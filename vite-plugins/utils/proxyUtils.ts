@@ -53,6 +53,45 @@ export function normalizeAxvgPayloadText(rawBody: string): string {
   return `// axvg\n${source}`;
 }
 
+export function buildAxureBridgeUnavailablePayload(params: {
+  route: string;
+  method: string;
+  bridgeUrl: string;
+  payloadBytes?: number;
+  error?: any;
+  status?: number;
+  statusText?: string;
+  responseText?: string;
+}) {
+  const errorCode =
+    readErrorString(params.error?.code)
+    || readErrorString(params.error?.cause?.code)
+    || undefined;
+  const errorMessage =
+    readErrorString(params.error?.message)
+    || readErrorString(params.responseText)
+    || (typeof params.status === 'number' ? `Axure Bridge unavailable (HTTP ${params.status})` : 'Axure Bridge unavailable');
+  const details =
+    params.error
+      ? formatAxureProxyErrorDetails(params.error)
+      : limitErrorText(readErrorString(params.responseText), 800) || undefined;
+
+  return {
+    available: false,
+    running: false,
+    success: false,
+    error: errorMessage,
+    details,
+    code: errorCode,
+    route: params.route,
+    method: params.method,
+    bridgeUrl: params.bridgeUrl,
+    payloadBytes: params.payloadBytes || undefined,
+    status: typeof params.status === 'number' ? params.status : undefined,
+    statusText: readErrorString(params.statusText) || undefined,
+  };
+}
+
 export function isLoopbackOrPrivateHostname(hostname: string): boolean {
   const normalized = String(hostname || '').trim().toLowerCase();
   if (!normalized) {

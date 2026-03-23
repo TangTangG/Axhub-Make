@@ -10,6 +10,7 @@ import {
 } from './utils/httpUtils';
 import { AXURE_BRIDGE_BASE_URL } from './utils/makeConstants';
 import {
+  buildAxureBridgeUnavailablePayload,
   formatAxureProxyErrorDetails,
   limitErrorText,
   normalizeAxvgPayloadText,
@@ -22,11 +23,28 @@ type UpstreamResponse = {
   bodyText: string;
 };
 
+const AVAILABILITY_PROBE_LOG_INTERVAL_MS = 30_000;
+
+let lastAvailabilityProbeLogKey = '';
+let lastAvailabilityProbeLogAt = 0;
+
 function readHeaderValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) {
     return value.join(', ');
   }
   return String(value || '');
+}
+
+function logAvailabilityProbeFailure(payload: Record<string, unknown>) {
+  const now = Date.now();
+  const key = JSON.stringify(payload);
+  if (key === lastAvailabilityProbeLogKey && now - lastAvailabilityProbeLogAt < AVAILABILITY_PROBE_LOG_INTERVAL_MS) {
+    return;
+  }
+
+  lastAvailabilityProbeLogKey = key;
+  lastAvailabilityProbeLogAt = now;
+  console.warn('[axure-bridge-proxy] availability probe failed', payload);
 }
 
 async function requestAxureBridge(
@@ -163,6 +181,33 @@ export function axureBridgeProxyPlugin(): Plugin {
           const responseText = upstreamResponse.bodyText;
 
           if (upstreamResponse.status < 200 || upstreamResponse.status >= 300) {
+            if (isAvailableRoute) {
+              const unavailablePayload = buildAxureBridgeUnavailablePayload({
+                route: pathname,
+                method: req.method,
+                bridgeUrl: upstreamUrl,
+                payloadBytes: payloadBytes || undefined,
+                status: upstreamResponse.status,
+                statusText: upstreamResponse.statusText,
+                responseText: readErrorString(responseText) || upstreamResponse.statusText,
+              });
+
+              logAvailabilityProbeFailure({
+                route: pathname,
+                method: req.method,
+                upstreamUrl,
+                status: upstreamResponse.status,
+                statusText: upstreamResponse.statusText,
+                bodyPreview: limitErrorText(readErrorString(responseText), 300) || undefined,
+              });
+
+              res.statusCode = 200;
+              res.setHeader('Cache-Control', 'no-store');
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify(unavailablePayload));
+              return;
+            }
+
             console.warn('[axure-bridge-proxy] upstream responded with error', {
               route: pathname,
               method: req.method,
@@ -198,6 +243,34 @@ export function axureBridgeProxyPlugin(): Plugin {
           res.end(responseText);
         } catch (error: any) {
           const errorLog = serializeErrorForLog(error);
+          if (isAvailableRoute) {
+            const unavailablePayload = buildAxureBridgeUnavailablePayload({
+              route: pathname,
+              method: req.method,
+              bridgeUrl: upstreamUrl,
+              payloadBytes: payloadBytes || undefined,
+              error,
+            });
+
+            logAvailabilityProbeFailure({
+              route: pathname,
+              method: req.method,
+              upstreamUrl,
+              payloadBytes: payloadBytes || undefined,
+              error: {
+                message: errorLog.message,
+                code: errorLog.code || errorLog.causeCode || undefined,
+                causeMessage: errorLog.causeMessage,
+              },
+            });
+
+            res.statusCode = 200;
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify(unavailablePayload));
+            return;
+          }
+
           console.error('[axure-bridge-proxy] upstream request failed', {
             route: pathname,
             method: req.method,
