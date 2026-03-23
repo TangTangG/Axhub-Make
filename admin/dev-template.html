@@ -150,20 +150,106 @@
           
           if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text).then(function() {
-              alert('错误信息已复制到剪贴板');
+              showFallbackNotice('错误信息已复制到剪贴板');
             }).catch(function() {
-              prompt('请手动复制以下内容:', text);
+              showFallbackTextPanel('请手动复制以下错误信息', text);
             });
           } else {
-            prompt('请手动复制以下内容:', text);
+            showFallbackTextPanel('请手动复制以下错误信息', text);
           }
         };
+      }
+
+      function showFallbackNotice(message) {
+        const existing = document.getElementById('__fallback_notice__');
+        if (existing) {
+          existing.remove();
+        }
+
+        const notice = document.createElement('div');
+        notice.id = '__fallback_notice__';
+        notice.textContent = message;
+        notice.style.cssText = 'position: fixed; right: 24px; bottom: 24px; z-index: 1000001; max-width: min(360px, calc(100vw - 48px)); padding: 10px 14px; border-radius: 8px; background: rgba(38, 38, 38, 0.92); color: white; font-size: 13px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,0.2);';
+        document.body.appendChild(notice);
+
+        window.setTimeout(function() {
+          notice.remove();
+        }, 2400);
+      }
+
+      function showFallbackTextPanel(title, text) {
+        const existing = document.getElementById('__fallback_text_panel__');
+        if (existing) {
+          existing.remove();
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = '__fallback_text_panel__';
+        overlay.style.cssText = 'position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000000; display: flex; align-items: center; justify-content: center; padding: 24px;';
+
+        const panel = document.createElement('div');
+        panel.style.cssText = 'width: min(720px, 100%); max-height: min(80vh, 640px); background: white; border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden;';
+
+        const header = document.createElement('div');
+        header.style.cssText = 'padding: 16px 20px; border-bottom: 1px solid #f0f0f0; font-size: 16px; font-weight: 600; color: #262626;';
+        header.textContent = title;
+
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.readOnly = true;
+        textarea.style.cssText = 'width: calc(100% - 40px); min-height: 280px; margin: 20px; padding: 12px; resize: vertical; border: 1px solid #d9d9d9; border-radius: 8px; font: 12px/1.6 SFMono-Regular, Consolas, monospace; color: #262626; background: #fafafa;';
+
+        const footer = document.createElement('div');
+        footer.style.cssText = 'padding: 12px 20px 20px; display: flex; justify-content: flex-end; gap: 8px;';
+
+        const selectButton = document.createElement('button');
+        selectButton.type = 'button';
+        selectButton.textContent = '全选内容';
+        selectButton.style.cssText = 'padding: 6px 16px; border: 1px solid #d9d9d9; background: white; border-radius: 6px; cursor: pointer; font-size: 14px;';
+        selectButton.onclick = function() {
+          textarea.focus();
+          textarea.select();
+        };
+
+        const closeButton = document.createElement('button');
+        closeButton.type = 'button';
+        closeButton.textContent = '关闭';
+        closeButton.style.cssText = 'padding: 6px 16px; border: 1px solid #1677ff; background: #1677ff; color: white; border-radius: 6px; cursor: pointer; font-size: 14px;';
+        closeButton.onclick = function() {
+          overlay.remove();
+        };
+
+        overlay.onclick = function(event) {
+          if (event.target === overlay) {
+            overlay.remove();
+          }
+        };
+
+        footer.appendChild(selectButton);
+        footer.appendChild(closeButton);
+        panel.appendChild(header);
+        panel.appendChild(textarea);
+        panel.appendChild(footer);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        window.setTimeout(function() {
+          textarea.focus();
+          textarea.select();
+        }, 0);
       }
 
       function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+      }
+
+      function isIgnorableVersionProxyIssue(text) {
+        const normalizedText = String(text || '');
+        return normalizedText.includes('__axhub_version__') &&
+          normalizedText.includes('html-proxy') &&
+          normalizedText.includes('No matching HTML proxy module found');
       }
 
       // 统一的错误处理函数
@@ -206,6 +292,9 @@
           if (event.target !== window && event.target instanceof HTMLElement) {
             const tagName = event.target.tagName;
             const resourceUrl = event.target.src || event.target.href || '未知资源';
+            if (isIgnorableVersionProxyIssue(resourceUrl)) {
+              return;
+            }
             message = `资源加载失败: ${tagName} - ${resourceUrl}`;
             stack = `标签: <${tagName.toLowerCase()}>\nURL: ${resourceUrl}\n类型: 资源加载错误`;
             originalConsoleError.call(console, '资源加载失败:', { tagName, resourceUrl });
@@ -264,6 +353,9 @@
 
         // 检查是否是重要错误
         const lowerMessage = message.toLowerCase();
+        if (isIgnorableVersionProxyIssue(message)) {
+          return;
+        }
         const shouldShow = !message.includes('[Error Dialog]') && 
                           !message.includes('[Error Handler]') &&
                           (lowerMessage.includes('error') || lowerMessage.includes('failed'));

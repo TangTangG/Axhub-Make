@@ -74,10 +74,61 @@
 <body>
   <div id="spec-root" class="loading">加载中</div>
 
+  <!-- 自定义模板不会走 Vite 默认 index.html 注入链路，这里手动补齐 HMR client 和 React preamble。 -->
+  <script type="module">
+    import '/@vite/client';
+    import '@vitejs/plugin-react/preamble';
+  </script>
+
   <!-- 加载 bootstrap JS（会自动挂载到 window.SpecTemplateBootstrap） -->
   <script type="module" src="/assets/spec-template-bootstrap.js"></script>
 
   <script type="module">
+    const specTemplateState = {
+      mode: 'single',
+      currentSpecUrl: '',
+      currentDocsConfig: [],
+      currentDocUrls: []
+    };
+
+    function setSpecTemplateState(nextState) {
+      specTemplateState.mode = nextState.mode;
+      specTemplateState.currentSpecUrl = nextState.currentSpecUrl || '';
+      specTemplateState.currentDocsConfig = Array.isArray(nextState.currentDocsConfig) ? nextState.currentDocsConfig : [];
+      specTemplateState.currentDocUrls = Array.isArray(nextState.currentDocUrls) ? nextState.currentDocUrls : [];
+    }
+
+    async function reloadCurrentSpecDocuments() {
+      if (!window.SpecTemplateBootstrap) {
+        return;
+      }
+
+      if (specTemplateState.mode === 'multi' && specTemplateState.currentDocsConfig.length > 0) {
+        await window.SpecTemplateBootstrap.loadMarkdownDocumentsFromUrls(specTemplateState.currentDocsConfig);
+        return;
+      }
+
+      if (specTemplateState.currentSpecUrl) {
+        await window.SpecTemplateBootstrap.loadMarkdownFromUrl(specTemplateState.currentSpecUrl);
+      }
+    }
+
+    if (import.meta.hot) {
+      import.meta.hot.on('axhub:spec-doc-update', async (payload) => {
+        if (!payload?.docUrl || !specTemplateState.currentDocUrls.includes(payload.docUrl)) {
+          return;
+        }
+
+        console.log('[Spec Template] 检测到文档热更新，重新加载:', payload.docUrl);
+
+        try {
+          await reloadCurrentSpecDocuments();
+        } catch (error) {
+          console.error('[Spec Template] 热更新重载失败:', error);
+        }
+      });
+    }
+
     function decodeHtmlEntities(str) {
       const textarea = document.createElement('textarea');
       textarea.innerHTML = str;
@@ -99,6 +150,11 @@
           try {
             const docsConfig = JSON.parse(docsConfigStr);
             console.log('[Spec Template] 多文档模式，加载文档:', docsConfig);
+            setSpecTemplateState({
+              mode: 'multi',
+              currentDocsConfig: docsConfig,
+              currentDocUrls: docsConfig.map((item) => item.url)
+            });
             
             if (window.SpecTemplateBootstrap.loadMarkdownDocumentsFromUrls) {
               window.SpecTemplateBootstrap.loadMarkdownDocumentsFromUrls(docsConfig).catch(err => {
@@ -114,6 +170,11 @@
             const urlParams = new URLSearchParams(window.location.search);
             const specUrl = urlParams.get('url') || '{{SPEC_URL}}';
             console.log('[Spec Template] 降级到单文档模式，加载 Spec:', specUrl);
+            setSpecTemplateState({
+              mode: 'single',
+              currentSpecUrl: specUrl,
+              currentDocUrls: specUrl ? [specUrl] : []
+            });
             
             // 检查是否是有效的 URL（不是占位符）
             if (specUrl && !specUrl.includes('{{') && !specUrl.includes('}}') && window.SpecTemplateBootstrap.loadMarkdownFromUrl) {
@@ -127,6 +188,11 @@
           const specUrl = urlParams.get('url') || '{{SPEC_URL}}';
 
           console.log('[Spec Template] 单文档模式，加载 Spec:', specUrl);
+          setSpecTemplateState({
+            mode: 'single',
+            currentSpecUrl: specUrl,
+            currentDocUrls: specUrl ? [specUrl] : []
+          });
 
           // 检查是否是有效的 URL（不是占位符）
           if (specUrl && !specUrl.includes('{{') && !specUrl.includes('}}')) {

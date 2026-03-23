@@ -14,9 +14,81 @@ export function gitVersionApiPlugin(): Plugin {
   let gitAvailable = false;
   let gitCheckError: string | null = null;
 
+  const resolveModuleFile = (basePath: string): string | null => {
+    const fileCandidates = [basePath, `${basePath}.ts`, `${basePath}.tsx`, `${basePath}.js`, `${basePath}.jsx`];
+    for (const candidate of fileCandidates) {
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          return candidate;
+        }
+      } catch {
+        // Ignore fs race/errors and continue probing other candidates.
+      }
+    }
+
+    const indexCandidates = [
+      path.join(basePath, 'index.ts'),
+      path.join(basePath, 'index.tsx'),
+      path.join(basePath, 'index.js'),
+      path.join(basePath, 'index.jsx'),
+    ];
+
+    for (const candidate of indexCandidates) {
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          return candidate;
+        }
+      } catch {
+        // Ignore fs race/errors and continue probing other candidates.
+      }
+    }
+
+    return null;
+  };
+
   return {
     name: 'git-version-api',
-    
+
+    /**
+     * 解决跨文件夹导入问题：
+     * 当从 .git-versions/{id}/src/... 中的文件发起相对导入时，如果目标文件
+     * 不在已提取的版本目录中（如 ../../components/side-menu），则回退到
+     * 当前工作目录的 src/ 下去解析。
+     */
+    resolveId(source, importer) {
+      if (!importer) return null;
+
+      const projectRoot = process.cwd();
+      const gitVersionsDir = path.join(projectRoot, '.git-versions');
+      const normalizedImporter = path.normalize(importer);
+
+      // 只处理来自 .git-versions 目录中的导入
+      if (!normalizedImporter.startsWith(gitVersionsDir)) return null;
+
+      // 解析相对路径导入
+      const resolved = path.resolve(path.dirname(normalizedImporter), source);
+
+      // 如果解析后的路径仍在 .git-versions 内且文件不存在，则回退到真实 src/
+      if (!resolved.startsWith(gitVersionsDir)) return null;
+
+      const versionResolvedPath = resolveModuleFile(resolved);
+      if (versionResolvedPath) {
+        return versionResolvedPath;
+      }
+
+      // 文件不存在 → 提取 .git-versions/{id}/ 之后的相对路径，映射到真实 src/
+      const relativeTail = path.relative(gitVersionsDir, resolved);
+      // relativeTail 形如 "67c09dc5/src/components/side-menu"
+      const slashIdx = relativeTail.indexOf(path.sep);
+      if (slashIdx < 0) return null;
+      const pathAfterVersionId = relativeTail.substring(slashIdx + 1);
+      // pathAfterVersionId 形如 "src/components/side-menu"
+
+      const realPath = path.join(projectRoot, pathAfterVersionId);
+
+      return resolveModuleFile(realPath);
+    },
+
     configureServer(server) {
       const projectRoot = process.cwd();
       
@@ -97,6 +169,59 @@ export function gitVersionApiPlugin(): Plugin {
         }
       };
 
+      const normalizeTargetPath = (rawTargetPath: string, projectRoot: string) => {
+        const sourceRoot = path.resolve(projectRoot, 'src');
+        const trimmedPath = String(rawTargetPath || '').trim();
+
+        if (!trimmedPath) {
+          throw new Error('Missing path parameter');
+        }
+
+        let normalizedPath = trimmedPath.replace(/\\/g, '/');
+        const normalizedProjectRoot = projectRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+        const normalizedSourceRoot = sourceRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+
+        if (normalizedPath.startsWith(normalizedSourceRoot + '/')) {
+          normalizedPath = normalizedPath.slice(normalizedSourceRoot.length + 1);
+        } else if (normalizedPath.startsWith(normalizedProjectRoot + '/src/')) {
+          normalizedPath = normalizedPath.slice(normalizedProjectRoot.length + '/src/'.length);
+        } else {
+          const srcMarkerIndex = normalizedPath.lastIndexOf('/src/');
+          if (srcMarkerIndex >= 0) {
+            normalizedPath = normalizedPath.slice(srcMarkerIndex + '/src/'.length);
+          } else if (normalizedPath.startsWith('src/')) {
+            normalizedPath = normalizedPath.slice('src/'.length);
+          }
+        }
+
+        normalizedPath = normalizedPath
+          .replace(/^\/+/, '')
+          .replace(/\/index\.(t|j)sx?$/i, '')
+          .replace(/\/+$/, '');
+
+        if (!normalizedPath) {
+          throw new Error('Invalid path');
+        }
+
+        const segments = normalizedPath.split('/').filter(Boolean);
+        if (segments.length === 0 || segments.some((segment) => segment === '.' || segment === '..')) {
+          throw new Error('Invalid path');
+        }
+
+        const resolvedFolderPath = path.resolve(sourceRoot, normalizedPath);
+        const relativeToSourceRoot = path.relative(sourceRoot, resolvedFolderPath);
+
+        if (!relativeToSourceRoot || relativeToSourceRoot.startsWith('..') || path.isAbsolute(relativeToSourceRoot)) {
+          throw new Error('Invalid path');
+        }
+
+        return {
+          sourceRoot,
+          targetPath: segments.join('/'),
+          folderPath: resolvedFolderPath,
+        };
+      };
+
       // Main middleware for git version API
       server.middlewares.use(async (req: any, res: any, next: any) => {
         // Only handle /api/git/* routes
@@ -112,21 +237,23 @@ export function gitVersionApiPlugin(): Plugin {
           if (pathname === '/api/git/history' && req.method === 'GET') {
             if (!checkGitAvailable(res)) return;
             
-            const targetPath = url.searchParams.get('path'); // e.g., 'prototypes/home' or 'components/button'
+            const rawTargetPath = url.searchParams.get('path'); // e.g., 'prototypes/home' or 'components/button'
             
-            if (!targetPath) {
+            if (!rawTargetPath) {
               sendJSON(res, 400, { error: 'Missing path parameter' });
               return;
             }
 
-            // Validate path
-            if (targetPath.includes('..') || targetPath.startsWith('/')) {
+            const projectRoot = process.cwd();
+            let targetPath = '';
+            let folderPath = '';
+
+            try {
+              ({ targetPath, folderPath } = normalizeTargetPath(rawTargetPath, projectRoot));
+            } catch (error: any) {
               sendJSON(res, 403, { error: 'Invalid path' });
               return;
             }
-
-            const projectRoot = process.cwd();
-            const folderPath = path.join(projectRoot, 'src', targetPath);
 
             if (!fs.existsSync(folderPath)) {
               sendJSON(res, 404, { error: 'Folder not found' });
@@ -168,21 +295,23 @@ export function gitVersionApiPlugin(): Plugin {
             if (!checkGitAvailable(res)) return;
             
             const body = await parseBody(req);
-            const { path: targetPath, commitHash } = body;
+            const { path: rawTargetPath, commitHash } = body;
 
-            if (!targetPath || !commitHash) {
+            if (!rawTargetPath || !commitHash) {
               sendJSON(res, 400, { error: 'Missing path or commitHash parameter' });
               return;
             }
 
-            // Validate path
-            if (targetPath.includes('..') || targetPath.startsWith('/')) {
+            const projectRoot = process.cwd();
+            let targetPath = '';
+            let folderPath = '';
+
+            try {
+              ({ targetPath, folderPath } = normalizeTargetPath(rawTargetPath, projectRoot));
+            } catch (error: any) {
               sendJSON(res, 403, { error: 'Invalid path' });
               return;
             }
-
-            const projectRoot = process.cwd();
-            const folderPath = path.join(projectRoot, 'src', targetPath);
 
             if (!fs.existsSync(folderPath)) {
               sendJSON(res, 404, { error: 'Folder not found' });
@@ -211,21 +340,23 @@ export function gitVersionApiPlugin(): Plugin {
             if (!checkGitAvailable(res)) return;
             
             const body = await parseBody(req);
-            const { path: targetPath, message } = body;
+            const { path: rawTargetPath, message } = body;
 
-            if (!targetPath || !message) {
+            if (!rawTargetPath || !message) {
               sendJSON(res, 400, { error: 'Missing path or message parameter' });
               return;
             }
 
-            // Validate path
-            if (targetPath.includes('..') || targetPath.startsWith('/')) {
+            const projectRoot = process.cwd();
+            let targetPath = '';
+            let folderPath = '';
+
+            try {
+              ({ targetPath, folderPath } = normalizeTargetPath(rawTargetPath, projectRoot));
+            } catch (error: any) {
               sendJSON(res, 403, { error: 'Invalid path' });
               return;
             }
-
-            const projectRoot = process.cwd();
-            const folderPath = path.join(projectRoot, 'src', targetPath);
 
             if (!fs.existsSync(folderPath)) {
               sendJSON(res, 404, { error: 'Folder not found' });
@@ -256,21 +387,23 @@ export function gitVersionApiPlugin(): Plugin {
           if (pathname === '/api/git/diff' && req.method === 'GET') {
             if (!checkGitAvailable(res)) return;
             
-            const targetPath = url.searchParams.get('path');
+            const rawTargetPath = url.searchParams.get('path');
             
-            if (!targetPath) {
+            if (!rawTargetPath) {
               sendJSON(res, 400, { error: 'Missing path parameter' });
               return;
             }
 
-            // Validate path
-            if (targetPath.includes('..') || targetPath.startsWith('/')) {
+            const projectRoot = process.cwd();
+            let targetPath = '';
+            let folderPath = '';
+
+            try {
+              ({ targetPath, folderPath } = normalizeTargetPath(rawTargetPath, projectRoot));
+            } catch (error: any) {
               sendJSON(res, 403, { error: 'Invalid path' });
               return;
             }
-
-            const projectRoot = process.cwd();
-            const folderPath = path.join(projectRoot, 'src', targetPath);
 
             if (!fs.existsSync(folderPath)) {
               sendJSON(res, 404, { error: 'Folder not found' });
@@ -300,21 +433,23 @@ export function gitVersionApiPlugin(): Plugin {
             if (!checkGitAvailable(res)) return;
             
             const body = await parseBody(req);
-            const { path: targetPath, commitHash } = body;
+            const { path: rawTargetPath, commitHash } = body;
 
-            if (!targetPath || !commitHash) {
+            if (!rawTargetPath || !commitHash) {
               sendJSON(res, 400, { error: 'Missing path or commitHash parameter' });
               return;
             }
 
-            // Validate path
-            if (targetPath.includes('..') || targetPath.startsWith('/')) {
+            const projectRoot = process.cwd();
+            let targetPath = '';
+            let folderPath = '';
+
+            try {
+              ({ targetPath, folderPath } = normalizeTargetPath(rawTargetPath, projectRoot));
+            } catch (error: any) {
               sendJSON(res, 403, { error: 'Invalid path' });
               return;
             }
-
-            const projectRoot = process.cwd();
-            const folderPath = path.join(projectRoot, 'src', targetPath);
 
             if (!fs.existsSync(folderPath)) {
               sendJSON(res, 404, { error: 'Folder not found' });

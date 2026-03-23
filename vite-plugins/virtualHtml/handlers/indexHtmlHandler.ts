@@ -3,8 +3,21 @@ import fs from 'fs';
 import path from 'path';
 import { encodeRoutePath, normalizePath } from './pathNormalizer';
 import { logVirtualHtmlDebug, logVirtualHtmlWarn } from '../logger';
+import {
+  createPreviewHostModuleCode,
+  createPreviewHostOptions,
+  replacePreviewLoaderScript,
+} from '../previewHost';
 
-export function handleIndexHtml(req: IncomingMessage, res: ServerResponse, devTemplate: string, htmlTemplate: string): boolean {
+type HtmlResponder = (html: string, transformUrl?: string) => Promise<void>;
+
+export async function handleIndexHtml(
+  req: IncomingMessage,
+  res: ServerResponse,
+  devTemplate: string,
+  htmlTemplate: string,
+  respondHtml: HtmlResponder,
+): Promise<boolean> {
   if (!req.url) return false;
 
   // 先尝试标准化路径
@@ -40,35 +53,54 @@ export function handleIndexHtml(req: IncomingMessage, res: ServerResponse, devTe
         const title = versionId
           ? `${typeLabel}: ${name} (版本: ${versionId}) - Dev Preview`
           : `${typeLabel}: ${name} - Dev Preview`;
+        const entryImportPath = versionId
+          ? `/@fs/${tsxPath}`
+          : `${urlPath}/index.tsx`;
+        const hackCssPath = path.resolve(process.cwd(), 'src', type, name, 'hack.css');
+        const previewHostModuleCode = createPreviewHostModuleCode(
+          createPreviewHostOptions({
+            type,
+            name,
+            entryImportPath,
+            versionId,
+            initialHackCssEnabled: fs.existsSync(hackCssPath),
+          }),
+        );
+        const bootstrapModulePath = path.resolve(process.cwd(), 'admin', 'assets', 'dev-template-bootstrap.js')
+          .split(path.sep)
+          .join('/');
 
         let html = devTemplate.replace(/\{\{TITLE\}\}/g, title);
+        html = replacePreviewLoaderScript(html, previewHostModuleCode);
+        html = html.replace(
+          '  <script type="module" src="/assets/dev-template-bootstrap.js"></script>',
+          `  <script type="module">\n    import ${JSON.stringify(`/@fs/${bootstrapModulePath}`)};\n  </script>`,
+        );
 
         // 🔥 添加 <base> 标签来修正相对路径基准（重要！）
         // 新路径格式 /prototypes/ref-antd 会被浏览器当作目录，导致相对路径解析错误
         // 添加 <base href="/prototypes/ref-antd/"> 可以修正这个问题
         const baseHref = `${urlPath}/`;
         html = html.replace('</head>', `  <base href="${baseHref}">\n  </head>`);
-
-        // 如果是版本化访问，使用 @fs 加载绝对路径
-        if (versionId) {
-          html = html.replace(/\{\{ENTRY\}\}/g, `/@fs/${tsxPath}`);
-        } else {
-          // 正常的当前版本访问
-          // Vite root 是 'src'，所以路径应该相对于 src 目录
-          html = html.replace(/\{\{ENTRY\}\}/g, `${urlPath}/index.tsx`);
-        }
-
-        const hackCssPath = path.resolve(process.cwd(), 'src', type, name, 'hack.css');
         if (fs.existsSync(hackCssPath)) {
           logVirtualHtmlDebug('注入 hack.css:', hackCssPath);
-          html = html.replace('</head>', '  <link rel="stylesheet" href="./hack.css">\n  </head>');
+          html = html.replace(
+            '</head>',
+            `  <link rel="stylesheet" data-axhub-hack-css="${type}/${name}" href="./hack.css">\n  </head>`,
+          );
         }
 
         logVirtualHtmlDebug('返回虚拟 HTML:', normalized.normalizedUrl);
 
-        res.setHeader('Content-Type', 'text/html');
-        res.statusCode = 200;
-        res.end(html);
+        // 交给 Vite 转换 HTML 时需要使用一个稳定的 .html 虚拟地址。
+        // 当前版本与历史版本不能共用同一个 transformUrl，否则 Vite 的 html-proxy
+        // 会复用当前页面的内联脚本，导致历史版本页面又加载回当前源码。
+        // 这里用一个仅供 transformIndexHtml 使用的虚拟路径段隔离不同版本，
+        // 避免在 URL 查询参数里追加 ver 触发双问号问题。
+        const transformUrl = versionId
+          ? `${urlPath}/__axhub_version__/${versionId}/index.html`
+          : `${urlPath}/index.html`;
+        await respondHtml(html, transformUrl);
         return true;
       } else if (versionId) {
         // 版本文件不存在

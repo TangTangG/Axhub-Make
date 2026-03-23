@@ -12,7 +12,6 @@ export interface ScannedEntryItem {
   demoUrl: string;
   specUrl: string;
   jsUrl: string;
-  isReference: boolean;
   filePath: string;
 }
 
@@ -81,7 +80,6 @@ function scanGroup(projectRoot: string, group: ScannableGroup): {
     entries.html[key] = path.join(folderPath, 'index.html');
 
     const displayName = getDisplayName(jsEntry) || name;
-    const isReference = name.startsWith('ref-');
     const encodedKey = encodeUrlPathSegments(key);
     items.push({
       name,
@@ -89,7 +87,6 @@ function scanGroup(projectRoot: string, group: ScannableGroup): {
       demoUrl: `/${encodedKey}`,
       specUrl: `/${encodedKey}/spec`,
       jsUrl: `/build/${encodedKey}.js`,
-      isReference,
       filePath: jsEntry,
     });
   }

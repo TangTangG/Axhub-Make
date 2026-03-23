@@ -2,27 +2,10 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import fs from 'fs';
 import path from 'path';
 
-function hasViteModuleQuery(url: string): boolean {
-  const query = url.split('?')[1];
-  if (!query) return false;
-
-  const params = new URLSearchParams(query);
-  return (
-    params.has('import') ||
-    params.has('url') ||
-    params.has('raw') ||
-    params.has('worker') ||
-    params.has('sharedworker')
-  );
-}
-
 export function handleAssetsRequest(req: IncomingMessage, res: ServerResponse): boolean {
   if (req.url && req.url.startsWith('/assets/')) {
-    if (hasViteModuleQuery(req.url)) {
-      return false;
-    }
-
-    const relativePath = req.url.startsWith('/') ? req.url.slice(1) : req.url;
+    const pathname = req.url.split('?')[0];
+    const relativePath = pathname.startsWith('/') ? pathname.slice(1) : pathname;
     const assetPath = path.resolve(process.cwd(), 'admin', relativePath);
     
     console.log('[主项目] 请求 asset:', req.url, '-> 路径:', assetPath, '存在:', fs.existsSync(assetPath));

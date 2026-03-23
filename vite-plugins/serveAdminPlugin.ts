@@ -39,9 +39,11 @@ export function serveAdminPlugin(): Plugin {
   return {
     name: 'serve-admin-plugin',
     configureServer(server: any) {
-      server.middlewares.use((req: any, res: any, next: any) => {
+      server.middlewares.use(async (req: any, res: any, next: any) => {
+        try {
         const adminDir = path.resolve(projectRoot, 'admin');
         const pathname = getRequestPathname(req);
+        const requestUrl = String(req.url || pathname || '/');
         const localIP = getLocalIP();
         const actualPort = server.httpServer?.address()?.port || server.config.server?.port || 5173;
         const injectScript = `
@@ -51,12 +53,21 @@ export function serveAdminPlugin(): Plugin {
     window.__LOCAL_IP__ = '${localIP}';
     window.__LOCAL_PORT__ = ${actualPort};
   </script>`;
+        const sendHtml = async (html: string, options?: { transform?: boolean }) => {
+          let responseHtml = html;
+          if (options?.transform) {
+            const htmlUrl = requestUrl === '/' ? '/index.html' : requestUrl;
+            responseHtml = await server.transformIndexHtml(htmlUrl, html, requestUrl);
+          }
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.end(responseHtml);
+        };
 
         if (pathname === '/' || pathname === '/index.html') {
           const indexPath = path.join(adminDir, 'index.html');
           if (fs.existsSync(indexPath)) {
-            res.setHeader('Content-Type', 'text/html; charset=utf-8');
-            res.end(readInjectedHtml(indexPath, injectScript));
+            // 首页 admin 壳不参与 src HMR，避免外层页面被 Vite client 带着刷新。
+            await sendHtml(readInjectedHtml(indexPath, injectScript), { transform: false });
             return;
           }
         }
@@ -64,8 +75,8 @@ export function serveAdminPlugin(): Plugin {
         if (pathname && pathname.match(/^\/[^/]+\.html$/)) {
           const htmlPath = path.join(adminDir, pathname);
           if (fs.existsSync(htmlPath)) {
-            res.setHeader('Content-Type', 'text/html; charset=utf-8');
-            res.end(readInjectedHtml(htmlPath, injectScript));
+            // 其他 admin 静态壳页面同样不接入 HMR，只保留 iframe 内 src 页面自己的热更。
+            await sendHtml(readInjectedHtml(htmlPath, injectScript), { transform: false });
             return;
           }
         }
@@ -148,13 +159,16 @@ export function serveAdminPlugin(): Plugin {
             html = html.replace(/\{\{MULTI_DOC\}\}/g, 'false');
             html = html.replace(/\{\{DOCS_CONFIG\}\}/g, '[]');
             html = html.replace('</head>', `${injectScript}\n</head>`);
-            res.setHeader('Content-Type', 'text/html; charset=utf-8');
-            res.end(html);
+            // 文档页内容源现在也在 src 下，保留它自己的 Vite 转换与更新能力。
+            await sendHtml(html, { transform: true });
             return;
           }
         }
 
         next();
+        } catch (error) {
+          next(error);
+        }
       });
     },
   };

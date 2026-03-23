@@ -97,6 +97,13 @@ export function normalizePath(url: string): NormalizedPath | null {
   const params = new URLSearchParams(queryString || '');
   const versionId = params.get('ver') || undefined;
 
+  // Vite 内部的 html-proxy 请求需要保留原样，不能参与旧路径重定向。
+  // 否则浏览器在加载 /index.html?html-proxy&index=*.js 时会被 301 到页面地址，
+  // 最终表现为 script 资源加载失败。
+  if (params.has('html-proxy')) {
+    return null;
+  }
+
   // 移除末尾的 .html
   const cleanUrl = urlWithoutQuery.replace(/\.html$/, '');
 
@@ -317,7 +324,32 @@ export function handlePathRedirect(req: IncomingMessage, res: ServerResponse): b
 
   const normalized = normalizePath(req.url);
 
+  if (
+    normalized &&
+    !normalized.isLegacy &&
+    normalized.action === 'preview'
+  ) {
+    const htmlEntryPath = path.resolve(process.cwd(), 'src', normalized.type, normalized.name, 'index.html');
+    if (fs.existsSync(htmlEntryPath)) {
+      const params = new URLSearchParams(req.url.split('?')[1] || '');
+      const query = params.toString();
+      const redirectUrl = `${encodeRoutePath(`/${normalized.type}/${normalized.name}/index.html`)}${query ? `?${query}` : ''}`;
+
+      res.statusCode = 302;
+      res.setHeader('Location', redirectUrl);
+      res.end();
+      return true;
+    }
+  }
+
   if (normalized && normalized.isLegacy) {
+    if (normalized.action === 'preview') {
+      const htmlEntryPath = path.resolve(process.cwd(), 'src', normalized.type, normalized.name, 'index.html');
+      if (fs.existsSync(htmlEntryPath)) {
+        return false;
+      }
+    }
+
     // 旧格式，重定向到新格式
     logVirtualHtmlDebug('路径重定向:', normalized.originalUrl, '→', normalized.normalizedUrl);
 

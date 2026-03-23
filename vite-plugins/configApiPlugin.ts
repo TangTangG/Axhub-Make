@@ -1008,6 +1008,176 @@ function buildAgentApiUrl(apiBaseUrl: string): string {
   return `${normalized}/api/agent`;
 }
 
+type AgentStreamNavigation = {
+  sessionId: string;
+  sessionUrl: string;
+};
+
+function extractAgentStreamError(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (typeof record.error === 'string' && record.error.trim()) {
+    return record.error.trim();
+  }
+
+  if (typeof record.message === 'string' && record.message.trim()) {
+    return record.message.trim();
+  }
+
+  const data = record.data;
+  if (!data || typeof data !== 'object') {
+    return null;
+  }
+
+  const nested = data as Record<string, unknown>;
+  if (typeof nested.error === 'string' && nested.error.trim()) {
+    return nested.error.trim();
+  }
+
+  if (typeof nested.message === 'string' && nested.message.trim()) {
+    return nested.message.trim();
+  }
+
+  return null;
+}
+
+function parseSseJsonEvent(rawBlock: string): Record<string, unknown> | null {
+  const trimmedBlock = rawBlock.trim();
+  if (!trimmedBlock) {
+    return null;
+  }
+
+  const dataLines = trimmedBlock
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trim());
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  const payloadText = dataLines.join('\n').trim();
+  if (!payloadText) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(payloadText);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+async function readAgentNavigationFromSse(response: Response, webBaseUrl: string): Promise<AgentStreamNavigation> {
+  if (!response.body) {
+    throw new Error('Agent API 未返回可读取的数据流');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let lastKnownSessionId = '';
+  let lastKnownSessionUrl = '';
+  let terminalError: string | null = null;
+
+  const resolveNavigation = (): AgentStreamNavigation | null => {
+    if (!lastKnownSessionId && !lastKnownSessionUrl) {
+      return null;
+    }
+
+    const resolvedUrl = lastKnownSessionUrl
+      || (lastKnownSessionId ? `${webBaseUrl}/session/${encodeURIComponent(lastKnownSessionId)}` : '');
+
+    if (!resolvedUrl) {
+      return null;
+    }
+
+    return {
+      sessionId: lastKnownSessionId,
+      sessionUrl: resolvedUrl,
+    };
+  };
+
+  const consumeEvent = (payload: Record<string, unknown>) => {
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
+    const sessionUrl = typeof payload.sessionUrl === 'string' ? payload.sessionUrl.trim() : '';
+
+    if (sessionId) {
+      lastKnownSessionId = sessionId;
+    }
+    if (sessionUrl) {
+      lastKnownSessionUrl = sessionUrl;
+    }
+
+    const eventType = typeof payload.type === 'string' ? payload.type.trim() : '';
+    if (eventType === 'session-created' || eventType === 'open-only') {
+      return resolveNavigation();
+    }
+
+    if (eventType === 'session-aborted') {
+      terminalError = 'Session aborted';
+      return null;
+    }
+
+    if (eventType === 'codex-error' || eventType === 'claude-error' || eventType === 'error') {
+      terminalError = extractAgentStreamError(payload) || terminalError;
+      return null;
+    }
+
+    return resolveNavigation();
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+      let separatorIndex = buffer.search(/\r?\n\r?\n/);
+      while (separatorIndex >= 0) {
+        const rawBlock = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + (buffer[separatorIndex] === '\r' ? 4 : 2));
+
+        const payload = parseSseJsonEvent(rawBlock);
+        if (payload) {
+          const navigation = consumeEvent(payload);
+          if (navigation) {
+            void reader.cancel().catch(() => undefined);
+            return navigation;
+          }
+        }
+
+        separatorIndex = buffer.search(/\r?\n\r?\n/);
+      }
+
+      if (done) {
+        const tailPayload = parseSseJsonEvent(buffer);
+        if (tailPayload) {
+          const navigation = consumeEvent(tailPayload);
+          if (navigation) {
+            return navigation;
+          }
+        }
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (terminalError) {
+    throw new Error(`Agent API 调用失败: ${terminalError}`);
+  }
+
+  throw new Error('Agent API 返回缺少 sessionUrl/sessionId');
+}
+
 function quoteForShell(value: string) {
   return `"${String(value).replace(/["\\$`]/g, '\\$&')}"`;
 }
@@ -1620,40 +1790,41 @@ export function configApiPlugin(): Plugin {
 
               const upstreamResponse = await fetch(agentApiUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Accept': 'text/event-stream, application/json',
+                },
                 body: JSON.stringify({
                   projectPath: assistantRuntime.projectPath,
                   provider,
                   message: prompt,
-                  stream: false,
+                  stream: true,
                 }),
               });
 
-              const upstreamText = await upstreamResponse.text();
-              let upstreamData: any = null;
-              try {
-                upstreamData = upstreamText ? JSON.parse(upstreamText) : null;
-              } catch {
-                upstreamData = null;
-              }
-
               if (!upstreamResponse.ok) {
+                const upstreamText = await upstreamResponse.text();
+                let upstreamData: any = null;
+                try {
+                  upstreamData = upstreamText ? JSON.parse(upstreamText) : null;
+                } catch {
+                  upstreamData = null;
+                }
                 const upstreamError = upstreamData?.error || upstreamData?.message || upstreamText || `status ${upstreamResponse.status}`;
                 throw new Error(`Agent API 调用失败: ${upstreamError}`);
               }
 
-              const sessionId = typeof upstreamData?.sessionId === 'string' ? upstreamData.sessionId : '';
-              const sessionUrl = typeof upstreamData?.sessionUrl === 'string' ? upstreamData.sessionUrl : '';
-
-              const url = sessionUrl || (sessionId ? `${assistantRuntime.webBaseUrl}/session/${encodeURIComponent(sessionId)}` : '');
-
-              if (!url) {
-                throw new Error('Agent API 返回缺少 sessionUrl/sessionId');
-              }
+              const navigation = await readAgentNavigationFromSse(upstreamResponse, assistantRuntime.webBaseUrl);
 
               res.statusCode = 200;
               res.setHeader('Content-Type', 'application/json; charset=utf-8');
-              res.end(JSON.stringify({ success: true, url, sessionId, scene, provider }));
+              res.end(JSON.stringify({
+                success: true,
+                url: navigation.sessionUrl,
+                sessionId: navigation.sessionId,
+                scene,
+                provider,
+              }));
             } catch (e: any) {
               res.statusCode = 500;
               res.setHeader('Content-Type', 'application/json; charset=utf-8');
