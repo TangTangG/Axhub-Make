@@ -273,6 +273,19 @@ function runCcConnectDaemonCommand(args: string[], timeoutMs = DAEMON_COMMAND_TI
 }
 
 function ensureCcConnectDaemonRunning(configPath: string): { ok: boolean; detail: string } {
+  const isWindows = process.platform === 'win32';
+
+  if (isWindows) {
+    return startCcConnectDetached(configPath);
+  }
+
+  return startCcConnectViaDaemon(configPath);
+}
+
+/**
+ * macOS / Linux: use the native `cc-connect daemon` sub-commands.
+ */
+function startCcConnectViaDaemon(configPath: string): { ok: boolean; detail: string } {
   const statusResult = runCcConnectDaemonCommand(['daemon', 'status']);
   const isRunning = statusResult.status === 0 && /Status:\s+Running/i.test(statusResult.stdout || '');
 
@@ -305,6 +318,46 @@ function ensureCcConnectDaemonRunning(configPath: string): { ok: boolean; detail
     ok: false,
     detail: `微信配置已写入，但 daemon 启动失败: ${buildShortErrorMessage(installResult)}`,
   };
+}
+
+/**
+ * Windows: `cc-connect daemon` is not supported.
+ * Try to spawn cc-connect as a detached background process instead.
+ * If that also fails, return a user-friendly message with manual instructions.
+ */
+function startCcConnectDetached(configPath: string): { ok: boolean; detail: string } {
+  try {
+    const spawnSpec = getSpawnCommandSpec(
+      CC_CONNECT_COMMAND,
+      ['--config', configPath],
+      'win32',
+    );
+
+    const env = { ...process.env };
+    delete env.CLAUDECODE;
+
+    const child = spawn(spawnSpec.command, spawnSpec.args, {
+      detached: true,
+      stdio: 'ignore',
+      env,
+      windowsHide: true,
+    });
+
+    child.unref();
+
+    console.info(`${LOG_PREFIX} cc-connect started as detached process (pid=${child.pid}) on Windows`);
+    return { ok: true, detail: 'cc-connect 已在后台启动，微信配置已生效' };
+  } catch (error: any) {
+    console.error(`${LOG_PREFIX} Failed to start cc-connect detached on Windows:`, error?.message);
+
+    return {
+      ok: false,
+      detail:
+        '微信配置已写入，但后台服务启动失败。' +
+        '请在终端手动运行: cc-connect --config ' +
+        configPath.replace(/\\/g, '\\\\'),
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------

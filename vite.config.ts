@@ -5,42 +5,112 @@ import path from 'path';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+// ── 构建模式也需要的插件（静态导入） ──
 import { addAxhubMarker } from './vite-plugins/addAxhubMarker';
-import { aiCliPlugin } from './vite-plugins/aiCliPlugin';
-import { autoDebugPlugin } from './vite-plugins/autoDebugPlugin';
-import { axureBridgeProxyPlugin } from './vite-plugins/axureBridgeProxyPlugin';
 import { axhubComponentEnforcer } from './vite-plugins/axhubComponentEnforcer';
-import { canvasApiPlugin } from './vite-plugins/canvasApiPlugin';
-import { codeReviewPlugin } from './vite-plugins/codeReviewPlugin';
-import { configApiPlugin } from './vite-plugins/configApiPlugin';
-import { dataManagementApiPlugin } from './vite-plugins/dataManagementApiPlugin';
-import { docsApiPlugin } from './vite-plugins/docsApiPlugin';
-import { docsImportApiPlugin } from './vite-plugins/docsImportApiPlugin';
-import { downloadDistPlugin } from './vite-plugins/downloadDistPlugin';
-import { exportImageProxyPlugin } from './vite-plugins/exportImageProxyPlugin';
-import { fileSystemApiPlugin } from './vite-plugins/fileSystemApiPlugin';
 import { forceInlineDynamicImportsOff } from './vite-plugins/forceInlineDynamicImportsOff';
-import { gitVersionApiPlugin } from './vite-plugins/gitVersionApiPlugin';
 import { injectStablePageIds } from './vite-plugins/injectStablePageIds';
-import { lanAccessControlPlugin } from './vite-plugins/lanAccessControlPlugin';
-import { mediaManagementApiPlugin } from './vite-plugins/mediaManagementApiPlugin';
-import { serveAdminPlugin } from './vite-plugins/serveAdminPlugin';
-import { sourceApiPlugin } from './vite-plugins/sourceApiPlugin';
-import { specDocApiPlugin } from './vite-plugins/specDocApiPlugin';
-import { templatesApiPlugin } from './vite-plugins/templatesApiPlugin';
-import { themesApiPlugin } from './vite-plugins/themesApiPlugin';
-import { unsetReferenceApiPlugin } from './vite-plugins/unsetReferenceApiPlugin';
-import { uploadDocsApiPlugin } from './vite-plugins/uploadDocsApiPlugin';
-import { versionApiPlugin } from './vite-plugins/versionApiPlugin';
-import { virtualHtmlPlugin } from './vite-plugins/virtualHtml';
-import { websocketPlugin } from './vite-plugins/websocketPlugin';
-import { writeDevServerInfoPlugin } from './vite-plugins/writeDevServerInfoPlugin';
-import { ccConnectApiPlugin } from './vite-plugins/ccConnectApiPlugin';
 import {
   MAKE_CONFIG_RELATIVE_PATH,
   MAKE_ENTRIES_RELATIVE_PATH,
 } from './vite-plugins/utils/makeConstants';
 import { readEntriesManifest, scanProjectEntries, writeEntriesManifestAtomic } from './vite-plugins/utils/entriesManifest';
+
+// ── 仅 dev server 模式需要的插件 ──
+// 使用动态 import() 避免在 build 模式下加载这些模块。
+// lowdbService 等单例会在模块求值时创建持久资源，导致 vite build 进程无法退出。
+async function loadServePlugins(): Promise<Plugin[]> {
+  const [
+    { aiCliPlugin },
+    { autoDebugPlugin },
+    { axureBridgeProxyPlugin },
+    { canvasApiPlugin },
+    { ccConnectApiPlugin },
+    { codeReviewPlugin },
+    { configApiPlugin },
+    { dataManagementApiPlugin },
+    { docsApiPlugin },
+    { docsImportApiPlugin },
+    { downloadDistPlugin },
+    { exportHtmlApiPlugin },
+    { exportImageProxyPlugin },
+    { fileSystemApiPlugin },
+    { gitVersionApiPlugin },
+    { lanAccessControlPlugin },
+    { mediaManagementApiPlugin },
+    { serveAdminPlugin },
+    { sourceApiPlugin },
+    { specDocApiPlugin },
+    { templatesApiPlugin },
+    { themesApiPlugin },
+    { unsetReferenceApiPlugin },
+    { uploadDocsApiPlugin },
+    { versionApiPlugin },
+    { virtualHtmlPlugin },
+    { websocketPlugin },
+    { writeDevServerInfoPlugin },
+  ] = await Promise.all([
+    import('./vite-plugins/aiCliPlugin'),
+    import('./vite-plugins/autoDebugPlugin'),
+    import('./vite-plugins/axureBridgeProxyPlugin'),
+    import('./vite-plugins/canvasApiPlugin'),
+    import('./vite-plugins/ccConnectApiPlugin'),
+    import('./vite-plugins/codeReviewPlugin'),
+    import('./vite-plugins/configApiPlugin'),
+    import('./vite-plugins/dataManagementApiPlugin'),
+    import('./vite-plugins/docsApiPlugin'),
+    import('./vite-plugins/docsImportApiPlugin'),
+    import('./vite-plugins/downloadDistPlugin'),
+    import('./vite-plugins/exportHtmlApiPlugin'),
+    import('./vite-plugins/exportImageProxyPlugin'),
+    import('./vite-plugins/fileSystemApiPlugin'),
+    import('./vite-plugins/gitVersionApiPlugin'),
+    import('./vite-plugins/lanAccessControlPlugin'),
+    import('./vite-plugins/mediaManagementApiPlugin'),
+    import('./vite-plugins/serveAdminPlugin'),
+    import('./vite-plugins/sourceApiPlugin'),
+    import('./vite-plugins/specDocApiPlugin'),
+    import('./vite-plugins/templatesApiPlugin'),
+    import('./vite-plugins/themesApiPlugin'),
+    import('./vite-plugins/unsetReferenceApiPlugin'),
+    import('./vite-plugins/uploadDocsApiPlugin'),
+    import('./vite-plugins/versionApiPlugin'),
+    import('./vite-plugins/virtualHtml'),
+    import('./vite-plugins/websocketPlugin'),
+    import('./vite-plugins/writeDevServerInfoPlugin'),
+  ]);
+
+  return [
+    lanAccessControlPlugin(),
+    writeDevServerInfoPlugin(),
+    serveAdminPlugin(),
+    axureBridgeProxyPlugin(),
+    exportImageProxyPlugin(),
+    virtualHtmlPlugin(),
+    websocketPlugin(),
+    versionApiPlugin(),
+    downloadDistPlugin(),
+    exportHtmlApiPlugin(),
+    docsImportApiPlugin(),
+    docsApiPlugin(),
+    canvasApiPlugin(),
+    templatesApiPlugin(),
+    uploadDocsApiPlugin(),
+    sourceApiPlugin(),
+    specDocApiPlugin(),
+    unsetReferenceApiPlugin(),
+    themesApiPlugin(),
+    fileSystemApiPlugin(),
+    dataManagementApiPlugin(),
+    mediaManagementApiPlugin(),
+    codeReviewPlugin(),
+    autoDebugPlugin(),
+    configApiPlugin(),
+    aiCliPlugin(),
+    gitVersionApiPlugin(),
+    ccConnectApiPlugin(),
+  ];
+}
 
 const projectRoot = process.cwd();
 const configPath = path.resolve(projectRoot, MAKE_CONFIG_RELATIVE_PATH);
@@ -75,44 +145,19 @@ if (hasSingleEntry) {
 
 const isIifeBuild = hasSingleEntry;
 
-export default defineConfig(({ command }) => {
+export default defineConfig(async ({ command }) => {
   const isServe = command === 'serve';
+
+  // 仅在 serve 模式才加载 server-only 插件，避免 build 进程被持久资源阻塞
+  const servePlugins = isServe ? await loadServePlugins() : [];
 
   const config: any = {
     plugins: [
-      tailwindcss(), // Tailwind CSS Vite 插件
-      lanAccessControlPlugin(), // 局域网访问控制（必须在最前面）
-      writeDevServerInfoPlugin(), // 写入开发服务器信息
-      serveAdminPlugin(), // 服务 admin 目录（需要在最前面）
-      axureBridgeProxyPlugin(), // 提供 /api/axure-bridge/* 端点
-      exportImageProxyPlugin(), // 提供 /api/export/image-proxy 端点
-      injectStablePageIds(), // 注入稳定 ID（所有模式都启用）
-      virtualHtmlPlugin(),
-      websocketPlugin(),
-      versionApiPlugin(), // 提供 /api/version 端点
-      downloadDistPlugin(), // 提供 /api/download-dist 端点
-      docsImportApiPlugin(), // 提供 /api/docs/import 端点
-      docsApiPlugin(), // 提供 /api/docs 端点
-      canvasApiPlugin(), // 提供 /api/canvas 端点
-      templatesApiPlugin(), // 提供 /api/docs/templates 端点
-      uploadDocsApiPlugin(),
-      sourceApiPlugin(), // 提供 /api/source 端点
-      specDocApiPlugin(), // 提供 /api/spec-doc/save 端点
-      unsetReferenceApiPlugin(), // 提供 /api/unset-reference 端点
-      themesApiPlugin(), // 提供 /api/themes 端点
-      fileSystemApiPlugin(),
-      dataManagementApiPlugin(), // 提供 /api/data 端点
-      mediaManagementApiPlugin(), // 提供 /api/media 端点
-      codeReviewPlugin(), // 提供 /api/code-review 端点
-      autoDebugPlugin(), // 提供自动调试 API 端点
-      configApiPlugin(), // 提供 /api/config 端点
-      aiCliPlugin(), // 提供 /api/ai 端点
-      // agentChatApiPlugin(), // 暂时移除 AI Chat 功能（/api/agent）
-      gitVersionApiPlugin(), // 提供 /api/git 端点（Git 版本管理）
-      ccConnectApiPlugin(), // 提供 /api/cc-connect 端点（微信连接）
+      tailwindcss(),
+      injectStablePageIds(),
+      ...servePlugins,
       forceInlineDynamicImportsOff(isIifeBuild),
       react({
-        // make 开发态预览直接使用真实 React 模块，让 Fast Refresh 能在 src 模块图中生效。
         jsxRuntime: 'classic',
         babel: { configFile: false, babelrc: false }
       }),
