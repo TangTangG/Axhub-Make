@@ -23,15 +23,11 @@ vite.config.*.timestamp-*
 .env.production
 .env.development
 
-# Local configuration
-.axhub/make/axhub.config.json
+# Local configuration (runtime-generated)
+.axhub/make/
 components.json
-.axhub/make/entries.json
 .dev-server-info.json
 entries.json
-
-# Dev server info (for AI debugging)
-.axhub/make/.dev-server-info.json
 
 # IDE and editors
 .idea/
