@@ -18,7 +18,7 @@
 
 若多页面存在冲突：
 - 以核心业务页面优先；
-- 记录冲突与取舍到 `DESIGN-SPEC.md`。
+- 记录冲突与取舍到 `DESIGN.md`。
 
 ## 输出文件（强约束）
 
@@ -26,14 +26,14 @@
 
 必需：
 - `globals.css` 或 `designToken.json`（二选一）
-- `DESIGN-SPEC.md`
+- `DESIGN.md`
 - `index.tsx`
 
 额外约束：
 - 若输出 `designToken.json`，必须包含 `name` 字段。
 - `index.tsx` 必须可演示主题关键 token（颜色、字体、圆角、间距、阴影）。
 
-## DESIGN-SPEC.md 最低结构
+## DESIGN.md 最低结构
 
 1. 视觉关键词与品牌气质
 2. 色彩系统（主色/辅色/语义色）
@@ -46,5 +46,5 @@
 
 - 文件路径是否落在 `src/themes/<theme-key>/`
 - token 命名是否一致且可读
-- `DESIGN-SPEC.md` 是否可指导后续实现
+- `DESIGN.md` 是否可指导后续实现
 - `index.tsx` 是否与 token 同步

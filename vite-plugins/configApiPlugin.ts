@@ -1446,13 +1446,34 @@ export function configApiPlugin(): Plugin {
               autoStart: shouldAutoStart,
             });
 
+            // When accessed via LAN, rewrite localhost URLs so remote clients can reach the API
+            const requestHost = String(req.headers?.host || '').split(':')[0];
+            if (requestHost && requestHost !== 'localhost' && requestHost !== '127.0.0.1') {
+              const rewriteLocalhostUrl = (urlStr: string): string => {
+                try {
+                  const parsed = new URL(urlStr);
+                  if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+                    parsed.hostname = requestHost;
+                    return parsed.toString().replace(/\/+$/, '');
+                  }
+                } catch { /* keep original */ }
+                return urlStr;
+              };
+              if (runtime.apiBaseUrl) runtime.apiBaseUrl = rewriteLocalhostUrl(runtime.apiBaseUrl);
+              if (runtime.webBaseUrl) runtime.webBaseUrl = rewriteLocalhostUrl(runtime.webBaseUrl);
+            }
+
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
             res.end(JSON.stringify(runtime));
           } catch (e: any) {
+            const requestHost = String(req.headers?.host || '').split(':')[0];
+            const fallbackApiHost = (requestHost && requestHost !== 'localhost' && requestHost !== '127.0.0.1')
+              ? requestHost : 'localhost';
+            const fallbackWebHost = fallbackApiHost;
             const fallback: AssistantRuntimeInfo = {
-              webBaseUrl: DEFAULT_ASSISTANT_WEB_BASE_URL,
-              apiBaseUrl: DEFAULT_ASSISTANT_API_BASE_URL,
+              webBaseUrl: `http://${fallbackWebHost}:${DEFAULT_ASSISTANT_WEB_BASE_URL.match(/:(\d+)/)?.[1] || '32123'}`,
+              apiBaseUrl: `http://${fallbackApiHost}:32123/api`,
               projectPath: projectRoot,
               source: 'default',
               health: createAssistantHealthInfo({

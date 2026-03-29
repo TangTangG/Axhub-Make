@@ -24,7 +24,11 @@ vite.config.*.timestamp-*
 .env.development
 
 # Local configuration (runtime-generated)
-.axhub/make/
+.axhub/make/*
+!.axhub/make/skills/
+!.axhub/make/README.md
+.axhub/make/skills/*.json
+!.axhub/make/skills/*.default.json
 components.json
 .dev-server-info.json
 entries.json

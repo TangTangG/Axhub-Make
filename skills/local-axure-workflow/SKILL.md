@@ -51,7 +51,7 @@ description: 处理本地导出的 Axure 原型资源并生成主题、数据模
 
 选择 3-5 个核心页面（首页、登录页、主要功能页），读取各页面的 `theme.json` 并结合 `screenshot.png` 分析视觉风格，合并主题数据（颜色、字体、间距、圆角、阴影），总结设计语言并生成设计规范。
 
-**输出**：`src/themes/<theme-key>/`（包含 `globals.css` 或 `designToken.json`（designToken.json 必须包含 `name` 字段）、`DESIGN-SPEC.md`、`index.tsx`，符合 `theme-guide.md` 规范）
+**输出**：`src/themes/<theme-key>/`（包含 `globals.css` 或 `designToken.json`（designToken.json 必须包含 `name` 字段）、`DESIGN.md`、`index.tsx`，符合 `theme-guide.md` 规范）
 
 ### 阶段 3：识别数据模型
 
@@ -208,7 +208,7 @@ sitemap.json 包含 projectUrl 时，可使用本项目MCP 工具获取在线资
 
 生成的资产：
 - 设计主题：src/themes/<theme-key>/
-- 设计规范文档：src/themes/<theme-key>/DESIGN-SPEC.md
+- 设计规范文档：src/themes/<theme-key>/DESIGN.md
 - 数据模型：src/database/
 - 项目文档：src/docs/
 

@@ -7,7 +7,7 @@
 开始调试前，按顺序确认以下信息：
 
 - 目标目录下的 `spec.md`、`index.tsx`、`style.css`（如有）
-- 相关主题文件：`DESIGN-SPEC.md`、`designToken.json`、`globals.css`（如有）
+- 相关主题文件：`DESIGN.md`、`designToken.json`、`globals.css`（如有）
 - 验收规则：`rules/development-guide.md`
 - 涉及视觉或布局问题时，额外参考 `rules/design-guide.md`
 
@@ -16,7 +16,7 @@
 当问题属于样式、布局、层级、字体、配色、组件状态不一致时，按以下顺序判断：
 
 1. **用户提供的设计规范**
-2. **主题内设计系统**：`DESIGN-SPEC.md`
+2. **主题内设计系统**：`DESIGN.md`
 3. **默认设计规范（兜底）**
    - **基础型界面**：`/skills/third-party/interface-design/SKILL.md`
      - 适用：后台、ToB、工具类、设置页、数据工作台

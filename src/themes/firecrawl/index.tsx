@@ -538,7 +538,7 @@ function Component() {
   const [designSpec, setDesignSpec] = useState<string>('');
 
   useEffect(() => {
-    fetch(new URL('./DESIGN-SPEC.md', import.meta.url).href)
+    fetch(new URL('./DESIGN.md', import.meta.url).href)
       .then(res => res.text())
       .then(text => setDesignSpec(text))
       .catch(err => console.error('Failed to load Design Spec:', err));

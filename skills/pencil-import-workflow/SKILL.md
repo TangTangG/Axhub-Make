@@ -66,7 +66,7 @@ description: 使用 Pencil MCP 读取当前打开的 .pen 文件与 Frame（无�
 - 导入的 frameId 列表、frameName 列表
 - Screen 到实现模块的映射
 
-> 如需更强的“先完成原型、再 1:1 回建 Pencil 并强制后续同步”约束，可参考：`/skills/pencil-before-index-workflow/SKILL.md`（技能名：`pencil-sync-after-prototype-workflow`）。
+> 如需更强的“先完成原型、再 1:1 回建 Pencil 并强制后续同步”约束，可参考：`/skills/pencil-sync-after-prototype-workflow/SKILL.md`（技能名：`pencil-sync-after-prototype-workflow`）。
 
 ### 5) 验收
 

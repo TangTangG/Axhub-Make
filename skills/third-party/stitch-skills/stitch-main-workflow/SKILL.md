@@ -56,8 +56,10 @@ allowed-tools:
 
 ### 3) 使用 Stitch 完成“设计”并确认
 
-1. （可选）如需风格统一，先用 `design-md` 从既有 Stitch screen 生成 `DESIGN.md`
-2. 使用 `generate_screen_from_text`，prompt 以 `spec.md` 为基础；若有 `DESIGN.md`，把设计系统相关内容并入 prompt
+> **根目录 `DESIGN.md` 自动同步**：当用户在管理后台“设为默认主题”时，该主题的 `DESIGN.md` 会被自动同步到项目根目录（`/DESIGN.md`）。如果根目录存在此文件且用户没有特殊指定，应默认将其内容提交给 Stitch 作为设计规范进行生成。
+
+1. （可选）如需风格统一，先用 `design-md` 从既有 Stitch screen 生成 `DESIGN.md`；或直接使用根目录已同步的 `DESIGN.md`
+2. 使用 `generate_screen_from_text`，prompt 以 `spec.md` 为基础；若有 `DESIGN.md`（优先检查根目录），把设计系统相关内容并入 prompt
 3. 使用 `get_screen` 获取最终候选 screen 的 `screenshot` 与 `htmlCode`
 4. 如果结果不符合 `spec.md`，使用 `edit_screens` 迭代，直到满足
 5. 设计确认最小产物：

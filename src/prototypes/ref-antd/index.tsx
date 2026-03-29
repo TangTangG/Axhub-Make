@@ -414,7 +414,7 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
               <Card bordered={false} bodyStyle={{ padding: '20px 24px' }}>
                 <Statistic
                   title="支付订单"
-                  value={6560}
+                  value={1560}
                   valueStyle={{ color: '#1e293b', fontSize: 24, fontWeight: 'bold' }}
                   prefix={<ShoppingCartOutlined style={{ fontSize: 18, color: '#8b5cf6', marginRight: 8 }} />}
                 />

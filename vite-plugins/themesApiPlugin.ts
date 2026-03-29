@@ -14,6 +14,58 @@ export function themesApiPlugin(): Plugin {
           return next();
         }
 
+        // Sync a theme's DESIGN.md to the project root
+        if (req.method === 'POST' && pathname === '/api/themes/sync-design') {
+          (async () => {
+            try {
+              const body = await readJsonBody(req);
+              const themeName = (body?.themeName || '').trim();
+              const rootDesignPath = path.resolve(process.cwd(), 'DESIGN.md');
+
+              if (!themeName) {
+                // Clear: remove root DESIGN.md if it exists
+                if (fs.existsSync(rootDesignPath)) {
+                  fs.unlinkSync(rootDesignPath);
+                }
+                res.statusCode = 200;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: true, removed: true }));
+                return;
+              }
+
+              const themesDir = path.resolve(process.cwd(), 'src/themes');
+              const themeDesignPath = path.join(themesDir, themeName, 'DESIGN.md');
+
+              if (!themeDesignPath.startsWith(themesDir)) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: 'Forbidden' }));
+                return;
+              }
+
+              if (!fs.existsSync(themeDesignPath)) {
+                // Theme has no DESIGN.md — remove root copy if present
+                if (fs.existsSync(rootDesignPath)) {
+                  fs.unlinkSync(rootDesignPath);
+                }
+                res.statusCode = 200;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ success: true, skipped: true }));
+                return;
+              }
+
+              fs.copyFileSync(themeDesignPath, rootDesignPath);
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ success: true }));
+            } catch (error: any) {
+              console.error('Error syncing DESIGN.md:', error);
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: error.message }));
+            }
+          })();
+          return;
+        }
+
         if (req.method === 'DELETE' && pathname !== '/api/themes' && pathname !== '/api/themes/') {
           try {
             const themeName = pathname.replace('/api/themes/', '');
@@ -178,7 +230,7 @@ export function themesApiPlugin(): Plugin {
                 const themeDir = path.join(themesDir, item.name);
                 const designTokenPath = path.join(themeDir, 'designToken.json');
                 const globalsPath = path.join(themeDir, 'globals.css');
-                const designSpecPath = path.join(themeDir, 'DESIGN-SPEC.md');
+                const designSpecPath = path.join(themeDir, 'DESIGN.md');
                 const indexTsxPath = path.join(themeDir, 'index.tsx');
                 let displayName = item.name;
                 const hasDesignToken = fs.existsSync(designTokenPath);
@@ -217,7 +269,7 @@ export function themesApiPlugin(): Plugin {
                     description = firstLine.replace(/^#\s*/, '').trim();
                     hasDoc = true;
                   } catch (error) {
-                    console.warn(`Failed to read DESIGN-SPEC.md for ${item.name}:`, error);
+                    console.warn(`Failed to read DESIGN.md for ${item.name}:`, error);
                   }
                 }
 

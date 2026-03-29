@@ -104,7 +104,7 @@ Antd 电商后台首页
 **设计依据**：
 
 - [x] 用户提供的设计规范：`/docs/设计规范.UIGuidelines.md`
-- [x] 主题设计系统：`/src/themes/antd-new/`（DESIGN-SPEC.md + designToken.json + globals.css）
+- [x] 主题设计系统：`/src/themes/antd-new/`（DESIGN.md + designToken.json + globals.css）
 
 ### 4.2 自定义设计要点
 

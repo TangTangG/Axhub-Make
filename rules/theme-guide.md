@@ -10,7 +10,7 @@
 src/themes/<theme-key>/
 ├── globals.css             # Tailwind CSS 定义（可选，优先使用）
 ├── designToken.json        # 主题 Token（可选，兼容传统模式）
-├── DESIGN-SPEC.md          # 设计规范文档（可选，信息充分时推荐）
+├── DESIGN.md          # 设计规范文档（可选，信息充分时推荐）
 ├── index.tsx               # 主题演示页（必需）
 ├── components/             # 演示组件 2-3 个（推荐）
 │   ├── Button.tsx
@@ -86,13 +86,13 @@ src/themes/<theme-key>/
 
 **默认情况下优先生成 `globals.css`**，避免维护两套配置。
 
-## 3) `DESIGN-SPEC.md` 规范（设计规范文档）
+## 3) `DESIGN.md` 规范（设计规范文档）
 
 **可选但推荐**的产物，用于系统化记录主题的设计价值、使用约束和实现细节。
 
 ### 3.1 推荐结构
 
-参考 `src/themes/firecrawl/DESIGN-SPEC.md`，包含：
+参考 `src/themes/firecrawl/DESIGN.md`，包含：
 - 设计系统价值（品牌定位、核心价值、设计原则）
 - 能力边界（适合/不适合的场景）
 - 色彩/字体/间距/圆角/阴影/图标系统
@@ -113,7 +113,7 @@ src/themes/<theme-key>/
 - **按需引入**：
     - 如果有 `globals.css`，必须 `import './globals.css';`
     - 如果有 `designToken.json`，导入并使用它。
-    - 如果有 `DESIGN-SPEC.md`，在演示页中提供查看入口。
+    - 如果有 `DESIGN.md`，在演示页中提供查看入口。
 - 演示页应展示主题效果。
 - 默认只使用原生 HTML 元素（div/button/input 等）与 CSS Variables 展示效果。
 
@@ -194,21 +194,21 @@ export const ButtonSection: React.FC<ComponentSectionProps> = ({ tokens }) => {
 1.  **用户提供 CSS/Tailwind**：
     - 必须生成 `globals.css`
     - **不生成** `designToken.json`（除非明确不支持 TW）
-    - 推荐生成 `DESIGN-SPEC.md` + 组件 + 模板
+    - 推荐生成 `DESIGN.md` + 组件 + 模板
 
 2.  **用户提供 JSON Token**：
     - 必须生成 `designToken.json`
     - **不生成** `globals.css`（除非用户要求迁移到 TW）
-    - 推荐生成 `DESIGN-SPEC.md` + 组件 + 模板
+    - 推荐生成 `DESIGN.md` + 组件 + 模板
 
 3.  **用户提供设计规范文档**：
-    - 必须生成 `DESIGN-SPEC.md`
+    - 必须生成 `DESIGN.md`
     - **优先生成 `globals.css`**（现代化方案）
     - 生成符合规范的组件和模板
 
 4.  **截图提取/无明确格式**：
     - **默认生成 `globals.css`**（推荐）
-    - 尽量生成 `DESIGN-SPEC.md` + 组件 + 模板
+    - 尽量生成 `DESIGN.md` + 组件 + 模板
 
 ### 7.2 默认设计指导（兜底方案）
 

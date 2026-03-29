@@ -26,7 +26,7 @@ The Build Loop pattern enables continuous, autonomous website development throug
 **Required:**
 - Access to the Stitch MCP Server
 - A Stitch project (existing or will be created)
-- A `DESIGN.md` file (generate one using the `design-md` skill if needed)
+- A `DESIGN.md` file (generate one using the `design-md` skill if needed)。注意：若用户已在管理后台"设为默认主题"，则根目录会自动同步该主题的 `DESIGN.md`，优先使用根目录版本
 - A `SITE.md` file documenting the site vision and roadmap
 
 **Optional:**

@@ -1,0 +1,15 @@
+{
+  "defaultPage": "workout",
+  "pages": [
+    {
+      "name": "workout",
+      "displayName": "训练页面",
+      "icon": "activity"
+    },
+    {
+      "name": "profile",
+      "displayName": "个人中心",
+      "icon": "user"
+    }
+  ]
+}

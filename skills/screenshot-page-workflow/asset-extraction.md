@@ -74,7 +74,7 @@
 **输出位置**：`src/themes/<theme-key>/`
 **必需文件**：
 - `globals.css` 或 `designToken.json`（`designToken.json` 必须包含 `name` 字段，二选一，遵循 `theme-guide.md`）
-- `DESIGN-SPEC.md`（基于多页面截图总结设计规范）
+- `DESIGN.md`（基于多页面截图总结设计规范）
 - `index.tsx`（主题演示页）
 
 ### 6) 提取数据模型（可选）
@@ -144,6 +144,6 @@
 
 生成的资产：
 - 设计主题：src/themes/<theme-key>/
-- 设计规范文档：src/themes/<theme-key>/DESIGN-SPEC.md
+- 设计规范文档：src/themes/<theme-key>/DESIGN.md
 - 数据模型：src/database/（如有）
 ```

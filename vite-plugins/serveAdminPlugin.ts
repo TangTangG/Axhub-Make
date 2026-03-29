@@ -12,6 +12,12 @@ function readInjectedHtml(htmlPath: string, injectScript: string) {
   return html;
 }
 
+function setNoStoreHeaders(res: any) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+}
+
 export function serveAdminPlugin(): Plugin {
   const projectRoot = process.cwd();
   const appsMatch = projectRoot.match(/[\/\\]apps[\/\\]([^\/\\]+)/);
@@ -59,6 +65,7 @@ export function serveAdminPlugin(): Plugin {
             const htmlUrl = requestUrl === '/' ? '/index.html' : requestUrl;
             responseHtml = await server.transformIndexHtml(htmlUrl, html, requestUrl);
           }
+          setNoStoreHeaders(res);
           res.setHeader('Content-Type', 'text/html; charset=utf-8');
           res.end(responseHtml);
         };
@@ -94,6 +101,7 @@ export function serveAdminPlugin(): Plugin {
               '.svg': 'image/svg+xml',
               '.ico': 'image/x-icon',
             };
+            setNoStoreHeaders(res);
             res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
             res.end(fs.readFileSync(assetPath));
             return;
@@ -112,6 +120,7 @@ export function serveAdminPlugin(): Plugin {
               '.svg': 'image/svg+xml',
               '.ico': 'image/x-icon',
             };
+            setNoStoreHeaders(res);
             res.setHeader('Content-Type', contentTypes[ext] || 'image/png');
             res.end(fs.readFileSync(imagePath));
             return;
@@ -128,6 +137,7 @@ export function serveAdminPlugin(): Plugin {
               '.json': 'application/json; charset=utf-8',
               '.html': 'text/html; charset=utf-8',
             };
+            setNoStoreHeaders(res);
             res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
             res.end(fs.readFileSync(adminFilePath));
             return;
@@ -137,6 +147,7 @@ export function serveAdminPlugin(): Plugin {
         if (pathname && pathname.match(/^\/[^/]+\.js$/)) {
           const jsPath = path.join(adminDir, pathname);
           if (fs.existsSync(jsPath)) {
+            setNoStoreHeaders(res);
             res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
             res.end(fs.readFileSync(jsPath));
             return;

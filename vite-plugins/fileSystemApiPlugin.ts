@@ -9,6 +9,7 @@ import { allowedItemKeysByTab, scanEntries, type SidebarTreeTab } from './utils/
 import { createSidebarTreeStore, type SidebarTreeNode, type ResourceOrderType } from './utils/sidebarTreeStore';
 import { buildAttachmentContentDisposition } from './utils/contentDisposition';
 import { ensureTemplatesDirMigrated, getTemplatesDir } from './utils/docUtils';
+import { getInstallSkillTargetDir } from './utils/installSkillTargets';
 import { runCommand, runCommandSync } from '../scripts/utils/command-runtime.mjs';
 
 /**
@@ -202,6 +203,17 @@ export function fileSystemApiPlugin(): Plugin {
         }
 
         const usedIds = new Set<string>();
+        const seenItemKeys = new Set<string>();
+        const makeUniqueId = (seed: string) => {
+          let candidate = seed;
+          let count = 1;
+          while (usedIds.has(candidate)) {
+            count += 1;
+            candidate = `${seed}-${count}`;
+          }
+          usedIds.add(candidate);
+          return candidate;
+        };
         const normalizeNodes = (nodes: any[], depth: number): SidebarTreeNode[] | null => {
           if (depth > 32) {
             return null;
@@ -215,21 +227,22 @@ export function fileSystemApiPlugin(): Plugin {
             const kind = rawNode.kind;
             const title = typeof rawNode.title === 'string' ? rawNode.title.trim() : '';
             if (!id || !title) return null;
-            if (usedIds.has(id)) {
-              return null;
-            }
             if (kind !== 'folder' && kind !== 'item') {
               return null;
             }
-            usedIds.add(id);
+            const nextId = makeUniqueId(id);
 
             if (kind === 'item') {
               const itemKey = typeof rawNode.itemKey === 'string' ? rawNode.itemKey.trim() : '';
               if (!itemKey || !itemKey.startsWith(`${tab}/`) || !allowedItemKeys.has(itemKey)) {
                 return null;
               }
+              if (seenItemKeys.has(itemKey)) {
+                continue;
+              }
+              seenItemKeys.add(itemKey);
               normalized.push({
-                id,
+                id: nextId,
                 kind: 'item',
                 title,
                 itemKey,
@@ -242,10 +255,18 @@ export function fileSystemApiPlugin(): Plugin {
             if (!children) {
               return null;
             }
+            const rawItemKey = typeof rawNode.itemKey === 'string' ? rawNode.itemKey.trim() : '';
+            const itemKey = rawItemKey && rawItemKey.startsWith(`${tab}/`) && allowedItemKeys.has(rawItemKey)
+              ? rawItemKey
+              : undefined;
+            if (itemKey) {
+              seenItemKeys.add(itemKey);
+            }
             normalized.push({
-              id,
+              id: nextId,
               kind: 'folder',
               title,
+              ...(itemKey ? { itemKey } : {}),
               children,
             });
           }
@@ -300,7 +321,18 @@ export function fileSystemApiPlugin(): Plugin {
             }
             if (rawNode.kind === 'folder') {
               const children = normalizeNodes(Array.isArray(rawNode.children) ? rawNode.children : [], depth + 1);
-              result.push({ id, kind: 'folder', title, children });
+              const rawFolderItemKey = typeof rawNode.itemKey === 'string' ? rawNode.itemKey.trim() : '';
+              const folderItemKey = rawFolderItemKey
+                && rawFolderItemKey.startsWith(`${tab}/`)
+                && allowedItemKeys.has(rawFolderItemKey)
+                ? rawFolderItemKey
+                : undefined;
+              const folderNode: SidebarTreeNode = { id, kind: 'folder' as const, title, children };
+              if (folderItemKey) {
+                seenItemKeys.add(folderItemKey);
+                folderNode.itemKey = folderItemKey;
+              }
+              result.push(folderNode);
             }
           }
           return result;
@@ -310,7 +342,7 @@ export function fileSystemApiPlugin(): Plugin {
         const missingItemKeys = Array.from(allowedItemKeys).filter((itemKey) => !seenItemKeys.has(itemKey));
         const nextMissingNodes = missingItemKeys.sort((a, b) => a.localeCompare(b)).map((itemKey) => ({
             id: makeUniqueId(`item-${sanitizeNodeId(itemKey)}`),
-            kind: 'item',
+            kind: 'item' as const,
             title: toDefaultTreeTitle(itemKey),
             itemKey,
           }));
@@ -589,6 +621,49 @@ export function fileSystemApiPlugin(): Plugin {
           return sendJSON(res, 200, { success: true, title });
         } catch (e: any) {
           return sendJSON(res, 500, { error: e?.message || 'Update project title failed' });
+        }
+      });
+
+      // ─── Skill Install API ──────────────────────────────────────────────
+      server.middlewares.use('/api/prototype-admin/install-skill', async (req: any, res: any) => {
+        if (req.method !== 'POST') {
+          return sendJSON(res, 405, { error: 'Method not allowed' });
+        }
+
+        try {
+          const body = await parseBody(req);
+          const skillId = typeof body?.skillId === 'string' ? body.skillId.trim() : '';
+          const client = typeof body?.client === 'string' ? body.client.trim() : '';
+
+          if (!skillId || !client) {
+            return sendJSON(res, 400, { error: 'skillId and client are required' });
+          }
+
+          const targetDir = getInstallSkillTargetDir(client);
+          if (!targetDir) {
+            return sendJSON(res, 400, {
+              error: 'not_supported',
+              message: `${client} 暂不支持自动安装技能`,
+            });
+          }
+
+          const sourceDir = path.join(projectRoot, 'skills', skillId);
+          if (!fs.existsSync(sourceDir)) {
+            return sendJSON(res, 404, { error: `Skill '${skillId}' not found at skills/${skillId}` });
+          }
+
+          const destDir = path.join(projectRoot, targetDir, skillId);
+          fs.mkdirSync(destDir, { recursive: true });
+          copyDirRecursive(sourceDir, destDir);
+
+          return sendJSON(res, 200, {
+            success: true,
+            skillId,
+            client,
+            installedTo: `${targetDir}/${skillId}`,
+          });
+        } catch (e: any) {
+          return sendJSON(res, 500, { error: e?.message || 'Install skill failed' });
         }
       });
 

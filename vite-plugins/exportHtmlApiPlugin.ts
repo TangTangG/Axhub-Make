@@ -384,6 +384,7 @@ function buildSingleEntry(projectRoot: string, entryKey: string) {
     env: { ...process.env, ENTRY_KEY: entryKey },
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 5 * 60 * 1000,
+    shell: true,
   });
 
   if (buildResult.status !== 0) {

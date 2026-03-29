@@ -21,14 +21,14 @@
 
 必需：
 - `globals.css` 或 `designToken.json`（二选一）
-- `DESIGN-SPEC.md`
+- `DESIGN.md`
 - `index.tsx`
 
 约束：
 - `designToken.json` 必须包含 `name` 字段。
 - `index.tsx` 必须展示主题关键 token 与主要组件风格。
 
-## DESIGN-SPEC.md 最低结构
+## DESIGN.md 最低结构
 
 1. 视觉关键词与品牌气质
 2. 色彩体系（主色/辅色/语义色）

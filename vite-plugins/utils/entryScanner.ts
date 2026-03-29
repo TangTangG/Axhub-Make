@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDisplayName } from './fileUtils';
 import { migrateLegacyEntries, toCompatMaps } from './entriesManifest';
+import { parseParentChild, readPagesConfig, type PageConfig } from './subPageUtils';
 
 export type SidebarTreeTab = 'prototypes' | 'components' | 'docs' | 'canvas';
 type ScannableGroup = 'components' | 'prototypes' | 'themes';
@@ -13,6 +14,9 @@ export interface ScannedEntryItem {
   specUrl: string;
   jsUrl: string;
   filePath: string;
+  isReference?: boolean;
+  parent?: string;
+  isSubPage?: boolean;
 }
 
 export interface EntriesFileData extends Record<string, unknown> {
@@ -56,7 +60,12 @@ function scanGroup(projectRoot: string, group: ScannableGroup): {
 } {
   const groupDir = path.resolve(projectRoot, 'src', group);
   const entries = { js: {} as Record<string, string>, html: {} as Record<string, string> };
-  const items: ScannedEntryItem[] = [];
+  const items: Array<ScannedEntryItem & {
+    sortGroup: string;
+    sortRank: number;
+    sortName: string;
+  }> = [];
+  const pageConfigCache = new Map<string, PageConfig | null>();
 
   if (!fs.existsSync(groupDir)) {
     return { entries, items };
@@ -79,8 +88,44 @@ function scanGroup(projectRoot: string, group: ScannableGroup): {
     entries.js[key] = jsEntry;
     entries.html[key] = path.join(folderPath, 'index.html');
 
-    const displayName = getDisplayName(jsEntry) || name;
+    let displayName = getDisplayName(jsEntry) || name;
     const encodedKey = encodeUrlPathSegments(key);
+    let parent: string | undefined;
+    let isSubPage: boolean | undefined;
+    let sortGroup = name;
+    let sortRank = 0;
+    let sortName = name;
+
+    if (group === 'prototypes') {
+      const relation = parseParentChild(name);
+      if (relation) {
+        parent = relation.parent;
+        isSubPage = true;
+        sortGroup = relation.parent;
+        sortRank = 1;
+        sortName = relation.child;
+
+        const parentDir = path.join(groupDir, relation.parent);
+        const cacheKey = parentDir;
+        if (!pageConfigCache.has(cacheKey)) {
+          pageConfigCache.set(cacheKey, readPagesConfig(parentDir));
+        }
+        const pageConfig = pageConfigCache.get(cacheKey);
+        const configuredPageIndex = pageConfig?.pages?.findIndex((page) => page.name === relation.child) ?? -1;
+        const configuredPage = configuredPageIndex >= 0 ? pageConfig?.pages?.[configuredPageIndex] : undefined;
+        if (configuredPage?.displayName) {
+          displayName = configuredPage.displayName;
+        } else {
+          displayName = relation.child;
+        }
+        if (configuredPageIndex >= 0) {
+          sortRank = configuredPageIndex + 1;
+        } else {
+          sortRank = 1000;
+        }
+      }
+    }
+
     items.push({
       name,
       displayName,
@@ -88,10 +133,37 @@ function scanGroup(projectRoot: string, group: ScannableGroup): {
       specUrl: `/${encodedKey}/spec`,
       jsUrl: `/build/${encodedKey}.js`,
       filePath: jsEntry,
+      isReference: name.startsWith('ref-'),
+      parent,
+      isSubPage,
+      sortGroup,
+      sortRank,
+      sortName,
     });
   }
 
-  return { entries, items };
+  items.sort((a, b) => {
+    const groupCompare = a.sortGroup.localeCompare(b.sortGroup);
+    if (groupCompare !== 0) {
+      return groupCompare;
+    }
+
+    if (a.sortRank !== b.sortRank) {
+      return a.sortRank - b.sortRank;
+    }
+
+    const nameCompare = a.sortName.localeCompare(b.sortName);
+    if (nameCompare !== 0) {
+      return nameCompare;
+    }
+
+    return a.name.localeCompare(b.name);
+  });
+
+  return {
+    entries,
+    items: items.map(({ sortGroup, sortRank, sortName, ...item }) => item),
+  };
 }
 
 export function scanEntries(projectRoot: string): EntryScanResult {
