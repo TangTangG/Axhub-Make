@@ -2,6 +2,20 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import fs from 'fs';
 import path from 'path';
 
+function hasVersionQuery(requestUrl: string) {
+  return /[?&]v=/.test(requestUrl);
+}
+
+function setNoStoreHeaders(res: ServerResponse) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+}
+
+function setImmutableAssetHeaders(res: ServerResponse) {
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+}
+
 export function handleAssetsRequest(req: IncomingMessage, res: ServerResponse): boolean {
   if (req.url && req.url.startsWith('/assets/')) {
     const pathname = req.url.split('?')[0];
@@ -23,7 +37,12 @@ export function handleAssetsRequest(req: IncomingMessage, res: ServerResponse): 
           '.svg': 'image/svg+xml',
           '.gif': 'image/gif'
         };
-        
+
+        if (hasVersionQuery(req.url)) {
+          setImmutableAssetHeaders(res);
+        } else {
+          setNoStoreHeaders(res);
+        }
         res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
         res.statusCode = 200;
         res.end(content);

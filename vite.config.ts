@@ -170,7 +170,10 @@ export default defineConfig(async ({ command }) => {
     optimizeDeps: {
       // React Fast Refresh 在开发态会接管 react/react-dom 的依赖预处理。
       // 这里不要再把它们排除掉，否则会和 plugin-react 的 include 冲突。
-      exclude: []
+      exclude: [],
+      include: [
+        'lucide-react'
+      ]
     },
 
     resolve: {

@@ -22,9 +22,6 @@ import type {
     KeyDesc,
 } from '../../common/axure-types';
 
-import ProfilePage from '../ref-app-home--profile';
-import WorkoutPage from '../ref-app-home--workout';
-
 const EVENT_LIST: EventItem[] = [
     { name: 'onCourseClick', desc: '点击课程卡片时触发' },
     { name: 'onStartWorkout', desc: '点击开始训练时触发' },
@@ -304,6 +301,95 @@ function AnalyticsView({ accentColor, todayProgress }: { accentColor: string; to
     );
 }
 
+function WorkoutView({ accentColor }: { accentColor: string }) {
+    const plans = [
+        { title: '燃脂冲刺', duration: '28 分钟', highlight: '预计消耗 360 kcal' },
+        { title: '核心塑形', duration: '18 分钟', highlight: '强化腹背与稳定性' },
+        { title: '拉伸恢复', duration: '12 分钟', highlight: '训练后放松与恢复' },
+    ];
+
+    return (
+        <div className="demo-app-home-scroll-content demo-app-home-scroll-content--tab">
+            <div className="demo-app-home-section">
+                <div className="demo-app-home-section-header">
+                    <h2 className="demo-app-home-section-title">训练计划</h2>
+                    <span className="demo-app-home-section-more">今日课程</span>
+                </div>
+                <div style={{ display: 'grid', gap: 14 }}>
+                    {plans.map((plan, index) => (
+                        <div
+                            key={plan.title}
+                            style={{
+                                borderRadius: 24,
+                                padding: 18,
+                                background: index === 0 ? 'rgba(166,255,0,0.12)' : 'rgba(255,255,255,0.05)',
+                                border: index === 0 ? `1px solid ${accentColor}` : '1px solid rgba(255,255,255,0.08)',
+                            }}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                                <div>
+                                    <div style={{ fontSize: 18, fontWeight: 600 }}>{plan.title}</div>
+                                    <div style={{ marginTop: 6, fontSize: 13, color: '#9ca3af' }}>{plan.highlight}</div>
+                                </div>
+                                <div style={{ fontSize: 13, color: '#d1d5db' }}>{plan.duration}</div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ProfileView({ accentColor, userName }: { accentColor: string; userName: string }) {
+    const profileCards = [
+        { label: '会员等级', value: 'Pro 年度会员' },
+        { label: '连续训练', value: '6 天' },
+        { label: '恢复指数', value: 'A' },
+        { label: '设备连接', value: '2 台' },
+    ];
+
+    return (
+        <div className="demo-app-home-scroll-content demo-app-home-scroll-content--tab">
+            <div className="demo-app-home-section">
+                <div className="demo-app-home-section-header">
+                    <h2 className="demo-app-home-section-title">个人中心</h2>
+                    <span className="demo-app-home-section-more">{userName}</span>
+                </div>
+                <div style={{
+                    borderRadius: 24,
+                    padding: 20,
+                    marginBottom: 14,
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                }}>
+                    <div style={{ fontSize: 14, color: '#9ca3af', marginBottom: 8 }}>账号概览</div>
+                    <div style={{ fontSize: 28, fontWeight: 700, color: accentColor }}>{userName}</div>
+                    <div style={{ marginTop: 8, fontSize: 13, color: '#d1d5db' }}>
+                        训练计划、设备连接与恢复状态已同步。
+                    </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+                    {profileCards.map((card) => (
+                        <div
+                            key={card.label}
+                            style={{
+                                borderRadius: 20,
+                                padding: 16,
+                                background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid rgba(255,255,255,0.08)',
+                            }}
+                        >
+                            <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 6 }}>{card.label}</div>
+                            <div style={{ fontSize: 18, fontWeight: 600 }}>{card.value}</div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 const Component = forwardRef<AxureHandle, AxureProps>(function FitnessHome(innerProps, ref) {
     const dataSource = innerProps?.data || {};
     const configSource = innerProps?.config || {};
@@ -408,19 +494,11 @@ const Component = forwardRef<AxureHandle, AxureProps>(function FitnessHome(inner
 
     let content: React.ReactNode;
     if (currentTab === 1) {
-        content = (
-            <div className="demo-app-home-scroll-content">
-                <WorkoutPage data={innerProps?.data} config={innerProps?.config} onEvent={innerProps?.onEvent} />
-            </div>
-        );
+        content = <WorkoutView accentColor={accentColor} />;
     } else if (currentTab === 2) {
         content = <AnalyticsView accentColor={accentColor} todayProgress={todayProgress} />;
     } else if (currentTab === 3) {
-        content = (
-            <div className="demo-app-home-scroll-content">
-                <ProfilePage data={innerProps?.data} config={innerProps?.config} onEvent={innerProps?.onEvent} />
-            </div>
-        );
+        content = <ProfileView accentColor={accentColor} userName={userName} />;
     } else {
         content = (
             <SummaryView

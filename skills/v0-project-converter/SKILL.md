@@ -44,9 +44,11 @@ node scripts/v0-converter.mjs "temp/my-v0-project" my-page
 
 ## 转换要点
 
-###本项目组件规范
+### 本项目页面组件规范
 
-所有页面组件必须遵循以下格式：
+默认先转换为普通 React 页面组件。只有在需求明确要求接入 Axhub / Axure 运行时能力时，才引入 `forwardRef<AxureHandle, AxureProps>`、`useImperativeHandle` 和 `axure-types`。
+
+**默认格式（推荐）**：
 
 ```typescript
 /**
@@ -58,6 +60,25 @@ node scripts/v0-converter.mjs "temp/my-v0-project" my-page
  */
 
 import './style.css';
+import React from 'react';
+
+export default function PageName() {
+  // 组件逻辑
+  
+  return (
+    // JSX 内容
+  );
+}
+```
+
+**仅在以下场景才接入 Axure API**：
+- 页面需要被 Axhub / Axure 接管
+- 需要配置面板、外部数据源、事件回调或动作触发
+- 用户明确要求保持与现有 Axure 组件一致的接口形式
+
+此时再参考 `/rules/axure-api-guide.md`，使用如下包装形式：
+
+```typescript
 import React, { forwardRef, useImperativeHandle } from 'react';
 import type { AxureProps, AxureHandle } from '../../common/axure-types';
 
@@ -74,8 +95,6 @@ const Component = forwardRef<AxureHandle, AxureProps>(function PageName(innerPro
     };
   }, []);
 
-  // 组件逻辑
-  
   return (
     // JSX 内容
   );

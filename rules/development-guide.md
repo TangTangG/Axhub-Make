@@ -20,8 +20,6 @@ src/
 - 入口文件必须是 `index.tsx`
 - 目录内必须包含 `spec.md`
 - 目录（`name`）使用小写字母、数字、连字符（如 `login-page`）
-- 子模块使用 `{父原型名}--{模块名}` 格式（双短横线 `--` 分隔，如 `app-home--login`）
-- 子模块与普通原型结构完全相同（`index.tsx` + `spec.md`），系统通过 `--` 命名自动识别父子关系
 - 支持可选子目录 `components/` 用于拆分内部子组件
 
 ## 核心约束
@@ -75,4 +73,3 @@ node scripts/check-app-ready.mjs /prototypes/[原型目录]
 - [ ] 依赖导入方式符合规范，新增依赖已安装
 - [ ] 使用 Tailwind 时已正确引入 `@import "tailwindcss";`
 - [ ] `check-app-ready.mjs` 验收通过
-- [ ] 子模块命名符合 `{父原型名}--{模块名}` 格式（如有）

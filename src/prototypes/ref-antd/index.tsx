@@ -113,7 +113,7 @@ const SalesTrendChart = () => {
           lineStyle: { width: 3 }
         },
         {
-          name: '访问用户',
+          name: '到访用户',
           type: 'line',
           smooth: true,
           showSymbol: false,
@@ -396,7 +396,7 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
             <Col xs={24} sm={12} lg={6}>
               <Card bordered={false} bodyStyle={{ padding: '20px 24px' }}>
                 <Statistic
-                  title="访问用户"
+                  title="到访用户"
                   value={8846}
                   valueStyle={{ color: '#1e293b', fontSize: 24, fontWeight: 'bold' }}
                   prefix={<UserOutlined style={{ fontSize: 18, color: '#3b82f6', marginRight: 8 }} />}

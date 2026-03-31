@@ -1421,7 +1421,10 @@ export function configApiPlugin(): Plugin {
             }
 
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            res.end(JSON.stringify(config));
+            res.end(JSON.stringify({
+              ...config,
+              projectPath: projectRoot,
+            }));
           } catch (e: any) {
             console.error('Error reading config:', e);
             res.statusCode = 500;

@@ -85,9 +85,11 @@ ai-studio-project/
 <link href="https://fonts.googleapis.com/...">  <!-- 可能包含外部字体 -->
 ```
 
-###本项目组件规范
+### 本项目页面组件规范
 
-所有页面组件必须遵循以下格式：
+默认先转换为普通 React 页面组件。只有在需求明确要求接入 Axhub / Axure 运行时能力时，才引入 `forwardRef<AxureHandle, AxureProps>`、`useImperativeHandle` 和 `axure-types`。
+
+**默认格式（推荐）**：
 
 ```typescript
 /**
@@ -99,6 +101,25 @@ ai-studio-project/
  */
 
 import './style.css';
+import React from 'react';
+
+export default function PageName() {
+  // 组件逻辑
+  
+  return (
+    // JSX 内容
+  );
+}
+```
+
+**仅在以下场景才接入 Axure API**：
+- 页面需要被 Axhub / Axure 接管
+- 需要配置面板、外部数据源、事件回调或动作触发
+- 用户明确要求保持与现有 Axure 组件一致的接口形式
+
+此时再参考 `/rules/axure-api-guide.md`，使用如下包装形式：
+
+```typescript
 import React, { forwardRef, useImperativeHandle } from 'react';
 import type { AxureProps, AxureHandle } from '../../common/axure-types';
 
@@ -115,8 +136,6 @@ const Component = forwardRef<AxureHandle, AxureProps>(function PageName(innerPro
     };
   }, []);
 
-  // 组件逻辑
-  
   return (
     // JSX 内容
   );
@@ -139,7 +158,7 @@ export default function App() {
 }
 ```
 
-**转换为本项目规范**：
+**转换为本项目默认规范**：
 ```typescript
 /**
  * @name 页面名称
@@ -150,37 +169,22 @@ export default function App() {
  */
 
 import './style.css';
-import React, { forwardRef, useImperativeHandle, useState } from 'react';
-import type { AxureProps, AxureHandle } from '../../common/axure-types';
+import React, { useState } from 'react';
 import Header from './components/Header';
 
-const Component = forwardRef<AxureHandle, AxureProps>(function PageName(innerProps, ref) {
+export default function PageName() {
   const [count, setCount] = useState(0);
-  
-  useImperativeHandle(ref, function () {
-    return {
-      getVar: function () { return undefined; },
-      fireAction: function () {},
-      eventList: [],
-      actionList: [],
-      varList: [],
-      configList: [],
-      dataList: []
-    };
-  }, []);
 
   return <div><Header /></div>;
-});
-
-export default Component;
+}
 ```
 
 **关键转换点**：
 1. 添加文件头部注释（`@name` 和参考资料）
-2. 使用 `forwardRef<AxureHandle, AxureProps>` 包装
-3. 实现 `useImperativeHandle` 暴露本项目API
-4. 使用 `export default Component`
-5. 保持原有的 JSX、Hooks 和 Tailwind 类名不变
+2. 默认保持普通 React 组件写法，优先最小改造
+3. 仅在明确需要 Axhub / Axure 接管时，才增加 `forwardRef<AxureHandle, AxureProps>` 与 `useImperativeHandle`
+4. 保持原有的 JSX、Hooks 和 Tailwind 类名不变
+5. 若补接 Axure API，需同步参考 `/rules/axure-api-guide.md`
 
 ### 处理样式
 

@@ -11,6 +11,13 @@ import {
 
 type HtmlResponder = (html: string, transformUrl?: string) => Promise<void>;
 
+function replaceDevTemplateBootstrapScript(html: string, bootstrapImportPath: string): string {
+  return html.replace(
+    /  <script type="module" src=["']\/assets\/dev-template-bootstrap\.js(?:\?[^"']*)?["']><\/script>/,
+    `  <script type="module">\n    import ${JSON.stringify(bootstrapImportPath)};\n  </script>`,
+  );
+}
+
 export async function handleIndexHtml(
   req: IncomingMessage,
   res: ServerResponse,
@@ -72,10 +79,7 @@ export async function handleIndexHtml(
 
         let html = devTemplate.replace(/\{\{TITLE\}\}/g, title);
         html = replacePreviewLoaderScript(html, previewHostModuleCode);
-        html = html.replace(
-          '  <script type="module" src="/assets/dev-template-bootstrap.js"></script>',
-          `  <script type="module">\n    import ${JSON.stringify(`/@fs/${bootstrapModulePath}`)};\n  </script>`,
-        );
+        html = replaceDevTemplateBootstrapScript(html, `/@fs/${bootstrapModulePath}`);
 
         // 🔥 添加 <base> 标签来修正相对路径基准（重要！）
         // 新路径格式 /prototypes/ref-antd 会被浏览器当作目录，导致相对路径解析错误

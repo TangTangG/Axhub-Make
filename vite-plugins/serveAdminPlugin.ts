@@ -18,6 +18,60 @@ function setNoStoreHeaders(res: any) {
   res.setHeader('Expires', '0');
 }
 
+function setImmutableAssetHeaders(res: any) {
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+}
+
+function setImageCacheHeaders(res: any) {
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+}
+
+function hasVersionQuery(requestUrl: string) {
+  return /[?&]v=/.test(requestUrl);
+}
+
+function setAdminStaticCacheHeaders(res: any, pathname: string, requestUrl: string) {
+  if (!hasVersionQuery(requestUrl)) {
+    setNoStoreHeaders(res);
+    return;
+  }
+
+  if (pathname.startsWith('/images/')) {
+    setImageCacheHeaders(res);
+    return;
+  }
+
+  if (pathname.startsWith('/assets/')) {
+    setImmutableAssetHeaders(res);
+    return;
+  }
+
+  setNoStoreHeaders(res);
+}
+
+function escapeHtmlAttribute(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function getCanvasDisplayName(canvasName: string) {
+  return path.basename(canvasName, path.extname(canvasName)) || canvasName;
+}
+
+function injectCanvasTemplateHtml(templateHtml: string, canvasName: string, injectScript: string) {
+  const displayName = getCanvasDisplayName(canvasName);
+  const pageTitle = `${displayName} - Canvas`;
+
+  return templateHtml
+    .replace(/\{\{CANVAS_NAME\}\}/g, escapeHtmlAttribute(canvasName))
+    .replace(/\{\{CANVAS_TITLE\}\}/g, escapeHtmlAttribute(pageTitle))
+    .replace('<title>Canvas</title>', `<title>${escapeHtmlAttribute(pageTitle)}</title>`)
+    .replace('</head>', `${injectScript}\n</head>`);
+}
+
 export function serveAdminPlugin(): Plugin {
   const projectRoot = process.cwd();
   const appsMatch = projectRoot.match(/[\/\\]apps[\/\\]([^\/\\]+)/);
@@ -98,10 +152,15 @@ export function serveAdminPlugin(): Plugin {
               '.json': 'application/json',
               '.png': 'image/png',
               '.jpg': 'image/jpeg',
+              '.jpeg': 'image/jpeg',
               '.svg': 'image/svg+xml',
               '.ico': 'image/x-icon',
+              '.woff': 'font/woff',
+              '.woff2': 'font/woff2',
+              '.ttf': 'font/ttf',
+              '.eot': 'application/vnd.ms-fontobject',
             };
-            setNoStoreHeaders(res);
+            setAdminStaticCacheHeaders(res, pathname, requestUrl);
             res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
             res.end(fs.readFileSync(assetPath));
             return;
@@ -120,7 +179,7 @@ export function serveAdminPlugin(): Plugin {
               '.svg': 'image/svg+xml',
               '.ico': 'image/x-icon',
             };
-            setNoStoreHeaders(res);
+            setAdminStaticCacheHeaders(res, pathname, requestUrl);
             res.setHeader('Content-Type', contentTypes[ext] || 'image/png');
             res.end(fs.readFileSync(imagePath));
             return;
@@ -136,8 +195,18 @@ export function serveAdminPlugin(): Plugin {
               '.css': 'text/css; charset=utf-8',
               '.json': 'application/json; charset=utf-8',
               '.html': 'text/html; charset=utf-8',
+              '.png': 'image/png',
+              '.jpg': 'image/jpeg',
+              '.jpeg': 'image/jpeg',
+              '.svg': 'image/svg+xml',
+              '.ico': 'image/x-icon',
+              '.woff': 'font/woff',
+              '.woff2': 'font/woff2',
+              '.ttf': 'font/ttf',
+              '.eot': 'application/vnd.ms-fontobject',
             };
-            setNoStoreHeaders(res);
+            const adminPathname = pathname.replace('/admin', '') || '/';
+            setAdminStaticCacheHeaders(res, adminPathname, requestUrl);
             res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
             res.end(fs.readFileSync(adminFilePath));
             return;
@@ -171,6 +240,21 @@ export function serveAdminPlugin(): Plugin {
             html = html.replace(/\{\{DOCS_CONFIG\}\}/g, '[]');
             html = html.replace('</head>', `${injectScript}\n</head>`);
             // 文档页内容源现在也在 src 下，保留它自己的 Vite 转换与更新能力。
+            await sendHtml(html, { transform: true });
+            return;
+          }
+        }
+
+        const encodedCanvasName = pathname?.match(/^\/canvas\/(.+?)\/?$/)?.[1];
+        if (encodedCanvasName) {
+          const canvasTemplatePath = path.join(adminDir, 'canvas-template.html');
+          if (fs.existsSync(canvasTemplatePath)) {
+            const canvasName = decodeURIComponent(encodedCanvasName);
+            const html = injectCanvasTemplateHtml(
+              fs.readFileSync(canvasTemplatePath, 'utf8'),
+              canvasName,
+              injectScript,
+            );
             await sendHtml(html, { transform: true });
             return;
           }

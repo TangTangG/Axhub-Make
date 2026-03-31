@@ -277,7 +277,7 @@ function generateDefaultTasksDocument(report, targetInfo, outputName, tempDir) {
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
 
   let markdown = `# AI Studio 项目转换任务清单\n\n`;
-  markdown += `> **重要**: 请先阅读 \`/rules/ai-studio-project-converter.md\` 了解转换规范\n\n`;
+  markdown += `> **重要**: 请先阅读 \`/skills/ai-studio-project-converter/SKILL.md\` 了解转换规范\n\n`;
   markdown += `**名称**: ${outputName}\n`;
   markdown += `**项目位置**: \`${targetInfo.relativeOutputDir}/\`\n`;
   markdown += `**原始文件**: \`${tempDir}\` (仅供参考，不要修改)\n`;
@@ -299,7 +299,7 @@ function generateDefaultTasksDocument(report, targetInfo, outputName, tempDir) {
     markdown += `**参考文件**: \`${targetInfo.relativeOutputDir}/App.tsx\`\n\n`;
     markdown += `**操作**:\n`;
     markdown += `1. 重命名 \`App.tsx\` 为 \`index.tsx\`\n`;
-    markdown += `2. 按照 \`/rules/ai-studio-project-converter.md\` 中的本项目组件规范改造\n`;
+    markdown += `2. 按照 \`/skills/ai-studio-project-converter/SKILL.md\` 中的本项目组件规范改造\n`;
     markdown += `3. 添加文件头部注释（\`@name\` 和参考资料）\n`;
     markdown += `4. 使用 \`forwardRef<AxureHandle, AxureProps>\` 包装\n`;
     markdown += `5. 实现 \`useImperativeHandle\`\n`;
@@ -379,7 +379,7 @@ function generateDefaultTasksDocument(report, targetInfo, outputName, tempDir) {
   markdown += `**验收标准**: 状态为 READY，页面正常渲染，无控制台错误\n\n`;
 
   markdown += `## 📚 参考资料\n\n`;
-  markdown += `- **转换规范**: \`/rules/ai-studio-project-converter.md\`\n`;
+  markdown += `- **转换规范**: \`/skills/ai-studio-project-converter/SKILL.md\`\n`;
   markdown += `- **原始项目**: \`${tempDir}\` (仅供参考)\n`;
   markdown += `- **详细数据**: \`${targetInfo.analysisFileName}\`\n\n`;
 
@@ -402,7 +402,7 @@ function generateThemeTasksDocument(report, targetInfo, outputName, tempDir) {
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
 
   let markdown = `# AI Studio 主题导入任务清单\n\n`;
-  markdown += `> **重要**: 请先阅读 \`/rules/ai-studio-project-converter.md\` 与主题拆分技能文档，按任务顺序执行\n\n`;
+  markdown += `> **重要**: 请先阅读 \`/skills/ai-studio-project-converter/SKILL.md\` 与主题拆分技能文档，按任务顺序执行\n\n`;
   markdown += `**主题 key**: ${outputName}\n`;
   markdown += `**主题目录**: \`${targetInfo.relativeOutputDir}/\`\n`;
   markdown += `**原始文件**: \`${tempDir}\` (仅供参考，不要修改)\n`;
@@ -416,7 +416,7 @@ function generateThemeTasksDocument(report, targetInfo, outputName, tempDir) {
   markdown += `- 待评估依赖: ${report.summary.dependenciesToInstall} 个\n\n`;
 
   markdown += `## 📚 参考文档（必须阅读）\n\n`;
-  markdown += `- \`/rules/ai-studio-project-converter.md\`\n`;
+  markdown += `- \`/skills/ai-studio-project-converter/SKILL.md\`\n`;
   THEME_SPLIT_SKILL_DOCS.forEach((docPath) => {
     markdown += `- \`${docPath}\`\n`;
   });

@@ -1,9 +1,9 @@
 ---
 name: create-workflow
-description: Axhub Make 统一创建入口；当用户要创建原型/组件、文档、主题或数据表时，根据提示词分流到对应引用文档，并按需渐进式加载。
+description: Axhub Make 创建内容入口；当用户要创建原型/组件、文档、主题或数据表时，根据提示词分流到对应引用文档，并按需渐进式加载。
 ---
 
-# Axhub Make 统一创建工作流
+# Axhub Make 创建内容工作流
 
 你正在协助用户在 Axhub Make 中创建新资源。请先阅读 `/AGENTS.md` 获取项目结构、命名规范与基础约束。
 
@@ -19,7 +19,7 @@ description: Axhub Make 统一创建入口；当用户要创建原型/组件、�
 
 | 用户意图 / 关键词 | 加载文档 | 典型产物 |
 | --- | --- | --- |
-| 原型、页面、组件、子模块、做个页面、做个组件 | `./references/create-prototype.md` | `src/prototypes/...` 或 `src/components/...` |
+| 原型、页面、组件、做个页面、做个组件 | `./references/create-prototype.md` | `src/prototypes/...` 或 `src/components/...` |
 | 文档、PRD、说明文档、需求文档、手册 | `./references/create-document.md` | `src/docs/...` |
 | 主题、设计系统、配色、design token、DESIGN.md | `./references/create-theme.md` | `src/themes/...` |
 | 数据、数据表、JSON、mock 数据、示例数据 | `./references/create-data.md` | `src/database/...` |
@@ -27,7 +27,7 @@ description: Axhub Make 统一创建入口；当用户要创建原型/组件、�
 ## 分流优先级
 
 1. 用户明确点名输出目录或文件类型时，按目标产物分流：
-   - 提到 `spec.md`、`index.tsx`、页面、组件、子模块 -> 原型 / 组件
+   - 提到 `spec.md`、`index.tsx`、页面、组件 -> 原型 / 组件
    - 提到 `DESIGN.md`、`designToken.json`、`globals.css` -> 主题
    - 提到 `.json` 数据表、`records`、mock 数据 -> 数据
    - 提到 PRD、说明文档、手册、Markdown -> 文档

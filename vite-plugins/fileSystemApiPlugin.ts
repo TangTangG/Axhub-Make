@@ -853,9 +853,10 @@ export function fileSystemApiPlugin(): Plugin {
         ];
         const allowedExt = new Set(['.ts', '.tsx', '.js', '.jsx', '.md', '.css']);
         const references = new Set<string>();
-        const escapedName = itemName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const normalizedItemName = String(itemName || '').trim();
+        const escapedName = normalizedItemName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const nameRegex = new RegExp(`(?:^|[\\\\/])${escapedName}(?:$|[\\\\/'"\\s])`);
-        const targetDir = path.resolve(projectRoot, 'src', itemType, itemName);
+        const targetDir = path.resolve(projectRoot, 'src', itemType, normalizedItemName);
 
         const walkDir = (dirPath: string) => {
           if (!fs.existsSync(dirPath)) return;
@@ -1024,7 +1025,7 @@ export function fileSystemApiPlugin(): Plugin {
           }
 
           const parts = String(targetPath).split('/').filter(Boolean);
-          const isElementsOrPages = parts.length >= 2 && (parts[0] === 'components' || parts[0] === 'prototypes');
+          const isElementsOrPages = parts.length === 2 && (parts[0] === 'components' || parts[0] === 'prototypes');
           const deletePath = isElementsOrPages
             ? path.join(projectRoot, 'src', parts[0], parts[1])
             : path.join(projectRoot, 'src', targetPath);
@@ -1033,13 +1034,22 @@ export function fileSystemApiPlugin(): Plugin {
             return sendJSON(res, 404, { error: 'Directory not found' });
           }
 
+          if (isElementsOrPages) {
+            fs.rmSync(deletePath, { recursive: true, force: true });
+
+            return sendJSON(res, 200, {
+              success: true,
+              deletedPaths: [targetPath],
+            });
+          }
+
           // 删除目录
           fs.rmSync(deletePath, { recursive: true, force: true });
 
-          sendJSON(res, 200, { success: true });
+          return sendJSON(res, 200, { success: true });
         } catch (e: any) {
           console.error('[文件系统 API] 删除失败:', e);
-          sendJSON(res, 500, { error: e.message || 'Delete failed' });
+          return sendJSON(res, 500, { error: e.message || 'Delete failed' });
         }
       });
 
@@ -1591,17 +1601,15 @@ export function fileSystemApiPlugin(): Plugin {
                       
                       // 返回任务文档路径
                       const tasksFileRelPath = `src/${targetType}/${pageName}/${tasksFileName}`;
-                      const ruleFile = '/rules/v0-project-converter.md';
                       const prompt = isThemeTarget
-                        ? `V0 项目已上传并预处理完成（主题模式）。\n\n请阅读以下文件：\n1. 主题任务清单: ${tasksFileRelPath}\n2. 转换规范: ${ruleFile}\n\n请同时阅读主题拆分技能文档：\n${formatReferenceList(THEME_IMPORT_SUB_SKILL_DOCS)}\n\n然后基于任务清单生成主题/文档/数据（输出到 \`src/themes/${pageName}/\`、\`src/docs/\`、\`src/database/\`）。`
-                        : `V0 项目已上传并预处理完成。\n\n请阅读以下文件：\n1. 任务清单: ${tasksFileRelPath}\n2. 转换规范: ${ruleFile}\n\n然后根据任务清单完成转换工作。`;
+                        ? `V0 项目已上传并预处理完成（主题模式）。\n\n请仔细阅读并执行主题任务清单：\n- ${tasksFileRelPath}\n\n然后请基于该任务清单和技能文档，进行主题拆分（输出到 \`src/themes/${pageName}/\`、\`src/docs/\`、\`src/database/\`）。`
+                        : `V0 项目已上传并预处理完成。\n\n请仔细阅读并执行以下任务清单：\n- ${tasksFileRelPath}\n\n然后根据该任务清单和技能文档，完成具体的转换工作。`;
                       
                       return sendJSON(res, 200, {
                         success: true,
                         uploadType,
                         pageName,
                         tasksFile: tasksFileRelPath,
-                        ruleFile,
                         prompt,
                         message: isThemeTarget ? '主题预处理完成，请查看任务文档' : '预处理完成，请查看任务文档'
                       });
@@ -1651,17 +1659,15 @@ export function fileSystemApiPlugin(): Plugin {
                       
                       // 返回任务文档路径
                       const tasksFileRelPath = `src/${targetType}/${pageName}/${tasksFileName}`;
-                      const ruleFile = '/rules/ai-studio-project-converter.md';
                       const prompt = isThemeTarget
-                        ? `AI Studio 项目已上传并预处理完成（主题模式）。\n\n请阅读以下文件：\n1. 主题任务清单: ${tasksFileRelPath}\n2. 转换规范: ${ruleFile}\n\n请同时阅读主题拆分技能文档：\n${formatReferenceList(THEME_IMPORT_SUB_SKILL_DOCS)}\n\n然后基于任务清单生成主题/文档/数据（输出到 \`src/themes/${pageName}/\`、\`src/docs/\`、\`src/database/\`）。`
-                        : `AI Studio 项目已上传并预处理完成。\n\n请阅读以下文件：\n1. 任务清单: ${tasksFileRelPath}\n2. 转换规范: ${ruleFile}\n\n然后根据任务清单完成转换工作。`;
+                        ? `AI Studio 项目已上传并预处理完成（主题模式）。\n\n请仔细阅读并执行主题任务清单：\n- ${tasksFileRelPath}\n\n然后请基于该任务清单和技能文档，进行主题拆分（输出到 \`src/themes/${pageName}/\`、\`src/docs/\`、\`src/database/\`）。`
+                        : `AI Studio 项目已上传并预处理完成。\n\n请仔细阅读并执行以下任务清单：\n- ${tasksFileRelPath}\n\n然后根据该任务清单和技能文档，完成具体的转换工作。`;
                       
                       return sendJSON(res, 200, {
                         success: true,
                         uploadType,
                         pageName,
                         tasksFile: tasksFileRelPath,
-                        ruleFile,
                         prompt,
                         message: isThemeTarget ? '主题预处理完成，请查看任务文档' : '预处理完成，请查看任务文档'
                       });

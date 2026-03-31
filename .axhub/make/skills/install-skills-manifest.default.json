@@ -14,13 +14,13 @@
     },
     {
       "id": "create-workflow",
-      "titleZh": "统一创建",
+      "titleZh": "创建内容",
       "titleEn": "Unified Create",
       "description": "想创建任何新内容（如原型、组件、主题或文档）时执行此技能。AI 会引导你完成规范的创建流程，无需手动记忆繁杂的规则。",
       "localPath": "/skills/create-workflow",
       "skillMdPath": "/skills/create-workflow/SKILL.md",
       "slashCommand": "/create-workflow",
-      "category": "创建工作流"
+      "category": "日常工作流"
     },
     {
       "id": "design-review",
@@ -34,7 +34,7 @@
     },
     {
       "id": "project-memory",
-      "titleZh": "记忆沉淀",
+      "titleZh": "项目整理",
       "titleEn": "Project Memory",
       "description": "想整理项目积累的经验时执行此技能。AI 会把近期的代码变更、零散信息和新增逻辑沉淀至说明文档中，以保持项目资产井井有条。",
       "localPath": "/skills/project-memory",
@@ -60,7 +60,7 @@
       "localPath": "/skills/skills-management",
       "skillMdPath": "/skills/skills-management/SKILL.md",
       "slashCommand": "/skills-management",
-      "category": "技能维护"
+      "category": "项目管理"
     }
   ]
 }
