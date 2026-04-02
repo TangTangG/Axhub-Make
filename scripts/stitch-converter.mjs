@@ -2,7 +2,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { assertValidGeneratedTsx } from './utils/generatedTsxValidator.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -584,7 +585,10 @@ import './style.css';
 import React, { forwardRef, useImperativeHandle } from 'react';
 import type { AxureProps, AxureHandle } from '../../common/axure-types';
 
-const Component = forwardRef<AxureHandle, AxureProps>(function ${componentName}(_props, ref) {
+const Component = forwardRef(function ${componentName}(
+  _props: AxureProps,
+  ref: React.ForwardedRef<AxureHandle>,
+) {
   useImperativeHandle(ref, function () {
     return {
       getVar: function () { return undefined; },
@@ -688,8 +692,11 @@ function convertPage(pagePath, outputDir, pageName) {
     pendingScripts,
   );
   const styleCSS = generateStyleCSS(headContent, tailwindConfig);
+  const outputTsxPath = path.join(outputDir, 'index.tsx');
 
-  fs.writeFileSync(path.join(outputDir, 'index.tsx'), componentCode, 'utf8');
+  assertValidGeneratedTsx(componentCode, outputTsxPath);
+
+  fs.writeFileSync(outputTsxPath, componentCode, 'utf8');
   fs.writeFileSync(path.join(outputDir, 'style.css'), styleCSS, 'utf8');
 
   const pendingPayload = buildPendingLogicPayload(pageName, outputDir, pendingScripts);
@@ -816,4 +823,10 @@ async function main() {
   }
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main();
+}
+
+export {
+  generateComponent,
+};

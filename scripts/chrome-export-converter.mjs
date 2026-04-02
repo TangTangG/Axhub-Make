@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { assertValidGeneratedTsx } from './utils/generatedTsxValidator.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -476,7 +477,10 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-const Component = forwardRef<AxureHandle, AxureProps>(function ${componentName}(innerProps, ref) {
+const Component = forwardRef(function ${componentName}(
+  innerProps: AxureProps,
+  ref: React.ForwardedRef<AxureHandle>,
+) {
   console.log('[${pageSlug}] 组件开始渲染');
   
   useImperativeHandle(ref, function () {
@@ -503,11 +507,16 @@ ${finalContent.split('\n').map(line => '      ' + line).join('\n')}
   }
 });
 
-const WrappedComponent = forwardRef<AxureHandle, AxureProps>((props, ref) => (
-  <ErrorBoundary>
-    <Component {...props} ref={ref} />
-  </ErrorBoundary>
-));
+const WrappedComponent = forwardRef(function WrappedComponent(
+  props: AxureProps,
+  ref: React.ForwardedRef<AxureHandle>,
+) {
+  return (
+    <ErrorBoundary>
+      <Component {...props} ref={ref} />
+    </ErrorBoundary>
+  );
+});
 
 export default WrappedComponent;
 `;
@@ -643,8 +652,11 @@ function convertPage(sourcePath, outputDir, pageSlug, displayName) {
   // 生成组件和样式
   const componentCode = generateComponent(pageSlug, displayName, bodyContent, headContent);
   const styleCSS = generateStyleCSS(fonts, sourcePath);
+  const outputTsxPath = path.join(outputDir, 'index.tsx');
+
+  assertValidGeneratedTsx(componentCode, outputTsxPath);
   
-  fs.writeFileSync(path.join(outputDir, 'index.tsx'), componentCode);
+  fs.writeFileSync(outputTsxPath, componentCode);
   fs.writeFileSync(path.join(outputDir, 'style.css'), styleCSS);
   
   // 复制静态资源
@@ -810,4 +822,5 @@ export {
   convertHtmlToJSX,
   convertStyleToJSX,
   extractBodyContent,
+  generateComponent,
 };

@@ -11,6 +11,7 @@ function serializeEntryItem(item: ScannedEntryItem) {
     jsUrl: item.jsUrl,
     filePath: item.filePath,
     ...(item.isReference !== undefined ? { isReference: item.isReference } : {}),
+    ...(item.hasSubPages !== undefined ? { hasSubPages: item.hasSubPages } : {}),
   };
 }
 

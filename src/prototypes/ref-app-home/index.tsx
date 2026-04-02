@@ -121,6 +121,58 @@ const TABS: TabDefinition[] = [
     },
 ];
 
+const SUB_PAGE_PATH_BY_TAB: Record<number, string> = {
+    0: '',
+    1: 'workout',
+    2: 'analytics',
+    3: 'profile',
+};
+
+function getCurrentSubPagePath(): string {
+    if (typeof window === 'undefined') {
+        return '';
+    }
+
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    if (pathParts[0] !== 'prototypes' || pathParts.length < 2) {
+        return '';
+    }
+
+    return pathParts.slice(2).join('/');
+}
+
+function resolveTabIndexFromLocation(): number {
+    const subPagePath = getCurrentSubPagePath();
+    switch (subPagePath) {
+        case 'workout':
+            return 1;
+        case 'analytics':
+            return 2;
+        case 'profile':
+            return 3;
+        default:
+            return 0;
+    }
+}
+
+function syncLocationForTab(index: number) {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    const basePathParts = window.location.pathname.split('/').filter(Boolean).slice(0, 2);
+    if (basePathParts.length < 2) {
+        return;
+    }
+
+    const subPagePath = SUB_PAGE_PATH_BY_TAB[index] || '';
+    const nextPath = `/${basePathParts.join('/')}${subPagePath ? `/${subPagePath}` : ''}`;
+    const nextUrl = `${nextPath}${window.location.search}${window.location.hash}`;
+    if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
+        window.history.replaceState(window.history.state, '', nextUrl);
+    }
+}
+
 function SummaryView({
     accentColor,
     dailyGoal,
@@ -407,7 +459,7 @@ const Component = forwardRef<AxureHandle, AxureProps>(function FitnessHome(inner
     ];
     const courses = Array.isArray(dataSource.courses) ? dataSource.courses : defaultCourses;
 
-    const [currentTab, setCurrentTab] = useState<number>(0);
+    const [currentTab, setCurrentTab] = useState<number>(() => resolveTabIndexFromLocation());
     const [todayProgress, setTodayProgress] = useState<number>(65);
     const [viewportHeight, setViewportHeight] = useState<string | undefined>(() => getViewportHeight());
 
@@ -420,6 +472,7 @@ const Component = forwardRef<AxureHandle, AxureProps>(function FitnessHome(inner
     }, [onEventHandler]);
 
     const handleTabChange = useCallback((index: number) => {
+        syncLocationForTab(index);
         setCurrentTab(index);
         emitEvent('onTabChange', { index });
     }, [emitEvent]);
@@ -429,6 +482,7 @@ const Component = forwardRef<AxureHandle, AxureProps>(function FitnessHome(inner
     }, [emitEvent]);
 
     const handleStartWorkout = useCallback(() => {
+        syncLocationForTab(1);
         setCurrentTab(1);
         emitEvent('onStartWorkout', { source: 'summary' });
     }, [emitEvent]);
@@ -451,6 +505,23 @@ const Component = forwardRef<AxureHandle, AxureProps>(function FitnessHome(inner
             window.removeEventListener('resize', syncViewportHeight);
             window.removeEventListener('orientationchange', syncViewportHeight);
             window.visualViewport?.removeEventListener('resize', syncViewportHeight);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') {
+            return undefined;
+        }
+
+        const handleLocationChange = () => {
+            setCurrentTab(resolveTabIndexFromLocation());
+        };
+
+        handleLocationChange();
+        window.addEventListener('popstate', handleLocationChange);
+
+        return () => {
+            window.removeEventListener('popstate', handleLocationChange);
         };
     }, []);
 
@@ -477,6 +548,7 @@ const Component = forwardRef<AxureHandle, AxureProps>(function FitnessHome(inner
                 case 'switchTab': {
                     const nextTab = typeof payload?.index === 'number' ? payload.index : NaN;
                     if (Number.isFinite(nextTab) && nextTab >= 0 && nextTab < TABS.length) {
+                        syncLocationForTab(Number(nextTab));
                         setCurrentTab(Number(nextTab));
                     }
                     return;

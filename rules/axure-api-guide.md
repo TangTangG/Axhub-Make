@@ -29,13 +29,16 @@ Axure API 是本项目提供的一套接口规范，用于实现组件与 Axure 
 
 ### 组件定义
 
-使用 `forwardRef<AxureHandle, AxureProps>` 包装组件：
+使用带显式参数类型的 `forwardRef(...)` 包装组件：
 
 ```typescript
 import React, { forwardRef, useImperativeHandle } from 'react';
 import type { AxureProps, AxureHandle } from '../../common/axure-types';
 
-const Component = forwardRef<AxureHandle, AxureProps>(function MyComponent(innerProps, ref) {
+const Component = forwardRef(function MyComponent(
+  innerProps: AxureProps,
+  ref: React.ForwardedRef<AxureHandle>,
+) {
   // 组件实现
   
   useImperativeHandle(ref, function () {
@@ -271,7 +274,10 @@ const users = Array.isArray(dataSource.users) ? dataSource.users : [];
 import { useRef, useEffect } from 'react';
 import * as echarts from 'echarts/core';
 
-const Component = forwardRef<AxureHandle, AxureProps>(function Chart(innerProps, ref) {
+const Component = forwardRef(function Chart(
+  innerProps: AxureProps,
+  ref: React.ForwardedRef<AxureHandle>,
+) {
   const container = innerProps && innerProps.container ? innerProps.container : null;
   const chartRef = useRef<any>(null);
 
@@ -341,7 +347,10 @@ const CONFIG_LIST: ConfigItem[] = [
 
 const DATA_LIST: DataDesc[] = [];
 
-const Component = forwardRef<AxureHandle, AxureProps>(function UserForm(innerProps, ref) {
+const Component = forwardRef(function UserForm(
+  innerProps: AxureProps,
+  ref: React.ForwardedRef<AxureHandle>,
+) {
   const configSource = innerProps && innerProps.config ? innerProps.config : {};
   const onEventHandler = typeof innerProps.onEvent === 'function' 
     ? innerProps.onEvent 

@@ -301,7 +301,7 @@ function generateDefaultTasksDocument(report, targetInfo, outputName, tempDir) {
     markdown += `1. 重命名 \`App.tsx\` 为 \`index.tsx\`\n`;
     markdown += `2. 按照 \`/skills/ai-studio-project-converter/SKILL.md\` 中的本项目组件规范改造\n`;
     markdown += `3. 添加文件头部注释（\`@name\` 和参考资料）\n`;
-    markdown += `4. 使用 \`forwardRef<AxureHandle, AxureProps>\` 包装\n`;
+    markdown += `4. 使用 \`forwardRef(function ComponentName(props: AxureProps, ref: React.ForwardedRef<AxureHandle>) { ... })\` 包装\n`;
     markdown += `5. 实现 \`useImperativeHandle\`\n`;
     markdown += `6. 保持原有的 JSX、Hooks 和 Tailwind 类名不变\n\n`;
   } else {

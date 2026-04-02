@@ -38,6 +38,7 @@ export async function handleIndexHtml(
 
     if (['components', 'prototypes', 'themes'].includes(type)) {
       const urlPath = encodeRoutePath(`/${type}/${name}`);
+      const moduleImportPath = `/${type}/${name}`;
       let tsxPath: string;
       let basePath: string;
 
@@ -60,9 +61,12 @@ export async function handleIndexHtml(
         const title = versionId
           ? `${typeLabel}: ${name} (版本: ${versionId}) - Dev Preview`
           : `${typeLabel}: ${name} - Dev Preview`;
+        // Vite 的 html-proxy/import-analysis 在虚拟 HTML 模块里解析 import 时，
+        // 对包含中文目录名的百分号编码路径兼容性不稳定。这里保留页面 URL 为编码形式，
+        // 但模块 import 使用原始路由路径，让 Vite 能正确映射到 src 下的真实文件。
         const entryImportPath = versionId
           ? `/@fs/${tsxPath}`
-          : `${urlPath}/index.tsx`;
+          : `${moduleImportPath}/index.tsx`;
         const hackCssPath = path.resolve(process.cwd(), 'src', type, name, 'hack.css');
         const previewHostModuleCode = createPreviewHostModuleCode(
           createPreviewHostOptions({

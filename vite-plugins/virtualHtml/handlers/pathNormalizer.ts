@@ -32,6 +32,7 @@ export interface NormalizedPath {
   originalUrl: string;
   normalizedUrl: string;
   versionId?: string;
+  subPath?: string;
 }
 
 function safeDecodeURIComponent(value: string): string {
@@ -44,6 +45,12 @@ function safeDecodeURIComponent(value: string): string {
 
 function decodePathSegments(parts: string[]): string[] {
   return parts.map((part) => safeDecodeURIComponent(part));
+}
+
+function looksLikeFileRequest(subPath: string): boolean {
+  if (!subPath) return false;
+  const lastSegment = subPath.split('/').filter(Boolean).pop() || '';
+  return /\.[a-z0-9]+$/i.test(lastSegment);
 }
 
 export function encodeRoutePath(pathname: string): string {
@@ -89,6 +96,39 @@ function resolveEntryTypeByName(name: string): 'prototypes' | 'components' | 'th
   return null;
 }
 
+function resolveTypedEntryName(
+  type: 'prototypes' | 'components' | 'themes',
+  nameParts: string[],
+): { name: string; restParts: string[] } | null {
+  const projectRoot = process.cwd();
+
+  for (let partCount = nameParts.length; partCount >= 1; partCount -= 1) {
+    const candidateName = nameParts.slice(0, partCount).join('/');
+    const restParts = nameParts.slice(partCount);
+    const entryPath = path.resolve(projectRoot, 'src', type, candidateName, 'index.tsx');
+    if (fs.existsSync(entryPath)) {
+      return { name: candidateName, restParts };
+    }
+  }
+
+  try {
+    const manifest = readEntriesManifest(projectRoot);
+    for (let partCount = nameParts.length; partCount >= 1; partCount -= 1) {
+      const candidateName = nameParts.slice(0, partCount).join('/');
+      if (manifest.items?.[`${type}/${candidateName}`]) {
+        return {
+          name: candidateName,
+          restParts: nameParts.slice(partCount),
+        };
+      }
+    }
+  } catch {
+    // ignore manifest read errors and keep null fallback
+  }
+
+  return null;
+}
+
 /**
  * 解析并标准化路径
  */
@@ -120,30 +160,40 @@ export function normalizePath(url: string): NormalizedPath | null {
   // 情况 1: /prototypes/{name} 或 /prototypes/{name}/spec 或 /prototypes/{name}/index
   if (pathParts[0] === 'prototypes' && pathParts.length >= 2) {
     const decodedNameParts = decodePathSegments(pathParts.slice(1));
-    const lastPart = decodedNameParts[decodedNameParts.length - 1];
-    const hasActionSegment = lastPart === 'index' || lastPart === 'spec';
-    const name = (hasActionSegment ? decodedNameParts.slice(0, -1) : decodedNameParts).join('/');
+    const resolved = resolveTypedEntryName('prototypes', decodedNameParts);
+    if (!resolved) return null;
+    const lastPart = resolved.restParts[resolved.restParts.length - 1];
+    const isSpecRoute = resolved.restParts.length === 1 && lastPart === 'spec';
+    const isLegacyIndexRoute = resolved.restParts.length === 1 && lastPart === 'index';
+    const subPath = !isSpecRoute && !isLegacyIndexRoute ? resolved.restParts.join('/') : '';
 
-    if (!hasActionSegment || lastPart === 'index') {
+    // 真实文件请求（如 index.tsx、style.css）应该交给 Vite 模块系统处理，
+    // 不能被误判成页面预览路由，否则会返回 HTML 导致模块加载失败。
+    if (looksLikeFileRequest(subPath)) {
+      return null;
+    }
+
+    if (resolved.restParts.length === 0 || !isSpecRoute) {
       // /prototypes/{name} 或 /prototypes/{name}/index.html
       return {
         type: 'prototypes',
-        name,
+        name: resolved.name,
         action: 'preview',
-        isLegacy: lastPart === 'index',
+        isLegacy: isLegacyIndexRoute,
         originalUrl: url,
-        normalizedUrl: `${encodeRoutePath(`/prototypes/${name}`)}${versionId ? `?ver=${versionId}` : ''}`,
-        versionId
+        normalizedUrl: `${encodeRoutePath(`/prototypes/${resolved.name}${subPath ? `/${subPath}` : ''}`)}${versionId ? `?ver=${versionId}` : ''}`,
+        versionId,
+        subPath: subPath || undefined,
       };
-    } else if (lastPart === 'spec') {
+    } else if (isSpecRoute) {
       // /prototypes/{name}/spec 或 /prototypes/{name}/spec.html
       return {
         type: 'prototypes',
-        name,
+        name: resolved.name,
         action: 'spec',
         isLegacy: urlWithoutQuery.includes('.html'),
         originalUrl: url,
-        normalizedUrl: `${encodeRoutePath(`/prototypes/${name}/spec`)}${versionId ? `?ver=${versionId}` : ''}`,
+        normalizedUrl: `${encodeRoutePath(`/prototypes/${resolved.name}/spec`)}${versionId ? `?ver=${versionId}` : ''}`,
         versionId
       };
     }
@@ -152,30 +202,40 @@ export function normalizePath(url: string): NormalizedPath | null {
   // 情况 2: /components/{name} 或 /components/{name}/spec 或 /components/{name}/index
   if (pathParts[0] === 'components' && pathParts.length >= 2) {
     const decodedNameParts = decodePathSegments(pathParts.slice(1));
-    const lastPart = decodedNameParts[decodedNameParts.length - 1];
-    const hasActionSegment = lastPart === 'index' || lastPart === 'spec';
-    const name = (hasActionSegment ? decodedNameParts.slice(0, -1) : decodedNameParts).join('/');
+    const resolved = resolveTypedEntryName('components', decodedNameParts);
+    if (!resolved) return null;
+    const lastPart = resolved.restParts[resolved.restParts.length - 1];
+    const isSpecRoute = resolved.restParts.length === 1 && lastPart === 'spec';
+    const isLegacyIndexRoute = resolved.restParts.length === 1 && lastPart === 'index';
+    const subPath = !isSpecRoute && !isLegacyIndexRoute ? resolved.restParts.join('/') : '';
 
-    if (!hasActionSegment || lastPart === 'index') {
+    // 真实文件请求（如 index.tsx、style.css）应该交给 Vite 模块系统处理，
+    // 不能被误判成页面预览路由，否则会返回 HTML 导致模块加载失败。
+    if (looksLikeFileRequest(subPath)) {
+      return null;
+    }
+
+    if (resolved.restParts.length === 0 || !isSpecRoute) {
       // /components/{name} 或 /components/{name}/index.html
       return {
         type: 'components',
-        name,
+        name: resolved.name,
         action: 'preview',
-        isLegacy: lastPart === 'index',
+        isLegacy: isLegacyIndexRoute,
         originalUrl: url,
-        normalizedUrl: `${encodeRoutePath(`/components/${name}`)}${versionId ? `?ver=${versionId}` : ''}`,
-        versionId
+        normalizedUrl: `${encodeRoutePath(`/components/${resolved.name}${subPath ? `/${subPath}` : ''}`)}${versionId ? `?ver=${versionId}` : ''}`,
+        versionId,
+        subPath: subPath || undefined,
       };
-    } else if (lastPart === 'spec') {
+    } else if (isSpecRoute) {
       // /components/{name}/spec 或 /components/{name}/spec.html
       return {
         type: 'components',
-        name,
+        name: resolved.name,
         action: 'spec',
         isLegacy: urlWithoutQuery.includes('.html'),
         originalUrl: url,
-        normalizedUrl: `${encodeRoutePath(`/components/${name}/spec`)}${versionId ? `?ver=${versionId}` : ''}`,
+        normalizedUrl: `${encodeRoutePath(`/components/${resolved.name}/spec`)}${versionId ? `?ver=${versionId}` : ''}`,
         versionId
       };
     }
@@ -184,30 +244,40 @@ export function normalizePath(url: string): NormalizedPath | null {
   // 情况 3: /themes/{name} 或 /themes/{name}/spec 或 /themes/{name}/index
   if (pathParts[0] === 'themes' && pathParts.length >= 2) {
     const decodedNameParts = decodePathSegments(pathParts.slice(1));
-    const lastPart = decodedNameParts[decodedNameParts.length - 1];
-    const hasActionSegment = lastPart === 'index' || lastPart === 'spec';
-    const name = (hasActionSegment ? decodedNameParts.slice(0, -1) : decodedNameParts).join('/');
+    const resolved = resolveTypedEntryName('themes', decodedNameParts);
+    if (!resolved) return null;
+    const lastPart = resolved.restParts[resolved.restParts.length - 1];
+    const isSpecRoute = resolved.restParts.length === 1 && lastPart === 'spec';
+    const isLegacyIndexRoute = resolved.restParts.length === 1 && lastPart === 'index';
+    const subPath = !isSpecRoute && !isLegacyIndexRoute ? resolved.restParts.join('/') : '';
 
-    if (!hasActionSegment || lastPart === 'index') {
+    // 真实文件请求（如 index.tsx、style.css）应该交给 Vite 模块系统处理，
+    // 不能被误判成页面预览路由，否则会返回 HTML 导致模块加载失败。
+    if (looksLikeFileRequest(subPath)) {
+      return null;
+    }
+
+    if (resolved.restParts.length === 0 || !isSpecRoute) {
       // /themes/{name} 或 /themes/{name}/index.html
       return {
         type: 'themes',
-        name,
+        name: resolved.name,
         action: 'preview',
-        isLegacy: lastPart === 'index',
+        isLegacy: isLegacyIndexRoute,
         originalUrl: url,
-        normalizedUrl: `${encodeRoutePath(`/themes/${name}`)}${versionId ? `?ver=${versionId}` : ''}`,
-        versionId
+        normalizedUrl: `${encodeRoutePath(`/themes/${resolved.name}${subPath ? `/${subPath}` : ''}`)}${versionId ? `?ver=${versionId}` : ''}`,
+        versionId,
+        subPath: subPath || undefined,
       };
-    } else if (lastPart === 'spec') {
+    } else if (isSpecRoute) {
       // /themes/{name}/spec 或 /themes/{name}/spec.html
       return {
         type: 'themes',
-        name,
+        name: resolved.name,
         action: 'spec',
         isLegacy: urlWithoutQuery.includes('.html'),
         originalUrl: url,
-        normalizedUrl: `${encodeRoutePath(`/themes/${name}/spec`)}${versionId ? `?ver=${versionId}` : ''}`,
+        normalizedUrl: `${encodeRoutePath(`/themes/${resolved.name}/spec`)}${versionId ? `?ver=${versionId}` : ''}`,
         versionId
       };
     }
@@ -330,7 +400,7 @@ export function handlePathRedirect(req: IncomingMessage, res: ServerResponse): b
     normalized.action === 'preview'
   ) {
     const htmlEntryPath = path.resolve(process.cwd(), 'src', normalized.type, normalized.name, 'index.html');
-    if (fs.existsSync(htmlEntryPath)) {
+    if (fs.existsSync(htmlEntryPath) && !normalized.subPath) {
       const params = new URLSearchParams(req.url.split('?')[1] || '');
       const query = params.toString();
       const redirectUrl = `${encodeRoutePath(`/${normalized.type}/${normalized.name}/index.html`)}${query ? `?${query}` : ''}`;

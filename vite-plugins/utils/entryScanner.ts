@@ -14,6 +14,7 @@ export interface ScannedEntryItem {
   jsUrl: string;
   filePath: string;
   isReference?: boolean;
+  hasSubPages?: boolean;
 }
 
 export interface EntriesFileData extends Record<string, unknown> {
@@ -90,6 +91,7 @@ function scanGroup(projectRoot: string, group: ScannableGroup): {
       jsUrl: `/build/${encodedKey}.js`,
       filePath: jsEntry,
       isReference: name.startsWith('ref-'),
+      hasSubPages: group === 'prototypes' && fs.existsSync(path.join(folderPath, 'pages.json')),
     });
   }
 
