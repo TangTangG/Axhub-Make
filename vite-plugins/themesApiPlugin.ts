@@ -4,6 +4,13 @@ import path from 'path';
 
 import { getRequestPathname, readJsonBody } from './utils/httpUtils';
 
+function isSafeThemeChildPath(themesDir: string, targetPath: string) {
+  const resolvedThemesDir = path.resolve(themesDir);
+  const resolvedTargetPath = path.resolve(targetPath);
+  return resolvedTargetPath !== resolvedThemesDir
+    && resolvedTargetPath.startsWith(`${resolvedThemesDir}${path.sep}`);
+}
+
 export function themesApiPlugin(): Plugin {
   return {
     name: 'themes-api-plugin',
@@ -34,9 +41,9 @@ export function themesApiPlugin(): Plugin {
               }
 
               const themesDir = path.resolve(process.cwd(), 'src/themes');
-              const themeDesignPath = path.join(themesDir, themeName, 'DESIGN.md');
+              const themeDesignPath = path.resolve(themesDir, themeName, 'DESIGN.md');
 
-              if (!themeDesignPath.startsWith(themesDir)) {
+              if (!isSafeThemeChildPath(themesDir, themeDesignPath)) {
                 res.statusCode = 403;
                 res.end(JSON.stringify({ error: 'Forbidden' }));
                 return;
@@ -76,9 +83,9 @@ export function themesApiPlugin(): Plugin {
             }
 
             const themesDir = path.resolve(process.cwd(), 'src/themes');
-            const themeDir = path.join(themesDir, themeName);
+            const themeDir = path.resolve(themesDir, themeName);
 
-            if (!themeDir.startsWith(themesDir)) {
+            if (!isSafeThemeChildPath(themesDir, themeDir)) {
               res.statusCode = 403;
               res.end(JSON.stringify({ error: 'Forbidden' }));
               return;
@@ -121,9 +128,9 @@ export function themesApiPlugin(): Plugin {
               }
 
               const themesDir = path.resolve(process.cwd(), 'src/themes');
-              const themeDir = path.join(themesDir, themeName);
+              const themeDir = path.resolve(themesDir, themeName);
 
-              if (!themeDir.startsWith(themesDir)) {
+              if (!isSafeThemeChildPath(themesDir, themeDir)) {
                 res.statusCode = 403;
                 res.end(JSON.stringify({ error: 'Forbidden' }));
                 return;
@@ -174,9 +181,9 @@ export function themesApiPlugin(): Plugin {
             }
 
             const themesDir = path.resolve(process.cwd(), 'src/themes');
-            const themeDir = path.join(themesDir, themeName);
+            const themeDir = path.resolve(themesDir, themeName);
 
-            if (!themeDir.startsWith(themesDir)) {
+            if (!isSafeThemeChildPath(themesDir, themeDir)) {
               res.statusCode = 403;
               res.end(JSON.stringify({ error: 'Forbidden' }));
               return;

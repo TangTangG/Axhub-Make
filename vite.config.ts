@@ -25,7 +25,6 @@ async function loadServePlugins(): Promise<Plugin[]> {
     { autoDebugPlugin },
     { axureBridgeProxyPlugin },
     { canvasApiPlugin },
-    { ccConnectApiPlugin },
     { codeReviewPlugin },
     { configApiPlugin },
     { dataManagementApiPlugin },
@@ -55,7 +54,6 @@ async function loadServePlugins(): Promise<Plugin[]> {
     import('./vite-plugins/autoDebugPlugin'),
     import('./vite-plugins/axureBridgeProxyPlugin'),
     import('./vite-plugins/canvasApiPlugin'),
-    import('./vite-plugins/ccConnectApiPlugin'),
     import('./vite-plugins/codeReviewPlugin'),
     import('./vite-plugins/configApiPlugin'),
     import('./vite-plugins/dataManagementApiPlugin'),
@@ -111,7 +109,6 @@ async function loadServePlugins(): Promise<Plugin[]> {
     configApiPlugin(),
     aiCliPlugin(),
     gitVersionApiPlugin(),
-    ccConnectApiPlugin(),
   ];
 }
 

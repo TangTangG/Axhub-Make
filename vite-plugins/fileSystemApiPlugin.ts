@@ -68,6 +68,28 @@ function sanitizeFolderName(name: string) {
     .toLowerCase();
 }
 
+function buildSafeImportFolderName(
+  candidates: Array<string | null | undefined>,
+  fallbackPrefix: string,
+  maxLength = 60,
+) {
+  for (const candidate of candidates) {
+    const sanitized = truncateName(sanitizeFolderName(String(candidate || '')), maxLength);
+    if (sanitized) {
+      return sanitized;
+    }
+  }
+
+  return `${fallbackPrefix}-${Date.now()}`;
+}
+
+function isSafeChildDir(baseDir: string, candidateDir: string) {
+  const resolvedBaseDir = path.resolve(baseDir);
+  const resolvedCandidateDir = path.resolve(candidateDir);
+  return resolvedCandidateDir !== resolvedBaseDir
+    && resolvedCandidateDir.startsWith(`${resolvedBaseDir}${path.sep}`);
+}
+
 function inferExtractedRootFolder(extractDir: string) {
   if (!fs.existsSync(extractDir)) {
     return { entryCount: 0, hasRootFolder: false, rootFolderName: '' };
@@ -1234,6 +1256,19 @@ export function fileSystemApiPlugin(): Plugin {
           const deletePath = isElementsOrPages
             ? path.join(projectRoot, 'src', parts[0], parts[1])
             : path.join(projectRoot, 'src', targetPath);
+          const srcRoot = path.join(projectRoot, 'src');
+          const resolvedDeletePath = path.resolve(deletePath);
+          const relativeToSrc = path.relative(srcRoot, resolvedDeletePath);
+          const relativeParts = relativeToSrc.split(path.sep).filter(Boolean);
+
+          if (
+            !relativeToSrc
+            || relativeToSrc.startsWith('..')
+            || path.isAbsolute(relativeToSrc)
+            || relativeParts.length < 2
+          ) {
+            return sendJSON(res, 403, { error: 'Refuse to delete protected root directory' });
+          }
 
           if (!fs.existsSync(deletePath)) {
             return sendJSON(res, 404, { error: 'Directory not found' });
@@ -1764,7 +1799,12 @@ export function fileSystemApiPlugin(): Plugin {
                   const basename = isFolderUpload
                     ? (folderUploadContext?.fallbackName || folderNameField || derivedRootName || `upload-${timestamp}`)
                     : path.basename(originalFilename, path.extname(originalFilename));
-                  const extractDirName = `${uploadType}-${truncateName(sanitizeFolderName(basename), 40)}-${timestamp}`;
+                  const inferredRootFolderName = folderUploadContext?.inferred.rootFolderName || derivedRootName || '';
+                  const safeBaseName = buildSafeImportFolderName(
+                    [basename, inferredRootFolderName],
+                    uploadType,
+                  );
+                  const extractDirName = `${uploadType}-${truncateName(safeBaseName, 40)}-${timestamp}`;
                   const extractDir = isFolderUpload
                     ? (folderUploadContext!.inferred.hasRootFolder
                         ? path.join(folderUploadContext!.tempExtractDir, folderUploadContext!.inferred.rootFolderName)
@@ -1777,11 +1817,10 @@ export function fileSystemApiPlugin(): Plugin {
                     fs.unlinkSync(tempFilePath);
                   }
 
-                  const pageName = basename
-                    .replace(/[^a-z0-9-]/gi, '-')
-                    .replace(/-+/g, '-')
-                    .replace(/^-|-$/g, '')
-                    .toLowerCase();
+                  const pageName = buildSafeImportFolderName(
+                    [basename, inferredRootFolderName, extractDirName],
+                    uploadType,
+                  );
                   const isThemeTarget = targetType === 'themes';
 
                   const converterConfigs: Record<string, {
@@ -1842,8 +1881,8 @@ export function fileSystemApiPlugin(): Plugin {
 
                     const tasksFileRelPath = `src/${targetType}/${pageName}/${tasksFileName}`;
                     const prompt = isThemeTarget
-                      ? `${converterConfig.label} 项目已上传并预处理完成（主题模式）。\n\n请仔细阅读并执行主题任务清单：\n- ${tasksFileRelPath}\n\n然后请基于该任务清单和技能文档，进行主题拆分（输出到 \`src/themes/${pageName}/\`、\`src/docs/\`、\`src/database/\`）。`
-                      : `${converterConfig.label} 项目已上传并预处理完成。\n\n请仔细阅读并执行以下任务清单：\n- ${tasksFileRelPath}\n\n然后根据该任务清单和技能文档，完成具体的转换工作。`;
+                      ? `${converterConfig.label} 项目已上传并预处理完成（主题模式）。\n\n请先在仓库中读取以下主题任务清单：\n- ${tasksFileRelPath}\n\n然后基于该任务清单和技能文档，完成主题拆分（输出到 \`src/themes/${pageName}/\`、\`src/docs/\`、\`src/database/\`）。`
+                      : `${converterConfig.label} 项目已上传并预处理完成。\n\n请先在仓库中读取以下转换任务清单：\n- ${tasksFileRelPath}\n\n然后根据该任务清单和技能文档，完成具体的转换工作。`;
 
                     return sendJSON(res, 200, {
                       success: true,
@@ -1851,14 +1890,18 @@ export function fileSystemApiPlugin(): Plugin {
                       pageName,
                       tasksFile: tasksFileRelPath,
                       prompt,
-                      message: isThemeTarget ? '主题预处理完成，请查看任务文档' : '预处理完成，请查看任务文档'
+                      message: isThemeTarget ? '主题文件已导入完成，可继续交给 AI 进行主题拆分。' : '页面文件已导入完成，可继续交给 AI 完成转换。',
+                      hint: '继续时直接把提示词发给 AI 即可，无需手动查看内部任务文档。',
                     });
                   } catch (scriptError: any) {
                     console.error(`[${converterConfig.label} 转换] 执行失败:`, scriptError);
 
-                    const pageDir = path.join(projectRoot, 'src', targetType, pageName);
-                    if (fs.existsSync(pageDir)) {
+                    const pageBaseDir = path.join(projectRoot, 'src', targetType);
+                    const pageDir = path.join(pageBaseDir, pageName);
+                    if (fs.existsSync(pageDir) && isSafeChildDir(pageBaseDir, pageDir)) {
                       fs.rmSync(pageDir, { recursive: true, force: true });
+                    } else if (fs.existsSync(pageDir)) {
+                      console.error(`[${converterConfig.label} 转换] 跳过不安全目录清理:`, pageDir);
                     }
 
                     return sendJSON(res, 500, {

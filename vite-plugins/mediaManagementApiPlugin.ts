@@ -34,6 +34,41 @@ export function mediaManagementApiPlugin(): Plugin {
         fs.mkdirSync(mediaDir, { recursive: true });
       }
 
+      const normalizeMediaRelativePath = (value: string) => {
+        return String(value || '')
+          .replace(/\\/g, '/')
+          .split('/')
+          .filter(Boolean)
+          .join('/');
+      };
+
+      const resolveMediaPath = (relativePath: string, options?: { allowRoot?: boolean }) => {
+        const normalizedRelativePath = normalizeMediaRelativePath(relativePath);
+        const resolvedMediaDir = path.resolve(mediaDir);
+        const resolvedTargetPath = normalizedRelativePath
+          ? path.resolve(resolvedMediaDir, normalizedRelativePath)
+          : resolvedMediaDir;
+        const allowRoot = options?.allowRoot === true;
+
+        if (resolvedTargetPath === resolvedMediaDir) {
+          return allowRoot ? resolvedTargetPath : null;
+        }
+
+        if (!resolvedTargetPath.startsWith(`${resolvedMediaDir}${path.sep}`)) {
+          return null;
+        }
+
+        return resolvedTargetPath;
+      };
+
+      const toMediaRelativePath = (absolutePath: string) => {
+        return path.relative(mediaDir, absolutePath).split(path.sep).join('/');
+      };
+
+      const isSafeMediaName = (value: string) => {
+        return Boolean(value && value.trim() && !value.includes('..') && !/[\\/]/.test(value));
+      };
+
       // Helper functions
       const sendJSON = (res: any, statusCode: number, data: any) => {
         res.statusCode = statusCode;
@@ -130,16 +165,17 @@ export function mediaManagementApiPlugin(): Plugin {
           try {
             const urlObj = new URL(url, `http://${req.headers.host}`);
             const requestedPath = urlObj.searchParams.get('path') || '';
-            
-            const targetDir = requestedPath 
-              ? path.join(mediaDir, requestedPath)
-              : mediaDir;
+
+            const targetDir = resolveMediaPath(requestedPath, { allowRoot: true });
+            if (!targetDir) {
+              return sendError(res, 403, 'Invalid media path');
+            }
             
             if (!fs.existsSync(targetDir)) {
               return sendError(res, 404, 'Directory not found');
             }
             
-            const assets = scanDirectory(targetDir, requestedPath);
+            const assets = scanDirectory(targetDir, normalizeMediaRelativePath(requestedPath));
             sendJSON(res, 200, assets);
           } catch (error: any) {
             console.error('Error listing media:', error);
@@ -169,18 +205,26 @@ export function mediaManagementApiPlugin(): Plugin {
                 }
 
                 const targetPath = Array.isArray(fields.path) ? fields.path[0] : fields.path;
-                const targetDir = targetPath ? path.join(mediaDir, targetPath) : mediaDir;
+                const targetDir = resolveMediaPath(String(targetPath || ''), { allowRoot: true });
+                if (!targetDir) {
+                  return sendError(res, 403, 'Invalid upload path');
+                }
                 
                 if (!fs.existsSync(targetDir)) {
                   fs.mkdirSync(targetDir, { recursive: true });
                 }
 
-                const finalPath = path.join(targetDir, file.originalFilename || file.newFilename);
+                const fileName = path.basename(file.originalFilename || file.newFilename || '');
+                if (!isSafeMediaName(fileName)) {
+                  return sendError(res, 400, 'Invalid file name');
+                }
+
+                const finalPath = path.join(targetDir, fileName);
                 fs.renameSync(file.filepath, finalPath);
 
                 sendJSON(res, 200, { 
                   message: 'File uploaded successfully',
-                  path: path.relative(mediaDir, finalPath)
+                  path: toMediaRelativePath(finalPath)
                 });
               } catch (error: any) {
                 sendError(res, 500, 'Failed to save file: ' + error.message);
@@ -205,9 +249,17 @@ export function mediaManagementApiPlugin(): Plugin {
                   return sendError(res, 400, 'Folder name is required');
                 }
 
-                const targetDir = parentPath 
-                  ? path.join(mediaDir, parentPath, name)
-                  : path.join(mediaDir, name);
+                const folderName = String(name).trim();
+                if (!isSafeMediaName(folderName)) {
+                  return sendError(res, 400, 'Invalid folder name');
+                }
+
+                const parentDir = resolveMediaPath(String(parentPath || ''), { allowRoot: true });
+                if (!parentDir) {
+                  return sendError(res, 403, 'Invalid parent path');
+                }
+
+                const targetDir = path.join(parentDir, folderName);
 
                 if (fs.existsSync(targetDir)) {
                   return sendError(res, 400, 'Folder already exists');
@@ -216,7 +268,7 @@ export function mediaManagementApiPlugin(): Plugin {
                 fs.mkdirSync(targetDir, { recursive: true });
                 sendJSON(res, 200, { 
                   message: 'Folder created successfully',
-                  path: path.relative(mediaDir, targetDir)
+                  path: toMediaRelativePath(targetDir)
                 });
               } catch (error: any) {
                 sendError(res, 400, 'Invalid request: ' + error.message);
@@ -232,7 +284,10 @@ export function mediaManagementApiPlugin(): Plugin {
         if (url.startsWith('/api/media/') && req.method === 'DELETE') {
           try {
             const assetPath = decodeURIComponent(url.replace('/api/media/', ''));
-            const fullPath = path.join(mediaDir, assetPath);
+            const fullPath = resolveMediaPath(assetPath);
+            if (!fullPath) {
+              return sendError(res, 403, 'Invalid asset path');
+            }
 
             if (!fs.existsSync(fullPath)) {
               return sendError(res, 404, 'Asset not found');
@@ -257,7 +312,10 @@ export function mediaManagementApiPlugin(): Plugin {
         if (url.startsWith('/api/media/file/') && req.method === 'GET') {
           try {
             const assetPath = decodeURIComponent(url.replace('/api/media/file/', ''));
-            const fullPath = path.join(mediaDir, assetPath);
+            const fullPath = resolveMediaPath(assetPath);
+            if (!fullPath) {
+              return sendError(res, 403, 'Invalid asset path');
+            }
 
             if (!fs.existsSync(fullPath) || fs.statSync(fullPath).isDirectory()) {
               return sendError(res, 404, 'File not found');

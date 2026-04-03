@@ -237,3 +237,4 @@ node scripts/check-app-ready.mjs /prototypes/<page-name>
 - 优先利用设计文档和 CSS 变量提取主题，而不是只看视觉截图
 - 如果目录内已有 `canvas.fig`、`meta.json`、`images/` 等原始资产，转换时不要删除它们
 - 如果目录内已有 `src/App.tsx` / `src/index.css` 作为 Figma 导出壳子，修改根目录页面后要同步更新它们，否则后续导出的 `.fig` 会与当前页面不一致
+- 转换完成后，清理 `src/prototypes/` 下本次导入产生的多余目录或文件
