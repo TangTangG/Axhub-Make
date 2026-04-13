@@ -21,14 +21,21 @@ import {
   parsePreviewHostModuleId,
   PREVIEW_HOST_MODULE_PREFIX,
 } from './previewHost';
+import {
+  createAdminAssetVersionResolver,
+  rewriteAdminAssetUrls,
+  sendMaybeCompressedResponse,
+} from '../utils/httpResponseUtils';
 
 /**
  * 虚拟 HTML 插件 - 在内存中生成 HTML，不写入文件系统
  */
 export function virtualHtmlPlugin(): Plugin {
-  const devTemplatePath = path.resolve(process.cwd(), 'admin/dev-template.html');
-  const specTemplatePath = path.resolve(process.cwd(), 'admin/spec-template.html');
-  const htmlTemplatePath = path.resolve(process.cwd(), 'admin/html-template.html');
+  const adminDir = path.resolve(process.cwd(), 'admin');
+  const devTemplatePath = path.resolve(adminDir, 'dev-template.html');
+  const specTemplatePath = path.resolve(adminDir, 'spec-template.html');
+  const htmlTemplatePath = path.resolve(adminDir, 'html-template.html');
+  const resolveAdminAssetVersion = createAdminAssetVersionResolver(adminDir);
   let devTemplate: string;
   let specTemplate: string;
   let htmlTemplate: string;
@@ -129,10 +136,16 @@ export function virtualHtmlPlugin(): Plugin {
 
           const respondHtml = async (html: string, transformUrl?: string) => {
             const htmlUrl = transformUrl || req.url || '/index.html';
-            const transformedHtml = await server.transformIndexHtml(htmlUrl, html, req.originalUrl || req.url || htmlUrl);
-            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            const transformedHtml = await server.transformIndexHtml(
+              htmlUrl,
+              rewriteAdminAssetUrls(html, resolveAdminAssetVersion()),
+              req.originalUrl || req.url || htmlUrl,
+            );
             res.statusCode = 200;
-            res.end(transformedHtml);
+            sendMaybeCompressedResponse(req, res, {
+              body: transformedHtml,
+              contentType: 'text/html; charset=utf-8',
+            });
           };
 
           // 🔥 处理旧路径重定向（必须在最前面）
@@ -158,10 +171,15 @@ export function virtualHtmlPlugin(): Plugin {
             const indexHtmlPath = path.resolve(process.cwd(), 'admin/index.html');
             if (fs.existsSync(indexHtmlPath)) {
               try {
-                const html = fs.readFileSync(indexHtmlPath, 'utf8');
-                res.setHeader('Content-Type', 'text/html');
+                const html = rewriteAdminAssetUrls(
+                  fs.readFileSync(indexHtmlPath, 'utf8'),
+                  resolveAdminAssetVersion(),
+                );
                 res.statusCode = 200;
-                res.end(html);
+                sendMaybeCompressedResponse(req, res, {
+                  body: html,
+                  contentType: 'text/html; charset=utf-8',
+                });
                 return;
               } catch (err) {
                 console.error('读取 index.html 失败:', err);

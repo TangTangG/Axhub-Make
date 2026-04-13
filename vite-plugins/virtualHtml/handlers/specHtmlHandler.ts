@@ -16,6 +16,45 @@ export async function handleSpecHtml(
   if (!req.url) return false;
 
   const rawPathname = req.url.split('?')[0];
+  if (rawPathname === '/markdown-file/spec.html') {
+    let requestedFilePath = '';
+    try {
+      const requestUrl = new URL(req.url, 'http://localhost');
+      requestedFilePath = decodeURIComponent(String(requestUrl.searchParams.get('file') || '').trim());
+    } catch {
+      requestedFilePath = '';
+    }
+
+    const normalizedFilePath = requestedFilePath.replace(/\\/g, '/');
+    if (!normalizedFilePath || !normalizedFilePath.toLowerCase().endsWith('.md')) {
+      return false;
+    }
+
+    const absolutePath = path.isAbsolute(normalizedFilePath)
+      ? path.resolve(normalizedFilePath)
+      : path.resolve(process.cwd(), normalizedFilePath);
+    const projectRoot = process.cwd();
+    const relativePath = path.relative(projectRoot, absolutePath);
+    if (
+      relativePath === '..'
+      || relativePath.startsWith(`..${path.sep}`)
+      || path.isAbsolute(relativePath)
+      || !fs.existsSync(absolutePath)
+    ) {
+      return false;
+    }
+
+    const docLabel = path.basename(normalizedFilePath, path.extname(normalizedFilePath)) || 'Markdown';
+    const specMdUrl = `/api/markdown-file?path=${encodeURIComponent(normalizedFilePath)}`;
+    let html = specTemplate.replace(/\{\{TITLE\}\}/g, `Markdown: ${docLabel}`);
+    html = html.replace(/\{\{SPEC_URL\}\}/g, specMdUrl);
+    html = html.replace(/\{\{DOCS_CONFIG\}\}/g, '[]');
+    html = html.replace(/\{\{MULTI_DOC\}\}/g, 'false');
+
+    await respondHtml(html, req.url);
+    return true;
+  }
+
   if (rawPathname.startsWith('/docs/') && rawPathname.includes('/assets/')) {
     return false;
   }

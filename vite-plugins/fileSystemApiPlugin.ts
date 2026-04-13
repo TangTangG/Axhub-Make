@@ -814,7 +814,24 @@ export function fileSystemApiPlugin(): Plugin {
         return prompt;
       };
 
-      server.middlewares.use('/api/prototype-admin/project-title', async (req: any, res: any) => {
+      const WORKSPACE_API_ROUTES = {
+        project: ['/api/workspace/project', '/api/prototype-admin/project-title'],
+        installSkill: ['/api/workspace/skills/install', '/api/prototype-admin/install-skill'],
+        navigationFolders: ['/api/workspace/navigation/folders', '/api/prototype-admin/sidebar-tree/folder'],
+        navigation: ['/api/workspace/navigation', '/api/prototype-admin/sidebar-tree'],
+        resourcesOrder: ['/api/workspace/resources/order', '/api/prototype-admin/resource-order'],
+      } as const;
+
+      const registerWorkspaceRoute = (
+        paths: readonly string[],
+        handler: (req: any, res: any) => Promise<any> | any,
+      ) => {
+        paths.forEach((routePath) => {
+          server.middlewares.use(routePath, handler);
+        });
+      };
+
+      registerWorkspaceRoute(WORKSPACE_API_ROUTES.project, async (req: any, res: any) => {
         if (req.method === 'GET') {
           return sendJSON(res, 200, { title: readProjectTitle() });
         }
@@ -852,7 +869,7 @@ export function fileSystemApiPlugin(): Plugin {
       });
 
       // ─── Skill Install API ──────────────────────────────────────────────
-      server.middlewares.use('/api/prototype-admin/install-skill', async (req: any, res: any) => {
+      registerWorkspaceRoute(WORKSPACE_API_ROUTES.installSkill, async (req: any, res: any) => {
         if (req.method !== 'POST') {
           return sendJSON(res, 405, { error: 'Method not allowed' });
         }
@@ -894,7 +911,7 @@ export function fileSystemApiPlugin(): Plugin {
         }
       });
 
-      server.middlewares.use('/api/prototype-admin/sidebar-tree/folder', async (req: any, res: any) => {
+      registerWorkspaceRoute(WORKSPACE_API_ROUTES.navigationFolders, async (req: any, res: any) => {
         const tab = getTabFromRequest(req);
         if (!tab) {
           return sendJSON(res, 400, { error: 'Invalid tab, expected prototypes|components|docs|canvas' });
@@ -937,7 +954,7 @@ export function fileSystemApiPlugin(): Plugin {
         }
       });
 
-      server.middlewares.use('/api/prototype-admin/sidebar-tree', async (req: any, res: any) => {
+      registerWorkspaceRoute(WORKSPACE_API_ROUTES.navigation, async (req: any, res: any) => {
         const tab = getTabFromRequest(req);
         if (!tab) {
           return sendJSON(res, 400, { error: 'Invalid tab, expected prototypes|components|docs|canvas' });
@@ -981,7 +998,7 @@ export function fileSystemApiPlugin(): Plugin {
         }
       });
 
-      server.middlewares.use('/api/prototype-admin/resource-order', async (req: any, res: any) => {
+      registerWorkspaceRoute(WORKSPACE_API_ROUTES.resourcesOrder, async (req: any, res: any) => {
         const type = getResourceOrderTypeFromRequest(req);
         if (!type) {
           return sendJSON(res, 400, { error: 'Invalid type, expected themes|data|templates' });

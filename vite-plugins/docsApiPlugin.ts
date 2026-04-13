@@ -6,6 +6,7 @@ import {
   createManualDocTemplate,
   getDocsDir,
   getTemplatesDir,
+  isPathInside,
   isTemplateDocName,
   isProtectedDocName,
   safeDecodeURIComponent,
@@ -52,19 +53,162 @@ function normalizeRenameBaseNameForPath(docPath: string, nextBaseName: string) {
   };
 }
 
+function normalizeMarkdownFileInput(value: string): string {
+  const rawValue = safeDecodeURIComponent(String(value || '').trim()).replace(/\\/g, '/');
+  if (!rawValue) {
+    return '';
+  }
+  if (/^[A-Za-z]:\//.test(rawValue) || rawValue.startsWith('/')) {
+    return rawValue.replace(/\/+/g, '/');
+  }
+  return rawValue.replace(/^\/+/, '').replace(/\/+/g, '/');
+}
+
+function resolveProjectMarkdownFile(projectRoot: string, input: string): { absolutePath: string; relativePath: string } | null {
+  const normalizedInput = normalizeMarkdownFileInput(input);
+  if (!normalizedInput || !normalizedInput.toLowerCase().endsWith('.md')) {
+    return null;
+  }
+
+  const absolutePath = path.isAbsolute(normalizedInput)
+    ? path.resolve(normalizedInput)
+    : path.resolve(projectRoot, normalizedInput);
+
+  if (!isPathInside(projectRoot, absolutePath)) {
+    return null;
+  }
+
+  return {
+    absolutePath,
+    relativePath: path.relative(projectRoot, absolutePath).split(path.sep).join('/'),
+  };
+}
+
 export function docsApiPlugin(): Plugin {
   return {
     name: 'docs-api-plugin',
     configureServer(server: any) {
       server.middlewares.use(async (req: any, res: any, next: any) => {
         const pathname = getRequestPathname(req);
+        const projectRoot = process.cwd();
+
+        if (pathname === '/api/markdown-file') {
+          try {
+            const requestUrl = new URL(req.url || pathname, 'http://localhost');
+            const resolvedFile = resolveProjectMarkdownFile(projectRoot, requestUrl.searchParams.get('path') || '');
+            if (!resolvedFile) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ error: 'Invalid markdown file path' }));
+              return;
+            }
+
+            if (req.method === 'GET') {
+              if (!fs.existsSync(resolvedFile.absolutePath)) {
+                res.statusCode = 404;
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.end(JSON.stringify({ error: 'Document not found' }));
+                return;
+              }
+
+              res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+              res.end(fs.readFileSync(resolvedFile.absolutePath, 'utf8'));
+              return;
+            }
+
+            if (req.method === 'PUT') {
+              const bodyData = await readJsonBody(req);
+              if (typeof bodyData?.content !== 'string') {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.end(JSON.stringify({ error: 'Missing content parameter' }));
+                return;
+              }
+
+              if (!fs.existsSync(resolvedFile.absolutePath)) {
+                res.statusCode = 404;
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.end(JSON.stringify({ error: 'Document not found' }));
+                return;
+              }
+
+              fs.writeFileSync(resolvedFile.absolutePath, String(bodyData.content), 'utf8');
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({
+                success: true,
+                path: resolvedFile.relativePath,
+                absoluteFilePath: resolvedFile.absolutePath,
+              }));
+              return;
+            }
+
+            return next();
+          } catch (error: any) {
+            console.error('Error handling generic markdown file request:', error);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ error: error?.message || 'Markdown file request failed' }));
+            return;
+          }
+        }
+
+        if (pathname === '/api/markdown-file-asset') {
+          try {
+            const requestUrl = new URL(req.url || pathname, 'http://localhost');
+            const resolvedFile = resolveProjectMarkdownFile(projectRoot, requestUrl.searchParams.get('path') || '');
+            const assetPathInput = safeDecodeURIComponent(String(requestUrl.searchParams.get('asset') || '').trim())
+              .replace(/\\/g, '/')
+              .replace(/^\/+/, '');
+
+            if (!resolvedFile || !assetPathInput) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ error: 'Invalid markdown asset request' }));
+              return;
+            }
+
+            const docDir = path.dirname(resolvedFile.absolutePath);
+            const targetAssetPath = path.resolve(docDir, assetPathInput);
+            if (!isPathInside(docDir, targetAssetPath) || !fs.existsSync(targetAssetPath) || !fs.statSync(targetAssetPath).isFile()) {
+              res.statusCode = 404;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ error: 'Asset not found' }));
+              return;
+            }
+
+            const ext = path.extname(targetAssetPath).toLowerCase();
+            const mimeType = ext === '.png'
+              ? 'image/png'
+              : ext === '.jpg' || ext === '.jpeg'
+                ? 'image/jpeg'
+                : ext === '.gif'
+                  ? 'image/gif'
+                  : ext === '.webp'
+                    ? 'image/webp'
+                    : ext === '.svg'
+                      ? 'image/svg+xml'
+                      : 'application/octet-stream';
+
+            res.statusCode = 200;
+            res.setHeader('Content-Type', mimeType);
+            res.end(fs.readFileSync(targetAssetPath));
+            return;
+          } catch (error: any) {
+            console.error('Error handling generic markdown asset request:', error);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ error: error?.message || 'Markdown asset request failed' }));
+            return;
+          }
+        }
+
         if (!pathname.startsWith('/api/docs')) {
           return next();
         }
         if (pathname === '/api/docs/templates' || pathname.startsWith('/api/docs/templates/')) {
           return next();
         }
-        const docsDir = getDocsDir(process.cwd());
+        const docsDir = getDocsDir(projectRoot);
         const encodedDocName = pathname.startsWith('/api/docs/')
           ? pathname.slice('/api/docs/'.length)
           : '';
@@ -268,6 +412,7 @@ export function docsApiPlugin(): Plugin {
               name: docFileName,
               displayName,
               path: `src/docs/${docFileName}`,
+              absoluteFilePath: docPath,
             }));
           } catch (error: any) {
             console.error('Error manual creating doc:', error);
@@ -340,6 +485,7 @@ export function docsApiPlugin(): Plugin {
               name: relativeName,
               displayName: relativeDisplayName,
               path: `src/docs/${relativeName}`,
+              absoluteFilePath: nextPath,
             }));
           } catch (error: any) {
             console.error('Error copying doc:', error);
@@ -498,7 +644,7 @@ export function docsApiPlugin(): Plugin {
 
             const relativeName = path.relative(docsDir, finalPath).split(path.sep).join('/');
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ success: true, name: relativeName }));
+            res.end(JSON.stringify({ success: true, name: relativeName, absoluteFilePath: finalPath }));
           } catch (error: any) {
             console.error('Error updating doc:', error);
             res.statusCode = 500;
@@ -585,6 +731,7 @@ export function docsApiPlugin(): Plugin {
                   docs.push({
                     name: relativePath,
                     displayName: relativePath,
+                    absoluteFilePath: fullPath,
                   });
                 });
               };

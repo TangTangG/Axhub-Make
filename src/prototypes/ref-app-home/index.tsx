@@ -10,7 +10,7 @@
 import './style.css';
 
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react';
-import { Activity, Flame, Timer, Zap } from 'lucide-react';
+import { Activity, Flame, Footprints, Timer } from 'lucide-react';
 
 import type {
     Action,
@@ -225,7 +225,7 @@ function SummaryView({
                 </div>
                 <div className="demo-app-home-stat-card">
                     <div className="demo-app-home-stat-icon">
-                        <Zap size={20} />
+                        <Footprints size={20} />
                     </div>
                     <div className="demo-app-home-stat-value">3</div>
                     <div className="demo-app-home-stat-label">连续天数</div>

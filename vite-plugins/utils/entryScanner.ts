@@ -67,8 +67,7 @@ function scanGroup(projectRoot: string, group: ScannableGroup): {
   const names = fs
     .readdirSync(groupDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b));
+    .map((entry) => entry.name);
 
   for (const name of names) {
     const folderPath = path.join(groupDir, name);
@@ -94,8 +93,6 @@ function scanGroup(projectRoot: string, group: ScannableGroup): {
       hasSubPages: group === 'prototypes' && fs.existsSync(path.join(folderPath, 'pages.json')),
     });
   }
-
-  items.sort((a, b) => a.name.localeCompare(b.name));
 
   return {
     entries,

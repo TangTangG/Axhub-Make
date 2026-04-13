@@ -11,7 +11,10 @@
 
 ## 提取策略
 
-1. 优先调用本项目 MCP 的 `get_page_theme`。
+1. 优先使用 `extract-page-data` 脚本的 `--theme` 参数提取设计令牌（位于 `skills/extract-page-data/`）：
+   ```bash
+   node skills/extract-page-data/scripts/extract.mjs <URL> --theme --screenshot
+   ```
 2. 若失败，再使用 Firecrawl `extract` 的 branding 结果兜底。
 3. 多页面结果需要合并并去重，保留稳定 token。
 

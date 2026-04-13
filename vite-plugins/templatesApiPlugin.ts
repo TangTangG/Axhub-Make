@@ -204,6 +204,7 @@ export function templatesApiPlugin(): Plugin {
               name: templateFileName,
               displayName: templateFileName.replace(/\.[^./\\]+$/u, ''),
               path: toTemplateProjectPath(templateFileName),
+              absoluteFilePath: templatePath,
             }));
           } catch (error: any) {
             console.error('Error creating template:', error);
@@ -269,6 +270,7 @@ export function templatesApiPlugin(): Plugin {
               name: relativeName,
               displayName: relativeName.replace(/\.[^./\\]+$/u, ''),
               path: toTemplateProjectPath(relativeName),
+              absoluteFilePath: nextPath,
             }));
           } catch (error: any) {
             console.error('Error copying template:', error);
@@ -409,7 +411,7 @@ export function templatesApiPlugin(): Plugin {
 
             const relativeName = path.relative(templatesDir, finalPath).split(path.sep).join('/');
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            res.end(JSON.stringify({ success: true, name: relativeName }));
+            res.end(JSON.stringify({ success: true, name: relativeName, absoluteFilePath: finalPath }));
           } catch (error: any) {
             console.error('Error updating template:', error);
             res.statusCode = 500;

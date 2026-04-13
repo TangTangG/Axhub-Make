@@ -1,6 +1,6 @@
 {
   "name": "axhub-make",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "description": "Axhub Make（AI 辅助生成原型工具）",
   "type": "module",
@@ -38,6 +38,7 @@
     "iconv-lite": "^0.7.1",
     "lowdb": "^7.0.1",
     "lucide-react": "^0.562.0",
+    "motion": "^12.38.0",
     "papaparse": "^5.5.3",
     "uuid": "^13.0.0"
   }

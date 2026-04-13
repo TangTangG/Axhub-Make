@@ -9,7 +9,7 @@ description: 通过 @axhub/genie CLI 发现在线 frontend-page、读取 Genie �
 
 ## 前置条件
 
-需要 `@axhub/genie` ≥ 0.2.2。如果用户尚未安装或启动，提示：
+需要 `@axhub/genie` ≥ 0.2.4。如果用户尚未安装或启动，提示：
 
 ```bash
 # 安装（首次）
@@ -23,6 +23,8 @@ npx @axhub/genie status --json
 ```
 
 如果 `status --json` 返回 `running: false` 或命令不存在，立即告诉用户当前阻塞点，不要假装继续。
+
+> 如果用户已安装 Axhub AI Extension（Chrome 扩展），可以获得更好的交互体验（可视化选择元素、实时 WS 通信、页面数据采集等）。配合扩展使用请参考 `genie-editor-workflow` 技能。
 
 ## 快速分流
 
@@ -78,7 +80,7 @@ npx @axhub/genie editor editing set \
 要求：
 - 每个节点生成唯一 `taskRequestId`
 - `provider` 固定用 `codex`
-- 无论成功失败，结束时都要发一次 `--state idle`（当作 `finally` 语义）
+- 修改成功 → `--state completed`；修改失败 → `--state error`；异常退出 → `--state idle`（兜底释放）
 
 ### 5. 收集上下文，决定怎么改
 
@@ -113,12 +115,29 @@ npx @axhub/genie editor nodes list --channel <ch> --target-client-id <id> --stat
 如果节点代码已改但 backlog 仍显示 `dirty`/`pending-dispatch`，不要假装已完成。明确说明：
 - 页面实现已完成
 - 编辑器 backlog 仍显示未消费
-- 当前 CLI `editing.set` 只支持 `editing`/`idle` 两种状态值
+- 将节点标记为 `--state completed` 表示 AI 已处理完毕
 
-### 8. 释放 editing 状态
+### 8. 设置终态
 
-对每个已领取节点：
+对每个已领取节点设置终态：
 
+修改成功：
+```bash
+npx @axhub/genie editor editing set \
+  --channel <ch> --target-client-id <id> \
+  --element-key <key> --state completed \
+  --provider codex --task-request-id <unique-id>
+```
+
+修改失败或跳过：
+```bash
+npx @axhub/genie editor editing set \
+  --channel <ch> --target-client-id <id> \
+  --element-key <key> --state error \
+  --provider codex --task-request-id <unique-id>
+```
+
+异常退出时兜底释放（`idle`）：
 ```bash
 npx @axhub/genie editor editing set \
   --channel <ch> --target-client-id <id> \
@@ -126,7 +145,7 @@ npx @axhub/genie editor editing set \
   --provider codex --task-request-id <unique-id>
 ```
 
-任务未完成也要释放，同时在总结里写清未完成原因。
+任务未完成也要设置终态，同时在总结里写清未完成原因。
 
 ## 多节点并行策略
 

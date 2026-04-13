@@ -118,4 +118,3 @@ if (fs.existsSync(srcBootstrap)) {
 } else {
   console.warn('⚠ html-template-bootstrap.js 不存在，请先构建 prototype-admin');
 }
-

@@ -6,7 +6,6 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 // ── 构建模式也需要的插件（静态导入） ──
-import { addAxhubMarker } from './vite-plugins/addAxhubMarker';
 import { axhubComponentEnforcer } from './vite-plugins/axhubComponentEnforcer';
 import { forceInlineDynamicImportsOff } from './vite-plugins/forceInlineDynamicImportsOff';
 import { injectStablePageIds } from './vite-plugins/injectStablePageIds';
@@ -22,6 +21,7 @@ import { readEntriesManifest, scanProjectEntries, writeEntriesManifestAtomic } f
 async function loadServePlugins(): Promise<Plugin[]> {
   const [
     { aiCliPlugin },
+    { annotationApiPlugin },
     { autoDebugPlugin },
     { axureBridgeProxyPlugin },
     { canvasApiPlugin },
@@ -51,6 +51,7 @@ async function loadServePlugins(): Promise<Plugin[]> {
     { writeDevServerInfoPlugin },
   ] = await Promise.all([
     import('./vite-plugins/aiCliPlugin'),
+    import('./vite-plugins/annotationApiPlugin'),
     import('./vite-plugins/autoDebugPlugin'),
     import('./vite-plugins/axureBridgeProxyPlugin'),
     import('./vite-plugins/canvasApiPlugin'),
@@ -107,6 +108,7 @@ async function loadServePlugins(): Promise<Plugin[]> {
     codeReviewPlugin(),
     autoDebugPlugin(),
     configApiPlugin(),
+    annotationApiPlugin(),
     aiCliPlugin(),
     gitVersionApiPlugin(),
   ];
@@ -161,7 +163,6 @@ export default defineConfig(async ({ command }) => {
         jsxRuntime: 'classic',
         babel: { configFile: false, babelrc: false }
       }),
-      isIifeBuild ? addAxhubMarker() : null,
       isIifeBuild ? axhubComponentEnforcer(jsEntries[entryKey as string]) : null
     ].filter(Boolean) as Plugin[],
 
@@ -196,6 +197,17 @@ export default defineConfig(async ({ command }) => {
           replacement: path.resolve(projectRoot, 'src/common/react-dom-shim.js')
         }
       ].filter(Boolean) as { find: string | RegExp; replacement: string }[]
+    },
+
+    css: {
+      preprocessorOptions: {
+        scss: {
+          api: 'modern-compiler'
+        },
+        sass: {
+          api: 'modern-compiler'
+        }
+      }
     },
 
     server: {

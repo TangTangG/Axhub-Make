@@ -15,17 +15,17 @@
 
 ## 工具策略
 
-默认优先使用本项目 MCP。  
-仅在以下场景切换/补充 Firecrawl MCP：
+默认优先使用 `extract-page-data` 技能脚本（位于 `skills/extract-page-data/`）。  
+仅在以下场景切换/补充 Firecrawl：
 
-1. 本项目 MCP 调用失败
+1. `extract-page-data` 脚本调用失败
 2. 链接发现不足（少于 5 条）
 3. 需要批量抓取或结构化抽取
 4. 用户明确要求使用 Firecrawl
 
 ## 标准执行顺序
 
-1. 发现页面：用 `get_page_map` 获取链接集合，必要时 `firecrawl_map` 补齐。
+1. 发现页面：用 `extract-page-data` 的 `--links` 获取链接集合，必要时 `firecrawl_map` 补齐。
 2. 确认范围：默认执行“主题 + 文档 + 数据”，可按用户要求裁剪。
 3. 主题生成：读取 `theme-generation.md`。
 4. 文档生成：读取 `doc-generation.md`。

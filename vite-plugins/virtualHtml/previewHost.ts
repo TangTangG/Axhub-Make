@@ -212,11 +212,8 @@ export function createPreviewHostModuleCode(options: PreviewHostModuleOptions): 
 function resolveInitialEditorMode() {
   const params = new URLSearchParams(window.location.search);
   const editor = params.get('editor');
-  if (editor === 'inspecta' || editor === 'textEdit' || editor === 'webEditorV2') {
+  if (editor === 'textEdit' || editor === 'webEditorV2' || editor === 'annotation') {
     return editor;
-  }
-  if (params.get('inspecta') === 'true') {
-    return 'inspecta';
   }
   return 'none';
 }
@@ -235,6 +232,10 @@ function maybeEnableInitialEditorMode(hostState) {
   hostState.editorModeHandled = true;
   const initialMode = resolveInitialEditorMode();
   if (initialMode === 'none') {
+    Promise.resolve(bootstrap.editors.disable?.()).catch((error) => {
+      hostState.editorModeHandled = false;
+      console.error('[Axhub Preview Host] Failed to sync default editor mode:', error);
+    });
     return;
   }
 
@@ -419,10 +420,6 @@ function syncLegacyBootstrap(container) {
     hostState.latestProps = props && typeof props === 'object' ? props : null;
     renderCurrentComponent(hostState.latestProps);
   };
-
-  if (typeof bootstrap.inspectaMode === 'undefined') {
-    bootstrap.inspectaMode = false;
-  }
 }
 
 ${editorModeBootstrapSnippet}

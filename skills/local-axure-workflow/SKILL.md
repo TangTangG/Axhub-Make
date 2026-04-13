@@ -166,9 +166,12 @@ description: 处理本地导出的 Axure 原型资源并生成主题、数据模
 **输出**：符合 `rules/development-guide.md` 规范的页面组件
 
 
-## MCP 工具补充
+## 在线资源补充
 
-sitemap.json 包含 projectUrl 时，可使用本项目MCP 工具获取在线资源（本地资源优先，仅在不足或需要最新数据时使用）。
+sitemap.json 包含 projectUrl 时，可使用 `extract-axure-data` 技能脚本（位于 `skills/extract-axure-data/`）获取在线资源（本地资源优先，仅在不足或需要最新数据时使用）：
+```bash
+node skills/extract-axure-data/scripts/extract.mjs <projectUrl> --pages <target>
+```
 
 ## 用户交互指南
 

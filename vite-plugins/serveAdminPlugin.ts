@@ -5,11 +5,16 @@ import path from 'path';
 import { getLocalIP, getRequestPathname } from './utils/httpUtils';
 import { MAKE_ENTRIES_RELATIVE_PATH } from './utils/makeConstants';
 import { buildDocApiPath } from './utils/docUtils';
+import {
+  createAdminAssetVersionResolver,
+  rewriteAdminAssetUrls,
+  sendMaybeCompressedResponse,
+} from './utils/httpResponseUtils';
 
-function readInjectedHtml(htmlPath: string, injectScript: string) {
+function readInjectedHtml(htmlPath: string, injectScript: string, cacheBustToken?: string) {
   let html = fs.readFileSync(htmlPath, 'utf8');
   html = html.replace('</head>', `${injectScript}\n</head>`);
-  return html;
+  return rewriteAdminAssetUrls(html, cacheBustToken);
 }
 
 function setNoStoreHeaders(res: any) {
@@ -74,7 +79,9 @@ function injectCanvasTemplateHtml(templateHtml: string, canvasName: string, inje
 
 export function serveAdminPlugin(): Plugin {
   const projectRoot = process.cwd();
+  const adminDir = path.resolve(projectRoot, 'admin');
   const appsMatch = projectRoot.match(/[\/\\]apps[\/\\]([^\/\\]+)/);
+  const resolveAdminAssetVersion = createAdminAssetVersionResolver(adminDir);
 
   let projectPrefix = '';
   if (appsMatch) {
@@ -101,11 +108,11 @@ export function serveAdminPlugin(): Plugin {
     configureServer(server: any) {
       server.middlewares.use(async (req: any, res: any, next: any) => {
         try {
-        const adminDir = path.resolve(projectRoot, 'admin');
         const pathname = getRequestPathname(req);
         const requestUrl = String(req.url || pathname || '/');
         const localIP = getLocalIP();
         const actualPort = server.httpServer?.address()?.port || server.config.server?.port || 5173;
+        const adminAssetVersion = resolveAdminAssetVersion();
         const injectScript = `
   <script>
     window.__PROJECT_PREFIX__ = '${projectPrefix}';
@@ -114,21 +121,23 @@ export function serveAdminPlugin(): Plugin {
     window.__LOCAL_PORT__ = ${actualPort};
   </script>`;
         const sendHtml = async (html: string, options?: { transform?: boolean }) => {
-          let responseHtml = html;
+          let responseHtml = rewriteAdminAssetUrls(html, adminAssetVersion);
           if (options?.transform) {
             const htmlUrl = requestUrl === '/' ? '/index.html' : requestUrl;
-            responseHtml = await server.transformIndexHtml(htmlUrl, html, requestUrl);
+            responseHtml = await server.transformIndexHtml(htmlUrl, responseHtml, requestUrl);
           }
           setNoStoreHeaders(res);
-          res.setHeader('Content-Type', 'text/html; charset=utf-8');
-          res.end(responseHtml);
+          sendMaybeCompressedResponse(req, res, {
+            body: responseHtml,
+            contentType: 'text/html; charset=utf-8',
+          });
         };
 
         if (pathname === '/' || pathname === '/index.html') {
           const indexPath = path.join(adminDir, 'index.html');
           if (fs.existsSync(indexPath)) {
             // 首页 admin 壳不参与 src HMR，避免外层页面被 Vite client 带着刷新。
-            await sendHtml(readInjectedHtml(indexPath, injectScript), { transform: false });
+            await sendHtml(readInjectedHtml(indexPath, injectScript, adminAssetVersion), { transform: false });
             return;
           }
         }
@@ -137,7 +146,7 @@ export function serveAdminPlugin(): Plugin {
           const htmlPath = path.join(adminDir, pathname);
           if (fs.existsSync(htmlPath)) {
             // 其他 admin 静态壳页面同样不接入 HMR，只保留 iframe 内 src 页面自己的热更。
-            await sendHtml(readInjectedHtml(htmlPath, injectScript), { transform: false });
+            await sendHtml(readInjectedHtml(htmlPath, injectScript, adminAssetVersion), { transform: false });
             return;
           }
         }
@@ -161,8 +170,10 @@ export function serveAdminPlugin(): Plugin {
               '.eot': 'application/vnd.ms-fontobject',
             };
             setAdminStaticCacheHeaders(res, pathname, requestUrl);
-            res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
-            res.end(fs.readFileSync(assetPath));
+            sendMaybeCompressedResponse(req, res, {
+              body: fs.readFileSync(assetPath),
+              contentType: contentTypes[ext] || 'application/octet-stream',
+            });
             return;
           }
         }
@@ -180,8 +191,10 @@ export function serveAdminPlugin(): Plugin {
               '.ico': 'image/x-icon',
             };
             setAdminStaticCacheHeaders(res, pathname, requestUrl);
-            res.setHeader('Content-Type', contentTypes[ext] || 'image/png');
-            res.end(fs.readFileSync(imagePath));
+            sendMaybeCompressedResponse(req, res, {
+              body: fs.readFileSync(imagePath),
+              contentType: contentTypes[ext] || 'image/png',
+            });
             return;
           }
         }
@@ -207,8 +220,10 @@ export function serveAdminPlugin(): Plugin {
             };
             const adminPathname = pathname.replace('/admin', '') || '/';
             setAdminStaticCacheHeaders(res, adminPathname, requestUrl);
-            res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
-            res.end(fs.readFileSync(adminFilePath));
+            sendMaybeCompressedResponse(req, res, {
+              body: fs.readFileSync(adminFilePath),
+              contentType: contentTypes[ext] || 'application/octet-stream',
+            });
             return;
           }
         }
@@ -217,8 +232,10 @@ export function serveAdminPlugin(): Plugin {
           const jsPath = path.join(adminDir, pathname);
           if (fs.existsSync(jsPath)) {
             setNoStoreHeaders(res);
-            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-            res.end(fs.readFileSync(jsPath));
+            sendMaybeCompressedResponse(req, res, {
+              body: fs.readFileSync(jsPath),
+              contentType: 'application/javascript; charset=utf-8',
+            });
             return;
           }
         }
@@ -239,6 +256,7 @@ export function serveAdminPlugin(): Plugin {
             html = html.replace(/\{\{MULTI_DOC\}\}/g, 'false');
             html = html.replace(/\{\{DOCS_CONFIG\}\}/g, '[]');
             html = html.replace('</head>', `${injectScript}\n</head>`);
+            html = rewriteAdminAssetUrls(html, adminAssetVersion);
             // 文档页内容源现在也在 src 下，保留它自己的 Vite 转换与更新能力。
             await sendHtml(html, { transform: true });
             return;
@@ -255,7 +273,7 @@ export function serveAdminPlugin(): Plugin {
               canvasName,
               injectScript,
             );
-            await sendHtml(html, { transform: true });
+            await sendHtml(rewriteAdminAssetUrls(html, adminAssetVersion), { transform: true });
             return;
           }
         }

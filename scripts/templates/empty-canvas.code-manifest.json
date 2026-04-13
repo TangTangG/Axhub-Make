@@ -1,7 +1,7 @@
 {
   "command": "inspect",
   "generatedAt": "2026-04-01T10:21:53.845Z",
-  "figPath": "/Users/jianzhoulin/rd/Axhub Runtime/apps/axhub-make/scripts/templates/empty-canvas.fig",
+  "figPath": "scripts/templates/empty-canvas.fig",
   "archive": {
     "prelude": "fig-make",
     "version": 101,

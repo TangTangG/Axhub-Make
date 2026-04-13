@@ -5,9 +5,12 @@
 
 ## 输入与范围
 
-1. 先从 `get_axure_sitemap` 确定页面集合。
+1. 先从 `extract-axure-data` 脚本产出的 `sitemap.json` 确定页面集合（位于 `skills/extract-axure-data/`）。
 2. 选择 3-5 个视觉代表性页面（首页、登录页、主功能页）。
-3. 对每个页面收集截图与主题信息（`get_page_theme`）。
+3. 对每个页面使用脚本提取截图与主题信息（产出 `screenshot.png` + `theme.json`）：
+   ```bash
+   node skills/extract-axure-data/scripts/extract.mjs <AXURE_URL> --pages <page1>,<page2>
+   ```
 
 ## 主题合并策略
 

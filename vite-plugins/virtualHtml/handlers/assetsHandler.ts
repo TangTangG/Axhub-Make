@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import fs from 'fs';
 import path from 'path';
 
+import { sendMaybeCompressedResponse } from '../../utils/httpResponseUtils';
+
 function hasVersionQuery(requestUrl: string) {
   return /[?&]v=/.test(requestUrl);
 }
@@ -43,9 +45,11 @@ export function handleAssetsRequest(req: IncomingMessage, res: ServerResponse): 
         } else {
           setNoStoreHeaders(res);
         }
-        res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
         res.statusCode = 200;
-        res.end(content);
+        sendMaybeCompressedResponse(req, res, {
+          body: content,
+          contentType: contentTypes[ext] || 'application/octet-stream',
+        });
         console.log('[主项目] ✅ 成功返回 asset:', req.url);
         return true;
       } catch (err) {

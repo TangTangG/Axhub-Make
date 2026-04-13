@@ -17,13 +17,13 @@
    - 生成页面名称（规范：小写字母、数字、连字符）
 
 2. **获取截图**
-  - 先确认当前模型支持视觉识别；不支持时立即告知用户，并询问是否改为仅基于文本+主题还原。
-  - 使用 `get_axure_screenshot` 下载截图到本项目：
-    - `downloadDirectory`：指向 `temp/axure-screenshots/` 的绝对路径（不存在时先创建）
-    - `projectUrl`：**必须先调用 `get-axure-sitemap` 获取项目地图，使用返回的 `projectUrl`**
-    - `pageUrl`：页面路径（如 `首页.html`）
-    - `filename`：可选，指定保存的文件名
-  - 若下载失败，尝试前环境内可用的其他截图工具；若仍失败，必须告知用户并让其决定是否继续。
+   - 先确认当前模型支持视觉识别；不支持时立即告知用户，并询问是否改为仅基于文本+主题还原。
+   - 使用 `extract-axure-data` 技能脚本提取截图（位于 `skills/extract-axure-data/`）：
+     ```bash
+     node skills/extract-axure-data/scripts/extract.mjs <AXURE_URL> --pages <target> -o temp/axure-screenshots
+     ```
+     产出 `pages/{pageName}/screenshot.png`。
+   - 若脚本失败，尝试环境内可用的其他截图工具；若仍失败，必须告知用户并让其决定是否继续。
 
 3. **验证图片读取能力**
    - 尝试读取已下载的截图文件
@@ -37,14 +37,16 @@
 4. **生成页面代码**
 
    **辅助数据获取**（可选，生成仍以图片为主）：
-   - 主题：`get_page_theme`（校验样式）
+   - 主题：从 `extract-axure-data` 产出的 `theme.json` 校验样式
      - 仅用于交叉校验，和截图识别结果不一致时，以截图为准
      - 多页面合并：优先 3-5 个核心页面，按页面权重合并统计
      - 噪声过滤：排除图片/图标/装饰性元素，弱化低频与异常值
      - 量化归一：颜色按相近色合并，间距/圆角按常见网格值聚类
      - 置信度阈值：低于阈值的 token 不进入最终主题
-   - 文本：`get_axure_text`（校验文案）
-   - 交互：`get_axure_interactions`（补充交互）
+   - 文本/交互：使用 `--advanced` 参数追加提取 `content.md` 和 `interactions.json`：
+     ```bash
+     node skills/extract-axure-data/scripts/extract.mjs <AXURE_URL> --pages <target> --advanced
+     ```
    **约束**：资源获取禁止批量/并发，必须等一个完成后再获取下一个
 
    - 直接基于截图生成页面代码

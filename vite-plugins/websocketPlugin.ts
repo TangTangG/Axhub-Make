@@ -314,6 +314,13 @@ export function websocketPlugin(): Plugin {
               return;
             }
 
+            if (type === 'sync-widget-content' || type === 'sync-page-content') {
+              res.statusCode = 410;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ error: 'Figma 同步已下线，请使用导出 Make' }));
+              return;
+            }
+
             // 验证 data
             if (data === undefined || data === null) {
               res.statusCode = 400;

@@ -271,10 +271,15 @@ function convertHtmlToJSX(content) {
  * 提取并转换 body 内容
  */
 function extractBodyContent(html) {
-  const bodyMatch = html.match(/(<body[^>]*>)([\s\S]*?)(<\/body>)/i);
-  if (!bodyMatch) return '';
-  
-  const [, openTag, innerContent] = bodyMatch;
+  const openTagMatch = html.match(/<body\b[^>]*>/i);
+  if (!openTagMatch || openTagMatch.index === undefined) return '';
+
+  const openTag = openTagMatch[0];
+  const contentStart = openTagMatch.index + openTag.length;
+  const closeTagIndex = html.toLowerCase().lastIndexOf('</body>');
+  if (closeTagIndex < contentStart) return '';
+
+  const innerContent = html.slice(contentStart, closeTagIndex);
   
   // 移除 <root> 标签（Chrome 扩展导出特有的包装标签）
   let cleanedContent = innerContent.trim()

@@ -316,14 +316,33 @@ export function resolveDocumentPathFromDocUrl(
   projectRoot: string = process.cwd(),
 ): { docPath: string } | { status: number; error: string } {
   let pathname = '';
+  let searchParams: URLSearchParams | null = null;
   try {
-    pathname = new URL(docUrl, `http://${host || 'localhost'}`).pathname;
+    const parsedUrl = new URL(docUrl, `http://${host || 'localhost'}`);
+    pathname = parsedUrl.pathname;
+    searchParams = parsedUrl.searchParams;
   } catch {
     return { status: 400, error: 'Invalid docUrl' };
   }
 
   const srcRoot = path.resolve(projectRoot, 'src');
   const docsRoot = getDocsDir(projectRoot);
+
+  if (pathname === '/api/markdown-file') {
+    const rawFilePath = String(searchParams?.get('path') || '').trim();
+    const normalizedFilePath = safeDecodeURIComponent(rawFilePath).replace(/\\/g, '/');
+    if (!normalizedFilePath || !normalizedFilePath.toLowerCase().endsWith('.md')) {
+      return { status: 400, error: 'Missing markdown file path in docUrl' };
+    }
+
+    const docPath = path.isAbsolute(normalizedFilePath)
+      ? path.resolve(normalizedFilePath)
+      : path.resolve(projectRoot, normalizedFilePath);
+    if (!isPathInside(projectRoot, docPath)) {
+      return { status: 403, error: 'Forbidden path' };
+    }
+    return { docPath };
+  }
 
   if (pathname.startsWith('/api/docs/')) {
     const encodedDocName = pathname.slice('/api/docs/'.length);
@@ -546,7 +565,7 @@ export function extractMarkdownDescription(content: string) {
 }
 
 export function listTemplateAssets(templatesDir: string) {
-  const templates: Array<{ name: string; displayName: string; description: string }> = [];
+  const templates: Array<{ name: string; displayName: string; description: string; absoluteFilePath: string }> = [];
 
   if (!fs.existsSync(templatesDir)) {
     return templates;
@@ -575,6 +594,7 @@ export function listTemplateAssets(templatesDir: string) {
         name: relativePath,
         displayName: relativePath.replace(/\.[^./\\]+$/u, ''),
         description: extractMarkdownDescription(content),
+        absoluteFilePath: fullPath,
       });
     });
   };

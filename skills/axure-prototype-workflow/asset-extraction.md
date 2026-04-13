@@ -15,7 +15,7 @@
 
 ## 标准执行顺序
 
-1. 获取站点地图：调用 `get_axure_sitemap`，确定页面范围、核心页面和优先级。
+1. 获取站点地图：运行 `extract-axure-data` 脚本（位于 `skills/extract-axure-data/`），从产出的 `sitemap.json` 确定页面范围、核心页面和优先级。
 2. 与用户确认范围：默认执行“主题 + 文档 + 数据”；若用户只要部分产物，按用户范围裁剪。
 3. 主题生成：读取 `theme-generation.md`，先完成主题资产。
 4. 文档生成：读取 `doc-generation.md`，产出页面地图/项目概览/业务文档（按需）。

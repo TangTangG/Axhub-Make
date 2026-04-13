@@ -6,7 +6,7 @@
 ## 识别步骤
 
 1. 识别数据密集页面（列表/详情/表单/报表）。
-2. 提取页面内容：优先 `get_page_markdown`，批量场景用 Firecrawl `batch_scrape`。
+2. 提取页面内容：优先使用 `extract-page-data` 脚本的 `--markdown`（位于 `skills/extract-page-data/`），批量场景用 Firecrawl `batch_scrape`。
 3. 抽取字段与记录模式，合并跨页面同类实体。
 4. 生成数据表并校验字段一致性。
 

@@ -1,6 +1,6 @@
 # CLI 命令参考
 
-所有命令通过 `npx @axhub/genie` 调用，要求版本 ≥ 0.2.1。
+所有命令通过 `npx @axhub/genie` 调用，要求版本 ≥ 0.2.4。
 
 建议在 shell 中定义变量减少重复输入：
 
@@ -124,10 +124,37 @@ npx @axhub/genie editor editing set \
   --element-key "hero-card" \
   --state editing \
   --provider codex \
+  --session-id "$SESSION_ID" \
   --task-request-id "codex_hero-card_$(date +%s)"
 ```
 
-### 处理结束
+### 处理成功
+
+```bash
+npx @axhub/genie editor editing set \
+  --channel "$CHANNEL" \
+  --target-client-id "$TARGET_CLIENT_ID" \
+  --element-key "hero-card" \
+  --state completed \
+  --provider codex \
+  --session-id "$SESSION_ID" \
+  --task-request-id "codex_hero-card_done_$(date +%s)"
+```
+
+### 处理失败
+
+```bash
+npx @axhub/genie editor editing set \
+  --channel "$CHANNEL" \
+  --target-client-id "$TARGET_CLIENT_ID" \
+  --element-key "hero-card" \
+  --state error \
+  --provider codex \
+  --session-id "$SESSION_ID" \
+  --task-request-id "codex_hero-card_error_$(date +%s)"
+```
+
+### 异常退出兜底释放
 
 ```bash
 npx @axhub/genie editor editing set \
@@ -135,12 +162,11 @@ npx @axhub/genie editor editing set \
   --target-client-id "$TARGET_CLIENT_ID" \
   --element-key "hero-card" \
   --state idle \
-  --provider codex \
-  --task-request-id "codex_hero-card_done_$(date +%s)"
+  --provider codex
 ```
 
 说明：
-- `--state` 只允许 `editing` 或 `idle`
+- `--state` 允许 `editing`、`idle`、`completed`、`error`
 - `editing.set` 控制 `taskState`，不直接改变 `changeState`
 - 结束后仍需重新读 `nodes list` 确认节点最终状态
 
@@ -160,7 +186,7 @@ npx @axhub/genie editor nodes list --channel "$CHANNEL" --target-client-id "$TAR
 3. 如仍难定位，拉 `node screenshot`
 4. 修改代码
 5. 重新拉 `snapshot` 与 `nodes list`
-6. `editor editing set --state idle`
+6. 成功 → `editor editing set --state completed`；失败 → `--state error`；异常 → `--state idle`
 
 ## 9. 最终复核
 
