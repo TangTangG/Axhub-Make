@@ -210,11 +210,49 @@ function escapeTextBraces(html) {
 function convertCommonAttributesToJSX(content) {
   let nextContent = content;
 
+  nextContent = nextContent.replace(/\s(?:srcset|sizes)=(["'])\1/gi, '');
+
   JSX_ATTRIBUTE_REPLACEMENTS.forEach(([from, to]) => {
     nextContent = nextContent.replace(new RegExp(`(\\s)${from}=`, 'gi'), `$1${to}=`);
   });
 
   return nextContent;
+}
+
+function findCompatibleImageAsset(filename, availableAssets) {
+  if (!filename || availableAssets.has(filename)) {
+    return filename;
+  }
+
+  const extension = path.extname(filename);
+  const basename = path.basename(filename, extension);
+  const dedupeMatch = basename.match(/^(.*?)-\d+$/);
+  if (!dedupeMatch) {
+    return filename;
+  }
+
+  const fallbackName = `${dedupeMatch[1]}${extension}`;
+  return availableAssets.has(fallbackName) ? fallbackName : filename;
+}
+
+function reconcileImageAssetReferences(content, imagesPath) {
+  if (!content || !fs.existsSync(imagesPath)) {
+    return content;
+  }
+
+  const availableAssets = new Set(
+    fs.readdirSync(imagesPath, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name),
+  );
+
+  return content.replace(/assets\/images\/([^"')\s>]+)/g, (fullMatch, filename) => {
+    const resolvedFilename = findCompatibleImageAsset(filename, availableAssets);
+    if (resolvedFilename === filename) {
+      return fullMatch;
+    }
+    return `assets/images/${resolvedFilename}`;
+  });
 }
 
 function createCommentPlaceholders(content) {
@@ -640,7 +678,10 @@ function convertPage(sourcePath, outputDir, pageSlug, displayName) {
   const html = fs.readFileSync(htmlPath, 'utf8');
   
   const headContent = extractHeadContent(html);
-  const bodyContent = extractBodyContent(html);
+  const bodyContent = reconcileImageAssetReferences(
+    extractBodyContent(html),
+    path.join(sourcePath, 'assets', 'images'),
+  );
   
   // 从外部 CSS 文件提取字体
   const externalCSSPath = path.join(sourcePath, 'style.css');
@@ -828,4 +869,5 @@ export {
   convertStyleToJSX,
   extractBodyContent,
   generateComponent,
+  reconcileImageAssetReferences,
 };

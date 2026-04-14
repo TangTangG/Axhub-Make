@@ -22,16 +22,26 @@ export interface ReviewIssue {
   message: string;
   line?: number;
   suggestion?: string;
+  blocking?: boolean;
+  category?: 'export-structure' | 'axure-api' | 'docs' | 'tailwind' | 'recommendation';
 }
+
+export type ReviewMode = 'default' | 'axure-export';
 
 export interface ReviewResult {
   file: string;
   passed: boolean;
+  mode: ReviewMode;
+  summary: {
+    blockingErrors: number;
+    warnings: number;
+  };
   issues: ReviewIssue[];
 }
 
-interface ReviewOptions {
+export interface ReviewOptions {
   enforceComponentExportName?: boolean;
+  mode?: ReviewMode;
 }
 
 export type AxureApiListKey = 'eventList' | 'actionList' | 'varList' | 'configList' | 'dataList';
@@ -70,6 +80,144 @@ function extractDefaultExportName(content: string): string | null {
   }
 
   return null;
+}
+
+function resolveReviewMode(options: ReviewOptions = {}): ReviewMode {
+  if (options.mode === 'axure-export') {
+    return 'axure-export';
+  }
+  return 'default';
+}
+
+function inferIssueCategory(rule: string): ReviewIssue['category'] {
+  if (rule.startsWith('axure-api')) {
+    return 'axure-api';
+  }
+  if (rule.startsWith('tailwind')) {
+    return 'tailwind';
+  }
+  if (rule.startsWith('file-header') || rule.startsWith('file-spec')) {
+    return 'docs';
+  }
+  if (rule.startsWith('jsx-') || rule.startsWith('state-')) {
+    return 'recommendation';
+  }
+  return 'export-structure';
+}
+
+function finalizeIssues(issues: ReviewIssue[]): ReviewIssue[] {
+  return issues.map((issue) => ({
+    ...issue,
+    blocking: issue.blocking ?? issue.type === 'error',
+    category: issue.category ?? inferIssueCategory(issue.rule),
+  }));
+}
+
+function buildReviewResult(filePath: string, mode: ReviewMode, issues: ReviewIssue[]): ReviewResult {
+  const finalizedIssues = finalizeIssues(issues);
+  const blockingErrors = finalizedIssues.filter((issue) => issue.type === 'error' && issue.blocking).length;
+  const warnings = finalizedIssues.filter((issue) => issue.type === 'warning').length;
+
+  return {
+    file: filePath,
+    passed: blockingErrors === 0,
+    mode,
+    summary: {
+      blockingErrors,
+      warnings,
+    },
+    issues: finalizedIssues,
+  };
+}
+
+function hasHeaderMarker(content: string, marker: string): boolean {
+  return content.includes(marker);
+}
+
+function hasTopLevelComponentBinding(content: string, filePath: string): boolean {
+  const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+  return sourceFile.statements.some((statement) => {
+    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+      return statement.name?.text === 'Component';
+    }
+
+    if (!ts.isVariableStatement(statement)) {
+      return false;
+    }
+
+    return statement.declarationList.declarations.some((declaration) => (
+      ts.isIdentifier(declaration.name) && declaration.name.text === 'Component'
+    ));
+  });
+}
+
+function checkAxureExportStructure(content: string, filePath: string): ReviewIssue[] {
+  const issues: ReviewIssue[] = [];
+  const specPath = path.join(path.dirname(filePath), 'spec.md');
+
+  if (!fs.existsSync(specPath)) {
+    issues.push({
+      type: 'error',
+      rule: 'file-spec-missing',
+      message: 'Axure 导出要求同目录存在 spec.md',
+      suggestion: '请补充 spec.md 文档',
+      blocking: true,
+      category: 'docs',
+    });
+  }
+
+  if (!/@name\s+.+/.test(content)) {
+    issues.push({
+      type: 'error',
+      rule: 'file-header-name',
+      message: '缺少 @name 注释',
+      suggestion: '请在文件头部添加 @name 注释',
+      blocking: true,
+      category: 'docs',
+    });
+  }
+
+  if (!hasHeaderMarker(content, '@mode axure')) {
+    issues.push({
+      type: 'error',
+      rule: 'file-header-mode-axure',
+      message: 'Axure 导出要求头部包含 @mode axure',
+      suggestion: '请在文件头注释中添加 `@mode axure`',
+      blocking: true,
+      category: 'docs',
+    });
+  }
+
+  if (!hasHeaderMarker(content, '/skills/axure-export-workflow/SKILL.md')) {
+    issues.push({
+      type: 'error',
+      rule: 'file-header-axure-skill',
+      message: 'Axure 导出要求头部包含 /skills/axure-export-workflow/SKILL.md 参考路径',
+      suggestion: '请在文件头注释中补充 Skill 路径',
+      blocking: true,
+      category: 'docs',
+    });
+  }
+
+  issues.push(...checkExportDefault(content, filePath, { enforceComponentExportName: true }).map((issue) => ({
+    ...issue,
+    blocking: true,
+    category: 'export-structure' as const,
+  })));
+
+  if (!hasTopLevelComponentBinding(content, filePath)) {
+    issues.push({
+      type: 'error',
+      rule: 'component-binding',
+      message: 'Axure 导出要求源码中存在可静态识别的顶层 Component 定义',
+      suggestion: '请使用 `const Component = ...` 或 `function Component() {}` 并导出 `export default Component`',
+      blocking: true,
+      category: 'export-structure',
+    });
+  }
+
+  return issues;
 }
 
 /**
@@ -178,7 +326,7 @@ function checkAxureAPI(content: string, filePath: string): ReviewIssue[] {
   const issues: ReviewIssue[] = [];
   
   // 检查是否使用了 forwardRef
-  const usesForwardRef = /forwardRef\s*</.test(content);
+  const usesForwardRef = /forwardRef(?:\s*<|\s*\()/.test(content);
   
   if (!usesForwardRef) {
     // 可能不是 Axure 组件，跳过检查
@@ -263,82 +411,57 @@ function checkAxureAPI(content: string, filePath: string): ReviewIssue[] {
 }
 
 /**
- * 其他推荐检查项（需要用户确认）
- */
-function checkRecommended(content: string, filePath: string): ReviewIssue[] {
-  const issues: ReviewIssue[] = [];
-  
-  // 检查是否有 @name 注释
-  const hasNameComment = /@name\s+.+/.test(content);
-  if (!hasNameComment) {
-    issues.push({
-      type: 'warning',
-      rule: 'file-header-name',
-      message: '缺少 @name 注释',
-      suggestion: '在文件头部添加：/**\\n * @name 组件名称\\n */'
-    });
-  }
-  
-  // 检查是否在 JSX 中直接定义函数（性能问题）
-  const hasInlineFunction = /onClick=\{function\s*\(/.test(content) || /onClick=\{\(\s*\)\s*=>/.test(content);
-  if (hasInlineFunction) {
-    issues.push({
-      type: 'warning',
-      rule: 'jsx-inline-function',
-      message: '在 JSX 中直接定义了函数，可能影响性能',
-      suggestion: '使用 useCallback 预定义函数'
-    });
-  }
-  
-  // 检查是否使用了 ES6 解构 state（不推荐）
-  const hasStateDestructure = /const\s*\[\s*\w+\s*,\s*\w+\s*\]\s*=\s*useState/.test(content);
-  if (hasStateDestructure) {
-    issues.push({
-      type: 'warning',
-      rule: 'state-destructure',
-      message: '使用了 ES6 解构 state，不符合项目规范',
-      suggestion: '使用数组索引访问：const countState = useState(0); const count = countState[0];'
-    });
-  }
-  
-  return issues;
-}
-
-/**
  * 检查单个文件
  */
-function reviewFile(filePath: string, options: ReviewOptions = {}): ReviewResult {
+export function reviewFile(filePath: string, options: ReviewOptions = {}): ReviewResult {
   const issues: ReviewIssue[] = [];
+  const mode = resolveReviewMode(options);
   
   try {
     if (!fs.existsSync(filePath)) {
-      return {
-        file: filePath,
-        passed: false,
-        issues: [{
+      return buildReviewResult(filePath, mode, [{
           type: 'error',
           rule: 'file-not-found',
-          message: '文件不存在'
-        }]
-      };
+          message: '文件不存在',
+          blocking: true,
+          category: 'docs',
+        }]);
     }
     
     const content = fs.readFileSync(filePath, 'utf8');
     
     console.log('[Code Review] Starting checks for:', filePath);
     
-    // 执行各项检查
-    const exportIssues = checkExportDefault(content, filePath, options);
-    console.log('[Code Review] Export issues:', exportIssues.length);
-    issues.push(...exportIssues);
-    
-    const tailwindIssues = checkTailwindCSS(content, filePath);
-    console.log('[Code Review] Tailwind issues:', tailwindIssues.length);
-    issues.push(...tailwindIssues);
-    
-    const axureIssues = checkAxureAPI(content, filePath);
-    console.log('[Code Review] Axure issues:', axureIssues.length);
-    issues.push(...axureIssues);
+    if (mode === 'axure-export') {
+      const exportIssues = checkAxureExportStructure(content, filePath);
+      console.log('[Code Review] Axure export structure issues:', exportIssues.length);
+      issues.push(...exportIssues);
+
+      const tailwindIssues = checkTailwindCSS(content, filePath);
+      console.log('[Code Review] Tailwind issues:', tailwindIssues.length);
+      issues.push(...tailwindIssues.map((issue) => ({
+        ...issue,
+        blocking: issue.type === 'error',
+        category: 'tailwind' as const,
+      })));
+
+      const axureIssues = collectAxureExportApiIssues(content, filePath);
+      console.log('[Code Review] Axure export API issues:', axureIssues.length);
+      issues.push(...axureIssues);
+
+    } else {
+      const exportIssues = checkExportDefault(content, filePath, options);
+      console.log('[Code Review] Export issues:', exportIssues.length);
+      issues.push(...exportIssues);
+
+      const tailwindIssues = checkTailwindCSS(content, filePath);
+      console.log('[Code Review] Tailwind issues:', tailwindIssues.length);
+      issues.push(...tailwindIssues);
+
+      const axureIssues = checkAxureAPI(content, filePath);
+      console.log('[Code Review] Axure issues:', axureIssues.length);
+      issues.push(...axureIssues);
+    }
     
     console.log('[Code Review] Total issues:', issues.length);
     
@@ -346,18 +469,12 @@ function reviewFile(filePath: string, options: ReviewOptions = {}): ReviewResult
     issues.push({
       type: 'error',
       rule: 'file-read-error',
-      message: `读取文件失败: ${error.message}`
+      message: `读取文件失败: ${error.message}`,
+      blocking: true,
     });
   }
-  
-  // 只有 error 类型的问题才算不通过
-  const hasErrors = issues.some(issue => issue.type === 'error');
-  
-  return {
-    file: filePath,
-    passed: !hasErrors,
-    issues
-  };
+
+  return buildReviewResult(filePath, mode, issues);
 }
 
 function createMissingListPreview(): AxureApiListPreview {
@@ -777,6 +894,80 @@ export function getAxureApiPreviewFromFile(filePath: string): AxureApiPreviewRes
   }
 }
 
+function isExplicitAxureApiUsage(content: string): boolean {
+  return /AxureHandle|AxureProps|useImperativeHandle|forwardRef(?:\s*<|\s*\()/.test(content);
+}
+
+function collectAxureExportApiIssues(content: string, filePath: string): ReviewIssue[] {
+  const issues: ReviewIssue[] = [];
+  const explicitUsage = isExplicitAxureApiUsage(content);
+  const preview = extractAxureApiPreviewFromContent(content, filePath);
+
+  if (!explicitUsage) {
+    return issues;
+  }
+
+  issues.push(...checkAxureAPI(content, filePath).map((issue) => {
+    if (issue.rule === 'axure-api-imperative-handle') {
+      return {
+        ...issue,
+        type: 'error' as const,
+        blocking: true,
+        category: 'axure-api' as const,
+      };
+    }
+    return {
+      ...issue,
+      blocking: issue.type === 'error',
+      category: 'axure-api' as const,
+    };
+  }));
+
+  if (!preview.hasAxureHandle) {
+    issues.push({
+      type: 'error',
+      rule: 'axure-api-handle-contract',
+      message: '检测到 Axure API 用法，但未找到 useImperativeHandle 返回的 AxureHandle 对象',
+      suggestion: '请通过 useImperativeHandle 返回 getVar、fireAction 与五类列表',
+      blocking: true,
+      category: 'axure-api',
+    });
+    return issues;
+  }
+
+  AXURE_LIST_KEYS.forEach((key) => {
+    const listPreview = preview.lists[key];
+
+    if (listPreview.parseStatus === 'missing') {
+      issues.push({
+        type: 'error',
+        rule: `axure-api-missing-${key}`,
+        message: `已接入 Axure API，但缺少 ${key} 定义`,
+        suggestion: `请在 useImperativeHandle 返回对象中补齐 ${key}`,
+        blocking: true,
+        category: 'axure-api',
+      });
+      return;
+    }
+
+  });
+
+  preview.lists.varList.items.forEach((item, index) => {
+    if (typeof item.name === 'string' && !/^[a-z0-9_]+$/.test(item.name)) {
+      issues.push({
+        type: 'error',
+        rule: 'axure-api-var-name',
+        message: `varList 第 ${index + 1} 项 name="${item.name}" 不符合 snake_case 规范`,
+        suggestion: '请使用小写字母、数字和下划线命名变量',
+        blocking: true,
+        category: 'axure-api',
+      });
+    }
+  });
+
+  return issues;
+}
+
 function isSafeRelativeTargetPath(targetPath: string): boolean {
   const normalized = String(targetPath || '');
   if (!normalized) return false;
@@ -841,7 +1032,8 @@ export function codeReviewPlugin(): Plugin {
 
           if (isCodeReviewRoute) {
             const enforceComponentExportName = body.enforceComponentExportName === true;
-            const result = reviewFile(filePath, { enforceComponentExportName });
+            const mode = body.mode === 'axure-export' ? 'axure-export' : 'default';
+            const result = reviewFile(filePath, { enforceComponentExportName, mode });
             sendJson(res, 200, result);
             return;
           }

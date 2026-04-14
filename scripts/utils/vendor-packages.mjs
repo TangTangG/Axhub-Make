@@ -47,6 +47,29 @@ function resolvePackageOutputDir(appRoot, pkg) {
   return path.resolve(appRoot, pkg.outputDir);
 }
 
+function listRequiredVendoredPaths(outputRoot, pkg) {
+  const requiredPaths = new Set();
+
+  for (const relativePath of pkg.copy) {
+    if (relativePath === 'package.json') {
+      requiredPaths.add(path.join(outputRoot, 'package.json'));
+      continue;
+    }
+
+    requiredPaths.add(path.join(outputRoot, relativePath));
+  }
+
+  requiredPaths.add(path.join(outputRoot, pkg.runtimeEntry));
+  requiredPaths.add(path.join(outputRoot, pkg.typesEntry));
+
+  return Array.from(requiredPaths);
+}
+
+function hasPublishedVendorArtifacts(appRoot, pkg) {
+  const outputRoot = resolvePackageOutputDir(appRoot, pkg);
+  return listRequiredVendoredPaths(outputRoot, pkg).every((requiredPath) => fs.existsSync(requiredPath));
+}
+
 function createVendoredPackageJson(pkg, sourceRoot) {
   const sourcePkgPath = path.join(sourceRoot, 'package.json');
   const sourcePkg = fs.existsSync(sourcePkgPath) ? readJson(sourcePkgPath) : {};
@@ -253,6 +276,9 @@ export function syncVendorPackages(appRoot, config, options = {}) {
     const outputRoot = resolvePackageOutputDir(appRoot, pkg);
 
     if (!fs.existsSync(sourceRoot)) {
+      if (hasPublishedVendorArtifacts(appRoot, pkg)) {
+        continue;
+      }
       throw new Error(`Vendor source package not found: ${sourceRoot}`);
     }
 

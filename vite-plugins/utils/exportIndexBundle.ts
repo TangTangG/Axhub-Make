@@ -1,12 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 
+import { generateAxureExportCode } from './axureExportCode';
+
 export interface ExportIndexBundle {
   entry: {
     name: string;
     group: string;
     displayName: string;
     code: string;
+    axureCode: string;
+    axureCodePath: string;
     hackCss: string;
   };
   annotation?: {
@@ -334,10 +338,10 @@ function hasAnnotationContent(params: {
   return Object.values(params.markdownMap).some((content) => content.trim().length > 0);
 }
 
-export function buildExportIndexBundle(
+export async function buildExportIndexBundle(
   projectRoot: string,
   descriptor: ExportBundleEntryDescriptor,
-): ExportIndexBundle {
+): Promise<ExportIndexBundle> {
   const jsRelativePath = descriptor.jsPath || `${descriptor.key}.js`;
   const entryRoot = path.resolve(projectRoot, 'src', descriptor.group, descriptor.name);
   const builtCodePath = path.resolve(projectRoot, 'dist', jsRelativePath);
@@ -431,12 +435,16 @@ export function buildExportIndexBundle(
     }
     : undefined;
 
+  const axureExport = await generateAxureExportCode(projectRoot, descriptor.key);
+
   return {
     entry: {
       name: descriptor.name,
       group: descriptor.group,
       displayName: descriptor.displayName,
       code: readTextFileIfExists(builtCodePath),
+      axureCode: axureExport.code,
+      axureCodePath: axureExport.codePath,
       hackCss: readTextFileIfExists(hackCssPath),
     },
     ...(annotation ? { annotation } : {}),

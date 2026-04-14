@@ -131,13 +131,26 @@ Antd 电商后台首页
 
 ## ⚙️ Axure API 说明
 
+- **导出模式**：该原型用于 Axure 导出交付，入口文件头部需保留 `@mode axure` 与 `/skills/axure-export-workflow/SKILL.md` 标记
+
 ### 5.1 事件列表（eventList）
+
+- `onOrderClick`：点击订单“详情”时触发，携带当前订单数据
+- `onProductClick`：点击热销商品项时触发，供外部绑定后续行为
 
 ### 5.2 动作列表（actionList）
 
+- `refreshData`：触发页面数据刷新动作（当前为占位接口）
+
 ### 5.3 变量列表（varList）
 
+- `selected_order`：当前通过订单表格“详情”操作选中的订单对象
+
+**命名规范**：使用 snake_case（小写字母、数字、下划线）
+
 ### 5.4 配置项列表（configList）
+
+- `title`：页面顶部标题，默认值为“电商后台”
 
 ### 5.5 数据项列表（dataList）
 

@@ -7,6 +7,7 @@ import archiver from 'archiver';
 import { getRequestPathname } from './utils/httpUtils';
 import { buildAttachmentContentDisposition } from './utils/contentDisposition';
 import { scanProjectEntries, writeEntriesManifestAtomic, readEntriesManifest } from './utils/entriesManifest';
+import { generateAxureExportCode } from './utils/axureExportCode';
 import { buildExportIndexBundle } from './utils/exportIndexBundle';
 import { buildPreviewTitle, readEntryDisplayName } from './utils/previewTitle';
 
@@ -477,13 +478,33 @@ function resolveRequestedEntry(projectRoot: string, targetPath: string): ExportE
   return createExportEntry(projectRoot, targetPath);
 }
 
+function resolveManifestEntry(projectRoot: string, targetPath: string): ExportEntry | null {
+  const manifest = ensureManifest(projectRoot);
+  const item = manifest.items?.[targetPath] as { group: string; name: string } | undefined;
+  if (!item || (item.group !== 'components' && item.group !== 'prototypes')) {
+    return null;
+  }
+
+  const srcIndexPath = path.join(projectRoot, 'src', targetPath, 'index.tsx');
+  return {
+    key: targetPath,
+    group: item.group,
+    name: item.name,
+    displayName: readEntryDisplayName(srcIndexPath) || item.name,
+    jsPath: `${targetPath}.js`,
+  };
+}
+
 export function exportHtmlApiPlugin(): Plugin {
   return {
     name: 'export-html-api-plugin',
     configureServer(server: any) {
       server.middlewares.use(async (req: any, res: any, next: any) => {
         const pathname = getRequestPathname(req);
-        if (req.method !== 'GET' || (pathname !== '/api/export-html' && pathname !== '/api/export-index-bundle')) {
+        if (
+          req.method !== 'GET'
+          || (pathname !== '/api/export-html' && pathname !== '/api/export-index-bundle' && pathname !== '/api/axure-export-code')
+        ) {
           return next();
         }
 
@@ -492,6 +513,23 @@ export function exportHtmlApiPlugin(): Plugin {
         try {
           const requestUrl = new URL(req.url, 'http://127.0.0.1');
           const targetPath = requestUrl.searchParams.get('path')?.trim() || '';
+
+          if (pathname === '/api/axure-export-code') {
+            if (!targetPath) {
+              return sendJSON(res, 400, { error: '缺少 path 参数' });
+            }
+
+            const entry = resolveManifestEntry(projectRoot, targetPath);
+            if (!entry) {
+              return sendJSON(res, 404, { error: '未找到可导出的原型或组件' });
+            }
+
+            const result = await generateAxureExportCode(projectRoot, entry.key);
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+            res.end(result.code);
+            return;
+          }
 
           if (pathname === '/api/export-index-bundle') {
             if (!targetPath) {
@@ -503,7 +541,7 @@ export function exportHtmlApiPlugin(): Plugin {
               return sendJSON(res, 404, { error: '未找到可导出的原型或组件' });
             }
 
-            return sendJSON(res, 200, buildExportIndexBundle(projectRoot, entry));
+            return sendJSON(res, 200, await buildExportIndexBundle(projectRoot, entry));
           }
 
           console.log('\n📦 [导出 HTML] 开始构建...');
@@ -553,10 +591,8 @@ export function exportHtmlApiPlugin(): Plugin {
           archive.pipe(res);
 
           const distDir = path.join(projectRoot, 'dist');
-          const adminAssetsDir = path.join(projectRoot, 'admin', 'assets');
-          if (fs.existsSync(adminAssetsDir)) {
-            archive.directory(adminAssetsDir, 'assets');
-          }
+          // Exported HTML pages use an inline template plus a tiny offline bootstrap,
+          // so the full admin asset set (spec/editor/dev templates) is unnecessary.
           archive.file(
             resolveNodeModuleFile(projectRoot, path.join('react', 'umd', OFFLINE_REACT_FILE_NAME)),
             { name: `assets/${OFFLINE_REACT_FILE_NAME}` },

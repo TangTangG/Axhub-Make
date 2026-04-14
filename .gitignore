@@ -11,6 +11,8 @@ dist/
 tests/
 vite-plugins/**/*.test.ts
 !vite-plugins/jagat-ui-clone-conversion.test.ts
+!vendor/**/dist/
+!vendor/**/dist/**
 *.tsbuildinfo
 
 # Vite

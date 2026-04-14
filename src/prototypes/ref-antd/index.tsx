@@ -1,7 +1,9 @@
 /**
  * @name Antd 电商后台
- * 
+ * @mode axure
+ *
  * 参考资料：
+ * - /skills/axure-export-workflow/SKILL.md
  * - /rules/development-guide.md
  * - /rules/axure-api-guide.md
  * - /docs/设计规范.UIGuidelines.md
@@ -226,7 +228,7 @@ const ACTION_LIST: Action[] = [
 ];
 
 const VAR_LIST: KeyDesc[] = [
-  { name: 'selectedOrder', desc: '当前选中的订单' }
+  { name: 'selected_order', desc: '当前选中的订单' }
 ];
 
 const CONFIG_LIST: ConfigItem[] = [
@@ -299,7 +301,7 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
 
   useImperativeHandle(ref, () => ({
     getVar: (name: string) => {
-      const vars: Record<string, any> = { selectedOrder };
+      const vars: Record<string, any> = { selected_order: selectedOrder };
       return vars[name];
     },
     fireAction: (name: string, params?: any) => {

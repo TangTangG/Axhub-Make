@@ -112,4 +112,48 @@ describe('vendor packages', () => {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it('keeps published vendor artifacts when source packages are unavailable', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-vendor-fallback-test-'));
+    const appTempRoot = path.join(tempRoot, 'apps', 'axhub-make');
+    const vendoredRoot = path.join(appTempRoot, 'vendor', 'demo-package');
+    const vendoredDistRoot = path.join(vendoredRoot, 'dist');
+
+    fs.mkdirSync(vendoredDistRoot, { recursive: true });
+    fs.writeFileSync(path.join(vendoredDistRoot, 'index.mjs'), 'export const published = true;\n', 'utf8');
+    fs.writeFileSync(path.join(vendoredDistRoot, 'index.d.ts'), 'export declare const published: true;\n', 'utf8');
+    fs.writeFileSync(
+      path.join(vendoredRoot, 'package.json'),
+      JSON.stringify({ name: 'demo-package', type: 'module' }, null, 2),
+      'utf8',
+    );
+
+    const config = {
+      packages: [
+        {
+          packageName: 'demo-package',
+          sourceDir: '../../packages/demo-package',
+          outputDir: 'vendor/demo-package',
+          runtimeEntry: 'dist/index.mjs',
+          typesEntry: 'dist/index.d.ts',
+          copy: ['dist', 'package.json'],
+        },
+      ],
+    };
+
+    try {
+      const result = syncVendorPackages(appTempRoot, config, {
+        shouldBuild: true,
+        onBuildPackage: () => {
+          throw new Error('build hook should not run when published artifacts are reused');
+        },
+      });
+
+      expect(result.packages).toHaveLength(1);
+      expect(fs.readFileSync(path.join(vendoredDistRoot, 'index.mjs'), 'utf8')).toContain('published = true');
+      expect(fs.existsSync(path.join(appTempRoot, 'vendor', 'vendor-aliases.generated.json'))).toBe(true);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });

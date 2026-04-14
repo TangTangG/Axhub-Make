@@ -31,7 +31,7 @@ https://raw.githubusercontent.com/lintendo/Axhub-Make/refs/heads/main/README.md
 
 ```
 请根据这里的说明安装并配置 Axhub Make：
-https://raw.githubusercontent.com/lintendo/Axhub-Make/refs/heads/main/rules/installation-guide.md
+https://raw.githubusercontent.com/lintendo/Axhub-Make/refs/heads/main/rules/installation.md
 ```
 
 ---
