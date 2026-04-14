@@ -75,30 +75,65 @@
   <!-- 加载 bootstrap JS（会自动挂载到 window.HtmlTemplateBootstrap） -->
   <script type="module" src="{{BOOTSTRAP_PATH}}"></script>
 
-  <!-- 加载组件 JS（IIFE 格式，会挂载 UserComponent 到 window） -->
-  <script src="{{ENTRY}}"></script>
-
   <script type="module">
-    // 等待 bootstrap 和组件加载完成
-    function waitForReady() {
-      if (window.HtmlTemplateBootstrap && window.UserComponent) {
-        const { renderComponent, React, ReactDOM } = window.HtmlTemplateBootstrap;
+    function waitForBootstrap(timeoutMs = 10000) {
+      return new Promise((resolve, reject) => {
+        const startedAt = Date.now();
+
+        function check() {
+          if (window.HtmlTemplateBootstrap) {
+            resolve(window.HtmlTemplateBootstrap);
+            return;
+          }
+
+          if (Date.now() - startedAt >= timeoutMs) {
+            reject(new Error('[Html Template] Bootstrap 初始化超时'));
+            return;
+          }
+
+          setTimeout(check, 10);
+        }
+
+        check();
+      });
+    }
+
+    function loadEntryScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = false;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error(`[Html Template] 入口脚本加载失败: ${src}`));
+        document.body.appendChild(script);
+      });
+    }
+
+    async function bootstrapAndRender() {
+      try {
+        const bootstrap = await waitForBootstrap();
+        const { renderComponent, React, ReactDOM } = bootstrap;
 
         // 将 React 和 ReactDOM 挂载到全局
         window.React = React;
         window.ReactDOM = ReactDOM;
 
-        // 获取组件
-        const Component = window.UserComponent.Component || window.UserComponent.default || window.UserComponent;
+        // 加载组件 JS（IIFE 格式，会挂载 UserComponent 到 window）
+        await loadEntryScript('{{ENTRY}}');
+
+        const Component = window.UserComponent?.Component || window.UserComponent?.default || window.UserComponent;
+        if (!Component) {
+          throw new Error('[Html Template] 入口脚本未暴露 UserComponent');
+        }
 
         // 渲染组件
         renderComponent(Component);
-      } else {
-        setTimeout(waitForReady, 10);
+      } catch (error) {
+        console.error('[Html Template] 页面初始化失败:', error);
       }
     }
 
-    waitForReady();
+    bootstrapAndRender();
   </script>
 
 </body>

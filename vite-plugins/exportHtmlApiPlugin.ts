@@ -8,6 +8,11 @@ import { getRequestPathname } from './utils/httpUtils';
 import { buildAttachmentContentDisposition } from './utils/contentDisposition';
 import { scanProjectEntries, writeEntriesManifestAtomic, readEntriesManifest } from './utils/entriesManifest';
 import { buildExportIndexBundle } from './utils/exportIndexBundle';
+import { buildPreviewTitle, readEntryDisplayName } from './utils/previewTitle';
+
+const OFFLINE_REACT_FILE_NAME = 'react.production.min.js';
+const OFFLINE_REACT_DOM_FILE_NAME = 'react-dom.production.min.js';
+const OFFLINE_BOOTSTRAP_FILE_NAME = 'export-html-bootstrap.js';
 
 interface ExportEntry {
   key: string;
@@ -15,16 +20,6 @@ interface ExportEntry {
   name: string;
   displayName: string;
   jsPath: string;
-}
-
-function getDisplayName(filePath: string): string | null {
-  try {
-    const content = fs.readFileSync(filePath, 'utf8');
-    const match = content.match(/@name\s+([^\n]+)/);
-    return match ? match[1].trim() : null;
-  } catch {
-    return null;
-  }
 }
 
 function createExportEntry(projectRoot: string, key: string): ExportEntry | null {
@@ -44,7 +39,7 @@ function createExportEntry(projectRoot: string, key: string): ExportEntry | null
     key,
     group: item.group,
     name: item.name,
-    displayName: getDisplayName(srcIndexPath) || item.name,
+    displayName: readEntryDisplayName(srcIndexPath) || item.name,
     jsPath: `${key}.js`,
   };
 }
@@ -89,27 +84,205 @@ function readExportTemplate(projectRoot: string): string {
   return fs.readFileSync(templatePath, 'utf8');
 }
 
+function resolveNodeModuleFile(projectRoot: string, relativePath: string): string {
+  let currentDir = projectRoot;
+
+  while (true) {
+    const candidate = path.join(currentDir, 'node_modules', relativePath);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      break;
+    }
+    currentDir = parentDir;
+  }
+
+  throw new Error(`缺少离线导出依赖资源: ${relativePath}`);
+}
+
+function getOfflineBootstrapScript(): string {
+  return `;(function () {
+  function applyRootSizing() {
+    var urlParams = new URLSearchParams(window.location.search);
+    var scale = urlParams.get('scale');
+    var width = urlParams.get('width');
+    var height = urlParams.get('height');
+    var rootElement = document.getElementById('root');
+
+    if (!rootElement) {
+      return;
+    }
+
+    if (scale) {
+      var scaleValue = parseFloat(scale);
+      if (!Number.isNaN(scaleValue) && scaleValue > 0) {
+        rootElement.style.transform = 'scale(' + scaleValue + ')';
+        rootElement.style.transformOrigin = 'top left';
+      }
+    }
+
+    if (width) {
+      var widthValue = parseInt(width, 10);
+      if (!Number.isNaN(widthValue) && widthValue > 0) {
+        rootElement.style.width = widthValue + 'px';
+      }
+    }
+
+    if (height) {
+      var heightValue = parseInt(height, 10);
+      if (!Number.isNaN(heightValue) && heightValue > 0) {
+        rootElement.style.height = heightValue + 'px';
+      }
+    }
+  }
+
+  function renderComponent(Component, props) {
+    var rootElement = document.getElementById('root');
+    if (!rootElement) {
+      console.error('[Html Template] 找不到 #root 元素');
+      return;
+    }
+
+    if (!window.React || !window.ReactDOM) {
+      console.error('[Html Template] React 或 ReactDOM 未加载');
+      return;
+    }
+
+    var finalProps = props || {
+      container: rootElement,
+      config: {},
+      data: {},
+      events: {},
+    };
+
+    try {
+      if (typeof window.ReactDOM.createRoot === 'function') {
+        window.ReactDOM.createRoot(rootElement).render(window.React.createElement(Component, finalProps));
+        return;
+      }
+
+      if (typeof window.ReactDOM.render === 'function') {
+        window.ReactDOM.render(window.React.createElement(Component, finalProps), rootElement);
+        return;
+      }
+
+      throw new Error('当前 ReactDOM 版本不支持 createRoot/render');
+    } catch (error) {
+      console.error('[Html Template] 渲染失败:', error);
+    }
+  }
+
+  applyRootSizing();
+
+  window.__AXHUB_DEFINE_COMPONENT__ = function (Component) {
+    window.UserComponent = Component;
+    return Component;
+  };
+
+  window.HtmlTemplateBootstrap = {
+    renderComponent: renderComponent,
+    React: window.React,
+    ReactDOM: window.ReactDOM,
+  };
+})();`;
+}
+
+function buildOfflineVendorScriptTags(options: {
+  reactPath: string;
+  reactDomPath: string;
+  bootstrapPath: string;
+}): string {
+  return `  <script src="${options.reactPath}"></script>
+  <script src="${options.reactDomPath}"></script>
+  <script src="${options.bootstrapPath}"></script>`;
+}
+
+function buildOfflineRenderScript(entryScriptPath: string): string {
+  return `  <script>
+    function waitForBootstrap(timeoutMs = 10000) {
+      return new Promise((resolve, reject) => {
+        const startedAt = Date.now();
+
+        function check() {
+          if (window.HtmlTemplateBootstrap) {
+            resolve(window.HtmlTemplateBootstrap);
+            return;
+          }
+
+          if (Date.now() - startedAt >= timeoutMs) {
+            reject(new Error('[Html Template] Bootstrap 初始化超时'));
+            return;
+          }
+
+          setTimeout(check, 10);
+        }
+
+        check();
+      });
+    }
+
+    function loadEntryScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = false;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error(\`[Html Template] 入口脚本加载失败: \${src}\`));
+        document.body.appendChild(script);
+      });
+    }
+
+    async function bootstrapAndRender() {
+      try {
+        const bootstrap = await waitForBootstrap();
+        const { renderComponent, React, ReactDOM } = bootstrap;
+
+        window.React = React;
+        window.ReactDOM = ReactDOM;
+
+        await loadEntryScript('${entryScriptPath}');
+
+        const Component = window.UserComponent?.Component || window.UserComponent?.default || window.UserComponent;
+        if (!Component) {
+          throw new Error('[Html Template] 入口脚本未暴露 UserComponent');
+        }
+
+        renderComponent(Component);
+      } catch (error) {
+        console.error('[Html Template] 页面初始化失败:', error);
+      }
+    }
+
+    bootstrapAndRender();
+  </script>`;
+}
+
 function generateExportPageHtml(
   projectRoot: string,
   entry: ExportEntry,
   options: {
     entryScriptPath: string;
+    reactPath: string;
+    reactDomPath: string;
     bootstrapPath: string;
   },
 ): string {
-  const bundle = buildExportIndexBundle(projectRoot, entry);
-  const title = `${entry.group === 'components' ? 'Element' : 'Page'}: ${entry.displayName}`;
-  const bootstrapTag = `<script type="module" src="${options.bootstrapPath}"></script>`;
-  const bundleTag = `<script>
-    window.__AXHUB_EXPORT_BUNDLE__ = ${serializeForInlineScript(bundle)};
-  </script>`;
+  const title = buildPreviewTitle({
+    group: entry.group,
+    name: entry.name,
+    displayName: entry.displayName,
+    mode: 'export',
+  });
 
   return readExportTemplate(projectRoot)
     .replace(/\{\{TITLE\}\}/g, escapeHtml(title))
-    .replace(/\{\{ENTRY\}\}/g, options.entryScriptPath)
-    .replace(/\{\{BOOTSTRAP_PATH\}\}/g, options.bootstrapPath)
-    .replace(/window\.location\.pathname\.includes\('\/components\/'\)/g, `window.location.pathname.includes('/components/') || window.__AXHUB_EXPORT_BUNDLE__?.entry?.group === 'components'`)
-    .replace(bootstrapTag, `${bundleTag}\n\n  ${bootstrapTag}`);
+    .replace('<body>', `<body>\n\n  <script>\n    window.__AXHUB_EXPORT_META__ = ${serializeForInlineScript({ group: entry.group })};\n  </script>`)
+    .replace(/window\.location\.pathname\.includes\('\/components\/'\)/g, `window.location.pathname.includes('/components/') || window.__AXHUB_EXPORT_META__?.group === 'components'`)
+    .replace(/<script type="module" src="\{\{BOOTSTRAP_PATH\}\}"><\/script>/, buildOfflineVendorScriptTags(options))
+    .replace(/<script type="module">[\s\S]*?bootstrapAndRender\(\);\s*<\/script>/, buildOfflineRenderScript(options.entryScriptPath));
 }
 
 function generateIndexHtml(entries: ExportEntry[], projectName: string): string {
@@ -384,6 +557,15 @@ export function exportHtmlApiPlugin(): Plugin {
           if (fs.existsSync(adminAssetsDir)) {
             archive.directory(adminAssetsDir, 'assets');
           }
+          archive.file(
+            resolveNodeModuleFile(projectRoot, path.join('react', 'umd', OFFLINE_REACT_FILE_NAME)),
+            { name: `assets/${OFFLINE_REACT_FILE_NAME}` },
+          );
+          archive.file(
+            resolveNodeModuleFile(projectRoot, path.join('react-dom', 'umd', OFFLINE_REACT_DOM_FILE_NAME)),
+            { name: `assets/${OFFLINE_REACT_DOM_FILE_NAME}` },
+          );
+          archive.append(getOfflineBootstrapScript(), { name: `assets/${OFFLINE_BOOTSTRAP_FILE_NAME}` });
 
           if (singleEntry) {
             const entryJsPath = path.join(distDir, singleEntry.jsPath);
@@ -395,7 +577,9 @@ export function exportHtmlApiPlugin(): Plugin {
             archive.append(
               generateExportPageHtml(projectRoot, singleEntry, {
                 entryScriptPath: './index.js',
-                bootstrapPath: './assets/html-template-bootstrap.js',
+                reactPath: `./assets/${OFFLINE_REACT_FILE_NAME}`,
+                reactDomPath: `./assets/${OFFLINE_REACT_DOM_FILE_NAME}`,
+                bootstrapPath: `./assets/${OFFLINE_BOOTSTRAP_FILE_NAME}`,
               }),
               { name: 'index.html' },
             );
@@ -411,7 +595,9 @@ export function exportHtmlApiPlugin(): Plugin {
               archive.append(
                 generateExportPageHtml(projectRoot, entry, {
                   entryScriptPath: `./${entry.name}.js`,
-                  bootstrapPath: '../assets/html-template-bootstrap.js',
+                  reactPath: `../assets/${OFFLINE_REACT_FILE_NAME}`,
+                  reactDomPath: `../assets/${OFFLINE_REACT_DOM_FILE_NAME}`,
+                  bootstrapPath: `../assets/${OFFLINE_BOOTSTRAP_FILE_NAME}`,
                 }),
                 { name: `${entry.group}/${entry.name}.html` },
               );

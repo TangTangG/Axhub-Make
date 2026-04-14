@@ -8,6 +8,7 @@ import {
   createPreviewHostOptions,
   replacePreviewLoaderScript,
 } from '../previewHost';
+import { buildPreviewTitle, readEntryDisplayName } from '../../utils/previewTitle';
 
 type HtmlResponder = (html: string, transformUrl?: string) => Promise<void>;
 
@@ -57,10 +58,13 @@ export async function handleIndexHtml(
       logVirtualHtmlDebug('检查 TSX 文件:', tsxPath, '存在:', fs.existsSync(tsxPath));
 
       if (fs.existsSync(tsxPath)) {
-        const typeLabel = type === 'components' ? 'Component' : type === 'prototypes' ? 'Prototype' : 'Theme';
-        const title = versionId
-          ? `${typeLabel}: ${name} (版本: ${versionId}) - Dev Preview`
-          : `${typeLabel}: ${name} - Dev Preview`;
+        const displayName = readEntryDisplayName(tsxPath);
+        const title = buildPreviewTitle({
+          group: type,
+          name,
+          displayName,
+          mode: 'dev',
+        });
         // Vite 的 html-proxy/import-analysis 在虚拟 HTML 模块里解析 import 时，
         // 对包含中文目录名的百分号编码路径兼容性不稳定。这里保留页面 URL 为编码形式，
         // 但模块 import 使用原始路由路径，让 Vite 能正确映射到 src 下的真实文件。

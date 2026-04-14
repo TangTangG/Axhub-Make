@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { createVendorAliases, loadVendorPackagesConfig } from './scripts/utils/vendor-packages.mjs';
 
 // ── 构建模式也需要的插件（静态导入） ──
 import { axhubComponentEnforcer } from './vite-plugins/axhubComponentEnforcer';
@@ -115,6 +116,8 @@ async function loadServePlugins(): Promise<Plugin[]> {
 }
 
 const projectRoot = process.cwd();
+const vendorPackagesConfig = loadVendorPackagesConfig(projectRoot);
+const vendorAliases = createVendorAliases(projectRoot, vendorPackagesConfig);
 const configPath = path.resolve(projectRoot, MAKE_CONFIG_RELATIVE_PATH);
 let axhubConfig: any = { server: { host: 'localhost', allowLAN: true } };
 if (fs.existsSync(configPath)) {
@@ -180,6 +183,10 @@ export default defineConfig(async ({ command }) => {
     resolve: {
       alias: [
         { find: '@', replacement: path.resolve(projectRoot, 'src') },
+        ...vendorAliases.map((alias) => ({
+          find: new RegExp(`^${alias.packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
+          replacement: alias.runtimeEntryAbsolute,
+        })),
         !isIifeBuild && !isServe && {
           find: /^react$/,
           replacement: path.resolve(projectRoot, 'src/common/react-shim.js')
@@ -281,6 +288,8 @@ export default defineConfig(async ({ command }) => {
       include: [
         'tests/**/*.test.ts',
         'tests/**/*.test.tsx',
+        'scripts/**/*.test.ts',
+        'scripts/**/*.test.mjs',
         'vite-plugins/**/*.test.ts',
       ],
       root: '.',
