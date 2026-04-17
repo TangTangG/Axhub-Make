@@ -1,5 +1,5 @@
 import type { Plugin } from 'vite';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
@@ -12,6 +12,15 @@ import {
 } from './gitVersionSupport';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+export const buildGitHistoryArgs = (targetPath: string): string[] => [
+  'log',
+  '-20',
+  '--pretty=format:%H|%an|%ae|%at|%s',
+  '--',
+  `src/${targetPath}`,
+];
 
 /**
  * Git 版本管理 API 插件
@@ -248,9 +257,11 @@ export function gitVersionApiPlugin(): Plugin {
       })();
 
       // Helper function to execute git command
-      const execGit = async (command: string, cwd: string) => {
+      const execGit = async (command: string | string[], cwd: string) => {
         try {
-          const { stdout, stderr } = await execAsync(command, { cwd, maxBuffer: 1024 * 1024 * 10 });
+          const { stdout, stderr } = Array.isArray(command)
+            ? await execFileAsync('git', command, { cwd, maxBuffer: 1024 * 1024 * 10 })
+            : await execAsync(command, { cwd, maxBuffer: 1024 * 1024 * 10 });
           return { stdout: stdout.trim(), stderr: stderr.trim() };
         } catch (error: any) {
           const message = extractGitErrorMessage(error);
@@ -374,7 +385,7 @@ export function gitVersionApiPlugin(): Plugin {
             }
 
             // Get git log for the folder (last 20 commits)
-            const gitCommand = `git log -20 --pretty=format:'%H|%an|%ae|%at|%s' -- src/${targetPath}`;
+            const gitCommand = buildGitHistoryArgs(targetPath);
             const { stdout } = await execGit(gitCommand, projectRoot);
 
             if (!stdout) {
@@ -736,3 +747,7 @@ export function gitVersionApiPlugin(): Plugin {
     }
   };
 }
+
+export const __gitVersionApiTestUtils = {
+  buildGitHistoryArgs,
+};

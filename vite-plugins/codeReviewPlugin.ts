@@ -825,13 +825,15 @@ function buildListPreview(
     return createMissingListPreview();
   }
 
-  const property = handleObject.properties.find((node) => {
-    if (!ts.isPropertyAssignment(node) && !ts.isShorthandPropertyAssignment(node)) {
-      return false;
+  const property = handleObject.properties.find(
+    (node): node is ts.PropertyAssignment | ts.ShorthandPropertyAssignment => {
+      if (!ts.isPropertyAssignment(node) && !ts.isShorthandPropertyAssignment(node)) {
+        return false;
+      }
+      const propertyName = getObjectPropertyName(node.name);
+      return propertyName === key;
     }
-    const propertyName = getObjectPropertyName(node.name);
-    return propertyName === key;
-  });
+  );
 
   if (!property) {
     return createMissingListPreview();

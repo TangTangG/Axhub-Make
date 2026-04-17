@@ -1,13 +1,16 @@
-# CLI 命令参考
+# CLI Reference
 
 所有命令通过 `npx @axhub/genie` 调用，要求版本 ≥ 0.2.4。
 
-建议在 shell 中定义变量减少重复输入：
+建议先定义变量：
 
 ```bash
 CHANNEL="project-a"
 TARGET_CLIENT_ID=""
+PROVIDER="agent"
 ```
+
+选客户端时优先看 `channel`、`pageUrl`、`sessionId`、`capabilities`。
 
 ## 1. 服务检查
 
@@ -15,7 +18,7 @@ TARGET_CLIENT_ID=""
 npx @axhub/genie status --json
 ```
 
-确认 `running: true`，记录 `endpoint.apiBaseUrl`。
+确认 `running: true`；失败时直接停止并报告阻塞点。
 
 ## 2. 列出在线客户端
 
@@ -36,11 +39,9 @@ npx @axhub/genie editor snapshot \
   --target-client-id "$TARGET_CLIENT_ID"
 ```
 
-关注字段：`resource`、`selectedElement`、`modifiedElements`、`textChanges`、`styleChanges`、`statusSummary`。
+常看字段：`resource`、`selectedElement`、`modifiedElements`、`textChanges`、`styleChanges`、`statusSummary`。
 
 ## 4. 列出待处理节点
-
-### 处理待办
 
 ```bash
 npx @axhub/genie editor nodes list \
@@ -49,16 +50,12 @@ npx @axhub/genie editor nodes list \
   --status pending-dispatch,dirty
 ```
 
-### 排查卡住节点
-
 ```bash
 npx @axhub/genie editor nodes list \
   --channel "$CHANNEL" \
   --target-client-id "$TARGET_CLIENT_ID" \
   --status editing,error,completed
 ```
-
-### 精确查询
 
 ```bash
 npx @axhub/genie editor nodes list \
@@ -69,17 +66,15 @@ npx @axhub/genie editor nodes list \
 
 每个节点的关键字段：
 
-| 字段 | 说明 |
-|------|------|
-| `elementKey` | 节点唯一标识 |
-| `label` | CSS 选择器路径 |
-| `changeState` | `clean` / `dirty` / `handled` |
-| `taskState` | `idle` / `editing` / `completed` / `error` |
-| `hasNote` | 是否有标注文字 |
-| `hasImages` | 是否附带图片 |
-| `changeKinds` | 修改类型：`text` / `style` / `class` |
-| `dirtySince` | 变脏时间戳 |
-| `lastHandledAt` | 上次处理时间 |
+- `elementKey`
+- `label`
+- `changeState`
+- `taskState`
+- `hasNote`
+- `hasImages`
+- `changeKinds`
+- `dirtySince`
+- `lastHandledAt`
 
 状态别名：
 
@@ -98,8 +93,6 @@ npx @axhub/genie editor node screenshot \
 
 返回 `absolutePath`（本地文件路径）、`mimeType`、`width`、`height`、`size`。
 
-用途：仅靠 `label` 无法定位节点时，通过截图视觉确认。
-
 ## 6. 导出上下文图片
 
 ```bash
@@ -111,11 +104,9 @@ npx @axhub/genie editor context-images export \
 
 返回每张图片的 `absolutePath`、`mimeType`、`size`。
 
-注意：这是页面级共享上下文，未必能精准映射到单个 `elementKey`，需结合 note、label、截图交叉判断。
+注意：这是页面级共享上下文，不保证能精准映射到单个 `elementKey`。
 
 ## 7. 设置节点编辑状态
-
-### 开始处理
 
 ```bash
 npx @axhub/genie editor editing set \
@@ -123,12 +114,9 @@ npx @axhub/genie editor editing set \
   --target-client-id "$TARGET_CLIENT_ID" \
   --element-key "hero-card" \
   --state editing \
-  --provider codex \
-  --session-id "$SESSION_ID" \
-  --task-request-id "codex_hero-card_$(date +%s)"
+  --provider "$PROVIDER" \
+  --task-request-id "${PROVIDER}_hero-card_$(date +%s)"
 ```
-
-### 处理成功
 
 ```bash
 npx @axhub/genie editor editing set \
@@ -136,12 +124,9 @@ npx @axhub/genie editor editing set \
   --target-client-id "$TARGET_CLIENT_ID" \
   --element-key "hero-card" \
   --state completed \
-  --provider codex \
-  --session-id "$SESSION_ID" \
-  --task-request-id "codex_hero-card_done_$(date +%s)"
+  --provider "$PROVIDER" \
+  --task-request-id "${PROVIDER}_hero-card_done_$(date +%s)"
 ```
-
-### 处理失败
 
 ```bash
 npx @axhub/genie editor editing set \
@@ -149,12 +134,9 @@ npx @axhub/genie editor editing set \
   --target-client-id "$TARGET_CLIENT_ID" \
   --element-key "hero-card" \
   --state error \
-  --provider codex \
-  --session-id "$SESSION_ID" \
-  --task-request-id "codex_hero-card_error_$(date +%s)"
+  --provider "$PROVIDER" \
+  --task-request-id "${PROVIDER}_hero-card_error_$(date +%s)"
 ```
-
-### 异常退出兜底释放
 
 ```bash
 npx @axhub/genie editor editing set \
@@ -162,13 +144,14 @@ npx @axhub/genie editor editing set \
   --target-client-id "$TARGET_CLIENT_ID" \
   --element-key "hero-card" \
   --state idle \
-  --provider codex
+  --provider "$PROVIDER" \
+  --task-request-id "${PROVIDER}_hero-card_idle_$(date +%s)"
 ```
 
 说明：
-- `--state` 允许 `editing`、`idle`、`completed`、`error`
-- `editing.set` 控制 `taskState`，不直接改变 `changeState`
-- 结束后仍需重新读 `nodes list` 确认节点最终状态
+- 同一任务保持稳定 `provider`
+- 每个节点使用唯一 `taskRequestId`
+- `editing.set` 改的是 `taskState`，不是 `changeState`
 
 ## 8. 推荐执行顺序
 
@@ -181,12 +164,12 @@ npx @axhub/genie editor nodes list --channel "$CHANNEL" --target-client-id "$TAR
 
 然后按节点循环：
 
-1. `editor editing set --state editing`
-2. 如有需要，拉 `context-images export`
-3. 如仍难定位，拉 `node screenshot`
-4. 修改代码
-5. 重新拉 `snapshot` 与 `nodes list`
-6. 成功 → `editor editing set --state completed`；失败 → `--state error`；异常 → `--state idle`
+- `editor editing set --state editing`
+- 如有需要，拉 `context-images export`
+- 如仍难定位，拉 `node screenshot`
+- 修改代码
+- 重新拉 `snapshot` 与 `nodes list`
+- 成功写 `completed`；失败写 `error`；中断写 `idle`
 
 ## 9. 最终复核
 
@@ -202,7 +185,7 @@ npx @axhub/genie editor nodes list \
 如果列表仍有项，区分说明：
 - 页面改动是否已完成
 - 编辑器 backlog 是否仍残留
-- 哪些节点只是退出了 `editing`，但仍是 `dirty`
+- 哪些节点状态异常或仍未消费
 
 ## 10. CLI 通用参数
 
@@ -229,3 +212,5 @@ npx @axhub/genie editor nodes list \
 ```
 
 失败时 `ok: false` + `error.code` + `error.message`，CLI 以非 0 退出码结束。
+
+常见网络类错误 `CONNECTION_ERROR`、`CONNECTION_CLOSED`、`REQUEST_TIMEOUT` 可按 CLI 默认重试一次；持续失败时再上报。

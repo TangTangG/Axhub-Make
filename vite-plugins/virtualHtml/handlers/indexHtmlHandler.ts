@@ -173,6 +173,10 @@ export async function handleIndexHtml(
 
   // 兼容旧的 .html 路径检查（如果标准化失败）
   if (req.url?.includes('/index.html')) {
+    if (req.url.includes('html-proxy')) {
+      return false;
+    }
+
     const [urlWithoutQuery, queryString] = req.url.split('?');
     const urlPath = urlWithoutQuery.replace('/index.html', '');
     const pathParts = urlPath.split('/').filter(Boolean);

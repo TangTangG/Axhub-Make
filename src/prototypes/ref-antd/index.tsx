@@ -12,7 +12,7 @@
  */
 
 import './style.css';
-import React, { useState, useCallback, useImperativeHandle, forwardRef, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useImperativeHandle, forwardRef, useEffect, useRef, useMemo } from 'react';
 import * as echarts from 'echarts';
 import {
   Layout,
@@ -25,23 +25,23 @@ import {
   Button,
   Space,
   List,
-  Avatar,
   Typography,
-  Badge,
   DatePicker,
   theme,
-  Divider,
-  Tabs
+  Drawer,
+  Menu
 } from 'antd';
 import {
   ArrowUpOutlined,
   ArrowDownOutlined,
   ShoppingOutlined,
   UserOutlined,
-  MoneyCollectOutlined,
   ShoppingCartOutlined,
-  EllipsisOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  DownloadOutlined,
+  MenuOutlined,
+  DashboardOutlined,
+  SettingOutlined
 } from '@ant-design/icons';
 
 import type {
@@ -55,13 +55,14 @@ import type {
 } from '../../common/axure-types';
 
 import SideMenu from '../../components/side-menu';
+import { getDashboardLayoutProfile } from './layout';
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
 
 // --- Chart Components ---
 
-const SalesTrendChart = () => {
+const SalesTrendChart = ({ height, compact }: { height: number; compact: boolean }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
 
@@ -89,14 +90,20 @@ const SalesTrendChart = () => {
         data: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
         axisLine: { show: false },
         axisTick: { show: false },
-        axisLabel: { color: '#94a3b8' }
+        axisLabel: {
+          color: '#94a3b8',
+          fontSize: compact ? 11 : 12
+        }
       },
       yAxis: {
         type: 'value',
         splitLine: {
           lineStyle: { type: 'dashed', color: '#f1f5f9' }
         },
-        axisLabel: { color: '#94a3b8' }
+        axisLabel: {
+          color: '#94a3b8',
+          fontSize: compact ? 11 : 12
+        }
       },
       series: [
         {
@@ -139,12 +146,12 @@ const SalesTrendChart = () => {
       resizeObserver.disconnect();
       chartInstance.current?.dispose();
     };
-  }, []);
+  }, [compact]);
 
-  return <div ref={chartRef} className="chart-container" />;
+  return <div ref={chartRef} className="chart-container" style={{ height }} />;
 };
 
-const CategoryPieChart = () => {
+const CategoryPieChart = ({ height, compact }: { height: number; compact: boolean }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
 
@@ -160,13 +167,19 @@ const CategoryPieChart = () => {
       legend: {
         bottom: '0%',
         left: 'center',
-        icon: 'circle'
+        icon: 'circle',
+        itemWidth: compact ? 8 : 10,
+        itemHeight: compact ? 8 : 10,
+        itemGap: compact ? 12 : 18,
+        textStyle: {
+          fontSize: compact ? 11 : 12
+        }
       },
       series: [
         {
           name: '销售占比',
           type: 'pie',
-          radius: ['40%', '70%'],
+          radius: compact ? ['44%', '66%'] : ['40%', '70%'],
           avoidLabelOverlap: false,
           itemStyle: {
             borderRadius: 10,
@@ -211,12 +224,84 @@ const CategoryPieChart = () => {
       resizeObserver.disconnect();
       chartInstance.current?.dispose();
     };
-  }, []);
+  }, [compact]);
 
-  return <div ref={chartRef} className="chart-container" />;
+  return <div ref={chartRef} className="chart-container" style={{ height }} />;
 };
 
 // --- Definitions ---
+
+type DashboardMenuItem = {
+  key: string;
+  label: string;
+  icon?: string;
+  children?: DashboardMenuItem[];
+};
+
+const DASHBOARD_MENU_ITEMS: DashboardMenuItem[] = [
+  { key: 'dashboard', label: '仪表盘', icon: 'dashboard' },
+  {
+    key: 'orders',
+    label: '订单管理',
+    icon: 'shop',
+    children: [
+      { key: 'orders_list', label: '订单列表' },
+      { key: 'orders_refund', label: '退款管理' }
+    ]
+  },
+  { key: 'users', label: '用户管理', icon: 'user' },
+  { key: 'settings', label: '系统设置', icon: 'setting' }
+];
+
+function resolveMenuIcon(name?: string) {
+  switch (name) {
+    case 'dashboard':
+      return <DashboardOutlined />;
+    case 'shop':
+      return <ShoppingOutlined />;
+    case 'user':
+      return <UserOutlined />;
+    case 'setting':
+      return <SettingOutlined />;
+    default:
+      return undefined;
+  }
+}
+
+function mapMenuItems(items: DashboardMenuItem[]): any[] {
+  return items.map((item) => ({
+    key: item.key,
+    label: item.label,
+    icon: resolveMenuIcon(item.icon),
+    children: Array.isArray(item.children) && item.children.length > 0 ? mapMenuItems(item.children) : undefined
+  }));
+}
+
+function useViewportWidth() {
+  const [width, setWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') {
+      return 1440;
+    }
+    return window.innerWidth;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const handleResize = () => {
+      setWidth(window.innerWidth);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
+
+  return width;
+}
 
 const EVENT_LIST: EventItem[] = [
   { name: 'onOrderClick', desc: '点击订单时触发' },
@@ -263,6 +348,9 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
   const dataSource = innerProps && innerProps.data ? innerProps.data : {};
   const configSource = innerProps && innerProps.config ? innerProps.config : {};
   const onEventHandler = typeof innerProps.onEvent === 'function' ? innerProps.onEvent : () => undefined;
+  const viewportWidth = useViewportWidth();
+  const layoutProfile = useMemo(() => getDashboardLayoutProfile(viewportWidth), [viewportWidth]);
+  const menuItems = useMemo(() => mapMenuItems(DASHBOARD_MENU_ITEMS), []);
 
   const title = typeof configSource.title === 'string' && configSource.title ? configSource.title : '电商后台';
   
@@ -290,6 +378,8 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
   const products = Array.isArray(dataSource.products) ? dataSource.products : defaultProducts;
 
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [selectedMenuKey, setSelectedMenuKey] = useState('dashboard');
 
   const emitEvent = useCallback((eventName: string, payload?: any) => {
     try {
@@ -356,29 +446,84 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
     },
   ];
 
+  const handleMenuSelect = useCallback((key: string) => {
+    setSelectedMenuKey(key);
+    setMobileMenuOpen(false);
+  }, []);
+
+  const handleMobileMenuClick = useCallback((info: any) => {
+    const key = typeof info?.key === 'string' ? info.key : String(info?.key ?? '');
+    if (!key) {
+      return;
+    }
+    handleMenuSelect(key);
+  }, [handleMenuSelect]);
+
   return (
-    <Layout style={{ minHeight: '100vh', background: '#f5f7fa' }}>
-      <SideMenu title="电商后台" />
+    <Layout style={{ minHeight: '100dvh', background: '#f5f7fa' }}>
+      {layoutProfile.showDesktopSider ? (
+        <SideMenu
+          title="电商后台"
+          items={DASHBOARD_MENU_ITEMS}
+          defaultSelectedKey={selectedMenuKey}
+          defaultCollapsed={layoutProfile.mode === 'tablet'}
+          onMenuSelect={handleMenuSelect}
+        />
+      ) : null}
       <Layout style={{ background: '#f5f7fa' }}>
-        <Layout.Content className="ecommerce-dashboard">
+        <Layout.Content className={`ecommerce-dashboard ecommerce-dashboard--${layoutProfile.mode}`}>
+          {layoutProfile.showMobileNav ? (
+            <>
+              <Button
+                type="text"
+                icon={<MenuOutlined />}
+                aria-label="打开导航菜单"
+                className="dashboard-mobile-trigger"
+                onClick={() => setMobileMenuOpen(true)}
+              />
+
+              <Drawer
+                placement="left"
+                width={280}
+                open={mobileMenuOpen}
+                onClose={() => setMobileMenuOpen(false)}
+                className="dashboard-mobile-drawer"
+                title={null}
+                closable={layoutProfile.mobileDrawerClosable}
+                maskClosable={layoutProfile.mobileDrawerMaskClosable}
+                styles={{
+                  header: { display: 'none' },
+                  body: { padding: 12 }
+                }}
+              >
+                <Menu
+                  mode="inline"
+                  items={menuItems}
+                  selectedKeys={[selectedMenuKey]}
+                  onClick={handleMobileMenuClick}
+                  style={{ borderInlineEnd: 0 }}
+                />
+              </Drawer>
+            </>
+          ) : null}
           
           {/* Header Section */}
           <div className="dashboard-header">
-            <div>
-              <Title level={3} style={{ margin: 0, fontWeight: 600 }}>{title}</Title>
+            <div className="dashboard-header__intro">
+              <Title level={layoutProfile.mode === 'mobile' ? 4 : 3} style={{ margin: 0, fontWeight: 600 }}>{title}</Title>
               <Text type="secondary" style={{ fontSize: 13 }}>欢迎回来，这里是今日的运营概况</Text>
             </div>
-            <Space size="middle">
-              <RangePicker style={{ borderRadius: 6 }} />
-              <Button type="primary" icon={<ReloadOutlined />} style={{ borderRadius: 6 }}>刷新数据</Button>
-              <Button style={{ borderRadius: 6 }}>导出报表</Button>
-            </Space>
+            <div className="dashboard-header__actions">
+              <RangePicker className="dashboard-header__range" style={{ borderRadius: 6 }} />
+              <Button type="primary" icon={<ReloadOutlined />} className="dashboard-header__action">刷新数据</Button>
+              <Button icon={<DownloadOutlined />} className="dashboard-header__action">导出报表</Button>
+            </div>
           </div>
 
           {/* Metrics Section */}
           <Row gutter={[20, 20]} className="metric-cards">
-            <Col xs={24} sm={12} lg={6}>
-              <Card bordered={false} bodyStyle={{ padding: '20px 24px' }}>
+            <Col span={layoutProfile.metricSpan}>
+              <Card bordered={false} bodyStyle={{ padding: '20px 24px' }} className="metric-card">
                 <Statistic
                   title="总销售额"
                   value={126560}
@@ -395,8 +540,8 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
                 </div>
               </Card>
             </Col>
-            <Col xs={24} sm={12} lg={6}>
-              <Card bordered={false} bodyStyle={{ padding: '20px 24px' }}>
+            <Col span={layoutProfile.metricSpan}>
+              <Card bordered={false} bodyStyle={{ padding: '20px 24px' }} className="metric-card">
                 <Statistic
                   title="到访用户"
                   value={8846}
@@ -412,8 +557,8 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
                 </div>
               </Card>
             </Col>
-            <Col xs={24} sm={12} lg={6}>
-              <Card bordered={false} bodyStyle={{ padding: '20px 24px' }}>
+            <Col span={layoutProfile.metricSpan}>
+              <Card bordered={false} bodyStyle={{ padding: '20px 24px' }} className="metric-card">
                 <Statistic
                   title="支付订单"
                   value={1560}
@@ -429,8 +574,8 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
                 </div>
               </Card>
             </Col>
-            <Col xs={24} sm={12} lg={6}>
-              <Card bordered={false} bodyStyle={{ padding: '20px 24px' }}>
+            <Col span={layoutProfile.metricSpan}>
+              <Card bordered={false} bodyStyle={{ padding: '20px 24px' }} className="metric-card">
                 <Statistic
                   title="转化率"
                   value={12.5}
@@ -457,20 +602,32 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
                 title={<span style={{ fontWeight: 600 }}>销售趋势</span>} 
                 bordered={false}
                 extra={
-                  <Space>
+                  <Space size={[8, 8]} wrap className="dashboard-card-extra">
                     <Tag color="blue" bordered={false}>本周</Tag>
                     <Tag bordered={false}>本月</Tag>
                     <Tag bordered={false}>全年</Tag>
                   </Space>
                 }
-                style={{ height: '100%' }} // Full height
+                style={{ height: '100%' }}
+                className="dashboard-card chart-card"
               >
-                <SalesTrendChart />
+                <SalesTrendChart
+                  height={layoutProfile.salesChartHeight}
+                  compact={layoutProfile.mode !== 'desktop'}
+                />
               </Card>
             </Col>
             <Col xs={24} lg={8}>
-              <Card title={<span style={{ fontWeight: 600 }}>销售品类占比</span>} bordered={false} style={{ height: '100%' }}>
-                <CategoryPieChart />
+              <Card
+                title={<span style={{ fontWeight: 600 }}>销售品类占比</span>}
+                bordered={false}
+                style={{ height: '100%' }}
+                className="dashboard-card chart-card"
+              >
+                <CategoryPieChart
+                  height={layoutProfile.categoryChartHeight}
+                  compact={layoutProfile.mode !== 'desktop'}
+                />
               </Card>
             </Col>
           </Row>
@@ -482,17 +639,48 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
                 title={<span style={{ fontWeight: 600 }}>最近订单</span>} 
                 bordered={false}
                 extra={<Button type="link">查看全部</Button>}
-                style={{ width: '100%', display: 'flex', flexDirection: 'column' }} // Flex column layout
-                bodyStyle={{ flex: 1, padding: 24, overflow: 'hidden' }} // Restored padding, flex grow
+                style={{ width: '100%', display: 'flex', flexDirection: 'column' }}
+                bodyStyle={{ flex: 1, padding: 24, overflow: 'hidden' }}
+                className="dashboard-card orders-card"
               >
-                <Table
-                  columns={columns}
-                  dataSource={orders}
-                  rowKey="id"
-                  pagination={false}
-                  size="middle"
-                  scroll={{ x: 600 }} // Add scroll for small screens
-                />
+                {layoutProfile.showOrderTable ? (
+                  <Table
+                    columns={columns}
+                    dataSource={orders}
+                    rowKey="id"
+                    pagination={false}
+                    size="middle"
+                    scroll={{ x: 680 }}
+                  />
+                ) : (
+                  <div className="order-cards">
+                    {orders.map((order: any) => (
+                      <div key={order.id} className="order-card">
+                        <div className="order-card__top">
+                          <div>
+                            <Text strong>{order.id}</Text>
+                            <div className="order-card__meta">{order.customer}</div>
+                          </div>
+                          {getStatusTag(order.status)}
+                        </div>
+                        <div className="order-card__middle">
+                          <Text type="secondary">下单日期 {order.date}</Text>
+                          <Text className="order-card__amount">¥{Number(order.amount).toFixed(2)}</Text>
+                        </div>
+                        <Button
+                          type="default"
+                          block
+                          onClick={() => {
+                            setSelectedOrder(order);
+                            emitEvent('onOrderClick', { order });
+                          }}
+                        >
+                          查看详情
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Card>
             </Col>
             <Col xs={24} lg={8} style={{ display: 'flex' }}>
@@ -501,13 +689,18 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
                 bordered={false}
                 style={{ width: '100%', display: 'flex', flexDirection: 'column' }}
                 bodyStyle={{ flex: 1, padding: '12px 24px' }}
+                className="dashboard-card products-card"
               >
                 <List
                   itemLayout="horizontal"
                   dataSource={products}
                   split={false}
                   renderItem={(item: any, index) => (
-                    <List.Item style={{ padding: '10px 0' }}>
+                    <List.Item
+                      style={{ padding: '10px 0' }}
+                      className="product-list__item"
+                      onClick={() => emitEvent('onProductClick', { product: item })}
+                    >
                       <List.Item.Meta
                         avatar={
                           <div style={{ 
@@ -527,7 +720,7 @@ const Component = forwardRef<AxureHandle, AxureProps>(function EcommerceDashboar
                         }
                         title={<Text style={{ fontSize: 14 }}>{item.name}</Text>}
                         description={
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                          <div className="product-list__meta">
                             <Text type="secondary" style={{ fontSize: 12 }}>销量: {item.sales}</Text>
                             <Text type={item.growth > 0 ? 'success' : 'danger'} style={{ fontSize: 12 }}>
                               {item.growth > 0 ? '+' : ''}{item.growth}%

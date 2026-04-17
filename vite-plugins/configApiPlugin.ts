@@ -5,9 +5,7 @@ import { exec, execFile, spawn, spawnSync } from 'node:child_process';
 import {
   commandExists,
   decodeOutput,
-  getPreferredNpmCommand,
   getSpawnCommandSpec,
-  runCommand,
   runCommandSync,
 } from '../scripts/utils/command-runtime.mjs';
 
@@ -152,6 +150,8 @@ const DEFAULT_ASSISTANT_API_BASE_URL = 'http://localhost:32123/api';
 const DEFAULT_ASSISTANT_HEALTH_URL = `${DEFAULT_ASSISTANT_WEB_BASE_URL}/health`;
 const ASSISTANT_SERVICE_ID = '@axhub/genie';
 const ASSISTANT_SERVICE_NAME = 'Axhub Genie';
+const ASSISTANT_NPX_COMMAND = 'npx';
+const ASSISTANT_NPX_PACKAGE = '@axhub/genie';
 const ASSISTANT_RUNTIME_LOG_PREFIX = '[assistant-runtime]';
 const ASSISTANT_RUNTIME_DEBUG_LOGS_ENABLED = false;
 const ASSISTANT_STATUS_TIMEOUT_MS = 8_000;
@@ -189,10 +189,26 @@ function logAssistantRuntime(level: 'info' | 'warn' | 'error', message: string, 
 
 function getAssistantHealthHints(): AssistantHealthHints {
   return {
-    installGlobal: 'npx @axhub/genie',
-    start: 'axhub-genie',
-    status: 'axhub-genie status',
+    installGlobal: formatAssistantCommand(),
+    start: formatAssistantCommand(),
+    status: formatAssistantCommand(['status', '--json']),
   };
+}
+
+function formatAssistantCommand(extraArgs: string[] = []): string {
+  return [ASSISTANT_NPX_COMMAND, ASSISTANT_NPX_PACKAGE, ...extraArgs].join(' ');
+}
+
+function isAxhubGenieCliCommand(command: string, args: string[]): boolean {
+  return command === 'axhub-genie' || (command === ASSISTANT_NPX_COMMAND && args[0] === ASSISTANT_NPX_PACKAGE);
+}
+
+function getAssistantCommandLabel(command: string, args: string[]): string {
+  if (isAxhubGenieCliCommand(command, args)) {
+    const extraArgs = command === ASSISTANT_NPX_COMMAND ? args.slice(1) : args;
+    return formatAssistantCommand(extraArgs);
+  }
+  return [command, ...args].join(' ').trim();
 }
 
 function normalizeOptionalString(value: unknown): string | null {
@@ -373,8 +389,10 @@ function containsMissingCommandHint(text: string): boolean {
   return /(not\s+recognized\s+as\s+an?\s+internal|command\s+not\s+found|no\s+such\s+file|未找到|不是内部或外部命令)/i.test(normalized);
 }
 
-function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: string[]): AssistantProbeResult {
-  const commandSource: Exclude<AssistantCommandSource, 'default'> = command === 'axhub-genie' ? 'axhub-genie' : 'cloudcli';
+function readAssistantStatusFromCli(command: 'axhub-genie' | 'npx' | 'cloudcli', args: string[]): AssistantProbeResult {
+  const isAxhubGenieCommand = isAxhubGenieCliCommand(command, args);
+  const commandSource: Exclude<AssistantCommandSource, 'default'> = isAxhubGenieCommand ? 'axhub-genie' : 'cloudcli';
+  const commandLabel = getAssistantCommandLabel(command, args);
 
   try {
     if (!commandExists(command)) {
@@ -407,7 +425,7 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
       if (errCode === 'ETIMEDOUT' || /timed?\s*out/i.test(error.message || '')) {
         return {
           status: 'not_running',
-          message: `${command} status 执行超时（>${ASSISTANT_STATUS_TIMEOUT_MS}ms），请确认服务已启动后重试`,
+          message: `${commandLabel} 执行超时（>${ASSISTANT_STATUS_TIMEOUT_MS}ms），请确认服务已启动后重试`,
           commandSource,
           config: null,
         };
@@ -415,7 +433,7 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
 
       return {
         status: 'cli_error',
-        message: `${command} 执行失败: ${error.message || 'unknown error'}`,
+        message: `${commandLabel} 执行失败: ${error.message || 'unknown error'}`,
         commandSource,
         config: null,
       };
@@ -435,19 +453,19 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
     }
 
     if (result.status !== 0) {
-      if (command === 'axhub-genie' && containsNeedsUpdateHint(mergedOutput)) {
+      if (isAxhubGenieCommand && containsNeedsUpdateHint(mergedOutput)) {
         return {
           status: 'needs_update',
-          message: `检测到 ${command} 版本可能过旧，请更新后重试`,
+          message: `检测到 ${commandLabel} 版本可能过旧，请更新后重试`,
           commandSource,
           config: null,
         };
       }
 
-      if (command === 'axhub-genie' && containsNotRunningHint(mergedOutput)) {
+      if (isAxhubGenieCommand && containsNotRunningHint(mergedOutput)) {
         return {
           status: 'not_running',
-          message: `${command} 服务未启动`,
+          message: `${commandLabel} 服务未启动`,
           commandSource,
           config: null,
         };
@@ -455,7 +473,7 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
 
       return {
         status: 'cli_error',
-        message: `${command} status 执行失败${mergedOutput ? `: ${mergedOutput}` : ''}`,
+        message: `${commandLabel} 执行失败${mergedOutput ? `: ${mergedOutput}` : ''}`,
         commandSource,
         config: null,
       };
@@ -464,7 +482,7 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
     if (!stdout) {
       return {
         status: 'cli_error',
-        message: `${command} status 未返回有效输出`,
+        message: `${commandLabel} 未返回有效输出`,
         commandSource,
         config: null,
       };
@@ -476,7 +494,7 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
     } catch {
       return {
         status: 'cli_error',
-        message: `${command} status 返回内容无法解析为 JSON`,
+        message: `${commandLabel} 返回内容无法解析为 JSON`,
         commandSource,
         config: null,
       };
@@ -488,7 +506,7 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
     if (running === false) {
       return {
         status: 'not_running',
-        message: `${command} 服务未启动`,
+        message: `${commandLabel} 服务未启动`,
         commandSource,
         config,
       };
@@ -497,7 +515,7 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
     if (!config) {
       return {
         status: 'cli_error',
-        message: `${command} status 返回中未发现可用地址`,
+        message: `${commandLabel} 返回中未发现可用地址`,
         commandSource,
         config: null,
       };
@@ -505,14 +523,14 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
 
     return {
       status: 'ready',
-      message: `${command} 已就绪`,
+      message: `${commandLabel} 已就绪`,
       commandSource,
       config,
     };
   } catch (error: any) {
     return {
       status: 'cli_error',
-      message: `${command} status 检查失败: ${error?.message || 'unknown error'}`,
+      message: `${commandLabel} 检查失败: ${error?.message || 'unknown error'}`,
       commandSource,
       config: null,
     };
@@ -520,9 +538,9 @@ function readAssistantStatusFromCli(command: 'axhub-genie' | 'cloudcli', args: s
 }
 
 function readAxhubGenieStatus(): AssistantProbeResult {
-  const probe = readAssistantStatusFromCli('axhub-genie', ['status', '--json']);
+  const probe = readAssistantStatusFromCli(ASSISTANT_NPX_COMMAND, [ASSISTANT_NPX_PACKAGE, 'status', '--json']);
   const level = probe.status === 'ready' ? 'info' : 'warn';
-  logAssistantRuntime(level, 'axhub-genie status --json', {
+  logAssistantRuntime(level, formatAssistantCommand(['status', '--json']), {
     status: probe.status,
     message: probe.message,
     config: probe.config || null,
@@ -647,7 +665,7 @@ async function startAxhubGenieAndWait(projectPath: string): Promise<AssistantPro
   });
 
   try {
-    await runExecutableCommandInBackground(startCommand, [], projectPath);
+    await runExecutableCommandInBackground(ASSISTANT_NPX_COMMAND, [ASSISTANT_NPX_PACKAGE], projectPath);
   } catch (error: any) {
     logAssistantRuntime('error', '启动命令触发失败', {
       command: startCommand,
@@ -690,7 +708,7 @@ async function startAxhubGenieAndWait(projectPath: string): Promise<AssistantPro
     return {
       ...probe,
       status: 'not_running',
-      message: `${probe.message}。Axhub Genie 自动启动失败，请手动执行 axhub-genie 后重试`,
+      message: `${probe.message}。Axhub Genie 自动启动失败，请手动执行 ${formatAssistantCommand()} 后重试`,
     };
   }
 
@@ -702,7 +720,7 @@ async function startAxhubGenieAndWait(projectPath: string): Promise<AssistantPro
   return {
     ...probe,
     status: 'not_running',
-    message: 'Axhub Genie 自动启动失败，请手动执行 axhub-genie 后重试',
+    message: `Axhub Genie 自动启动失败，请手动执行 ${formatAssistantCommand()} 后重试`,
   };
 }
 
@@ -785,38 +803,13 @@ function normalizeAssistantBootstrapMode(value: unknown): AssistantBootstrapMode
   return null;
 }
 
-function getPreferredNpmCommandForBootstrap(): string {
-  return getPreferredNpmCommand();
-}
-
 function buildAssistantBootstrapCommand(mode: AssistantBootstrapMode): string {
   const hints = getAssistantHealthHints();
-  if (mode === 'install_global') {
-    const npmCommand = getPreferredNpmCommandForBootstrap();
-    return `${npmCommand} install -g @axhub/genie && ${hints.start}`;
-  }
   return hints.start;
 }
 
 async function runAssistantBootstrap(mode: AssistantBootstrapMode, cwd: string): Promise<void> {
-  const startCommand = getAssistantHealthHints().start;
-
-  if (mode === 'install_global') {
-    const npmCommand = getPreferredNpmCommandForBootstrap();
-    const installResult = await runCommand({
-      command: npmCommand,
-      args: ['install', '-g', '@axhub/genie'],
-      cwd,
-      capture: true,
-      timeoutMs: 180_000,
-    });
-
-    if (installResult.code !== 0) {
-      throw new Error(installResult.stderr || installResult.stdout || 'npm install -g @axhub/genie failed');
-    }
-  }
-
-  await runExecutableCommandInBackground(startCommand, [], cwd);
+  await runExecutableCommandInBackground(ASSISTANT_NPX_COMMAND, [ASSISTANT_NPX_PACKAGE], cwd);
 }
 
 function isCommandAvailable(command: string, args: string[] = ['--version']): boolean {
@@ -837,15 +830,8 @@ function isCommandAvailable(command: string, args: string[] = ['--version']): bo
 }
 
 function validateBootstrapPrerequisites(mode: AssistantBootstrapMode): string | null {
-  if (mode === 'install_global') {
-    if (!isCommandAvailable('npm')) {
-      return 'npm 未安装，无法自动安装 Axhub Genie';
-    }
-    return null;
-  }
-
-  if (!isCommandAvailable('axhub-genie')) {
-    return '未检测到 axhub-genie 命令，请先安装后重试';
+  if (!isCommandAvailable(ASSISTANT_NPX_COMMAND)) {
+    return '未检测到 npx 命令，请先安装 Node.js/npm 后重试';
   }
 
   return null;
@@ -949,16 +935,16 @@ async function resolveAssistantRuntime(
 
   if (axhubGenieStatus.status === 'ready') {
     healthStatus = 'ready';
-    healthMessage = `已通过 axhub-genie status --json 获取服务地址（默认 /health 探测失败：${healthProbe.message}）`;
+    healthMessage = `已通过 ${formatAssistantCommand(['status', '--json'])} 获取服务地址（默认 /health 探测失败：${healthProbe.message}）`;
   } else if (axhubGenieStatus.status === 'missing_cli') {
     healthStatus = 'missing_cli';
-    healthMessage = '未检测到 axhub-genie 命令，请先安装后重试';
+    healthMessage = '未检测到 npx 命令，请先安装 Node.js/npm 后重试';
   } else if (axhubGenieStatus.status === 'needs_update') {
     healthStatus = 'needs_update';
     healthMessage = axhubGenieStatus.message;
   } else if (axhubGenieStatus.status === 'not_running') {
     healthStatus = 'runtime_unreachable';
-    healthMessage = 'Axhub Genie 自动启动失败，请手动执行 axhub-genie 后重试';
+    healthMessage = `Axhub Genie 自动启动失败，请手动执行 ${formatAssistantCommand()} 后重试`;
   } else if (axhubGenieStatus.status === 'cli_error') {
     healthStatus = 'cli_error';
     healthMessage = axhubGenieStatus.message;
