@@ -56,6 +56,7 @@
   },
   "dependencies": {
     "archiver": "^7.0.1",
+    "axhub-genie-editor-react": "workspace:*",
     "extract-zip": "^2.0.1",
     "formidable": "^3.5.4",
     "iconv-lite": "^0.7.1",

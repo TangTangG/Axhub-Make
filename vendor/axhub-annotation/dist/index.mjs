@@ -1,8 +1,8 @@
 // src/AnnotationViewer.tsx
-import React23 from "react";
+import React24 from "react";
 
 // src/annotation-runtime.tsx
-import React22 from "react";
+import React23 from "react";
 import { createRoot } from "react-dom/client";
 import { App, ConfigProvider as ConfigProvider2 } from "antd";
 import { StyleProvider, createCache } from "@ant-design/cssinjs";
@@ -1624,10 +1624,9 @@ function createAnnotationMarkers(options) {
 }
 
 // src/ui/runtime/annotation-shell.tsx
-import React21 from "react";
+import React22 from "react";
 import { Drawer, FloatButton, Popover, Segmented, Space, Switch as Switch3 } from "antd";
 import { CheckOutlined, SettingOutlined } from "@ant-design/icons";
-import { SimpleEditor } from "tiptap-editor";
 
 // src/constants/colors.ts
 var ANNOTATION_COLORS = [
@@ -2807,8 +2806,243 @@ function IconActionButton(props) {
   ) });
 }
 
-// src/devtools/store.ts
+// src/ui/runtime/readonly-markdown.tsx
 import React2 from "react";
+import { jsx as jsx2 } from "react/jsx-runtime";
+function isBlankLine(line) {
+  return line.trim().length === 0;
+}
+function isCodeFence(line) {
+  return /^```/.test(line.trim());
+}
+function isHeading(line) {
+  return /^#{1,6}\s+/.test(line.trim());
+}
+function isHorizontalRule(line) {
+  return /^(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line.trim());
+}
+function isBlockquote(line) {
+  return /^>\s?/.test(line.trim());
+}
+function isListItem(line) {
+  return /^(([-*+])|(\d+\.))\s+/.test(line.trim());
+}
+function isBlockBoundary(line) {
+  return isBlankLine(line) || isCodeFence(line) || isHeading(line) || isHorizontalRule(line) || isBlockquote(line) || isListItem(line);
+}
+function parseMarkdownBlocks(markdown) {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const blocks = [];
+  for (let index = 0; index < lines.length; ) {
+    const line = lines[index] ?? "";
+    if (isBlankLine(line)) {
+      index += 1;
+      continue;
+    }
+    if (isCodeFence(line)) {
+      const language = line.trim().slice(3).trim();
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !isCodeFence(lines[index] ?? "")) {
+        codeLines.push(lines[index] ?? "");
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      blocks.push({
+        type: "code",
+        code: codeLines.join("\n"),
+        language
+      });
+      continue;
+    }
+    const headingMatch = line.trim().match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      blocks.push({
+        type: "heading",
+        depth: headingMatch[1].length,
+        text: headingMatch[2].trim()
+      });
+      index += 1;
+      continue;
+    }
+    if (isHorizontalRule(line)) {
+      blocks.push({ type: "hr" });
+      index += 1;
+      continue;
+    }
+    if (isBlockquote(line)) {
+      const quotedLines = [];
+      while (index < lines.length && isBlockquote(lines[index] ?? "")) {
+        quotedLines.push((lines[index] ?? "").trim().replace(/^>\s?/, ""));
+        index += 1;
+      }
+      blocks.push({
+        type: "blockquote",
+        content: parseMarkdownBlocks(quotedLines.join("\n"))
+      });
+      continue;
+    }
+    const listMatch = line.trim().match(/^(([-*+])|(\d+\.))\s+(.*)$/);
+    if (listMatch) {
+      const ordered = Boolean(listMatch[3]);
+      const start = ordered ? Number.parseInt(listMatch[3], 10) : void 0;
+      const items = [];
+      while (index < lines.length) {
+        const currentLine = (lines[index] ?? "").trim();
+        const currentMatch = currentLine.match(/^(([-*+])|(\d+\.))\s+(.*)$/);
+        if (!currentMatch) {
+          break;
+        }
+        const currentOrdered = Boolean(currentMatch[3]);
+        if (currentOrdered !== ordered) {
+          break;
+        }
+        items.push(currentMatch[4].trim());
+        index += 1;
+      }
+      blocks.push({
+        type: "list",
+        ordered,
+        start,
+        items
+      });
+      continue;
+    }
+    const paragraphLines = [];
+    while (index < lines.length && !isBlockBoundary(lines[index] ?? "")) {
+      paragraphLines.push((lines[index] ?? "").trim());
+      index += 1;
+    }
+    blocks.push({
+      type: "paragraph",
+      text: paragraphLines.join(" ").trim()
+    });
+  }
+  return blocks;
+}
+function isSafeUrl(url, allowDataImage = false) {
+  const trimmed = String(url || "").trim();
+  if (!trimmed) return false;
+  if (/^javascript:/i.test(trimmed)) return false;
+  if (/^data:/i.test(trimmed) && !allowDataImage) return false;
+  return true;
+}
+function renderInlineMarkdown(text, keyPrefix) {
+  const content = String(text || "");
+  const nodes = [];
+  const tokenPattern = /!\[([^\]]*)\]\(([^)\s]+(?:\s+"[^"]*")?)\)|\[([^\]]+)\]\(([^)\s]+(?:\s+"[^"]*")?)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_/g;
+  let cursor = 0;
+  let matchIndex = 0;
+  for (const match of content.matchAll(tokenPattern)) {
+    const matchStart = match.index ?? 0;
+    if (matchStart > cursor) {
+      nodes.push(content.slice(cursor, matchStart));
+    }
+    if (match[1] !== void 0 && match[2] !== void 0) {
+      const alt = match[1];
+      const src = match[2].trim().replace(/\s+"[^"]*"$/, "");
+      if (isSafeUrl(src, true)) {
+        nodes.push(
+          /* @__PURE__ */ jsx2(
+            "img",
+            {
+              src,
+              alt
+            },
+            `${keyPrefix}-img-${matchIndex}`
+          )
+        );
+      } else {
+        nodes.push(match[0]);
+      }
+    } else if (match[3] !== void 0 && match[4] !== void 0) {
+      const label = match[3];
+      const href = match[4].trim().replace(/\s+"[^"]*"$/, "");
+      if (isSafeUrl(href)) {
+        nodes.push(
+          /* @__PURE__ */ jsx2(
+            "a",
+            {
+              href,
+              target: "_blank",
+              rel: "noreferrer",
+              children: renderInlineMarkdown(label, `${keyPrefix}-link-text-${matchIndex}`)
+            },
+            `${keyPrefix}-link-${matchIndex}`
+          )
+        );
+      } else {
+        nodes.push(match[0]);
+      }
+    } else if (match[5] !== void 0) {
+      nodes.push(
+        /* @__PURE__ */ jsx2("code", { children: match[5] }, `${keyPrefix}-code-${matchIndex}`)
+      );
+    } else if (match[6] !== void 0 || match[7] !== void 0) {
+      const strongText = match[6] ?? match[7] ?? "";
+      nodes.push(
+        /* @__PURE__ */ jsx2("strong", { children: renderInlineMarkdown(strongText, `${keyPrefix}-strong-text-${matchIndex}`) }, `${keyPrefix}-strong-${matchIndex}`)
+      );
+    } else if (match[8] !== void 0 || match[9] !== void 0) {
+      const emphasisText = match[8] ?? match[9] ?? "";
+      nodes.push(
+        /* @__PURE__ */ jsx2("em", { children: renderInlineMarkdown(emphasisText, `${keyPrefix}-em-text-${matchIndex}`) }, `${keyPrefix}-em-${matchIndex}`)
+      );
+    }
+    cursor = matchStart + match[0].length;
+    matchIndex += 1;
+  }
+  if (cursor < content.length) {
+    nodes.push(content.slice(cursor));
+  }
+  return nodes;
+}
+function renderMarkdownBlocks(blocks, keyPrefix) {
+  return blocks.map((block, index) => {
+    const key = `${keyPrefix}-${index}`;
+    if (block.type === "heading") {
+      const headingContent = renderInlineMarkdown(block.text, key);
+      switch (block.depth) {
+        case 1:
+          return /* @__PURE__ */ jsx2("h1", { children: headingContent }, key);
+        case 2:
+          return /* @__PURE__ */ jsx2("h2", { children: headingContent }, key);
+        case 3:
+          return /* @__PURE__ */ jsx2("h3", { children: headingContent }, key);
+        case 4:
+          return /* @__PURE__ */ jsx2("h4", { children: headingContent }, key);
+        case 5:
+          return /* @__PURE__ */ jsx2("h5", { children: headingContent }, key);
+        default:
+          return /* @__PURE__ */ jsx2("h6", { children: headingContent }, key);
+      }
+    }
+    if (block.type === "paragraph") {
+      return /* @__PURE__ */ jsx2("p", { children: renderInlineMarkdown(block.text, key) }, key);
+    }
+    if (block.type === "code") {
+      return /* @__PURE__ */ jsx2("pre", { children: /* @__PURE__ */ jsx2("code", { className: block.language ? `language-${block.language}` : void 0, children: block.code }) }, key);
+    }
+    if (block.type === "blockquote") {
+      return /* @__PURE__ */ jsx2("blockquote", { children: renderMarkdownBlocks(block.content, `${key}-blockquote`) }, key);
+    }
+    if (block.type === "list") {
+      const listItems = block.items.map((item, itemIndex) => /* @__PURE__ */ jsx2("li", { children: renderInlineMarkdown(item, `${key}-item-${itemIndex}`) }, `${key}-item-${itemIndex}`));
+      return block.ordered ? /* @__PURE__ */ jsx2("ol", { start: block.start, children: listItems }, key) : /* @__PURE__ */ jsx2("ul", { children: listItems }, key);
+    }
+    return /* @__PURE__ */ jsx2("hr", {}, key);
+  });
+}
+function ReadonlyMarkdown(props) {
+  const { content, className, style } = props;
+  const blocks = React2.useMemo(() => parseMarkdownBlocks(content), [content]);
+  return /* @__PURE__ */ jsx2("div", { className, style, children: renderMarkdownBlocks(blocks, "markdown") });
+}
+
+// src/devtools/store.ts
+import React3 from "react";
 
 // src/devtools/normalize.ts
 function normalizeText2(value, fallback) {
@@ -2832,12 +3066,18 @@ function getDefaultInitialValue(control) {
   if (control.type === "switch") {
     return typeof control.initialValue === "boolean" ? control.initialValue : false;
   }
+  if (control.type === "checkbox") {
+    return typeof control.initialValue === "boolean" ? control.initialValue : false;
+  }
   if (control.type === "select") {
     const options = normalizeOptions(control.options);
     if (control.initialValue !== void 0) {
       return normalizeOptionValue(control.initialValue);
     }
     return options[0]?.value ?? "";
+  }
+  if (control.type === "slider") {
+    return typeof control.initialValue === "number" && Number.isFinite(control.initialValue) ? control.initialValue : 0;
   }
   return typeof control.initialValue === "string" ? control.initialValue : String(control.initialValue ?? "");
 }
@@ -2849,12 +3089,22 @@ function normalizeControl(control) {
     return null;
   }
   if (control.type === "select") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      options: _options,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
     const options = normalizeOptions(control.options);
     return {
       type: "select",
       attributeId,
       displayName,
       info,
+      ...rest,
       options,
       initialValue: getDefaultInitialValue({
         ...control,
@@ -2863,29 +3113,164 @@ function normalizeControl(control) {
     };
   }
   if (control.type === "inputNumber") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
     return {
       type: "inputNumber",
       attributeId,
       displayName,
       info,
+      ...rest,
       initialValue: getDefaultInitialValue(control)
     };
   }
   if (control.type === "switch") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
     return {
       type: "switch",
       attributeId,
       displayName,
       info,
+      ...rest,
       initialValue: getDefaultInitialValue(control)
     };
   }
   if (control.type === "input") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
     return {
       type: "input",
       attributeId,
       displayName,
       info,
+      ...rest,
+      initialValue: getDefaultInitialValue(control)
+    };
+  }
+  if (control.type === "checkbox") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
+    return {
+      type: "checkbox",
+      attributeId,
+      displayName,
+      info,
+      ...rest,
+      initialValue: getDefaultInitialValue(control)
+    };
+  }
+  if (control.type === "slider") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
+    return {
+      type: "slider",
+      attributeId,
+      displayName,
+      info,
+      ...rest,
+      initialValue: getDefaultInitialValue(control)
+    };
+  }
+  if (control.type === "textarea") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
+    return {
+      type: "textarea",
+      attributeId,
+      displayName,
+      info,
+      ...rest,
+      initialValue: getDefaultInitialValue(control)
+    };
+  }
+  if (control.type === "text") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
+    return {
+      type: "text",
+      attributeId,
+      displayName,
+      info,
+      ...rest,
+      initialValue: getDefaultInitialValue(control)
+    };
+  }
+  if (control.type === "button") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
+    return {
+      type: "button",
+      attributeId,
+      displayName,
+      info,
+      ...rest,
+      initialValue: getDefaultInitialValue(control)
+    };
+  }
+  if (control.type === "colorPicker") {
+    const {
+      type: _type,
+      attributeId: _attributeId,
+      displayName: _displayName,
+      info: _info,
+      initialValue: _initialValue,
+      ...rest
+    } = control;
+    return {
+      type: "colorPicker",
+      attributeId,
+      displayName,
+      info,
+      ...rest,
       initialValue: getDefaultInitialValue(control)
     };
   }
@@ -3017,7 +3402,7 @@ function subscribeProtoDevRuntime(listener) {
   };
 }
 function useProtoDevState() {
-  return React2.useSyncExternalStore(
+  return React3.useSyncExternalStore(
     subscribeProtoDevRuntime,
     () => getProtoDevStateSnapshot(),
     () => getProtoDevStateSnapshot()
@@ -3122,7 +3507,7 @@ function createProtoDevController(options = {}) {
 }
 
 // src/devtools/ProtoDevPanel.tsx
-import React3 from "react";
+import React4 from "react";
 function isProtoDevEnabled() {
   if (typeof process !== "undefined" && typeof process.env?.NODE_ENV === "string") {
     return process.env.NODE_ENV !== "production";
@@ -3131,11 +3516,11 @@ function isProtoDevEnabled() {
 }
 function ProtoDevPanel(props) {
   const { controls, storageKey, defaultOpen } = props;
-  const controller = React3.useMemo(
+  const controller = React4.useMemo(
     () => createProtoDevController({ controls, storageKey, defaultOpen }),
     [controls, defaultOpen, storageKey]
   );
-  React3.useEffect(() => {
+  React4.useEffect(() => {
     if (!isProtoDevEnabled()) {
       return void 0;
     }
@@ -3151,24 +3536,24 @@ function ProtoDevPanel(props) {
 }
 
 // src/devtools/controls-content.tsx
-import React20 from "react";
+import React21 from "react";
 import { ConfigProvider } from "antd";
 
 // src/ui/config-panel/AttributeTree.tsx
-import React19 from "react";
+import React20 from "react";
 
 // src/ui/config-panel/components/Collapse.tsx
-import React4 from "react";
+import React5 from "react";
 import { Collapse as AntdCollapse } from "antd";
-import { Fragment, jsx as jsx2 } from "react/jsx-runtime";
+import { Fragment, jsx as jsx3 } from "react/jsx-runtime";
 import { createElement } from "react";
 var _AttributeTree = null;
 function setAttributeTreeRef(ref) {
   _AttributeTree = ref;
 }
-var Collapse = React4.memo(function Collapse2(props) {
+var Collapse = React5.memo(function Collapse2(props) {
   const { config, attributes, onChange } = props;
-  const items = React4.useMemo(() => {
+  const items = React5.useMemo(() => {
     if (!config.children) return [];
     return config.children.filter((child) => {
       const hasChildren = Array.isArray(child.children) && child.children.length > 0;
@@ -3176,7 +3561,7 @@ var Collapse = React4.memo(function Collapse2(props) {
     }).map((child, index) => ({
       label: child.displayName,
       key: index.toString(),
-      children: /* @__PURE__ */ jsx2(Fragment, { children: (child.children || []).map(
+      children: /* @__PURE__ */ jsx3(Fragment, { children: (child.children || []).map(
         (childConfig, idx) => _AttributeTree ? /* @__PURE__ */ createElement(
           _AttributeTree,
           {
@@ -3188,7 +3573,7 @@ var Collapse = React4.memo(function Collapse2(props) {
       ) })
     }));
   }, [config.children, props]);
-  return /* @__PURE__ */ jsx2("div", { className: "annotation-config-panel-tab", children: /* @__PURE__ */ jsx2(
+  return /* @__PURE__ */ jsx3("div", { className: "annotation-config-panel-tab", children: /* @__PURE__ */ jsx3(
     AntdCollapse,
     {
       activeKey: attributes.activeKey ?? "0",
@@ -3203,27 +3588,27 @@ var Collapse = React4.memo(function Collapse2(props) {
 });
 
 // src/ui/config-panel/components/CollapsePanel.tsx
-import React5 from "react";
-import { Fragment as Fragment2, jsx as jsx3 } from "react/jsx-runtime";
-var CollapsePanel = React5.memo(function CollapsePanel2(props) {
-  return /* @__PURE__ */ jsx3(Fragment2, { children: props.children });
+import React6 from "react";
+import { Fragment as Fragment2, jsx as jsx4 } from "react/jsx-runtime";
+var CollapsePanel = React6.memo(function CollapsePanel2(props) {
+  return /* @__PURE__ */ jsx4(Fragment2, { children: props.children });
 });
 
 // src/ui/config-panel/components/Group.tsx
-import React7 from "react";
+import React8 from "react";
 
 // src/ui/config-panel/components/AttrLabel.tsx
-import React6 from "react";
+import React7 from "react";
 import { Tooltip as Tooltip2 } from "antd";
 import { InfoCircleOutlined, CaretRightOutlined } from "@ant-design/icons";
-import { Fragment as Fragment3, jsx as jsx4, jsxs as jsxs2 } from "react/jsx-runtime";
+import { Fragment as Fragment3, jsx as jsx5, jsxs as jsxs2 } from "react/jsx-runtime";
 function HighlightText(props) {
   const { text, keyword } = props;
-  if (!keyword) return /* @__PURE__ */ jsx4(Fragment3, { children: text });
+  if (!keyword) return /* @__PURE__ */ jsx5(Fragment3, { children: text });
   const regex = new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
   const parts = text.split(regex);
-  return /* @__PURE__ */ jsx4(Fragment3, { children: parts.map(
-    (part, index) => part.toLowerCase() === keyword.toLowerCase() ? /* @__PURE__ */ jsx4("span", { style: { backgroundColor: "#ffd666" }, children: part }, index) : part
+  return /* @__PURE__ */ jsx5(Fragment3, { children: parts.map(
+    (part, index) => part.toLowerCase() === keyword.toLowerCase() ? /* @__PURE__ */ jsx5("span", { style: { backgroundColor: "#ffd666" }, children: part }, index) : part
   ) });
 }
 var rootStyle = {
@@ -3251,7 +3636,7 @@ var collapseIconStyle = {
   marginRight: 5,
   transition: "transform 0.3s ease"
 };
-var AttrLabel = React6.memo(function AttrLabel2(props) {
+var AttrLabel = React7.memo(function AttrLabel2(props) {
   const { config, keyword, style, canCollapse, collapsed, onClick } = props;
   const { displayName, info } = config;
   if (!displayName) return null;
@@ -3261,7 +3646,7 @@ var AttrLabel = React6.memo(function AttrLabel2(props) {
       style: { ...rootStyle, ...style, cursor: onClick ? "pointer" : "unset" },
       onClick,
       children: [
-        canCollapse && /* @__PURE__ */ jsx4(
+        canCollapse && /* @__PURE__ */ jsx5(
           CaretRightOutlined,
           {
             rotate: collapsed ? 0 : 90,
@@ -3269,15 +3654,15 @@ var AttrLabel = React6.memo(function AttrLabel2(props) {
           }
         ),
         /* @__PURE__ */ jsxs2("div", { style: labelMainStyle, children: [
-          /* @__PURE__ */ jsx4(Tooltip2, { title: displayName, children: /* @__PURE__ */ jsx4("span", { style: labelTextStyle, children: /* @__PURE__ */ jsx4(HighlightText, { text: displayName, keyword }) }) }),
-          info ? /* @__PURE__ */ jsx4(
+          /* @__PURE__ */ jsx5(Tooltip2, { title: displayName, children: /* @__PURE__ */ jsx5("span", { style: labelTextStyle, children: /* @__PURE__ */ jsx5(HighlightText, { text: displayName, keyword }) }) }),
+          info ? /* @__PURE__ */ jsx5(
             Tooltip2,
             {
               placement: "left",
               title: info,
               overlayStyle: { width: 280, fontSize: 12, color: "rgba(0,0,0,0.65)" },
               arrow: { pointAtCenter: true },
-              children: /* @__PURE__ */ jsx4(InfoCircleOutlined, { style: { marginLeft: 4 } })
+              children: /* @__PURE__ */ jsx5(InfoCircleOutlined, { style: { marginLeft: 4 } })
             }
           ) : null
         ] })
@@ -3287,7 +3672,7 @@ var AttrLabel = React6.memo(function AttrLabel2(props) {
 });
 
 // src/ui/config-panel/components/Group.tsx
-import { jsx as jsx5, jsxs as jsxs3 } from "react/jsx-runtime";
+import { jsx as jsx6, jsxs as jsxs3 } from "react/jsx-runtime";
 var groupStyle = {
   margin: "4px 0"
 };
@@ -3312,12 +3697,12 @@ var contentExpandedStyle = {
   maxHeight: 2e3,
   opacity: 1
 };
-var Group = React7.memo(function Group2(props) {
+var Group = React8.memo(function Group2(props) {
   const { config, children } = props;
-  const [collapsed, setCollapsed] = React7.useState(true);
+  const [collapsed, setCollapsed] = React8.useState(true);
   const isInline = config.displayType === "inline";
   return /* @__PURE__ */ jsxs3("div", { style: isInline ? inlineGroupStyle : groupStyle, children: [
-    /* @__PURE__ */ jsx5(
+    /* @__PURE__ */ jsx6(
       AttrLabel,
       {
         config,
@@ -3327,41 +3712,41 @@ var Group = React7.memo(function Group2(props) {
         style: { color: "rgba(0,0,0,0.85)", padding: "4px 0" }
       }
     ),
-    /* @__PURE__ */ jsx5("div", { style: collapsed ? contentCollapsedStyle : contentExpandedStyle, children })
+    /* @__PURE__ */ jsx6("div", { style: collapsed ? contentCollapsedStyle : contentExpandedStyle, children })
   ] });
 });
 
 // src/ui/config-panel/components/Checkbox.tsx
-import React9 from "react";
+import React10 from "react";
 import { Checkbox as AntdCheckbox } from "antd";
 
 // src/ui/config-panel/components/FieldWrapper.tsx
-import React8 from "react";
-import { jsx as jsx6, jsxs as jsxs4 } from "react/jsx-runtime";
+import React9 from "react";
+import { jsx as jsx7, jsxs as jsxs4 } from "react/jsx-runtime";
 var wrapperStyle = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",
   margin: "6px 0"
 };
-var FieldWrapper = React8.memo(function FieldWrapper2(props) {
+var FieldWrapper = React9.memo(function FieldWrapper2(props) {
   const { config, keyword, style, children } = props;
   return /* @__PURE__ */ jsxs4("div", { style: { ...wrapperStyle, ...style }, children: [
-    /* @__PURE__ */ jsx6(AttrLabel, { keyword, config }),
+    /* @__PURE__ */ jsx7(AttrLabel, { keyword, config }),
     children
   ] });
 });
 
 // src/ui/config-panel/components/Checkbox.tsx
-import { jsx as jsx7 } from "react/jsx-runtime";
+import { jsx as jsx8 } from "react/jsx-runtime";
 function getAttrValue(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
 }
-var Checkbox = React9.memo(function Checkbox2(props) {
+var Checkbox = React10.memo(function Checkbox2(props) {
   const { config, attributes, onChange, keyword } = props;
   const value = getAttrValue(attributes, config.attributeId, config.initialValue);
-  return /* @__PURE__ */ jsx7(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx7(
+  return /* @__PURE__ */ jsx8(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx8(
     AntdCheckbox,
     {
       checked: Boolean(value),
@@ -3372,14 +3757,14 @@ var Checkbox = React9.memo(function Checkbox2(props) {
 });
 
 // src/ui/config-panel/components/Button.tsx
-import React10 from "react";
+import React11 from "react";
 import { Button as AntdButton, Dropdown } from "antd";
-import { jsx as jsx8 } from "react/jsx-runtime";
+import { jsx as jsx9 } from "react/jsx-runtime";
 function getAttrValue2(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
 }
-var Button2 = React10.memo(function Button3(props) {
+var Button2 = React11.memo(function Button3(props) {
   const { config, attributes, keyword } = props;
   const value = getAttrValue2(attributes, config.attributeId, config.initialValue);
   const onClick = config.onClick;
@@ -3391,7 +3776,7 @@ var Button2 = React10.memo(function Button3(props) {
       onClick: config.onMenuClick || (() => {
       })
     };
-    return /* @__PURE__ */ jsx8(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx8(
+    return /* @__PURE__ */ jsx9(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx9(
       Dropdown.Button,
       {
         menu: menuProps,
@@ -3400,15 +3785,15 @@ var Button2 = React10.memo(function Button3(props) {
         type: buttonType,
         disabled: config.disabled ?? false,
         buttonsRender: ([leftBtn, rightBtn]) => [
-          React10.cloneElement(leftBtn, { style: { flex: 1 } }),
-          React10.cloneElement(rightBtn, { style: { width: 40 } })
+          React11.cloneElement(leftBtn, { style: { flex: 1 } }),
+          React11.cloneElement(rightBtn, { style: { width: 40 } })
         ],
         style: { display: "flex", width: "100%" },
         children: value
       }
     ) });
   }
-  return /* @__PURE__ */ jsx8(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx8(
+  return /* @__PURE__ */ jsx9(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx9(
     AntdButton,
     {
       type: buttonType,
@@ -3421,17 +3806,17 @@ var Button2 = React10.memo(function Button3(props) {
 });
 
 // src/ui/config-panel/components/ColorPicker.tsx
-import React11 from "react";
+import React12 from "react";
 import { ColorPicker as AntdColorPicker } from "antd";
-import { jsx as jsx9 } from "react/jsx-runtime";
+import { jsx as jsx10 } from "react/jsx-runtime";
 function getAttrValue3(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
 }
-var ColorPicker = React11.memo(function ColorPicker2(props) {
+var ColorPicker = React12.memo(function ColorPicker2(props) {
   const { config, attributes, onChange, keyword } = props;
   const color = getAttrValue3(attributes, config.attributeId, config.initialValue) || "";
-  return /* @__PURE__ */ jsx9(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx9(
+  return /* @__PURE__ */ jsx10(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx10(
     AntdColorPicker,
     {
       value: color || void 0,
@@ -3445,26 +3830,26 @@ var ColorPicker = React11.memo(function ColorPicker2(props) {
 });
 
 // src/ui/config-panel/components/CustomTextArea.tsx
-import React12 from "react";
+import React13 from "react";
 import { Input as AntdInput } from "antd";
-import { jsx as jsx10 } from "react/jsx-runtime";
+import { jsx as jsx11 } from "react/jsx-runtime";
 var { TextArea } = AntdInput;
 var DEBOUNCE_MS = 500;
 function getAttrValue4(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
 }
-var FocusPreservingTextArea = React12.memo(function FocusPreservingTextArea2(props) {
+var FocusPreservingTextArea = React13.memo(function FocusPreservingTextArea2(props) {
   const { value, onChange, disabled, placeholder, minRows = 6, maxRows = 20 } = props;
-  const textAreaRef = React12.useRef(null);
-  const [internalValue, setInternalValue] = React12.useState(value);
-  const [selection, setSelection] = React12.useState(null);
-  React12.useEffect(() => {
+  const textAreaRef = React13.useRef(null);
+  const [internalValue, setInternalValue] = React13.useState(value);
+  const [selection, setSelection] = React13.useState(null);
+  React13.useEffect(() => {
     if (value !== internalValue) {
       setInternalValue(value || "");
     }
   }, [value]);
-  React12.useEffect(() => {
+  React13.useEffect(() => {
     if (textAreaRef.current && selection) {
       try {
         textAreaRef.current.setSelectionRange(selection.start, selection.end);
@@ -3472,7 +3857,7 @@ var FocusPreservingTextArea = React12.memo(function FocusPreservingTextArea2(pro
       }
     }
   }, [internalValue, selection]);
-  const handleChange = React12.useCallback(
+  const handleChange = React13.useCallback(
     (e) => {
       const nextValue = e.target.value;
       setInternalValue(nextValue);
@@ -3484,7 +3869,7 @@ var FocusPreservingTextArea = React12.memo(function FocusPreservingTextArea2(pro
     },
     [onChange]
   );
-  return /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx11(
     TextArea,
     {
       ref: textAreaRef,
@@ -3496,18 +3881,18 @@ var FocusPreservingTextArea = React12.memo(function FocusPreservingTextArea2(pro
     }
   );
 });
-var CustomTextArea = React12.memo(function CustomTextArea2(props) {
+var CustomTextArea = React13.memo(function CustomTextArea2(props) {
   const { config, attributes, onChange, keyword } = props;
   const value = getAttrValue4(attributes, config.attributeId, config.initialValue) || "";
-  const debounceTimerRef = React12.useRef(null);
-  React12.useEffect(() => {
+  const debounceTimerRef = React13.useRef(null);
+  React13.useEffect(() => {
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
     };
   }, []);
-  const handleChange = React12.useCallback(
+  const handleChange = React13.useCallback(
     (nextValue) => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
@@ -3518,7 +3903,7 @@ var CustomTextArea = React12.memo(function CustomTextArea2(props) {
     },
     [config.attributeId, onChange]
   );
-  return /* @__PURE__ */ jsx10(FieldWrapper, { config, keyword, style: { flexDirection: "column", alignItems: "stretch" }, children: /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx11(FieldWrapper, { config, keyword, style: { flexDirection: "column", alignItems: "stretch" }, children: /* @__PURE__ */ jsx11(
     FocusPreservingTextArea,
     {
       value,
@@ -3532,18 +3917,18 @@ var CustomTextArea = React12.memo(function CustomTextArea2(props) {
 });
 
 // src/ui/config-panel/components/Input.tsx
-import React13 from "react";
+import React14 from "react";
 import { Input as AntdInput2 } from "antd";
-import { jsx as jsx11 } from "react/jsx-runtime";
+import { jsx as jsx12 } from "react/jsx-runtime";
 function getAttrValue5(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
 }
-var Input = React13.memo(function Input2(props) {
+var Input = React14.memo(function Input2(props) {
   const { config, attributes, onChange, keyword } = props;
   const value = getAttrValue5(attributes, config.attributeId, config.initialValue);
   const widthStyle = config.displayName ? { width: config.width || "40%" } : { width: "100%", minWidth: "40%" };
-  return /* @__PURE__ */ jsx11(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx11("div", { style: widthStyle, children: /* @__PURE__ */ jsx11(
+  return /* @__PURE__ */ jsx12(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx12("div", { style: widthStyle, children: /* @__PURE__ */ jsx12(
     AntdInput2,
     {
       value,
@@ -3556,17 +3941,17 @@ var Input = React13.memo(function Input2(props) {
 });
 
 // src/ui/config-panel/components/InputNumber.tsx
-import React14 from "react";
+import React15 from "react";
 import { InputNumber as AntdInputNumber } from "antd";
-import { jsx as jsx12 } from "react/jsx-runtime";
+import { jsx as jsx13 } from "react/jsx-runtime";
 function getAttrValue6(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
 }
-var InputNumber = React14.memo(function InputNumber2(props) {
+var InputNumber = React15.memo(function InputNumber2(props) {
   const { config, attributes, onChange, keyword } = props;
   const value = getAttrValue6(attributes, config.attributeId, config.initialValue);
-  return /* @__PURE__ */ jsx12(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx12(
+  return /* @__PURE__ */ jsx13(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx13(
     AntdInputNumber,
     {
       value,
@@ -3582,19 +3967,19 @@ var InputNumber = React14.memo(function InputNumber2(props) {
 });
 
 // src/ui/config-panel/components/Select.tsx
-import React15 from "react";
+import React16 from "react";
 import { Select as AntdSelect } from "antd";
-import { jsx as jsx13 } from "react/jsx-runtime";
+import { jsx as jsx14 } from "react/jsx-runtime";
 function getAttrValue7(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
 }
-var Select = React15.memo(function Select2(props) {
+var Select = React16.memo(function Select2(props) {
   const { config, attributes, onChange, keyword } = props;
   const value = getAttrValue7(attributes, config.attributeId, config.initialValue);
   const options = config.options || [];
   const widthStyle = config.displayName ? { width: "40%" } : { width: "100%", minWidth: "40%" };
-  return /* @__PURE__ */ jsx13(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx13(
+  return /* @__PURE__ */ jsx14(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx14(
     AntdSelect,
     {
       mode: config.mode || void 0,
@@ -3611,10 +3996,10 @@ var Select = React15.memo(function Select2(props) {
 });
 
 // src/ui/config-panel/components/Text.tsx
-import React16 from "react";
+import React17 from "react";
 import { Typography, Button as Button4, Tooltip as Tooltip3 } from "antd";
 import { BugOutlined } from "@ant-design/icons";
-import { jsx as jsx14, jsxs as jsxs5 } from "react/jsx-runtime";
+import { jsx as jsx15, jsxs as jsxs5 } from "react/jsx-runtime";
 function getAttrValue8(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
@@ -3630,13 +4015,13 @@ var execButtonStyle = {
   height: "auto",
   lineHeight: 1
 };
-var Text = React16.memo(function Text2(props) {
+var Text = React17.memo(function Text2(props) {
   const { config, attributes, keyword } = props;
   const value = getAttrValue8(attributes, config.attributeId, config.initialValue);
   const link = getAttrValue8(attributes, config.attributeId, config.link) || value;
   const textType = getAttrValue8(attributes, config.attributeId, config.textType);
   const maxWidth = config.maxWidth || "140px";
-  const textElement = textType === "link" ? /* @__PURE__ */ jsx14(Typography.Link, { href: link, target: "_blank", children: value }) : /* @__PURE__ */ jsx14(
+  const textElement = textType === "link" ? /* @__PURE__ */ jsx15(Typography.Link, { href: link, target: "_blank", children: value }) : /* @__PURE__ */ jsx15(
     Typography.Paragraph,
     {
       copyable: config.copyable ? { tooltips: ["\u590D\u5236", "\u5DF2\u590D\u5236"] } : false,
@@ -3646,13 +4031,13 @@ var Text = React16.memo(function Text2(props) {
       children: value
     }
   );
-  const executableButton = config.executable ? /* @__PURE__ */ jsx14(Tooltip3, { title: config.executableTooltip || "\u8FD0\u884C", children: /* @__PURE__ */ jsx14(
+  const executableButton = config.executable ? /* @__PURE__ */ jsx15(Tooltip3, { title: config.executableTooltip || "\u8FD0\u884C", children: /* @__PURE__ */ jsx15(
     Button4,
     {
       variant: "link",
       size: "small",
       color: "primary",
-      icon: /* @__PURE__ */ jsx14(BugOutlined, {}),
+      icon: /* @__PURE__ */ jsx15(BugOutlined, {}),
       onClick: () => {
         if (typeof config.onExecute === "function") {
           config.onExecute();
@@ -3661,16 +4046,16 @@ var Text = React16.memo(function Text2(props) {
       style: execButtonStyle
     }
   ) }) : null;
-  return /* @__PURE__ */ jsx14(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx14("div", { style: { maxWidth }, children: /* @__PURE__ */ jsxs5("div", { style: textContainerStyle, children: [
+  return /* @__PURE__ */ jsx15(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx15("div", { style: { maxWidth }, children: /* @__PURE__ */ jsxs5("div", { style: textContainerStyle, children: [
     textElement,
     executableButton
   ] }) }) });
 });
 
 // src/ui/config-panel/components/Slider.tsx
-import React17 from "react";
+import React18 from "react";
 import { Slider as AntdSlider, InputNumber as AntdInputNumber2 } from "antd";
-import { jsx as jsx15, jsxs as jsxs6 } from "react/jsx-runtime";
+import { jsx as jsx16, jsxs as jsxs6 } from "react/jsx-runtime";
 function getAttrValue9(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
@@ -3691,11 +4076,11 @@ var inputNumberStyle = {
   width: 56,
   flex: "0 0 auto"
 };
-var Slider = React17.memo(function Slider2(props) {
+var Slider = React18.memo(function Slider2(props) {
   const { config, attributes, onChange, keyword } = props;
   const value = getAttrValue9(attributes, config.attributeId, config.initialValue);
-  return /* @__PURE__ */ jsx15(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsxs6("div", { style: containerStyle, children: [
-    /* @__PURE__ */ jsx15(
+  return /* @__PURE__ */ jsx16(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsxs6("div", { style: containerStyle, children: [
+    /* @__PURE__ */ jsx16(
       AntdSlider,
       {
         style: sliderStyle,
@@ -3706,7 +4091,7 @@ var Slider = React17.memo(function Slider2(props) {
         onChange: (v) => onChange({ [config.attributeId]: v })
       }
     ),
-    Boolean(config.showInputNumber) && /* @__PURE__ */ jsx15(
+    Boolean(config.showInputNumber) && /* @__PURE__ */ jsx16(
       AntdInputNumber2,
       {
         style: inputNumberStyle,
@@ -3722,17 +4107,17 @@ var Slider = React17.memo(function Slider2(props) {
 });
 
 // src/ui/config-panel/components/Switch.tsx
-import React18 from "react";
+import React19 from "react";
 import { Switch as AntdSwitch } from "antd";
-import { jsx as jsx16 } from "react/jsx-runtime";
+import { jsx as jsx17 } from "react/jsx-runtime";
 function getAttrValue10(attributes, attributeId, fallback) {
   if (!attributeId) return fallback;
   return attributeId in attributes ? attributes[attributeId] : fallback;
 }
-var Switch = React18.memo(function Switch2(props) {
+var Switch = React19.memo(function Switch2(props) {
   const { config, attributes, onChange, keyword } = props;
   const value = getAttrValue10(attributes, config.attributeId, config.initialValue);
-  return /* @__PURE__ */ jsx16(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx16(
+  return /* @__PURE__ */ jsx17(FieldWrapper, { config, keyword, children: /* @__PURE__ */ jsx17(
     AntdSwitch,
     {
       checked: Boolean(value),
@@ -3760,7 +4145,7 @@ var configComponents = {
 var components_default = configComponents;
 
 // src/ui/config-panel/AttributeTree.tsx
-import { jsx as jsx17 } from "react/jsx-runtime";
+import { jsx as jsx18 } from "react/jsx-runtime";
 import { createElement as createElement2 } from "react";
 function titleCase(type) {
   if (!type) return "";
@@ -3780,19 +4165,19 @@ function getStatus(config, attributes, relations) {
   }
   return status;
 }
-var AttributeTree = React19.memo(function AttributeTree2(props) {
+var AttributeTree = React20.memo(function AttributeTree2(props) {
   const { config, attributes, relations } = props;
   const Component = config.type ? components_default[titleCase(config.type)] : void 0;
   const status = getStatus(config, attributes, relations);
   const visible = Component && config.show !== false && !status.includes("hidden");
   if (!visible) return null;
   const children = config.children?.map((child, idx) => /* @__PURE__ */ createElement2(AttributeTree2, { ...props, config: child, key: String(idx) }));
-  return /* @__PURE__ */ jsx17(Component, { ...props, children });
+  return /* @__PURE__ */ jsx18(Component, { ...props, children });
 });
 setAttributeTreeRef(AttributeTree);
 
 // src/devtools/controls-content.tsx
-import { jsx as jsx18, jsxs as jsxs7 } from "react/jsx-runtime";
+import { jsx as jsx19, jsxs as jsxs7 } from "react/jsx-runtime";
 function mapControlType(type) {
   switch (type) {
     case "inputNumber":
@@ -3827,8 +4212,8 @@ function ProtoDevControlsContent(props) {
   if (!controls.length) {
     return null;
   }
-  const configTree = React20.useMemo(() => controlsToConfigTree(controls), [controls]);
-  const handleChange = React20.useCallback(
+  const configTree = React21.useMemo(() => controlsToConfigTree(controls), [controls]);
+  const handleChange = React21.useCallback(
     (values) => {
       for (const [key, value] of Object.entries(values)) {
         onValueChange(key, value);
@@ -3856,7 +4241,7 @@ function ProtoDevControlsContent(props) {
               gap: 8
             },
             children: [
-              /* @__PURE__ */ jsx18("span", { style: { fontSize: compact ? 12 : 13, fontWeight: 700, color: EDITOR_CHROME.textPrimary }, children: "\u72B6\u6001\u8C03\u8BD5" }),
+              /* @__PURE__ */ jsx19("span", { style: { fontSize: compact ? 12 : 13, fontWeight: 700, color: EDITOR_CHROME.textPrimary }, children: "\u72B6\u6001\u8C03\u8BD5" }),
               /* @__PURE__ */ jsxs7("span", { style: { fontSize: 11, color: EDITOR_CHROME.textMuted }, children: [
                 controls.length,
                 " \u9879"
@@ -3864,7 +4249,7 @@ function ProtoDevControlsContent(props) {
             ]
           }
         ),
-        /* @__PURE__ */ jsx18(ConfigProvider, { componentSize: "small", children: /* @__PURE__ */ jsx18(
+        /* @__PURE__ */ jsx19(ConfigProvider, { componentSize: "small", children: /* @__PURE__ */ jsx19(
           AttributeTree,
           {
             attributes: state,
@@ -3878,7 +4263,7 @@ function ProtoDevControlsContent(props) {
 }
 
 // src/ui/runtime/annotation-shell.tsx
-import { Fragment as Fragment4, jsx as jsx19, jsxs as jsxs8 } from "react/jsx-runtime";
+import { Fragment as Fragment4, jsx as jsx20, jsxs as jsxs8 } from "react/jsx-runtime";
 var ANNOTATION_POPOVER_CLASS = "axhub-annotation-popover";
 function normalizeColorToken2(value) {
   return String(value || "").trim().toLowerCase();
@@ -3927,7 +4312,7 @@ function ColorSwatchGrid(props) {
         minWidth: 156
       },
       children: [
-        allowAll ? /* @__PURE__ */ jsx19(
+        allowAll ? /* @__PURE__ */ jsx20(
           "button",
           {
             type: "button",
@@ -3964,8 +4349,8 @@ function ColorSwatchGrid(props) {
                   height: "100%"
                 },
                 children: [
-                  /* @__PURE__ */ jsx19("circle", { cx: "10", cy: "10", r: "9", stroke: EDITOR_CHROME.borderStrong, strokeWidth: "1.2", fill: EDITOR_CHROME.surface }),
-                  /* @__PURE__ */ jsx19("line", { x1: "4.5", y1: "15.5", x2: "15.5", y2: "4.5", stroke: EDITOR_CHROME.textMuted, strokeWidth: "1.6", strokeLinecap: "round" })
+                  /* @__PURE__ */ jsx20("circle", { cx: "10", cy: "10", r: "9", stroke: EDITOR_CHROME.borderStrong, strokeWidth: "1.2", fill: EDITOR_CHROME.surface }),
+                  /* @__PURE__ */ jsx20("line", { x1: "4.5", y1: "15.5", x2: "15.5", y2: "4.5", stroke: EDITOR_CHROME.textMuted, strokeWidth: "1.6", strokeLinecap: "round" })
                 ]
               }
             )
@@ -3973,7 +4358,7 @@ function ColorSwatchGrid(props) {
         ) : null,
         options.map((option) => {
           const active = normalizeColorToken2(value) === normalizeColorToken2(option.value);
-          return /* @__PURE__ */ jsx19(
+          return /* @__PURE__ */ jsx20(
             "button",
             {
               type: "button",
@@ -3993,7 +4378,7 @@ function ColorSwatchGrid(props) {
                 justifySelf: "center",
                 ...activeSwatchStyle(active)
               },
-              children: active ? /* @__PURE__ */ jsx19(CheckOutlined, { style: { color: "#fff", fontSize: 11 } }) : null
+              children: active ? /* @__PURE__ */ jsx20(CheckOutlined, { style: { color: "#fff", fontSize: 11 } }) : null
             },
             option.value
           );
@@ -4030,18 +4415,18 @@ function AnnotationShell(props) {
     onProtoValueChange,
     onCloseCard
   } = props;
-  const cardRef = React21.useRef(null);
-  const toolbarRef = React21.useRef(null);
-  const drawerEditorRef = React21.useRef(null);
-  const [cardPosition, setCardPosition] = React21.useState({ left: 24, top: 80 });
-  const [settingsOpen, setSettingsOpen] = React21.useState(false);
-  const [drawerWidth, setDrawerWidth] = React21.useState(() => getAnnotationDrawerDefaultWidth(typeof window === "undefined" ? void 0 : window.innerWidth));
-  const [toolbarPosition, setToolbarPosition] = React21.useState(() => getDefaultAnnotationToolbarPosition({
+  const cardRef = React22.useRef(null);
+  const toolbarRef = React22.useRef(null);
+  const drawerEditorRef = React22.useRef(null);
+  const [cardPosition, setCardPosition] = React22.useState({ left: 24, top: 80 });
+  const [settingsOpen, setSettingsOpen] = React22.useState(false);
+  const [drawerWidth, setDrawerWidth] = React22.useState(() => getAnnotationDrawerDefaultWidth(typeof window === "undefined" ? void 0 : window.innerWidth));
+  const [toolbarPosition, setToolbarPosition] = React22.useState(() => getDefaultAnnotationToolbarPosition({
     width: typeof window === "undefined" ? 1440 : window.innerWidth,
     height: typeof window === "undefined" ? 900 : window.innerHeight
   }));
-  const [toolbarDragging, setToolbarDragging] = React21.useState(false);
-  React21.useLayoutEffect(() => {
+  const [toolbarDragging, setToolbarDragging] = React22.useState(false);
+  React22.useLayoutEffect(() => {
     if (!anchorRect || !cardRef.current) return;
     const rect = cardRef.current.getBoundingClientRect();
     const nextPosition = computePromptCardPosition({
@@ -4054,7 +4439,7 @@ function AnnotationShell(props) {
     });
     setCardPosition((prev) => prev.left === nextPosition.left && prev.top === nextPosition.top ? prev : nextPosition);
   }, [anchorRect, annotationText, images.length, selectedNode?.id]);
-  React21.useEffect(() => {
+  React22.useEffect(() => {
     if (typeof window === "undefined") {
       return void 0;
     }
@@ -4074,7 +4459,7 @@ function AnnotationShell(props) {
   const drawerOpen = displayMode === "drawer" && Boolean(currentTarget);
   const displayAnnotation = markdownText || annotationText;
   const protoControls = selectedNode?.controls || [];
-  const filterColorOptions = React21.useMemo(
+  const filterColorOptions = React22.useMemo(
     () => buildColorSwatchOptions(availableFilterColors),
     [availableFilterColors]
   );
@@ -4083,7 +4468,7 @@ function AnnotationShell(props) {
   const viewportWidth = typeof window === "undefined" ? void 0 : window.innerWidth;
   const drawerMaxWidth = getAnnotationDrawerMaxWidth(viewportWidth);
   const drawerDefaultWidth = clampAnnotationDrawerWidth(drawerWidth, viewportWidth);
-  React21.useEffect(() => {
+  React22.useEffect(() => {
     const toolbarEl = toolbarRef.current;
     if (!hasSettingsControls || !toolbarEl || typeof window === "undefined") {
       return void 0;
@@ -4101,13 +4486,13 @@ function AnnotationShell(props) {
       }
     });
   }, [hasSettingsControls]);
-  const colorFilterContent = /* @__PURE__ */ jsx19(
+  const colorFilterContent = /* @__PURE__ */ jsx20(
     "div",
     {
       className: ANNOTATION_POPOVER_CLASS,
       onPointerDownCapture: (event) => event.stopPropagation(),
       style: { padding: 2 },
-      children: /* @__PURE__ */ jsx19(
+      children: /* @__PURE__ */ jsx20(
         ColorSwatchGrid,
         {
           value: colorFilter,
@@ -4130,7 +4515,7 @@ function AnnotationShell(props) {
       style: { width: 248 },
       children: [
         showThemeToggle ? /* @__PURE__ */ jsxs8("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }, children: [
-          /* @__PURE__ */ jsx19(
+          /* @__PURE__ */ jsx20(
             "span",
             {
               style: {
@@ -4142,7 +4527,7 @@ function AnnotationShell(props) {
               children: "\u6697\u9ED1\u6A21\u5F0F"
             }
           ),
-          /* @__PURE__ */ jsx19(
+          /* @__PURE__ */ jsx20(
             "div",
             {
               style: {
@@ -4151,7 +4536,7 @@ function AnnotationShell(props) {
                 justifyContent: "flex-end",
                 flex: "0 0 auto"
               },
-              children: /* @__PURE__ */ jsx19(
+              children: /* @__PURE__ */ jsx20(
                 Switch3,
                 {
                   checked: themeMode === "dark",
@@ -4164,8 +4549,8 @@ function AnnotationShell(props) {
           )
         ] }) : null,
         showDisplayModeSwitch ? /* @__PURE__ */ jsxs8("div", { style: { display: "flex", flexDirection: "column", gap: 6 }, children: [
-          /* @__PURE__ */ jsx19("span", { style: { fontSize: 12, fontWeight: 600, color: EDITOR_CHROME.textSecondary }, children: "\u663E\u793A\u6A21\u5F0F" }),
-          /* @__PURE__ */ jsx19(
+          /* @__PURE__ */ jsx20("span", { style: { fontSize: 12, fontWeight: 600, color: EDITOR_CHROME.textSecondary }, children: "\u663E\u793A\u6A21\u5F0F" }),
+          /* @__PURE__ */ jsx20(
             Segmented,
             {
               block: true,
@@ -4182,7 +4567,7 @@ function AnnotationShell(props) {
           )
         ] }) : null,
         showColorFilter ? /* @__PURE__ */ jsxs8("div", { style: { display: "flex", flexDirection: "column", gap: 6 }, children: [
-          /* @__PURE__ */ jsx19("span", { style: { fontSize: 12, fontWeight: 600, color: EDITOR_CHROME.textSecondary }, children: "\u989C\u8272\u7B5B\u9009" }),
+          /* @__PURE__ */ jsx20("span", { style: { fontSize: 12, fontWeight: 600, color: EDITOR_CHROME.textSecondary }, children: "\u989C\u8272\u7B5B\u9009" }),
           colorFilterContent
         ] }) : null
       ]
@@ -4226,7 +4611,7 @@ function AnnotationShell(props) {
       box-sizing: border-box;
     }
 
-    .axhub-annotation-drawer-editor .simple-editor-wrapper {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown {
       width: 100%;
       height: 100%;
       min-height: 0;
@@ -4237,7 +4622,7 @@ function AnnotationShell(props) {
       flex-direction: column;
     }
 
-    .axhub-annotation-drawer-editor .simple-editor-content {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown {
       max-width: none;
       width: 100%;
       min-height: 0;
@@ -4248,7 +4633,7 @@ function AnnotationShell(props) {
         linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 252, 255, 0.96));
     }
 
-    .axhub-annotation-drawer-editor .simple-editor-content .tiptap.ProseMirror.simple-editor {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown {
       width: 100%;
       max-width: none;
       min-height: 100%;
@@ -4264,33 +4649,32 @@ function AnnotationShell(props) {
       line-height: 1.75;
     }
 
-    .axhub-annotation-drawer-editor .tiptap-toolbar {
-      display: none !important;
-    }
-
-    .axhub-annotation-drawer-editor .simple-editor-content .tiptap.ProseMirror.simple-editor > :first-child {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown > :first-child {
       margin-top: 0;
     }
 
-    .axhub-annotation-drawer-editor .simple-editor-content .tiptap.ProseMirror.simple-editor p:first-child {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown p:first-child {
       margin-top: 0;
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror p {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown p {
       margin: 0;
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror p + p,
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror ul + p,
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror ol + p,
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror blockquote + p,
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror pre + p {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown p + p,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown ul + p,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown ol + p,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown blockquote + p,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown pre + p {
       margin-top: 14px;
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror h1,
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror h2,
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror h3 {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h1,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h2,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h3,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h4,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h5,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h6 {
       margin: 1.4em 0 0.65em;
       line-height: 1.2;
       font-weight: 700;
@@ -4298,25 +4682,28 @@ function AnnotationShell(props) {
       color: ${EDITOR_CHROME.textPrimary};
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror h1 { font-size: 1.85rem; }
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror h2 { font-size: 1.45rem; }
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror h3 { font-size: 1.15rem; }
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h1 { font-size: 1.85rem; }
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h2 { font-size: 1.45rem; }
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h3 { font-size: 1.15rem; }
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h4 { font-size: 1rem; }
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h5,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown h6 { font-size: 0.92rem; }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror ul,
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror ol {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown ul,
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown ol {
       margin: 14px 0;
       padding-left: 24px;
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror li + li { margin-top: 6px; }
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown li + li { margin-top: 6px; }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror a {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown a {
       color: #1677ff;
       text-decoration: underline;
       text-underline-offset: 2px;
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror code {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown code {
       padding: 0.15em 0.38em;
       border-radius: 6px;
       background: rgba(15, 23, 42, 0.06);
@@ -4324,7 +4711,7 @@ function AnnotationShell(props) {
       font-size: 0.92em;
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror pre {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown pre {
       margin: 16px 0;
       padding: 14px 16px;
       border-radius: 14px;
@@ -4333,13 +4720,13 @@ function AnnotationShell(props) {
       overflow-x: auto;
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror pre code {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown pre code {
       padding: 0;
       background: transparent;
       color: inherit;
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror blockquote {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown blockquote {
       margin: 16px 0;
       padding: 12px 16px;
       border-left: 3px solid rgba(24, 144, 255, 0.48);
@@ -4348,13 +4735,13 @@ function AnnotationShell(props) {
       color: ${EDITOR_CHROME.textSecondary};
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror hr {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown hr {
       border: none;
       border-top: 1px solid ${EDITOR_CHROME.border};
       margin: 20px 0;
     }
 
-    .axhub-annotation-drawer-editor .tiptap.ProseMirror img {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown img {
       display: block;
       max-width: 100%;
       height: auto;
@@ -4362,25 +4749,25 @@ function AnnotationShell(props) {
       margin: 18px auto;
     }
 
-    .axhub-annotation-drawer-editor.dark .simple-editor-content {
+    .axhub-annotation-drawer-editor.dark .axhub-annotation-markdown {
       background: linear-gradient(180deg, rgba(24, 24, 27, 0.96), rgba(17, 24, 39, 0.94));
     }
 
-    .axhub-annotation-drawer-editor.dark .tiptap.ProseMirror code {
+    .axhub-annotation-drawer-editor.dark .axhub-annotation-markdown code {
       background: rgba(255, 255, 255, 0.08);
     }
 
-    .axhub-annotation-drawer-editor.dark .tiptap.ProseMirror blockquote {
+    .axhub-annotation-drawer-editor.dark .axhub-annotation-markdown blockquote {
       background: rgba(24, 144, 255, 0.12);
     }
 
-    .axhub-annotation-drawer-editor .simple-editor-content::-webkit-scrollbar {
+    .axhub-annotation-drawer-editor .axhub-annotation-markdown::-webkit-scrollbar {
       display: none;
     }
   `;
   return /* @__PURE__ */ jsxs8(Fragment4, { children: [
-    /* @__PURE__ */ jsx19("style", { children: PROPERTY_PANEL_LOCAL_STYLES }),
-    hasSettingsControls ? /* @__PURE__ */ jsx19(
+    /* @__PURE__ */ jsx20("style", { children: PROPERTY_PANEL_LOCAL_STYLES }),
+    hasSettingsControls ? /* @__PURE__ */ jsx20(
       "div",
       {
         ref: toolbarRef,
@@ -4395,7 +4782,7 @@ function AnnotationShell(props) {
           cursor: toolbarDragging ? "grabbing" : "grab",
           userSelect: "none"
         },
-        children: /* @__PURE__ */ jsx19(
+        children: /* @__PURE__ */ jsx20(
           Popover,
           {
             trigger: "click",
@@ -4406,10 +4793,10 @@ function AnnotationShell(props) {
             content: settingsCardContent,
             getPopupContainer: () => toolbarRef.current ?? drawerContainer ?? document.body,
             overlayClassName: ANNOTATION_POPOVER_CLASS,
-            children: /* @__PURE__ */ jsx19("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ jsx19(
+            children: /* @__PURE__ */ jsx20("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ jsx20(
               FloatButton,
               {
-                icon: /* @__PURE__ */ jsx19(SettingOutlined, {}),
+                icon: /* @__PURE__ */ jsx20(SettingOutlined, {}),
                 "aria-label": "\u8BBE\u7F6E",
                 tooltip: null,
                 rootClassName: "ant-float-btn-pure"
@@ -4433,7 +4820,7 @@ function AnnotationShell(props) {
           gap: 10
         },
         children: [
-          /* @__PURE__ */ jsx19("style", { children: `
+          /* @__PURE__ */ jsx20("style", { children: `
             .axhub-annotation-bubble-scroll::-webkit-scrollbar {
               width: 4px;
               background: transparent;
@@ -4450,7 +4837,7 @@ function AnnotationShell(props) {
             }
           ` }),
           /* @__PURE__ */ jsxs8("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
-            /* @__PURE__ */ jsx19(
+            /* @__PURE__ */ jsx20(
               "span",
               {
                 "aria-hidden": "true",
@@ -4465,16 +4852,16 @@ function AnnotationShell(props) {
                 }
               }
             ),
-            /* @__PURE__ */ jsx19("div", { style: { flex: 1 } }),
+            /* @__PURE__ */ jsx20("div", { style: { flex: 1 } }),
             displayIndex != null ? /* @__PURE__ */ jsxs8("span", { style: { fontSize: 11, fontWeight: 600, color: EDITOR_CHROME.textMuted, padding: "0 2px" }, children: [
               "#",
               displayIndex
             ] }) : null,
-            /* @__PURE__ */ jsx19(
+            /* @__PURE__ */ jsx20(
               IconActionButton,
               {
                 title: "\u5173\u95ED",
-                icon: /* @__PURE__ */ jsx19(CloseToolIcon, {}),
+                icon: /* @__PURE__ */ jsx20(CloseToolIcon, {}),
                 tone: "dark",
                 onClick: onCloseCard
               }
@@ -4492,71 +4879,71 @@ function AnnotationShell(props) {
                 scrollbarColor: "rgba(0,0,0,0.15) transparent"
               },
               children: [
-                /* @__PURE__ */ jsx19("style", { children: `
-                .axhub-annotation-bubble-md .simple-editor-wrapper { background: transparent !important; }
-                .axhub-annotation-bubble-md .simple-editor-content { max-width: none; width: 100%; margin: 0; background: transparent !important; }
-                .axhub-annotation-bubble-md .tiptap-toolbar { display: none !important; }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror.simple-editor {
+                /* @__PURE__ */ jsx20("style", { children: `
+                .axhub-annotation-bubble-md .axhub-annotation-markdown {
                   padding: 0 4px 0 0 !important;
                   font-size: 12.5px !important;
                   line-height: 1.6 !important;
                   min-height: auto !important;
                   color: ${EDITOR_CHROME.textPrimary};
-                  cursor: default !important;
+                  background: transparent !important;
                 }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror p { margin: 0; }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror p + p { margin-top: 8px; }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror h1,
-                .axhub-annotation-bubble-md .tiptap.ProseMirror h2,
-                .axhub-annotation-bubble-md .tiptap.ProseMirror h3 {
+                .axhub-annotation-bubble-md .axhub-annotation-markdown > :first-child { margin-top: 0; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown p { margin: 0; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown p + p { margin-top: 8px; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h1,
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h2,
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h3,
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h4,
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h5,
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h6 {
                   margin: 0.8em 0 0.4em; line-height: 1.3; font-weight: 700;
                 }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror h1 { font-size: 1.3em; }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror h2 { font-size: 1.15em; }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror h3 { font-size: 1.05em; }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror ul,
-                .axhub-annotation-bubble-md .tiptap.ProseMirror ol { margin: 6px 0; padding-left: 20px; }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror li + li { margin-top: 3px; }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror code {
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h1 { font-size: 1.3em; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h2 { font-size: 1.15em; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h3 { font-size: 1.05em; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h4,
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h5,
+                .axhub-annotation-bubble-md .axhub-annotation-markdown h6 { font-size: 1em; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown ul,
+                .axhub-annotation-bubble-md .axhub-annotation-markdown ol { margin: 6px 0; padding-left: 20px; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown li + li { margin-top: 3px; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown code {
                   padding: 0.1em 0.3em; border-radius: 4px;
                   background: rgba(15, 23, 42, 0.06); font-size: 0.9em;
                 }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror pre {
+                .axhub-annotation-bubble-md .axhub-annotation-markdown pre {
                   margin: 8px 0; padding: 10px 12px; border-radius: 10px;
                   background: rgba(15, 23, 42, 0.92); color: rgba(248, 250, 252, 0.96);
                   overflow-x: auto; font-size: 0.88em;
                 }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror pre code { padding: 0; background: transparent; color: inherit; }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror blockquote {
+                .axhub-annotation-bubble-md .axhub-annotation-markdown pre code { padding: 0; background: transparent; color: inherit; }
+                .axhub-annotation-bubble-md .axhub-annotation-markdown blockquote {
                   margin: 8px 0; padding: 8px 12px;
                   border-left: 3px solid rgba(24, 144, 255, 0.48);
                   background: rgba(24, 144, 255, 0.06); border-radius: 0 8px 8px 0;
                 }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror hr {
+                .axhub-annotation-bubble-md .axhub-annotation-markdown hr {
                   border: none; border-top: 1px solid ${EDITOR_CHROME.border}; margin: 10px 0;
                 }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror img {
+                .axhub-annotation-bubble-md .axhub-annotation-markdown img {
                   display: block; max-width: 100%; height: auto; border-radius: 8px; margin: 10px auto;
                 }
-                .axhub-annotation-bubble-md .tiptap.ProseMirror a {
+                .axhub-annotation-bubble-md .axhub-annotation-markdown a {
                   color: #1677ff; text-decoration: underline; text-underline-offset: 2px;
                 }
               ` }),
-                /* @__PURE__ */ jsx19("div", { className: "axhub-annotation-bubble-md", children: /* @__PURE__ */ jsx19(
-                  SimpleEditor,
+                /* @__PURE__ */ jsx20("div", { className: "axhub-annotation-bubble-md", children: /* @__PURE__ */ jsx20(
+                  ReadonlyMarkdown,
                   {
-                    contentType: "markdown",
-                    content: displayAnnotation,
-                    editable: false,
-                    embedded: true,
-                    compactToolbar: true,
-                    showThemeToggle: false
+                    className: "axhub-annotation-markdown",
+                    content: displayAnnotation
                   },
                   `bubble-${selectedNode?.id ?? "none"}`
                 ) })
               ]
             }
-          ) : /* @__PURE__ */ jsx19(
+          ) : /* @__PURE__ */ jsx20(
             "div",
             {
               style: {
@@ -4568,7 +4955,7 @@ function AnnotationShell(props) {
               children: "\u6682\u65E0\u6807\u6CE8\u5185\u5BB9"
             }
           ),
-          images.length > 0 ? /* @__PURE__ */ jsx19("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" }, children: images.map((image) => /* @__PURE__ */ jsx19(
+          images.length > 0 ? /* @__PURE__ */ jsx20("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" }, children: images.map((image) => /* @__PURE__ */ jsx20(
             "img",
             {
               src: image.url,
@@ -4583,7 +4970,7 @@ function AnnotationShell(props) {
             },
             image.filename
           )) }) : null,
-          protoControls.length > 0 ? /* @__PURE__ */ jsx19(
+          protoControls.length > 0 ? /* @__PURE__ */ jsx20(
             "div",
             {
               style: {
@@ -4593,7 +4980,7 @@ function AnnotationShell(props) {
                 paddingTop: 10,
                 borderTop: `1px solid ${EDITOR_CHROME.border}`
               },
-              children: /* @__PURE__ */ jsx19(
+              children: /* @__PURE__ */ jsx20(
                 ProtoDevControlsContent,
                 {
                   controls: protoControls,
@@ -4655,7 +5042,7 @@ function AnnotationShell(props) {
           }
         },
         children: [
-          /* @__PURE__ */ jsx19("style", { children: drawerEditorStyles }),
+          /* @__PURE__ */ jsx20("style", { children: drawerEditorStyles }),
           /* @__PURE__ */ jsxs8(
             "div",
             {
@@ -4668,7 +5055,7 @@ function AnnotationShell(props) {
                 flex: "0 0 auto"
               },
               children: [
-                /* @__PURE__ */ jsx19(
+                /* @__PURE__ */ jsx20(
                   "span",
                   {
                     "aria-hidden": "true",
@@ -4683,16 +5070,16 @@ function AnnotationShell(props) {
                     }
                   }
                 ),
-                /* @__PURE__ */ jsx19("div", { style: { flex: 1 } }),
+                /* @__PURE__ */ jsx20("div", { style: { flex: 1 } }),
                 displayIndex != null ? /* @__PURE__ */ jsxs8("span", { style: { fontSize: 11, fontWeight: 600, color: EDITOR_CHROME.textMuted, padding: "0 2px" }, children: [
                   "#",
                   displayIndex
                 ] }) : null,
-                /* @__PURE__ */ jsx19(
+                /* @__PURE__ */ jsx20(
                   IconActionButton,
                   {
                     title: "\u5173\u95ED",
-                    icon: /* @__PURE__ */ jsx19(CloseToolIcon, {}),
+                    icon: /* @__PURE__ */ jsx20(CloseToolIcon, {}),
                     tone: "dark",
                     onClick: onCloseCard
                   }
@@ -4709,7 +5096,7 @@ function AnnotationShell(props) {
               "data-readonly": "true",
               style: { flex: "1 1 auto", minHeight: 0 },
               children: [
-                protoControls.length > 0 ? /* @__PURE__ */ jsx19(
+                protoControls.length > 0 ? /* @__PURE__ */ jsx20(
                   "div",
                   {
                     style: {
@@ -4718,7 +5105,7 @@ function AnnotationShell(props) {
                       borderBottom: `1px solid ${EDITOR_CHROME.border}`,
                       background: EDITOR_CHROME.surface
                     },
-                    children: /* @__PURE__ */ jsx19(
+                    children: /* @__PURE__ */ jsx20(
                       ProtoDevControlsContent,
                       {
                         controls: protoControls,
@@ -4728,18 +5115,14 @@ function AnnotationShell(props) {
                     )
                   }
                 ) : null,
-                displayAnnotation.trim() ? /* @__PURE__ */ jsx19(
-                  SimpleEditor,
+                displayAnnotation.trim() ? /* @__PURE__ */ jsx20(
+                  ReadonlyMarkdown,
                   {
-                    contentType: "markdown",
-                    content: displayAnnotation,
-                    editable: false,
-                    embedded: true,
-                    compactToolbar: true,
-                    showThemeToggle: false
+                    className: "axhub-annotation-markdown",
+                    content: displayAnnotation
                   },
                   `drawer-${selectedNode?.id ?? "none"}`
-                ) : /* @__PURE__ */ jsx19(
+                ) : /* @__PURE__ */ jsx20(
                   "div",
                   {
                     style: {
@@ -4835,7 +5218,7 @@ async function loadAnnotationSource(source) {
 }
 
 // src/annotation-runtime.tsx
-import { jsx as jsx20 } from "react/jsx-runtime";
+import { jsx as jsx21 } from "react/jsx-runtime";
 var ANNOTATION_THEME_STORAGE_KEY = "axhub-annotation-theme-mode";
 var DEFAULT_VIEWER_OPTIONS = {
   showToolbar: true,
@@ -5100,10 +5483,10 @@ function createAnnotationViewer(config) {
     };
   };
   const RuntimeApp = () => {
-    const snapshot = React22.useSyncExternalStore(subscribeUi, getRuntimeSnapshot, getRuntimeSnapshot);
+    const snapshot = React23.useSyncExternalStore(subscribeUi, getRuntimeSnapshot, getRuntimeSnapshot);
     const protoState = useProtoDevState();
-    const styleCache = React22.useMemo(() => createCache(), []);
-    const availableFilterColors = React22.useMemo(() => {
+    const styleCache = React23.useMemo(() => createCache(), []);
+    const availableFilterColors = React23.useMemo(() => {
       const seen = /* @__PURE__ */ new Set();
       return snapshot.state.data.nodes.map((node) => String(node.color || "").trim()).filter((color) => {
         const normalized = normalizeColorToken3(color);
@@ -5118,13 +5501,13 @@ function createAnnotationViewer(config) {
       (node) => normalizeColorToken3(node.color) === normalizeColorToken3(snapshot.state.colorFilter)
     ).length : snapshot.state.data.nodes.length;
     if (!snapshot.shadowRoot) return null;
-    return /* @__PURE__ */ jsx20(StyleProvider, { cache: styleCache, container: snapshot.shadowRoot, children: /* @__PURE__ */ jsx20(
+    return /* @__PURE__ */ jsx21(StyleProvider, { cache: styleCache, container: snapshot.shadowRoot, children: /* @__PURE__ */ jsx21(
       ConfigProvider2,
       {
         componentSize: "small",
         getPopupContainer: () => snapshot.drawerContainer ?? document.body,
         theme: createRuntimeAntdTheme(snapshot.themeMode),
-        children: /* @__PURE__ */ jsx20(App, { children: /* @__PURE__ */ jsx20(
+        children: /* @__PURE__ */ jsx21(App, { children: /* @__PURE__ */ jsx21(
           "div",
           {
             style: {
@@ -5133,7 +5516,7 @@ function createAnnotationViewer(config) {
               pointerEvents: "none",
               ...createEditorChromeCssVars(snapshot.themeMode)
             },
-            children: /* @__PURE__ */ jsx20(
+            children: /* @__PURE__ */ jsx21(
               AnnotationShell,
               {
                 displayMode: snapshot.state.displayMode,
@@ -5237,7 +5620,7 @@ function createAnnotationViewer(config) {
       appHost.style.background = "transparent";
       mountedElements.uiRoot.append(appHost);
       root = createRoot(appHost);
-      root.render(/* @__PURE__ */ jsx20(RuntimeApp, {}));
+      root.render(/* @__PURE__ */ jsx21(RuntimeApp, {}));
       window.addEventListener("keydown", handleKeyDown, true);
       await syncUiState();
       emitState();
@@ -5299,7 +5682,7 @@ function AnnotationViewer(props) {
     resolveElement,
     options
   } = props;
-  React23.useEffect(() => {
+  React24.useEffect(() => {
     if (!defaultVisible) {
       return void 0;
     }
@@ -5372,10 +5755,10 @@ function buildAnnotationPrompt(nodes, options = {}) {
 }
 
 // src/ui/genie-brand.tsx
-import React24 from "react";
+import React25 from "react";
 import { AnimatePresence as AnimatePresence2, motion as motion2 } from "motion/react";
 import { LoadingOutlined as LoadingOutlined2 } from "@ant-design/icons";
-import { Fragment as Fragment5, jsx as jsx21, jsxs as jsxs9 } from "react/jsx-runtime";
+import { Fragment as Fragment5, jsx as jsx22, jsxs as jsxs9 } from "react/jsx-runtime";
 function getGenieBrandPalette(themeMode) {
   return themeMode === "dark" ? {
     activeColor: "#00d68f",
@@ -5398,12 +5781,12 @@ function clamp2(value, min, max) {
 }
 function AIFace(props) {
   const { state, themeMode, hovered, mousePos, dragVelocity, size } = props;
-  const [isBlinking, setIsBlinking] = React24.useState(false);
+  const [isBlinking, setIsBlinking] = React25.useState(false);
   const isActive = state !== "sleeping";
   const isWorking = state === "working";
   const isDragging = state === "dragging";
   const { activeColor, inactiveColor } = getGenieBrandPalette(themeMode);
-  React24.useEffect(() => {
+  React25.useEffect(() => {
     if (!isActive) {
       setIsBlinking(false);
       return;
@@ -5470,7 +5853,7 @@ function AIFace(props) {
       },
       transition: { duration: 3, repeat: Infinity, ease: "easeInOut" },
       children: [
-        /* @__PURE__ */ jsx21(
+        /* @__PURE__ */ jsx22(
           motion2.rect,
           {
             initial: false,
@@ -5503,7 +5886,7 @@ function AIFace(props) {
             style: { transformOrigin: "center" }
           }
         ),
-        /* @__PURE__ */ jsx21(
+        /* @__PURE__ */ jsx22(
           motion2.rect,
           {
             initial: false,
@@ -5536,7 +5919,7 @@ function AIFace(props) {
             style: { transformOrigin: "center" }
           }
         ),
-        /* @__PURE__ */ jsx21(AnimatePresence2, { children: isActive ? /* @__PURE__ */ jsxs9(
+        /* @__PURE__ */ jsx22(AnimatePresence2, { children: isActive ? /* @__PURE__ */ jsxs9(
           motion2.g,
           {
             initial: { opacity: 0 },
@@ -5550,7 +5933,7 @@ function AIFace(props) {
                   transition: isDragging ? { type: "spring", stiffness: 200, damping: 10 } : isWorking ? { duration: 0.1, repeat: Infinity } : { duration: 3.5, repeat: Infinity, ease: "easeInOut" },
                   style: { transformOrigin: "11px -6px" },
                   children: [
-                    /* @__PURE__ */ jsx21(
+                    /* @__PURE__ */ jsx22(
                       motion2.path,
                       {
                         initial: { d: "M 11 -6 C 15 -10 21 -8 24 -2" },
@@ -5563,7 +5946,7 @@ function AIFace(props) {
                         strokeLinecap: "round"
                       }
                     ),
-                    /* @__PURE__ */ jsx21(
+                    /* @__PURE__ */ jsx22(
                       motion2.circle,
                       {
                         initial: { cx: 24, cy: -2 },
@@ -5574,7 +5957,7 @@ function AIFace(props) {
                         fill: activeColor
                       }
                     ),
-                    /* @__PURE__ */ jsx21(AnimatePresence2, { children: isWorking ? /* @__PURE__ */ jsx21(
+                    /* @__PURE__ */ jsx22(AnimatePresence2, { children: isWorking ? /* @__PURE__ */ jsx22(
                       motion2.circle,
                       {
                         initial: { cx: 5, cy: -26, r: 1, opacity: 0.8 },
@@ -5596,7 +5979,7 @@ function AIFace(props) {
                   transition: isDragging ? { type: "spring", stiffness: 200, damping: 10 } : isWorking ? { duration: 0.1, repeat: Infinity, delay: 0.05 } : { duration: 3.5, repeat: Infinity, ease: "easeInOut", delay: 0.2 },
                   style: { transformOrigin: "13px -5px" },
                   children: [
-                    /* @__PURE__ */ jsx21(
+                    /* @__PURE__ */ jsx22(
                       motion2.path,
                       {
                         initial: { d: "M 13 -5 C 17 -8 23 -5 26 2" },
@@ -5609,7 +5992,7 @@ function AIFace(props) {
                         strokeLinecap: "round"
                       }
                     ),
-                    /* @__PURE__ */ jsx21(
+                    /* @__PURE__ */ jsx22(
                       motion2.circle,
                       {
                         initial: { cx: 26, cy: 2 },
@@ -5620,7 +6003,7 @@ function AIFace(props) {
                         fill: activeColor
                       }
                     ),
-                    /* @__PURE__ */ jsx21(AnimatePresence2, { children: isWorking ? /* @__PURE__ */ jsx21(
+                    /* @__PURE__ */ jsx22(AnimatePresence2, { children: isWorking ? /* @__PURE__ */ jsx22(
                       motion2.circle,
                       {
                         initial: { cx: 19, cy: -25, r: 1, opacity: 0.8 },
@@ -5639,8 +6022,8 @@ function AIFace(props) {
           },
           "hair-tennae"
         ) : null }),
-        /* @__PURE__ */ jsx21(AnimatePresence2, { children: isActive && !isBlinking && !isWorking && !isDragging ? /* @__PURE__ */ jsxs9(Fragment5, { children: [
-          /* @__PURE__ */ jsx21(
+        /* @__PURE__ */ jsx22(AnimatePresence2, { children: isActive && !isBlinking && !isWorking && !isDragging ? /* @__PURE__ */ jsxs9(Fragment5, { children: [
+          /* @__PURE__ */ jsx22(
             motion2.circle,
             {
               initial: { opacity: 0, scale: 0 },
@@ -5652,7 +6035,7 @@ function AIFace(props) {
               fill: activeColor
             }
           ),
-          /* @__PURE__ */ jsx21(
+          /* @__PURE__ */ jsx22(
             motion2.circle,
             {
               initial: { opacity: 0, scale: 0 },
@@ -5671,7 +6054,7 @@ function AIFace(props) {
 }
 function SleepingZzz(props) {
   const { inactiveColor } = getGenieBrandPalette(props.themeMode);
-  return /* @__PURE__ */ jsx21(
+  return /* @__PURE__ */ jsx22(
     "div",
     {
       "aria-hidden": "true",
@@ -5681,7 +6064,7 @@ function SleepingZzz(props) {
         pointerEvents: "none",
         overflow: "visible"
       },
-      children: [0, 1, 2].map((index) => /* @__PURE__ */ jsx21(
+      children: [0, 1, 2].map((index) => /* @__PURE__ */ jsx22(
         motion2.div,
         {
           style: {
@@ -5724,13 +6107,13 @@ function GenieBrandButton(props) {
     dragVelocity = { x: 0, y: 0 },
     onClick
   } = props;
-  const [hovered, setHovered] = React24.useState(false);
-  const [mousePos, setMousePos] = React24.useState({ x: 0, y: 0 });
+  const [hovered, setHovered] = React25.useState(false);
+  const [mousePos, setMousePos] = React25.useState({ x: 0, y: 0 });
   const isDark = themeMode === "dark";
   const isActive = state !== "sleeping";
   const isWorking = state === "working";
   const palette = getGenieBrandPalette(themeMode);
-  const handleMouseMove = React24.useCallback(
+  const handleMouseMove = React25.useCallback(
     (event) => {
       if (!isActive || disabled || state === "dragging") return;
       const rect = event.currentTarget.getBoundingClientRect();
@@ -5782,8 +6165,8 @@ function GenieBrandButton(props) {
         userSelect: "none"
       },
       children: [
-        /* @__PURE__ */ jsx21(AnimatePresence2, { children: isActive ? /* @__PURE__ */ jsxs9(Fragment5, { children: [
-          /* @__PURE__ */ jsx21(
+        /* @__PURE__ */ jsx22(AnimatePresence2, { children: isActive ? /* @__PURE__ */ jsxs9(Fragment5, { children: [
+          /* @__PURE__ */ jsx22(
             motion2.div,
             {
               initial: { opacity: 0, scale: 0.8 },
@@ -5801,7 +6184,7 @@ function GenieBrandButton(props) {
             },
             "genie-face-glow"
           ),
-          isWorking ? /* @__PURE__ */ jsx21(
+          isWorking ? /* @__PURE__ */ jsx22(
             motion2.div,
             {
               "data-genie-working-ring": "true",
@@ -5820,7 +6203,7 @@ function GenieBrandButton(props) {
             "genie-working-ring"
           ) : null
         ] }) : null }),
-        loading ? /* @__PURE__ */ jsx21(
+        loading ? /* @__PURE__ */ jsx22(
           LoadingOutlined2,
           {
             spin: true,
@@ -5832,7 +6215,7 @@ function GenieBrandButton(props) {
             }
           }
         ) : /* @__PURE__ */ jsxs9(Fragment5, { children: [
-          /* @__PURE__ */ jsx21(
+          /* @__PURE__ */ jsx22(
             AIFace,
             {
               state,
@@ -5843,7 +6226,7 @@ function GenieBrandButton(props) {
               size
             }
           ),
-          /* @__PURE__ */ jsx21(AnimatePresence2, { children: !isActive ? /* @__PURE__ */ jsx21(SleepingZzz, { themeMode }) : null })
+          /* @__PURE__ */ jsx22(AnimatePresence2, { children: !isActive ? /* @__PURE__ */ jsx22(SleepingZzz, { themeMode }) : null })
         ] })
       ]
     }

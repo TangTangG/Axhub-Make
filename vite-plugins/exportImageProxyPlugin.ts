@@ -3,6 +3,25 @@ import type { Plugin } from 'vite';
 import { getRequestPathname, serializeErrorForLog } from './utils/httpUtils';
 import { isAllowedProxyImageUrl } from './utils/proxyUtils';
 
+const PROXY_PLACEHOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"></svg>';
+
+function respondWithPlaceholderImage(
+  res: any,
+  reason: string,
+  details?: Record<string, unknown>,
+) {
+  res.statusCode = 200;
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  res.setHeader('X-Axhub-Proxy-Fallback', 'placeholder');
+  res.setHeader('X-Axhub-Proxy-Reason', reason);
+  if (details) {
+    res.setHeader('X-Axhub-Proxy-Details', JSON.stringify(details));
+  }
+  res.end(PROXY_PLACEHOLDER_SVG);
+}
+
 export function exportImageProxyPlugin(): Plugin {
   return {
     name: 'export-image-proxy-plugin',
@@ -17,16 +36,12 @@ export function exportImageProxyPlugin(): Plugin {
         const targetUrl = String(requestUrl.searchParams.get('url') || '').trim();
 
         if (!targetUrl) {
-          res.statusCode = 400;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: 'Missing url query parameter' }));
+          respondWithPlaceholderImage(res, 'missing-target-url');
           return;
         }
 
         if (!isAllowedProxyImageUrl(targetUrl)) {
-          res.statusCode = 400;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: 'Unsupported proxy target url' }));
+          respondWithPlaceholderImage(res, 'unsupported-target-url', { targetUrl });
           return;
         }
 
@@ -41,23 +56,19 @@ export function exportImageProxyPlugin(): Plugin {
           });
 
           if (!upstreamResponse.ok) {
-            res.statusCode = upstreamResponse.status;
-            res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            res.end(JSON.stringify({
-              error: `Upstream responded with ${upstreamResponse.status}`,
+            respondWithPlaceholderImage(res, 'upstream-http-error', {
+              status: upstreamResponse.status,
               targetUrl,
-            }));
+            });
             return;
           }
 
           const contentType = String(upstreamResponse.headers.get('content-type') || '').toLowerCase();
           if (contentType && !contentType.startsWith('image/')) {
-            res.statusCode = 415;
-            res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            res.end(JSON.stringify({
-              error: `Unsupported upstream content-type: ${contentType}`,
+            respondWithPlaceholderImage(res, 'unsupported-content-type', {
+              contentType,
               targetUrl,
-            }));
+            });
             return;
           }
 
@@ -86,12 +97,10 @@ export function exportImageProxyPlugin(): Plugin {
             error: serializeErrorForLog(error),
           });
 
-          res.statusCode = 502;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({
+          respondWithPlaceholderImage(res, 'fetch-failed', {
             error: error?.message || 'Failed to fetch target image',
             targetUrl,
-          }));
+          });
         }
       });
     },

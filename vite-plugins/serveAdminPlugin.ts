@@ -77,6 +77,15 @@ function injectCanvasTemplateHtml(templateHtml: string, canvasName: string, inje
     .replace('</head>', `${injectScript}\n</head>`);
 }
 
+function resolveAdminRootJsFallbackPath(projectRoot: string, pathname: string): string | null {
+  if (pathname !== '/auto-debug-client.js') {
+    return null;
+  }
+
+  const sourceAssetPath = path.resolve(projectRoot, '../prototype-admin/assets/auto-debug-client.js');
+  return fs.existsSync(sourceAssetPath) ? sourceAssetPath : null;
+}
+
 export function serveAdminPlugin(): Plugin {
   const projectRoot = process.cwd();
   const adminDir = path.resolve(projectRoot, 'admin');
@@ -230,10 +239,12 @@ export function serveAdminPlugin(): Plugin {
 
         if (pathname && pathname.match(/^\/[^/]+\.js$/)) {
           const jsPath = path.join(adminDir, pathname);
-          if (fs.existsSync(jsPath)) {
+          const fallbackPath = resolveAdminRootJsFallbackPath(projectRoot, pathname);
+          const resolvedJsPath = fs.existsSync(jsPath) ? jsPath : fallbackPath;
+          if (resolvedJsPath) {
             setNoStoreHeaders(res);
             sendMaybeCompressedResponse(req, res, {
-              body: fs.readFileSync(jsPath),
+              body: fs.readFileSync(resolvedJsPath),
               contentType: 'application/javascript; charset=utf-8',
             });
             return;
