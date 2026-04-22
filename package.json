@@ -1,6 +1,6 @@
 {
   "name": "axhub-make",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "description": "Axhub Make（AI 辅助生成原型工具）",
   "type": "module",
@@ -56,7 +56,6 @@
   },
   "dependencies": {
     "archiver": "^7.0.1",
-    "axhub-genie-editor-react": "workspace:*",
     "extract-zip": "^2.0.1",
     "formidable": "^3.5.4",
     "iconv-lite": "^0.7.1",
