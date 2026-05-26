@@ -1,0 +1,67 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "axhub-make",
+  "elements": [
+    {
+      "id": "1779072639314-steetle",
+      "type": "embeddable",
+      "x": -136.68888417135202,
+      "y": -1890.9442525754214,
+      "width": 738.4611470569007,
+      "height": 667.8671875,
+      "angle": 0,
+      "strokeColor": "#008F5D",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "index": "aQ",
+      "roundness": {
+        "type": 3
+      },
+      "seed": 1669426037,
+      "version": 1572,
+      "versionNonce": 175826597,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1779296928868,
+      "link": "/?p=beginner-guide",
+      "locked": false,
+      "customData": {
+        "title": "新手指导",
+        "previewUrl": "/prototypes/beginner-guide",
+        "openUrl": "/?p=beginner-guide",
+        "previewKind": "web",
+        "resourceType": "prototype",
+        "resourceId": "beginner-guide",
+        "screenshotUrl": "/prototypes/beginner-guide/canvas-assets/embed-1779072639314-steetle.png?v=1779119039817",
+        "aspectRatioPreset": "desktop",
+        "embedViewMode": "preview",
+        "storedPreviewSize": {
+          "width": 1728.9923970569005,
+          "height": 1081
+        },
+        "previewStrokeColor": "#008F5D",
+        "previousPreviewSize": {
+          "width": 126,
+          "height": 79
+        },
+        "screenshotWidth": 1729,
+        "screenshotHeight": 1081,
+        "screenshotCapturedAt": "2026-05-18T15:43:59.818Z",
+        "embedContentScale": 1,
+        "screenshotContentScale": 1
+      }
+    }
+  ],
+  "appState": {
+    "gridSize": 20,
+    "viewBackgroundColor": "#ffffff"
+  },
+  "files": {}
+}

@@ -1,0 +1,701 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { CanvasItem, DataType, ItemData, SidebarTreeNode, SidebarTreeTab } from '../../../types';
+import type { DataTableResourceItem, ThemeResourceItem } from '../../../types/index-page.types';
+import type { TemplateAssetOption } from '../../../types';
+import { sidebarApi } from '../../../services/sidebar.api';
+import {
+    DEFAULT_LOCAL_EXPORT_CAPABILITIES,
+    DEFAULT_PROJECT_CAPABILITIES,
+    DEFAULT_RESOURCE_WRITE_CAPABILITIES,
+    normalizeProjectResourcesPayload,
+    normalizeProjectRuntimeStatusPayload,
+    normalizeProjectsPayload,
+    type ProjectCapabilities,
+    type ProjectListItem,
+    type ProjectRuntimeStatus,
+} from '../../../services/projectResources';
+import { buildDefaultTree, sanitizeSidebarTree } from '../../../utils/sidebarTree';
+import {
+    normalizeCanvasItems,
+    normalizeDocsItems,
+    resolveSidebarTreeTab,
+    scheduleIdleTask,
+    sortResourceItemsByOrder,
+    type SidebarTab,
+} from '../../../app/index-page.helpers';
+import { formatMakeClientProjectError } from '../../../utils/projectSetupErrors';
+
+interface MessageApi {
+    error: (content: string) => void;
+}
+
+interface UseWorkspaceNavigationControllerOptions {
+    messageApi: MessageApi;
+}
+
+function readInitialProjectIdFromUrl(): string | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+    try {
+        const projectId = new URLSearchParams(window.location.search).get('projectId')?.trim();
+        return projectId || null;
+    } catch {
+        return null;
+    }
+}
+
+function isLANHostname(hostname: string): boolean {
+    const normalized = String(hostname || '').trim().toLowerCase();
+    if (!normalized) return false;
+    return normalized !== 'localhost'
+        && normalized !== '0.0.0.0'
+        && normalized !== '::1'
+        && normalized !== '[::1]'
+        && !/^127(?:\.\d{1,3}){3}$/u.test(normalized);
+}
+
+export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNavigationControllerOptions) {
+    const [loading, setLoading] = useState(true);
+    const [data, setData] = useState<DataType>({ components: [], prototypes: [] });
+    const [docsItems, setDocsItems] = useState<ItemData[]>([]);
+    const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([]);
+    const [themes, setThemes] = useState<ThemeResourceItem[]>([]);
+    const [dataTables, setDataTables] = useState<DataTableResourceItem[]>([]);
+    const [templateAssets, setTemplateAssets] = useState<TemplateAssetOption[]>([]);
+    const [projects, setProjects] = useState<ProjectListItem[]>([]);
+    const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+    const [projectCapabilities, setProjectCapabilities] = useState<ProjectCapabilities>(DEFAULT_PROJECT_CAPABILITIES);
+    const [projectRuntimeStatus, setProjectRuntimeStatus] = useState<ProjectRuntimeStatus | null>(null);
+    const [projectRuntimeStatusLoading, setProjectRuntimeStatusLoading] = useState(false);
+    const [resourceOrders, setResourceOrders] = useState<{ themes: string[]; data: string[]; templates: string[] }>({
+        themes: [],
+        data: [],
+        templates: [],
+    });
+    const [sidebarTrees, setSidebarTrees] = useState<Record<SidebarTreeTab, SidebarTreeNode[]>>({
+        prototypes: [],
+        docs: [],
+        canvas: [],
+        themes: [],
+    });
+    const [sidebarAssetsLoaded, setSidebarAssetsLoaded] = useState(false);
+    const [projectSetupRequired, setProjectSetupRequired] = useState(false);
+    const [projectAccessDeniedReason, setProjectAccessDeniedReason] = useState('');
+    const [projectTitle, setProjectTitle] = useState('未命名项目');
+    const [searchText, setSearchText] = useState('');
+
+    const loadedSidebarTreeTabsRef = useRef<Set<SidebarTreeTab>>(new Set());
+    const loadingSidebarTreeTabsRef = useRef<Set<SidebarTreeTab>>(new Set());
+    const sidebarAssetsRequestedRef = useRef(false);
+    const projectResourcesLoadedRef = useRef(false);
+    const projectSetupRequiredRef = useRef(false);
+    const projectAccessDeniedRef = useRef(false);
+    const initialProjectIdRef = useRef<string | null>(readInitialProjectIdFromUrl());
+
+    const applyProjectResourceBundle = useCallback((bundle: ReturnType<typeof normalizeProjectResourcesPayload>) => {
+        projectAccessDeniedRef.current = false;
+        setProjectAccessDeniedReason('');
+        setData(bundle.data);
+        setDocsItems(bundle.docs);
+        setThemes(sortResourceItemsByOrder(bundle.themes, bundle.orders.themes, (item: ThemeResourceItem) => item.name));
+        setDataTables([]);
+        setTemplateAssets([]);
+        setResourceOrders({ themes: bundle.orders.themes, data: [], templates: [] });
+        const resourceWriteCapabilities = bundle.capabilities.resourceWrites || DEFAULT_RESOURCE_WRITE_CAPABILITIES;
+        const localExportCapabilities = bundle.capabilities.localExports || DEFAULT_LOCAL_EXPORT_CAPABILITIES;
+        if (
+            resourceWriteCapabilities === bundle.capabilities.resourceWrites
+            && localExportCapabilities === bundle.capabilities.localExports
+        ) {
+            setProjectCapabilities(bundle.capabilities);
+        } else {
+            setProjectCapabilities({
+                ...bundle.capabilities,
+                localExports: localExportCapabilities,
+                resourceWrites: resourceWriteCapabilities,
+            });
+        }
+        if (bundle.projectName) {
+            setProjectTitle(bundle.projectName);
+        }
+        setActiveProjectId(bundle.projectId);
+        const themeItems = bundle.themes.map((theme: ThemeResourceItem) => ({
+            name: theme.name,
+            displayName: theme.displayName || theme.name,
+            jsUrl: '',
+            specUrl: '',
+        } as ItemData));
+        setSidebarTrees((previous) => ({
+            ...previous,
+            prototypes: loadedSidebarTreeTabsRef.current.has('prototypes')
+                ? sanitizeSidebarTree('prototypes', previous.prototypes, bundle.data.prototypes)
+                : buildDefaultTree('prototypes', bundle.data.prototypes),
+            docs: loadedSidebarTreeTabsRef.current.has('docs')
+                ? sanitizeSidebarTree('docs', previous.docs, bundle.docs)
+                : buildDefaultTree('docs', bundle.docs),
+            themes: loadedSidebarTreeTabsRef.current.has('themes')
+                ? sanitizeSidebarTree('themes', previous.themes, themeItems)
+                : buildDefaultTree('themes', themeItems),
+        }));
+    }, []);
+
+    const loadProjects = useCallback(async (): Promise<ReturnType<typeof normalizeProjectsPayload>> => {
+        const response = await fetch('/api/projects');
+        if (!response.ok) {
+            const fallback = { activeProjectId: null, projects: [] };
+            setProjects([]);
+            setActiveProjectId(null);
+            setProjectSetupRequired(true);
+            projectSetupRequiredRef.current = true;
+            setProjectCapabilities(DEFAULT_PROJECT_CAPABILITIES);
+            setProjectAccessDeniedReason('');
+            projectAccessDeniedRef.current = false;
+            return fallback;
+        }
+        const payload = normalizeProjectsPayload(await response.json().catch(() => null));
+        setProjects(payload.projects);
+        setActiveProjectId(payload.activeProjectId);
+        setProjectSetupRequired(payload.projects.length === 0);
+        projectSetupRequiredRef.current = payload.projects.length === 0;
+        return payload;
+    }, []);
+
+    const probeProjectRuntimeStatus = useCallback(async (projectId: string | null): Promise<ProjectRuntimeStatus | null> => {
+        if (!projectId) {
+            setProjectRuntimeStatus(null);
+            return null;
+        }
+        setProjectRuntimeStatusLoading(true);
+        try {
+            const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/dev/status`);
+            const payload = await response.json().catch(() => null);
+            if (!response.ok) {
+                throw new Error(payload?.error || '检测 Make 客户端状态失败');
+            }
+            const normalized = normalizeProjectRuntimeStatusPayload(payload, projectId);
+            setProjectRuntimeStatus(normalized);
+            return normalized;
+        } catch (error) {
+            const fallback = normalizeProjectRuntimeStatusPayload({
+                projectId,
+                makeClient: false,
+                running: false,
+                reason: 'status-unavailable',
+            }, projectId);
+            setProjectRuntimeStatus(fallback);
+            return fallback;
+        } finally {
+            setProjectRuntimeStatusLoading(false);
+        }
+    }, []);
+
+    const loadProjectResourcesFor = useCallback(async (projectId: string | null): Promise<boolean> => {
+        if (!projectId) {
+            setProjectCapabilities(DEFAULT_PROJECT_CAPABILITIES);
+            setProjectRuntimeStatus(null);
+            setProjectAccessDeniedReason('');
+            projectAccessDeniedRef.current = false;
+            return false;
+        }
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/resources`);
+        if (!response.ok) {
+            projectResourcesLoadedRef.current = false;
+            return false;
+        }
+        const payload = await response.json();
+        const bundle = normalizeProjectResourcesPayload(payload, projectId);
+        if (
+            typeof window !== 'undefined'
+            && isLANHostname(window.location.hostname)
+            && bundle.capabilities.lanAccessAllowed === false
+        ) {
+            projectAccessDeniedRef.current = true;
+            setProjectAccessDeniedReason('当前项目未开启局域网访问');
+            messageApi.error('当前项目未开启局域网访问');
+            setProjectCapabilities(bundle.capabilities);
+            setProjectRuntimeStatus(null);
+            projectResourcesLoadedRef.current = false;
+            return false;
+        }
+        applyProjectResourceBundle(bundle);
+        void probeProjectRuntimeStatus(projectId);
+        projectResourcesLoadedRef.current = true;
+        setSidebarAssetsLoaded(true);
+        return true;
+    }, [applyProjectResourceBundle, messageApi, probeProjectRuntimeStatus]);
+
+    const loadProjectResources = useCallback(async (): Promise<boolean> => {
+        const projectList = await loadProjects();
+        const requestedProjectId = initialProjectIdRef.current;
+        if (projectList.projects.length === 0) {
+            setProjectCapabilities(DEFAULT_PROJECT_CAPABILITIES);
+            setProjectRuntimeStatus(null);
+            setProjectAccessDeniedReason('');
+            projectResourcesLoadedRef.current = false;
+            return false;
+        }
+        if (requestedProjectId) {
+            const requestedExists = projectList.projects.some((project) => project.id === requestedProjectId);
+            if (requestedExists && await loadProjectResourcesFor(requestedProjectId)) {
+                return true;
+            }
+            if (projectAccessDeniedRef.current) {
+                return false;
+            }
+            initialProjectIdRef.current = null;
+        }
+        return loadProjectResourcesFor(projectList.activeProjectId);
+    }, [loadProjectResourcesFor, loadProjects]);
+
+    const loadData = useCallback(async () => {
+        try {
+            if (await loadProjectResources()) {
+                return;
+            }
+            if (projectSetupRequiredRef.current) {
+                return;
+            }
+            if (projectAccessDeniedRef.current) {
+                return;
+            }
+            const response = await fetch('/api/entries.json');
+            if (!response.ok) {
+                throw new Error('Failed to fetch data');
+            }
+            const jsonData = await response.json();
+            setData({
+                components: [],
+                prototypes: Array.isArray(jsonData?.prototypes) ? jsonData.prototypes : [],
+            });
+        } catch (error: any) {
+            messageApi.error(`加载数据失败: ${error.message}`);
+        } finally {
+            setLoading(false);
+        }
+    }, [loadProjectResources, messageApi]);
+
+    const resetProjectScopedState = useCallback(() => {
+        loadedSidebarTreeTabsRef.current.clear();
+        loadingSidebarTreeTabsRef.current.clear();
+        sidebarAssetsRequestedRef.current = false;
+        projectResourcesLoadedRef.current = false;
+        setSidebarAssetsLoaded(false);
+        setProjectCapabilities(DEFAULT_PROJECT_CAPABILITIES);
+        setProjectRuntimeStatus(null);
+        setProjectAccessDeniedReason('');
+        projectAccessDeniedRef.current = false;
+        setSidebarTrees({
+            prototypes: [],
+            docs: [],
+            canvas: [],
+            themes: [],
+        });
+        setSearchText('');
+    }, []);
+
+    const ensureProjectDevServer = useCallback(async (projectId: string) => {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/dev/ensure`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw new Error(formatMakeClientProjectError(payload, '启动 Make 客户端失败'));
+        }
+        return payload;
+    }, []);
+
+    const startActiveProjectServer = useCallback(async () => {
+        if (!activeProjectId) {
+            throw new Error('请先选择项目');
+        }
+        const payload = await ensureProjectDevServer(activeProjectId);
+        await loadProjectResourcesFor(activeProjectId);
+        await probeProjectRuntimeStatus(activeProjectId);
+        return payload;
+    }, [activeProjectId, ensureProjectDevServer, loadProjectResourcesFor, probeProjectRuntimeStatus]);
+
+    const switchProject = useCallback(async (projectId: string) => {
+        const normalizedProjectId = projectId.trim();
+        if (!normalizedProjectId || normalizedProjectId === activeProjectId) {
+            return;
+        }
+        initialProjectIdRef.current = null;
+        const response = await fetch('/api/projects/active', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId: normalizedProjectId }),
+        });
+        if (!response.ok) {
+            const payload = await response.json().catch(() => null);
+            throw new Error(payload?.error || '切换项目失败');
+        }
+        resetProjectScopedState();
+        setLoading(true);
+        try {
+            await loadProjects();
+            const loaded = await loadProjectResourcesFor(normalizedProjectId);
+            if (!loaded) {
+                throw new Error('加载项目资源失败');
+            }
+            await probeProjectRuntimeStatus(normalizedProjectId);
+        } finally {
+            setLoading(false);
+        }
+    }, [activeProjectId, loadProjectResourcesFor, loadProjects, probeProjectRuntimeStatus, resetProjectScopedState]);
+
+    const deleteProject = useCallback(async (projectId: string) => {
+        const normalizedProjectId = projectId.trim();
+        if (!normalizedProjectId) {
+            return;
+        }
+        const wasActiveProject = normalizedProjectId === activeProjectId;
+        const response = await fetch(`/api/projects/${encodeURIComponent(normalizedProjectId)}`, {
+            method: 'DELETE',
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw new Error(payload?.error || '移除项目失败');
+        }
+
+        initialProjectIdRef.current = null;
+        const projectList = await loadProjects();
+        if (wasActiveProject) {
+            resetProjectScopedState();
+            if (!projectList.activeProjectId) {
+                setProjectCapabilities(DEFAULT_PROJECT_CAPABILITIES);
+                setProjectRuntimeStatus(null);
+                return;
+            }
+            setLoading(true);
+            try {
+                const loaded = await loadProjectResourcesFor(projectList.activeProjectId);
+                if (!loaded) {
+                    throw new Error('加载项目资源失败');
+                }
+                await probeProjectRuntimeStatus(projectList.activeProjectId);
+            } finally {
+                setLoading(false);
+            }
+        }
+    }, [activeProjectId, loadProjectResourcesFor, loadProjects, probeProjectRuntimeStatus, resetProjectScopedState]);
+
+    const addProjectFromLocalPath = useCallback(async () => {
+        const pickerResponse = await fetch('/api/projects/select-root?kind=existing', { method: 'POST' });
+        const pickerPayload = await pickerResponse.json().catch(() => null);
+        if (!pickerResponse.ok) {
+            throw new Error(pickerPayload?.error || '无法打开本地目录选择器');
+        }
+        const root = typeof pickerPayload?.root === 'string' ? pickerPayload.root.trim() : '';
+        if (!root) {
+            return false;
+        }
+        const createResponse = await fetch('/api/projects/make/register-existing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ root }),
+        });
+        const createPayload = await createResponse.json().catch(() => null);
+        if (!createResponse.ok) {
+            throw new Error(formatMakeClientProjectError(createPayload, '添加项目失败'));
+        }
+        const projectId = typeof createPayload?.project?.id === 'string' ? createPayload.project.id.trim() : '';
+        if (!projectId) {
+            throw new Error('添加项目后未返回项目 ID');
+        }
+        await switchProject(projectId);
+        return true;
+    }, [switchProject]);
+
+    const selectMakeProjectParentFolder = useCallback(async (): Promise<string | null> => {
+        const pickerResponse = await fetch('/api/projects/select-root?kind=parent', { method: 'POST' });
+        const pickerPayload = await pickerResponse.json().catch(() => null);
+        if (!pickerResponse.ok) {
+            throw new Error(pickerPayload?.error || '无法打开本地目录选择器');
+        }
+        const root = typeof pickerPayload?.root === 'string' ? pickerPayload.root.trim() : '';
+        return root || null;
+    }, []);
+
+    const createBlankMakeProject = useCallback(async (params: {
+        parentRoot: string;
+        folderName: string;
+        projectName?: string;
+    }) => {
+        const response = await fetch('/api/projects/make/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params),
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw new Error(formatMakeClientProjectError(payload, '新建空白项目失败'));
+        }
+        const projectId = typeof payload?.project?.id === 'string' ? payload.project.id.trim() : '';
+        if (!projectId) {
+            throw new Error('新建项目后未返回项目 ID');
+        }
+        resetProjectScopedState();
+        setLoading(true);
+        try {
+            await loadProjects();
+            const loaded = await loadProjectResourcesFor(projectId);
+            if (!loaded) {
+                throw new Error('加载项目资源失败');
+            }
+        } finally {
+            setLoading(false);
+        }
+        return payload;
+    }, [loadProjectResourcesFor, loadProjects, resetProjectScopedState]);
+
+    const reloadSidebarAssets = useCallback(async () => {
+        try {
+            if (await loadProjectResources()) {
+                return;
+            }
+            if (projectSetupRequiredRef.current) {
+                return;
+            }
+            if (projectAccessDeniedRef.current) {
+                return;
+            }
+            const [
+                docsResponse,
+                themesResponse,
+                themeOrderResponse,
+            ] = await Promise.all([
+                fetch('/api/docs'),
+                fetch('/api/themes'),
+                sidebarApi.getResourceOrder('themes').catch(() => null),
+            ]);
+
+            const themeOrder = Array.isArray(themeOrderResponse?.order) ? themeOrderResponse.order : [];
+            setDataTables([]);
+            setTemplateAssets([]);
+            setResourceOrders({ themes: themeOrder, data: [], templates: [] });
+
+            if (docsResponse.ok) {
+                const docs = await docsResponse.json();
+                setDocsItems(normalizeDocsItems(docs));
+            }
+
+            if (themesResponse.ok) {
+                const themesData = await themesResponse.json();
+                const nextThemes = Array.isArray(themesData) ? themesData : [];
+                setThemes(sortResourceItemsByOrder(nextThemes, themeOrder, (item: ThemeResourceItem) => item.name));
+            }
+
+        } catch (error) {
+            console.warn('Failed to load docs/themes assets:', error);
+        } finally {
+            setSidebarAssetsLoaded(true);
+        }
+    }, [loadProjectResources]);
+
+    const reloadDocsItems = useCallback(async (): Promise<ItemData[]> => {
+        const response = await fetch('/api/docs');
+        if (!response.ok) {
+            throw new Error('Failed to fetch docs');
+        }
+        const docs = await response.json();
+        const docsList = normalizeDocsItems(docs);
+        setDocsItems(docsList);
+        return docsList;
+    }, []);
+
+    const reloadCanvasItems = useCallback(async (): Promise<CanvasItem[]> => {
+        const response = await fetch('/api/canvas');
+        if (!response.ok) {
+            throw new Error('Failed to fetch canvas items');
+        }
+        const items = await response.json();
+        const list: CanvasItem[] = Array.isArray(items) ? items : [];
+        setCanvasItems(list);
+        return list;
+    }, []);
+
+    const getSidebarTabItems = useCallback((tab: SidebarTreeTab): ItemData[] => {
+        if (tab === 'docs') {
+            return docsItems;
+        }
+        if (tab === 'canvas') {
+            return normalizeCanvasItems(canvasItems);
+        }
+        if (tab === 'themes') {
+            return themes.map((theme) => ({
+                name: theme.name,
+                displayName: theme.displayName || theme.name,
+                jsUrl: '',
+                specUrl: '',
+            }));
+        }
+        return data.prototypes;
+    }, [canvasItems, data.prototypes, docsItems, themes]);
+
+    const loadSidebarTree = useCallback(async (tab: SidebarTreeTab, options?: { force?: boolean }) => {
+        if (!options?.force && loadedSidebarTreeTabsRef.current.has(tab)) {
+            return;
+        }
+        if (loadingSidebarTreeTabsRef.current.has(tab)) {
+            return;
+        }
+        if (tab === 'prototypes' && loading) {
+            return;
+        }
+        if ((tab === 'docs' || tab === 'canvas' || tab === 'themes') && !sidebarAssetsLoaded) {
+            return;
+        }
+
+        const items = getSidebarTabItems(tab);
+        setSidebarTrees((previous) => ({
+            ...previous,
+            [tab]: previous[tab].length > 0 ? previous[tab] : buildDefaultTree(tab, items),
+        }));
+
+        loadingSidebarTreeTabsRef.current.add(tab);
+        try {
+            const response = await sidebarApi.getSidebarTree(tab);
+            const nextTree = sanitizeSidebarTree(
+                tab,
+                Array.isArray(response.tree) ? response.tree : [],
+                items,
+            );
+            loadedSidebarTreeTabsRef.current.add(tab);
+            setSidebarTrees((previous) => ({ ...previous, [tab]: nextTree }));
+        } catch {
+            loadedSidebarTreeTabsRef.current.add(tab);
+            setSidebarTrees((previous) => ({ ...previous, [tab]: buildDefaultTree(tab, items) }));
+        } finally {
+            loadingSidebarTreeTabsRef.current.delete(tab);
+        }
+    }, [getSidebarTabItems, loading, sidebarAssetsLoaded]);
+
+    useEffect(() => {
+        void loadData();
+    }, [loadData]);
+
+    useEffect(() => {
+        if (activeProjectId) {
+            return undefined;
+        }
+        let canceled = false;
+        sidebarApi.getProjectTitle()
+            .then((title) => {
+                if (!canceled) {
+                    setProjectTitle(title);
+                }
+            })
+            .catch(() => {
+                if (!canceled) {
+                    setProjectTitle('未命名项目');
+                }
+            });
+        return () => {
+            canceled = true;
+        };
+    }, [activeProjectId]);
+
+    useEffect(() => {
+        document.title = `${projectTitle || '未命名项目'} - Axhub Make`;
+    }, [projectTitle]);
+
+    useEffect(() => {
+        if (sidebarAssetsRequestedRef.current) {
+            return;
+        }
+        if (sidebarAssetsLoaded || projectResourcesLoadedRef.current) {
+            return;
+        }
+
+        sidebarAssetsRequestedRef.current = true;
+        return scheduleIdleTask(() => {
+            void reloadSidebarAssets();
+        });
+    }, [reloadSidebarAssets, sidebarAssetsLoaded]);
+
+    useEffect(() => {
+        setSidebarTrees((previous) => {
+            let changed = false;
+            const nextTrees = { ...previous };
+            const treeTabs: SidebarTreeTab[] = ['prototypes', 'docs', 'themes'];
+
+            for (const tab of treeTabs) {
+                if (!loadedSidebarTreeTabsRef.current.has(tab)) {
+                    continue;
+                }
+
+                const sanitizedTree = sanitizeSidebarTree(tab, previous[tab] || [], getSidebarTabItems(tab));
+                if (sanitizedTree !== previous[tab]) {
+                    nextTrees[tab] = sanitizedTree;
+                    changed = true;
+                }
+            }
+
+            return changed ? nextTrees : previous;
+        });
+    }, [getSidebarTabItems]);
+
+    const ensureSidebarTreeLoaded = useCallback((sidebarTab: SidebarTab) => {
+        const activeTreeTab = resolveSidebarTreeTab(sidebarTab);
+        void loadSidebarTree(activeTreeTab, activeTreeTab === 'docs' ? { force: true } : undefined);
+    }, [loadSidebarTree]);
+
+    return {
+        loading,
+        setLoading,
+        data,
+        setData,
+        docsItems,
+        setDocsItems,
+        canvasItems,
+        setCanvasItems,
+        themes,
+        setThemes,
+        dataTables,
+        setDataTables,
+        templateAssets,
+        setTemplateAssets,
+        projects,
+        setProjects,
+        activeProjectId,
+        setActiveProjectId,
+        resourceOrders,
+        setResourceOrders,
+        sidebarTrees,
+        setSidebarTrees,
+        sidebarAssetsLoaded,
+        setSidebarAssetsLoaded,
+        projectTitle,
+        setProjectTitle,
+        projectCapabilities,
+        projectSetupRequired,
+        projectAccessDeniedReason,
+        setProjectCapabilities,
+        projectRuntimeStatus,
+        setProjectRuntimeStatus,
+        projectRuntimeStatusLoading,
+        probeProjectRuntimeStatus,
+        searchText,
+        setSearchText,
+        loadedSidebarTreeTabsRef,
+        sidebarAssetsRequestedRef,
+        loadData,
+        loadProjects,
+        loadProjectResources,
+        startActiveProjectServer,
+        switchProject,
+        deleteProject,
+        addProjectFromLocalPath,
+        selectMakeProjectParentFolder,
+        createBlankMakeProject,
+        reloadSidebarAssets,
+        reloadDocsItems,
+        reloadCanvasItems,
+        getSidebarTabItems,
+        loadSidebarTree,
+        ensureSidebarTreeLoaded,
+    };
+}

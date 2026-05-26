@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+!vendor/**/dist/
+!vendor/**/dist/**
+build/
+**/build/
+admin/
+**/admin/
+coverage/
+**/coverage/
+*.tsbuildinfo
+vite.config.*.timestamp-*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Axhub Make runtime data
+**/.axhub/make/.admin-server-info.json
+**/.axhub/make/.dev-server-info.json
+**/.axhub/make/axhub.config.json
+**/.axhub/make/entries.json
+**/.axhub/make/sidebar-tree.json
+**/.axhub/make/sessions/
+**/.axhub/make/exports/
+**/.axhub/make/artifacts/
+**/.axhub/make/backups/
+**/.axhub/make/edit-history/
+
+# Local tools and caches
+.local/
+**/.local/
+.trae/
+**/.trae/
+.codex/
+**/.codex/
+.cache/
+**/.cache/
+temp/
+**/temp/
+tmp/
+**/tmp/
+.release/
+
+# OS and editor files
+.DS_Store
+**/.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs and archives
+*.log
+*.tmp
+*.temp
+*.tgz

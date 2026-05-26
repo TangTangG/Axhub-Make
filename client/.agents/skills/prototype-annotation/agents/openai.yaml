@@ -1,0 +1,4 @@
+interface:
+  display_name: "原型标注"
+  short_description: "为多原型项目接入目录组件标注和组件状态标注"
+  default_prompt: "使用 $prototype-annotation 为这个原型接入或维护标注能力。"

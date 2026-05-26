@@ -1,0 +1,400 @@
+{
+  "documentVersion": 1,
+  "format": "axhub-annotation-source",
+  "data": {
+    "version": 2,
+    "prototypeName": "annotation-guide",
+    "pageId": "prototype-as-prd",
+    "updatedAt": 1779667200000,
+    "nodes": [
+      {
+        "id": "prototype-as-prd-purpose",
+        "index": 1,
+        "title": "原型即 PRD",
+        "pageId": "prototype-as-prd",
+        "locator": {
+          "selectors": [
+            ".annotation-guide-hero"
+          ]
+        },
+        "aiPrompt": "说明为什么原型可以成为主需求载体。",
+        "annotationText": "",
+        "hasMarkdown": true,
+        "color": "#D97706",
+        "images": [],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "content-preview-node",
+        "index": 2,
+        "title": "点击预览节点",
+        "pageId": "content-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"content-preview-node\"]"
+          ]
+        },
+        "aiPrompt": "说明点击标注节点后如何预览 Markdown 内容。",
+        "annotationText": "",
+        "hasMarkdown": true,
+        "color": "#D97706",
+        "images": [],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "content-category-node",
+        "index": 3,
+        "title": "多颜色标注",
+        "pageId": "content-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"content-category-node\"]"
+          ]
+        },
+        "aiPrompt": "解释多颜色标注的用途。",
+        "annotationText": "",
+        "hasMarkdown": true,
+        "color": "#059669",
+        "images": [],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "content-filter-node",
+        "index": 4,
+        "title": "筛选颜色",
+        "pageId": "content-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"content-filter-node\"]"
+          ]
+        },
+        "aiPrompt": "解释按颜色筛选标注的评审场景。",
+        "annotationText": "",
+        "hasMarkdown": true,
+        "color": "#7C3AED",
+        "images": [],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "content-multi-node-note",
+        "index": 5,
+        "title": "一个节点多种标注：说明",
+        "pageId": "content-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"content-multi-node\"]"
+          ]
+        },
+        "aiPrompt": "说明同一元素上的文字说明标注。",
+        "annotationText": "",
+        "hasMarkdown": true,
+        "color": "#D97706",
+        "images": [],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "content-multi-node-category",
+        "index": 6,
+        "title": "一个节点多种标注：分类",
+        "pageId": "content-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"content-multi-node\"]"
+          ]
+        },
+        "aiPrompt": "说明同一元素上的分类标注。",
+        "annotationText": "这个节点用于演示同一个元素可以被多种颜色和标题共同解释。",
+        "hasMarkdown": false,
+        "color": "#059669",
+        "images": [],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "content-multi-node-filter",
+        "index": 7,
+        "title": "一个节点多种标注：筛选",
+        "pageId": "content-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"content-multi-node\"]"
+          ]
+        },
+        "aiPrompt": "说明同一元素在筛选时的展示。",
+        "annotationText": "打开颜色筛选后，这个元素仍然可以按当前颜色独立出现。",
+        "hasMarkdown": false,
+        "color": "#7C3AED",
+        "images": [],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "state-result-card",
+        "index": 8,
+        "title": "结果页状态",
+        "pageId": "state-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"state-result-card\"]"
+          ]
+        },
+        "aiPrompt": "演示结果页成功和失败两种状态。",
+        "annotationText": "",
+        "hasMarkdown": false,
+        "color": "#D97706",
+        "images": [],
+        "controls": [
+          {
+            "type": "segmented",
+            "attributeId": "result_state",
+            "displayName": "结果状态",
+            "initialValue": "success",
+            "options": [
+              {
+                "label": "成功",
+                "value": "success"
+              },
+              {
+                "label": "失败",
+                "value": "failure"
+              }
+            ]
+          }
+        ],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "state-list-card",
+        "index": 9,
+        "title": "列表页状态",
+        "pageId": "state-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"state-list-card\"]"
+          ]
+        },
+        "aiPrompt": "演示列表页空列表和有内容状态。",
+        "annotationText": "",
+        "hasMarkdown": true,
+        "color": "#059669",
+        "images": [],
+        "controls": [
+          {
+            "type": "segmented",
+            "attributeId": "list_state",
+            "displayName": "列表状态",
+            "initialValue": "empty",
+            "options": [
+              {
+                "label": "空列表",
+                "value": "empty"
+              },
+              {
+                "label": "有内容",
+                "value": "filled"
+              }
+            ]
+          }
+        ],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "state-metric-card",
+        "index": 10,
+        "title": "指标卡状态",
+        "pageId": "state-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"state-metric-card\"]"
+          ]
+        },
+        "aiPrompt": "演示指标卡偏低、正常、偏高状态。",
+        "annotationText": "",
+        "hasMarkdown": true,
+        "color": "#7C3AED",
+        "images": [],
+        "controls": [
+          {
+            "type": "segmented",
+            "attributeId": "metric_state",
+            "displayName": "指标状态",
+            "initialValue": "normal",
+            "options": [
+              {
+                "label": "偏低",
+                "value": "low"
+              },
+              {
+                "label": "正常",
+                "value": "normal"
+              },
+              {
+                "label": "偏高",
+                "value": "high"
+              }
+            ]
+          }
+        ],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "directory-practice",
+        "index": 11,
+        "title": "原型目录",
+        "pageId": "prototype-directory",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"directory-practice\"]"
+          ]
+        },
+        "aiPrompt": "说明目录如何组织页面、文档和链接。",
+        "annotationText": "",
+        "hasMarkdown": true,
+        "color": "#D97706",
+        "images": [],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      },
+      {
+        "id": "generate-practice",
+        "index": 12,
+        "title": "生成标注",
+        "pageId": "generate-annotation",
+        "locator": {
+          "selectors": [
+            "[data-annotation-id=\"generate-practice\"]"
+          ]
+        },
+        "aiPrompt": "说明 Agent 可以生成哪些标注内容。",
+        "annotationText": "",
+        "hasMarkdown": true,
+        "color": "#D97706",
+        "images": [],
+        "createdAt": 1779667200000,
+        "updatedAt": 1779667200000
+      }
+    ]
+  },
+  "markdownMap": {
+    "prototype-as-prd": "# 原型即 PRD\n\n原型是主需求载体。页面负责表达结构、交互、状态和数据关系，标注负责补充边界、原因和决策。\n\n这种方式让需求不再停留在抽象文字里，而是变成可以运行、可以检查、可以继续修改的上下文。",
+    "prototype-as-prd-purpose": "# 原型是主需求载体\n\n当原型已经能表达页面结构、交互路径和状态变化时，PRD 的重点就从重复描述界面转向补充判断依据。\n\n标注用于说明原因、边界、例外和未决事项。",
+    "content-preview-node": "# Markdown 示例\n\n这个节点展示 Markdown 标注正文。你可以写列表、表格，也可以写 `行内代码` 来解释字段、状态或接口约束。\n\n- 适合解释复杂逻辑\n- 适合补充业务规则\n- 适合沉淀评审结论",
+    "content-category-node": "# 多颜色标注\n\n多颜色标注用于区分说明、风险、待确认、设计补充等不同类型的信息。\n\n在这份演示里，橙色、绿色和紫色是功能性标注颜色；整体文档主题仍保持 Swiss 参考里的 IKB 蓝和灰阶系统。",
+    "content-filter-node": "# 筛选颜色\n\n筛选颜色可以让评审只看当前讨论主题。例如先看风险，再看补充说明，最后看待确认项。\n\n这能减少一次评审里同时处理太多信息的问题。",
+    "content-multi-node-note": "# 一个节点多种标注\n\n一个节点多种标注适合表达同一元素的多个层次：交互说明、业务规则、异常边界可以同时存在，但用不同标题和颜色区分。\n\n这样不会把页面拆得太碎，也不会把所有解释挤在一条长说明里。",
+    "state-list-card": "# 列表页状态\n\n文案标注和状态标注可以同时存在。点击上方的状态控制后，列表页会在空列表和有内容之间切换。\n\n空列表不是没有内容，而是需要说明下一步入口和业务原因。",
+    "state-metric-card": "# 指标卡状态\n\n文案标注和状态标注可以同时存在。点击上方的状态控制后，指标会展示偏低、正常和偏高三种表达。\n\n指标状态的价值是把数字背后的判断标准也沉淀下来。",
+    "directory-practice": "# 原型目录\n\n原型目录用于组织页面、文档和链接。页面负责运行体验，文档负责补充长说明，链接负责连接外部设计来源或参考资料。\n\n目录让评审者不需要离开原型，也能找到完整资料。",
+    "generate-practice": "# 生成标注\n\n可以生成的内容包括任意元素标注、状态标注、原型目录内容和默认设置状态。\n\n运行时会把原型目录树和全部标注节点列表统一输出到 `window.__AXHUB_ANNOTATION_SOURCE__`，便于宿主工具或 Agent 读取上下文。\n\n两种主要方式是内置批注编辑和 Agent 标注技能：前者适合人工即时补充，后者适合从页面结构和需求资料里批量生成第一版说明。"
+  },
+  "assetMap": {},
+  "directory": {
+    "nodes": [
+      {
+        "type": "folder",
+        "id": "directory-pages",
+        "title": "页面",
+        "defaultExpanded": true,
+        "children": [
+          {
+            "type": "route",
+            "id": "route-prototype-as-prd",
+            "title": "原型即 PRD",
+            "route": "prototype-as-prd"
+          },
+          {
+            "type": "route",
+            "id": "route-content-annotation",
+            "title": "内容标注",
+            "route": "content-annotation"
+          },
+          {
+            "type": "route",
+            "id": "route-state-annotation",
+            "title": "状态标注",
+            "route": "state-annotation"
+          },
+          {
+            "type": "route",
+            "id": "route-prototype-directory",
+            "title": "原型目录",
+            "route": "prototype-directory"
+          },
+          {
+            "type": "route",
+            "id": "route-generate-annotation",
+            "title": "生成标注",
+            "route": "generate-annotation"
+          }
+        ]
+      },
+      {
+        "type": "folder",
+        "id": "directory-documents",
+        "title": "文档",
+        "defaultExpanded": true,
+        "children": [
+          {
+            "type": "markdown",
+            "id": "prd-overview",
+            "title": "PRD 00｜总览",
+            "markdown": "# 标注协作看板 PRD 示例\n\n## 1. 背景与目标\n\n本原型用于说明 Axhub Make 的标注能力如何把可运行原型、节点说明、状态控制和补充文档放在同一个评审入口里。它不是一份静态说明页，而是一个可以切换页面、点击标注、查看目录和阅读文档的演示项目。\n\n目标是让评审者理解：原型即 PRD 负责承载界面和交互，标注负责补充边界、原因和决策，目录负责组织页面、文档和外部来源。这样产品、设计、研发和后续 Agent 可以围绕同一份上下文工作，减少原型、PRD、截图和聊天记录之间的重复同步。\n\n## 2. 功能范围\n\n- 原型即 PRD：解释为什么可运行页面可以成为需求主载体，并用对比表说明它相对传统原型 + PRD 的效率优势。\n- 内容标注：演示任意元素标注、Markdown 正文、多颜色分类、颜色筛选和同一节点多条标注。\n- 状态标注：演示结果状态、列表状态和指标状态，评审者可以在标注面板中切换不同业务状态。\n- 原型目录：把页面、PRD 文档和外部设计来源放进同一棵目录树，减少评审时找资料的成本。\n- 生成标注：说明 Agent 可以生成哪些标注资料，以及人工编辑和 Agent 批量生成的分工。\n\n## 3. 不在本次范围\n\n本演示不覆盖真实后端接口、用户权限系统、多人实时协作冲突处理和正式发布审批流。它聚焦标注运行时本身，以及目录如何承载围绕原型的产品说明。"
+          },
+          {
+            "type": "markdown",
+            "id": "prd-roles",
+            "title": "PRD 01｜角色",
+            "markdown": "# 角色\n\n## 1. 使用者\n\n- 产品负责人：负责确定页面目标、业务边界、验收标准和标注内容是否表达清楚。\n- 设计师：负责确认页面结构、视觉规则、交互状态和设计来源是否统一。\n- 研发：负责根据可运行原型和节点标注理解页面行为、状态条件和实现优先级。\n- 评审者：负责在目录中按页面和文档阅读上下文，并通过标注理解问题、风险和决策。\n- Agent：负责基于页面结构、需求资料和已有规则生成第一版标注、目录和补充文档。\n\n## 2. 协作职责\n\n产品负责人先定义原型要表达的功能和评审重点；设计师补充视觉约束和交互细节；研发读取页面与标注来判断实现方式；评审者通过目录快速进入相关页面或文档；Agent 则负责把重复性说明批量生成出来，再交给人工校正。\n\n## 3. 权限与边界\n\n目录中的页面和文档默认用于评审阅读。标注编辑、状态配置和生成结果确认应由项目维护者完成；外部链接只保留必要来源，避免把目录变成资料堆。"
+          },
+          {
+            "type": "markdown",
+            "id": "prd-flow",
+            "title": "PRD 02｜流程",
+            "markdown": "# 流程\n\n## 1. 主流程\n\n1. 先生成或维护可运行原型，让页面结构、交互路径和关键状态可以被直接查看。\n2. 再为关键节点补充内容标注，说明字段含义、业务规则、例外情况和设计判断。\n3. 为需要评审的业务状态添加状态标注，例如成功、失败、空列表、指标偏低或偏高。\n4. 整理原型目录，把页面、PRD 文档和设计来源放入同一个入口。\n5. 由 Agent 生成第一版标注或文档后，人工复核并进入正式评审。\n\n## 2. 页面流转\n\n评审者从“原型即 PRD”理解整体理念，再进入“内容标注”查看节点说明能力；随后进入“状态标注”切换业务状态；如果需要完整上下文，则打开“原型目录”查看文档；最后通过“生成标注”理解后续如何批量生产资料。\n\n## 3. 异常处理\n\n如果页面内容与文档描述不一致，以可运行原型为主，并在对应节点补充标注说明差异原因。如果状态标注无法覆盖某个业务条件，应新增状态项或在 PRD 03 中记录状态缺口。"
+          },
+          {
+            "type": "markdown",
+            "id": "prd-states",
+            "title": "PRD 03｜状态",
+            "markdown": "# 状态\n\n## 1. 状态标注范围\n\n状态标注用于把业务条件和页面表现绑定在同一个节点上。本演示覆盖三类状态：结果状态、列表状态和指标状态。\n\n## 2. 状态清单\n\n- 结果状态：成功时展示保存完成和下一步协作提示；失败时展示网络异常和重试提示。\n- 列表状态：空列表时说明下一步入口和业务原因；有内容时展示最近更新的标注任务说明。\n- 指标状态：偏低时提示排查方向；正常时保留业务含义；偏高时强调峰值原因和潜在风险。\n\n## 3. 默认状态\n\n结果状态默认成功，列表状态默认空列表，指标状态默认正常。默认值用于保证首次打开页面时有稳定演示效果，评审时再通过标注面板切换不同分支。\n\n## 4. 验收要求\n\n每个状态项都应有清晰名称、可读文案和明确业务含义。状态切换后，页面内容应同步变化，标注说明不应与当前状态冲突。"
+          },
+          {
+            "type": "markdown",
+            "id": "prd-risks",
+            "title": "PRD 04｜风险",
+            "markdown": "# 风险\n\n## 1. 已知风险\n\n- 信息过载：如果每个节点都堆叠多条说明，评审者会失去重点。需要通过颜色筛选、标题和目录分层控制阅读顺序。\n- 状态遗漏：如果只展示成功路径，研发容易忽略失败、空数据和指标异常。需要用状态标注补全关键分支。\n- 文档漂移：PRD 文档如果长期不更新，会重新变成与原型脱节的资料。重要变更应优先回到页面和节点标注。\n- 链接膨胀：外部链接过多会稀释目录价值，本演示只保留必要的设计来源。\n\n## 2. 控制策略\n\n内容标注要围绕关键节点，不追求覆盖所有文字。多颜色标注只用于功能性分类，不改变整体 Swiss 视觉主题。目录文档按照 PRD 00-05 组织，确保每篇文档都有明确章节和用途。\n\n## 3. 待确认事项\n\n后续真实项目需要确认是否开放多人共同编辑、是否需要标注版本历史、是否需要导出为独立文档，以及状态标注是否要接入真实业务数据。"
+          },
+          {
+            "type": "markdown",
+            "id": "prd-handoff",
+            "title": "PRD 05｜交付",
+            "markdown": "# 交付\n\n## 1. 交付物\n\n- 可运行原型：包含原型即 PRD、内容标注、状态标注、原型目录和生成标注五个页面。\n- 标注数据：包含节点定位、颜色分类、Markdown 正文和状态控制配置。\n- PRD 文档：包含总览、角色、流程、状态、风险和交付六个章节化文档。\n- 外部来源：只保留必要的外部设计来源链接，避免目录成为无关资料集合。\n\n## 2. 验收标准\n\n- 目录中页面入口必须能切换到对应页面。\n- PRD 00-05 必须有对应章节，且内容能体现本原型的功能范围、协作方式、状态规则、风险和交付要求。\n- 外部链接只保留设计来源：op7418/guizang-ppt-skill。\n- 状态标注能通过分段控件切换成功/失败、空列表/有内容、偏低/正常/偏高。\n- 内容标注支持 Markdown、多颜色分类、颜色筛选和同一节点多条标注。\n\n## 3. 后续扩展\n\n后续可以把这套目录结构作为项目模板：新原型先建立页面和状态，再生成标注，最后补充 PRD 文档。正式交付前应由人工检查标注准确性和目录完整性。"
+          }
+        ]
+      },
+      {
+        "type": "folder",
+        "id": "directory-external-links",
+        "title": "外部链接",
+        "defaultExpanded": true,
+        "children": [
+          {
+            "type": "link",
+            "id": "link-design-source-guizang-ppt-skill",
+            "title": "设计来源：op7418/guizang-ppt-skill",
+            "href": "https://github.com/op7418/guizang-ppt-skill",
+            "target": "blank"
+          }
+        ]
+      }
+    ]
+  }
+}
