@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": false
+  },
+  "files": [
+    "scripts/sync-project-metadata.d.ts",
+    "vite-plugins/utils/entriesManifestCore.d.ts"
+  ],
+  "include": [
+    "src",
+    "scripts",
+    "tests",
+    "vite-plugins",
+    "vite.config.ts"
+  ]
+}

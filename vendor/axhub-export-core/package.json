@@ -1,0 +1,59 @@
+{
+  "name": "axhub-export-core",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./figma": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./dom": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./axure": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./scripts/canvas-fig-sync.mjs": {
+      "import": "./scripts/canvas-fig-sync.mjs",
+      "default": "./scripts/canvas-fig-sync.mjs"
+    }
+  },
+  "dependencies": {
+    "@zumer/snapdom": "^2.0.1",
+    "kiwi-schema": "^0.5.0",
+    "pako": "^2.1.0"
+  }
+}

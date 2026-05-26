@@ -1,0 +1,207 @@
+.ax-ai-image-composer-host {
+  border-radius: 16px;
+  background-color: hsl(var(--aui-background));
+  isolation: isolate;
+}
+
+.ax-ai-image-composer-root {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 4px;
+  border: 1px solid hsl(var(--aui-border));
+  border-radius: 16px;
+  background-color: hsl(var(--aui-background));
+  padding: 8px;
+  color: hsl(var(--aui-foreground));
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+
+.ax-ai-image-composer-root:focus-within {
+  border-color: hsl(var(--aui-ring) / 0.22);
+}
+
+.ax-ai-image-composer-root .aui-composer-attachments {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+}
+
+.ax-ai-image-composer-root .aui-composer-input {
+  width: 100%;
+  min-height: 40px;
+  background-color: hsl(var(--aui-background));
+  padding: 8px 10px 6px;
+}
+
+.ax-ai-image-composer-attachments {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ax-ai-image-composer-footer {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.ax-ai-image-composer-footer-leading-actions {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.ax-ai-image-composer-footer-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.ax-ai-image-composer-root .aui-composer-attach,
+.ax-ai-image-composer-root .aui-composer-send {
+  margin: 0;
+}
+
+body:has([data-axhub-ai-image-composer]) .aui-dialog-overlay {
+  z-index: 1210;
+}
+
+body:has([data-axhub-prototype-composer]) .aui-dialog-overlay {
+  z-index: 1210;
+}
+
+body:has([data-axhub-ai-image-composer]) .aui-dialog-content {
+  left: 50vw;
+  top: 50dvh;
+  transform: translate(-50%, -50%);
+  z-index: 1220;
+}
+
+body:has([data-axhub-prototype-composer]) .aui-dialog-content {
+  left: 50vw;
+  top: 50dvh;
+  transform: translate(-50%, -50%);
+  z-index: 1220;
+}
+
+body:has([data-axhub-ai-image-composer]) .aui-dialog-content img {
+  max-height: min(68dvh, calc(100dvh - 220px));
+}
+
+body:has([data-axhub-prototype-composer]) .aui-dialog-content img {
+  max-height: min(68dvh, calc(100dvh - 220px));
+}
+
+body:has([data-axhub-ai-image-composer]) .aui-tooltip-content,
+body:has([data-axhub-prototype-composer]) .aui-tooltip-content {
+  z-index: 3200 !important;
+}
+
+.ax-ai-image-settings-trigger {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 360px;
+  height: 32px;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 0 10px;
+  color: hsl(var(--aui-muted-foreground));
+  font-size: 13px;
+  line-height: 1;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.ax-ai-image-settings-trigger:hover,
+.ax-ai-image-settings-trigger[data-state='open'] {
+  background: hsl(var(--aui-accent));
+  color: hsl(var(--aui-accent-foreground));
+}
+
+.ax-ai-image-settings-trigger:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px hsl(var(--aui-ring));
+}
+
+.ax-ai-image-skills-trigger {
+  display: inline-flex;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 0 10px;
+  color: hsl(var(--aui-muted-foreground));
+  font-size: 13px;
+  line-height: 1;
+  transition: background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+
+.ax-ai-image-skills-trigger:hover {
+  background: hsl(var(--aui-accent));
+  color: hsl(var(--aui-accent-foreground));
+}
+
+.ax-ai-image-skills-trigger:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px hsl(var(--aui-ring));
+}
+
+.ax-ai-image-skills-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ax-ai-image-skills-trigger svg,
+.ax-ai-image-settings-trigger svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.ax-ai-image-settings-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .ax-ai-image-composer-footer {
+    align-items: flex-start;
+  }
+
+  .ax-ai-image-composer-footer-actions {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+  }
+
+  .ax-ai-image-settings-trigger {
+    max-width: 240px;
+  }
+}

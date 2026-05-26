@@ -1,0 +1,429 @@
+import type { Plugin } from 'vite';
+import fs from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+
+import {
+  fetchHealth,
+  normalizeHealthServerInfo,
+  readServerInfo,
+} from '../scripts/utils/serverInfo.mjs';
+import { PROJECT_ID, PROJECT_NAME } from '../scripts/sync-project-metadata.mjs';
+import { MAKE_CONFIG_RELATIVE_PATH } from './utils/makeConstants';
+
+const DEFAULT_ADMIN_ORIGIN = 'http://localhost:5174';
+const STATUS_ROUTE = '/__axhub/make-server/status';
+const START_ROUTE = '/__axhub/make-server/start';
+
+type RegisteredProject = {
+  projectId: string;
+  projectName: string;
+};
+
+type MakeServerStartCommand = {
+  command: string;
+  args: string[];
+  label: string;
+};
+
+type MakeServerStatusPayload = {
+  ready: boolean;
+  starting: boolean;
+  adminOrigin: string | null;
+  adminUrl: string | null;
+  projectId: string;
+  projectName: string;
+  error?: string;
+};
+
+let startPromise: Promise<MakeServerStatusPayload> | null = null;
+
+type ReusableAdminOriginOptions = {
+  requireDevMode?: boolean;
+  runtimeOrigin?: string;
+};
+
+type MakeServerStartOptions = {
+  runtimeOrigin?: string;
+};
+
+function findWorkspaceRoot(projectRoot: string): string | null {
+  let current = path.resolve(projectRoot);
+  while (true) {
+    if (fs.existsSync(path.join(current, 'pnpm-workspace.yaml'))) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
+function resolveLocalMakeServerCli(projectRoot: string): string | null {
+  const workspaceRoot = findWorkspaceRoot(projectRoot);
+  if (!workspaceRoot) {
+    return null;
+  }
+  const cliPath = path.join(workspaceRoot, 'bin/cli.mjs');
+  return fs.existsSync(cliPath) ? cliPath : null;
+}
+
+function normalizeOrigin(origin: unknown): string | null {
+  if (typeof origin !== 'string') {
+    return null;
+  }
+  const trimmed = origin.trim().replace(/\/+$/u, '');
+  return trimmed || null;
+}
+
+export function resolveMakeServerStartCommand(
+  projectRoot: string,
+  options: MakeServerStartOptions = {},
+): MakeServerStartCommand {
+  const runtimeOrigin = normalizeOrigin(options.runtimeOrigin);
+  const cliPath = resolveLocalMakeServerCli(projectRoot);
+  if (cliPath) {
+    const args = [cliPath, projectRoot, '--dev'];
+    if (runtimeOrigin) {
+      args.push('--runtime-origin', runtimeOrigin);
+    }
+    return {
+      command: process.execPath,
+      args,
+      label: 'local @axhub/make dev',
+    };
+  }
+  const args = ['@axhub/make', projectRoot];
+  if (runtimeOrigin) {
+    args.push('--runtime-origin', runtimeOrigin);
+  }
+  return {
+    command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
+    args,
+    label: 'npx @axhub/make',
+  };
+}
+
+export function createAdminUrl(adminOrigin: string, projectId?: string): string {
+  const url = new URL('/', adminOrigin);
+  const normalizedProjectId = projectId?.trim();
+  if (normalizedProjectId) {
+    url.searchParams.set('projectId', normalizedProjectId);
+  }
+  return url.toString();
+}
+
+export async function getReusableAdminOrigin(
+  projectRoot: string,
+  options: ReusableAdminOriginOptions = {},
+): Promise<string | null> {
+  const info = readServerInfo(projectRoot, 'admin');
+  const candidates = [
+    info?.origin,
+    DEFAULT_ADMIN_ORIGIN,
+  ].filter((origin, index, all): origin is string => Boolean(origin) && all.indexOf(origin) === index);
+
+  for (const origin of candidates) {
+    const health = await fetchHealth(origin, 1200);
+    if (normalizeHealthServerInfo(health)?.origin && isReusableAdminHealth(health, options)) {
+      return origin;
+    }
+  }
+  return null;
+}
+
+function isReusableAdminHealth(health: unknown, options: ReusableAdminOriginOptions): boolean {
+  if (!options.requireDevMode) {
+    return isReusableRuntimeOrigin(health, options);
+  }
+  if (!health || typeof health !== 'object') {
+    return false;
+  }
+  const payload = health as { role?: unknown; devMode?: unknown };
+  return payload.role === 'admin'
+    && payload.devMode === true
+    && isReusableRuntimeOrigin(health, options);
+}
+
+function isReusableRuntimeOrigin(health: unknown, options: ReusableAdminOriginOptions): boolean {
+  const expectedRuntimeOrigin = normalizeOrigin(options.runtimeOrigin);
+  if (!expectedRuntimeOrigin) {
+    return true;
+  }
+  if (!health || typeof health !== 'object') {
+    return false;
+  }
+  const payload = health as { runtimeOrigin?: unknown };
+  return normalizeOrigin(payload.runtimeOrigin) === expectedRuntimeOrigin;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldRequireDevAdmin(projectRoot: string): boolean {
+  return Boolean(resolveLocalMakeServerCli(projectRoot));
+}
+
+async function waitForAdminOrigin(
+  projectRoot: string,
+  options: ReusableAdminOriginOptions = {},
+): Promise<string | null> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const origin = await getReusableAdminOrigin(projectRoot, options);
+    if (origin) {
+      return origin;
+    }
+    await sleep(500);
+  }
+  return null;
+}
+
+export async function registerOfficialProject(projectRoot: string, adminOrigin: string): Promise<RegisteredProject> {
+  const resolvedProjectRoot = path.resolve(projectRoot);
+  const metadataPath = path.join(resolvedProjectRoot, '.axhub/make/project.json');
+  const body = {
+    id: PROJECT_ID,
+    name: PROJECT_NAME,
+    root: resolvedProjectRoot,
+    metadataPath,
+  };
+
+  const projectsResponse = await fetch(new URL('/api/projects', adminOrigin), {
+    headers: { accept: 'application/json' },
+  });
+  if (!projectsResponse.ok) {
+    throw new Error(`GET /api/projects failed with ${projectsResponse.status}`);
+  }
+  const registry = await projectsResponse.json() as any;
+  const existing = Array.isArray(registry.projects)
+    ? registry.projects.find((project: any) => project.id === PROJECT_ID || path.resolve(project.root || '') === resolvedProjectRoot)
+    : null;
+
+  if (existing) {
+    const response = await fetch(new URL(`/api/projects/${encodeURIComponent(existing.id)}`, adminOrigin), {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: PROJECT_NAME,
+        root: resolvedProjectRoot,
+        metadataPath,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`PATCH /api/projects/${existing.id} failed with ${response.status}`);
+    }
+  } else {
+    const response = await fetch(new URL('/api/projects', adminOrigin), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok && response.status !== 409) {
+      throw new Error(`POST /api/projects failed with ${response.status}`);
+    }
+  }
+
+  return {
+    projectId: existing?.id || PROJECT_ID,
+    projectName: PROJECT_NAME,
+  };
+}
+
+function createStatusPayload(adminOrigin: string | null, registration?: RegisteredProject): MakeServerStatusPayload {
+  const projectId = registration?.projectId || PROJECT_ID;
+  return {
+    ready: Boolean(adminOrigin),
+    starting: Boolean(startPromise),
+    adminOrigin,
+    adminUrl: adminOrigin ? createAdminUrl(adminOrigin, projectId) : null,
+    projectId,
+    projectName: registration?.projectName || PROJECT_NAME,
+  };
+}
+
+async function getRegisteredMakeServerStatus(
+  projectRoot: string,
+  options: MakeServerStartOptions = {},
+): Promise<MakeServerStatusPayload> {
+  if (startPromise) {
+    return {
+      ...createStatusPayload(null),
+      starting: true,
+    };
+  }
+
+  const adminOrigin = await getReusableAdminOrigin(projectRoot, {
+    requireDevMode: shouldRequireDevAdmin(projectRoot),
+    runtimeOrigin: options.runtimeOrigin,
+  });
+  if (!adminOrigin) {
+    return createStatusPayload(null);
+  }
+
+  const registration = await registerOfficialProject(projectRoot, adminOrigin);
+  return createStatusPayload(adminOrigin, registration);
+}
+
+function spawnMakeServer(projectRoot: string, options: MakeServerStartOptions = {}): void {
+  const startCommand = resolveMakeServerStartCommand(projectRoot, options);
+  const child = spawn(startCommand.command, startCommand.args, {
+    cwd: projectRoot,
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  console.log(`🚀 Starting Axhub Make server via ${startCommand.label}...`);
+}
+
+export async function startOrReuseMakeServer(
+  projectRoot: string,
+  options: MakeServerStartOptions = {},
+): Promise<MakeServerStatusPayload> {
+  if (startPromise) {
+    return startPromise;
+  }
+
+  startPromise = (async () => {
+    try {
+      const reuseOptions = {
+        requireDevMode: shouldRequireDevAdmin(projectRoot),
+        runtimeOrigin: options.runtimeOrigin,
+      };
+      const reusableOrigin = await getReusableAdminOrigin(projectRoot, reuseOptions);
+      if (reusableOrigin) {
+        const registration = await registerOfficialProject(projectRoot, reusableOrigin);
+        return createStatusPayload(reusableOrigin, registration);
+      }
+
+      spawnMakeServer(projectRoot, options);
+      const adminOrigin = await waitForAdminOrigin(projectRoot, reuseOptions);
+      if (!adminOrigin) {
+        return {
+          ...createStatusPayload(null),
+          error: `Started but did not become ready in time. Open make-server and register ${metadataPathForLog(projectRoot)} manually if needed.`,
+        };
+      }
+
+      const registration = await registerOfficialProject(projectRoot, adminOrigin);
+      return createStatusPayload(adminOrigin, registration);
+    } catch (error: any) {
+      return {
+        ...createStatusPayload(null),
+        error: error?.message || String(error),
+      };
+    } finally {
+      startPromise = null;
+    }
+  })();
+
+  return startPromise;
+}
+
+function sendJson(res: ServerResponse, payload: unknown, status = 200) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(JSON.stringify(payload));
+}
+
+function handleMakeServerEndpoint(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRoot: string,
+  options: MakeServerStartOptions = {},
+): boolean {
+  const url = new URL(req.url || '/', 'http://localhost');
+  if (url.pathname === STATUS_ROUTE) {
+    if (req.method !== 'GET') {
+      sendJson(res, { error: 'Method not allowed' }, 405);
+      return true;
+    }
+    getRegisteredMakeServerStatus(projectRoot, options)
+      .then((payload) => sendJson(res, payload))
+      .catch((error: any) => sendJson(res, {
+        ...createStatusPayload(null),
+        error: error?.message || String(error),
+      }));
+    return true;
+  }
+
+  if (url.pathname === START_ROUTE) {
+    if (req.method !== 'POST') {
+      sendJson(res, { error: 'Method not allowed' }, 405);
+      return true;
+    }
+    startOrReuseMakeServer(projectRoot, options)
+      .then((payload) => sendJson(res, payload))
+      .catch((error: any) => sendJson(res, {
+        ...createStatusPayload(null),
+        error: error?.message || String(error),
+      }));
+    return true;
+  }
+
+  return false;
+}
+
+function resolveRuntimeOriginFromViteServer(server: any): string | undefined {
+  const actualPort = server.httpServer?.address()?.port || server.config.server?.port;
+  if (!actualPort) {
+    return undefined;
+  }
+
+  const configPath = path.resolve(process.cwd(), MAKE_CONFIG_RELATIVE_PATH);
+  let displayHost = 'localhost';
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (typeof config?.server?.host === 'string' && config.server.host.trim()) {
+        displayHost = config.server.host.trim();
+      }
+    } catch {
+      // Ignore config parse errors and keep default.
+    }
+  }
+
+  return `http://${displayHost}:${actualPort}`;
+}
+
+export function autoStartMakeServerPlugin(): Plugin {
+  return {
+    name: 'auto-start-make-server',
+    configureServer(server: any) {
+      const projectRoot = path.resolve(process.cwd());
+
+      server.middlewares.use((req: IncomingMessage, res: ServerResponse, next: () => void) => {
+        if (handleMakeServerEndpoint(req, res, projectRoot, {
+          runtimeOrigin: resolveRuntimeOriginFromViteServer(server),
+        })) {
+          return;
+        }
+        next();
+      });
+
+      server.httpServer?.once('listening', async () => {
+        try {
+          const payload = await startOrReuseMakeServer(projectRoot, {
+            runtimeOrigin: resolveRuntimeOriginFromViteServer(server),
+          });
+          if (payload.ready && payload.adminOrigin) {
+            console.log(`✅ Axhub Make server ready at ${payload.adminOrigin}`);
+            console.log(`✅ Registered ${PROJECT_NAME}; admin URL ${payload.adminUrl}`);
+            return;
+          }
+          console.warn(`[make-server] ${payload.error || `Open make-server and register ${metadataPathForLog(projectRoot)} manually if needed.`}`);
+        } catch (error: any) {
+          console.warn('[make-server] Auto-start failed:', error?.message || error);
+        }
+      });
+    },
+  };
+}
+
+function metadataPathForLog(projectRoot: string) {
+  return path.join(projectRoot, '.axhub/make/project.json');
+}

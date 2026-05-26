@@ -1,98 +1,76 @@
-> [!NOTE]
-> Axhub Make 不是“又一个 AI 生成原型工具”。它是一条从 **需求** 到 **文档** 到 **原型** 再到 **交付（Axure / Figma / Html）** 的工作流。
-
-# 跳过这个 README 吧
-
-读文档的时代已经过去了。直接把下面这行发给你的 Agent：
-
-```
-阅读这个 README，并告诉我它为什么不只是又一个 AI 生成原型工具：
-https://raw.githubusercontent.com/lintendo/Axhub-Make/refs/heads/main/README.md
-```
-
 # Axhub Make
 
-一个给 **产品**、**设计师** 和 **AI Agent** 用的原型与文档协作工作流。
+> Axhub Make 不是“又一个 AI 生成页面工具”。
+> 它是一条从 **需求分析** 到 **原型生成**、**批注微调**、**原型评审**，再到 **发布交付** 的 AI 产品工作流。
 
-官网：[https://axhub.im/make/](https://axhub.im/make/)
+给产品、设计师、业务团队和 AI Agent 用。
 
 你说清楚要什么，Make 会把它变成：
 
-- 可以跑的交互原型（不是截图，不是 PPT）
-- 完整的多类型文档（需求文档、用户故事、规格文档等）
-- 可持续复用的资源资产（主题、组件、数据表等）
-- 可导出的交付物（Axure / Figma / Html）
+- 可以点击、可以评审、可以发布的交互原型
+- 带批注、标注和业务说明的“活 PRD”
+- 基于设计系统和专业技能生成的 UI/UX 方案
+- 面向新手的免费教程和上手路径
+- 可分享、可导出、可交付的原型成果
 
----
+官网：[https://axhub.im/make/](https://axhub.im/make/)
 
-## 安装
+## 直接启动
 
-统一交给 AI Agent 安装。把下面这段直接发给你的 Agent（Claude Code、TRAE、Cursor 等）：
+在你的项目目录里运行：
 
+```bash
+npx -y @axhub/make@latest
 ```
-请根据这里的说明安装并配置 Axhub Make：
-https://raw.githubusercontent.com/lintendo/Axhub-Make/refs/heads/main/rules/installation.md
+
+启动后会自动打开管理页面。如果没有打开，复制终端里显示的地址到浏览器。
+
+## 让 AI 帮你启动
+
+把下面这段发给你的 AI Agent，让它帮你检查环境、启动 Make，并创建一个以后可以直接双击运行的桌面脚本：
+
+```text
+请帮我在当前项目目录启动 Axhub Make，并确保以后可以一键启动。
+
+目标命令：
+npx -y @axhub/make@latest
+
+请按下面要求执行：
+
+1. 先检查当前环境是否可以直接执行 `npx -y @axhub/make@latest`。
+2. 如果命令失败，不要停在报错处。请判断原因并处理，直到这个命令可以直接执行：
+   - 检查 Node.js、npm、npx 是否可用；
+   - 如果缺少依赖，请按当前操作系统安装或引导我安装；
+   - 如果是网络、权限、缓存、PATH、Node 版本或 npm 配置问题，请修复或给出可执行命令；
+   - 每次修复后重新运行 `npx -y @axhub/make@latest` 验证。
+3. 启动成功后，确认管理页面已经打开；如果没有自动打开，请把终端里的访问地址复制给我。
+4. 在我的桌面创建一个启动脚本，用来以后直接启动 Axhub Make：
+   - macOS/Linux：创建可双击或可执行的 `.command` 或 `.sh` 脚本；
+   - Windows：创建 `.bat` 或 `.cmd` 脚本；
+   - 脚本需要进入当前项目目录，然后执行 `npx -y @axhub/make@latest`。
+5. 创建脚本后，请实际运行一次脚本，确认脚本可以正确启动 Axhub Make。
+6. 最后告诉我：
+   - Axhub Make 的访问地址；
+   - 桌面脚本的完整路径；
+   - 如果后续要手动启动，应该双击哪个脚本。
 ```
 
----
+## 核心能力
 
-## 核心亮点
+| 能力 | 说明 |
+| --- | --- |
+| AI 原型生成 | 根据业务目标、目标用户和核心场景生成可点击、可评审的交互原型。 |
+| 活 PRD | 通过批注、标注、字段说明和状态说明，把需求沉淀在真实界面上。 |
+| UI/UX 工作流 | 结合设计系统和图像生成能力，支持界面生成、风格探索和 UI 还原。 |
+| 设计系统 | 内置多种产品类型和视觉风格，适合快速建立专业界面方向。 |
+| 专业技能 | 覆盖需求梳理、交互设计、原型生成、评审和交付等常见产品流程。 |
+| 新手教程 | 提供上手路径和示例，帮助非技术用户完成第一个 AI 原型。 |
+| 发布交付 | 支持在线分享、HTML 成果、Axure/Figma/HTML 等交付形态。 |
 
-Axhub Make 把「原型生成」变成「可执行工作流」，核心能力如下：
+## 界面演示
 
-- 可视化管理原型和文档，不懂开发的产品和设计师也能直接使用
-- 内置 30+ 专业的原型生成与文档协作技能（`skills`）
-- 内置项目与资源管理和生成能力，让 AI 持续产出视觉风格一致、逻辑统一的原型和文档
-- 内置记忆系统，通过文档持续沉淀项目记忆，让 AI 越来越懂你和项目
-- 内置 `spec` 驱动的原型生成机制，减少 AI 生成过程中的幻觉和偏题
-- 支持从 Axure、V0、Stitch、AIStudio 以及任意网页导入原型或资源
-- 支持导出到 Axure 或 Figma，完美融入原有工作流
+![原型即 PRD](assets/images/make-demo-prd-annotation.png)
 
+![空原型引导](assets/images/make-demo-empty-prototype.png)
 
-### 三大产物
-
-<table>
-  <thead>
-    <tr>
-      <th style="white-space: nowrap;">内容</th>
-      <th>你会在仓库里看到什么</th>
-      <th>为什么重要</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="white-space: nowrap;">原型</td>
-      <td><code>src/prototypes/</code></td>
-      <td>用于评审真实交互和业务流程，不再只看静态稿。可通过普通原型目录和原型内部模块组织页面结构</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">文档</td>
-      <td><code>src/docs/</code></td>
-      <td>按专门文档编写流程沉淀信息，支撑协作、评审与复盘</td>
-    </tr>
-    <tr>
-      <td style="white-space: nowrap;">资源</td>
-      <td><code>src/themes/</code>、<code>src/components/</code>、<code>src/database/</code></td>
-      <td>统一管理主题、组件、数据表，保证持续生成的一致性</td>
-    </tr>
-  </tbody>
-</table>
-
----
-
-## 给 Agent 的入职材料
-
-你可以把下面这段直接贴给 Agent，当作“入职说明”：
-
-```
-你正在 Axhub Make 仓库中工作。
-
-请阅读并遵循：
-- AGENTS.md（工作流与原则）
-- rules/README.md（规则索引与命名体系）
-
-你必须：
-- 以产品经理 + UI/UX 设计师 + 前端工程师的复合角色开展工作
-- 遵循项目的文档编写流程，并维护必要文档
-- 持续实现并维护可运行的原型、文档和可复用资源
-```
+![设计系统浏览](assets/images/make-demo-design-system.png)

@@ -1,13 +1,28 @@
 {
-  "extends": "../tsconfig.base.json",
+  "extends": "../tsconfig.json",
   "compilerOptions": {
     "baseUrl": "..",
     "paths": {
       "@/*": [
-        "./src/*"
+        "src/*"
       ],
-      "axhub-annotation": [
-        "./vendor/axhub-annotation/dist/index.d.ts"
+      "@ant-design/cssinjs": [
+        "./node_modules/@ant-design/cssinjs"
+      ],
+      "@axhub/excalidraw": [
+        "./vendor/axhub-excalidraw/dist/types/excalidraw/index.d.ts"
+      ],
+      "@axhub/excalidraw/*": [
+        "./vendor/axhub-excalidraw/dist/types/excalidraw/*.d.ts"
+      ],
+      "axhub-export-core": [
+        "./vendor/axhub-export-core/dist/index.d.ts"
+      ],
+      "axhub-genie-editor": [
+        "./vendor/axhub-genie-editor/src/index.ts"
+      ],
+      "tiptap-editor": [
+        "./vendor/tiptap-editor/dist/index.d.ts"
       ]
     }
   }

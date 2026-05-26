@@ -1,11 +1,28 @@
 {
-  "generatedAt": "2026-04-21T17:03:52.735Z",
   "packages": [
     {
-      "packageName": "axhub-annotation",
-      "outputDirRelative": "vendor/axhub-annotation",
-      "runtimeEntryRelative": "vendor/axhub-annotation/dist/index.mjs",
-      "typesEntryRelative": "vendor/axhub-annotation/dist/index.d.ts"
+      "packageName": "@axhub/excalidraw",
+      "outputDirRelative": "vendor/axhub-excalidraw",
+      "runtimeEntryRelative": "vendor/axhub-excalidraw/dist/prod/index.js",
+      "typesEntryRelative": "vendor/axhub-excalidraw/dist/types/excalidraw/index.d.ts"
+    },
+    {
+      "packageName": "axhub-export-core",
+      "outputDirRelative": "vendor/axhub-export-core",
+      "runtimeEntryRelative": "vendor/axhub-export-core/dist/index.mjs",
+      "typesEntryRelative": "vendor/axhub-export-core/dist/index.d.ts"
+    },
+    {
+      "packageName": "axhub-genie-editor",
+      "outputDirRelative": "vendor/axhub-genie-editor",
+      "runtimeEntryRelative": "vendor/axhub-genie-editor/dist/index.mjs",
+      "typesEntryRelative": "vendor/axhub-genie-editor/src/index.ts"
+    },
+    {
+      "packageName": "tiptap-editor",
+      "outputDirRelative": "vendor/tiptap-editor",
+      "runtimeEntryRelative": "vendor/tiptap-editor/dist/index.js",
+      "typesEntryRelative": "vendor/tiptap-editor/dist/index.d.ts"
     }
   ]
 }

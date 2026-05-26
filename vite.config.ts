@@ -1,300 +1,363 @@
-import { defineConfig } from 'vite';
-import type { Plugin } from 'vite';
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
+
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { createVendorAliases, loadVendorPackagesConfig } from './scripts/utils/vendor-packages.mjs';
+import { defineConfig } from 'vite';
 
-// ── 构建模式也需要的插件（静态导入） ──
-import { axhubComponentEnforcer } from './vite-plugins/axhubComponentEnforcer';
-import { forceInlineDynamicImportsOff } from './vite-plugins/forceInlineDynamicImportsOff';
-import { injectStablePageIds } from './vite-plugins/injectStablePageIds';
-import {
-  MAKE_CONFIG_RELATIVE_PATH,
-  MAKE_ENTRIES_RELATIVE_PATH,
-} from './vite-plugins/utils/makeConstants';
-import { readEntriesManifest, scanProjectEntries, writeEntriesManifestAtomic } from './vite-plugins/utils/entriesManifest';
+import { getManualChunkName } from './src/chunking/manualChunks';
+import { canvasHotUpdateFilterPlugin } from './src/server/canvasHotUpdateFilter';
+import { DEFAULT_MAKE_SERVER_PORT } from './src/server/defaults';
 
-// ── 仅 dev server 模式需要的插件 ──
-// 使用动态 import() 避免在 build 模式下加载这些模块。
-// lowdbService 等单例会在模块求值时创建持久资源，导致 vite build 进程无法退出。
-async function loadServePlugins(): Promise<Plugin[]> {
-  const [
-    { aiCliPlugin },
-    { annotationApiPlugin },
-    { autoDebugPlugin },
-    { axureBridgeProxyPlugin },
-    { canvasApiPlugin },
-    { codeReviewPlugin },
-    { configApiPlugin },
-    { dataManagementApiPlugin },
-    { docsApiPlugin },
-    { docsImportApiPlugin },
-    { downloadDistPlugin },
-    { exportHtmlApiPlugin },
-    { exportImageProxyPlugin },
-    { fileSystemApiPlugin },
-    { gitVersionApiPlugin },
-    { lanAccessControlPlugin },
-    { mediaManagementApiPlugin },
-    { serveAdminPlugin },
-    { sourceApiPlugin },
-    { specDocApiPlugin },
-    { subPagesApiPlugin },
-    { templatesApiPlugin },
-    { themesApiPlugin },
-    { unsetReferenceApiPlugin },
-    { uploadDocsApiPlugin },
-    { versionApiPlugin },
-    { virtualHtmlPlugin },
-    { websocketPlugin },
-    { writeDevServerInfoPlugin },
-  ] = await Promise.all([
-    import('./vite-plugins/aiCliPlugin'),
-    import('./vite-plugins/annotationApiPlugin'),
-    import('./vite-plugins/autoDebugPlugin'),
-    import('./vite-plugins/axureBridgeProxyPlugin'),
-    import('./vite-plugins/canvasApiPlugin'),
-    import('./vite-plugins/codeReviewPlugin'),
-    import('./vite-plugins/configApiPlugin'),
-    import('./vite-plugins/dataManagementApiPlugin'),
-    import('./vite-plugins/docsApiPlugin'),
-    import('./vite-plugins/docsImportApiPlugin'),
-    import('./vite-plugins/downloadDistPlugin'),
-    import('./vite-plugins/exportHtmlApiPlugin'),
-    import('./vite-plugins/exportImageProxyPlugin'),
-    import('./vite-plugins/fileSystemApiPlugin'),
-    import('./vite-plugins/gitVersionApiPlugin'),
-    import('./vite-plugins/lanAccessControlPlugin'),
-    import('./vite-plugins/mediaManagementApiPlugin'),
-    import('./vite-plugins/serveAdminPlugin'),
-    import('./vite-plugins/sourceApiPlugin'),
-    import('./vite-plugins/specDocApiPlugin'),
-    import('./vite-plugins/subPagesApiPlugin'),
-    import('./vite-plugins/templatesApiPlugin'),
-    import('./vite-plugins/themesApiPlugin'),
-    import('./vite-plugins/unsetReferenceApiPlugin'),
-    import('./vite-plugins/uploadDocsApiPlugin'),
-    import('./vite-plugins/versionApiPlugin'),
-    import('./vite-plugins/virtualHtml'),
-    import('./vite-plugins/websocketPlugin'),
-    import('./vite-plugins/writeDevServerInfoPlugin'),
-  ]);
+const adminOutDir = path.resolve(__dirname, 'dist/admin');
 
-  return [
-    lanAccessControlPlugin(),
-    writeDevServerInfoPlugin(),
-    serveAdminPlugin(),
-    axureBridgeProxyPlugin(),
-    exportImageProxyPlugin(),
-    virtualHtmlPlugin(),
-    websocketPlugin(),
-    versionApiPlugin(),
-    downloadDistPlugin(),
-    exportHtmlApiPlugin(),
-    docsImportApiPlugin(),
-    docsApiPlugin(),
-    canvasApiPlugin(),
-    templatesApiPlugin(),
-    uploadDocsApiPlugin(),
-    sourceApiPlugin(),
-    specDocApiPlugin(),
-    subPagesApiPlugin(),
-    unsetReferenceApiPlugin(),
-    themesApiPlugin(),
-    fileSystemApiPlugin(),
-    dataManagementApiPlugin(),
-    mediaManagementApiPlugin(),
-    codeReviewPlugin(),
-    autoDebugPlugin(),
-    configApiPlugin(),
-    annotationApiPlugin(),
-    aiCliPlugin(),
-    gitVersionApiPlugin(),
-  ];
-}
+function discoverEntries() {
+  const srcDir = path.resolve(__dirname, 'src');
+  const entries: Record<string, string> = {};
+  const excludeDirs = new Set(['article-editor', 'dev-template', 'spec-template', 'html-template', 'canvas-template']);
+  const excludeRootHtmlFiles = new Set(['index.html']);
 
-const projectRoot = process.cwd();
-const vendorPackagesConfig = loadVendorPackagesConfig(projectRoot);
-const vendorAliases = createVendorAliases(projectRoot, vendorPackagesConfig);
-const configPath = path.resolve(projectRoot, MAKE_CONFIG_RELATIVE_PATH);
-let axhubConfig: any = { server: { host: 'localhost', allowLAN: true } };
-if (fs.existsSync(configPath)) {
-  try {
-    axhubConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  } catch (error) {
-    console.warn(`Failed to parse ${MAKE_CONFIG_RELATIVE_PATH}, using defaults:`, error);
-  }
-}
-
-writeEntriesManifestAtomic(
-  projectRoot,
-  scanProjectEntries(projectRoot, ['components', 'prototypes', 'themes']),
-);
-const entries = readEntriesManifest(projectRoot);
-
-const entryKey = process.env.ENTRY_KEY;
-const jsEntries = entries.js as Record<string, string>;
-const htmlEntries = entries.html as Record<string, string>;
-
-const hasSingleEntry = typeof entryKey === 'string' && entryKey.length > 0;
-let rollupInput: Record<string, string> = htmlEntries;
-
-if (hasSingleEntry) {
-  if (!jsEntries[entryKey as string]) {
-    throw new Error(`ENTRY_KEY=${entryKey} 未在 ${MAKE_ENTRIES_RELATIVE_PATH} 中找到对应入口文件。请确保目录 src/${entryKey} 存在且包含 index.tsx 文件。`);
-  }
-  rollupInput = { [entryKey as string]: jsEntries[entryKey as string] };
-}
-
-const isIifeBuild = hasSingleEntry;
-
-export default defineConfig(async ({ command }) => {
-  const isServe = command === 'serve';
-
-  // 仅在 serve 模式才加载 server-only 插件，避免 build 进程被持久资源阻塞
-  const servePlugins = isServe ? await loadServePlugins() : [];
-
-  const config: any = {
-    plugins: [
-      tailwindcss(),
-      injectStablePageIds(),
-      ...servePlugins,
-      forceInlineDynamicImportsOff(isIifeBuild),
-      react({
-        jsxRuntime: 'classic',
-        babel: { configFile: false, babelrc: false }
-      }),
-      isIifeBuild ? axhubComponentEnforcer(jsEntries[entryKey as string]) : null
-    ].filter(Boolean) as Plugin[],
-
-    root: 'src',
-
-    optimizeDeps: {
-      // React Fast Refresh 在开发态会接管 react/react-dom 的依赖预处理。
-      // 这里不要再把它们排除掉，否则会和 plugin-react 的 include 冲突。
-      exclude: [],
-      include: [
-        'lucide-react'
-      ]
-    },
-
-    resolve: {
-      alias: [
-        { find: '@', replacement: path.resolve(projectRoot, 'src') },
-        ...vendorAliases.map((alias) => ({
-          find: new RegExp(`^${alias.packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
-          replacement: alias.runtimeEntryAbsolute,
-        })),
-        !isIifeBuild && !isServe && {
-          find: /^react$/,
-          replacement: path.resolve(projectRoot, 'src/common/react-shim.js')
-        },
-        !isIifeBuild && !isServe && {
-          find: /^react-dom$/,
-          replacement: path.resolve(projectRoot, 'src/common/react-dom-shim.js')
-        },
-        !isIifeBuild && !isServe && {
-          find: /^react\/.*/,
-          replacement: path.resolve(projectRoot, 'src/common/react-shim.js')
-        },
-        !isIifeBuild && !isServe && {
-          find: /^react-dom\/.*/,
-          replacement: path.resolve(projectRoot, 'src/common/react-dom-shim.js')
-        }
-      ].filter(Boolean) as { find: string | RegExp; replacement: string }[]
-    },
-
-    css: {
-      preprocessorOptions: {
-        scss: {
-          api: 'modern-compiler'
-        },
-        sass: {
-          api: 'modern-compiler'
-        }
+  if (fs.existsSync(srcDir)) {
+    for (const item of fs.readdirSync(srcDir, { withFileTypes: true })) {
+      if (!item.isDirectory() || excludeDirs.has(item.name)) {
+        continue;
       }
-    },
-
-    server: {
-      port: 51720, // 默认从 51720 开始，如果被占用会自动尝试 51721, 51722...
-      strictPort: false, // 端口被占用时自动尝试下一个端口
-      host: '0.0.0.0', // 统一使用 0.0.0.0 绑定，确保端口检测正确
-      open: false, // 开发态不要自动打开浏览器，避免端口回退时误打开 51721/51722 等页面
-      cors: true,
-      // HMR 配置
-      hmr: {
-        // 禁用 Vite 的错误覆盖层（Error Overlay）
-        // 原因：项目使用多入口架构（prototypes、components 等），Vite 的 Error Overlay 会在所有打开的页面上显示错误
-        // 这导致用户在访问页面 A 时，如果页面 B 出现构建错误，错误会跨页面显示在页面 A 上，造成困扰
-        // 解决方案：禁用 Vite 的 Error Overlay，使用 dev-template.html 中已实现的自定义错误捕获和显示系统
-        // 优点：避免跨页面错误显示，保持错误提示的页面隔离性，风险最小
-        overlay: false
-      },
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+      const htmlPath = path.join(srcDir, item.name, 'index.html');
+      if (fs.existsSync(htmlPath)) {
+      entries[item.name === 'index' ? 'index' : item.name] = htmlPath;
       }
-    },
-
-    build: {
-      outDir: path.resolve(projectRoot, 'dist'),
-      emptyOutDir: !isIifeBuild,
-      target: isIifeBuild ? 'es2015' : 'esnext',
-      assetsInlineLimit: 1024 * 1024, // 1MB - 小于此大小的图片会被内联为 Base64
-
-      rollupOptions: {
-        input: rollupInput,
-
-        external: isIifeBuild ? ['react', 'react-dom'] : [],
-
-        output: {
-          entryFileNames: (chunkInfo: { name: string }) => `${chunkInfo.name}.js`,
-          format: isIifeBuild ? 'iife' : 'es',
-          name: 'UserComponent',
-
-          ...(isIifeBuild
-            ? {
-              globals: {
-                react: 'React',
-                'react-dom': 'ReactDOM'
-              },
-              generatedCode: { constBindings: false }
-            }
-            : {})
-        }
-      },
-
-      minify: isIifeBuild ? 'esbuild' : false
-    },
-
-    esbuild: isIifeBuild
-      ? {
-        target: 'es2015',
-        legalComments: 'none',
-        keepNames: true
-      }
-      : {
-        jsx: 'transform',
-        jsxFactory: 'React.createElement',
-        jsxFragment: 'React.Fragment'
-      },
-
-    test: {
-      globals: true,
-      environment: 'node',
-      include: [
-        'tests/**/*.test.ts',
-        'tests/**/*.test.tsx',
-        'scripts/**/*.test.ts',
-        'scripts/**/*.test.mjs',
-        'vite-plugins/**/*.test.ts',
-      ],
-      root: '.',
     }
+  }
+
+  for (const htmlFile of fs.readdirSync(__dirname).filter((file) => file.endsWith('.html') && !excludeRootHtmlFiles.has(file))) {
+    entries[htmlFile.replace(/\.html$/u, '')] = path.resolve(__dirname, htmlFile);
+  }
+
+  return entries;
+}
+
+function readJsonFile<T>(filePath: string): T | null {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
+}
+
+function createVendorResolveAliases() {
+  const generatedAliases = readJsonFile<{
+    packages?: Array<{
+      packageName?: string;
+    }>;
+  }>(path.resolve(__dirname, 'vendor/vendor-aliases.generated.json'));
+
+  return (generatedAliases?.packages || []).flatMap((pkg) => {
+    if (!pkg.packageName) {
+      return [];
+    }
+    return [{
+      find: new RegExp(`^${pkg.packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
+      replacement: path.resolve(__dirname, 'node_modules', pkg.packageName),
+    }];
+  });
+}
+
+function copyDirRecursive(src: string, dest: string) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+function copyHtmlTemplatePlugin(name: string, sourceRelativePath: string, outputFileName: string) {
+  return {
+    name,
+    closeBundle() {
+      const srcPath = path.resolve(__dirname, sourceRelativePath);
+      const destPath = path.resolve(adminOutDir, outputFileName);
+      if (!fs.existsSync(srcPath)) {
+        return;
+      }
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.copyFileSync(srcPath, destPath);
+      console.log(`✓ ${outputFileName} copied to make-server dist/admin`);
+    },
+  };
+}
+
+function copyAssetsPlugin() {
+  return {
+    name: 'copy-assets',
+    closeBundle() {
+      const srcDir = path.resolve(__dirname, 'assets');
+      if (!fs.existsSync(srcDir)) {
+        return;
+      }
+      copyDirRecursive(srcDir, adminOutDir);
+    },
+  };
+}
+
+function renameHtmlPlugin() {
+  return {
+    name: 'rename-html',
+    closeBundle() {
+      const nestedSrcDir = path.join(adminOutDir, 'src');
+      if (!fs.existsSync(nestedSrcDir)) {
+        return;
+      }
+
+      for (const entry of fs.readdirSync(nestedSrcDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        const indexHtmlPath = path.join(nestedSrcDir, entry.name, 'index.html');
+        if (fs.existsSync(indexHtmlPath)) {
+          fs.renameSync(indexHtmlPath, path.join(adminOutDir, entry.name === 'index' ? 'index.html' : `${entry.name}.html`));
+        }
+      }
+
+      fs.rmSync(nestedSrcDir, { recursive: true, force: true });
+    },
+  };
+}
+
+function stampAdminAssetUrlsPlugin() {
+  const buildVersion = Date.now().toString();
+  const assetReferencePattern = /((?:href|src)=["'])(\/(?:assets|images)\/[^"'?#]+|(?:\.\.?\/)+(?:assets|images)\/[^"'?#]+)(?:\?[^"']*)?(["'])/g;
+  const jsCssReferencePattern = /((?:["'`(]\s*))(\/(?:assets|images)\/[^"'`)#?]+|(?:\.\.?\/)+(?:assets|images|chunks)\/[^"'`)#?]+|(?:\.\.?\/)[^"'`)#?]+\.(?:js|css|png|jpe?g|gif|svg|ico|woff2?|ttf|eot|json))(?:\?[^"'`)]*)?((?:\s*["'`)]))/g;
+
+  const collectFiles = (rootDir: string, extensions: Set<string>): string[] => {
+    const files: string[] = [];
+    const walk = (currentDir: string) => {
+      for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+        const fullPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          walk(fullPath);
+          continue;
+        }
+        if (extensions.has(path.extname(entry.name))) {
+          files.push(fullPath);
+        }
+      }
+    };
+    walk(rootDir);
+    return files;
   };
 
-  return config;
+  return {
+    name: 'stamp-admin-asset-urls',
+    closeBundle() {
+      if (!fs.existsSync(adminOutDir)) {
+        return;
+      }
+      for (const filePath of collectFiles(adminOutDir, new Set(['.html', '.js', '.css']))) {
+        const originalContent = fs.readFileSync(filePath, 'utf8');
+        const stampedContent = originalContent
+          .replace(assetReferencePattern, `$1$2?v=${buildVersion}$3`)
+          .replace(jsCssReferencePattern, (_, prefix, assetPath, suffix) => {
+            if (
+              assetPath.startsWith('http://')
+              || assetPath.startsWith('https://')
+              || assetPath.startsWith('//')
+              || assetPath.includes('?v=')
+            ) {
+              return `${prefix}${assetPath}${suffix}`;
+            }
+            return `${prefix}${assetPath}?v=${buildVersion}${suffix}`;
+          });
+
+        if (stampedContent !== originalContent) {
+          fs.writeFileSync(filePath, stampedContent, 'utf8');
+        }
+      }
+    },
+  };
+}
+
+const ADMIN_ENTRY_PRELOAD_BLOCKLIST = [
+  'vendor-excalidraw',
+  'ExcalidrawCanvas',
+  'vendor-export',
+  'vendor-editor',
+  'vendor-assistant',
+  'vendor-genie',
+];
+
+function filterAdminEntryPreloadDependencies(filename: string, deps: string[], context?: { hostId?: string; hostType?: string }) {
+  const isAdminIndexEntry = filename === 'assets/index.js'
+    || context?.hostId === 'src/index/index.html'
+    || context?.hostId === 'index.html';
+  if (!isAdminIndexEntry) {
+    return deps;
+  }
+  return deps.filter((dep) => !ADMIN_ENTRY_PRELOAD_BLOCKLIST.some((blocked) => dep.includes(blocked)));
+}
+
+/**
+ * Resolve @excalidraw/* sibling packages to the copies bundled inside
+ * @axhub/excalidraw/dist/siblings. The upstream Excalidraw build keeps these
+ * as external imports; without this plugin Rollup/esbuild cannot find them.
+ */
+function excalidrawSiblingsPlugin() {
+  const siblingsBase = path.resolve(__dirname, 'vendor/axhub-excalidraw/dist/siblings');
+  const siblingMap: Record<string, string> = {
+    '@excalidraw/common': path.join(siblingsBase, 'common/dev/index.js'),
+    '@excalidraw/element': path.join(siblingsBase, 'element/dev/index.js'),
+    '@excalidraw/math': path.join(siblingsBase, 'math/dev/index.js'),
+    '@excalidraw/fractional-indexing': path.join(siblingsBase, 'fractional-indexing/dev/index.js'),
+  };
+
+  return {
+    name: 'excalidraw-siblings',
+    enforce: 'pre' as const,
+    resolveId(source: string) {
+      // Exact match
+      if (siblingMap[source]) {
+        return siblingMap[source];
+      }
+      // Subpath match: @excalidraw/element/binding → same index.js
+      const slashIndex = source.indexOf('/', '@excalidraw/'.length);
+      if (slashIndex > 0) {
+        const basePkg = source.substring(0, slashIndex);
+        if (siblingMap[basePkg]) {
+          return siblingMap[basePkg];
+        }
+      }
+      return null;
+    },
+  };
+}
+
+export default defineConfig({
+  css: {
+    preprocessorOptions: {
+      scss: { api: 'modern-compiler' },
+      sass: { api: 'modern-compiler' },
+    },
+  },
+  plugins: [
+    excalidrawSiblingsPlugin(),
+    canvasHotUpdateFilterPlugin(),
+    react(),
+    tailwindcss(),
+    copyAssetsPlugin(),
+    renameHtmlPlugin(),
+    copyHtmlTemplatePlugin('copy-dev-template', 'src/dev-template/index.html', 'dev-template.html'),
+    copyHtmlTemplatePlugin('copy-spec-template', 'src/spec-template/index.html', 'spec-template.html'),
+    copyHtmlTemplatePlugin('copy-canvas-template', 'src/canvas-template/index.html', 'canvas-template.html'),
+    copyHtmlTemplatePlugin('copy-html-template', 'src/html-template/index.html', 'html-template.html'),
+    stampAdminAssetUrlsPlugin(),
+  ],
+  root: path.resolve(__dirname),
+  publicDir: false,
+  server: {
+    port: DEFAULT_MAKE_SERVER_PORT,
+    open: '/',
+    cors: true,
+    strictPort: false,
+    watch: {
+      ignored: ['**/client/**'],
+    },
+  },
+  build: {
+    outDir: adminOutDir,
+    emptyOutDir: true,
+    modulePreload: {
+      resolveDependencies: filterAdminEntryPreloadDependencies,
+    },
+    rollupOptions: {
+      preserveEntrySignatures: 'exports-only',
+      input: {
+        ...discoverEntries(),
+        'dev-template-bootstrap': path.resolve(__dirname, 'src/dev-template/index.tsx'),
+        'spec-template-styles': path.resolve(__dirname, 'src/spec-template/styles.ts'),
+        'spec-template-bootstrap': path.resolve(__dirname, 'src/spec-template/index.tsx'),
+        'canvas-template-bootstrap': path.resolve(__dirname, 'src/canvas-template/index.tsx'),
+        'html-template-bootstrap': path.resolve(__dirname, 'src/html-template/index.tsx'),
+        'runtime-export-core': path.resolve(__dirname, 'src/runtime-export-core.ts'),
+      },
+      output: {
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/chunks/[name].js',
+        minifyInternalExports: false,
+        assetFileNames: (assetInfo) => {
+          if (assetInfo.name?.endsWith('.css')) {
+            return 'assets/[name].css';
+          }
+          return 'assets/[name].[ext]';
+        },
+        manualChunks: getManualChunkName,
+        onlyExplicitManualChunks: true,
+      },
+    },
+  },
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+    alias: [
+      { find: '@', replacement: path.resolve(__dirname, 'src') },
+      ...createVendorResolveAliases(),
+      { find: /^@axhub\/excalidraw\/index\.css$/, replacement: path.resolve(__dirname, 'vendor/axhub-excalidraw/dist/prod/index.css') },
+      { find: '@ant-design/cssinjs', replacement: path.resolve(__dirname, 'node_modules/@ant-design/cssinjs') },
+      { find: '@ant-design/icons', replacement: path.resolve(__dirname, 'node_modules/@ant-design/icons') },
+      { find: 'antd', replacement: path.resolve(__dirname, 'node_modules/antd') },
+      { find: 'react', replacement: path.resolve(__dirname, 'node_modules/react') },
+      { find: 'react-dom', replacement: path.resolve(__dirname, 'node_modules/react-dom') },
+    ],
+  },
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      'antd',
+      '@ant-design/icons',
+      'cmdk',
+      'lucide-react',
+      '@radix-ui/react-checkbox',
+      '@radix-ui/react-select',
+      '@radix-ui/react-separator',
+    ],
+    exclude: [
+      '@axhub/excalidraw',
+      'axhub-genie-editor',
+      'axhub-export-core',
+      'tiptap-editor',
+    ],
+    esbuildOptions: {
+      plugins: [
+        {
+          name: 'excalidraw-siblings-esbuild',
+          setup(build) {
+            const siblingsBase = path.resolve(__dirname, 'vendor/axhub-excalidraw/dist/siblings');
+            const siblingMap: Record<string, string> = {
+              '@excalidraw/common': path.join(siblingsBase, 'common/dev/index.js'),
+              '@excalidraw/element': path.join(siblingsBase, 'element/dev/index.js'),
+              '@excalidraw/math': path.join(siblingsBase, 'math/dev/index.js'),
+              '@excalidraw/fractional-indexing': path.join(siblingsBase, 'fractional-indexing/dev/index.js'),
+            };
+
+            build.onResolve({ filter: /^@excalidraw\// }, (args) => {
+              if (siblingMap[args.path]) {
+                return { path: siblingMap[args.path] };
+              }
+              // Subpath: @excalidraw/element/binding → element/dev/index.js
+              const slashIndex = args.path.indexOf('/', '@excalidraw/'.length);
+              if (slashIndex > 0) {
+                const basePkg = args.path.substring(0, slashIndex);
+                if (siblingMap[basePkg]) {
+                  return { path: siblingMap[basePkg] };
+                }
+              }
+              return undefined;
+            });
+          },
+        },
+      ],
+    },
+  },
 });

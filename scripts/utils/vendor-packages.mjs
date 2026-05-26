@@ -15,28 +15,33 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+function shouldSkipVendorEntry(entryName) {
+  return entryName === '.DS_Store'
+    || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(entryName);
+}
+
 function copyRecursive(sourcePath, targetPath) {
+  if (shouldSkipVendorEntry(path.basename(sourcePath))) {
+    return;
+  }
   const stat = fs.statSync(sourcePath);
   if (stat.isDirectory()) {
     ensureDir(targetPath);
     for (const entry of fs.readdirSync(sourcePath, { withFileTypes: true })) {
+      if (shouldSkipVendorEntry(entry.name)) {
+        continue;
+      }
       copyRecursive(path.join(sourcePath, entry.name), path.join(targetPath, entry.name));
     }
     return;
   }
-
   ensureDir(path.dirname(targetPath));
   fs.copyFileSync(sourcePath, targetPath);
 }
 
 function normalizeCopyEntries(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((entry) => String(entry || '').trim())
-    .filter(Boolean);
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => String(entry || '').trim()).filter(Boolean);
 }
 
 function resolvePackageSourceDir(appRoot, pkg) {
@@ -49,19 +54,11 @@ function resolvePackageOutputDir(appRoot, pkg) {
 
 function listRequiredVendoredPaths(outputRoot, pkg) {
   const requiredPaths = new Set();
-
   for (const relativePath of pkg.copy) {
-    if (relativePath === 'package.json') {
-      requiredPaths.add(path.join(outputRoot, 'package.json'));
-      continue;
-    }
-
     requiredPaths.add(path.join(outputRoot, relativePath));
   }
-
   requiredPaths.add(path.join(outputRoot, pkg.runtimeEntry));
   requiredPaths.add(path.join(outputRoot, pkg.typesEntry));
-
   return Array.from(requiredPaths);
 }
 
@@ -70,21 +67,40 @@ function hasPublishedVendorArtifacts(appRoot, pkg) {
   return listRequiredVendoredPaths(outputRoot, pkg).every((requiredPath) => fs.existsSync(requiredPath));
 }
 
-function createVendoredPackageJson(pkg, sourceRoot) {
+function createVendoredDependencyMap(config) {
+  return new Map(config.packages.map((pkg) => [pkg.packageName, pkg.outputDir]));
+}
+
+function rewriteDependencySpecs(pkg, dependencies, vendoredDependencyMap) {
+  if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) {
+    return dependencies;
+  }
+
+  const rewritten = {};
+  for (const [dependencyName, dependencySpec] of Object.entries(dependencies)) {
+    if (typeof dependencySpec === 'string' && dependencySpec.startsWith('workspace:')) {
+      const dependencyOutputDir = vendoredDependencyMap.get(dependencyName);
+      if (!dependencyOutputDir) {
+        throw new Error(`Vendored package "${pkg.packageName}" has workspace dependency "${dependencyName}" that is not in vendor-packages.config.json.`);
+      }
+      const relativePath = toPosixPath(path.posix.relative(pkg.outputDir, dependencyOutputDir)) || '.';
+      rewritten[dependencyName] = `file:${relativePath.startsWith('.') ? relativePath : `./${relativePath}`}`;
+      continue;
+    }
+    rewritten[dependencyName] = dependencySpec;
+  }
+  return rewritten;
+}
+
+function createVendoredPackageJson(pkg, sourceRoot, vendoredDependencyMap) {
   const sourcePkgPath = path.join(sourceRoot, 'package.json');
   const sourcePkg = fs.existsSync(sourcePkgPath) ? readJson(sourcePkgPath) : {};
   const requireEntry = fs.existsSync(path.join(sourceRoot, 'dist', 'index.js'))
     ? './dist/index.js'
     : `./${toPosixPath(pkg.runtimeEntry)}`;
-
-  return {
-    name: pkg.packageName,
-    private: true,
-    type: sourcePkg.type || 'module',
-    main: requireEntry,
-    module: `./${toPosixPath(pkg.runtimeEntry)}`,
-    types: `./${toPosixPath(pkg.typesEntry)}`,
-    exports: {
+  const exports = sourcePkg.exports && typeof sourcePkg.exports === 'object'
+    ? sourcePkg.exports
+    : {
       '.': {
         import: {
           types: `./${toPosixPath(pkg.typesEntry)}`,
@@ -95,19 +111,32 @@ function createVendoredPackageJson(pkg, sourceRoot) {
           default: requireEntry,
         },
       },
-    },
+    };
+
+  return {
+    name: pkg.packageName,
+    private: true,
+    type: sourcePkg.type || 'module',
+    main: sourcePkg.main || requireEntry,
+    module: sourcePkg.module || `./${toPosixPath(pkg.runtimeEntry)}`,
+    types: sourcePkg.types || `./${toPosixPath(pkg.typesEntry)}`,
+    exports,
+    sideEffects: sourcePkg.sideEffects,
+    peerDependencies: sourcePkg.peerDependencies,
+    dependencies: rewriteDependencySpecs(pkg, sourcePkg.dependencies, vendoredDependencyMap),
+    optionalDependencies: rewriteDependencySpecs(pkg, sourcePkg.optionalDependencies, vendoredDependencyMap),
   };
 }
 
-function writeVendoredPackageJson(appRoot, pkg) {
+function writeVendoredPackageJson(appRoot, pkg, config) {
   const sourceRoot = resolvePackageSourceDir(appRoot, pkg);
   const outputDir = resolvePackageOutputDir(appRoot, pkg);
   ensureDir(outputDir);
-  fs.writeFileSync(
-    path.join(outputDir, 'package.json'),
-    `${JSON.stringify(createVendoredPackageJson(pkg, sourceRoot), null, 2)}\n`,
-    'utf8',
-  );
+  const json = createVendoredPackageJson(pkg, sourceRoot, createVendoredDependencyMap(config));
+  for (const key of Object.keys(json)) {
+    if (json[key] === undefined) delete json[key];
+  }
+  fs.writeFileSync(path.join(outputDir, 'package.json'), `${JSON.stringify(json, null, 2)}\n`, 'utf8');
 }
 
 function writeVendorMetadata(appRoot, aliases) {
@@ -117,7 +146,6 @@ function writeVendorMetadata(appRoot, aliases) {
   fs.writeFileSync(
     path.join(vendorRoot, 'vendor-aliases.generated.json'),
     `${JSON.stringify({
-      generatedAt: new Date().toISOString(),
       packages: aliases.map(({ packageName, outputDirRelative, runtimeEntryRelative, typesEntryRelative }) => ({
         packageName,
         outputDirRelative,
@@ -142,7 +170,7 @@ function writeVendorMetadata(appRoot, aliases) {
     'utf8',
   );
 
-  const baseTsconfigPath = path.resolve(appRoot, 'tsconfig.base.json');
+  const baseTsconfigPath = path.resolve(appRoot, 'tsconfig.json');
   const baseTsconfig = fs.existsSync(baseTsconfigPath) ? readJson(baseTsconfigPath) : {};
   const basePaths = baseTsconfig?.compilerOptions?.paths && typeof baseTsconfig.compilerOptions.paths === 'object'
     ? baseTsconfig.compilerOptions.paths
@@ -150,7 +178,7 @@ function writeVendorMetadata(appRoot, aliases) {
   fs.writeFileSync(
     path.join(vendorRoot, 'vendor-tsconfig.generated.json'),
     `${JSON.stringify({
-      extends: '../tsconfig.base.json',
+      extends: '../tsconfig.json',
       compilerOptions: {
         baseUrl: '..',
         paths: {
@@ -161,24 +189,10 @@ function writeVendorMetadata(appRoot, aliases) {
     }, null, 2)}\n`,
     'utf8',
   );
-
-  const declarationLines = aliases.flatMap((alias) => [
-    `declare module '${alias.packageName}' {`,
-    `  export * from './${alias.typesModuleSpecifier}';`,
-    '}',
-    '',
-  ]);
-  fs.writeFileSync(
-    path.join(vendorRoot, 'vendor-modules.generated.d.ts'),
-    `${declarationLines.join('\n')}\n`,
-    'utf8',
-  );
 }
 
 function buildPackageCommand(pkg) {
-  if (!Array.isArray(pkg.buildCommand) || pkg.buildCommand.length === 0) {
-    return null;
-  }
+  if (!Array.isArray(pkg.buildCommand) || pkg.buildCommand.length === 0) return null;
   return {
     command: pkg.buildCommand[0],
     args: pkg.buildCommand.slice(1),
@@ -188,14 +202,19 @@ function buildPackageCommand(pkg) {
 function runBuildForPackage(appRoot, pkg) {
   const sourceRoot = resolvePackageSourceDir(appRoot, pkg);
   const commandSpec = buildPackageCommand(pkg);
-  if (!commandSpec) {
-    return;
-  }
+  if (!commandSpec) return;
+  const workspaceRoot = path.resolve(appRoot, '..', '..');
+  const workspaceBin = path.join(workspaceRoot, 'node_modules', '.pnpm', 'node_modules', '.bin');
+  const pathKey = process.platform === 'win32' ? 'Path' : 'PATH';
+  const existingPath = process.env[pathKey] || process.env.PATH || '';
 
   const result = runCommandSync({
     command: commandSpec.command,
     args: commandSpec.args,
     cwd: sourceRoot,
+    env: {
+      [pathKey]: `${workspaceBin}${path.delimiter}${existingPath}`,
+    },
     timeoutMs: 10 * 60 * 1000,
     maxBuffer: 20 * 1024 * 1024,
   });
@@ -203,12 +222,10 @@ function runBuildForPackage(appRoot, pkg) {
   if (result.status !== 0) {
     const stderr = result.stderr.trim();
     const stdout = result.stdout.trim();
-    throw new Error(
-      [
-        `Failed to build vendored package "${pkg.packageName}".`,
-        stderr || stdout || `Command exited with status ${result.status}.`,
-      ].join('\n'),
-    );
+    throw new Error([
+      `Failed to build vendored package "${pkg.packageName}".`,
+      stderr || stdout || `Command exited with status ${result.status}.`,
+    ].join('\n'));
   }
 }
 
@@ -216,10 +233,12 @@ export function loadVendorPackagesConfig(appRoot) {
   const configPath = path.resolve(appRoot, 'vendor-packages.config.json');
   const rawConfig = readJson(configPath);
   const packages = Array.isArray(rawConfig.packages) ? rawConfig.packages : [];
-
   return {
     packages: packages.map((pkg) => ({
       packageName: String(pkg.packageName),
+      aliases: Array.isArray(pkg.aliases)
+        ? pkg.aliases.map((alias) => String(alias || '').trim()).filter(Boolean)
+        : [],
       sourceDir: String(pkg.sourceDir),
       outputDir: toPosixPath(String(pkg.outputDir)),
       runtimeEntry: toPosixPath(String(pkg.runtimeEntry)),
@@ -231,17 +250,13 @@ export function loadVendorPackagesConfig(appRoot) {
 }
 
 export function createVendorAliases(appRoot, config) {
-  return config.packages.map((pkg) => {
+  return config.packages.flatMap((pkg) => {
     const outputDirRelative = toPosixPath(pkg.outputDir);
     const runtimeEntryRelative = toPosixPath(path.posix.join(outputDirRelative, pkg.runtimeEntry));
     const typesEntryRelative = toPosixPath(path.posix.join(outputDirRelative, pkg.typesEntry));
-    const vendorRoot = path.resolve(appRoot, 'vendor');
-    const typesModuleSpecifier = toPosixPath(
-      path.relative(vendorRoot, path.resolve(appRoot, typesEntryRelative)).replace(/\.d\.ts$/u, ''),
-    );
 
-    return {
-      packageName: pkg.packageName,
+    const createAlias = (packageName) => ({
+      packageName,
       sourceDirAbsolute: resolvePackageSourceDir(appRoot, pkg),
       outputDirAbsolute: resolvePackageOutputDir(appRoot, pkg),
       outputDirRelative,
@@ -249,8 +264,9 @@ export function createVendorAliases(appRoot, config) {
       runtimeEntryRelative,
       typesEntryAbsolute: path.resolve(appRoot, typesEntryRelative),
       typesEntryRelative,
-      typesModuleSpecifier,
-    };
+    });
+
+    return [pkg.packageName, ...(pkg.aliases || [])].map(createAlias);
   });
 }
 
@@ -274,24 +290,19 @@ export function syncVendorPackages(appRoot, config, options = {}) {
   for (const pkg of config.packages) {
     const sourceRoot = resolvePackageSourceDir(appRoot, pkg);
     const outputRoot = resolvePackageOutputDir(appRoot, pkg);
-
     if (!fs.existsSync(sourceRoot)) {
-      if (hasPublishedVendorArtifacts(appRoot, pkg)) {
-        continue;
-      }
+      if (hasPublishedVendorArtifacts(appRoot, pkg)) continue;
       throw new Error(`Vendor source package not found: ${sourceRoot}`);
     }
 
-    if (shouldBuild) {
-      onBuildPackage(appRoot, pkg);
-    }
+    if (shouldBuild) onBuildPackage(appRoot, pkg);
 
     fs.rmSync(outputRoot, { recursive: true, force: true });
     ensureDir(outputRoot);
 
     for (const relativePath of pkg.copy) {
       if (relativePath === 'package.json') {
-        writeVendoredPackageJson(appRoot, pkg);
+        writeVendoredPackageJson(appRoot, pkg, config);
         continue;
       }
 
@@ -306,8 +317,5 @@ export function syncVendorPackages(appRoot, config, options = {}) {
 
   const aliases = createVendorAliases(appRoot, config);
   writeVendorMetadata(appRoot, aliases);
-
-  return {
-    packages: aliases,
-  };
+  return { packages: aliases };
 }

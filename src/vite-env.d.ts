@@ -1,31 +1,43 @@
 /// <reference types="vite/client" />
 
+interface Window {
+  __LOCAL_IP__?: string;
+  __LOCAL_PORT__?: number;
+  __RUNTIME_ORIGIN__?: string;
+  __ERROR_SYSTEM__?: {
+    markReactReady: () => void;
+    getErrorQueue: () => any[];
+    clearErrors: () => void;
+    setErrorCaptureEnabled: (enabled: boolean) => void;
+    isErrorCaptureEnabled: () => boolean;
+  };
+}
+
 declare module '*.png' {
-  const src: string;
-  export default src;
+  const value: string;
+  export default value;
 }
 
 declare module '*.jpg' {
-  const src: string;
-  export default src;
+  const value: string;
+  export default value;
 }
 
 declare module '*.jpeg' {
-  const src: string;
-  export default src;
-}
-
-declare module '*.gif' {
-  const src: string;
-  export default src;
+  const value: string;
+  export default value;
 }
 
 declare module '*.svg' {
-  const src: string;
-  export default src;
+  const value: string;
+  export default value;
 }
 
-declare module '*.woff2' {
-  const src: string;
-  export default src;
+declare module '*.gif' {
+  const value: string;
+  export default value;
+}
+
+declare module 'marked' {
+  export const marked: any;
 }

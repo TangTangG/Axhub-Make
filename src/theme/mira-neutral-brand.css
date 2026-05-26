@@ -1,0 +1,112 @@
+:root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 47.4% 11.2%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 47.4% 11.2%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 47.4% 11.2%;
+
+    --primary: 159 100% 28%;
+    --primary-foreground: 0 0% 100%;
+    --brand: 159 100% 28%;
+    --brand-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --success: 159 83% 33%;
+    --success-foreground: 0 0% 100%;
+    --warning: 33 92% 46%;
+    --warning-foreground: 210 40% 98%;
+    --info: 214 88% 52%;
+    --info-foreground: 210 40% 98%;
+
+    --destructive: 0 78% 58%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --border-strong: 214 26% 83%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 159 100% 28%;
+
+    --chart-1: 159 83% 33%;
+    --chart-2: 214 88% 52%;
+    --chart-3: 262 83% 58%;
+    --chart-4: 35 92% 55%;
+    --chart-5: 198 93% 42%;
+
+    --surface-page: 210 20% 97%;
+    --surface-elevated: 0 0% 100%;
+
+    --device-shell-bg: 220 11% 14%;
+    --device-shell-border: 220 8% 20%;
+    --device-screen-bg: 0 0% 100%;
+
+    --radius: 0.625rem;
+
+    --shadow-xs: 0 1px 2px hsl(220 43% 11% / 0.04);
+    --shadow-sm: 0 2px 8px hsl(220 43% 11% / 0.08);
+    --shadow-md: 0 10px 30px hsl(220 43% 11% / 0.12);
+
+    --ax-font-size-ui: 12px;
+    --ax-font-size-caption: 11px;
+}
+
+.dark {
+    --background: 224 71% 4%;
+    --foreground: 213 31% 91%;
+
+    --card: 222 39% 10%;
+    --card-foreground: 213 31% 91%;
+    --popover: 222 39% 10%;
+    --popover-foreground: 213 31% 91%;
+
+    --primary: 159 100% 35%;
+    --primary-foreground: 0 0% 100%;
+    --brand: 159 100% 35%;
+    --brand-foreground: 0 0% 100%;
+
+    --secondary: 215 27.9% 16.9%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 216 34% 13%;
+    --muted-foreground: 217.9 10.6% 64.9%;
+    --accent: 216 34% 16%;
+    --accent-foreground: 210 40% 98%;
+
+    --success: 159 90% 39%;
+    --success-foreground: 0 0% 100%;
+    --warning: 39 92% 54%;
+    --warning-foreground: 222 47% 11%;
+    --info: 214 88% 63%;
+    --info-foreground: 222 47% 11%;
+
+    --destructive: 0 74% 45%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 215 27.9% 16.9%;
+    --border-strong: 215 20% 26%;
+    --input: 215 27.9% 16.9%;
+    --ring: 159 100% 35%;
+
+    --chart-1: 159 90% 39%;
+    --chart-2: 214 88% 63%;
+    --chart-3: 262 83% 70%;
+    --chart-4: 39 92% 62%;
+    --chart-5: 198 88% 54%;
+
+    --surface-page: 223 36% 9%;
+    --surface-elevated: 222 39% 12%;
+
+    --device-shell-bg: 222 16% 9%;
+    --device-shell-border: 217 19% 20%;
+    --device-screen-bg: 224 71% 4%;
+
+    --shadow-xs: 0 1px 2px hsl(220 33% 2% / 0.35);
+    --shadow-sm: 0 2px 10px hsl(220 33% 2% / 0.45);
+    --shadow-md: 0 14px 40px hsl(220 33% 2% / 0.55);
+}

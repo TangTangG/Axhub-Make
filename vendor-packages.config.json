@@ -1,10 +1,37 @@
 {
   "packages": [
     {
-      "packageName": "axhub-annotation",
-      "sourceDir": "../../packages/axhub-annotation",
-      "outputDir": "vendor/axhub-annotation",
+      "packageName": "@axhub/excalidraw",
+      "sourceDir": "../../packages/excalidraw",
+      "outputDir": "vendor/axhub-excalidraw",
+      "runtimeEntry": "dist/prod/index.js",
+      "typesEntry": "dist/types/excalidraw/index.d.ts",
+      "copy": ["dist", "package.json"],
+      "buildCommand": ["pnpm", "build"]
+    },
+    {
+      "packageName": "axhub-export-core",
+      "sourceDir": "../../packages/axhub-export-core",
+      "outputDir": "vendor/axhub-export-core",
       "runtimeEntry": "dist/index.mjs",
+      "typesEntry": "dist/index.d.ts",
+      "copy": ["dist", "scripts", "package.json"],
+      "buildCommand": ["pnpm", "build"]
+    },
+    {
+      "packageName": "axhub-genie-editor",
+      "sourceDir": "../../packages/axhub-genie-editor",
+      "outputDir": "vendor/axhub-genie-editor",
+      "runtimeEntry": "dist/index.mjs",
+      "typesEntry": "src/index.ts",
+      "copy": ["dist", "src", "package.json"],
+      "buildCommand": ["pnpm", "build"]
+    },
+    {
+      "packageName": "tiptap-editor",
+      "sourceDir": "../../packages/tiptap-editor",
+      "outputDir": "vendor/tiptap-editor",
+      "runtimeEntry": "dist/index.js",
       "typesEntry": "dist/index.d.ts",
       "copy": ["dist", "package.json"],
       "buildCommand": ["pnpm", "build"]

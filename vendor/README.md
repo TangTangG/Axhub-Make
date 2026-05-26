@@ -1,5 +1,7 @@
-# Vendor Packages
+# Make Server Vendor Packages
 
-This directory stores package artifacts that are copied into `axhub-make` so the app can run and be published without relying on monorepo `workspace:*` dependencies.
+This directory stores built artifacts for internal packages that are not copied
+as source into the standalone Axhub-Make repository.
 
-Source packages remain in the monorepo `packages/` directory for development. Run `pnpm vendor:sync` in `apps/axhub-make` to rebuild configured source packages and refresh the vendored artifacts here.
+Run `pnpm --filter @axhub/make vendor:sync` from the workspace root to refresh
+the artifacts from the source packages.
