@@ -125,6 +125,15 @@ describe('IndexPage source', () => {
     expect(source).not.toContain('服务器已启动');
   });
 
+  it('keeps the desktop preview workspace available in narrow desktop browser panes', () => {
+    const styles = readFileSync(resolve(__dirname, './styles/index-page.css'), 'utf8');
+
+    expect(styles).toContain('@media (max-width: 640px)');
+    expect(styles).toContain('@media (min-width: 641px)');
+    expect(styles).not.toContain('@media (max-width: 768px)');
+    expect(styles).not.toContain('@media (min-width: 769px)');
+  });
+
   it('destructures the initial create dialog tab before passing it to dialogs', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const createDialogHookStart = source.indexOf('} = useCreateDialog(activeTab, workspace.data);');
@@ -223,12 +232,16 @@ describe('IndexPage source', () => {
     expect(source).toContain('onCloseWebAgentPanel: handleCloseWebAgentPanel,');
     expect(source).not.toContain('assistantController.handleOpenGenieWebAgent(undefined, cachedOnlineProvider);');
     expect(source).toContain('assistantAutoOpenDismissedStorageKey,');
+    expect(source).toContain('initialResourceDeepLink,');
     expect(source).toContain('preferences.initialPreferencesLoaded,');
 
     const autoOpenEffectStart = source.indexOf('if (!preferences.initialPreferencesLoaded || onlineOpenAutoTriggeredRef.current) {');
     const autoOpenEffectEnd = source.indexOf('assistantController.handleOpenGenieWebAgent(assistantAutoOpenTargetPath, cachedOnlineProvider);', autoOpenEffectStart);
     const autoOpenEffectSource = source.slice(autoOpenEffectStart, autoOpenEffectEnd);
 
+    expect(autoOpenEffectSource).toContain('if (initialResourceDeepLink) {');
+    expect(autoOpenEffectSource.indexOf('if (initialResourceDeepLink) {'))
+      .toBeLessThan(autoOpenEffectSource.indexOf('if (cachedOnlineProvider === null) {'));
     expect(autoOpenEffectSource.indexOf('if (cachedOnlineProvider === null) {'))
       .toBeLessThan(autoOpenEffectSource.indexOf('if (!assistantAutoOpenTargetPath) {'));
     expect(autoOpenEffectSource.indexOf('if (!assistantAutoOpenTargetPath) {'))

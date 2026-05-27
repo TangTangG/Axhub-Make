@@ -142,7 +142,7 @@ interface PresentationToolbarProps {
     handleRefreshElement: () => void;
     handleCopyToFigma: () => void;
     handleExportMake: () => void;
-    handleExportHtml: () => void;
+    handleExportHtml: (options?: { includeSource?: boolean }) => void;
     handlePublishCloudTarget: (target: CloudPublishTarget) => void | Promise<void>;
     handleOpenCloudPublishSettings: (target?: CloudPublishTarget) => void;
     latestCloudPublishUrl: string;
@@ -1255,10 +1255,16 @@ export default function PresentationToolbar({
                             HTML
                         </DropdownMenuLabel>
                         <DropdownMenuItem
-                            onClick={handleExportHtml}
+                            onClick={() => handleExportHtml()}
                             className="gap-2 h-7 text-sm"
                         >
                             <Download className="h-3.5 w-3.5" /> 导出 HTML
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                            onClick={() => handleExportHtml({ includeSource: true })}
+                            className="gap-2 h-7 text-sm"
+                        >
+                            <Download className="h-3.5 w-3.5" /> 导出 HTML（含源码）
                         </DropdownMenuItem>
                     </>
                 ) : null}

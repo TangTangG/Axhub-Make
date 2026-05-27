@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-const { buildMakeProjectMetadata } = await import('../scripts/sync-project-metadata.mjs');
+const { buildMakeProjectMetadata, syncMakeProjectMetadata } = await import('../scripts/sync-project-metadata.mjs');
 const testFileDir = path.dirname(fileURLToPath(import.meta.url));
 const makeProjectRoot = path.resolve(testFileDir, '..');
 
@@ -41,6 +41,40 @@ describe('make-project metadata sync', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(makeProjectRoot, 'package.json'), 'utf8'));
 
     expect(packageJson.scripts?.['metadata:sync']).toBe('node scripts/sync-project-metadata.mjs');
+  });
+
+  it('keeps generated project metadata ignored in the reusable client template', () => {
+    const ignoreRules = fs.readFileSync(path.join(makeProjectRoot, '.gitignore'), 'utf8');
+
+    expect(ignoreRules).toContain('.axhub/make/*');
+    expect(ignoreRules).toContain('!.axhub/make/client.json');
+    expect(ignoreRules).toContain('!.axhub/make/README.md');
+    expect(ignoreRules).not.toContain('!.axhub/make/project.json');
+  });
+
+  it('writes portable metadata by default for the publishing repository', () => {
+    const projectRoot = createFixtureProject();
+
+    syncMakeProjectMetadata(projectRoot, {
+      clientOrigin: 'http://localhost:51720',
+    });
+
+    const metadata = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub/make/project.json'), 'utf8'));
+    const prototype = metadata.resources.prototypes.find((item: any) => item.id === 'ref-app-home');
+    const theme = metadata.resources.themes.find((item: any) => item.id === 'antd-new');
+
+    expect(prototype).toMatchObject({
+      clientUrl: '/prototypes/ref-app-home',
+      filePath: 'src/prototypes/ref-app-home/index.tsx',
+    });
+    expect(prototype).not.toHaveProperty('absoluteFilePath');
+    expect(prototype.artifacts?.runtime).toBeUndefined();
+    expect(theme).toMatchObject({
+      clientUrl: '/themes/antd-new',
+      sourcePath: 'src/themes/antd-new',
+    });
+    expect(JSON.stringify(metadata)).not.toContain(projectRoot);
+    expect(JSON.stringify(metadata)).not.toContain('localhost:51720');
   });
 
   it('includes built runtime artifact metadata when the dist entry exists', () => {
@@ -215,7 +249,7 @@ describe('make-project metadata sync', () => {
     expect(secondMetadata).toEqual(metadata);
     expect(metadata.project).toEqual({
       id: 'make-project',
-      name: '',
+      name: 'Axhub Make',
     });
     expect(Object.keys(metadata.resources)).toEqual([
       'prototypes',

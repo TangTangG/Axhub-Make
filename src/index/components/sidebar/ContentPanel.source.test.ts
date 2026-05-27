@@ -192,6 +192,23 @@ describe('ContentPanel project switcher source', () => {
     expect(projectSwitcherSource).toContain('void handleProjectDelete(project.id);');
     expect(projectSwitcherSource).toContain('const deleting = project.id === deletingProjectId;');
   });
+
+  it('keeps the selected project indicator fixed at the far right when delete is hidden', () => {
+    const source = readContentPanelSource();
+    const projectSwitcherSource = source.slice(
+      source.indexOf('{projects.length > 0 ? projects.map((project) => {'),
+      source.indexOf(') : (', source.indexOf('{projects.length > 0 ? projects.map((project) => {')),
+    );
+
+    const deleteButtonIndex = projectSwitcherSource.indexOf('aria-label={`从列表移除 ${project.name || UNTITLED_PROJECT_LABEL}`}');
+    const activeCheckIndex = projectSwitcherSource.indexOf('<Check className="h-3.5 w-3.5 shrink-0 text-primary" />');
+
+    expect(source).toContain("const UNTITLED_PROJECT_LABEL = '未命名项目';");
+    expect(projectSwitcherSource).toContain('{project.name || UNTITLED_PROJECT_LABEL}');
+    expect(deleteButtonIndex).toBeGreaterThan(-1);
+    expect(activeCheckIndex).toBeGreaterThan(-1);
+    expect(deleteButtonIndex).toBeLessThan(activeCheckIndex);
+  });
 });
 
 describe('ContentPanel default design source', () => {

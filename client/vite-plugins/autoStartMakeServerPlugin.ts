@@ -15,6 +15,9 @@ import { MAKE_CONFIG_RELATIVE_PATH } from './utils/makeConstants';
 const DEFAULT_ADMIN_ORIGIN = 'http://localhost:5174';
 const STATUS_ROUTE = '/__axhub/make-server/status';
 const START_ROUTE = '/__axhub/make-server/start';
+const DEFAULT_ADMIN_HEALTH_TIMEOUT_MS = 1200;
+const DEFAULT_ADMIN_READY_TIMEOUT_MS = 60000;
+const DEFAULT_ADMIN_READY_POLL_INTERVAL_MS = 500;
 
 type RegisteredProject = {
   projectId: string;
@@ -42,10 +45,19 @@ let startPromise: Promise<MakeServerStatusPayload> | null = null;
 type ReusableAdminOriginOptions = {
   requireDevMode?: boolean;
   runtimeOrigin?: string;
+  healthTimeoutMs?: number;
 };
 
 type MakeServerStartOptions = {
   runtimeOrigin?: string;
+  adminReadyTimeoutMs?: number;
+  pollIntervalMs?: number;
+  healthTimeoutMs?: number;
+};
+
+type AdminOriginWaitOptions = ReusableAdminOriginOptions & {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
 };
 
 function findWorkspaceRoot(projectRoot: string): string | null {
@@ -67,8 +79,11 @@ function resolveLocalMakeServerCli(projectRoot: string): string | null {
   if (!workspaceRoot) {
     return null;
   }
-  const cliPath = path.join(workspaceRoot, 'bin/cli.mjs');
-  return fs.existsSync(cliPath) ? cliPath : null;
+  const candidates = [
+    path.join(workspaceRoot, 'bin/cli.mjs'),
+    path.join(workspaceRoot, 'apps/make-server/bin/cli.mjs'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
 function normalizeOrigin(origin: unknown): string | null {
@@ -127,7 +142,7 @@ export async function getReusableAdminOrigin(
   ].filter((origin, index, all): origin is string => Boolean(origin) && all.indexOf(origin) === index);
 
   for (const origin of candidates) {
-    const health = await fetchHealth(origin, 1200);
+    const health = await fetchHealth(origin, options.healthTimeoutMs ?? DEFAULT_ADMIN_HEALTH_TIMEOUT_MS);
     if (normalizeHealthServerInfo(health)?.origin && isReusableAdminHealth(health, options)) {
       return origin;
     }
@@ -168,16 +183,24 @@ function shouldRequireDevAdmin(projectRoot: string): boolean {
   return Boolean(resolveLocalMakeServerCli(projectRoot));
 }
 
-async function waitForAdminOrigin(
+export async function waitForAdminOrigin(
   projectRoot: string,
-  options: ReusableAdminOriginOptions = {},
+  options: AdminOriginWaitOptions = {},
 ): Promise<string | null> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  const timeoutMs = Math.max(0, options.timeoutMs ?? DEFAULT_ADMIN_READY_TIMEOUT_MS);
+  const pollIntervalMs = Math.max(1, options.pollIntervalMs ?? DEFAULT_ADMIN_READY_POLL_INTERVAL_MS);
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
     const origin = await getReusableAdminOrigin(projectRoot, options);
     if (origin) {
       return origin;
     }
-    await sleep(500);
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= timeoutMs) {
+      break;
+    }
+    await sleep(Math.min(pollIntervalMs, timeoutMs - elapsedMs));
   }
   return null;
 }
@@ -292,6 +315,7 @@ export async function startOrReuseMakeServer(
       const reuseOptions = {
         requireDevMode: shouldRequireDevAdmin(projectRoot),
         runtimeOrigin: options.runtimeOrigin,
+        healthTimeoutMs: options.healthTimeoutMs,
       };
       const reusableOrigin = await getReusableAdminOrigin(projectRoot, reuseOptions);
       if (reusableOrigin) {
@@ -300,7 +324,11 @@ export async function startOrReuseMakeServer(
       }
 
       spawnMakeServer(projectRoot, options);
-      const adminOrigin = await waitForAdminOrigin(projectRoot, reuseOptions);
+      const adminOrigin = await waitForAdminOrigin(projectRoot, {
+        ...reuseOptions,
+        timeoutMs: options.adminReadyTimeoutMs,
+        pollIntervalMs: options.pollIntervalMs,
+      });
       if (!adminOrigin) {
         return {
           ...createStatusPayload(null),

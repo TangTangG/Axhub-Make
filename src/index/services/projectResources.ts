@@ -117,6 +117,10 @@ function pickString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+function pickOptionalString(value: unknown): string | null {
+    return typeof value === 'string' ? value.trim() : null;
+}
+
 const PAGE_ID_RE = /^[a-z0-9-]+$/u;
 
 function normalizePageId(value: unknown): string {
@@ -154,9 +158,10 @@ export function normalizeProjectsPayload(payload: unknown): ProjectListPayload {
                 if (!id || !root) {
                     return null;
                 }
+                const explicitName = pickOptionalString(item.name);
                 return {
                     id,
-                    name: pickString(item.name) || id,
+                    name: explicitName === null ? id : explicitName,
                     root,
                     metadataPath: pickString(item.metadataPath) || undefined,
                     createdAt: pickString(item.createdAt) || undefined,
@@ -436,7 +441,7 @@ export function normalizeProjectResourcesPayload(payload: unknown, projectId: st
 
     return {
         projectId: resolvedProjectId,
-        projectName: pickString(project.name) || null,
+        projectName: pickOptionalString(project.name),
         capabilities,
         data: {
             components: [],

@@ -443,7 +443,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
     }
   });
 
-  it('updates workspace project titles and validates invalid title payloads', async () => {
+  it('updates workspace project titles, allows empty titles, and validates invalid title payloads', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
       project: { id: 'workspace-title-client', name: 'Workspace Title Client' },
@@ -464,9 +464,25 @@ describe('make-server resource sidebar filesystem tree API', () => {
         body: JSON.stringify({ title: '   ' }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(blank).toEqual({
-        status: 400,
-        body: { error: 'title cannot be empty' },
+        status: 200,
+        body: { success: true, title: '' },
       });
+
+      const blankReloaded = await fetch(`${server.origin}/api/workspace/project`)
+        .then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(blankReloaded).toEqual({
+        status: 200,
+        body: { title: '' },
+      });
+      const blankConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(blankConfig.projectInfo.name).toBe('');
+      const blankProjects = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
+      expect(blankProjects.projects).toEqual([
+        expect.objectContaining({
+          id: 'workspace-title-client',
+          name: '',
+        }),
+      ]);
 
       const control = await fetch(`${server.origin}/api/workspace/project`, {
         method: 'PATCH',
@@ -487,6 +503,15 @@ describe('make-server resource sidebar filesystem tree API', () => {
         status: 200,
         body: { success: true, title: 'Renamed Workspace' },
       });
+      const updatedConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(updatedConfig.projectInfo.name).toBe('Renamed Workspace');
+      const updatedProjects = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
+      expect(updatedProjects.projects).toEqual([
+        expect.objectContaining({
+          id: 'workspace-title-client',
+          name: 'Renamed Workspace',
+        }),
+      ]);
     } finally {
       await server.close();
     }

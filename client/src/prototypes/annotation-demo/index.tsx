@@ -521,9 +521,6 @@ function GeneratePractice() {
                             </article>
                         ))}
                     </div>
-                    <p className="annotation-guide-global-source-note">
-                        对外统一读取时，运行时会输出 <code>window.__AXHUB_ANNOTATION_SOURCE__</code>，里面包含原型目录树和全部标注节点列表，方便宿主工具或 Agent 直接获取上下文。
-                    </p>
                 </div>
             </ManuscriptSection>
             <ManuscriptSection id="generate-methods" title="两种标注方式">

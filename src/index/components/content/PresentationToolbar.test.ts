@@ -92,6 +92,13 @@ describe('PresentationToolbar cloud publishing source', () => {
     expect(source).toContain('<Settings2 className="h-3.5 w-3.5" /> 设置');
   });
 
+  it('offers separate HTML export actions with and without source files', () => {
+    const source = readToolbarSource();
+
+    expect(source).toContain('handleExportHtml({ includeSource: true })');
+    expect(source).toContain('导出 HTML（含源码）');
+  });
+
   it('wires cloud publishing menu actions through explicit target handlers', () => {
     const source = readToolbarSource();
 

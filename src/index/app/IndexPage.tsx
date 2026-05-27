@@ -425,6 +425,9 @@ export default function IndexPage({
         if (!preferences.initialPreferencesLoaded || onlineOpenAutoTriggeredRef.current) {
             return;
         }
+        if (initialResourceDeepLink) {
+            return;
+        }
         const cachedOpenMethod = parseOpenMethod(preferences.preferredIDE);
         const cachedOnlineProvider = cachedOpenMethod ? resolveCachedOnlineOpenProvider(cachedOpenMethod) : null;
         if (cachedOnlineProvider === null) {
@@ -442,6 +445,7 @@ export default function IndexPage({
         assistantAutoOpenTargetPath,
         assistantAutoOpenDismissedStorageKey,
         assistantController,
+        initialResourceDeepLink,
         preferences.initialPreferencesLoaded,
         preferences.preferredIDE,
     ]);

@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { __onDemandBuildTestUtils, buildOnDemand } from '../onDemandBuild.ts';
 
 const tempRoots: string[] = [];
-const repoRoot = path.resolve(fileURLToPath(import.meta.url), '../../../../../..');
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 function createTempProject() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-on-demand-build-'));

@@ -75,6 +75,17 @@ describe('useIndexPageSelectionSync source', () => {
     expect(consumedBeforeResolvedTheme).toBeGreaterThan(resolvedThemeCheck);
   });
 
+  it('does not consume a prototype deep link until the requested prototype is resolved', () => {
+    const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
+    const prototypeBlockStart = source.indexOf("if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'prototype')");
+    const resolvedPrototypeCheck = source.indexOf("resolvedDeepLink?.kind === 'prototype'", prototypeBlockStart);
+    const consumedBeforeResolvedPrototype = source.indexOf('resourceDeepLinkConsumedRef.current = true;', prototypeBlockStart);
+
+    expect(prototypeBlockStart).toBeGreaterThanOrEqual(0);
+    expect(resolvedPrototypeCheck).toBeGreaterThan(prototypeBlockStart);
+    expect(consumedBeforeResolvedPrototype).toBeGreaterThan(resolvedPrototypeCheck);
+  });
+
   it('keeps the selected prototype while resource tabs are browsed in prototype canvas mode', () => {
     const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
 

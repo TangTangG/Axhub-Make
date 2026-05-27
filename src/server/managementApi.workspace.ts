@@ -976,10 +976,6 @@ export function handleWorkspaceApi(
     if (req.method === 'PATCH') {
       readJsonBody(req).then((body) => {
         const title = String(body?.title || '').trim();
-        if (!title) {
-          sendJson(res, { error: 'title cannot be empty' }, { status: 400 });
-          return;
-        }
         if (/[\u0000-\u001F\u007F]/.test(title)) {
           sendJson(res, { error: 'title contains invalid control characters' }, { status: 400 });
           return;

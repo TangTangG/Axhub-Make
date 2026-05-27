@@ -15,6 +15,10 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function shouldSkipVendorEntry(entryName) {
   return entryName === '.DS_Store'
     || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(entryName);
@@ -281,6 +285,35 @@ export function buildVendorImportMap(appRoot, config) {
       paths,
     },
   };
+}
+
+export function withVendorSyncLock(appRoot, task, options = {}) {
+  const lockDir = path.resolve(appRoot, 'vendor/.sync.lock');
+  const retryDelayMs = Math.max(1, Number(options.retryDelayMs ?? 100));
+  const timeoutMs = Math.max(retryDelayMs, Number(options.timeoutMs ?? 120000));
+  const startedAt = Date.now();
+
+  ensureDir(path.dirname(lockDir));
+  while (true) {
+    try {
+      fs.mkdirSync(lockDir);
+      break;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') {
+        throw error;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error(`Timed out waiting for vendor sync lock: ${lockDir}`);
+      }
+      sleepSync(retryDelayMs);
+    }
+  }
+
+  try {
+    return task();
+  } finally {
+    fs.rmSync(lockDir, { recursive: true, force: true });
+  }
 }
 
 export function syncVendorPackages(appRoot, config, options = {}) {

@@ -14,6 +14,7 @@ import path from 'node:path';
 import archiver from 'archiver';
 
 import { buildOnDemand } from './onDemandBuild.ts';
+import { isPathInside } from './projectCore/index.ts';
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -317,6 +318,7 @@ export interface ExportHtmlOptions {
   entryName: string;
   displayName: string;
   group: string;
+  includeSource?: boolean;
 }
 
 export interface ExportHtmlStaticFile {
@@ -342,6 +344,7 @@ function getContentType(filePath: string): string {
   if (ext === '.js') return 'application/javascript; charset=utf-8';
   if (ext === '.css') return 'text/css; charset=utf-8';
   if (ext === '.json') return 'application/json; charset=utf-8';
+  if (ext === '.ts' || ext === '.tsx' || ext === '.jsx') return 'text/plain; charset=utf-8';
   if (ext === '.txt') return 'text/plain; charset=utf-8';
   if (ext === '.png') return 'image/png';
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
@@ -426,6 +429,47 @@ function listFilesRecursive(rootDir: string, baseDir = rootDir): string[] {
   return files.sort((a, b) => a.localeCompare(b));
 }
 
+const SOURCE_EXCLUDED_DIR_NAMES = new Set([
+  '.spec',
+  'canvas-assets',
+]);
+
+const SOURCE_EXCLUDED_FILE_NAMES = new Set([
+  'canvas.code-manifest.json',
+  'canvas.excalidraw',
+  'canvas.fig',
+]);
+
+function shouldExcludeSourceFile(relativePath: string): boolean {
+  const normalizedPath = relativePath.split(path.sep).join('/');
+  const segments = normalizedPath.split('/').filter(Boolean);
+  if (segments.some((segment) => SOURCE_EXCLUDED_DIR_NAMES.has(segment.toLowerCase()))) {
+    return true;
+  }
+
+  const fileName = (segments[segments.length - 1] || '').toLowerCase();
+  return SOURCE_EXCLUDED_FILE_NAMES.has(fileName) || /\.spec(?:\.|$)/iu.test(fileName);
+}
+
+function collectSourceStaticFiles(projectRoot: string, sourceFile: string): ExportHtmlStaticFile[] {
+  const resolvedProjectRoot = path.resolve(projectRoot);
+  const sourceDir = path.dirname(path.resolve(sourceFile));
+  if (!isPathInside(resolvedProjectRoot, sourceDir)) {
+    throw new Error('源码目录不在项目根目录内，无法导出源码');
+  }
+
+  return listFilesRecursive(sourceDir)
+    .filter((relativePath) => !shouldExcludeSourceFile(relativePath))
+    .map((relativePath) => {
+      const normalizedPath = relativePath.split(path.sep).join('/');
+      return toStaticFile(
+        `source/${normalizedPath}`,
+        getContentType(normalizedPath),
+        fs.readFileSync(path.join(sourceDir, relativePath)),
+      );
+    });
+}
+
 export async function buildExportHtmlStaticFiles(options: ExportHtmlOptions): Promise<ExportHtmlStaticFile[]> {
   const { projectRoot, sourceFile, displayName, entryName, group } = options;
   console.log(`\n📦 [导出 HTML] 开始构建: ${entryName}`);
@@ -466,6 +510,9 @@ export async function buildExportHtmlStaticFiles(options: ExportHtmlOptions): Pr
   for (const relativePath of listFilesRecursive(mediaDir)) {
     const normalizedPath = relativePath.split(path.sep).join('/');
     files.push(toStaticFile(`media/${normalizedPath}`, getContentType(normalizedPath), fs.readFileSync(path.join(mediaDir, relativePath))));
+  }
+  if (options.includeSource === true) {
+    files.push(...collectSourceStaticFiles(projectRoot, sourceFile));
   }
 
   return files;

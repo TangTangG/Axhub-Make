@@ -7,6 +7,24 @@ function readSource() {
 }
 
 describe('ExcalidrawCanvas source', () => {
+  it('preserves nested prototype canvas API paths by encoding each segment separately', () => {
+    const source = readSource();
+    const encoderStart = source.indexOf('function encodeCanvasApiPath(canvasName: string): string {');
+    const encoderEnd = source.indexOf('\n}\n\nfunction getCanvasBridgeCanvasName', encoderStart);
+    const encoderSource = source.slice(encoderStart, encoderEnd);
+
+    expect(encoderStart).toBeGreaterThan(-1);
+    expect(encoderSource).toContain(".split('/')");
+    expect(encoderSource).toContain('.filter(Boolean)');
+    expect(encoderSource).toContain('.map((segment) => encodeURIComponent(segment))');
+    expect(encoderSource).toContain(".join('/')");
+    expect(source).toContain('fetch(`/api/canvas/${encodeCanvasApiPath(canvasName)}`)');
+    expect(source).toContain('fetch(`/api/canvas/${encodeCanvasApiPath(currentNameRef.current)}`)');
+    expect(source).toContain('const url = `/api/canvas/${encodeCanvasApiPath(currentNameRef.current)}`;');
+    expect(source).not.toContain('encodeURIComponent(canvasName)');
+    expect(source).not.toContain('encodeURIComponent(currentNameRef.current)');
+  });
+
   it('renders the canvas search menu item with a search icon', () => {
     const source = readSource();
 

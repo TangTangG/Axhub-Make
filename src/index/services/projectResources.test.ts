@@ -7,6 +7,31 @@ import {
 } from './projectResources';
 
 describe('project resource frontend adapter', () => {
+  it('preserves explicit empty project names so the UI can show its untitled label', () => {
+    const projectList = normalizeProjectsPayload({
+      activeProjectId: 'make-project',
+      projects: [
+        {
+          id: 'make-project',
+          name: '',
+          root: '/workspace/client',
+        },
+      ],
+    });
+
+    const bundle = normalizeProjectResourcesPayload({
+      project: { id: 'make-project', name: '' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+      },
+    }, null);
+
+    expect(projectList.projects[0].name).toBe('');
+    expect(bundle.projectName).toBe('');
+  });
+
   it('maps project metadata resources into the frontend model without components, data, or templates', () => {
     const bundle = normalizeProjectResourcesPayload({
       project: { id: 'client-project', name: 'Client Project' },

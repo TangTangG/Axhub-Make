@@ -147,6 +147,7 @@ export async function handleSourceBackedExports(
     return true;
   }
   const targetPath = url.searchParams.get('path') || '';
+  const includeSource = url.searchParams.get('includeSource') === '1' || url.searchParams.get('includeSource') === 'true';
   const sourceFile = handlers.resolveSourceFileFromMetadata(context, targetPath);
   const {
     resource,
@@ -399,6 +400,7 @@ export async function handleSourceBackedExports(
           entryName: String(resource?.name || resource?.id || path.basename(path.dirname(sourceFile))),
           displayName: String(resource?.title || resource?.name || resource?.id || path.basename(path.dirname(sourceFile))),
           group: targetPath.split('/')[0] || 'prototypes',
+          includeSource,
         }, handlers.buildAttachmentContentDisposition);
 
         communicationStore.appendExportRecord({
@@ -407,7 +409,10 @@ export async function handleSourceBackedExports(
           resourceType,
           operationType: 'export-html',
           status: 'success',
-          metadata: { path: targetPath },
+          metadata: {
+            path: targetPath,
+            ...(includeSource ? { includeSource: true } : {}),
+          },
         });
       } catch (error: any) {
         communicationStore.appendExportRecord({

@@ -33,6 +33,64 @@ type MeasuredSplitContentSizes = {
     secondary: PreviewMeasuredContentSize | null;
 };
 
+interface CanvasErrorBoundaryProps {
+    resetKey: string;
+    children: React.ReactNode;
+}
+
+interface CanvasErrorBoundaryState {
+    hasError: boolean;
+}
+
+class CanvasErrorBoundary extends React.Component<CanvasErrorBoundaryProps, CanvasErrorBoundaryState> {
+    state: CanvasErrorBoundaryState = { hasError: false };
+
+    static getDerivedStateFromError(error: Error): CanvasErrorBoundaryState {
+        if (import.meta.env.DEV && typeof window !== 'undefined') {
+            (window as any).__AXHUB_CANVAS_RENDER_ERROR__ = {
+                message: error?.message || String(error),
+                stack: error?.stack || '',
+            };
+        }
+        return { hasError: true };
+    }
+
+    componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+        console.error('[Axhub Make] Canvas render failed', error, errorInfo);
+        if (import.meta.env.DEV && typeof window !== 'undefined') {
+            (window as any).__AXHUB_CANVAS_RENDER_ERROR__ = {
+                message: error?.message || String(error),
+                stack: error?.stack || '',
+                componentStack: errorInfo?.componentStack || '',
+            };
+        }
+    }
+
+    componentDidUpdate(prevProps: CanvasErrorBoundaryProps) {
+        if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+            this.setState({ hasError: false });
+        }
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="flex h-full w-full items-center justify-center bg-background px-6 text-center">
+                    <div className="max-w-[360px]">
+                        <PencilRuler className="mx-auto mb-4 h-12 w-12 text-muted-foreground opacity-25" />
+                        <div className="text-base font-medium text-foreground">画布加载失败</div>
+                        <div className="mt-2 text-[12px] leading-5 text-muted-foreground">
+                            请刷新页面，或切换到其他画布后再回来重试。
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        return this.props.children;
+    }
+}
+
 interface ContentAreaProps {
     containerRef: React.RefObject<HTMLDivElement>;
     previewIframeRef: React.MutableRefObject<HTMLIFrameElement | null>;
@@ -1070,32 +1128,34 @@ export default function ContentArea({
         return (
             <div className="h-full min-h-0 relative bg-background">
                 <CanvasWelcomeGuide />
-                <React.Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">加载中...</div>}>
-                    <ExcalidrawCanvas
-                        canvasName={selectedCanvas.name}
-                        canvasFilePath={selectedStandaloneCanvasFilePath}
-                        isDarkMode={_isDarkMode}
-                        collapsed={collapsed}
-                        setCollapsed={setCollapsed}
-                        propertyPanelMode={excalidrawPropertyPanelMode}
-                        onPropertyPanelModeChange={setExcalidrawPropertyPanelMode}
-                        propertyPanelPosition={excalidrawPropertyPanelPosition}
-                        onPropertyPanelPositionChange={setExcalidrawPropertyPanelPosition}
-                        bridgeConnected={bridgeConnected}
-                        onAddToContext={onAddToContext}
-                        onAnnotationsChange={onAnnotationsChange}
-                        onOpenCanvasInIDE={onOpenCanvasInIDE}
-                        onOpenCanvasGenie={onOpenCanvasGenie}
-                        assistantApiBaseUrl={assistantApiBaseUrl}
-                        assistantProjectPath={assistantProjectPath}
-                        preferredPromptClient={preferredPromptClient}
-                        prototypes={prototypes}
-                        themes={themes}
-                        defaultThemeName={defaultThemeName}
-                        onRefreshPrototypes={onRefreshPrototypes}
-                        overlayChildren={<CanvasFloatingToolbar />}
-                    />
-                </React.Suspense>
+                <CanvasErrorBoundary resetKey={selectedCanvas.name}>
+                    <React.Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">加载中...</div>}>
+                        <ExcalidrawCanvas
+                            canvasName={selectedCanvas.name}
+                            canvasFilePath={selectedStandaloneCanvasFilePath}
+                            isDarkMode={_isDarkMode}
+                            collapsed={collapsed}
+                            setCollapsed={setCollapsed}
+                            propertyPanelMode={excalidrawPropertyPanelMode}
+                            onPropertyPanelModeChange={setExcalidrawPropertyPanelMode}
+                            propertyPanelPosition={excalidrawPropertyPanelPosition}
+                            onPropertyPanelPositionChange={setExcalidrawPropertyPanelPosition}
+                            bridgeConnected={bridgeConnected}
+                            onAddToContext={onAddToContext}
+                            onAnnotationsChange={onAnnotationsChange}
+                            onOpenCanvasInIDE={onOpenCanvasInIDE}
+                            onOpenCanvasGenie={onOpenCanvasGenie}
+                            assistantApiBaseUrl={assistantApiBaseUrl}
+                            assistantProjectPath={assistantProjectPath}
+                            preferredPromptClient={preferredPromptClient}
+                            prototypes={prototypes}
+                            themes={themes}
+                            defaultThemeName={defaultThemeName}
+                            onRefreshPrototypes={onRefreshPrototypes}
+                            overlayChildren={<CanvasFloatingToolbar />}
+                        />
+                    </React.Suspense>
+                </CanvasErrorBoundary>
             </div>
         );
     }
@@ -1131,44 +1191,46 @@ export default function ContentArea({
                     />
                 ) : viewMode === 'canvas' ? (
                     <div className="h-full w-full min-h-0 relative overflow-hidden bg-background">
-                        <React.Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">加载中...</div>}>
-                            <ExcalidrawCanvas
-                                canvasName={selectedPrototypeCanvasName}
-                                canvasFilePath={selectedPrototypeCanvasFilePath}
-                                isDarkMode={_isDarkMode}
-                                collapsed={collapsed}
-                                setCollapsed={setCollapsed}
-                                propertyPanelMode={excalidrawPropertyPanelMode}
-                                onPropertyPanelModeChange={setExcalidrawPropertyPanelMode}
-                                propertyPanelPosition={excalidrawPropertyPanelPosition}
-                                onPropertyPanelPositionChange={setExcalidrawPropertyPanelPosition}
-                                bridgeConnected={bridgeConnected}
-                                onAddToContext={onAddToContext}
-                                onAnnotationsChange={onAnnotationsChange}
-                                onOpenCanvasInIDE={onOpenCanvasInIDE}
-                                onOpenCanvasGenie={onOpenCanvasGenie}
-                                assistantApiBaseUrl={assistantApiBaseUrl}
-                                assistantProjectPath={assistantProjectPath}
-                                preferredPromptClient={preferredPromptClient}
-                                prototypes={prototypes}
-                                themes={themes}
-                                defaultThemeName={defaultThemeName}
-                                onRefreshPrototypes={onRefreshPrototypes}
-                                showPrototypePreviewHint={canPlayPrototypePreview}
-                                overlayChildren={
-                                    <>
-                                        <CanvasFloatingToolbar />
-                                        <CanvasPlayPrototypeButton
-                                            disabled={!canPlayPrototypePreview}
-                                            disabledReason={prototypePreviewDisabledReason}
-                                            onEnterPreview={() => {
-                                                handleEnterPrototypePreview?.();
-                                            }}
-                                        />
-                                    </>
-                                }
-                            />
-                        </React.Suspense>
+                        <CanvasErrorBoundary resetKey={selectedPrototypeCanvasName}>
+                            <React.Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">加载中...</div>}>
+                                <ExcalidrawCanvas
+                                    canvasName={selectedPrototypeCanvasName}
+                                    canvasFilePath={selectedPrototypeCanvasFilePath}
+                                    isDarkMode={_isDarkMode}
+                                    collapsed={collapsed}
+                                    setCollapsed={setCollapsed}
+                                    propertyPanelMode={excalidrawPropertyPanelMode}
+                                    onPropertyPanelModeChange={setExcalidrawPropertyPanelMode}
+                                    propertyPanelPosition={excalidrawPropertyPanelPosition}
+                                    onPropertyPanelPositionChange={setExcalidrawPropertyPanelPosition}
+                                    bridgeConnected={bridgeConnected}
+                                    onAddToContext={onAddToContext}
+                                    onAnnotationsChange={onAnnotationsChange}
+                                    onOpenCanvasInIDE={onOpenCanvasInIDE}
+                                    onOpenCanvasGenie={onOpenCanvasGenie}
+                                    assistantApiBaseUrl={assistantApiBaseUrl}
+                                    assistantProjectPath={assistantProjectPath}
+                                    preferredPromptClient={preferredPromptClient}
+                                    prototypes={prototypes}
+                                    themes={themes}
+                                    defaultThemeName={defaultThemeName}
+                                    onRefreshPrototypes={onRefreshPrototypes}
+                                    showPrototypePreviewHint={canPlayPrototypePreview}
+                                    overlayChildren={
+                                        <>
+                                            <CanvasFloatingToolbar />
+                                            <CanvasPlayPrototypeButton
+                                                disabled={!canPlayPrototypePreview}
+                                                disabledReason={prototypePreviewDisabledReason}
+                                                onEnterPreview={() => {
+                                                    handleEnterPrototypePreview?.();
+                                                }}
+                                            />
+                                        </>
+                                    }
+                                />
+                            </React.Suspense>
+                        </CanvasErrorBoundary>
                     </div>
                 ) : (
                     selectedItem.previewDisabled ? (
