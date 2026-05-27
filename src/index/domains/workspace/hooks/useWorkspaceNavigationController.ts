@@ -33,6 +33,8 @@ interface UseWorkspaceNavigationControllerOptions {
     messageApi: MessageApi;
 }
 
+const UNTITLED_PROJECT_LABEL = '未命名项目';
+
 function readInitialProjectIdFromUrl(): string | null {
     if (typeof window === 'undefined') {
         return null;
@@ -82,7 +84,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
     const [sidebarAssetsLoaded, setSidebarAssetsLoaded] = useState(false);
     const [projectSetupRequired, setProjectSetupRequired] = useState(false);
     const [projectAccessDeniedReason, setProjectAccessDeniedReason] = useState('');
-    const [projectTitle, setProjectTitle] = useState('未命名项目');
+    const [projectTitle, setProjectTitle] = useState(UNTITLED_PROJECT_LABEL);
     const [searchText, setSearchText] = useState('');
 
     const loadedSidebarTreeTabsRef = useRef<Set<SidebarTreeTab>>(new Set());
@@ -116,8 +118,8 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
                 resourceWrites: resourceWriteCapabilities,
             });
         }
-        if (bundle.projectName) {
-            setProjectTitle(bundle.projectName);
+        if (typeof bundle.projectName === 'string') {
+            setProjectTitle(bundle.projectName || UNTITLED_PROJECT_LABEL);
         }
         setActiveProjectId(bundle.projectId);
         const themeItems = bundle.themes.map((theme: ThemeResourceItem) => ({
@@ -590,7 +592,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             })
             .catch(() => {
                 if (!canceled) {
-                    setProjectTitle('未命名项目');
+                    setProjectTitle(UNTITLED_PROJECT_LABEL);
                 }
             });
         return () => {
@@ -599,7 +601,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
     }, [activeProjectId]);
 
     useEffect(() => {
-        document.title = `${projectTitle || '未命名项目'} - Axhub Make`;
+        document.title = `${projectTitle || UNTITLED_PROJECT_LABEL} - Axhub Make`;
     }, [projectTitle]);
 
     useEffect(() => {

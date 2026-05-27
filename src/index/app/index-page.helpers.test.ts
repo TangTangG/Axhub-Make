@@ -11,7 +11,7 @@ import {
 } from './index-page.helpers';
 
 describe('index page helpers', () => {
-    it('keeps assistant auto-open dismissal project-wide across prototype switches', () => {
+    it('keeps assistant auto-open dismissed by default and project-wide across prototype switches', () => {
         const storage = new Map<string, string>();
         const fakeStorage = {
             getItem: (key: string) => storage.get(key) ?? null,
@@ -23,18 +23,19 @@ describe('index page helpers', () => {
         const otherPrototypeKey = buildAssistantAutoOpenDismissedStorageKey('make-project', 'src/prototypes/other/index.tsx');
         const otherProjectKey = buildAssistantAutoOpenDismissedStorageKey('other-project', 'src/prototypes/beginner-guide/index.tsx');
 
-        expect(getAssistantAutoOpenDismissed(guideKey, fakeStorage)).toBe(false);
-
-        setAssistantAutoOpenDismissed(guideKey, true, fakeStorage);
-
         expect(getAssistantAutoOpenDismissed(guideKey, fakeStorage)).toBe(true);
-        expect(getAssistantAutoOpenDismissed(otherPrototypeKey, fakeStorage)).toBe(true);
-        expect(getAssistantAutoOpenDismissed(otherProjectKey, fakeStorage)).toBe(false);
+        expect(getAssistantAutoOpenDismissed(otherProjectKey, fakeStorage)).toBe(true);
 
         setAssistantAutoOpenDismissed(guideKey, false, fakeStorage);
 
         expect(getAssistantAutoOpenDismissed(guideKey, fakeStorage)).toBe(false);
         expect(getAssistantAutoOpenDismissed(otherPrototypeKey, fakeStorage)).toBe(false);
+        expect(getAssistantAutoOpenDismissed(otherProjectKey, fakeStorage)).toBe(true);
+
+        setAssistantAutoOpenDismissed(guideKey, true, fakeStorage);
+
+        expect(getAssistantAutoOpenDismissed(guideKey, fakeStorage)).toBe(true);
+        expect(getAssistantAutoOpenDismissed(otherPrototypeKey, fakeStorage)).toBe(true);
     });
 
     it('opens metadata clientUrl values directly from the mobile prototype list', () => {

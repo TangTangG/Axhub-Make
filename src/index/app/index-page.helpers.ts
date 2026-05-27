@@ -123,12 +123,16 @@ export function getAssistantAutoOpenDismissed(
     storage: AssistantAutoOpenDismissedStorage | null = getLocalStorage(),
 ): boolean {
     if (!storage) {
-        return false;
+        return true;
     }
     try {
-        return parseDismissedStorageValue(storage.getItem(storageKey));
+        const storedValue = storage.getItem(storageKey);
+        if (storedValue === null) {
+            return true;
+        }
+        return parseDismissedStorageValue(storedValue);
     } catch {
-        return false;
+        return true;
     }
 }
 

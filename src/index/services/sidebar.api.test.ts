@@ -7,6 +7,15 @@ describe('sidebarApi', () => {
     vi.restoreAllMocks();
   });
 
+  it('preserves explicit empty project titles from the workspace API', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ title: '' }),
+    } as Response);
+
+    await expect(sidebarApi.getProjectTitle()).resolves.toBe('');
+  });
+
   it('opens resource file and folder paths through the workspace API', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,

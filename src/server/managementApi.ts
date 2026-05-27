@@ -279,7 +279,6 @@ function ensureDefaultRegisteredProject(options: ManagementApiOptions) {
   const existingProject = registry.getProject(metadata.project.id);
   if (existingProject) {
     registry.updateProject(existingProject.id, {
-      name: metadata.project.name,
       root: options.projectRoot,
       metadataPath: metadataStore.getMetadataPath(),
     });

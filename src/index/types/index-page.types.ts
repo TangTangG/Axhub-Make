@@ -72,133 +72,6 @@ export interface ExportAvailability {
     makeExportDisabledReason: string;
 }
 
-export interface HeaderState {
-    collapsed: boolean;
-    selectedItem: ItemData | null;
-    viewMode: ViewMode;
-    activeTab: TabType;
-    selectedDeviceId: string;
-    previewConfig: PreviewConfig;
-    deviceSegmentOptions: Array<{ value: string; icon: React.ReactNode }>;
-    qrCodeVisible: boolean;
-    wsClients: any[];
-    quickEditAvailable: boolean;
-    quickEditActive?: boolean;
-    exportAvailability: ExportAvailability;
-    editorMode: 'none' | 'quickEdit';
-    lanAccessAllowed?: boolean;
-    assistantVisible: boolean;
-    startServerLoading?: boolean;
-}
-
-export interface HeaderActions {
-    setCollapsed: (collapsed: boolean) => void;
-    setViewMode: (mode: ViewMode) => void;
-    setSelectedDeviceId: (id: string) => void;
-    handleSelectPreviewSinglePreset: (preset: PreviewSinglePreset) => void;
-    handleSelectCustomPreview: () => void;
-    handleActivateSplitPreview: () => void;
-    handleChangeCustomPreviewWidth: (width: number) => void;
-    handleChangeCustomPreviewHeight: (height: number) => void;
-    handleChangeSplitPreviewWidth: (pane: 'primary' | 'secondary', width: number) => void;
-    handleChangeSplitPreviewHeight: (pane: 'primary' | 'secondary', height: number) => void;
-    handleChangePreviewScaleMode: (mode: PreviewScaleMode) => void;
-    handleOpenWebEditor: () => void;
-    handleExitWebEditor: () => void;
-    handleRefreshElement: () => void;
-    handleCopyLocalLink: () => void;
-    handleCopyLANLink: () => void;
-    handleDownloadZip: () => void;
-    getLANUrl: () => string;
-    setQrCodeVisible: (visible: boolean) => void;
-    handleCopyToFigma: () => void;
-    handleExportMake: () => void;
-    handlePublishCloudTarget: (target: CloudPublishTarget) => void | Promise<void>;
-    handleOpenCloudPublishSettings: (target?: CloudPublishTarget) => void;
-    latestCloudPublishUrl: string;
-    handleCopyLatestCloudPublishUrl: () => void | Promise<void>;
-    setIsExportModalOpen: (open: boolean) => void;
-    handleQuickCopyEditablePrototype?: () => void;
-    handleQuickCopyRuntimeComponent?: () => void;
-    handleQuickDownloadRuntimeCover?: () => void;
-    handleOpenIdeFile: () => void | Promise<void>;
-    handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
-    onStartCurrentProjectServer?: () => void | Promise<void>;
-    handleRefreshEditorStatus: () => void;
-    onToggleAssistant: () => void;
-    onSettingsSaved: () => void;
-}
-
-export interface HeaderPreferences {
-    preferredIDE: MainIDEPreference;
-    ideAvailability?: IDEAvailabilityMap;
-    agentAvailability?: RuntimeAgentAvailability;
-    onPreferredIDEChange: (ide: MainIDEPreference) => void;
-    isDarkMode: boolean;
-    setIsDarkMode: (dark: boolean) => void;
-}
-
-export interface SidebarState {
-    collapsed: boolean;
-    loading: boolean;
-    activeTab: TabType;
-    sidebarTab: SidebarTab;
-    sidebarTrees: Record<SidebarTreeTab, SidebarTreeNode[]>;
-    resourceSection: ResourceSection;
-    data: DataType;
-    docsItems: ItemData[];
-    canvasItems: CanvasItem[];
-    themes: ThemeResourceItem[];
-    searchText: string;
-    filteredItems: ItemData[];
-    selectedItem: ItemData | null;
-    selectedDoc: ItemData | null;
-    selectedResourceFolder?: SelectedResourceFolder | null;
-    selectedCanvas: CanvasItem | null;
-    selectedTheme: ThemeResourceItem | null;
-    activeProjectId: string | null;
-    projects: ProjectListItem[];
-    preferredPromptClient: PromptClientPreference;
-    preferredIDE: MainIDEPreference;
-}
-
-export interface SidebarActions {
-    handleTabChange: (tab: TabType) => void;
-    setSearchText: (text: string) => void;
-    handleMenuClick: (params: { key: string }) => void;
-    handleDownloadItemSource: (item: ItemData) => void;
-    handleRenameItem: (item: ItemData) => void;
-    handleDuplicateItem: (item: ItemData) => void;
-    handleDeleteItem: (item: ItemData) => void;
-    handleCopyItemPath: (item: ItemData) => void;
-    setCreateDialogVisible: (visible: boolean) => void;
-}
-
-export interface ContentState {
-    containerRef: RefObject<HTMLDivElement>;
-    previewIframeRef: MutableRefObject<HTMLIFrameElement | null>;
-    secondaryPreviewIframeRef: MutableRefObject<HTMLIFrameElement | null>;
-    selectedItem: ItemData | null;
-    activeTab: TabType;
-    previewConfig: PreviewConfig;
-    currentDevice: { id: string; [key: string]: any };
-    displaySize: { width: number; height: number };
-    scale: number;
-    elementIframeKey: number;
-    iframeUrl: string;
-    primaryIframeUrl: string;
-    secondaryIframeUrl: string;
-    handlePreviewIframeLoad: () => void;
-    elementIframeSize: { width: number; height: number };
-    viewMode: ViewMode;
-}
-
-export interface ContentActions {
-    setElementIframeSize: (size: { width: number; height: number }) => void;
-    handleChangeSplitPreviewWidth: (pane: 'primary' | 'secondary', width: number) => void;
-    handleChangeSplitPreviewHeight: (pane: 'primary' | 'secondary', height: number) => void;
-}
-
 export interface CreateDialogState {
     visible: boolean;
     activeTab: TabType;
@@ -255,22 +128,6 @@ export interface ExportActions {
     onCopyRuntimeComponent: () => void;
     onCopyToAxure: (options: AxureCopyOptions) => Promise<void>;
     onCopyConfig: (exportType: string) => Promise<string>;
-}
-
-export interface IndexPageState {
-    header: HeaderState;
-    sidebar: SidebarState;
-    content: ContentState;
-    createDialog: CreateDialogState;
-    exportDialog: ExportState;
-}
-
-export interface IndexPageActions {
-    header: HeaderActions;
-    sidebar: SidebarActions;
-    content: ContentActions;
-    createDialog: CreateDialogActions;
-    exportDialog: ExportActions;
 }
 
 export interface NewSidebarState {
@@ -491,7 +348,7 @@ export interface PresentationAreaActions {
     setQrCodeVisible: (visible: boolean) => void;
     handleCopyToFigma: () => void;
     handleExportMake: () => void;
-    handleExportHtml: () => void;
+    handleExportHtml: (options?: { includeSource?: boolean }) => void;
     handlePublishCloudTarget: (target: CloudPublishTarget) => void | Promise<void>;
     handleOpenCloudPublishSettings: (target?: CloudPublishTarget) => void;
     latestCloudPublishUrl: string;

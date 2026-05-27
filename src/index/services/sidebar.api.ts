@@ -58,7 +58,7 @@ export const sidebarApi = {
     async getProjectTitle(): Promise<string> {
         const response = await fetch(WORKSPACE_API_ROUTES.project);
         const data = await parseJsonResponse<{ title?: string }>(response, '加载项目标题失败');
-        return (data.title || '').trim() || '未命名项目';
+        return typeof data.title === 'string' ? data.title.trim() : '';
     },
 
     async updateProjectTitle(title: string): Promise<UpdateProjectTitleResponse> {

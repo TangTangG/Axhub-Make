@@ -159,6 +159,28 @@ describe('useWorkspaceNavigationController source', () => {
     expect(applyBundleSource).not.toContain('loadedSidebarTreeTabsRef.current.add(\'docs\')');
   });
 
+  it('applies explicit empty project names from project resource bundles', () => {
+    const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
+    const applyBundleStart = source.indexOf('const applyProjectResourceBundle = useCallback');
+    const loadProjectsStart = source.indexOf('const loadProjects = useCallback', applyBundleStart);
+    const applyBundleSource = source.slice(applyBundleStart, loadProjectsStart);
+
+    expect(applyBundleSource).toContain("if (typeof bundle.projectName === 'string') {");
+    expect(applyBundleSource).toContain('setProjectTitle(bundle.projectName || UNTITLED_PROJECT_LABEL);');
+    expect(applyBundleSource).not.toContain('if (bundle.projectName) {');
+  });
+
+  it('resets the title fallback when the active project has an empty display name', () => {
+    const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
+    const applyBundleStart = source.indexOf('const applyProjectResourceBundle = useCallback');
+    const loadProjectsStart = source.indexOf('const loadProjects = useCallback', applyBundleStart);
+    const applyBundleSource = source.slice(applyBundleStart, loadProjectsStart);
+
+    expect(source).toContain("const UNTITLED_PROJECT_LABEL = '未命名项目';");
+    expect(source).toContain("const [projectTitle, setProjectTitle] = useState(UNTITLED_PROJECT_LABEL);");
+    expect(applyBundleSource).toContain("setProjectTitle(bundle.projectName || UNTITLED_PROJECT_LABEL);");
+  });
+
   it('guards sidebar tree loading against duplicate in-flight requests per tab', () => {
     const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
     const loadTreeStart = source.indexOf('const loadSidebarTree = useCallback');

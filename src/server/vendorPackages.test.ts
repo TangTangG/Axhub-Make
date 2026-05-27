@@ -9,6 +9,7 @@ import {
   createVendorAliases,
   loadVendorPackagesConfig,
   syncVendorPackages,
+  withVendorSyncLock,
 } from '../../scripts/utils/vendor-packages.mjs';
 
 const appRoot = path.resolve(__dirname, '..', '..');
@@ -28,7 +29,10 @@ describe('make-server vendor packages', () => {
     expect(packageJson.dependencies).not.toHaveProperty('@axhub/project-core');
     expect(packageJson.dependencies).not.toHaveProperty('@axhub/annotation');
     expect(packageJson.scripts?.['vendor:sync']).toBe('node scripts/sync-vendor-package.mjs');
-    expect(packageJson.scripts?.dev).toContain('pnpm vendor:sync &&');
+    expect(packageJson.scripts?.dev).toBe('pnpm --filter @axhub/make-client dev');
+    expect(packageJson.scripts?.['server:dev']).toContain('pnpm vendor:sync &&');
+    expect(packageJson.scripts?.['server:dev']).toContain('src/server/cli.ts -- ./client --dev');
+    expect(packageJson.scripts?.['make-server:dev']).toBe('pnpm server:dev');
     expect(packageJson.scripts?.build).toContain('pnpm vendor:sync &&');
     expect(packageJson.scripts?.['server:build']).toContain('pnpm vendor:sync &&');
     expect(packageJson.scripts?.test).toContain('pnpm vendor:sync &&');
@@ -233,6 +237,40 @@ describe('make-server vendor packages', () => {
         'dependency-package': 'file:../dependency-package',
         'external-package': '^1.0.0',
       });
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('serializes vendor sync operations with a lock directory', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'make-server-vendor-lock-test-'));
+    const appTempRoot = path.join(tempRoot, 'apps', 'make-server');
+    const syncLog: string[] = [];
+
+    fs.mkdirSync(appTempRoot, { recursive: true });
+
+    try {
+      const firstResult = withVendorSyncLock(appTempRoot, () => {
+        syncLog.push('first');
+        return 'locked';
+      }, {
+        retryDelayMs: 1,
+        timeoutMs: 20,
+      });
+
+      expect(firstResult).toBe('locked');
+      expect(syncLog).toEqual(['first']);
+      expect(fs.existsSync(path.join(appTempRoot, 'vendor/.sync.lock'))).toBe(false);
+
+      fs.mkdirSync(path.join(appTempRoot, 'vendor/.sync.lock'), { recursive: true });
+
+      expect(() => withVendorSyncLock(appTempRoot, () => {
+        syncLog.push('blocked');
+      }, {
+        retryDelayMs: 1,
+        timeoutMs: 3,
+      })).toThrow(/Timed out waiting for vendor sync lock/);
+      expect(syncLog).toEqual(['first']);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

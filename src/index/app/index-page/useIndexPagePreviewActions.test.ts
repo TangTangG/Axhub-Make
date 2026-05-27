@@ -416,10 +416,10 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewRootSource();
 
     expect(source).toContain("import { downloadExportHtmlArchive } from '../../domains/export/export.api';");
-    expect(source).toContain('const handleExportHtml = useCallback(async () => {');
+    expect(source).toContain('const handleExportHtml = useCallback(async (options: { includeSource?: boolean } = {}) => {');
     expect(source).toContain('if (exportAvailability.htmlExportDisabledReason) {');
     expect(source).toContain('const targetPath = getSelectedSourceBasePath(selectedItem);');
-    expect(source).toContain('await downloadExportHtmlArchive(targetPath);');
+    expect(source).toContain('await downloadExportHtmlArchive(targetPath, { includeSource: options.includeSource === true });');
     expect(source).toContain('HTML 导出完成，已开始下载');
     expect(source).toContain('handleExportHtml,');
   });

@@ -148,7 +148,7 @@ type DropPlacement = 'before' | 'inside' | 'after';
 type ProjectSetupMode = 'menu' | 'blank';
 type CanvasDropPreviewKind = 'web' | 'doc' | 'image' | 'none';
 const SIDEBAR_TITLE_MAX_LENGTH = 40;
-const UNTITLED_PROJECT_LABEL = '未命名';
+const UNTITLED_PROJECT_LABEL = '未命名项目';
 
 const MAKE_CLIENT_SETUP_PHASES = [
     { key: 'clone', label: '获取源码' },
@@ -2096,13 +2096,6 @@ export default function ContentPanel({
                                                         <span className="max-w-full truncate text-[13px] font-medium">{project.name || UNTITLED_PROJECT_LABEL}</span>
                                                         <span className="max-w-full truncate text-[11px] text-muted-foreground" title={project.root}>{displayRoot}</span>
                                                     </span>
-                                                    {switching ? (
-                                                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-                                                    ) : deleting ? (
-                                                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-                                                    ) : active ? (
-                                                        <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
-                                                    ) : null}
                                                     <Button
                                                         type="button"
                                                         variant="ghost"
@@ -2118,6 +2111,13 @@ export default function ContentPanel({
                                                     >
                                                         <Trash2 className="h-3.5 w-3.5" />
                                                     </Button>
+                                                    {switching ? (
+                                                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                                                    ) : deleting ? (
+                                                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                                                    ) : active ? (
+                                                        <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
+                                                    ) : null}
                                                 </DropdownMenuItem>
                                             );
                                         }) : (

@@ -15,6 +15,34 @@ function getSourceSegment(source: string, startNeedle: string, endNeedle: string
 }
 
 describe('ContentAreaView review zoom source', () => {
+  it('wraps both canvas render paths in a scoped error boundary', () => {
+    const source = readContentAreaViewSource();
+    const standaloneCanvasBranch = getSourceSegment(
+      source,
+      "if (contentMode === 'canvas') {",
+      '    return (\n        <div\n            ref={containerRef}',
+    );
+    const prototypeCanvasBranch = getSourceSegment(
+      source,
+      ") : viewMode === 'canvas' ? (",
+      ") : (",
+    );
+
+    expect(source).toContain('class CanvasErrorBoundary extends React.Component');
+    expect(source).toContain('static getDerivedStateFromError(error: Error): CanvasErrorBoundaryState');
+    expect(source).toContain("console.error('[Axhub Make] Canvas render failed', error, errorInfo);");
+    expect(source).not.toContain('data-canvas-error');
+    expect(source).toContain('import.meta.env.DEV');
+    expect(source).toContain('__AXHUB_CANVAS_RENDER_ERROR__');
+    expect(source).toContain('componentDidUpdate(prevProps: CanvasErrorBoundaryProps)');
+    expect(source).toContain('if (prevProps.resetKey !== this.props.resetKey && this.state.hasError)');
+    expect(source).toContain('画布加载失败');
+    expect(standaloneCanvasBranch).toContain('<CanvasErrorBoundary resetKey={selectedCanvas.name}>');
+    expect(standaloneCanvasBranch).toContain('</CanvasErrorBoundary>');
+    expect(prototypeCanvasBranch).toContain('<CanvasErrorBoundary resetKey={selectedPrototypeCanvasName}>');
+    expect(prototypeCanvasBranch).toContain('</CanvasErrorBoundary>');
+  });
+
   it('destructures theme props before forwarding them into the canvas', () => {
     const source = readContentAreaViewSource();
     const propsSegment = getSourceSegment(

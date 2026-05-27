@@ -15,6 +15,7 @@ import {
   registerOfficialProject,
   resolveMakeServerStartCommand,
   startOrReuseMakeServer,
+  waitForAdminOrigin,
 } from '../vite-plugins/autoStartMakeServerPlugin';
 
 const originalFetch = globalThis.fetch;
@@ -77,7 +78,7 @@ describe('auto make-server registration', () => {
 
     await expect(registerOfficialProject(projectRoot, 'http://localhost:5174'))
       .resolves
-      .toEqual({ projectId: 'make-project', projectName: '' });
+      .toEqual({ projectId: 'make-project', projectName: 'Axhub Make' });
 
     expect(calls).toEqual([
       expect.objectContaining({ pathname: '/api/projects', method: 'GET' }),
@@ -86,7 +87,7 @@ describe('auto make-server registration', () => {
         method: 'POST',
         body: {
           id: 'make-project',
-          name: '',
+          name: 'Axhub Make',
           root: projectRoot,
           metadataPath: path.join(projectRoot, '.axhub/make/project.json'),
         },
@@ -124,7 +125,7 @@ describe('auto make-server registration', () => {
 
     await expect(registerOfficialProject(projectRoot, 'http://localhost:5174'))
       .resolves
-      .toEqual({ projectId: 'official-existing', projectName: '' });
+      .toEqual({ projectId: 'official-existing', projectName: 'Axhub Make' });
 
     expect(calls).toEqual([
       expect.objectContaining({ pathname: '/api/projects', method: 'GET' }),
@@ -132,7 +133,7 @@ describe('auto make-server registration', () => {
         pathname: '/api/projects/official-existing',
         method: 'PATCH',
         body: {
-          name: '',
+          name: 'Axhub Make',
           root: projectRoot,
           metadataPath: path.join(projectRoot, '.axhub/make/project.json'),
         },
@@ -212,10 +213,10 @@ describe('auto make-server registration', () => {
     });
   });
 
-  it('starts the local monorepo make-server in dev mode for admin HMR', () => {
+  it('starts the local standalone make-server in dev mode for admin HMR', () => {
     const workspaceRoot = createTempProjectRoot();
-    const projectRoot = path.join(workspaceRoot, 'apps', 'make-project');
-    const cliPath = path.join(workspaceRoot, 'apps', 'make-server', 'bin', 'cli.mjs');
+    const projectRoot = path.join(workspaceRoot, 'client');
+    const cliPath = path.join(workspaceRoot, 'bin', 'cli.mjs');
     fs.mkdirSync(path.dirname(cliPath), { recursive: true });
     fs.mkdirSync(projectRoot, { recursive: true });
     fs.writeFileSync(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages: []\n', 'utf8');
@@ -228,10 +229,10 @@ describe('auto make-server registration', () => {
     });
   });
 
-  it('passes the live runtime origin to the local monorepo make-server', () => {
+  it('passes the live runtime origin to the local standalone make-server', () => {
     const workspaceRoot = createTempProjectRoot();
-    const projectRoot = path.join(workspaceRoot, 'apps', 'make-project');
-    const cliPath = path.join(workspaceRoot, 'apps', 'make-server', 'bin', 'cli.mjs');
+    const projectRoot = path.join(workspaceRoot, 'client');
+    const cliPath = path.join(workspaceRoot, 'bin', 'cli.mjs');
     fs.mkdirSync(path.dirname(cliPath), { recursive: true });
     fs.mkdirSync(projectRoot, { recursive: true });
     fs.writeFileSync(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages: []\n', 'utf8');
@@ -250,6 +251,63 @@ describe('auto make-server registration', () => {
       ],
       label: 'local @axhub/make dev',
     });
+  });
+
+  it('still supports the legacy monorepo make-server CLI location', () => {
+    const workspaceRoot = createTempProjectRoot();
+    const projectRoot = path.join(workspaceRoot, 'apps', 'make-project');
+    const cliPath = path.join(workspaceRoot, 'apps', 'make-server', 'bin', 'cli.mjs');
+    fs.mkdirSync(path.dirname(cliPath), { recursive: true });
+    fs.mkdirSync(projectRoot, { recursive: true });
+    fs.writeFileSync(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages: []\n', 'utf8');
+    fs.writeFileSync(cliPath, '#!/usr/bin/env node\n', 'utf8');
+
+    expect(resolveMakeServerStartCommand(projectRoot)).toEqual({
+      command: process.execPath,
+      args: [cliPath, projectRoot, '--dev'],
+      label: 'local @axhub/make dev',
+    });
+  });
+
+  it('waits for slow local make-server startup before reporting unavailable', async () => {
+    vi.useFakeTimers();
+    const projectRoot = createTempProjectRoot();
+    let attempts = 0;
+    mockFetch((url) => {
+      expect(url.pathname).toBe('/api/health');
+      attempts += 1;
+      if (attempts < 3) {
+        throw new Error('connect ECONNREFUSED');
+      }
+      return jsonResponse({
+        ok: true,
+        role: 'admin',
+        projectRoot,
+        devMode: true,
+        runtimeOrigin: 'http://localhost:51720',
+        server: {
+          pid: 12345,
+          port: 53817,
+          host: 'localhost',
+          origin: 'http://localhost:53817',
+          projectRoot,
+          startedAt: '2026-05-03T00:01:00.000Z',
+        },
+      });
+    });
+
+    const waitPromise = waitForAdminOrigin(projectRoot, {
+      requireDevMode: true,
+      runtimeOrigin: 'http://localhost:51720',
+      timeoutMs: 5000,
+      pollIntervalMs: 500,
+      healthTimeoutMs: 1,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(waitPromise).resolves.toBe('http://localhost:5174');
+    expect(attempts).toBe(3);
+    vi.useRealTimers();
   });
 
   it('does not reuse a dev admin with a stale runtime origin', async () => {

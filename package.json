@@ -19,8 +19,8 @@
   ],
   "scripts": {
     "vendor:sync": "node scripts/sync-vendor-package.mjs",
-    "dev": "pnpm vendor:sync && tsx watch --ignore './src/index/**' --ignore './dist/**' --ignore './src/dev-template/**' --ignore './src/spec-template/**' --ignore './src/canvas-template/**' --ignore './src/html-template/**' --ignore './*.timestamp-*' src/server/cli.ts -- ./client --dev",
-    "server:dev": "pnpm dev",
+    "dev": "pnpm --filter @axhub/make-client dev",
+    "server:dev": "pnpm vendor:sync && tsx watch --ignore './src/index/**' --ignore './dist/**' --ignore './src/dev-template/**' --ignore './src/spec-template/**' --ignore './src/canvas-template/**' --ignore './src/html-template/**' --ignore './*.timestamp-*' src/server/cli.ts -- ./client --dev",
     "make-server:dev": "pnpm server:dev",
     "admin:dev": "pnpm vendor:sync && vite",
     "build": "pnpm vendor:sync && vite build && pnpm --filter @axhub/make-client build",
@@ -55,6 +55,7 @@
     "@assistant-ui/react-markdown": "^0.14.0",
     "@assistant-ui/react-ui": "^0.2.1",
     "@axhub/excalidraw": "file:vendor/axhub-excalidraw",
+    "@braintree/sanitize-url": "7.1.1",
     "@floating-ui/react": "^0.27.17",
     "@lobehub/icons": "^5.8.0",
     "@noble/hashes": "^1.8.0",
@@ -100,6 +101,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "dayjs": "1.11.19",
     "es-toolkit": "^1.44.0",
     "execa": "^9.6.1",
     "html-to-image": "^1.11.13",
@@ -118,7 +120,8 @@
     "tailwindcss-animate": "^1.0.7",
     "tiptap-editor": "file:vendor/tiptap-editor",
     "tsx": "^4.21.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "use-sync-external-store": "1.6.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",

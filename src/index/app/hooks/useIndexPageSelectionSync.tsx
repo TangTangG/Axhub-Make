@@ -241,9 +241,9 @@ export function useIndexPageSelectionSync({
                 prototypes: items,
                 docs: docsItems,
             });
-            resourceDeepLinkConsumedRef.current = true;
-            onInitialResourceDeepLinkHandled?.();
             if (resolvedDeepLink?.kind === 'prototype') {
+                resourceDeepLinkConsumedRef.current = true;
+                onInitialResourceDeepLinkHandled?.();
                 setSidebarTab(resolvedDeepLink.sidebarTab);
                 setViewMode(resolvedDeepLink.viewMode);
                 setSelectedItem(resolvedDeepLink.item);

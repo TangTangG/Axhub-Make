@@ -1983,7 +1983,7 @@ export function useIndexPagePreviewActions(params: any) {
         selectedItem,
     ]);
 
-    const handleExportHtml = useCallback(async () => {
+    const handleExportHtml = useCallback(async (options: { includeSource?: boolean } = {}) => {
         if (activeTab !== 'prototypes' || !selectedItem) {
             messageApi.warning('请先选择一个原型页面');
             return;
@@ -2002,12 +2002,13 @@ export function useIndexPagePreviewActions(params: any) {
         const itemLabel = selectedItem.displayName || selectedItem.name;
         const hide = messageApi.loading(`正在导出原型「${itemLabel}」HTML，时间较长时请耐心等待...`, 0);
         try {
-            await downloadExportHtmlArchive(targetPath);
+            await downloadExportHtmlArchive(targetPath, { includeSource: options.includeSource === true });
             void postProjectCommunicationRecord(selectedItem, 'exports', {
                 operationType: 'export-html',
                 status: 'success',
                 metadata: {
                     targetPath,
+                    ...(options.includeSource === true ? { includeSource: true } : {}),
                 },
             }).catch(() => undefined);
             messageApi.success(`「${itemLabel}」HTML 导出完成，已开始下载`);

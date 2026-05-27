@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const PROJECT_ID = 'make-project';
-export const PROJECT_NAME = '';
+export const PROJECT_NAME = 'Axhub Make';
 export const MAKE_CLIENT_MARKER_KIND = 'axhub-make-client';
 export const MAKE_CLIENT_MARKER_RELATIVE_PATH = '.axhub/make/client.json';
 export const DEFAULT_CLIENT_ORIGIN = 'http://localhost:51720';
@@ -158,7 +158,7 @@ export function readMakeClientProjectIdentity(projectRoot) {
     ? marker.project
     : {};
   const id = stringValue(project.id);
-  const name = typeof project.name === 'string' ? project.name.trim() : PROJECT_NAME;
+  const name = stringValue(project.name) || PROJECT_NAME;
   if (marker?.schemaVersion !== 1 || marker?.kind !== MAKE_CLIENT_MARKER_KIND || !id) {
     return {
       id: PROJECT_ID,
@@ -428,7 +428,10 @@ function readRuntimeEntryKeys(projectRoot) {
     .filter(Boolean);
 }
 
-function createRuntimeArtifactMetadata(projectRoot, prototypeName, runtimeEntryKeys) {
+function createRuntimeArtifactMetadata(projectRoot, prototypeName, runtimeEntryKeys, options = {}) {
+  if (options.includeRuntimeArtifacts === false) {
+    return undefined;
+  }
   const entry = runtimeEntryKeys.find((item) => item.name === prototypeName || item.key === `prototypes/${prototypeName}`);
   if (!entry) {
     return undefined;
@@ -444,7 +447,16 @@ function createRuntimeArtifactMetadata(projectRoot, prototypeName, runtimeEntryK
   };
 }
 
-function collectPrototypes(projectRoot, clientOrigin) {
+function createResourceClientUrl(clientOrigin, resourceKind, resourceName) {
+  const pathname = `/${resourceKind}/${encodeURIComponent(resourceName)}`;
+  const normalizedOrigin = String(clientOrigin || '').trim().replace(/\/+$/u, '');
+  if (!normalizedOrigin) {
+    return pathname;
+  }
+  return `${normalizedOrigin}${pathname}`;
+}
+
+function collectPrototypes(projectRoot, clientOrigin, options = {}) {
   const roots = resourceLayout.prototypes.map((dir) => path.join(projectRoot, dir));
   const runtimeEntryKeys = readRuntimeEntryKeys(projectRoot);
   const items = [];
@@ -460,18 +472,18 @@ function collectPrototypes(projectRoot, clientOrigin) {
         id: entry.name,
         name: entry.name,
         title: readDisplayName(indexFile, entry.name),
-        clientUrl: `${clientOrigin.replace(/\/+$/u, '')}/prototypes/${encodeURIComponent(entry.name)}`,
+        clientUrl: createResourceClientUrl(clientOrigin, 'prototypes', entry.name),
         previewMode: 'clientRuntime',
         description: '',
         updatedAt: DETERMINISTIC_UPDATED_AT,
         filePath,
-        absoluteFilePath: path.resolve(indexFile),
+        ...(options.includeAbsoluteFilePaths === false ? {} : { absoluteFilePath: path.resolve(indexFile) }),
         ...(route ? { pages: route.pages, defaultPageId: route.defaultPageId } : {}),
       };
       const artifacts = {
         ...createFigmaArtifactMetadata(projectRoot, entry.name),
         ...createAxureArtifactMetadata(projectRoot, entry.name),
-        ...createRuntimeArtifactMetadata(projectRoot, entry.name, runtimeEntryKeys),
+        ...createRuntimeArtifactMetadata(projectRoot, entry.name, runtimeEntryKeys, options),
       };
       if (Object.keys(artifacts).length > 0) {
         item.artifacts = artifacts;
@@ -482,7 +494,7 @@ function collectPrototypes(projectRoot, clientOrigin) {
   return items.sort(sortById);
 }
 
-function collectDocs(projectRoot) {
+function collectDocs(projectRoot, options = {}) {
   const docs = [];
   for (const root of resourceLayout.docs.map((dir) => path.resolve(projectRoot, dir))) {
     for (const filePath of listFiles(root, () => true)) {
@@ -496,7 +508,9 @@ function collectDocs(projectRoot) {
         title: isMarkdown
           ? titleFromMarkdown(filePath, path.basename(filePath, '.md'))
           : relativePath.replace(/\.[^.]+$/u, ''),
-        path: path.resolve(filePath),
+        path: options.includeAbsoluteFilePaths === false
+          ? toPosix(path.relative(projectRoot, filePath))
+          : path.resolve(filePath),
         description: '',
         updatedAt: DETERMINISTIC_UPDATED_AT,
       });
@@ -521,7 +535,7 @@ function collectThemes(projectRoot, clientOrigin) {
         id: entry.name,
         name: entry.name,
         title: normalizeThemeResourceTitle(rawTitle, entry.name),
-        clientUrl: `${clientOrigin.replace(/\/+$/u, '')}/themes/${encodeURIComponent(entry.name)}`,
+        clientUrl: createResourceClientUrl(clientOrigin, 'themes', entry.name),
         sourcePath: toPosix(path.relative(projectRoot, path.join(root, entry.name))),
         updatedAt: DETERMINISTIC_UPDATED_AT,
         ...(getdesignStats
@@ -543,10 +557,10 @@ function collectThemes(projectRoot, clientOrigin) {
 }
 
 export function buildMakeProjectMetadata(projectRoot, options = {}) {
-  const clientOrigin = String(options.clientOrigin || DEFAULT_CLIENT_ORIGIN).replace(/\/+$/u, '');
+  const clientOrigin = String(options.clientOrigin ?? DEFAULT_CLIENT_ORIGIN).replace(/\/+$/u, '');
   const projectIdentity = readMakeClientProjectIdentity(projectRoot);
-  const prototypes = collectPrototypes(projectRoot, clientOrigin);
-  const docs = collectDocs(projectRoot);
+  const prototypes = collectPrototypes(projectRoot, clientOrigin, options);
+  const docs = collectDocs(projectRoot, options);
   const themes = collectThemes(projectRoot, clientOrigin);
 
   return {
@@ -585,7 +599,11 @@ export function resolveClientOrigin(projectRoot, fallbackOrigin = DEFAULT_CLIENT
 
 export function syncMakeProjectMetadata(projectRoot, options = {}) {
   const metadata = buildMakeProjectMetadata(projectRoot, {
-    clientOrigin: options.clientOrigin || resolveClientOrigin(projectRoot),
+    clientOrigin: options.includeRuntimeUrls === true
+      ? options.clientOrigin ?? resolveClientOrigin(projectRoot)
+      : '',
+    includeAbsoluteFilePaths: options.includeAbsoluteFilePaths === true,
+    includeRuntimeArtifacts: options.includeRuntimeArtifacts === true,
   });
   const metadataPath = path.join(projectRoot, '.axhub/make/project.json');
   writeJsonAtomic(metadataPath, metadata);

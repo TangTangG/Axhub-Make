@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getConfigPath,
+  getMakeClientMarkerPath,
   getProjectMetadataPath,
   getProjectRegistryPath,
 } from '../projectCore/index.ts';
@@ -174,6 +175,24 @@ function writeProjectMetadata(projectRoot: string, id = 'assistant-client') {
   });
 }
 
+function writeMakeClientMarker(projectRoot: string, id: string, name = 'Assistant Client') {
+  writeJson(getMakeClientMarkerPath(projectRoot), {
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: { id, name },
+  });
+}
+
+function writeMakeClientPackage(projectRoot: string) {
+  writeJson(path.join(projectRoot, 'package.json'), {
+    scripts: {
+      dev: 'vite',
+      'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+    },
+  });
+}
+
 async function startTestServer(projectRoot: string) {
   const registryHome = createTempRoot('axhub-make-assistant-runtime-registry-');
   return startMakeServer({
@@ -312,6 +331,8 @@ describe('make-server assistant runtime API', () => {
     const selectedProjectRoot = createTempRoot('axhub-make-assistant-runtime-selected-');
     writeProjectMetadata(activeProjectRoot, 'active-assistant-client');
     writeProjectMetadata(selectedProjectRoot, 'selected-assistant-client');
+    writeMakeClientMarker(selectedProjectRoot, 'selected-assistant-client', 'Selected Assistant Client');
+    writeMakeClientPackage(selectedProjectRoot);
     const assistant = await startAssistantHealthServer();
     writeProjectConfig(activeProjectRoot, {
       assistant: {
@@ -335,12 +356,10 @@ describe('make-server assistant runtime API', () => {
     });
 
     try {
-      const registerResponse = await fetch(`${server.origin}/api/projects`, {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: 'selected-assistant-client',
-          name: 'Selected Assistant Client',
           root: selectedProjectRoot,
         }),
       });

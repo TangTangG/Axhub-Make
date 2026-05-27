@@ -55,10 +55,16 @@ async function parseResponseError(response: Response) {
     return `导出失败（${response.status}）`;
 }
 
-export async function downloadExportHtmlArchive(targetPath?: string) {
-    const url = targetPath
-        ? `/api/export-html?path=${encodeURIComponent(targetPath)}`
-        : '/api/export-html';
+export async function downloadExportHtmlArchive(targetPath?: string, options: { includeSource?: boolean } = {}) {
+    const query = new URLSearchParams();
+    if (targetPath) {
+        query.set('path', targetPath);
+    }
+    if (options.includeSource === true) {
+        query.set('includeSource', '1');
+    }
+    const suffix = query.toString();
+    const url = `/api/export-html${suffix ? `?${suffix}` : ''}`;
     const response = await fetch(url);
 
     if (!response.ok) {

@@ -22,6 +22,7 @@ vite.config.*.timestamp-*
 .env.*.local
 
 # Axhub Make runtime data
+**/.axhub/make/project.json
 **/.axhub/make/.admin-server-info.json
 **/.axhub/make/.dev-server-info.json
 **/.axhub/make/axhub.config.json

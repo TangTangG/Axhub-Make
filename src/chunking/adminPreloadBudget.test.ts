@@ -14,6 +14,16 @@ function extractOptimizeDepsArray(source: string, name: 'include' | 'exclude') {
 }
 
 describe('admin homepage preload budget', () => {
+  it('declares direct dependencies required by dev pre-bundling', () => {
+    const packageJson = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>;
+    };
+
+    expect(packageJson.dependencies).toHaveProperty('use-sync-external-store');
+    expect(packageJson.dependencies).toHaveProperty('dayjs');
+    expect(packageJson.dependencies).toHaveProperty('@braintree/sanitize-url');
+  });
+
   it('filters canvas, export, editor, and assistant chunks out of the homepage HTML preloads', () => {
     const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
 
@@ -48,5 +58,47 @@ describe('admin homepage preload budget', () => {
 
     expect(includeDeps).not.toContain("'@axhub/excalidraw'");
     expect(excludeDeps).toContain("'@axhub/excalidraw'");
+  });
+
+  it('pre-bundles Excalidraw PNG CommonJS dependencies reached by the lazy canvas chunk', () => {
+    const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
+    const includeDeps = extractOptimizeDepsArray(viteConfigSource, 'include');
+
+    expect(includeDeps).toContain("'@axhub/excalidraw > png-chunk-text'");
+    expect(includeDeps).toContain("'@axhub/excalidraw > png-chunks-encode'");
+    expect(includeDeps).toContain("'@axhub/excalidraw > png-chunks-extract'");
+  });
+
+  it('pre-bundles Excalidraw CommonJS utility dependencies reached by the lazy canvas chunk', () => {
+    const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
+    const includeDeps = extractOptimizeDepsArray(viteConfigSource, 'include');
+
+    expect(includeDeps).toContain("'@axhub/excalidraw > lodash.throttle'");
+    expect(includeDeps).toContain("'@axhub/excalidraw > lodash.debounce'");
+    expect(includeDeps).toContain("'@axhub/excalidraw > fuzzy'");
+    expect(includeDeps).toContain("'@axhub/excalidraw > @excalidraw/markdown-to-text'");
+  });
+
+  it('pre-bundles CommonJS external-store shims reached by the lazy canvas chunk', () => {
+    const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
+    const includeDeps = extractOptimizeDepsArray(viteConfigSource, 'include');
+
+    expect(includeDeps).toContain("'use-sync-external-store/shim'");
+    expect(includeDeps).toContain("'use-sync-external-store/shim/with-selector'");
+    expect(includeDeps).toContain("'use-sync-external-store/shim/with-selector.js'");
+  });
+
+  it('pre-bundles the CommonJS dayjs entry reached by the lazy canvas chunk', () => {
+    const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
+    const includeDeps = extractOptimizeDepsArray(viteConfigSource, 'include');
+
+    expect(includeDeps).toContain("'dayjs'");
+  });
+
+  it('pre-bundles the CommonJS sanitize-url entry reached by Mermaid inside the lazy canvas chunk', () => {
+    const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
+    const includeDeps = extractOptimizeDepsArray(viteConfigSource, 'include');
+
+    expect(includeDeps).toContain("'@braintree/sanitize-url'");
   });
 });

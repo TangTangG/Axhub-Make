@@ -808,17 +808,6 @@
     padding:0;
 }
 
-.annotation-guide-global-source-note {
-    max-width:780px;
-}
-
-.annotation-guide-global-source-note code {
-    color:var(--accent);
-    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
-    font-size:.92em;
-    font-weight:700;
-}
-
 .annotation-guide-method-grid {
     display:grid;
     grid-template-columns:repeat(2, minmax(0, 1fr));

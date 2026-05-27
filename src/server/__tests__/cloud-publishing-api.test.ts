@@ -258,6 +258,40 @@ describe('cloud publishing API', () => {
     });
   });
 
+  it('can include source files while excluding canvas and spec resources', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeFile(path.join(projectRoot, 'src/prototypes/home/components/Card.tsx'), 'export function Card() { return null; }\n');
+    writeFile(path.join(projectRoot, 'src/prototypes/home/Home.spec.tsx'), 'test("home", () => {});\n');
+    writeFile(path.join(projectRoot, 'src/prototypes/home/canvas.excalidraw'), '{}\n');
+    writeFile(path.join(projectRoot, 'src/prototypes/home/canvas.fig'), 'FIG');
+    writeFile(path.join(projectRoot, 'src/prototypes/home/canvas-assets/screenshot.png'), 'PNG');
+    writeFile(path.join(projectRoot, 'src/prototypes/home/.spec/ai-image-history.json'), '{}\n');
+
+    const files = await buildExportHtmlStaticFiles({
+      projectRoot,
+      sourceFile: path.join(projectRoot, 'src/prototypes/home/index.tsx'),
+      entryName: 'home',
+      displayName: 'Home',
+      group: 'prototypes',
+      includeSource: true,
+    });
+
+    const paths = files.map((file) => file.path).sort();
+
+    expect(paths).toEqual(expect.arrayContaining([
+      'source/components/Card.tsx',
+      'source/index.tsx',
+    ]));
+    expect(paths).not.toEqual(expect.arrayContaining([
+      'source/Home.spec.tsx',
+      'source/canvas.excalidraw',
+      'source/canvas.fig',
+      'source/canvas-assets/screenshot.png',
+      'source/.spec/ai-image-history.json',
+    ]));
+  });
+
   it('extracts large CSS data URIs into static asset files for cloud publishing limits', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
