@@ -41,6 +41,16 @@ describe('IndexPage source', () => {
     expect(assistantControllerCall).toContain('activeProjectId: workspace.activeProjectId,');
   });
 
+  it('passes project setup required state into the sidebar builder', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const sidebarBuilderCall = source.slice(
+      source.indexOf('const sidebarProps = useIndexPageSidebarPropsBuilder'),
+      source.indexOf('const handleEnterSelectedPrototypePreview'),
+    );
+
+    expect(sidebarBuilderCall).toContain('projectSetupRequired: workspace.projectSetupRequired,');
+  });
+
   it('keeps assistant active resource calculation aligned with preview documents and templates', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
 

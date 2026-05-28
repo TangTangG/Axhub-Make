@@ -92,7 +92,6 @@ function createBuilderParams(overrides: Partial<Parameters<typeof useIndexPageSi
       switchProject: vi.fn(),
       stopProjectDevServer: vi.fn(),
       addProjectFromLocalPath: vi.fn(),
-      selectMakeProjectParentFolder: vi.fn(async () => null),
       createBlankMakeProject: vi.fn(async () => ({})),
       loadProjects: vi.fn(),
       setCreateDialogVisible: vi.fn(),
@@ -219,5 +218,13 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     props.actions.onSetDefaultTheme?.('theme-b');
 
     expect(handleSetDefaultTheme).toHaveBeenCalledWith('theme-b');
+  });
+
+  it('passes project setup required state into the sidebar', () => {
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      state: { projectSetupRequired: true },
+    }));
+
+    expect(props.state.projectSetupRequired).toBe(true);
   });
 });

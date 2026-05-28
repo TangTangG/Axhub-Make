@@ -148,4 +148,32 @@ describe('make-server CLI args', () => {
     });
     expect(unref).toHaveBeenCalled();
   });
+
+  it('prints a friendly hint with the visit URL when the server port is occupied', async () => {
+    const projectRoot = createProjectRoot();
+    const originalExitCode = process.exitCode;
+    const portInUseError = Object.assign(new Error('listen EADDRINUSE: address already in use 0.0.0.0:53817'), {
+      address: '0.0.0.0',
+      code: 'EADDRINUSE',
+      port: DEFAULT_MAKE_SERVER_PORT,
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    startMakeServerMock.mockRejectedValue(portInUseError);
+    process.exitCode = undefined;
+
+    try {
+      await runCli([projectRoot]);
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const message = String(errorSpy.mock.calls[0]?.[0] || '');
+      expect(message).toContain(`端口 ${DEFAULT_MAKE_SERVER_PORT} 已经被占用了`);
+      expect(message).toContain(`http://localhost:${DEFAULT_MAKE_SERVER_PORT}`);
+      expect(message).toContain('如果看到的是 Axhub Make 首页');
+      expect(message).toContain(`关闭占用 ${DEFAULT_MAKE_SERVER_PORT} 端口的应用`);
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = originalExitCode;
+    }
+  });
 });

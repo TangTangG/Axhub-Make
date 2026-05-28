@@ -46,7 +46,11 @@ function stringValue(value: unknown): string {
 }
 
 function isSafeProjectId(value: string): boolean {
-  return /^[a-z0-9][a-z0-9-]{0,80}$/u.test(value);
+  return Boolean(value.trim())
+    && value !== '.'
+    && value !== '..'
+    && value.length <= 120
+    && !/[/?#\u0000-\u001f]/u.test(value);
 }
 
 function isLegacyOfficialProjectName(projectId: string, name: string): boolean {

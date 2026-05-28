@@ -11,9 +11,11 @@ import {
 } from '@/components/ui/dialog';
 import { Field, FieldDescription, FieldLabelWithHint } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 type CloudPublishSettingsForm = Required<CloudPublishingConfigPayload>;
+type CloudPublishSettingsTab = CloudPublishTarget | 'publish-settings';
 
 interface CloudPublishSettingsDialogProps {
     open: boolean;
@@ -48,6 +50,9 @@ const EMPTY_FORM: CloudPublishSettingsForm = {
         branch: 'gh-pages',
         sourceDirectory: '/',
     },
+    publishSettings: {
+        includeSource: false,
+    },
 };
 
 function cloneForm(form: CloudPublishSettingsForm): CloudPublishSettingsForm {
@@ -56,6 +61,7 @@ function cloneForm(form: CloudPublishSettingsForm): CloudPublishSettingsForm {
         cloudflarePages: { ...form.cloudflarePages },
         s3: { ...form.s3 },
         githubPages: { ...form.githubPages },
+        publishSettings: { ...form.publishSettings },
     };
 }
 
@@ -76,6 +82,10 @@ function mergeConfig(config?: CloudPublishingConfigPayload): CloudPublishSetting
         githubPages: {
             ...EMPTY_FORM.githubPages,
             ...(config?.githubPages || {}),
+        },
+        publishSettings: {
+            ...EMPTY_FORM.publishSettings,
+            ...(config?.publishSettings || {}),
         },
     };
 }
@@ -132,14 +142,14 @@ export default function CloudPublishSettingsDialog({
     onOpenChange,
     onSaved,
 }: CloudPublishSettingsDialogProps) {
-    const [activeTarget, setActiveTarget] = useState<CloudPublishTarget>(initialTarget);
+    const [activeTab, setActiveTab] = useState<CloudPublishSettingsTab>(initialTarget);
     const [form, setForm] = useState<CloudPublishSettingsForm>(() => cloneForm(EMPTY_FORM));
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
         if (open) {
-            setActiveTarget(initialTarget);
+            setActiveTab(initialTarget);
         }
     }, [initialTarget, open]);
 
@@ -155,6 +165,7 @@ export default function CloudPublishSettingsDialog({
                     cloudflarePages: config.targets.cloudflarePages,
                     s3: config.targets.s3,
                     githubPages: config.targets.githubPages,
+                    publishSettings: config.targets.publishSettings,
                 }));
             })
             .catch((error: any) => {
@@ -212,6 +223,16 @@ export default function CloudPublishSettingsDialog({
         }));
     };
 
+    const updatePublishSettings = (field: keyof CloudPublishSettingsForm['publishSettings'], value: boolean) => {
+        setForm((previous) => ({
+            ...previous,
+            publishSettings: {
+                ...previous.publishSettings,
+                [field]: value,
+            },
+        }));
+    };
+
     const payload = useMemo<CloudPublishingConfigPayload>(() => ({
         vercel: {
             token: form.vercel.token,
@@ -238,6 +259,9 @@ export default function CloudPublishSettingsDialog({
             branch: form.githubPages.branch || 'gh-pages',
             sourceDirectory: form.githubPages.sourceDirectory || '/',
         },
+        publishSettings: {
+            includeSource: form.publishSettings.includeSource === true,
+        },
     }), [form]);
 
     const handleSave = async () => {
@@ -259,7 +283,10 @@ export default function CloudPublishSettingsDialog({
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="flex h-[560px] w-[min(90vw,760px)] max-w-[760px] flex-col overflow-hidden p-0 text-sm [&>[data-dialog-close]]:hidden">
                 <DialogTitle className="sr-only">云服务发布设置</DialogTitle>
-                <Tabs value={activeTarget} onValueChange={(value) => setActiveTarget(value as CloudPublishTarget)} className="flex min-h-0 flex-1 flex-col">
+                <Tabs value={activeTab} onValueChange={(value) => {
+                    const nextTab = value as CloudPublishSettingsTab;
+                    setActiveTab(nextTab);
+                }} className="flex min-h-0 flex-1 flex-col">
                     <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
                         <TabsList className="h-8 rounded-md bg-muted/70 p-0.5">
                             <TabsTrigger value="s3" className="h-7 px-3 text-xs">
@@ -271,6 +298,7 @@ export default function CloudPublishSettingsDialog({
                             <TabsTrigger value="vercel" className="h-7 px-3 text-xs">Vercel</TabsTrigger>
                             <TabsTrigger value="cloudflare-pages" className="h-7 px-3 text-xs">Cloudflare Pages</TabsTrigger>
                             <TabsTrigger value="github-pages" className="h-7 px-3 text-xs">GitHub Pages</TabsTrigger>
+                            <TabsTrigger value="publish-settings" className="h-7 px-3 text-xs">发布设置</TabsTrigger>
                         </TabsList>
                         <Button type="button" variant="ghost" size="icon-xs" onClick={() => onOpenChange(false)} aria-label="关闭">
                             <X className="h-4 w-4" />
@@ -443,6 +471,22 @@ export default function CloudPublishSettingsDialog({
                                         description="GitHub Pages branch source 仅支持 / 或 /docs。"
                                         onChange={(value) => updateGitHubPages('sourceDirectory', value)}
                                     />
+                                </TabsContent>
+
+                                <TabsContent value="publish-settings" className="m-0 grid gap-4">
+                                    <div className="rounded-md border">
+                                        <div className="flex items-start justify-between gap-4 px-4 py-3">
+                                            <div className="space-y-1">
+                                                <div className="text-sm font-medium">包含源码</div>
+                                                <p className="text-xs text-muted-foreground">发布时附带当前原型源码目录，规则与导出 HTML（含源码）一致。</p>
+                                            </div>
+                                            <Switch
+                                                checked={form.publishSettings.includeSource === true}
+                                                onCheckedChange={(checked) => updatePublishSettings('includeSource', checked)}
+                                                aria-label="包含源码"
+                                            />
+                                        </div>
+                                    </div>
                                 </TabsContent>
                             </>
                         )}

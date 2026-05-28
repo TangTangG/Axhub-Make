@@ -4,6 +4,8 @@ import { QRCode } from 'antd';
 import {
     ArrowLeft,
     Code2,
+    HardDrive,
+    Home,
     FolderPlus,
     Plus,
     Search,
@@ -34,6 +36,7 @@ import {
     Loader2,
     LayoutGrid,
     Square,
+    RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { GenieProvider } from '@/common/genie/types';
@@ -92,8 +95,7 @@ interface ContentPanelProps {
     onProjectSwitch: (projectId: string) => void | Promise<void>;
     onProjectDelete: (projectId: string) => void | Promise<void>;
     onProjectStop: (projectId: string) => void | Promise<void>;
-    onAddProject: () => boolean | void | Promise<boolean | void>;
-    onSelectMakeProjectParentFolder: () => Promise<string | null>;
+    onAddProject: (root: string) => boolean | void | Promise<boolean | void>;
     onCreateBlankMakeProject: (params: {
         parentRoot: string;
         folderName: string;
@@ -161,9 +163,10 @@ const MAKE_CLIENT_SETUP_PHASES = [
 function slugifyProjectFolderName(input: string): string {
     return String(input || '')
         .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
+        .replace(/[<>:"|?*\u0000-\u001f/\\]+/gu, '-')
+        .replace(/\s+/gu, '-')
+        .replace(/[.-]+$/gu, '')
+        .replace(/^-+|-+$/gu, '')
         .slice(0, 80);
 }
 
@@ -606,15 +609,238 @@ function buildPrototypePageCanvasPayload(item: ItemData, page: { id: string; tit
     };
 }
 
+interface FolderBrowserFolder {
+    name: string;
+    path: string;
+}
+
+interface FolderBrowserPayload {
+    path: string;
+    home: string;
+    parent: string | null;
+    roots?: string[];
+    folders: FolderBrowserFolder[];
+}
+
+async function browseProjectFolders(pathValue?: string): Promise<FolderBrowserPayload> {
+    const query = pathValue ? `?path=${encodeURIComponent(pathValue)}` : '';
+    const response = await fetch(`/api/projects/browse-folders${query}`);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+        throw new Error(payload?.error || '读取目录失败');
+    }
+    return {
+        path: String(payload?.path || ''),
+        home: String(payload?.home || ''),
+        parent: typeof payload?.parent === 'string' ? payload.parent : null,
+        roots: Array.isArray(payload?.roots) ? payload.roots.filter((item: unknown): item is string => typeof item === 'string') : undefined,
+        folders: Array.isArray(payload?.folders)
+            ? payload.folders
+                .map((folder: any) => ({
+                    name: String(folder?.name || ''),
+                    path: String(folder?.path || ''),
+                }))
+                .filter((folder: FolderBrowserFolder) => folder.name && folder.path)
+            : [],
+    };
+}
+
+async function createProjectFolder(parentPath: string, folderName: string): Promise<string> {
+    const response = await fetch('/api/projects/folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentPath, folderName }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+        throw new Error(payload?.error || '创建文件夹失败');
+    }
+    const createdPath = typeof payload?.path === 'string' ? payload.path.trim() : '';
+    if (!createdPath) {
+        throw new Error('创建文件夹后未返回路径');
+    }
+    return createdPath;
+}
+
+interface FolderBrowserDialogProps {
+    open: boolean;
+    title: string;
+    confirmLabel: string;
+    busy?: boolean;
+    initialPath?: string;
+    onOpenChange: (open: boolean) => void;
+    onConfirm: (path: string) => void | Promise<void>;
+}
+
+function FolderBrowserDialog({
+    open,
+    title,
+    confirmLabel,
+    busy = false,
+    initialPath,
+    onOpenChange,
+    onConfirm,
+}: FolderBrowserDialogProps) {
+    const [payload, setPayload] = useState<FolderBrowserPayload | null>(null);
+    const [pathInput, setPathInput] = useState('');
+    const [newFolderName, setNewFolderName] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [creating, setCreating] = useState(false);
+
+    const selectedPath = payload?.path || '';
+    const loadPath = useCallback(async (nextPath?: string) => {
+        setLoading(true);
+        try {
+            const nextPayload = await browseProjectFolders(nextPath);
+            setPayload(nextPayload);
+            setPathInput(nextPayload.path);
+        } catch (error: any) {
+            toast.error(error?.message || '读取目录失败');
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!open) {
+            return;
+        }
+        setNewFolderName('');
+        void loadPath(initialPath || undefined);
+    }, [initialPath, loadPath, open]);
+
+    const handleCreateFolder = async () => {
+        const parentPath = selectedPath.trim();
+        const folderName = newFolderName.trim();
+        if (!parentPath || !folderName) {
+            return;
+        }
+        setCreating(true);
+        try {
+            const createdPath = await createProjectFolder(parentPath, folderName);
+            setNewFolderName('');
+            await loadPath(createdPath);
+        } catch (error: any) {
+            toast.error(error?.message || '创建文件夹失败');
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={(nextOpen) => {
+            if (!busy && !creating) {
+                onOpenChange(nextOpen);
+            }
+        }}>
+            <DialogContent className="flex w-[min(92vw,560px)] max-w-[560px] flex-col gap-0 overflow-hidden p-0 text-sm">
+                <DialogHeader className="border-b px-4 py-3">
+                    <DialogTitle className="text-[15px] font-semibold">{title}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3 p-4">
+                    <div className="flex gap-2">
+                        <Input
+                            value={pathInput}
+                            onChange={(event) => setPathInput(event.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                    void loadPath(pathInput);
+                                }
+                            }}
+                            className="h-8 min-w-0 flex-1 text-[12px]"
+                        />
+                        <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={() => void loadPath(pathInput)} disabled={loading}>
+                            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                        </Button>
+                    </div>
+                    <div className="flex gap-2">
+                        <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void loadPath(payload?.home)} disabled={loading || !payload?.home}>
+                            <Home className="h-3.5 w-3.5" />
+                            Home
+                        </Button>
+                        {payload?.parent ? (
+                            <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void loadPath(payload.parent || undefined)} disabled={loading}>
+                                <ArrowLeft className="h-3.5 w-3.5" />
+                                上一级
+                            </Button>
+                        ) : null}
+                        {(payload?.roots || []).map((root) => (
+                            <Button key={root} type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void loadPath(root)} disabled={loading}>
+                                <HardDrive className="h-3.5 w-3.5" />
+                                {root}
+                            </Button>
+                        ))}
+                    </div>
+                    <ScrollArea className="h-[260px] rounded-md border">
+                        <div className="p-1">
+                            {loading ? (
+                                <div className="flex h-[220px] items-center justify-center text-muted-foreground">
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                </div>
+                            ) : payload?.folders.length ? (
+                                payload.folders.map((folder) => (
+                                    <button
+                                        key={folder.path}
+                                        type="button"
+                                        className="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-[12px] hover:bg-muted"
+                                        onClick={() => void loadPath(folder.path)}
+                                    >
+                                        <Folder className="h-3.5 w-3.5 shrink-0 text-primary" />
+                                        <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+                                    </button>
+                                ))
+                            ) : (
+                                <div className="flex h-[220px] items-center justify-center text-[12px] text-muted-foreground">没有子目录</div>
+                            )}
+                        </div>
+                    </ScrollArea>
+                    <div className="flex gap-2">
+                        <Input
+                            value={newFolderName}
+                            onChange={(event) => setNewFolderName(event.target.value)}
+                            placeholder="新建文件夹名称"
+                            className="h-8 min-w-0 flex-1 text-[12px]"
+                            disabled={creating || loading || !selectedPath}
+                        />
+                        <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void handleCreateFolder()} disabled={creating || loading || !newFolderName.trim() || !selectedPath}>
+                            {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}
+                            新建
+                        </Button>
+                    </div>
+                </div>
+                <DialogFooter className="border-t p-3">
+                    <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onOpenChange(false)} disabled={busy || creating}>
+                        取消
+                    </Button>
+                    <Button
+                        type="button"
+                        size="sm"
+                        className="h-8 gap-2"
+                        onClick={() => {
+                            if (selectedPath) {
+                                void onConfirm(selectedPath);
+                            }
+                        }}
+                        disabled={busy || creating || loading || !selectedPath}
+                    >
+                        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        {confirmLabel}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 interface ProjectSetupDialogProps {
     open: boolean;
     forceBlankProjectCreation?: boolean;
+    dismissDisabled?: boolean;
     addingProject: boolean;
-    selectingParentFolder: boolean;
     creatingBlankProject: boolean;
     onOpenChange: (open: boolean) => void;
-    onAddProject: () => boolean | void | Promise<boolean | void>;
-    onSelectParentFolder: () => Promise<string | null>;
+    onSetupComplete: () => void;
+    onAddProject: (root: string) => boolean | void | Promise<boolean | void>;
     onCreateBlankProject: (params: {
         parentRoot: string;
         folderName: string;
@@ -625,12 +851,12 @@ interface ProjectSetupDialogProps {
 function ProjectSetupDialog({
     open,
     forceBlankProjectCreation,
+    dismissDisabled,
     addingProject,
-    selectingParentFolder,
     creatingBlankProject,
     onOpenChange,
+    onSetupComplete,
     onAddProject,
-    onSelectParentFolder,
     onCreateBlankProject,
 }: ProjectSetupDialogProps) {
     const [setupMode, setSetupMode] = useState<ProjectSetupMode>(forceBlankProjectCreation ? 'blank' : 'menu');
@@ -638,6 +864,8 @@ function ProjectSetupDialog({
     const [projectName, setProjectName] = useState('新建 Make 项目');
     const [folderName, setFolderName] = useState('make-project');
     const [manualFolderName, setManualFolderName] = useState(false);
+    const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
+    const [folderBrowserPurpose, setFolderBrowserPurpose] = useState<'existing' | 'parent'>('existing');
     const [runningPhase, setRunningPhase] = useState('');
     const [failedPhase, setFailedPhase] = useState('');
     const allowCloseRef = useRef(false);
@@ -657,6 +885,7 @@ function ProjectSetupDialog({
         setSetupMode('menu');
         setRunningPhase('');
         setFailedPhase('');
+        setFolderBrowserOpen(false);
     }, [open]);
 
     useEffect(() => {
@@ -665,25 +894,25 @@ function ProjectSetupDialog({
         }
     }, [forceBlankProjectCreation]);
 
-    const busy = addingProject || selectingParentFolder || creatingBlankProject;
+    const busy = addingProject || creatingBlankProject;
 
-    const handleSelectExisting = async () => {
+    const handleSelectExisting = async (selectedPath: string) => {
         try {
-            const selected = await Promise.resolve(onAddProject());
+            const selected = await Promise.resolve(onAddProject(selectedPath));
             if (selected === false) {
                 return;
             }
+            allowCloseRef.current = true;
+            onSetupComplete();
             onOpenChange(false);
         } catch (error: any) {
             toast.error(error?.message || '添加项目失败');
         }
     };
 
-    const handleSelectParentFolder = async () => {
-        const selected = await onSelectParentFolder();
-        if (selected) {
-            setParentRoot(selected);
-        }
+    const openFolderBrowser = (purpose: 'existing' | 'parent') => {
+        setFolderBrowserPurpose(purpose);
+        setFolderBrowserOpen(true);
     };
 
     const handleCreateBlankProject = async () => {
@@ -704,9 +933,10 @@ function ProjectSetupDialog({
             await onCreateBlankProject({
                 parentRoot: normalizedParent,
                 folderName: normalizedFolder,
-                projectName: normalizedProjectName || normalizedFolder,
+                projectName: normalizedProjectName,
             });
             allowCloseRef.current = true;
+            onSetupComplete();
             onOpenChange(false);
         } catch (error: any) {
             setFailedPhase(getProjectSetupErrorPhase(error));
@@ -717,151 +947,173 @@ function ProjectSetupDialog({
     };
 
     return (
-        <Dialog open={open} onOpenChange={(nextOpen) => {
-            if (!busy && (nextOpen || allowCloseRef.current || !forceBlankProjectCreation)) {
+        <>
+            <Dialog open={open} onOpenChange={(nextOpen) => {
+                if (busy) {
+                    return;
+                }
+                if (dismissDisabled && !nextOpen && !allowCloseRef.current) {
+                    return;
+                }
                 onOpenChange(nextOpen);
-            }
-        }}>
-            <DialogContent className="flex w-[min(92vw,460px)] max-w-[460px] flex-col gap-0 overflow-hidden p-0 text-sm [&>[data-dialog-close]]:hidden">
-                <DialogHeader className="border-b px-4 py-3">
-                    <div className="flex items-center gap-2">
-                        {setupMode === 'blank' && !forceBlankProjectCreation ? (
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-xs"
-                                className="h-7 w-7"
-                                onClick={() => setSetupMode('menu')}
-                                disabled={busy}
-                                aria-label="返回"
-                            >
-                                <ArrowLeft className="h-4 w-4" />
-                            </Button>
-                        ) : null}
-                        <DialogTitle className="text-[15px] font-semibold">项目设置</DialogTitle>
-                    </div>
-                </DialogHeader>
-                {!forceBlankProjectCreation && setupMode === 'menu' ? (
-                    <div className="grid gap-2 p-4">
-                        <button
-                            type="button"
-                            className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-primary/35 bg-primary/5 px-3 py-3 text-left transition-colors hover:bg-primary/10 disabled:opacity-50"
-                            onClick={() => setSetupMode('blank')}
-                            disabled={busy}
-                        >
-                            <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
-                            <span className="flex min-w-0 flex-1 flex-col gap-1">
-                                <span className="text-[13px] font-medium">新建空白项目</span>
-                                <span className="text-[12px] leading-5 text-muted-foreground">从官方 Make 客户端仓库创建新项目</span>
-                            </span>
-                        </button>
-                        <button
-                            type="button"
-                            className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 px-3 py-3 text-left transition-colors hover:bg-muted/70 disabled:opacity-50"
-                            onClick={() => void handleSelectExisting()}
-                            disabled={busy}
-                        >
-                            <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
-                            <span className="flex min-w-0 flex-1 flex-col gap-1">
-                                <span className="text-[13px] font-medium">选择已有项目</span>
-                                <span className="text-[12px] leading-5 text-muted-foreground">选择本地 Make 客户端项目目录并启动开发服务</span>
-                            </span>
-                            {addingProject ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
-                        </button>
-                    </div>
-                ) : (
-                    <div className="space-y-4 p-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="make-project-parent" className="text-[12px]">父目录</Label>
-                            <div className="flex gap-2">
-                                <Input
-                                    id="make-project-parent"
-                                    value={parentRoot}
-                                    readOnly
-                                    placeholder="请选择父目录"
-                                    className="h-8 min-w-0 flex-1 text-[12px]"
-                                />
+            }}>
+                <DialogContent className="flex w-[min(92vw,460px)] max-w-[460px] flex-col gap-0 overflow-hidden p-0 text-sm [&>[data-dialog-close]]:hidden">
+                    <DialogHeader className="border-b px-4 py-3">
+                        <div className="flex items-center gap-2">
+                            {setupMode === 'blank' && !forceBlankProjectCreation ? (
                                 <Button
                                     type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 shrink-0 gap-1.5"
-                                    onClick={() => void handleSelectParentFolder()}
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    className="h-7 w-7"
+                                    onClick={() => setSetupMode('menu')}
                                     disabled={busy}
+                                    aria-label="返回"
                                 >
-                                    {selectingParentFolder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
-                                    选择
+                                    <ArrowLeft className="h-4 w-4" />
                                 </Button>
-                            </div>
+                            ) : null}
+                            <DialogTitle className="text-[15px] font-semibold">项目设置</DialogTitle>
                         </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="make-project-name" className="text-[12px]">项目名称</Label>
-                            <Input
-                                id="make-project-name"
-                                value={projectName}
-                                onChange={(event) => setProjectName(event.target.value)}
+                    </DialogHeader>
+                    {!forceBlankProjectCreation && setupMode === 'menu' ? (
+                        <div className="grid gap-2 p-4">
+                            <button
+                                type="button"
+                                className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 bg-primary/5 px-3 py-3 text-left transition-colors hover:bg-primary/10 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none disabled:opacity-50"
+                                onClick={() => setSetupMode('blank')}
                                 disabled={busy}
-                                className="h-8 text-[12px]"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="make-project-folder" className="text-[12px]">文件夹名称</Label>
-                            <Input
-                                id="make-project-folder"
-                                value={folderName}
-                                onChange={(event) => {
-                                    setManualFolderName(true);
-                                    setFolderName(event.target.value);
-                                }}
+                            >
+                                <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
+                                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                                    <span className="text-[13px] font-medium">新建空白项目</span>
+                                    <span className="text-[12px] leading-5 text-muted-foreground">从官方 Make 客户端仓库创建新项目</span>
+                                </span>
+                            </button>
+                            <button
+                                type="button"
+                                className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 px-3 py-3 text-left transition-colors hover:bg-muted/70 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none disabled:opacity-50"
+                                onClick={() => openFolderBrowser('existing')}
                                 disabled={busy}
-                                className="h-8 text-[12px]"
-                            />
+                            >
+                                <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+                                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                                    <span className="text-[13px] font-medium">选择已有项目</span>
+                                    <span className="text-[12px] leading-5 text-muted-foreground">选择本地 Make 客户端项目目录并启动开发服务</span>
+                                </span>
+                                {addingProject ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
+                            </button>
                         </div>
-                        {(creatingBlankProject || runningPhase || failedPhase) ? (
-                            <div className="rounded-md border border-border/70 bg-muted/30 p-3">
-                                <div className="grid gap-2">
-                                    {MAKE_CLIENT_SETUP_PHASES.map((phase) => {
-                                        const active = runningPhase === phase.key;
-                                        const failed = failedPhase === phase.key;
-                                        return (
-                                            <div key={phase.key} className="flex items-center gap-2 text-[12px]">
-                                                {active ? (
-                                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                                                ) : failed ? (
-                                                    <span className="h-3.5 w-3.5 rounded-full border border-destructive" />
-                                                ) : (
-                                                    <span className="h-3.5 w-3.5 rounded-full border border-border bg-background" />
-                                                )}
-                                                <span className={cn(failed && 'text-destructive')}>{phase.label}</span>
-                                            </div>
-                                        );
-                                    })}
+                    ) : (
+                        <div className="space-y-4 p-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="make-project-parent" className="text-[12px]">父目录</Label>
+                                <div className="flex gap-2">
+                                    <Input
+                                        id="make-project-parent"
+                                        value={parentRoot}
+                                        readOnly
+                                        placeholder="请选择父目录"
+                                        className="h-8 min-w-0 flex-1 text-[12px]"
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 shrink-0 gap-1.5"
+                                        onClick={() => openFolderBrowser('parent')}
+                                        disabled={busy}
+                                    >
+                                        <FolderOpen className="h-3.5 w-3.5" />
+                                        选择
+                                    </Button>
                                 </div>
                             </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="make-project-name" className="text-[12px]">项目名称</Label>
+                                <Input
+                                    id="make-project-name"
+                                    value={projectName}
+                                    onChange={(event) => setProjectName(event.target.value)}
+                                    disabled={busy}
+                                    className="h-8 text-[12px]"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="make-project-folder" className="text-[12px]">文件夹名称</Label>
+                                <Input
+                                    id="make-project-folder"
+                                    value={folderName}
+                                    onChange={(event) => {
+                                        setManualFolderName(true);
+                                        setFolderName(event.target.value);
+                                    }}
+                                    disabled={busy}
+                                    className="h-8 text-[12px]"
+                                />
+                            </div>
+                            {(creatingBlankProject || runningPhase || failedPhase) ? (
+                                <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                                    <div className="grid gap-2">
+                                        {MAKE_CLIENT_SETUP_PHASES.map((phase) => {
+                                            const active = runningPhase === phase.key;
+                                            const failed = failedPhase === phase.key;
+                                            return (
+                                                <div key={phase.key} className="flex items-center gap-2 text-[12px]">
+                                                    {active ? (
+                                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                                                    ) : failed ? (
+                                                        <span className="h-3.5 w-3.5 rounded-full border border-destructive" />
+                                                    ) : (
+                                                        <span className="h-3.5 w-3.5 rounded-full border border-border bg-background" />
+                                                    )}
+                                                    <span className={cn(failed && 'text-destructive')}>{phase.label}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ) : null}
+                        </div>
+                    )}
+                    <DialogFooter className="border-t p-3 sm:justify-between sm:space-x-0">
+                        {!dismissDisabled ? (
+                            <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onOpenChange(false)} disabled={busy}>
+                                取消
+                            </Button>
                         ) : null}
-                    </div>
-                )}
-                <DialogFooter className="border-t p-3 sm:justify-between sm:space-x-0">
-                    {!forceBlankProjectCreation ? (
-                        <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onOpenChange(false)} disabled={busy}>
-                            取消
-                        </Button>
-                    ) : null}
-                    {setupMode === 'blank' ? (
-                        <Button
-                            type="button"
-                            size="sm"
-                            className="h-8 gap-2"
-                            onClick={() => void handleCreateBlankProject()}
-                            disabled={busy || !parentRoot.trim() || !folderName.trim()}
-                        >
-                            {creatingBlankProject ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}
-                            创建并启动
-                        </Button>
-                    ) : null}
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
+                        {setupMode === 'blank' ? (
+                            <Button
+                                type="button"
+                                size="sm"
+                                className="h-8 gap-2"
+                                onClick={() => void handleCreateBlankProject()}
+                                disabled={busy || !parentRoot.trim() || !folderName.trim()}
+                            >
+                                {creatingBlankProject ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}
+                                创建并启动
+                            </Button>
+                        ) : null}
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+            <FolderBrowserDialog
+                open={folderBrowserOpen}
+                title={folderBrowserPurpose === 'existing' ? '选择已有项目' : '选择父目录'}
+                confirmLabel={folderBrowserPurpose === 'existing' ? '添加项目' : '使用此目录'}
+                busy={folderBrowserPurpose === 'existing' && addingProject}
+                initialPath={folderBrowserPurpose === 'parent' ? parentRoot : ''}
+                onOpenChange={setFolderBrowserOpen}
+                onConfirm={(selectedPath) => {
+                    if (folderBrowserPurpose === 'parent') {
+                        setParentRoot(selectedPath);
+                        setFolderBrowserOpen(false);
+                        return;
+                    }
+                    void handleSelectExisting(selectedPath);
+                }}
+            />
+        </>
     );
 }
 
@@ -881,7 +1133,6 @@ export default function ContentPanel({
     onProjectDelete,
     onProjectStop,
     onAddProject,
-    onSelectMakeProjectParentFolder,
     onCreateBlankMakeProject,
     onRefreshProjects,
     tree,
@@ -946,7 +1197,6 @@ export default function ContentPanel({
     const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
     const [stoppingProjectId, setStoppingProjectId] = useState<string | null>(null);
     const [isAddingProject, setIsAddingProject] = useState(false);
-    const [isSelectingParentFolder, setIsSelectingParentFolder] = useState(false);
     const [isCreatingBlankProject, setIsCreatingBlankProject] = useState(false);
     const [isSearchExpanded, setIsSearchExpanded] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1189,10 +1439,10 @@ export default function ContentPanel({
         }
     };
 
-    const handleAddProject = async () => {
+    const handleAddProject = async (root: string) => {
         setIsAddingProject(true);
         try {
-            const selected = await Promise.resolve(onAddProject());
+            const selected = await Promise.resolve(onAddProject(root));
             if (selected === false) {
                 return false;
             }
@@ -1201,18 +1451,6 @@ export default function ContentPanel({
             return true;
         } finally {
             setIsAddingProject(false);
-        }
-    };
-
-    const handleSelectMakeProjectParentFolder = async () => {
-        setIsSelectingParentFolder(true);
-        try {
-            return await onSelectMakeProjectParentFolder();
-        } catch (error: any) {
-            toast.error(error?.message || '选择父目录失败');
-            return null;
-        } finally {
-            setIsSelectingParentFolder(false);
         }
     };
 
@@ -2466,9 +2704,8 @@ export default function ContentPanel({
         </div>
         <ProjectSetupDialog
             open={projectSetupOpen}
-            forceBlankProjectCreation={projectSetupRequired}
+            dismissDisabled={projectSetupRequired}
             addingProject={isAddingProject}
-            selectingParentFolder={isSelectingParentFolder}
             creatingBlankProject={isCreatingBlankProject}
             onOpenChange={(open) => {
                 if (projectSetupRequired && !open) {
@@ -2476,8 +2713,11 @@ export default function ContentPanel({
                 }
                 setProjectSetupOpen(open);
             }}
+            onSetupComplete={() => {
+                setProjectSetupOpen(false);
+                setProjectSwitcherMenuOpen(false);
+            }}
             onAddProject={handleAddProject}
-            onSelectParentFolder={handleSelectMakeProjectParentFolder}
             onCreateBlankProject={handleCreateBlankMakeProject}
         />
         </>

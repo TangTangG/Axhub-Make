@@ -8,11 +8,11 @@ describe('useWorkspaceNavigationController source', () => {
 
     expect(source).toContain("fetch('/api/projects')");
     expect(source).toContain("fetch('/api/projects/active'");
-    expect(source).toContain("fetch('/api/projects/select-root?kind=existing'");
-    expect(source).toContain("fetch('/api/projects/select-root?kind=parent'");
     expect(source).toContain("fetch('/api/projects/make/register-existing'");
     expect(source).toContain("fetch('/api/projects/make/create'");
     expect(source).toContain("fetch(`/api/projects/${encodeURIComponent(projectId)}/dev/ensure`");
+    expect(source).not.toContain('/api/projects/select-root');
+    expect(source).not.toContain('selectMakeProjectParentFolder');
     expect(source).toContain('const MAKE_CLIENT_DEV_START_TIMEOUT_MS = 60_000;');
     expect(source).toContain('body: JSON.stringify({ timeoutMs: MAKE_CLIENT_DEV_START_TIMEOUT_MS })');
     expect(source).toContain('addProjectFromLocalPath');
@@ -63,12 +63,13 @@ describe('useWorkspaceNavigationController source', () => {
   it('returns false when existing project folder selection is cancelled', () => {
     const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
     const addProjectStart = source.indexOf('const addProjectFromLocalPath = useCallback');
-    const selectParentStart = source.indexOf('const selectMakeProjectParentFolder = useCallback', addProjectStart);
-    const addProjectSource = source.slice(addProjectStart, selectParentStart);
+    const createBlankStart = source.indexOf('const createBlankMakeProject = useCallback', addProjectStart);
+    const addProjectSource = source.slice(addProjectStart, createBlankStart);
 
-    expect(addProjectSource).toContain('if (!root) {');
+    expect(addProjectSource).toContain('if (!normalizedRoot) {');
     expect(addProjectSource).toContain('return false;');
     expect(addProjectSource).toContain('return true;');
+    expect(addProjectSource).toContain('async (root: string)');
   });
 
   it('requires project setup instead of falling back to legacy entries when no projects exist', () => {

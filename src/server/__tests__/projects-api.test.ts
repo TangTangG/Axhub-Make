@@ -175,8 +175,30 @@ describe('make-server project APIs', () => {
     }
   });
 
+  it('does not auto-register a metadata-only startup root', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'metadata-only-default', name: 'Metadata Only Default' },
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const listResponse = await fetch(`${server.origin}/api/projects`);
+      const list = await listResponse.json();
+
+      expect(listResponse.status).toBe(200);
+      expect(list).toEqual({
+        activeProjectId: null,
+        projects: [],
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('exposes current project LAN access capability from project config', async () => {
     const defaultRoot = createTempRoot();
+    writeMakeClientMarkerForProject(defaultRoot, 'lan-disabled', 'LAN Disabled');
     writeProjectMetadata(defaultRoot, {
       project: { id: 'lan-disabled', name: 'LAN Disabled' },
     });
@@ -198,6 +220,7 @@ describe('make-server project APIs', () => {
 
   it('defaults current project LAN access capability to enabled when config omits allowLAN', async () => {
     const defaultRoot = createTempRoot();
+    writeMakeClientMarkerForProject(defaultRoot, 'lan-default', 'LAN Default');
     writeProjectMetadata(defaultRoot, {
       project: { id: 'lan-default', name: 'LAN Default' },
     });
@@ -216,6 +239,7 @@ describe('make-server project APIs', () => {
 
   it('serves project resources by explicit projectId and no longer exposes unused project compatibility endpoints', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
     writeProjectMetadata(projectRoot, {
       project: { id: 'client-a', name: 'Client A' },
     });
@@ -250,6 +274,7 @@ describe('make-server project APIs', () => {
 
   it('reconciles project resources from the filesystem when serving resources', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
     const prototypesDir = path.join(projectRoot, 'content', 'prototypes');
     const docsDir = path.join(projectRoot, 'content', 'docs');
     const themesDir = path.join(projectRoot, 'content', 'themes');
@@ -378,6 +403,7 @@ describe('make-server project APIs', () => {
 
   it('handles project registry mutations, active project validation, and doc content updates', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
     writeProjectMetadata(projectRoot, {
       project: { id: 'client-a', name: 'Client A' },
     });
@@ -471,12 +497,14 @@ describe('make-server project APIs', () => {
     }
   });
 
-  it('repoints the default project registry entry when the same project id moves roots', async () => {
+  it('repoints the default make client registry entry when the same project id moves roots', async () => {
     const previousRoot = createTempRoot('axhub-make-old-client-');
+    writeMakeClientMarkerForProject(previousRoot, 'make-project', 'Old Make Client');
     writeProjectMetadata(previousRoot, {
       project: { id: 'make-project', name: 'Old Make Client' },
     });
     const currentRoot = createTempRoot('axhub-make-current-client-');
+    writeMakeClientMarkerForProject(currentRoot, 'make-project', 'Current Make Client');
     writeProjectMetadata(currentRoot, {
       project: { id: 'make-project', name: 'Current Make Client' },
     });
@@ -557,6 +585,7 @@ describe('make-server project APIs', () => {
 
   it('rejects doc content reads when metadata points outside the project root', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
     const outsideRoot = createTempRoot('axhub-make-projects-api-outside-');
     const outsideDocPath = path.join(outsideRoot, 'outside.md');
     fs.writeFileSync(outsideDocPath, '# Outside\n', 'utf8');
@@ -645,6 +674,7 @@ describe('make-server project APIs', () => {
   it('writes project communication records and lists Axure artifacts by explicit projectId', async () => {
     const projectRoot = createTempRoot();
     const otherProjectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
     writeProjectMetadata(projectRoot, {
       project: { id: 'client-a', name: 'Client A' },
     });

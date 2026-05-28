@@ -95,7 +95,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         onProjectDelete,
         onProjectStop,
         onAddProject,
-        onSelectMakeProjectParentFolder,
         onCreateBlankMakeProject,
         onRefreshProjects,
         handleOpenProjectInIDE,
@@ -236,7 +235,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 onProjectDelete={onProjectDelete}
                 onProjectStop={onProjectStop}
                 onAddProject={onAddProject}
-                onSelectMakeProjectParentFolder={onSelectMakeProjectParentFolder}
                 onCreateBlankMakeProject={onCreateBlankMakeProject}
                 onRefreshProjects={onRefreshProjects}
                 tree={sidebarTrees[currentTreeTab] || []}

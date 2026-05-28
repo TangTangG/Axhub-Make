@@ -80,11 +80,16 @@ interface GitHubPagesConfig {
   sourceDirectory?: string;
 }
 
+interface PublishSettingsConfig {
+  includeSource: boolean;
+}
+
 interface CloudPublishingConfig {
   vercel?: VercelConfig;
   cloudflarePages?: CloudflarePagesConfig;
   s3?: S3Config;
   githubPages?: GitHubPagesConfig;
+  publishSettings?: PublishSettingsConfig;
 }
 
 const TARGETS = new Set<CloudPublishTarget>(['vercel', 'cloudflare-pages', 's3', 'github-pages']);
@@ -153,6 +158,9 @@ function normalizeCloudPublishingConfig(value: unknown): CloudPublishingConfig {
       repository: stringValue(githubPages.repository),
       branch: stringValue(githubPages.branch) || 'gh-pages',
       sourceDirectory: normalizeGithubPagesSourceDirectory(githubPages.sourceDirectory),
+    },
+    publishSettings: {
+      includeSource: raw.publishSettings?.includeSource === true,
     },
   };
 }
@@ -293,6 +301,9 @@ function toConfigResponse(config: CloudPublishingConfig, projectRoot?: string) {
         ...githubPages,
         configured: githubPagesMissing.length === 0,
         missingFields: githubPagesMissing,
+      },
+      publishSettings: {
+        includeSource: config.publishSettings?.includeSource === true,
       },
     },
   };
@@ -1270,6 +1281,7 @@ export function handleCloudPublishingApi(
           entryName: stringValue(resource?.name) || path.basename(path.dirname(sourceFile)),
           displayName: stringValue(resource?.title) || stringValue(resource?.name) || path.basename(path.dirname(sourceFile)),
           group: targetPath.split('/')[0] || 'prototypes',
+          includeSource: config.publishSettings?.includeSource === true,
         });
         const result = await publishTarget(target, config, files, context.project.root, handlers.commandExecutor);
         const url = result.url;

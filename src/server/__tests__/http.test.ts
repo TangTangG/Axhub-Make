@@ -27,6 +27,7 @@ const tempRoots: string[] = [];
 function createProjectRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-make-server-http-'));
   tempRoots.push(root);
+  writeMakeClientProjectMarker(root, 'test-client', path.basename(root));
   fs.mkdirSync(path.join(root, 'src/components/ref-button'), { recursive: true });
   fs.writeFileSync(path.join(root, 'src/components/ref-button/index.tsx'), 'export default function Button() {}', 'utf8');
   fs.writeFileSync(path.join(root, 'src/components/ref-button/index.html'), '<div id="root"></div>', 'utf8');
@@ -55,6 +56,20 @@ function writeTheme(root: string, name: string) {
 }
 
 function writeJson(filePath: string, value: unknown): void {
+  if (filePath.endsWith(path.join('.axhub', 'make', 'project.json'))) {
+    const raw = value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, any>
+      : {};
+    const project = raw.project && typeof raw.project === 'object' && !Array.isArray(raw.project)
+      ? raw.project as Record<string, unknown>
+      : {};
+    const id = typeof project.id === 'string' ? project.id.trim() : '';
+    if (id) {
+      const root = path.dirname(path.dirname(path.dirname(filePath)));
+      const name = typeof project.name === 'string' ? project.name.trim() : id;
+      writeMakeClientProjectMarker(root, id, name);
+    }
+  }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
 }
@@ -336,6 +351,38 @@ describe('make-server HTTP server', () => {
       const versionedAsset = await fetch(`${server.origin}/assets/index.js?v=stable`);
       expect(versionedAsset.status).toBe(200);
       expect(versionedAsset.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('serves the admin app when no active project exists', async () => {
+    const projectRoot = createProjectRoot();
+    fs.rmSync(getMakeClientMarkerPath(projectRoot), { force: true });
+    fs.rmSync(path.join(projectRoot, 'package.json'), { force: true });
+    const adminRoot = path.join(projectRoot, 'admin-dist');
+    fs.mkdirSync(adminRoot, { recursive: true });
+    fs.writeFileSync(path.join(adminRoot, 'index.html'), '<html><body>Admin App</body></html>', 'utf8');
+
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot,
+      registryPath: createRegistryPath(),
+    });
+
+    try {
+      const projects = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
+      expect(projects).toEqual({ activeProjectId: null, projects: [] });
+
+      const home = await fetch(`${server.origin}/`);
+      await expect(home.text()).resolves.toContain('Admin App');
+      expect(home.status).toBe(200);
+
+      const context = await fetch(`${server.origin}/api/admin/context`);
+      expect(context.status).toBe(409);
+      await expect(context.json()).resolves.toMatchObject({ code: 'no-active-project' });
     } finally {
       await server.close();
     }

@@ -17,6 +17,92 @@ describe('ContentPanel make client project setup source', () => {
     expect(setupPhasesSource).not.toContain("key: 'metadata'");
     expect(setupPhasesSource).not.toContain('同步 metadata');
   });
+
+  it('preserves an explicitly blank project name when creating a blank make client project', () => {
+    const source = readContentPanelSource();
+    const handlerSource = source.slice(
+      source.indexOf('const handleCreateBlankProject = async () => {'),
+      source.indexOf('return (', source.indexOf('const handleCreateBlankProject = async () => {')),
+    );
+
+    expect(handlerSource).toContain('projectName: normalizedProjectName,');
+    expect(handlerSource).not.toContain('projectName: normalizedProjectName || normalizedFolder');
+  });
+
+  it('forces the project setup dialog open without skipping the create/select guide', () => {
+    const source = readContentPanelSource();
+    const dialogPropsSource = source.slice(
+      source.indexOf('interface ProjectSetupDialogProps'),
+      source.indexOf('function ProjectSetupDialog'),
+    );
+    const dialogRenderSource = source.slice(
+      source.indexOf('<ProjectSetupDialog'),
+      source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
+    );
+
+    expect(dialogPropsSource).toContain('dismissDisabled?: boolean;');
+    expect(dialogRenderSource).toContain('dismissDisabled={projectSetupRequired}');
+    expect(dialogRenderSource).not.toContain('forceBlankProjectCreation={projectSetupRequired}');
+  });
+
+  it('keeps the forced project setup dialog non-dismissible while still showing project setup options', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+
+    expect(dialogSource).toContain('if (dismissDisabled && !nextOpen && !allowCloseRef.current) {');
+    expect(dialogSource).toContain('!forceBlankProjectCreation && setupMode === \'menu\'');
+    expect(dialogSource).toContain('!dismissDisabled ? (');
+  });
+
+  it('allows successful required project setup to close the setup dialog', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+    const renderSource = source.slice(
+      source.indexOf('<ProjectSetupDialog'),
+      source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
+    );
+
+    expect(dialogSource).toContain('onSetupComplete');
+    expect(dialogSource).toContain('onSetupComplete();');
+    expect(renderSource).toContain('onSetupComplete={() => {');
+    expect(renderSource).toContain('setProjectSetupOpen(false);');
+    expect(renderSource).toContain('setProjectSwitcherMenuOpen(false);');
+  });
+
+  it('does not show blue borders or focus rings on setup option buttons', () => {
+    const source = readContentPanelSource();
+    const menuSource = source.slice(
+      source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? ('),
+      source.indexOf('</div>', source.indexOf('选择已有项目')),
+    );
+
+    expect(menuSource).not.toContain('border-primary');
+    expect(menuSource).toContain('focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none');
+  });
+
+  it('uses the in-app folder browser for project setup paths instead of a native picker', () => {
+    const source = readContentPanelSource();
+    const browserSource = source.slice(
+      source.indexOf('function FolderBrowserDialog'),
+      source.indexOf('interface ProjectSetupDialogProps'),
+    );
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+
+    expect(dialogSource).toContain('FolderBrowserDialog');
+    expect(browserSource).toContain('browseProjectFolders');
+    expect(browserSource).toContain('createProjectFolder');
+    expect(dialogSource).toContain('onAddProject(selectedPath)');
+    expect(dialogSource).not.toContain('onSelectParentFolder');
+  });
 });
 
 describe('ContentPanel prototype canvas entry source', () => {

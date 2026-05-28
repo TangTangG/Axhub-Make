@@ -7,13 +7,16 @@ import {
   createProjectMetadataStore,
   getProjectMetadataPath,
   isPathInside,
+  readMakeClientMarker,
   type ProjectMetadata,
   type RegisteredProject,
 } from './projectCore/index.ts';
 
 import { getRequestUrl, readJsonBody, sendJson } from './http.ts';
+import { LocalCommandError } from './localCommand.ts';
 import { backfillMakeClientResourcePreviewLinks } from './makeClientRuntimeLinks.ts';
 import { getMakeClientDevStatus } from './makeClientProject.ts';
+import { handleProjectFolderBrowserApi } from './managementApi.folderBrowser.ts';
 import { handleMakeClientProjectApi } from './managementApi.makeClient.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { PROTOTYPE_PLACEHOLDER_GUIDE } from './prototypePlaceholderGuide.ts';
@@ -451,6 +454,20 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || '');
 }
 
+function getLocalCommandErrorPayload(error: unknown): Record<string, unknown> {
+  if (!(error instanceof LocalCommandError)) {
+    return {};
+  }
+  return {
+    command: error.command,
+    args: error.args,
+    escapedCommand: error.escapedCommand,
+    exitCode: error.exitCode,
+    stderr: error.stderr,
+    stdout: error.stdout,
+  };
+}
+
 function getDocPathOutsideProjectResourceId(error: unknown): string | null {
   const match = getErrorMessage(error).match(/^Doc resource (.+) is outside project root$/u);
   return match?.[1] || null;
@@ -518,13 +535,48 @@ export function handleProjectRegistryApi(
     return false;
   }
 
+  const registry = handlers.getProjectRegistryForRequest(options);
+  if (handleProjectFolderBrowserApi(req, res, pathname, getRequestUrl(req))) {
+    return true;
+  }
+
+  try {
+    handlers.ensureDefaultRegisteredProject(options);
+  } catch (error) {
+    if (!readMakeClientMarker(options.projectRoot)) {
+      sendProjectMetadataError(res, error, { projectRoot: options.projectRoot });
+      return true;
+    }
+  }
+
+  if (handleMakeClientProjectApi(req, res, options, pathname, registry, {
+    addOrUpdateMakeClientRegistryProject: (params) => handlers.addOrUpdateRegistryProjectByRoot(registry, {
+      ...params,
+      metadataPath: params.metadataPath || getProjectMetadataPath(params.root),
+    }),
+    toProjectEntry: handlers.toProjectEntry,
+  })) {
+    return true;
+  }
+
+  if (pathname === '/api/projects/select-root' && req.method === 'POST') {
+    const kind = String(getRequestUrl(req).searchParams.get('kind') || '').trim();
+    handlers.selectLocalProjectRootForKind(kind || 'existing')
+      .then((root) => sendJson(res, root ? { root } : { root: null, cancelled: true }))
+      .catch((error) => sendJson(res, {
+        error: error.message,
+        code: 'LOCAL_PROJECT_PICKER_UNAVAILABLE',
+        ...getLocalCommandErrorPayload(error),
+      }, { status: 501 }));
+    return true;
+  }
+
   try {
     handlers.ensureDefaultRegisteredProject(options);
   } catch (error) {
     sendProjectMetadataError(res, error, { projectRoot: options.projectRoot });
     return true;
   }
-  const registry = handlers.getProjectRegistryForRequest(options);
 
   if (pathname === '/api/projects' && req.method === 'GET') {
     const data = registry.getRegistry();
@@ -546,27 +598,6 @@ export function handleProjectRegistryApi(
       code: 'MAKE_CLIENT_PROJECT_REQUIRED',
       route: '/api/projects/make/register-existing',
     }, { status: 410 });
-    return true;
-  }
-
-  if (handleMakeClientProjectApi(req, res, options, pathname, registry, {
-    addOrUpdateMakeClientRegistryProject: (params) => handlers.addOrUpdateRegistryProjectByRoot(registry, {
-      ...params,
-      metadataPath: params.metadataPath || getProjectMetadataPath(params.root),
-    }),
-    toProjectEntry: handlers.toProjectEntry,
-  })) {
-    return true;
-  }
-
-  if (pathname === '/api/projects/select-root' && req.method === 'POST') {
-    const kind = String(getRequestUrl(req).searchParams.get('kind') || '').trim();
-    handlers.selectLocalProjectRootForKind(kind || 'existing')
-      .then((root) => sendJson(res, root ? { root } : { root: null, cancelled: true }))
-      .catch((error) => sendJson(res, {
-        error: error.message,
-        code: 'LOCAL_PROJECT_PICKER_UNAVAILABLE',
-      }, { status: 501 }));
     return true;
   }
 

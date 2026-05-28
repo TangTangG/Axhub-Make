@@ -13,15 +13,18 @@ describe('CloudPublishSettingsDialog source', () => {
     const vercelTabIndex = source.indexOf('value="vercel"');
     const cloudflareTabIndex = source.indexOf('value="cloudflare-pages"');
     const githubPagesTabIndex = source.indexOf('value="github-pages"');
+    const publishSettingsTabIndex = source.indexOf('value="publish-settings"');
 
     expect(source).toContain("from '@/components/ui/tabs'");
     expect(s3TabIndex).toBeGreaterThan(-1);
     expect(vercelTabIndex).toBeGreaterThan(-1);
     expect(cloudflareTabIndex).toBeGreaterThan(-1);
     expect(githubPagesTabIndex).toBeGreaterThan(-1);
+    expect(publishSettingsTabIndex).toBeGreaterThan(-1);
     expect(s3TabIndex).toBeLessThan(vercelTabIndex);
     expect(s3TabIndex).toBeLessThan(cloudflareTabIndex);
     expect(s3TabIndex).toBeLessThan(githubPagesTabIndex);
+    expect(publishSettingsTabIndex).toBeGreaterThan(githubPagesTabIndex);
     expect(source).toContain('value="vercel"');
     expect(source).toContain('Vercel');
     expect(source).toContain('value="cloudflare-pages"');
@@ -30,6 +33,18 @@ describe('CloudPublishSettingsDialog source', () => {
     expect(source).toContain('S3');
     expect(source).toContain('value="github-pages"');
     expect(source).toContain('GitHub Pages');
+    expect(source).toContain('value="publish-settings"');
+    expect(source).toContain('发布设置');
+  });
+
+  it('defaults cloud publishing to exclude source files and exposes a toggle', () => {
+    const source = readDialogSource();
+
+    expect(source).toContain("import { Switch } from '@/components/ui/switch';");
+    expect(source).toContain('publishSettings: {');
+    expect(source).toContain('includeSource: false');
+    expect(source).toContain('包含源码');
+    expect(source).toContain("updatePublishSettings('includeSource', checked)");
   });
 
   it('explains S3-compatible object storage and uses Chinese labels with English subtitles', () => {
@@ -75,5 +90,7 @@ describe('CloudPublishSettingsDialog source', () => {
     expect(source).toContain('repository');
     expect(source).toContain('sourceDirectory');
     expect(source).toContain('gh-pages');
+    expect(source).toContain('publishSettings');
+    expect(source).toContain('includeSource');
   });
 });

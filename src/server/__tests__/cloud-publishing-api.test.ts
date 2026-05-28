@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getConfigPath,
+  getMakeClientMarkerPath,
   getProjectExportsDir,
   getProjectMetadataPath,
   getProjectRegistryPath,
@@ -42,6 +43,12 @@ function writeJson(filePath: string, value: unknown): void {
 }
 
 function writeProject(projectRoot: string) {
+  writeJson(getMakeClientMarkerPath(projectRoot), {
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: { id: 'cloud-client', name: 'Cloud Client' },
+  });
   writeFile(path.join(projectRoot, 'src/prototypes/home/index.tsx'), 'export default function Home() { return null; }\n');
   writeFile(path.join(projectRoot, 'src/media/logo.txt'), 'LOGO');
   writeJson(getProjectMetadataPath(projectRoot), {
@@ -70,6 +77,16 @@ function writeProject(projectRoot: string) {
       figmaExport: true,
       axureExport: true,
       localExports: { html: true, make: false },
+    },
+    resourceWriteTargets: {
+      prototypes: {
+        type: 'project-relative-path',
+        path: 'src/prototypes',
+      },
+      media: {
+        type: 'project-relative-path',
+        path: 'src/media',
+      },
     },
   });
 }
@@ -340,6 +357,9 @@ describe('cloud publishing API', () => {
             prefix: 'home',
             baseUrl: 'https://cdn.example.com/home/',
           },
+          publishSettings: {
+            includeSource: false,
+          },
         }),
       });
       expect(saveResponse.status).toBe(200);
@@ -369,6 +389,72 @@ describe('cloud publishing API', () => {
         prefix: 'home',
         baseUrl: 'https://cdn.example.com/home/',
       });
+      expect(config.targets.publishSettings).toMatchObject({
+        includeSource: false,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('defaults cloud publishing to exclude source files from published static assets', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeFile(path.join(projectRoot, 'src/prototypes/home/components/Card.tsx'), 'export function Card() { return null; }\n');
+    writeCloudConfig(projectRoot, {
+      vercel: { token: 'vercel-token', projectName: 'axhub-home' },
+    });
+    const fetchMock = mockExternalFetch(() => jsonResponse({
+      url: 'axhub-home.vercel.app',
+    }));
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'vercel', path: 'prototypes/home' }),
+      });
+
+      expect(response.status).toBe(200);
+      const [, requestInit] = fetchMock.mock.calls.find(([requestUrl]) => String(requestUrl).includes('api.vercel.com')) || [];
+      const payload = JSON.parse(String(requestInit?.body));
+      expect(payload.files.map((file: any) => file.file)).not.toEqual(expect.arrayContaining([
+        'source/index.tsx',
+        'source/components/Card.tsx',
+      ]));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('can enable source files for cloud publishing', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeFile(path.join(projectRoot, 'src/prototypes/home/components/Card.tsx'), 'export function Card() { return null; }\n');
+    writeCloudConfig(projectRoot, {
+      vercel: { token: 'vercel-token', projectName: 'axhub-home' },
+      publishSettings: { includeSource: true },
+    });
+    const fetchMock = mockExternalFetch(() => jsonResponse({
+      url: 'axhub-home.vercel.app',
+    }));
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'vercel', path: 'prototypes/home' }),
+      });
+
+      expect(response.status).toBe(200);
+      const [, requestInit] = fetchMock.mock.calls.find(([requestUrl]) => String(requestUrl).includes('api.vercel.com')) || [];
+      const payload = JSON.parse(String(requestInit?.body));
+      expect(payload.files.map((file: any) => file.file)).toEqual(expect.arrayContaining([
+        'source/index.tsx',
+        'source/components/Card.tsx',
+      ]));
     } finally {
       await server.close();
     }
