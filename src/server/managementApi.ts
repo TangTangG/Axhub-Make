@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -11,6 +10,7 @@ import {
   getConfigPath,
   getProjectMetadataPath,
   isPathInside,
+  readMakeClientMarker,
   readServerInfo,
   resolveProjectPath,
   type ProjectMetadata,
@@ -58,6 +58,7 @@ import { handleMediaApi } from './mediaApi.ts';
 import { handleQuickEditRuntimeApi } from './quickEditRuntimeApi.ts';
 import { hasFigmaMakeArtifactCapability } from './exportMakeArtifacts.ts';
 import { getCanvasBridgeHub } from './canvasBridge.ts';
+import { selectLocalDirectory } from './localDirectoryPicker.ts';
 
 export interface ManagementApiOptions {
   projectRoot: string;
@@ -274,6 +275,10 @@ function updateRegisteredProjectTitle(options: ManagementApiOptions, project: Re
 function ensureDefaultRegisteredProject(options: ManagementApiOptions) {
   const registry = getProjectRegistryForRequest(options);
   const current = registry.getRegistry();
+  const marker = readMakeClientMarker(options.projectRoot);
+  if (!marker) {
+    return current;
+  }
   let identity: { id: string; name: string };
   let metadataPath: string;
   try {
@@ -527,26 +532,6 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function selectLocalProjectRoot(): Promise<string | null> {
-  if (process.platform !== 'darwin') {
-    return Promise.reject(new Error('Local project picker is only available on macOS in this build'));
-  }
-
-  return new Promise((resolve, reject) => {
-    execFile('osascript', [
-      '-e',
-      'try\nPOSIX path of (choose folder with prompt "选择 Axhub 项目目录")\non error number -128\nreturn ""\nend try',
-    ], { timeout: 120000 }, (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      const selectedPath = stdout.trim();
-      resolve(selectedPath ? path.resolve(selectedPath) : null);
-    });
-  });
-}
-
 function getLocalProjectPickerPrompt(kind: string): string {
   if (kind === 'parent') {
     return '选择新建 Make 项目的父目录';
@@ -555,23 +540,7 @@ function getLocalProjectPickerPrompt(kind: string): string {
 }
 
 function selectLocalProjectRootForKind(kind: string): Promise<string | null> {
-  if (process.platform !== 'darwin') {
-    return Promise.reject(new Error('Local project picker is only available on macOS in this build'));
-  }
-
-  return new Promise((resolve, reject) => {
-    execFile('osascript', [
-      '-e',
-      `try\nPOSIX path of (choose folder with prompt "${getLocalProjectPickerPrompt(kind).replace(/"/g, '\\"')}")\non error number -128\nreturn ""\nend try`,
-    ], { timeout: 120000 }, (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      const selectedPath = stdout.trim();
-      resolve(selectedPath ? path.resolve(selectedPath) : null);
-    });
-  });
+  return selectLocalDirectory({ prompt: getLocalProjectPickerPrompt(kind) });
 }
 
 function handleProjectApi(req: IncomingMessage, res: ServerResponse, options: ManagementApiOptions, pathname: string): boolean {
@@ -902,6 +871,12 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     encodeUrlPathSegments,
   })) {
     return true;
+  }
+
+  const registry = getProjectRegistryForRequest(options);
+  const hasRequestProject = Boolean(url.searchParams.get('projectId') || registry.getActiveProject());
+  if (!hasRequestProject && !pathname.startsWith('/api/')) {
+    return false;
   }
 
   const requestContext = getRequestProjectContext(req, res, options);

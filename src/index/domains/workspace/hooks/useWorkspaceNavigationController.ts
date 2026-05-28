@@ -405,20 +405,15 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         }
     }, [activeProjectId, loadProjects, probeProjectRuntimeStatus]);
 
-    const addProjectFromLocalPath = useCallback(async () => {
-        const pickerResponse = await fetch('/api/projects/select-root?kind=existing', { method: 'POST' });
-        const pickerPayload = await pickerResponse.json().catch(() => null);
-        if (!pickerResponse.ok) {
-            throw new Error(pickerPayload?.error || '无法打开本地目录选择器');
-        }
-        const root = typeof pickerPayload?.root === 'string' ? pickerPayload.root.trim() : '';
-        if (!root) {
+    const addProjectFromLocalPath = useCallback(async (root: string) => {
+        const normalizedRoot = root.trim();
+        if (!normalizedRoot) {
             return false;
         }
         const createResponse = await fetch('/api/projects/make/register-existing', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ root }),
+            body: JSON.stringify({ root: normalizedRoot }),
         });
         const createPayload = await createResponse.json().catch(() => null);
         if (!createResponse.ok) {
@@ -431,16 +426,6 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         await switchProject(projectId);
         return true;
     }, [switchProject]);
-
-    const selectMakeProjectParentFolder = useCallback(async (): Promise<string | null> => {
-        const pickerResponse = await fetch('/api/projects/select-root?kind=parent', { method: 'POST' });
-        const pickerPayload = await pickerResponse.json().catch(() => null);
-        if (!pickerResponse.ok) {
-            throw new Error(pickerPayload?.error || '无法打开本地目录选择器');
-        }
-        const root = typeof pickerPayload?.root === 'string' ? pickerPayload.root.trim() : '';
-        return root || null;
-    }, []);
 
     const createBlankMakeProject = useCallback(async (params: {
         parentRoot: string;
@@ -713,7 +698,6 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         switchProject,
         deleteProject,
         addProjectFromLocalPath,
-        selectMakeProjectParentFolder,
         createBlankMakeProject,
         reloadSidebarAssets,
         reloadDocsItems,

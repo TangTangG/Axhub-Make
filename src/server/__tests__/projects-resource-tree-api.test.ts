@@ -28,6 +28,7 @@ import {
   writeJson,
   writeProjectMetadata,
 } from './projects-api.helpers';
+import { getMakeClientMarkerPath } from '../projectCore/index.ts';
 import { buildSystemOpenCommand } from '../managementApi.workspace.ts';
 
 afterEach(() => {
@@ -35,7 +36,17 @@ afterEach(() => {
   cleanupProjectApiTestRoots();
 });
 
+function writeMakeClientMarkerForProject(projectRoot: string, id: string, name: string) {
+  writeJson(getMakeClientMarkerPath(projectRoot), {
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: { id, name },
+  });
+}
+
 function writeResourceProject(projectRoot: string) {
+  writeMakeClientMarkerForProject(projectRoot, 'resource-tree-client', 'Resource Tree Client');
   writeProjectMetadata(projectRoot, {
     project: { id: 'resource-tree-client', name: 'Resource Tree Client' },
     resources: {
@@ -114,6 +125,29 @@ describe('make-server resource sidebar filesystem tree API', () => {
         }),
       ]);
       expect(JSON.stringify(body.tree)).not.toContain('README.md');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('generates stable unique ids for non-ASCII resource paths', async () => {
+    const projectRoot = createTempRoot();
+    writeResourceProject(projectRoot);
+    fs.mkdirSync(path.join(projectRoot, 'content/resources'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'content/resources/原型.md'), '# Prototype\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'content/resources/资源.md'), '# Resources\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'content/resources/设计.md'), '# Design\n', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const response = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`);
+      const body = await response.json();
+
+      const ids = body.tree.map((node: { id: string }) => node.id);
+      expect(response.status).toBe(200);
+      expect(ids).toHaveLength(3);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ids.every((id: string) => /^[a-zA-Z0-9_-]+$/u.test(id))).toBe(true);
     } finally {
       await server.close();
     }
@@ -446,6 +480,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
 
   it('updates workspace project titles, allows empty titles, and validates invalid title payloads', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'workspace-title-client', 'Workspace Title Client');
     writeProjectMetadata(projectRoot, {
       project: { id: 'workspace-title-client', name: 'Workspace Title Client' },
     });
@@ -520,6 +555,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
 
   it('maintains non-resource sidebar folders and validates non-resource navigation payloads', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'workspace-canvas-tree-client', 'Workspace Canvas Tree Client');
     writeProjectMetadata(projectRoot, {
       project: { id: 'workspace-canvas-tree-client', name: 'Workspace Canvas Tree Client' },
     });
@@ -661,6 +697,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
 
   it('reconciles cached prototype navigation with the filesystem scan', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'prototype-tree-client', 'Prototype Tree Client');
     writeProjectMetadata(projectRoot, {
       project: { id: 'prototype-tree-client', name: 'Prototype Tree Client' },
       resources: {
@@ -728,6 +765,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
 
   it('keeps metadata-only prototype navigation when no local prototype root is declared or present', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'metadata-only-tree-client', 'Metadata Only Tree Client');
     writeProjectMetadata(projectRoot, {
       project: { id: 'metadata-only-tree-client', name: 'Metadata Only Tree Client' },
       resources: {
@@ -781,6 +819,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
 
   it('reconciles workspace resource order for data, templates, and themes', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'workspace-order-client', 'Workspace Order Client');
     writeProjectMetadata(projectRoot, {
       project: { id: 'workspace-order-client', name: 'Workspace Order Client' },
       resources: {

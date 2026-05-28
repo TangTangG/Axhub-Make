@@ -8,6 +8,7 @@ export interface LocalCommandOptions {
   timeoutMs?: number;
   maxBuffer?: number;
   preferLocal?: boolean;
+  windowsHide?: boolean;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   execPath?: string;
@@ -28,6 +29,7 @@ export type LocalCommandExecutor = (
 ) => Promise<{ stdout?: unknown; stderr?: unknown; escapedCommand?: string }>;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_FORCE_KILL_AFTER_DELAY_MS = 5_000;
 const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
 const POSIX_GUI_PATHS = [
   '/opt/homebrew/bin',
@@ -164,8 +166,9 @@ export async function runLocalCommand(
       env: options.env,
     }),
     shell: false,
-    windowsHide: true,
+    windowsHide: options.windowsHide ?? true,
     timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    forceKillAfterDelay: DEFAULT_FORCE_KILL_AFTER_DELAY_MS,
     maxBuffer: options.maxBuffer ?? DEFAULT_MAX_BUFFER,
     reject: true,
     preferLocal: options.preferLocal,

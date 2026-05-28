@@ -263,6 +263,9 @@ export interface CloudPublishingConfigPayload {
         branch?: string;
         sourceDirectory?: string;
     };
+    publishSettings?: {
+        includeSource?: boolean;
+    };
 }
 
 type CloudPublishingConfigured<T extends object> = T & {
@@ -276,6 +279,7 @@ export interface CloudPublishingConfigResponse {
         cloudflarePages: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['cloudflarePages']>>;
         s3: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['s3']>>;
         githubPages: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['githubPages']>>;
+        publishSettings: NonNullable<CloudPublishingConfigPayload['publishSettings']>;
     };
 }
 

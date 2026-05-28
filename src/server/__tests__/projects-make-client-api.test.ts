@@ -1040,6 +1040,72 @@ describe('make-server make client project APIs', () => {
     }
   });
 
+  it('uses a long timeout for make client dependency installation', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-install-timeout-');
+    writeMakeClientMarker(projectRoot, 'install-timeout-client', 'Install Timeout Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'install-timeout-client', 'Install Timeout Client');
+    runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'pnpm' && args[0] === 'install') {
+        throw Object.assign(new Error('pnpm registry unavailable'), {
+          stderr: 'pnpm registry unavailable',
+        });
+      }
+      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+        writeInstalledMakeClientDependencies(projectRoot);
+      }
+      return localCommandResult(command, args);
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51731,
+        host: 'localhost',
+        origin: 'http://localhost:51731',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/install-timeout-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      expect(ensureResponse.status).toBe(200);
+
+      const installTimeouts = runLocalCommandMock.mock.calls
+        .filter(([, args]) => args[0] === 'install')
+        .map(([, , options]) => Number((options as any)?.timeoutMs));
+      expect(installTimeouts).toHaveLength(2);
+      expect(installTimeouts).toEqual([600_000, 600_000]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('starts with local vite when dependencies are installed but pnpm is unavailable', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
@@ -1255,6 +1321,30 @@ describe('make-server make client project APIs', () => {
         code: 'NOT_MAKE_CLIENT_PROJECT',
         root: metadataOnlyRoot,
       });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects dot-segment make client project ids', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-dot-id-');
+    writeMakeClientMarker(projectRoot, '.', 'Dot Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, '.', 'Dot Client');
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body).toMatchObject({ code: 'NOT_MAKE_CLIENT_PROJECT' });
     } finally {
       await server.close();
     }
@@ -1506,14 +1596,14 @@ describe('make-server make client project APIs', () => {
         }),
       });
       const body = await response.json();
-      const targetRoot = path.join(parentRoot, 'sales-demo');
+      const targetRoot = path.join(parentRoot, 'Sales Demo');
 
       expect(response.status).toBe(201);
       expect(body).toMatchObject({
         success: true,
         phase: 'ready',
         project: {
-          id: 'sales-demo',
+          id: 'Sales Demo',
           name: 'Sales Demo',
           root: targetRoot,
         },
@@ -1540,7 +1630,7 @@ describe('make-server make client project APIs', () => {
       expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(targetRoot), 'utf8'))).toMatchObject({
         repository: TEMPLATE_SOURCE_URL,
         project: {
-          id: 'sales-demo',
+          id: 'Sales Demo',
           name: 'Sales Demo',
         },
       });
@@ -1630,11 +1720,11 @@ describe('make-server make client project APIs', () => {
         }),
       });
       const body = await response.json();
-      const targetRoot = path.join(parentRoot, 'mirror-demo');
+      const targetRoot = path.join(parentRoot, 'Mirror Demo');
 
       expect(response.status).toBe(201);
       expect(body.project).toMatchObject({
-        id: 'mirror-demo',
+        id: 'Mirror Demo',
         name: 'Mirror Demo',
         root: targetRoot,
       });
@@ -1642,7 +1732,7 @@ describe('make-server make client project APIs', () => {
       expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(targetRoot), 'utf8'))).toMatchObject({
         repository: TEMPLATE_MIRROR_SOURCE_URL,
         project: {
-          id: 'mirror-demo',
+          id: 'Mirror Demo',
           name: 'Mirror Demo',
         },
       });
@@ -1656,6 +1746,60 @@ describe('make-server make client project APIs', () => {
         expect.arrayContaining(['clone', TEMPLATE_MIRROR_GIT_URL, expect.any(String)]),
         expect.objectContaining({ cwd: expect.any(String) }),
       );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('uses a long timeout for remote template clone and sparse checkout commands', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const parentRoot = createTempRoot('axhub-make-parent-');
+    const server = await startTestServer(defaultRoot);
+
+    installRemoteTemplateCommandMock({
+      failPrimary: true,
+      metadataId: 'template-timeout-demo',
+      metadataName: 'Template Timeout Demo',
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51732,
+        host: 'localhost',
+        origin: 'http://localhost:51732',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/projects/make/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRoot,
+          folderName: 'Template Timeout Demo',
+          projectName: 'Template Timeout Demo',
+        }),
+      });
+
+      expect(response.status).toBe(201);
+      const templateTimeouts = runLocalCommandMock.mock.calls
+        .filter(([command, args]) => command === 'git' && (args[0] === 'clone' || args.includes('sparse-checkout')))
+        .map(([, , options]) => Number((options as any)?.timeoutMs));
+      expect(templateTimeouts).toEqual([180_000, 180_000, 180_000]);
     } finally {
       await server.close();
     }
@@ -1706,14 +1850,14 @@ describe('make-server make client project APIs', () => {
         }),
       });
       const body = await response.json();
-      const targetRoot = path.join(parentRoot, 'owned-template');
+      const targetRoot = path.join(parentRoot, 'Owned Template');
 
       expect(response.status).toBe(201);
       expect(body).toMatchObject({
         success: true,
         phase: 'ready',
         project: {
-          id: 'owned-template',
+          id: 'Owned Template',
           root: targetRoot,
         },
       });
@@ -1721,8 +1865,150 @@ describe('make-server make client project APIs', () => {
       expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(targetRoot), 'utf8'))).toMatchObject({
         repository: TEMPLATE_SOURCE_URL,
         project: {
-          id: 'owned-template',
+          id: 'Owned Template',
           name: 'Owned Template',
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('preserves an explicitly blank project name when creating a blank make client project', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const parentRoot = createTempRoot('axhub-make-parent-');
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startTestServer(defaultRoot, registryHome);
+
+    installRemoteTemplateCommandMock({
+      metadataId: 'untitled-client',
+      metadataName: '',
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeMakeClientMetadata(targetRoot, 'untitled-client', '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51724,
+        host: 'localhost',
+        origin: 'http://localhost:51724',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/projects/make/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRoot,
+          folderName: 'Untitled Client',
+          projectName: '',
+        }),
+      });
+      const body = await response.json();
+      const targetRoot = path.join(parentRoot, 'Untitled Client');
+
+      expect(response.status).toBe(201);
+      expect(body).toMatchObject({
+        success: true,
+        project: {
+          id: 'Untitled Client',
+          name: '',
+          root: targetRoot,
+        },
+        marker: {
+          project: {
+            id: 'Untitled Client',
+            name: '',
+          },
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('creates a blank make client project in a real Chinese folder without ASCII slugging', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const parentRoot = createTempRoot('axhub-make-parent-中文-');
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startTestServer(defaultRoot, registryHome);
+
+    installRemoteTemplateCommandMock({
+      metadataId: '中文项目',
+      metadataName: '中文项目',
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeMakeClientMetadata(targetRoot, '中文项目', '中文项目');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51725,
+        host: 'localhost',
+        origin: 'http://localhost:51725',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/projects/make/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRoot,
+          folderName: '中文项目',
+          projectName: '中文项目',
+        }),
+      });
+      const body = await response.json();
+      const targetRoot = path.join(parentRoot, '中文项目');
+
+      expect(response.status).toBe(201);
+      expect(body).toMatchObject({
+        success: true,
+        project: {
+          id: '中文项目',
+          name: '中文项目',
+          root: targetRoot,
+        },
+        marker: {
+          project: {
+            id: '中文项目',
+            name: '中文项目',
+          },
+        },
+      });
+      expect(fs.existsSync(path.join(parentRoot, '中文项目'))).toBe(true);
+      expect(fs.existsSync(path.join(parentRoot, 'make-project'))).toBe(false);
+      expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(targetRoot), 'utf8'))).toMatchObject({
+        project: {
+          id: '中文项目',
+          name: '中文项目',
         },
       });
     } finally {
@@ -1806,7 +2092,7 @@ describe('make-server make client project APIs', () => {
     }
   });
 
-  it('keeps the previous active project when dev ensure fails', async () => {
+  it('keeps the requested project active when dev ensure fails', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot, {
       project: { id: 'default-client', name: 'Default Client' },
@@ -1848,7 +2134,7 @@ describe('make-server make client project APIs', () => {
       expect(ensureBody).toMatchObject({ code: 'MAKE_CLIENT_DEV_TIMEOUT' });
 
       const active = await fetch(`${server.origin}/api/projects/active`).then((response) => response.json());
-      expect(active.id).toBe('default-client');
+      expect(active.id).toBe('timeout-client');
     } finally {
       await server.close();
     }

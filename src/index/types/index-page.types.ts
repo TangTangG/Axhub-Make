@@ -204,8 +204,7 @@ export interface NewSidebarActions {
     onProjectSwitch: (projectId: string) => void | Promise<void>;
     onProjectDelete: (projectId: string) => void | Promise<void>;
     onProjectStop: (projectId: string) => void | Promise<void>;
-    onAddProject: () => boolean | void | Promise<boolean | void>;
-    onSelectMakeProjectParentFolder: () => Promise<string | null>;
+    onAddProject: (root: string) => boolean | void | Promise<boolean | void>;
     onCreateBlankMakeProject: (params: {
         parentRoot: string;
         folderName: string;

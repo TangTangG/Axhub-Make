@@ -63,6 +63,17 @@ describe('localCommand', () => {
       });
   });
 
+  it('forcefully kills commands soon after their timeout elapses', async () => {
+    const executor = vi.fn(async () => ({ stdout: 'ok', stderr: '' }));
+
+    await runLocalCommand('slow-bin', ['--wait'], { executor, timeoutMs: 25 });
+
+    expect(executor).toHaveBeenCalledWith('slow-bin', ['--wait'], expect.objectContaining({
+      timeout: 25,
+      forceKillAfterDelay: 5_000,
+    }));
+  });
+
   it('passes preferLocal and localDirectory through to execa', async () => {
     const executor = vi.fn(async () => ({ stdout: 'ok', stderr: '' }));
     const cwd = path.join('/tmp', 'project');
@@ -74,6 +85,21 @@ describe('localCommand', () => {
       preferLocal: true,
       localDir: cwd,
       shell: false,
+    }));
+  });
+
+  it('allows GUI commands to show Windows child process windows', async () => {
+    const executor = vi.fn(async () => ({ stdout: 'ok', stderr: '' }));
+
+    await runLocalCommand('powershell.exe', ['-Command', 'Write-Output ok'], {
+      platform: 'win32',
+      windowsHide: false,
+      executor,
+    });
+
+    expect(executor).toHaveBeenCalledWith('powershell.exe', ['-Command', 'Write-Output ok'], expect.objectContaining({
+      shell: false,
+      windowsHide: false,
     }));
   });
 

@@ -20,6 +20,9 @@ import {
 } from './makeClientProject.ts';
 
 interface MakeClientProjectRegistry {
+  getRegistry?: () => {
+    activeProjectId?: string | null;
+  };
   setActiveProject(projectId: string): void;
 }
 
@@ -57,6 +60,7 @@ export function handleMakeClientProjectApi(
       }
       try {
         const marker = validateExistingMakeClientProject(root);
+        const previousActiveProjectId = registry.getRegistry?.().activeProjectId ?? null;
         const dev = body?.ensureDev
           ? await ensureMakeClientDevServer(root, {
             adminServerInfo: options.serverInfo,
@@ -70,6 +74,11 @@ export function handleMakeClientProjectApi(
           root,
           metadataPath: getProjectMetadataPath(root),
         });
+        if (dev) {
+          registry.setActiveProject(project.id);
+        } else if (previousActiveProjectId) {
+          registry.setActiveProject(previousActiveProjectId);
+        }
         sendJson(res, {
           success: true,
           project: handlers.toProjectEntry(project),

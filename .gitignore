@@ -41,6 +41,8 @@ vite.config.*.timestamp-*
 **/.trae/
 .codex/
 **/.codex/
+.workbuddy/
+**/.workbuddy/
 .cache/
 **/.cache/
 temp/

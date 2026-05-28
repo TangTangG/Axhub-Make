@@ -112,6 +112,8 @@ export const MAKE_CLIENT_TEMPLATE_SOURCES = [
 ] as const;
 const SKIP_AUTO_START_SERVER_ENV = 'AXHUB_MAKE_SKIP_AUTO_START_SERVER';
 const MAKE_CLIENT_RUNTIME_HEARTBEAT_MAX_AGE_MS = 15_000;
+const DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS = 3 * 60_000;
+const DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAKE_CLIENT_DEV_TIMEOUT_MS = 60_000;
 const DEFAULT_MAKE_CLIENT_DEV_POLL_INTERVAL_MS = 250;
 const DEFAULT_MAKE_CLIENT_DEV_PORT = 51720;
@@ -153,10 +155,14 @@ export function slugifyMakeClientFolderName(input: string): string {
   return String(input || '')
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, '-')
+    .replace(/[<>:"|?*\u0000-\u001f/\\]+/gu, '-')
+    .replace(/\s+/gu, '-')
+    .replace(/[.-]+$/gu, '')
     .replace(/^-+|-+$/gu, '')
     .slice(0, 80);
 }
+
+const WINDOWS_RESERVED_FOLDER_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
 
 export function assertSafeMakeClientFolderName(input: string): string {
   const raw = String(input || '').trim();
@@ -164,11 +170,13 @@ export function assertSafeMakeClientFolderName(input: string): string {
     !raw
     || raw === '.'
     || raw === '..'
-    || raw.includes('..')
     || raw.includes('/')
     || raw.includes('\\')
     || path.isAbsolute(raw)
     || /^[a-z]:/iu.test(raw)
+    || /[<>:"|?*\u0000-\u001f]/u.test(raw)
+    || /[ .]$/u.test(String(input || ''))
+    || WINDOWS_RESERVED_FOLDER_NAMES.test(raw)
   ) {
     throw new MakeClientProjectError(
       'INVALID_MAKE_PROJECT_FOLDER_NAME',
@@ -176,15 +184,7 @@ export function assertSafeMakeClientFolderName(input: string): string {
       { status: 400 },
     );
   }
-  const folderName = slugifyMakeClientFolderName(input);
-  if (!folderName || folderName === '.' || folderName === '..' || folderName.includes('/')) {
-    throw new MakeClientProjectError(
-      'INVALID_MAKE_PROJECT_FOLDER_NAME',
-      'Invalid Make project folder name',
-      { status: 400 },
-    );
-  }
-  return folderName;
+  return raw.slice(0, 80);
 }
 
 async function runMakeClientCommand(
@@ -193,10 +193,15 @@ async function runMakeClientCommand(
   args: string[],
   cwd: string,
   phase: MakeClientPhase,
+  options: { timeoutMs?: number } = {},
 ): Promise<void> {
   const runCommand = runner.runCommand || runLocalCommand;
   try {
-    await runCommand(command, args, { cwd, maxBuffer: 1024 * 1024 * 20 });
+    await runCommand(command, args, {
+      cwd,
+      maxBuffer: 1024 * 1024 * 20,
+      ...(typeof options.timeoutMs === 'number' ? { timeoutMs: options.timeoutMs } : {}),
+    });
   } catch (error: any) {
     const output = String(error?.stderr || error?.stdout || error?.message || '').trim();
     const errorCode = String(error?.code || '');
@@ -323,11 +328,15 @@ async function ensureMakeClientDependencies(
   }
 
   try {
-    await runMakeClientCommand(runner, 'pnpm', ['install'], projectRoot, 'install');
+    await runMakeClientCommand(runner, 'pnpm', ['install'], projectRoot, 'install', {
+      timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
+    });
     return 'pnpm';
   } catch (pnpmError) {
     try {
-      await runMakeClientCommand(runner, npmCommand(), ['install'], projectRoot, 'install');
+      await runMakeClientCommand(runner, npmCommand(), ['install'], projectRoot, 'install', {
+        timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
+      });
       return 'npm';
     } catch (npmError) {
       throw new MakeClientProjectError(
@@ -407,12 +416,12 @@ async function fetchMakeClientTemplateFromRemote(
         ], {
           cwd: tempParent,
           maxBuffer: 1024 * 1024 * 20,
-          timeoutMs: 30_000,
+          timeoutMs: DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS,
         });
         await runCommand('git', ['sparse-checkout', 'set', MAKE_CLIENT_TEMPLATE_PATH], {
           cwd: checkoutRoot,
           maxBuffer: 1024 * 1024 * 20,
-          timeoutMs: 30_000,
+          timeoutMs: DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS,
         });
         const sourceRoot = path.join(checkoutRoot, MAKE_CLIENT_TEMPLATE_PATH);
         copyMakeClientTemplateDirectory(sourceRoot, targetRoot);

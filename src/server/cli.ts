@@ -50,6 +50,36 @@ export function openBrowser(url: string, platform = process.platform): void {
   }
 }
 
+function isPortInUseError(error: unknown): error is NodeJS.ErrnoException & { port?: unknown; address?: unknown } {
+  return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'EADDRINUSE';
+}
+
+function resolveVisitUrlHost(host: string): string {
+  const normalized = host.trim();
+  if (!normalized || normalized === '0.0.0.0' || normalized === '::') {
+    return 'localhost';
+  }
+  return normalized.includes(':') && !normalized.startsWith('[') ? `[${normalized}]` : normalized;
+}
+
+function resolvePortInUsePort(error: { port?: unknown }, fallbackPort: number): number {
+  const parsed = Number(error.port);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : fallbackPort;
+}
+
+export function formatPortInUseMessage(error: NodeJS.ErrnoException & { port?: unknown; address?: unknown }, options: MakeServerCliOptions): string {
+  const port = resolvePortInUsePort(error, options.port);
+  const visitHost = resolveVisitUrlHost(String(error.address || options.host || 'localhost'));
+  const url = `http://${visitHost}:${port}`;
+  return [
+    `Axhub Make 启动失败：端口 ${port} 已经被占用了。`,
+    '',
+    `你可以先在浏览器里访问：${url}`,
+    '如果看到的是 Axhub Make 首页，说明服务可能已经在运行，可以直接使用这个页面。',
+    `如果打开的不是 Axhub Make 首页，请先关闭占用 ${port} 端口的应用，然后重新启动 Axhub Make。`,
+  ].join('\n');
+}
+
 function readOptionValue(args: string[], index: number, optionName: string): string {
   const value = args[index + 1];
   if (!value || value.startsWith('--')) {
@@ -138,7 +168,17 @@ export async function runCli(args = process.argv.slice(2)): Promise<void> {
     console.log(CLI_USAGE.trimEnd());
     return;
   }
-  const server = await startMakeServer(options);
+  let server: Awaited<ReturnType<typeof startMakeServer>>;
+  try {
+    server = await startMakeServer(options);
+  } catch (error) {
+    if (isPortInUseError(error)) {
+      console.error(formatPortInUseMessage(error, options));
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
   if (options.devMode) {
     console.log(`Axhub Make dev server (Vite HMR) at ${server.origin}`);
   } else {

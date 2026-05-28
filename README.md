@@ -25,6 +25,18 @@ npx -y @axhub/make@latest
 
 启动后会自动打开管理页面。如果没有打开，复制终端里显示的地址到浏览器。
 
+## 发布后的使用方式
+
+发布到 npm 后，用户不需要手动 clone 本仓库；在项目目录里执行 `npx -y @axhub/make@latest` 就会启动 Axhub Make 管理服务器。
+
+当用户在管理页面里创建原型项目时，Make 会从 GitHub 拉取官方客户端模板代码：
+
+```text
+https://github.com/lintendo/Axhub-Make/tree/main/client
+```
+
+拉取完成后，本地会生成一个可运行的 Make Client 项目，用来承载后续创建的原型、主题、项目资料和预览运行时。
+
 ## 让 AI 帮你启动
 
 把下面这段发给你的 AI Agent，让它帮你检查环境、启动 Make，并创建一个以后可以直接双击运行的桌面脚本：
@@ -79,4 +91,4 @@ npx -y @axhub/make@latest
 
 如果你已经加入过 Axhub 其他用户群，不需要重复添加。
 
-![Axhub Make 用户群二维码](assets/images/axhub-make-user-group-qrcode.png)
+<img src="assets/images/axhub-make-user-group-qrcode.png" alt="Axhub Make 用户群二维码" width="240" />

@@ -12,6 +12,7 @@ const MAKE_CLIENT_ERROR_MESSAGES: Record<string, string> = {
 
 const MAKE_CLIENT_PHASE_LABELS: Record<string, string> = {
     clone: '获取源码',
+    template: '获取源码',
     install: '安装依赖',
     metadata: '生成项目清单',
     dev: '启动客户端',
