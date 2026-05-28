@@ -12,6 +12,16 @@ import { DEFAULT_MAKE_SERVER_PORT } from './src/server/defaults';
 import { releaseListeningProcessesOnPort } from './src/server/portOccupancy';
 
 const adminOutDir = path.resolve(__dirname, 'dist/admin');
+const ADMIN_RUNTIME_ASSETS = [
+  {
+    source: 'assets/auto-debug-client.js',
+    destination: 'auto-debug-client.js',
+  },
+  {
+    source: 'assets/images/favicon.ico',
+    destination: 'assets/favicon.ico',
+  },
+];
 
 function discoverEntries() {
   const srcDir = path.resolve(__dirname, 'src');
@@ -63,19 +73,6 @@ function createVendorResolveAliases() {
   });
 }
 
-function copyDirRecursive(src: string, dest: string) {
-  fs.mkdirSync(dest, { recursive: true });
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
-    } else {
-      fs.copyFileSync(srcPath, destPath);
-    }
-  }
-}
-
 function copyHtmlTemplatePlugin(name: string, sourceRelativePath: string, outputFileName: string) {
   return {
     name,
@@ -96,11 +93,15 @@ function copyAssetsPlugin() {
   return {
     name: 'copy-assets',
     closeBundle() {
-      const srcDir = path.resolve(__dirname, 'assets');
-      if (!fs.existsSync(srcDir)) {
-        return;
+      for (const asset of ADMIN_RUNTIME_ASSETS) {
+        const srcPath = path.resolve(__dirname, asset.source);
+        if (!fs.existsSync(srcPath)) {
+          continue;
+        }
+        const destPath = path.resolve(adminOutDir, asset.destination);
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+        fs.copyFileSync(srcPath, destPath);
       }
-      copyDirRecursive(srcDir, adminOutDir);
     },
   };
 }

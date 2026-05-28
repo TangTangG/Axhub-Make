@@ -67,6 +67,14 @@ describe('release make artifact helpers', () => {
     assert.doesNotMatch(releaseSource, /packages\/axhub-export-core\/scripts\/canvas-fig-sync\.mjs/u);
   });
 
+  it('copies only explicit admin runtime assets into the admin build', () => {
+    const viteConfigSource = fs.readFileSync(path.resolve('vite.config.ts'), 'utf8');
+
+    assert.match(viteConfigSource, /ADMIN_RUNTIME_ASSETS/u);
+    assert.match(viteConfigSource, /assets\/auto-debug-client\.js/u);
+    assert.doesNotMatch(viteConfigSource, /copyDirRecursive\(srcDir, adminOutDir\)/u);
+  });
+
   it('builds only the admin app when preparing npm release artifacts', () => {
     const releaseSource = fs.readFileSync(path.resolve('scripts/release-make.mjs'), 'utf8');
 
@@ -104,7 +112,8 @@ describe('release make artifact helpers', () => {
       make: './bin/cli.mjs',
       'make-server': './bin/cli.mjs',
     });
-    assert(packageJson.files.includes('assets'));
+    assert.equal(packageJson.files.includes('assets'), false);
+    assert.equal(packageJson.files.includes('README.md'), false);
     assert.deepEqual(packageJson.engines, { node: '>=20' });
     assert.deepEqual(packageJson.publishConfig, { access: 'public' });
     for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
@@ -129,9 +138,8 @@ describe('release make artifact helpers', () => {
         { path: 'bin/cli.mjs', size: 180, mode: 0o755 },
         { path: 'dist/server/cli.mjs', size: 1000, mode: 0o644 },
         { path: 'dist/admin/index.html', size: 100, mode: 0o644 },
-        { path: 'assets/images/make-demo-prd-annotation.png', size: 100, mode: 0o644 },
-        { path: 'assets/images/make-demo-empty-prototype.png', size: 100, mode: 0o644 },
-        { path: 'assets/images/make-demo-design-system.png', size: 100, mode: 0o644 },
+        { path: 'dist/admin/assets/favicon.ico', size: 100, mode: 0o644 },
+        { path: 'dist/admin/auto-debug-client.js', size: 100, mode: 0o644 },
         { path: 'scripts/canvas-fig-sync.mjs', size: 100, mode: 0o755 },
       ],
     };
@@ -173,6 +181,10 @@ describe('release make artifact helpers', () => {
       '.local/notes.md',
       'dist/server/tsconfig.node.tsbuildinfo',
       'dist/server/vite.config.ts.timestamp-123456.mjs',
+      'README.md',
+      'assets/auto-debug-client.js',
+      'assets/images/make-demo-prd-annotation.png',
+      'dist/admin/images/make-demo-prd-annotation.png',
     ]) {
       assert.throws(
         () => releaseMake.assertNpmPackageShape({
