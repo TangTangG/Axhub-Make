@@ -67,6 +67,13 @@ describe('release make artifact helpers', () => {
     assert.doesNotMatch(releaseSource, /packages\/axhub-export-core\/scripts\/canvas-fig-sync\.mjs/u);
   });
 
+  it('builds only the admin app when preparing npm release artifacts', () => {
+    const releaseSource = fs.readFileSync(path.resolve('scripts/release-make.mjs'), 'utf8');
+
+    assert.match(releaseSource, /run\('pnpm', \['--filter', '@axhub\/make', 'admin:build'\]\)/u);
+    assert.doesNotMatch(releaseSource, /run\('pnpm', \['--filter', '@axhub\/make', 'build'\]\)/u);
+  });
+
   it('keeps Vite build tooling out of the static npm server bundle graph', () => {
     const onDemandBuildSource = fs.readFileSync(path.resolve('src/server/onDemandBuild.ts'), 'utf8');
     const viteDevServerSource = fs.readFileSync(path.resolve('src/server/viteDevServer.ts'), 'utf8');

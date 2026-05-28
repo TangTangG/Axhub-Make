@@ -557,7 +557,7 @@ function prepareRelease() {
   run('pnpm', ['--filter', '@axhub/make', 'server:build']);
 
   logStep('Building admin UI');
-  run('pnpm', ['--filter', '@axhub/make', 'build']);
+  run('pnpm', ['--filter', '@axhub/make', 'admin:build']);
 
   const builtAdminDir = path.join(makeServerRoot, 'dist/admin');
   if (!fs.existsSync(path.join(builtAdminDir, 'index.html'))) {
