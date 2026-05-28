@@ -1,4 +1,4 @@
-import type { AnnotationEntryMode } from './selection-ui-mode';
+import type { CommentEntryMode } from './selection-ui-mode';
 import type { WebEditorDesignAdjustmentTool } from '../core/editor/ui-settings';
 
 export type ExportSelectionToDesignToolHandler = (
@@ -13,7 +13,7 @@ export function getDesignToolExportLabel(tool: WebEditorDesignAdjustmentTool): s
 export function getDesignToolExportActionState(options: {
   tool: WebEditorDesignAdjustmentTool | null;
   currentTarget: Element | null;
-  uiMode: AnnotationEntryMode;
+  uiMode: CommentEntryMode;
   toolMinimized: boolean;
   onExportSelectionToDesignTool?: ExportSelectionToDesignToolHandler | undefined;
   canExportSelectionToDesignTool?: (

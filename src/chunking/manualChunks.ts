@@ -5,6 +5,7 @@ const REACT_PACKAGES = new Set([
 ]);
 
 const ANTD_PACKAGES = new Set([
+  '@babel/runtime',
   'antd',
   'antd-style',
 ]);
@@ -36,6 +37,13 @@ const WORKSPACE_CHUNK_RULES: Array<{ marker: string; chunkName: string }> = [
   { marker: '/vendor/axhub-export-core/', chunkName: 'vendor-export' },
   { marker: '/vendor/axhub-genie-editor/', chunkName: 'vendor-genie' },
 ];
+
+const WORKSPACE_PACKAGE_CHUNKS = new Map<string, string>([
+  ['@axhub/excalidraw', 'vendor-excalidraw'],
+  ['tiptap-editor', 'vendor-editor'],
+  ['axhub-export-core', 'vendor-export'],
+  ['axhub-genie-editor', 'vendor-genie'],
+]);
 
 export function normalizeModuleId(id: string) {
   return id.replace(/\\/g, '/');
@@ -94,15 +102,20 @@ export function getManualChunkName(id: string): string | undefined {
     return 'vendor-react';
   }
 
+  const workspacePackageChunk = WORKSPACE_PACKAGE_CHUNKS.get(packageName);
+  if (workspacePackageChunk) {
+    return workspacePackageChunk;
+  }
+
+  if (SPEC_TEMPLATE_PACKAGES.has(packageName)) {
+    return 'spec-template-vendor';
+  }
+
   if (
     ANTD_PACKAGES.has(packageName)
     || startsWithPackageGroup(packageName, ['@ant-design/', '@rc-component/', 'rc-'])
   ) {
     return 'vendor-antd';
-  }
-
-  if (SPEC_TEMPLATE_PACKAGES.has(packageName)) {
-    return 'spec-template-vendor';
   }
 
   if (

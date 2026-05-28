@@ -42,7 +42,7 @@
     "ws": "^8.18.3"
   },
   "dependencies": {
-    "@axhub/annotation": "^1.0.0",
+    "@axhub/annotation": "^1.0.2",
     "lucide-react": "^0.562.0",
     "motion": "^12.38.0"
   }

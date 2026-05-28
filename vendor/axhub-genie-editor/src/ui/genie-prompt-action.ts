@@ -1,4 +1,4 @@
-import type { AnnotationEntryMode } from './selection-ui-mode';
+import type { CommentEntryMode } from './selection-ui-mode';
 
 export type SendToGenieHandler = (element: Element) => void | Promise<void>;
 export type SendPromptToGenieHandler = () => void | Promise<void>;
@@ -11,7 +11,7 @@ function resolveRunningConversationTitle(sessionReady: boolean): string {
 
 export function isGeniePromptActionVisible(options: {
   currentTarget: Element | null;
-  uiMode: AnnotationEntryMode;
+  uiMode: CommentEntryMode;
   toolMinimized: boolean;
   onSendToGenie?: SendToGenieHandler | undefined;
   getGenieBridgeAvailable?: (() => boolean) | undefined;

@@ -8,8 +8,8 @@
 import type { TransactionManager } from '../../core/transaction-manager';
 import type { DesignTokensService } from '../../core/design-tokens';
 import type { FloatingPosition } from '../floating-drag';
-import type { AnnotationEntryMode } from '../selection-ui-mode';
-import type { AnnotationShortcutSettings } from '../../core/editor/annotation-shortcut-settings';
+import type { CommentEntryMode } from '../selection-ui-mode';
+import type { CommentShortcutSettings } from '../../core/editor/comment-shortcut-settings';
 import type { ElementGenieTaskState, PageGenieConversationState, PromptImageAttachment } from '../../core/editor/state';
 import type {
   GenieProviderAvailability,
@@ -72,10 +72,7 @@ export interface PropertyPanelOptions {
   /** Send the generated prompt to Genie, routing to the active page or a new session */
   onSendPromptToGenie?: (element?: Element | null) => void | Promise<void>;
   /** Send the current element's prompt to Genie without including other elements */
-  onSendCurrentElementPromptToGenie?: (
-    element: Element,
-    options?: { promptPrefix?: string },
-  ) => void | Promise<void>;
+  onSendCurrentElementPromptToGenie?: (element: Element) => void | Promise<void>;
   /** Interrupt the active Genie execution for the current element */
   onAbortSendPromptToGenie?: (element?: Element | null) => void | Promise<void>;
   /** Wake Genie after the host confirms the backend is ready */
@@ -196,6 +193,9 @@ export interface PropertyPanelOptions {
   /** Read the saved AI note for the current element */
   getAiNote?: (element: Element | null) => string;
 
+  /** Read prompt-card skill metadata for the current element */
+  getAiNoteSkillIds?: (element: Element | null) => string[];
+
   /** Read the saved AI note images for the current element */
   getAiNoteImages?: (element: Element | null) => PromptImageAttachment[];
 
@@ -209,7 +209,11 @@ export interface PropertyPanelOptions {
   ) => void;
 
   /** Update the saved AI note for the current element or current page */
-  onAiNoteChange?: (element: Element | null, note: string) => void | Promise<void>;
+  onAiNoteChange?: (
+    element: Element | null,
+    note: string,
+    options?: { skillIds?: readonly string[] },
+  ) => void | Promise<void>;
 
   /** Update the saved AI note images for the current element */
   onAiNoteImagesChange?: (
@@ -217,7 +221,7 @@ export interface PropertyPanelOptions {
     images: readonly PromptImageAttachment[],
   ) => void | Promise<void>;
 
-  /** Collapse the whole annotation/editor tool */
+  /** Collapse the whole comment/editor tool */
   onRequestClose?: () => void;
   /** Fully stop Genie editor and release the current page session */
   onRequestFullExit?: () => void | Promise<void>;
@@ -225,19 +229,19 @@ export interface PropertyPanelOptions {
   onDismissSelection?: () => void;
 
   /** Get the current selection UI mode */
-  getUiMode?: () => AnnotationEntryMode;
+  getUiMode?: () => CommentEntryMode;
 
   /** Update the current selection UI mode */
-  onUiModeChange?: (mode: AnnotationEntryMode) => void;
+  onUiModeChange?: (mode: CommentEntryMode) => void;
 
   /** Initial selection UI mode */
-  initialUiMode?: AnnotationEntryMode;
+  initialUiMode?: CommentEntryMode;
 
-  /** Read current annotation shortcut settings */
-  getAnnotationShortcutSettings?: () => AnnotationShortcutSettings;
+  /** Read current comment shortcut settings */
+  getCommentShortcutSettings?: () => CommentShortcutSettings;
 
-  /** Persist annotation shortcut settings */
-  onAnnotationShortcutSettingsChange?: (settings: AnnotationShortcutSettings) => void;
+  /** Persist comment shortcut settings */
+  onCommentShortcutSettingsChange?: (settings: CommentShortcutSettings) => void;
 
   /** Read current runtime UI settings */
   getUiSettings?: () => WebEditorUiSettings;
@@ -249,7 +253,7 @@ export interface PropertyPanelOptions {
   onUiSettingsChange?: (settings: WebEditorUiSettings) => void;
 
   /** Notify whether shortcut settings dialog is open */
-  onAnnotationShortcutDialogOpenChange?: (open: boolean) => void;
+  onCommentShortcutDialogOpenChange?: (open: boolean) => void;
 
   /** Select the current element's parent candidate */
   onSelectParent?: (element: Element) => void;
@@ -303,8 +307,8 @@ export interface PropertyPanel {
   /** Set floating position (viewport coordinates), pass null to reset to anchored */
   setPosition(position: FloatingPosition | null): void;
 
-  /** Focus note entry using the requested annotation mode */
-  enterAnnotationInput?(mode?: AnnotationEntryMode): void;
+  /** Focus note entry using the requested comment mode */
+  enterCommentInput?(mode?: CommentEntryMode): void;
 
   /** Legacy no-op retained for older host integrations. */
   enterInlineTextEdit?(): void;

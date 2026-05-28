@@ -9,7 +9,7 @@ import type {
 import type { EventModifiers } from '../event-controller';
 import type { TrackedRects } from '../position-tracker';
 import type { TransactionChangeEvent } from '../transaction-manager';
-import type { AnnotationShortcutSettings } from './annotation-shortcut-settings';
+import type { CommentShortcutSettings } from './comment-shortcut-settings';
 import type {
   EditorRuntimeState,
   ElementGenieTaskState,
@@ -17,15 +17,15 @@ import type {
   PageGenieConversationState,
   PersistedElementGenieTaskState,
 } from './state';
-import type { AnnotationEntryMode } from '../../ui/selection-ui-mode';
+import type { CommentEntryMode } from '../../ui/selection-ui-mode';
 import type { WebEditorUiSettings } from './ui-settings';
 import type { PromptImageAttachment } from './state';
 import type {
   GenieEditorCopyPromptContext,
   GenieEditorHostResource,
-  PrototypeEditAnnotationTaskStatus,
+  PrototypeEditCommentTaskStatus,
 } from '../../web-editor-types';
-import type { TextAnnotation } from '../../selection/text-annotation-manager';
+import type { TextComment } from '../../selection/text-comment-manager';
 import type {
   GenieEditorTweakSchema,
   GenieEditorTweakValues,
@@ -153,7 +153,7 @@ export interface EditorChangesService {
   clearPendingSelectionAnchor(): void;
   renderChangeMarkers(): void;
   syncEditMetaWithTransactions(): void;
-  setNoteForElement(element: Element | null, note: string): void;
+  setNoteForElement(element: Element | null, note: string, options?: { skillIds?: readonly string[] }): void;
   getImagesForElement(element: Element | null): PromptImageAttachment[];
   setImagesForElement(element: Element | null, images: readonly PromptImageAttachment[]): void;
   recordTweakValuesForElement(
@@ -171,7 +171,7 @@ export interface EditorChangesService {
   clearAllEditMeta(): void;
   getSelectedElementNote(): string;
   setChangeMarkersVisible(visible: boolean, options?: { persist?: boolean }): void;
-  buildAnnotationCommentsContext(element?: Element | null): Array<{
+  buildCommentCommentsContext(element?: Element | null): Array<{
     elementKey: WebEditorElementKey;
     selector: string;
     label: string;
@@ -197,8 +197,8 @@ export interface EditorChangesService {
 export interface EditorPersistenceService {
   readMarkerVisibility(): boolean;
   setMarkerVisibility(visible: boolean): void;
-  readAnnotationShortcutSettings(): AnnotationShortcutSettings;
-  setAnnotationShortcutSettings(settings: AnnotationShortcutSettings): void;
+  readCommentShortcutSettings(): CommentShortcutSettings;
+  setCommentShortcutSettings(settings: CommentShortcutSettings): void;
   readUiSettings(): WebEditorUiSettings;
   setUiSettings(settings: WebEditorUiSettings): void;
   readGenieConversationState(scopeKey: string): PageGenieConversationState | null;
@@ -207,9 +207,9 @@ export interface EditorPersistenceService {
   readGenieTaskStates(scopeKey: string): PersistedElementGenieTaskState[];
   writeGenieTaskStates(scopeKey: string, tasks: PersistedElementGenieTaskState[]): void;
   pruneExpiredGenieTaskStates(scopeKey: string): void;
-  recordAnnotationTaskState?(
+  recordCommentTaskState?(
     elementKey: WebEditorElementKey,
-    state: PrototypeEditAnnotationTaskStatus,
+    state: PrototypeEditCommentTaskStatus,
     taskRef?: Partial<ExternalEditingTaskRef> | null,
   ): void;
   scheduleWrite(): void;
@@ -237,10 +237,10 @@ export interface EditorInteractionService {
   handleDeselect(): void;
   handlePositionUpdate(rects: TrackedRects): void;
   handleTransactionChange(event: TransactionChangeEvent): void;
-  enterAnnotationInput(mode?: AnnotationEntryMode): void;
-  enterAnnotationFromTrigger(selectionAnchor?: { clientX: number; clientY: number }): boolean;
-  enterTextAnnotation(
-    annotation: TextAnnotation,
+  enterCommentInput(mode?: CommentEntryMode): void;
+  enterCommentFromTrigger(selectionAnchor?: { clientX: number; clientY: number }): boolean;
+  enterTextComment(
+    comment: TextComment,
     anchor: { clientX: number; clientY: number },
   ): void;
   clearSelection(): void;
@@ -296,7 +296,7 @@ export interface EditorGenieBridgeService {
   canInterruptElementTask(element: Element | null): boolean;
   interruptElementTask(element: Element): Promise<void>;
   handleSendSelectionToGenie(element: Element): Promise<void>;
-  handleSyncAnnotationContextToGenie(
+  handleSyncCommentContextToGenie(
     element: Element | null,
     mode: 'append' | 'replace',
   ): Promise<void>;

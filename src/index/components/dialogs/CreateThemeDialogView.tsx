@@ -17,6 +17,7 @@ import {
     SheetTitle,
 } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import AiCreateGuideContent from './AiCreateGuideContent';
 import {
     appendThemeImportDocsToPrompt,
@@ -46,6 +47,7 @@ interface UploadResult {
 }
 
 interface ThemeLibraryItem extends ThemeLibraryPromptItem {
+    coverUrl: string;
     sourceUrl: string;
     canDirectImport: boolean;
     directImportDisabledReason?: string;
@@ -124,7 +126,7 @@ export default function CreateThemeDialog({
     }, [canImportTheme, initialTab, isThemeImportEntry, visible]);
 
     useEffect(() => {
-        if (!visible || activeTab !== 'onlineSelect' || themeLibrary.loading || themeLibrary.loaded) {
+        if (!visible || activeTab !== 'onlineSelect' || themeLibrary.loaded) {
             return;
         }
         let cancelled = false;
@@ -136,7 +138,7 @@ export default function CreateThemeDialog({
         fetch('/api/theme-library')
             .then(async (response) => {
                 const result = await response.json();
-                if (!response.ok) {
+                if (!response.ok || result?.ok === false) {
                     throw new Error(result?.error || '设计系统库读取失败');
                 }
                 if (cancelled) return;
@@ -161,7 +163,7 @@ export default function CreateThemeDialog({
         return () => {
             cancelled = true;
         };
-    }, [activeTab, themeLibrary.loaded, themeLibrary.loading, visible]);
+    }, [activeTab, themeLibrary.loaded, visible]);
 
     const handleThemeUpload = useCallback(async (files: File[]) => {
         if (files.length === 0) return;
@@ -416,54 +418,72 @@ export default function CreateThemeDialog({
                                     <div className="space-y-3">
                                         {themeLibrary.designSystems.map((designSystem) => {
                                             const importing = themeImportingId === designSystem.id;
-                                            const disabledReason = designSystem.directImportDisabledReason || '';
+                                            const disabledReason = designSystem.directImportDisabledReason || (!designSystem.canDirectImport ? '直接导入不可用' : '');
                                             const directDisabled = Boolean(disabledReason) || !designSystem.canDirectImport || Boolean(themeImportingId);
+                                            const directImportTooltip = disabledReason
+                                                ? '直接导入不可用，请复制提示词让 AI 完成导入'
+                                                : themeImportingId && !importing ? '已有设计系统正在导入，请稍候' : '';
                                             return (
-                                                <div key={designSystem.id} className="rounded-md border bg-background p-3">
-                                                    <div className="space-y-2">
-                                                        <div className="flex items-start justify-between gap-3">
-                                                            <div className="min-w-0">
-                                                                <div className="truncate text-sm font-medium">{designSystem.title}</div>
-                                                                <div className="mt-0.5 text-[12px] text-muted-foreground">{designSystem.slug}</div>
+                                                <div key={designSystem.id} className="overflow-hidden rounded-md border bg-background">
+                                                    <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-4 p-3">
+                                                        <div className="h-[112px] overflow-hidden rounded border bg-muted">
+                                                            <img
+                                                                src={designSystem.coverUrl}
+                                                                alt={designSystem.title}
+                                                                className="h-full w-full object-cover"
+                                                                loading="lazy"
+                                                            />
+                                                        </div>
+                                                        <div className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
+                                                            <div className="flex items-start justify-between gap-3">
+                                                                <div className="min-w-0">
+                                                                    <div className="truncate text-sm font-medium">{designSystem.title}</div>
+                                                                    <div className="mt-1 truncate text-[12px] text-muted-foreground">{designSystem.sourcePath}</div>
+                                                                </div>
+                                                                <div className={`rounded px-1.5 py-0.5 text-[11px] ${disabledReason ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                                                                    {disabledReason ? '不可直接导入' : '可直接导入'}
+                                                                </div>
                                                             </div>
-                                                            <div className={`rounded px-1.5 py-0.5 text-[11px] ${disabledReason ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                                                                {disabledReason ? '需 AI 处理' : '可直接导入'}
+                                                            <div className="space-y-1">
+                                                                <p className="line-clamp-2 text-[12px] leading-5 text-muted-foreground">{designSystem.description}</p>
+                                                            </div>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    className="h-7 gap-1.5 px-2.5 text-xs"
+                                                                    onClick={() => void handleCopyThemeLibraryPrompt(designSystem)}
+                                                                    disabled={Boolean(themeImportingId)}
+                                                                >
+                                                                    <Copy className="h-3.5 w-3.5" />
+                                                                    复制提示词
+                                                                </Button>
+                                                                <TooltipProvider>
+                                                                    <Tooltip>
+                                                                        <TooltipTrigger asChild>
+                                                                            <span className="inline-flex">
+                                                                                <Button
+                                                                                    type="button"
+                                                                                    size="sm"
+                                                                                    className="h-7 gap-1.5 px-2.5 text-xs"
+                                                                                    onClick={() => void handleDirectThemeLibraryImport(designSystem)}
+                                                                                    disabled={directDisabled}
+                                                                                >
+                                                                                    {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                                                                                    直接导入
+                                                                                </Button>
+                                                                            </span>
+                                                                        </TooltipTrigger>
+                                                                        {directImportTooltip ? (
+                                                                            <TooltipContent side="top">
+                                                                                {directImportTooltip}
+                                                                            </TooltipContent>
+                                                                        ) : null}
+                                                                    </Tooltip>
+                                                                </TooltipProvider>
                                                             </div>
                                                         </div>
-                                                        <p className="line-clamp-2 text-[12px] leading-5 text-muted-foreground">{designSystem.description}</p>
-                                                        <div className="grid gap-0.5 text-[12px] leading-5 text-muted-foreground">
-                                                            <div className="truncate">入口：{designSystem.entryPath}</div>
-                                                            <div className="truncate">Token：{designSystem.tokenPath}</div>
-                                                        </div>
-                                                        <div className="flex flex-wrap gap-2 pt-1">
-                                                            <Button
-                                                                type="button"
-                                                                variant="outline"
-                                                                size="sm"
-                                                                className="h-7 gap-1.5 px-2.5 text-xs"
-                                                                onClick={() => void handleCopyThemeLibraryPrompt(designSystem)}
-                                                                disabled={Boolean(themeImportingId)}
-                                                            >
-                                                                <Copy className="h-3.5 w-3.5" />
-                                                                复制提示词
-                                                            </Button>
-                                                            <Button
-                                                                type="button"
-                                                                size="sm"
-                                                                className="h-7 gap-1.5 px-2.5 text-xs"
-                                                                onClick={() => void handleDirectThemeLibraryImport(designSystem)}
-                                                                disabled={directDisabled}
-                                                                title={disabledReason || undefined}
-                                                            >
-                                                                {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                                                                直接导入
-                                                            </Button>
-                                                        </div>
-                                                        {disabledReason ? (
-                                                            <div className="text-[12px] leading-5 text-amber-700">
-                                                                {disabledReason}
-                                                            </div>
-                                                        ) : null}
                                                     </div>
                                                 </div>
                                             );

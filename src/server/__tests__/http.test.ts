@@ -437,7 +437,7 @@ describe('make-server HTTP server', () => {
     }
   });
 
-  it('starts with fallback port, writes admin server info, and serves health/context', async () => {
+  it('does not fall back to another port when the requested admin port is already in use', async () => {
     const projectRoot = createProjectRoot();
     const registryPath = createRegistryPath();
     const first = await startMakeServer({
@@ -447,27 +447,26 @@ describe('make-server HTTP server', () => {
       adminRoot: path.join(projectRoot, 'missing-admin'),
       registryPath,
     });
-    const second = await startMakeServer({
-      projectRoot,
-      host: 'localhost',
-      port: first.port,
-      adminRoot: path.join(projectRoot, 'missing-admin'),
-      registryPath,
-    });
 
     try {
-      expect(second.port).not.toBe(first.port);
+      await expect(startMakeServer({
+        projectRoot,
+        host: 'localhost',
+        port: first.port,
+        adminRoot: path.join(projectRoot, 'missing-admin'),
+        registryPath,
+      })).rejects.toMatchObject({ code: 'EADDRINUSE' });
       expect(fs.existsSync(getAdminServerInfoPath(projectRoot))).toBe(true);
 
-      const health = await fetch(`${second.origin}/api/health`).then((response) => response.json());
+      const health = await fetch(`${first.origin}/api/health`).then((response) => response.json());
       expect(health).toMatchObject({
         ok: true,
         role: 'admin',
         projectRoot,
-        origin: second.origin,
+        origin: first.origin,
         server: {
-          origin: second.origin,
-          port: second.port,
+          origin: first.origin,
+          port: first.port,
         },
       });
 
@@ -484,7 +483,7 @@ describe('make-server HTTP server', () => {
         },
       });
 
-      const context = await fetch(`${second.origin}/api/admin/context`).then((response) => response.json());
+      const context = await fetch(`${first.origin}/api/admin/context`).then((response) => response.json());
       expect(context).toMatchObject({
         projectRoot,
         runtime: {
@@ -492,7 +491,7 @@ describe('make-server HTTP server', () => {
         },
       });
 
-      const configUpdate = await fetch(`${second.origin}/api/config`, {
+      const configUpdate = await fetch(`${first.origin}/api/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server: { host: 'localhost', allowLAN: false }, projectInfo: { name: 'Demo' } }),
@@ -502,10 +501,10 @@ describe('make-server HTTP server', () => {
         server: { host: 'localhost', allowLAN: false },
       });
 
-      const entries = await fetch(`${second.origin}/api/entries.json`).then((response) => response.json());
+      const entries = await fetch(`${first.origin}/api/entries.json`).then((response) => response.json());
       expect(entries).toEqual({ components: [], prototypes: [] });
 
-      const review = await fetch(`${second.origin}/api/code-review`, {
+      const review = await fetch(`${first.origin}/api/code-review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: 'components/ref-button' }),
@@ -515,7 +514,7 @@ describe('make-server HTTP server', () => {
         mode: 'default',
       });
 
-      const axurePreview = await fetch(`${second.origin}/api/axure-api-preview`, {
+      const axurePreview = await fetch(`${first.origin}/api/axure-api-preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: 'components/ref-button' }),
@@ -545,12 +544,12 @@ describe('make-server HTTP server', () => {
         orders: { themes: [], data: [], templates: [] },
         capabilities: { quickEdit: true, figmaExport: true, axureExport: true, multiDevicePreview: true },
       });
-      await fetch(`${second.origin}/api/projects/active`, {
+      await fetch(`${first.origin}/api/projects/active`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'metadata-only' }),
       });
-      const metadataOnlyReview = await fetch(`${second.origin}/api/code-review`, {
+      const metadataOnlyReview = await fetch(`${first.origin}/api/code-review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: 'prototypes/remote-home' }),
@@ -564,7 +563,7 @@ describe('make-server HTTP server', () => {
         },
       });
 
-      const exportMake = await fetch(`${second.origin}/api/export-make?path=${encodeURIComponent('prototypes/home')}`)
+      const exportMake = await fetch(`${first.origin}/api/export-make?path=${encodeURIComponent('prototypes/home')}`)
         .then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(exportMake).toMatchObject({
         status: 424,
@@ -574,7 +573,7 @@ describe('make-server HTTP server', () => {
         },
       });
 
-      const exportHtml = await fetch(`${second.origin}/api/export-html?path=${encodeURIComponent('prototypes/home')}`)
+      const exportHtml = await fetch(`${first.origin}/api/export-html?path=${encodeURIComponent('prototypes/home')}`)
         .then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(exportHtml).toMatchObject({
         status: 424,
@@ -584,7 +583,7 @@ describe('make-server HTTP server', () => {
         },
       });
 
-      const media = await fetch(`${second.origin}/api/media`).then((response) => response.json());
+      const media = await fetch(`${first.origin}/api/media`).then((response) => response.json());
       expect(media).toEqual(expect.arrayContaining([
         expect.objectContaining({
           name: 'icons',
@@ -598,7 +597,7 @@ describe('make-server HTTP server', () => {
         }),
       ]));
 
-      const createFolderResponse = await fetch(`${second.origin}/api/media/folder`, {
+      const createFolderResponse = await fetch(`${first.origin}/api/media/folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'photos', parentPath: 'icons' }),
@@ -606,11 +605,11 @@ describe('make-server HTTP server', () => {
       expect(createFolderResponse.status).toBe(200);
       expect(fs.existsSync(path.join(projectRoot, 'assets/media/icons/photos'))).toBe(true);
 
-      const mediaFile = await fetch(`${second.origin}/api/media/file/logo.svg`);
+      const mediaFile = await fetch(`${first.origin}/api/media/file/logo.svg`);
       expect(mediaFile.status).toBe(200);
       expect(mediaFile.headers.get('content-type')).toBe('image/svg+xml');
 
-      const docCheck = await fetch(`${second.origin}/api/docs/check-references`, {
+      const docCheck = await fetch(`${first.origin}/api/docs/check-references`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ docName: 'overview.md', action: 'delete' }),
@@ -621,7 +620,7 @@ describe('make-server HTTP server', () => {
         references: [],
       });
 
-      const canvasCreate = await fetch(`${second.origin}/api/canvas/create`, {
+      const canvasCreate = await fetch(`${first.origin}/api/canvas/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ displayName: 'Main Canvas' }),
@@ -631,7 +630,6 @@ describe('make-server HTTP server', () => {
       });
       expect(canvasCreate.name).toMatch(/main-canvas-\d+\.excalidraw|main-canvas\.excalidraw/);
     } finally {
-      await second.close();
       await first.close();
     }
   });

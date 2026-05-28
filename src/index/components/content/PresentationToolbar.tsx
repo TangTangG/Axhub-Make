@@ -225,7 +225,7 @@ export default function PresentationToolbar({
     handleOpenDataTableInIDE,
     quickEditAvailable,
     quickEditActive = false,
-    docEditState = { enabled: false, dirty: false, saving: false, quickEditMode: 'annotation' },
+    docEditState = { enabled: false, dirty: false, saving: false, quickEditMode: 'comment' },
     markdownPromptCopying = false,
     quickEditRuntimeStatus = 'idle',
     exportAvailability,
@@ -273,7 +273,7 @@ export default function PresentationToolbar({
     const isDocumentEditingContent = contentMode === 'doc' || contentMode === 'template';
     const isQuickEditActive = quickEditActive && !isDocumentEditingContent;
     const isDocumentEditActive = docEditState.enabled;
-    const isDocumentAnnotationActive = isDocumentEditActive && docEditState.quickEditMode === 'annotation';
+    const isDocumentCommentActive = isDocumentEditActive && docEditState.quickEditMode === 'comment';
     const isSplitQuickEditActive = isQuickEditActive && previewConfig.previewMode === 'split';
 
     const quickEditSegmentLabelText = '批注/编辑';
@@ -979,7 +979,7 @@ export default function PresentationToolbar({
         ? (
             <>
                 {resourceActionButtons}
-                {isDocumentAnnotationActive ? hostToolbarControls : null}
+                {isDocumentCommentActive ? hostToolbarControls : null}
                 {isDocumentEditActive ? documentEditTrailingActionButtons : null}
             </>
         )

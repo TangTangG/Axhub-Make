@@ -3,8 +3,8 @@ import type { Breadcrumbs, BreadcrumbsOptions } from '../breadcrumbs';
 import type { ViewportRect } from '../../overlay/canvas-overlay';
 import type { PropertyPanel, PropertyPanelOptions, PropertyPanelTab } from '../property-panel';
 import type { FloatingPosition } from '../floating-drag';
-import type { AnnotationEntryMode } from '../selection-ui-mode';
-import type { AnnotationShortcutSettings, ModifierShortcutKey } from '../../core/editor/annotation-shortcut-settings';
+import type { CommentEntryMode } from '../selection-ui-mode';
+import type { CommentShortcutSettings, ModifierShortcutKey } from '../../core/editor/comment-shortcut-settings';
 import type { GenieProviderAvailability } from '../../core/editor/contracts';
 import type {
   WebEditorInteractionProfile,
@@ -31,7 +31,7 @@ export type PropertyPanelHandle = Pick<
   | 'setHistory'
   | 'getPosition'
   | 'setPosition'
-  | 'enterAnnotationInput'
+  | 'enterCommentInput'
   | 'enterInlineTextEdit'
   | 'getHostToolbarState'
   | 'subscribeHostToolbarState'
@@ -80,6 +80,7 @@ export interface SharedNoteState {
   savedNote: string;
   draftNote: string;
   noteDirty: boolean;
+  savedNoteMeta?: { skillIds?: string[] };
 }
 
 export interface SharedTextState {
@@ -107,10 +108,11 @@ export interface SharedNoteActions {
   draftNote: string;
   noteDirty: boolean;
   savedNote: string;
+  savedNoteMeta?: { skillIds?: string[] };
   onDraftChange: (value: string) => void;
   onClearCurrentElementEdits: () => Promise<void>;
   onCancelNote: () => void;
-  onConfirmNote: () => Promise<void>;
+  onConfirmNote: (options?: { skillIds?: readonly string[] }) => Promise<void>;
   onDismissSelection?: () => void;
 }
 
@@ -124,7 +126,7 @@ export interface SharedImageActions {
 export interface PropertyPanelViewProps extends SharedNoteActions, SharedTextActions, SharedImageActions {
   options: PropertyPanelOptions;
   currentTarget: Element | null;
-  uiMode: AnnotationEntryMode;
+  uiMode: CommentEntryMode;
   toolMinimized: boolean;
   propertyPanelOpen: boolean;
   inlineTextEditing?: boolean;
@@ -138,7 +140,7 @@ export interface PropertyPanelViewProps extends SharedNoteActions, SharedTextAct
   onRefreshGenieProviderAvailabilities?: (providers?: readonly string[]) => Promise<void>;
   onHoverSelectionSuppressedChange: (hovered: boolean) => void;
   onSelectionInteractionLockChange: (locked: boolean) => void;
-  onUiModeChange: (mode: AnnotationEntryMode) => void;
+  onUiModeChange: (mode: CommentEntryMode) => void;
   onToolMinimizedChange: (minimized: boolean) => void;
   onTargetChange: (element: Element | null) => void;
   onRefreshNoteState: () => void;
@@ -159,7 +161,7 @@ export interface PromptCardViewProps extends SharedNoteActions, SharedTextAction
   options: BreadcrumbsOptions;
   currentTarget: Element | null;
   anchorRect: ViewportRect | null;
-  uiMode: AnnotationEntryMode;
+  uiMode: CommentEntryMode;
   interactionProfile: WebEditorInteractionProfile;
   transactionManager?: TransactionManager;
   tokensService?: DesignTokensService;
@@ -171,10 +173,7 @@ export interface PromptCardViewProps extends SharedNoteActions, SharedTextAction
   genieVisualState: 'sleeping' | 'awake';
   hideExecutionControls?: boolean;
   onBubbleStyleEditorOpenChange: (open: boolean) => void;
-  onSendCurrentElementPromptToGenie?: (
-    element: Element,
-    options?: { promptPrefix?: string },
-  ) => void | Promise<void>;
+  onSendCurrentElementPromptToGenie?: (element: Element) => void | Promise<void>;
   getGenieBridgeConnected?: (() => boolean) | undefined;
   getHasReusableGenieConversation?: (() => boolean) | undefined;
   getSendCurrentElementPromptToGenieBlockReason?: ((element: Element | null) => string | undefined) | undefined;
@@ -192,7 +191,7 @@ export interface PromptCardViewProps extends SharedNoteActions, SharedTextAction
   ) => string | undefined;
   onHoverSelectionSuppressedChange: (hovered: boolean) => void;
   onSelectionInteractionLockChange: (locked: boolean) => void;
-  onUiModeChange: (mode: AnnotationEntryMode) => void;
+  onUiModeChange: (mode: CommentEntryMode) => void;
   onTargetChange: (element: Element | null) => void;
   onAnchorRectChange: (rect: ViewportRect | null) => void;
   onPromptCardVisibleChange?: (visible: boolean) => void;
@@ -288,4 +287,4 @@ export type RuntimeFlushBridge<T extends object> = {
 
 export type PropertyPanelTabLike = PropertyPanelTab;
 export type FloatingPositionLike = FloatingPosition;
-export type AnnotationShortcutSettingsLike = AnnotationShortcutSettings;
+export type CommentShortcutSettingsLike = CommentShortcutSettings;

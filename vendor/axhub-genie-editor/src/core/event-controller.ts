@@ -126,7 +126,7 @@ export interface EventControllerOptions {
   isElementInteractionLocked?: (element: Element | null) => boolean;
   /**
    * When true, allow native browser text selection (no pointer/mouse blocking).
-   * Used by the `text-annotation` profile so users can drag-select text normally.
+   * Used by the `text-comment` profile so users can drag-select text normally.
    * Keyboard events (Escape) are still intercepted.
    */
   allowNativeTextSelection?: boolean;
@@ -896,7 +896,7 @@ export function createEventController(options: EventControllerOptions): EventCon
         return;
       }
 
-      // In text-annotation mode: ESC dismisses the active annotation
+      // In text-comment mode: ESC dismisses the active comment
       if (options.allowNativeTextSelection) {
         window.getSelection()?.removeAllRanges();
         onDeselect();

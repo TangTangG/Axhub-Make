@@ -15,7 +15,7 @@ import type { ViewportRect } from '../overlay/canvas-overlay';
 import { createSparkleIcon } from './icons';
 import { Disposer } from '../utils/disposables';
 import type { ElementGenieTaskState } from '../core/editor/state';
-import type { AnnotationShortcutSettings } from '../core/editor/annotation-shortcut-settings';
+import type { CommentShortcutSettings } from '../core/editor/comment-shortcut-settings';
 
 // =============================================================================
 // Types
@@ -48,8 +48,8 @@ export interface BreadcrumbsOptions {
   externalEditingStatusDescription?: string;
   /** Read the current style edit summary lines for the selected element */
   getElementStyleSummaryLines?: (element: Element | null) => string[];
-  /** Read current annotation shortcut settings for tooltip/help rendering */
-  getAnnotationShortcutSettings?: () => AnnotationShortcutSettings;
+  /** Read current comment shortcut settings for tooltip/help rendering */
+  getCommentShortcutSettings?: () => CommentShortcutSettings;
   /** Callback when selecting the parent candidate */
   onSelectParent?: (element: Element) => void;
 }

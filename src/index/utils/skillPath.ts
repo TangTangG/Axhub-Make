@@ -55,8 +55,8 @@ export function selfCheckSkillPathNormalization(): boolean {
         ['/skills/local-axure-workflow/SKILL.md', '/skills/local-axure-workflow/SKILL.md'],
         ['skills\\local-axure-workflow\\SKILL.md', '/skills/local-axure-workflow/SKILL.md'],
         ['/skills//nested///guide.md', '/skills/nested/guide.md'],
-        ['.agents/skills/prototype-edit-annotations/SKILL.md', '.agents/skills/prototype-edit-annotations/SKILL.md'],
-        ['.claude\\skills\\prototype-edit-annotations\\SKILL.md', '.claude/skills/prototype-edit-annotations/SKILL.md'],
+        ['.agents/skills/prototype-comments/SKILL.md', '.agents/skills/prototype-comments/SKILL.md'],
+        ['.claude\\skills\\prototype-comments\\SKILL.md', '.claude/skills/prototype-comments/SKILL.md'],
     ];
 
     for (const [input, expected] of validCases) {

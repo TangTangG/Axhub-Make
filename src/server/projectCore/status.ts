@@ -16,6 +16,7 @@ export interface AxhubServerInfo {
   origin: string;
   projectRoot: string;
   startedAt: string;
+  timestamp?: string;
 }
 
 function getServerInfoPath(projectRoot: string, role: AxhubServerRole): string {
@@ -48,6 +49,7 @@ function normalizeServerInfo(data: unknown): AxhubServerInfo | null {
     origin: value.origin,
     projectRoot: resolveProjectRoot(value.projectRoot),
     startedAt: value.startedAt,
+    ...(typeof value.timestamp === 'string' ? { timestamp: value.timestamp } : {}),
   };
 }
 
@@ -75,9 +77,13 @@ export function writeServerInfo(
   role: AxhubServerRole,
   info: AxhubServerInfo,
 ): AxhubServerInfo {
+  const timestamp = role === 'runtime'
+    ? String(info.timestamp || new Date().toISOString())
+    : info.timestamp;
   const normalized: AxhubServerInfo = {
     ...info,
     projectRoot: resolveProjectRoot(info.projectRoot),
+    ...(timestamp ? { timestamp } : {}),
   };
   const infoPath = getServerInfoPath(projectRoot, role);
   fs.mkdirSync(path.dirname(infoPath), { recursive: true });
@@ -90,6 +96,46 @@ export function isHealthyServerInfo(info: AxhubServerInfo | null, expectedProjec
     return false;
   }
   return resolveProjectRoot(info.projectRoot) === resolveProjectRoot(expectedProjectRoot);
+}
+
+export function isProcessAlive(
+  pid: number,
+  probeProcess: (pid: number, signal?: NodeJS.Signals | 0) => void = process.kill,
+): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    probeProcess(pid, 0);
+    return true;
+  } catch (error: any) {
+    return String(error?.code || '') === 'EPERM';
+  }
+}
+
+export function isLiveLocalServerInfo(
+  info: AxhubServerInfo | null,
+  expectedProjectRoot: string,
+  options: {
+    maxAgeMs?: number;
+    nowMs?: number;
+    probeProcess?: (pid: number, signal?: NodeJS.Signals | 0) => void;
+  } = {},
+): info is AxhubServerInfo {
+  if (!isHealthyServerInfo(info, expectedProjectRoot) || !isProcessAlive(info.pid, options.probeProcess)) {
+    return false;
+  }
+  if (typeof options.maxAgeMs !== 'number') {
+    return true;
+  }
+  if (typeof info.timestamp !== 'string') {
+    return false;
+  }
+  const timestampMs = Date.parse(info.timestamp);
+  if (!Number.isFinite(timestampMs)) {
+    return false;
+  }
+  return (options.nowMs ?? Date.now()) - timestampMs <= options.maxAgeMs;
 }
 
 export async function fetchHealth(origin: string, timeoutMs = 1000): Promise<unknown | null> {

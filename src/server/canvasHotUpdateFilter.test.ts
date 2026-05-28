@@ -103,4 +103,20 @@ describe('make-server canvas hot-update filter', () => {
     expect(viteConfigSource).toContain('canvasHotUpdateFilterPlugin()');
     expect(viteConfigSource).toContain("'**/client/**'");
   });
+
+  it('keeps the standalone admin dev server on its configured port', () => {
+    const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
+
+    expect(viteConfigSource).toContain('strictPort: true');
+    expect(viteConfigSource).not.toContain('strictPort: false');
+  });
+
+  it('releases the standalone admin dev port before Vite starts listening', () => {
+    const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
+
+    expect(viteConfigSource).toContain("import { releaseListeningProcessesOnPort } from './src/server/portOccupancy'");
+    expect(viteConfigSource).toContain('portReleaseBeforeListenPlugin()');
+    expect(viteConfigSource).toContain('!config.server.middlewareMode');
+    expect(viteConfigSource).toContain('releaseListeningProcessesOnPort(config.server.port ?? DEFAULT_MAKE_SERVER_PORT)');
+  });
 });

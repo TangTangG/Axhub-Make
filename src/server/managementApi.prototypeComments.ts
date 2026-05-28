@@ -6,11 +6,11 @@ import { isPathInside, resolveProjectPath, type ProjectMetadata } from './projec
 
 import { readJsonBody, sendFile, sendJson } from './http.ts';
 
-const ANNOTATION_FILE_NAME = 'prototype-annotations.json';
+const COMMENT_FILE_NAME = 'prototype-comments.json';
 const SPEC_DIR_NAME = '.spec';
-const ASSET_DIR_NAME = 'prototype-annotation-assets';
+const ASSET_DIR_NAME = 'prototype-comment-assets';
 
-type PrototypeAnnotationsContext = {
+type PrototypeCommentsContext = {
   project: {
     root: string;
   };
@@ -23,8 +23,8 @@ type ResolveResult =
       prototypeId: string;
       prototypeDir: string;
       specDir: string;
-      annotationFilePath: string;
-      projectRelativeAnnotationPath: string;
+      commentFilePath: string;
+      projectRelativeCommentPath: string;
     }
   | {
       ok: false;
@@ -67,7 +67,7 @@ function getDeclaredPrototypeWriteDir(projectRoot: string, metadata?: ProjectMet
   }
 }
 
-function resolvePrototypeAnnotationsPath(
+function resolvePrototypeCommentsPath(
   projectRoot: string,
   rawTargetPath: string | null,
   metadata?: ProjectMetadata,
@@ -83,11 +83,11 @@ function resolvePrototypeAnnotationsPath(
 
   const prototypesDir = getDeclaredPrototypeWriteDir(projectRoot, metadata);
   if (!prototypesDir) {
-    return { ok: false, status: 424, error: 'Prototype annotation persistence requires declared prototype write target' };
+    return { ok: false, status: 424, error: 'Prototype comment persistence requires declared prototype write target' };
   }
   const defaultPrototypesDir = path.join(projectRoot, 'src', 'prototypes');
   if (path.resolve(prototypesDir) !== path.resolve(defaultPrototypesDir)) {
-    return { ok: false, status: 403, error: 'Prototype annotation persistence is limited to src/prototypes' };
+    return { ok: false, status: 403, error: 'Prototype comment persistence is limited to src/prototypes' };
   }
 
   const prototypeDir = path.resolve(prototypesDir, normalized.id);
@@ -96,13 +96,13 @@ function resolvePrototypeAnnotationsPath(
   }
 
   const specDir = path.join(prototypeDir, SPEC_DIR_NAME);
-  const annotationFilePath = path.join(specDir, ANNOTATION_FILE_NAME);
+  const commentFilePath = path.join(specDir, COMMENT_FILE_NAME);
   if (
     !isPathInside(projectRoot, specDir)
     || !isPathInside(prototypeDir, specDir)
-    || !isPathInside(specDir, annotationFilePath)
+    || !isPathInside(specDir, commentFilePath)
   ) {
-    return { ok: false, status: 403, error: 'Invalid annotation path' };
+    return { ok: false, status: 403, error: 'Invalid comment path' };
   }
 
   return {
@@ -110,8 +110,8 @@ function resolvePrototypeAnnotationsPath(
     prototypeId: normalized.id,
     prototypeDir,
     specDir,
-    annotationFilePath,
-    projectRelativeAnnotationPath: path.relative(projectRoot, annotationFilePath).split(path.sep).join('/'),
+    commentFilePath,
+    projectRelativeCommentPath: path.relative(projectRoot, commentFilePath).split(path.sep).join('/'),
   };
 }
 
@@ -144,7 +144,7 @@ function parseImageDataUrl(dataUrl: unknown): { mimeType: string; buffer: Buffer
   };
 }
 
-function normalizeAnnotationDocument(input: unknown, resolved: Extract<ResolveResult, { ok: true }>): Record<string, unknown> {
+function normalizeCommentDocument(input: unknown, resolved: Extract<ResolveResult, { ok: true }>): Record<string, unknown> {
   const raw = input && typeof input === 'object' && 'document' in input
     ? (input as { document?: unknown }).document
     : input;
@@ -158,14 +158,14 @@ function normalizeAnnotationDocument(input: unknown, resolved: Extract<ResolveRe
   return {
     ...record,
     schemaVersion: 1,
-    kind: 'prototype-edit-annotations',
+    kind: 'prototype-comments',
     resource: {
       ...resource,
       id: resolved.prototypeId,
       targetPath: `prototypes/${resolved.prototypeId}`,
-      filePath: resolved.projectRelativeAnnotationPath,
+      filePath: resolved.projectRelativeCommentPath,
     },
-    entries: Array.isArray(record.entries) ? record.entries : [],
+    comments: Array.isArray(record.comments) ? record.comments : [],
     tasks: record.tasks && typeof record.tasks === 'object' && !Array.isArray(record.tasks)
       ? record.tasks
       : {},
@@ -190,7 +190,7 @@ function persistImageAssets(
       const fileName = `${id}.${extension}`;
       const assetPath = path.join(assetDir, fileName);
       if (!isPathInside(assetDir, assetPath)) {
-        throw new Error('Invalid annotation asset path');
+        throw new Error('Invalid comment asset path');
       }
       fs.mkdirSync(assetDir, { recursive: true });
       fs.writeFileSync(assetPath, parsed.buffer);
@@ -264,16 +264,16 @@ function mimeTypeFromFileName(filePath: string): string {
 function handleAssetRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  context: PrototypeAnnotationsContext,
+  context: PrototypeCommentsContext,
   url: URL,
 ): boolean {
-  if (url.pathname !== '/api/prototype-annotations/asset') return false;
+  if (url.pathname !== '/api/prototype-comments/asset') return false;
   if (req.method !== 'GET') {
     sendJson(res, { error: 'Method not allowed' }, { status: 405 });
     return true;
   }
 
-  const resolved = resolvePrototypeAnnotationsPath(context.project.root, url.searchParams.get('targetPath'), context.metadata);
+  const resolved = resolvePrototypeCommentsPath(context.project.root, url.searchParams.get('targetPath'), context.metadata);
   if (isResolveError(resolved)) {
     sendJson(res, { error: resolved.error }, { status: resolved.status });
     return true;
@@ -295,39 +295,39 @@ function handleAssetRequest(
   return true;
 }
 
-export function handlePrototypeAnnotationsApi(
+export function handlePrototypeCommentsApi(
   req: IncomingMessage,
   res: ServerResponse,
-  context: PrototypeAnnotationsContext,
+  context: PrototypeCommentsContext,
   url: URL,
 ): boolean {
   if (handleAssetRequest(req, res, context, url)) return true;
-  if (url.pathname !== '/api/prototype-annotations') return false;
+  if (url.pathname !== '/api/prototype-comments') return false;
 
-  const resolved = resolvePrototypeAnnotationsPath(context.project.root, url.searchParams.get('targetPath'), context.metadata);
+  const resolved = resolvePrototypeCommentsPath(context.project.root, url.searchParams.get('targetPath'), context.metadata);
   if (isResolveError(resolved)) {
     sendJson(res, { error: resolved.error }, { status: resolved.status });
     return true;
   }
 
   if (req.method === 'GET') {
-    if (!fs.existsSync(resolved.annotationFilePath)) {
+    if (!fs.existsSync(resolved.commentFilePath)) {
       sendJson(res, {
         exists: false,
         document: null,
-        path: resolved.projectRelativeAnnotationPath,
+        path: resolved.projectRelativeCommentPath,
       });
       return true;
     }
     try {
-      const document = JSON.parse(fs.readFileSync(resolved.annotationFilePath, 'utf8'));
+      const document = JSON.parse(fs.readFileSync(resolved.commentFilePath, 'utf8'));
       sendJson(res, {
         exists: true,
         document: hydrateImageData(document, resolved, url),
-        path: resolved.projectRelativeAnnotationPath,
+        path: resolved.projectRelativeCommentPath,
       });
     } catch (error) {
-      sendJson(res, { error: error instanceof Error ? error.message : 'Invalid annotation file' }, { status: 400 });
+      sendJson(res, { error: error instanceof Error ? error.message : 'Invalid comment file' }, { status: 400 });
     }
     return true;
   }
@@ -335,18 +335,18 @@ export function handlePrototypeAnnotationsApi(
   if (req.method === 'PUT') {
     readJsonBody(req)
       .then((body) => {
-        const normalized = normalizeAnnotationDocument(body, resolved);
+        const normalized = normalizeCommentDocument(body, resolved);
         const document = persistImageAssets(normalized, resolved);
         fs.mkdirSync(resolved.specDir, { recursive: true });
-        fs.writeFileSync(resolved.annotationFilePath, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(resolved.commentFilePath, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
         sendJson(res, {
           ok: true,
           exists: true,
           document,
-          path: resolved.projectRelativeAnnotationPath,
+          path: resolved.projectRelativeCommentPath,
         });
       })
-      .catch((error) => sendJson(res, { error: error?.message || 'Failed to write annotations' }, { status: 400 }));
+      .catch((error) => sendJson(res, { error: error?.message || 'Failed to write comments' }, { status: 400 }));
     return true;
   }
 

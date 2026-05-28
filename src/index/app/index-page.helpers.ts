@@ -26,7 +26,7 @@ export interface SpecPromptRequestResult {
     context?: GenieContextV1;
 }
 
-export type MarkdownQuickEditMode = 'annotation' | 'edit';
+export type MarkdownQuickEditMode = 'comment' | 'edit';
 
 export type MarkdownQuickEditState = {
     enabled: boolean;
@@ -156,7 +156,7 @@ export function createDefaultMarkdownQuickEditState(): MarkdownQuickEditState {
         enabled: false,
         dirty: false,
         saving: false,
-        quickEditMode: 'annotation',
+        quickEditMode: 'comment',
     };
 }
 

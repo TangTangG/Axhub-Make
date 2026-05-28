@@ -1,17 +1,19 @@
 import {
   readMakeClientMarker,
   readServerInfo,
+  resolveProjectRoot,
   type ProjectMetadata,
 } from './projectCore/index.ts';
 
 function getMakeClientRuntimeOrigin(projectRoot: string, runtimeOriginOverride?: string): string {
-  const override = runtimeOriginOverride?.trim().replace(/\/+$/u, '');
-  if (override) {
-    return override;
-  }
   const marker = readMakeClientMarker(projectRoot);
-  const runtime = marker ? readServerInfo(projectRoot, 'runtime') : null;
-  return runtime?.origin?.replace(/\/+$/u, '') || '';
+  if (marker) {
+    const runtime = readServerInfo(projectRoot, 'runtime');
+    if (runtime?.origin && resolveProjectRoot(runtime.projectRoot) === resolveProjectRoot(projectRoot)) {
+      return runtime.origin.replace(/\/+$/u, '');
+    }
+  }
+  return runtimeOriginOverride?.trim().replace(/\/+$/u, '') || '';
 }
 
 function replaceResourceUrlOrigin(value: unknown, runtimeOrigin: string): string {

@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getGlobalServerConfigPath,
+  getMakeClientMarkerPath,
+  getProjectMetadataPath,
 } from '../projectCore/index.ts';
 
 import {
@@ -83,10 +85,12 @@ describe('make-server project config APIs', () => {
       const projectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(projectConfig).toEqual({
         server: { host: '0.0.0.0', allowLAN: false },
-        projectInfo: { name: 'Updated Project' },
       });
+      expect(projectConfig.projectInfo).toBeUndefined();
       expect(projectConfig.automation).toBeUndefined();
       expect(projectConfig.assistant).toBeUndefined();
+      const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
+      expect(metadata.project.name).toBe('Updated Project');
 
       const projects = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
       expect(projects.projects).toEqual([
@@ -469,9 +473,10 @@ describe('make-server project config APIs', () => {
       });
       const projectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(projectConfig.projectInfo).toEqual({
-        name: '',
         description: 'Updated description',
       });
+      const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
+      expect(metadata.project.name).toBe('');
       const projects = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
       expect(projects.projects).toEqual([
         expect.objectContaining({
@@ -479,6 +484,92 @@ describe('make-server project config APIs', () => {
           name: '',
         }),
       ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('writes make client project names to client.json and leaves config projectInfo name derived', async () => {
+    const projectRoot = createTempRoot();
+    writeJson(getMakeClientMarkerPath(projectRoot), {
+      schemaVersion: 1,
+      kind: 'axhub-make-client',
+      repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+      project: { id: 'make-project', name: 'Axhub Make' },
+    });
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'make-project', name: 'Axhub Make' },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+      projectInfo: { name: 'Axhub Make', description: 'Description' },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startTestServer(projectRoot, registryHome);
+
+    try {
+      const initialConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(initialConfig.projectInfo).toEqual({
+        name: '',
+        description: 'Description',
+      });
+
+      const savedBlank = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server: { host: 'localhost', allowLAN: true },
+          projectInfo: { name: null, description: 'Updated description' },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(savedBlank).toMatchObject({ status: 200, body: { success: true } });
+
+      expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(projectRoot), 'utf8')).project).toEqual({
+        id: 'make-project',
+        name: '',
+      });
+      const blankProjectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
+      expect(blankProjectConfig).toEqual({
+        server: { host: 'localhost', allowLAN: true },
+        projectInfo: { description: 'Updated description' },
+      });
+      const blankMetadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
+      expect(blankMetadata.project).toEqual({
+        id: 'make-project',
+        name: '',
+      });
+      const blankProjects = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
+      expect(blankProjects.projects).toEqual([
+        expect.objectContaining({
+          id: 'make-project',
+          name: '',
+        }),
+      ]);
+
+      const savedName = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server: { host: 'localhost', allowLAN: true },
+          projectInfo: { name: 'Named Client', description: 'Named description' },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(savedName).toMatchObject({ status: 200, body: { success: true } });
+
+      expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(projectRoot), 'utf8')).project).toEqual({
+        id: 'make-project',
+        name: 'Named Client',
+      });
+      const namedProjectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
+      expect(namedProjectConfig).toEqual({
+        server: { host: 'localhost', allowLAN: true },
+        projectInfo: { description: 'Named description' },
+      });
+      const namedConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(namedConfig.projectInfo).toEqual({
+        name: 'Named Client',
+        description: 'Named description',
+      });
     } finally {
       await server.close();
     }

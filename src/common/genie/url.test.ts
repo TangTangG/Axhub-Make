@@ -5,7 +5,7 @@ import {
   buildMinimalGenieUrlContext,
 } from './url';
 
-const EDITOR_TODO_PROMPT = '请优先读取 .agents/skills/prototype-edit-annotations/SKILL.md；如果你的环境使用 Claude skills，则读取 .claude/skills/prototype-edit-annotations/SKILL.md。然后按这个技能处理当前项目里的原型批注。';
+const EDITOR_TODO_PROMPT = '请优先读取 .agents/skills/prototype-comments/SKILL.md；如果你的环境使用 Claude skills，则读取 .claude/skills/prototype-comments/SKILL.md。然后按这个技能处理当前项目里的原型批注。';
 
 function decodeSlashCommands(value: string | null) {
   expect(value).toBeTruthy();

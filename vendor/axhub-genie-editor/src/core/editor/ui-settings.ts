@@ -2,7 +2,7 @@ import { isMobileDevice } from '../../utils/mobile-detect';
 
 export type WebEditorGenieAgent = 'claude' | 'codex' | 'gemini' | 'opencode';
 export type WebEditorDesignAdjustmentTool = 'figma' | 'axure' | 'pencil';
-export type WebEditorInteractionProfile = 'design' | 'text-annotation';
+export type WebEditorInteractionProfile = 'design' | 'text-comment';
 export type GenieEditorGenieAgent = WebEditorGenieAgent;
 export type GenieEditorDesignAdjustmentTool = WebEditorDesignAdjustmentTool;
 export type GenieEditorInteractionProfile = WebEditorInteractionProfile;
@@ -80,7 +80,7 @@ export function applyInteractionProfileToUiSettings(
   settings: WebEditorUiSettings,
   profile: WebEditorInteractionProfile,
 ): WebEditorUiSettings {
-  if (profile !== 'text-annotation') {
+  if (profile !== 'text-comment') {
     return settings;
   }
 

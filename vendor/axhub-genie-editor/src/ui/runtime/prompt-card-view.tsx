@@ -29,10 +29,10 @@ import { deriveGenieUiState } from './genie-ui-state';
 import { PromptImageStrip } from './prompt-image-strip';
 import { PromptCardDesignEditor } from './prompt-card-design-editor';
 import {
-  PROMPT_CARD_SKILLS,
   addPromptCardSkillSelection,
-  buildPromptCardSkillPrefix,
+  buildPromptCardSkillSavePayload,
   clearPromptCardSkillTrigger,
+  deserializePromptCardSkillSelection,
   filterPromptCardSkills,
   findPromptCardSkillTrigger,
   type PromptCardSkill,
@@ -50,7 +50,7 @@ import {
   WEB_EDITOR_POPUP_ROOT_ATTR,
 } from './theme';
 import type { BreadcrumbsHandle, PromptCardSize, PromptCardViewProps } from './types';
-import { formatModifierShortcutLabel } from '../../core/editor/annotation-shortcut-settings';
+import { formatModifierShortcutLabel } from '../../core/editor/comment-shortcut-settings';
 
 function normalizePromptStyleSummaryLine(line: string): string {
   return line.replace(/^样式\s+/u, '').trim();
@@ -183,6 +183,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       onRemoveImage,
       onNotePasteCapture,
       canEditNote,
+      savedNoteMeta,
       draftNote,
       noteDirty,
       onDraftChange,
@@ -209,6 +210,11 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       () => filterPromptCardSkills(skillTrigger?.query ?? ''),
       [skillTrigger?.query],
     );
+    const selectedSkillsDirty = React.useMemo(() => {
+      const savedSkillIds = savedNoteMeta?.skillIds ?? [];
+      const selectedSkillIds = selectedSkills.map((skill) => skill.id);
+      return selectedSkillIds.join('\0') !== savedSkillIds.join('\0');
+    }, [savedNoteMeta?.skillIds, selectedSkills]);
     const skillMenuOpen = Boolean(
       skillTrigger
       && !inlineTextEditing
@@ -221,8 +227,13 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     }, [inlineTextEditing]);
 
     React.useEffect(() => {
-      setSelectedSkills([]);
-    }, [currentTarget]);
+      setSelectedSkills(deserializePromptCardSkillSelection(savedNoteMeta));
+    }, [savedNoteMeta, currentTarget]);
+
+    const onConfirmNoteWithSelectedSkills = React.useCallback(async () => {
+      const payload = buildPromptCardSkillSavePayload(draftNote, selectedSkills);
+      await onConfirmNote({ skillIds: payload.skillIds });
+    }, [draftNote, onConfirmNote, selectedSkills]);
 
     React.useImperativeHandle(
       ref,
@@ -464,14 +475,14 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     }, [promptVisible, uiMode]);
 
     const saveAndCloseNoteComposer = React.useCallback(async () => {
-      await onConfirmNote();
+      await onConfirmNoteWithSelectedSkills();
       setSelectedSkills([]);
       const textarea = noteComposerRef.current?.querySelector('textarea');
       if (textarea instanceof HTMLTextAreaElement) {
         textarea.blur();
       }
       onDismissSelection?.();
-    }, [onConfirmNote, onDismissSelection]);
+    }, [onConfirmNoteWithSelectedSkills, onDismissSelection]);
 
     const cancelAndDismissSelection = React.useCallback(() => {
       onCancelNote();
@@ -484,7 +495,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     }, [onCancelNote, onDismissSelection]);
     const saveAndDismissPromptCard = React.useCallback(async () => {
       await onConfirmText();
-      await onConfirmNote();
+      await onConfirmNoteWithSelectedSkills();
       setSelectedSkills([]);
 
       const activeElement = document.activeElement;
@@ -493,7 +504,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       }
 
       onDismissSelection?.();
-    }, [onConfirmNote, onConfirmText, onDismissSelection]);
+    }, [onConfirmNoteWithSelectedSkills, onConfirmText, onDismissSelection]);
 
     const clearSelectedSkills = React.useCallback(() => {
       setSelectedSkills([]);
@@ -501,8 +512,9 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
 
     const handleSkillSelect = React.useCallback(
       (skill: PromptCardSkill) => {
+        const nextDraftNote = clearPromptCardSkillTrigger(draftNote);
         setSelectedSkills((current) => addPromptCardSkillSelection(current, skill));
-        onDraftChange(clearPromptCardSkillTrigger(draftNote));
+        onDraftChange(nextDraftNote);
         window.requestAnimationFrame(() => {
           ensurePromptPrimaryFocus(2);
         });
@@ -550,7 +562,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       canExportSelectionToDesignTool,
       getExportSelectionToDesignToolBlockReason,
     });
-    const textAnnotationMode = interactionProfile === 'text-annotation';
+    const textCommentMode = interactionProfile === 'text-comment';
     const {
       currentTask: currentGenieTask,
       currentTaskRunning,
@@ -631,14 +643,12 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     const handleConfirmSendCurrentElementPrompt = React.useCallback(async () => {
       setSendingCurrentElementPrompt(true);
       try {
-        const promptPrefix = buildPromptCardSkillPrefix(selectedSkills);
         const sent = await executePromptCardCurrentElementAction({
           currentTarget,
           onConfirmText,
-          onConfirmNote,
+          onConfirmNote: onConfirmNoteWithSelectedSkills,
           onDismissSelection,
           onSendCurrentElementPromptToGenie,
-          promptPrefix,
         });
         if (sent) {
           clearSelectedSkills();
@@ -651,7 +661,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     }, [
       clearSelectedSkills,
       currentTarget,
-      onConfirmNote,
+      onConfirmNoteWithSelectedSkills,
       onConfirmText,
       onDismissSelection,
       onSendCurrentElementPromptToGenie,
@@ -701,7 +711,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       transactionManager &&
       bubbleStyleEditorOpen &&
       styleDesignEnabled &&
-      !textAnnotationMode,
+      !textCommentMode,
     );
     const styleEditorToggleTitle = bubbleStyleEditorOpen ? '关闭样式编辑' : '打开样式编辑';
     const promptCardSendShortcutLabel = resolvePromptCardSendShortcutLabel();
@@ -710,7 +720,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       currentElementPromptAction.disabled,
       promptCardSendShortcutLabel,
     );
-    const genieSelectionShortcutSettings = options.getAnnotationShortcutSettings?.();
+    const genieSelectionShortcutSettings = options.getCommentShortcutSettings?.();
     const genieSelectionShortcutLabels = genieSelectionShortcutSettings?.enabled
       ? genieSelectionShortcutSettings.shortcuts
         .filter((shortcut): shortcut is NonNullable<typeof shortcut> => Boolean(shortcut))
@@ -812,7 +822,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
           </div>
           <div style={{ flex: 1 }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {propertyPanelEnabled && styleDesignEnabled && !textAnnotationMode ? (
+            {propertyPanelEnabled && styleDesignEnabled && !textCommentMode ? (
               <IconActionButton
                 title={styleEditorToggleTitle}
                 icon={<FormatPainterOutlined />}
@@ -820,7 +830,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                 onClick={() => onBubbleStyleEditorOpenChange(!bubbleStyleEditorOpen)}
               />
             ) : null}
-            {designToolExportAction.visible && !textAnnotationMode ? (
+            {designToolExportAction.visible && !textCommentMode ? (
               <IconActionButton
                 title={designToolExportAction.title}
                 icon={<ExportOutlined />}
@@ -1027,8 +1037,8 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                 if (nextTarget instanceof Node && noteComposerRef.current?.contains(nextTarget)) {
                   return;
                 }
-                if (!noteDirty) return;
-                void onConfirmNote();
+                if (!noteDirty && !selectedSkillsDirty) return;
+                void onConfirmNoteWithSelectedSkills();
               }}
             />
             {skillMenuOpen ? (

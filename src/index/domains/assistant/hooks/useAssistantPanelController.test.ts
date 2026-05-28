@@ -167,6 +167,9 @@ describe('useAssistantPanelController source', () => {
     );
 
     expect(source).toContain("messageApi.loading('正在打开 AI...', 0)");
+    expect(source).toContain("const DEFAULT_ASSISTANT_INSTALL_CMD = 'npx @axhub/genie@latest';");
+    expect(source).toContain("start: 'npx @axhub/genie@latest',");
+    expect(source).toContain("status: 'npx @axhub/genie@latest status --json',");
     expect(source).not.toContain('正在启动并检测 Axhub Genie');
     expect(notReadyModalSource).toContain('请先通过 CLI 启动 AI 助手。');
     expect(notReadyModalSource).toContain('在终端执行这条启动命令，完成后再回来打开 AI。');

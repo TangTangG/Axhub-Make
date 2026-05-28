@@ -22,7 +22,7 @@ import type {
   ResolvedWebEditorOptions,
 } from './state';
 import type { WebEditorElementKey } from '../../web-editor-types';
-import { resolveTextAnnotationElementMeta } from './text-annotation-target';
+import { resolveTextCommentElementMeta } from './text-comment-target';
 import {
   GENIE_AGENT_RUN_TIMEOUT_MS,
   GENIE_BRIDGE_CONFIG_ERROR,
@@ -1310,9 +1310,9 @@ export function createGenieBridgeService(options: {
 
   function getElementTaskState(element: Element | null): ElementGenieTaskState | null {
     if (!element || !element.isConnected) return null;
-    const textAnnotationMeta = resolveTextAnnotationElementMeta(state, element);
-    if (textAnnotationMeta) {
-      return getDisplayTaskStateByKey(textAnnotationMeta.elementKey);
+    const textCommentMeta = resolveTextCommentElementMeta(state, element);
+    if (textCommentMeta) {
+      return getDisplayTaskStateByKey(textCommentMeta.elementKey);
     }
     const locator = createElementLocator(element);
     const elementKey = generateStableElementKey(element, locator.shadowHostChain);
@@ -1357,12 +1357,12 @@ export function createGenieBridgeService(options: {
     locator: ReturnType<typeof createElementLocator>;
     label: string;
   } {
-    const textAnnotationMeta = resolveTextAnnotationElementMeta(state, element);
-    if (textAnnotationMeta) {
+    const textCommentMeta = resolveTextCommentElementMeta(state, element);
+    if (textCommentMeta) {
       return {
-        elementKey: textAnnotationMeta.elementKey,
-        locator: textAnnotationMeta.locator,
-        label: textAnnotationMeta.label,
+        elementKey: textCommentMeta.elementKey,
+        locator: textCommentMeta.locator,
+        label: textCommentMeta.label,
       };
     }
     const locator = createElementLocator(element);
@@ -3288,9 +3288,9 @@ export function createGenieBridgeService(options: {
     const pageUrl = readPageUrl();
     const updatedAt = new Date().toISOString();
     const comments = mode === 'replace'
-      ? options.changes.buildAnnotationCommentsContext()
+      ? options.changes.buildCommentCommentsContext()
       : element
-        ? options.changes.buildAnnotationCommentsContext(element)
+        ? options.changes.buildCommentCommentsContext(element)
         : [];
 
     return comments.map((comment) => {
@@ -3331,7 +3331,7 @@ export function createGenieBridgeService(options: {
     });
   }
 
-  function buildAnnotationCommentsOnlyContext(
+  function buildCommentCommentsOnlyContext(
     element: Element | null,
     mode: 'append' | 'replace',
   ) {
@@ -3368,13 +3368,13 @@ export function createGenieBridgeService(options: {
     const comments = buildGenieContextComments(selectedElement);
     const selectedElements = (() => {
       if (!selectedElement) return [];
-      const textAnnotationMeta = resolveTextAnnotationElementMeta(state, selectedElement);
-      if (textAnnotationMeta) {
+      const textCommentMeta = resolveTextCommentElementMeta(state, selectedElement);
+      if (textCommentMeta) {
         return [
           {
-            tag: textAnnotationMeta.sourceElement?.tagName.toLowerCase() ?? 'text-selection',
-            selector: options.summaries.formatSelectorPath(textAnnotationMeta.locator),
-            label: textAnnotationMeta.label,
+            tag: textCommentMeta.sourceElement?.tagName.toLowerCase() ?? 'text-selection',
+            selector: options.summaries.formatSelectorPath(textCommentMeta.locator),
+            label: textCommentMeta.label,
           },
         ];
       }
@@ -3415,25 +3415,25 @@ export function createGenieBridgeService(options: {
     };
   }
 
-  async function handleSyncAnnotationContextToGenie(
+  async function handleSyncCommentContextToGenie(
     element: Element | null,
     mode: 'append' | 'replace',
   ): Promise<void> {
     if (!enabled) return;
 
     try {
-      const context = buildAnnotationCommentsOnlyContext(element, mode);
-      logInfo('Syncing annotation comments to Genie context', {
+      const context = buildCommentCommentsOnlyContext(element, mode);
+      logInfo('Syncing comment comments to Genie context', {
         integrationChannel,
         targetClientId,
         mode,
       });
       assertFrontendAvailable();
       if (!normalizeString(targetClientId)) {
-        await resolveOnlineFrontendTargetForContext(context, 'annotation_context');
+        await resolveOnlineFrontendTargetForContext(context, 'comment_context');
       }
 
-      const requestId = createRequestId('genie_annotation_context');
+      const requestId = createRequestId('genie_comment_context');
       const request = createPendingRequest(
         requestId,
         getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS),
@@ -3456,7 +3456,7 @@ export function createGenieBridgeService(options: {
       }
 
       await request;
-      logInfo('Annotation comments synced to Genie context', {
+      logInfo('Comment comments synced to Genie context', {
         requestId,
         integrationChannel,
         targetClientId,
@@ -3464,7 +3464,7 @@ export function createGenieBridgeService(options: {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logWarn('Failed to sync annotation comments to Genie context', {
+      logWarn('Failed to sync comment comments to Genie context', {
         message,
         integrationChannel,
         targetClientId,
@@ -3837,7 +3837,7 @@ export function createGenieBridgeService(options: {
     },
     interruptElementTask,
     handleSendSelectionToGenie,
-    handleSyncAnnotationContextToGenie,
+    handleSyncCommentContextToGenie,
     handleSendPromptToGenieForElements,
     handleSendPromptToGenieForElement,
     rehydratePersistedGenieState,

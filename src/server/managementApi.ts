@@ -16,6 +16,11 @@ import {
   type ProjectMetadata,
   type RegisteredProject,
 } from './projectCore/index.ts';
+import {
+  readProjectIdentity,
+  syncProjectIdentitySource,
+  updateProjectIdentityName,
+} from './projectIdentity.ts';
 
 import {
   getRequestUrl,
@@ -41,7 +46,7 @@ import { handleGitApi } from './managementApi.git.ts';
 import { handleLegacyDocsApi } from './managementApi.legacyDocs.ts';
 import { handleLegacyWebSocketApi } from './managementApi.legacyWebSocket.ts';
 import { handleProjectRegistryApi } from './managementApi.projectRegistry.ts';
-import { handlePrototypeAnnotationsApi } from './managementApi.prototypeAnnotations.ts';
+import { handlePrototypeCommentsApi } from './managementApi.prototypeComments.ts';
 import { handleCreatePlaceholderPrototype, handlePrototypeUploadApi } from './managementApi.prototypeUpload.ts';
 import { handleUploadAndReferenceApis } from './managementApi.references.ts';
 import { findProjectResourceByPath, getAxureArtifactPaths, resolveSourceFileFromMetadata } from './managementApi.resourceLookup.ts';
@@ -70,7 +75,6 @@ export interface ManagementApiOptions {
   };
   devMode?: boolean;
   cloudPublishingCommandExecutor?: CommandExecutor;
-  makeClientTemplateRoot?: string;
 }
 
 interface ProjectRequestContext {
@@ -186,16 +190,24 @@ function getMultipartTextFields(parts: MultipartPart[], name: string): string[] 
 }
 
 function toProjectEntry(project: RegisteredProject) {
+  const identity = readProjectIdentity(project.root, {
+    metadataPath: project.metadataPath,
+    fallback: project,
+  });
   return {
     ...project,
-    name: stringValue(project.name),
+    name: identity.name,
   };
 }
 
 function toProjectIdentity(project: RegisteredProject) {
+  const identity = readProjectIdentity(project.root, {
+    metadataPath: project.metadataPath,
+    fallback: project,
+  });
   return {
     id: project.id,
-    name: stringValue(project.name),
+    name: identity.name,
   };
 }
 
@@ -213,24 +225,28 @@ function addOrUpdateRegistryProjectByRoot(
   },
 ): RegisteredProject {
   const root = path.resolve(params.root);
+  const { identity } = syncProjectIdentitySource(root, {
+    metadataPath: params.metadataPath,
+    fallback: params,
+  });
   const existingByRoot = registry.listProjects().find((project) => path.resolve(project.root) === root) || null;
-  const existingById = registry.getProject(params.id);
+  const existingById = registry.getProject(identity.id);
   if (existingById && path.resolve(existingById.root) !== root && existingByRoot?.id !== existingById.id) {
-    const error = new Error(`Project already exists with id ${params.id}`) as Error & { code?: string; status?: number };
+    const error = new Error(`Project already exists with id ${identity.id}`) as Error & { code?: string; status?: number };
     error.code = 'MAKE_PROJECT_ID_CONFLICT';
     error.status = 409;
     throw error;
   }
   if (existingByRoot) {
     return registry.updateProject(existingByRoot.id, {
-      name: params.name,
+      name: identity.name,
       root,
       metadataPath: params.metadataPath,
     });
   }
   return registry.addProject({
-    id: params.id,
-    name: params.name,
+    id: identity.id,
+    name: identity.name,
     root,
     metadataPath: params.metadataPath,
   });
@@ -242,45 +258,40 @@ function getServerConfigStoreForRequest(options: ManagementApiOptions) {
   return createServerConfigStore(homeDir ? { homeDir } : undefined);
 }
 
-function syncProjectConfigName(projectRoot: string, title: string): void {
-  const configPath = getConfigPath(projectRoot);
-  const config = readProjectConfig(projectRoot);
-  const nextConfig = {
-    ...config,
-    projectInfo: {
-      ...(config?.projectInfo || {}),
-      name: title,
-    },
-  };
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(nextConfig, null, 2), 'utf8');
-}
-
 function updateRegisteredProjectTitle(options: ManagementApiOptions, project: RegisteredProject, title: string): RegisteredProject {
   const registry = getProjectRegistryForRequest(options);
-  const updatedProject = registry.updateProject(project.id, { name: title });
-  syncProjectConfigName(updatedProject.root, stringValue(updatedProject.name));
-  return updatedProject;
+  const { identity } = updateProjectIdentityName(project.root, title, {
+    metadataPath: project.metadataPath,
+    fallback: project,
+  });
+  return registry.updateProject(project.id, {
+    name: identity.name,
+    root: project.root,
+    metadataPath: project.metadataPath,
+  });
 }
 
 function ensureDefaultRegisteredProject(options: ManagementApiOptions) {
   const registry = getProjectRegistryForRequest(options);
   const current = registry.getRegistry();
-  const metadataStore = createProjectMetadataStore(options.projectRoot);
-  let metadata: ProjectMetadata;
+  let identity: { id: string; name: string };
+  let metadataPath: string;
   try {
-    metadata = metadataStore.saveMetadata(metadataStore.getMetadata());
+    const synced = syncProjectIdentitySource(options.projectRoot);
+    identity = synced.identity;
+    metadataPath = getProjectMetadataPath(options.projectRoot);
   } catch (error) {
     if (current.projects.length > 0) {
       return current;
     }
     throw error;
   }
-  const existingProject = registry.getProject(metadata.project.id);
+  const existingProject = registry.getProject(identity.id);
   if (existingProject) {
     registry.updateProject(existingProject.id, {
+      name: identity.name,
       root: options.projectRoot,
-      metadataPath: metadataStore.getMetadataPath(),
+      metadataPath,
     });
     return registry.getRegistry();
   }
@@ -288,10 +299,10 @@ function ensureDefaultRegisteredProject(options: ManagementApiOptions) {
     return current;
   }
   registry.addProject({
-    id: metadata.project.id,
-    name: metadata.project.name,
+    id: identity.id,
+    name: identity.name,
     root: options.projectRoot,
-    metadataPath: metadataStore.getMetadataPath(),
+    metadataPath,
   });
   return registry.getRegistry();
 }
@@ -570,7 +581,7 @@ function handleProjectApi(req: IncomingMessage, res: ServerResponse, options: Ma
     addOrUpdateRegistryProjectByRoot,
     toProjectEntry,
     toProjectIdentity,
-    syncProjectConfigName,
+    updateRegisteredProjectTitle,
     selectLocalProjectRootForKind,
     getExistingMetadataStore,
     createEffectiveProjectCapabilities,
@@ -1012,7 +1023,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     sendDisabledCapability,
   })) return true;
   if (handleCanvasApi(req, res, activeProjectRoot, pathname, { metadata: requestContext.metadata })) return true;
-  if (handlePrototypeAnnotationsApi(req, res, requestContext, url)) return true;
+  if (handlePrototypeCommentsApi(req, res, requestContext, url)) return true;
   if (handleMediaApi(req, res, activeProjectRoot, { mediaRoot: getDeclaredResourceWriteDir(requestContext, 'media') || undefined })) return true;
   if (handleWorkspaceApi(req, res, options, requestContext, pathname, url, {
     toProjectIdentity,

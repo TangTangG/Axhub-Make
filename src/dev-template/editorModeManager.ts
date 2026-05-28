@@ -17,7 +17,7 @@ export interface DevEditorEnableOptions {
   integrationWs?: GenieEditorIntegrationWsOptions;
 }
 
-const MAKE_GENIE_EDITOR_SKILL_INSTALL_SOURCE = '.agents/skills/prototype-edit-annotations/SKILL.md';
+const MAKE_GENIE_EDITOR_SKILL_INSTALL_SOURCE = '.agents/skills/prototype-comments/SKILL.md';
 
 export interface DevEditorsApi {
   getMode: () => EditorMode;

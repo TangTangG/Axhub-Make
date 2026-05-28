@@ -9,6 +9,7 @@ import {
   getMakeClientMarkerPath,
   getProjectMetadataPath,
   getRuntimeServerInfoPath,
+  readServerInfo,
   writeServerInfo,
 } from '../projectCore/index.ts';
 
@@ -64,14 +65,22 @@ import { runLocalCommand } from '../localCommand.ts';
 
 const runLocalCommandMock = vi.mocked(runLocalCommand);
 
-beforeEach(() => {
-  runLocalCommandMock.mockReset();
-  runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => ({
+const TEMPLATE_GIT_URL = 'https://github.com/lintendo/Axhub-Make.git';
+const TEMPLATE_MIRROR_GIT_URL = 'https://gitee.com/axhub/Axhub-Make.git';
+const TEMPLATE_MIRROR_SOURCE_URL = 'https://gitee.com/axhub/Axhub-Make/tree/main/client';
+
+function localCommandResult(command: string, args: string[]) {
+  return {
     stdout: '',
     stderr: '',
     command,
     escapedCommand: [command, ...args].join(' '),
-  }));
+  };
+}
+
+beforeEach(() => {
+  runLocalCommandMock.mockReset();
+  runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => localCommandResult(command, args));
   childProcessMock.execFile.mockReset();
   childProcessMock.execFile.mockImplementation((_file: string, _args: string[], optionsOrCallback?: unknown, maybeCallback?: unknown) => {
     const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
@@ -115,6 +124,16 @@ function writeMakeClientPackage(projectRoot: string) {
       'metadata:sync': 'node scripts/sync-project-metadata.mjs',
     },
   });
+}
+
+function writeInstalledMakeClientDependencies(projectRoot: string) {
+  const binDir = path.join(projectRoot, 'node_modules', '.bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(binDir, process.platform === 'win32' ? 'vite.cmd' : 'vite'), '', 'utf8');
+  const viteRoot = path.join(projectRoot, 'node_modules', 'vite');
+  fs.mkdirSync(path.join(viteRoot, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(viteRoot, 'package.json'), JSON.stringify({ bin: { vite: 'bin/vite.js' } }), 'utf8');
+  fs.writeFileSync(path.join(viteRoot, 'bin', 'vite.js'), '#!/usr/bin/env node\n', 'utf8');
 }
 
 function writeMakeClientMetadata(projectRoot: string, id = 'make-client-a', name = 'Make Client A') {
@@ -174,6 +193,43 @@ function writeMakeClientTemplate(templateRoot: string) {
   fs.writeFileSync(path.join(templateRoot, '.axhub', 'make', 'edit-history', 'stale.json'), '{}\n', 'utf8');
 }
 
+function installRemoteTemplateCommandMock(options: {
+  failPrimary?: boolean;
+  failMirror?: boolean;
+  metadataId?: string;
+  metadataName?: string;
+} = {}) {
+  runLocalCommandMock.mockImplementation(async (command: string, args: string[], commandOptions: any) => {
+    if (command === 'git' && args[0] === 'clone') {
+      const repository = String(args[args.length - 2] || '');
+      const checkoutRoot = String(args[args.length - 1] || '');
+      if (repository === TEMPLATE_GIT_URL && options.failPrimary) {
+        throw Object.assign(new Error('Primary template repository unavailable'), {
+          stderr: 'Primary template repository unavailable',
+        });
+      }
+      if (repository === TEMPLATE_MIRROR_GIT_URL && options.failMirror) {
+        throw Object.assign(new Error('Mirror template repository unavailable'), {
+          stderr: 'Mirror template repository unavailable',
+        });
+      }
+      writeMakeClientTemplate(path.join(checkoutRoot, 'client'));
+      return localCommandResult(command, args);
+    }
+    if (command === 'git' && args.includes('sparse-checkout')) {
+      return localCommandResult(command, args);
+    }
+    if (command === 'pnpm' && args[0] === 'metadata:sync') {
+      writeMakeClientMetadata(
+        String(commandOptions?.cwd || ''),
+        options.metadataId || path.basename(String(commandOptions?.cwd || '')),
+        options.metadataName || options.metadataId || path.basename(String(commandOptions?.cwd || '')),
+      );
+    }
+    return localCommandResult(command, args);
+  });
+}
+
 describe('make-server make client project APIs', () => {
   it('exposes Make client project routes from their domain module', () => {
     expect(handleMakeClientProjectApi).toBeTypeOf('function');
@@ -231,6 +287,7 @@ describe('make-server make client project APIs', () => {
         origin: runtimeServer.origin,
         projectRoot,
         startedAt: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
       });
 
       const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
@@ -256,6 +313,337 @@ describe('make-server make client project APIs', () => {
       expect(childProcessMock.spawn).not.toHaveBeenCalled();
     } finally {
       await runtimeServer.close();
+      await server.close();
+    }
+  });
+
+  it('treats local runtime info as running even when the recorded origin serves another project', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-local-runtime-');
+    const otherRoot = createTempRoot('axhub-make-client-port-owner-');
+    writeMakeClientMarker(projectRoot, 'local-runtime-client', 'Local Runtime Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'local-runtime-client', 'Local Runtime Client');
+    const server = await startTestServer(defaultRoot);
+    const portOwnerServer = await startTestServer(otherRoot);
+
+    try {
+      writeServerInfo(projectRoot, 'runtime', {
+        pid: process.pid,
+        port: portOwnerServer.port,
+        host: 'localhost',
+        origin: portOwnerServer.origin,
+        projectRoot,
+        startedAt: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
+      });
+
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const statusResponse = await fetch(`${server.origin}/api/projects/local-runtime-client/dev/status`);
+      const statusBody = await statusResponse.json();
+      const ensureResponse = await fetch(`${server.origin}/api/projects/local-runtime-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(statusResponse.status).toBe(200);
+      expect(statusBody).toMatchObject({
+        projectId: 'local-runtime-client',
+        makeClient: true,
+        running: true,
+        runtime: {
+          origin: portOwnerServer.origin,
+          projectRoot,
+        },
+      });
+      expect(statusBody.reason).toBeUndefined();
+      expect(ensureResponse.status).toBe(200);
+      expect(ensureBody).toMatchObject({
+        success: true,
+        projectId: 'local-runtime-client',
+        reused: true,
+        runtime: {
+          origin: portOwnerServer.origin,
+          projectRoot,
+        },
+      });
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
+        'pnpm',
+        ['install'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      await portOwnerServer.close();
+      await server.close();
+    }
+  });
+
+  it('reuses a discovered make client runtime when ensuring dev and the runtime file is missing', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-discovered-ensure-');
+    writeMakeClientMarker(projectRoot, 'discovered-ensure-client', 'Discovered Ensure Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'discovered-ensure-client', 'Discovered Ensure Client');
+    const server = await startTestServer(defaultRoot);
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'http://localhost:51724/api/health') {
+        return new Response(JSON.stringify({
+          ok: true,
+          role: 'runtime',
+          projectRoot,
+          server: {
+            pid: process.pid,
+            port: 51724,
+            host: 'localhost',
+            origin: 'http://localhost:51724',
+            projectRoot,
+            startedAt: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+          },
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    });
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/discovered-ensure-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(ensureResponse.status).toBe(200);
+      expect(ensureBody).toMatchObject({
+        success: true,
+        projectId: 'discovered-ensure-client',
+        reused: true,
+        runtime: {
+          origin: 'http://localhost:51724',
+          projectRoot,
+        },
+      });
+      expect(readServerInfo(projectRoot, 'runtime')).toMatchObject({
+        origin: 'http://localhost:51724',
+        projectRoot,
+      });
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
+        'pnpm',
+        ['install'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('returns the discovered runtime when ensuring dev from stale runtime info', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-discovered-stale-ensure-');
+    writeMakeClientMarker(projectRoot, 'discovered-stale-client', 'Discovered Stale Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'discovered-stale-client', 'Discovered Stale Client');
+    writeServerInfo(projectRoot, 'runtime', {
+      pid: process.pid,
+      port: 9,
+      host: 'localhost',
+      origin: 'http://127.0.0.1:9',
+      projectRoot,
+      startedAt: new Date().toISOString(),
+      timestamp: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const server = await startTestServer(defaultRoot);
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'http://localhost:51724/api/health') {
+        return new Response(JSON.stringify({
+          ok: true,
+          role: 'runtime',
+          projectRoot,
+          server: {
+            pid: process.pid,
+            port: 51724,
+            host: 'localhost',
+            origin: 'http://localhost:51724',
+            projectRoot,
+            startedAt: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+          },
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    });
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/discovered-stale-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(ensureResponse.status).toBe(200);
+      expect(ensureBody).toMatchObject({
+        success: true,
+        projectId: 'discovered-stale-client',
+        reused: true,
+        runtime: {
+          origin: 'http://localhost:51724',
+          projectRoot,
+        },
+      });
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('includes local make client runtime status in the project list', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-list-running-');
+    const portOwnerRoot = createTempRoot('axhub-make-client-list-port-owner-');
+    writeMakeClientMarker(projectRoot, 'list-running-client', 'List Running Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'list-running-client', 'List Running Client');
+    const server = await startTestServer(defaultRoot);
+    const portOwnerServer = await startTestServer(portOwnerRoot);
+
+    try {
+      writeServerInfo(projectRoot, 'runtime', {
+        pid: process.pid,
+        port: portOwnerServer.port,
+        host: 'localhost',
+        origin: portOwnerServer.origin,
+        projectRoot,
+        startedAt: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
+      });
+
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const listResponse = await fetch(`${server.origin}/api/projects`);
+      const listBody = await listResponse.json();
+      const project = listBody.projects.find((item: any) => item.id === 'list-running-client');
+
+      expect(listResponse.status).toBe(200);
+      expect(project).toMatchObject({
+        id: 'list-running-client',
+        runtimeStatus: {
+          projectId: 'list-running-client',
+          makeClient: true,
+          running: true,
+          runtime: {
+            origin: portOwnerServer.origin,
+            projectRoot,
+          },
+        },
+      });
+      expect(project.runtimeStatus.reason).toBeUndefined();
+    } finally {
+      await portOwnerServer.close();
+      await server.close();
+    }
+  });
+
+  it('stops a running make client by the local runtime pid and clears the runtime file', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-stop-running-');
+    writeMakeClientMarker(projectRoot, 'stop-running-client', 'Stop Running Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'stop-running-client', 'Stop Running Client');
+    const server = await startTestServer(defaultRoot);
+    const runtimePid = 987654;
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+      if (pid === runtimePid && (signal === 0 || signal === 'SIGTERM')) {
+        return true;
+      }
+      const error: NodeJS.ErrnoException = new Error('process not found');
+      error.code = 'ESRCH';
+      throw error;
+    }) as typeof process.kill);
+
+    try {
+      writeServerInfo(projectRoot, 'runtime', {
+        pid: runtimePid,
+        port: 51721,
+        host: 'localhost',
+        origin: 'http://localhost:51721',
+        projectRoot,
+        startedAt: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
+      });
+
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const stopResponse = await fetch(`${server.origin}/api/projects/stop-running-client/dev/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const stopBody = await stopResponse.json();
+
+      expect(stopResponse.status).toBe(200);
+      expect(stopBody).toMatchObject({
+        success: true,
+        projectId: 'stop-running-client',
+        stopped: true,
+        status: {
+          makeClient: true,
+          running: false,
+          reason: 'not-running',
+        },
+      });
+      expect(killSpy).toHaveBeenCalledWith(runtimePid, 'SIGTERM');
+      expect(fs.existsSync(getRuntimeServerInfoPath(projectRoot))).toBe(false);
+    } finally {
       await server.close();
     }
   });
@@ -293,6 +681,14 @@ describe('make-server make client project APIs', () => {
       navigation: { prototypes: ['home'], docs: [] },
       orders: { themes: ['brand'], data: [], templates: [] },
     });
+    writeServerInfo(projectRoot, 'runtime', {
+      pid: process.pid,
+      port: 51721,
+      host: 'localhost',
+      origin: 'http://localhost:51721',
+      projectRoot,
+      startedAt: new Date().toISOString(),
+    });
     const server = await startTestServer(defaultRoot, undefined, {
       runtimeOrigin: 'http://localhost:51720',
     });
@@ -319,15 +715,15 @@ describe('make-server make client project APIs', () => {
 
       expect(resourcesResponse.status).toBe(200);
       expect(resourcesBody.resources.prototypes[0]).toMatchObject({
-        clientUrl: 'http://localhost:51720/prototypes/home',
+        clientUrl: 'http://localhost:51721/prototypes/home',
       });
       expect(resourcesBody.resources.themes[0]).toMatchObject({
-        clientUrl: 'http://localhost:51720/themes/brand',
-        previewUrl: 'http://localhost:51720/themes/brand',
+        clientUrl: 'http://localhost:51721/themes/brand',
+        previewUrl: 'http://localhost:51721/themes/brand',
       });
       expect(entriesResponse.status).toBe(200);
       expect(entriesBody.prototypes[0]).toMatchObject({
-        clientUrl: 'http://localhost:51720/prototypes/home',
+        clientUrl: 'http://localhost:51721/prototypes/home',
       });
       expect(JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8')).resources.prototypes[0].clientUrl)
         .toBe('http://localhost:51721/prototypes/home');
@@ -350,6 +746,7 @@ describe('make-server make client project APIs', () => {
       origin: 'http://127.0.0.1:9',
       projectRoot,
       startedAt: new Date().toISOString(),
+      timestamp: new Date(Date.now() - 60_000).toISOString(),
     });
     const server = await startTestServer(defaultRoot);
 
@@ -391,6 +788,7 @@ describe('make-server make client project APIs', () => {
       origin: 'http://127.0.0.1:9',
       projectRoot,
       startedAt: new Date().toISOString(),
+      timestamp: new Date(Date.now() - 60_000).toISOString(),
     });
     childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
       const targetRoot = String(options.cwd || '');
@@ -401,6 +799,7 @@ describe('make-server make client project APIs', () => {
         origin: 'http://localhost:51726',
         projectRoot: targetRoot,
         startedAt: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
       });
       const child = {
         once: vi.fn((event: string, callback: (...args: any[]) => void) => {
@@ -449,7 +848,10 @@ describe('make-server make client project APIs', () => {
         ['dev'],
         expect.objectContaining({
           cwd: projectRoot,
-          env: expect.objectContaining({ PATH: expect.any(String) }),
+          env: expect.objectContaining({
+            AXHUB_MAKE_SKIP_AUTO_START_SERVER: '1',
+            PATH: expect.any(String),
+          }),
         }),
       );
     } finally {
@@ -457,24 +859,14 @@ describe('make-server make client project APIs', () => {
     }
   });
 
-  it('runs install and metadata sync through the shared local command runner', async () => {
+  it('starts dev directly from the project root when client dependencies are already installed', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
     const projectRoot = createTempRoot('axhub-make-client-local-command-');
     writeMakeClientMarker(projectRoot, 'local-command-client', 'Local Command Client');
     writeMakeClientPackage(projectRoot);
+    writeInstalledMakeClientDependencies(projectRoot);
     writeMakeClientMetadata(projectRoot, 'local-command-client', 'Local Command Client');
-    runLocalCommandMock.mockImplementation(async (command: string, args: string[], options: any) => {
-      if (command === 'pnpm' && args[0] === 'metadata:sync') {
-        writeMakeClientMetadata(String(options?.cwd || ''), 'local-command-client', 'Local Command Client');
-      }
-      return {
-        stdout: '',
-        stderr: '',
-        command,
-        escapedCommand: [command, ...args].join(' '),
-      };
-    });
     childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
       const targetRoot = String(options.cwd || '');
       writeServerInfo(targetRoot, 'runtime', {
@@ -521,15 +913,15 @@ describe('make-server make client project APIs', () => {
           origin: 'http://localhost:51728',
         },
       });
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         'pnpm',
         ['install'],
-        expect.objectContaining({ cwd: projectRoot, maxBuffer: 1024 * 1024 * 20 }),
+        expect.anything(),
       );
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         'pnpm',
         ['metadata:sync'],
-        expect.objectContaining({ cwd: projectRoot, maxBuffer: 1024 * 1024 * 20 }),
+        expect.anything(),
       );
       expect(childProcessMock.execFile).not.toHaveBeenCalled();
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
@@ -537,7 +929,203 @@ describe('make-server make client project APIs', () => {
         ['dev'],
         expect.objectContaining({
           cwd: projectRoot,
-          env: expect.objectContaining({ PATH: expect.any(String) }),
+          env: expect.objectContaining({
+            AXHUB_MAKE_SKIP_AUTO_START_SERVER: '1',
+            PATH: expect.any(String),
+          }),
+        }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('falls back to npm install when make client dependencies are missing and pnpm install fails', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-npm-fallback-');
+    writeMakeClientMarker(projectRoot, 'npm-fallback-client', 'NPM Fallback Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'npm-fallback-client', 'NPM Fallback Client');
+    runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'pnpm' && args[0] === 'install') {
+        throw Object.assign(new Error('pnpm registry unavailable'), {
+          stderr: 'pnpm registry unavailable',
+        });
+      }
+      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+        writeInstalledMakeClientDependencies(projectRoot);
+      }
+      return {
+        stdout: '',
+        stderr: '',
+        command,
+        escapedCommand: [command, ...args].join(' '),
+      };
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51729,
+        host: 'localhost',
+        origin: 'http://localhost:51729',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/npm-fallback-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(ensureResponse.status).toBe(200);
+      expect(ensureBody).toMatchObject({
+        success: true,
+        projectId: 'npm-fallback-client',
+        runtime: {
+          origin: 'http://localhost:51729',
+        },
+      });
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        'pnpm',
+        ['install'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['run', 'dev'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
+        expect.objectContaining({
+          cwd: projectRoot,
+          env: expect.objectContaining({
+            AXHUB_MAKE_SKIP_AUTO_START_SERVER: '1',
+            PATH: expect.any(String),
+          }),
+        }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('starts with local vite when dependencies are installed but pnpm is unavailable', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-installed-no-pnpm-');
+    writeMakeClientMarker(projectRoot, 'installed-no-pnpm-client', 'Installed No PNPM Client');
+    writeMakeClientPackage(projectRoot);
+    writeInstalledMakeClientDependencies(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'installed-no-pnpm-client', 'Installed No PNPM Client');
+    runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'pnpm' && args[0] === '--version') {
+        throw Object.assign(new Error('pnpm command not found'), {
+          code: 'ENOENT',
+        });
+      }
+      return localCommandResult(command, args);
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51730,
+        host: 'localhost',
+        origin: 'http://localhost:51730',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/installed-no-pnpm-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(ensureResponse.status).toBe(200);
+      expect(ensureBody).toMatchObject({
+        success: true,
+        projectId: 'installed-no-pnpm-client',
+        runtime: {
+          origin: 'http://localhost:51730',
+        },
+      });
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        'pnpm',
+        ['--version'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
+        'pnpm',
+        ['install'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'pnpm',
+        ['dev'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
+        expect.objectContaining({
+          cwd: projectRoot,
+          env: expect.objectContaining({
+            AXHUB_MAKE_SKIP_AUTO_START_SERVER: '1',
+            PATH: expect.any(String),
+          }),
         }),
       );
     } finally {
@@ -559,6 +1147,7 @@ describe('make-server make client project APIs', () => {
       origin: 'http://127.0.0.1:9',
       projectRoot,
       startedAt: '2026-05-01T00:00:00.000Z',
+      timestamp: '2026-05-01T00:00:00.000Z',
     });
     childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
       const targetRoot = String(options.cwd || '');
@@ -570,6 +1159,7 @@ describe('make-server make client project APIs', () => {
           origin: 'http://localhost:51727',
           projectRoot: targetRoot,
           startedAt: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
         });
       }, 20);
       const child = {
@@ -834,7 +1424,10 @@ describe('make-server make client project APIs', () => {
         ['dev'],
         expect.objectContaining({
           cwd: projectRoot,
-          env: expect.objectContaining({ PATH: expect.any(String) }),
+          env: expect.objectContaining({
+            AXHUB_MAKE_SKIP_AUTO_START_SERVER: '1',
+            PATH: expect.any(String),
+          }),
         }),
       );
     } finally {
@@ -868,28 +1461,20 @@ describe('make-server make client project APIs', () => {
     }
   });
 
-  it('creates a blank make client project from the embedded template and starts dev', async () => {
+  it('creates a blank make client project from the primary remote template and starts dev', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
     const parentRoot = createTempRoot('axhub-make-parent-');
-    const templateRoot = createTempRoot('axhub-make-template-');
-    writeMakeClientTemplate(templateRoot);
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
-    const server = await startTestServer(defaultRoot, registryHome, { makeClientTemplateRoot: templateRoot });
+    const server = await startTestServer(defaultRoot, registryHome);
 
-    runLocalCommandMock.mockImplementation(async (command: string, args: string[], options: any) => {
-      if (command === 'pnpm' && args[0] === 'metadata:sync') {
-        writeMakeClientMetadata(String(options?.cwd || ''), 'sales-demo', 'Sales Demo');
-      }
-      return {
-        stdout: '',
-        stderr: '',
-        command,
-        escapedCommand: [command, ...args].join(' '),
-      };
+    installRemoteTemplateCommandMock({
+      metadataId: 'sales-demo',
+      metadataName: 'Sales Demo',
     });
     childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
       const targetRoot = String(options.cwd || '');
+      writeMakeClientMetadata(targetRoot, 'sales-demo', 'Sales Demo');
       writeServerInfo(targetRoot, 'runtime', {
         pid: process.pid,
         port: 51721,
@@ -966,14 +1551,24 @@ describe('make-server make client project APIs', () => {
         expect.any(Function),
       );
       expect(runLocalCommandMock).toHaveBeenCalledWith(
+        'git',
+        expect.arrayContaining(['clone', TEMPLATE_GIT_URL, expect.any(String)]),
+        expect.objectContaining({ cwd: expect.any(String) }),
+      );
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
+        'git',
+        expect.arrayContaining(['clone', TEMPLATE_MIRROR_GIT_URL, expect.any(String)]),
+        expect.any(Object),
+      );
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
         'pnpm',
         ['install'],
         expect.objectContaining({ cwd: targetRoot }),
       );
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         'pnpm',
         ['metadata:sync'],
-        expect.objectContaining({ cwd: targetRoot }),
+        expect.anything(),
       );
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
         'pnpm',
@@ -991,25 +1586,91 @@ describe('make-server make client project APIs', () => {
     }
   });
 
+  it('falls back to the Gitee mirror when the primary remote template download fails', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const parentRoot = createTempRoot('axhub-make-parent-');
+    const server = await startTestServer(defaultRoot);
+
+    installRemoteTemplateCommandMock({
+      failPrimary: true,
+      metadataId: 'mirror-demo',
+      metadataName: 'Mirror Demo',
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51724,
+        host: 'localhost',
+        origin: 'http://localhost:51724',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/projects/make/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRoot,
+          folderName: 'Mirror Demo',
+          projectName: 'Mirror Demo',
+        }),
+      });
+      const body = await response.json();
+      const targetRoot = path.join(parentRoot, 'mirror-demo');
+
+      expect(response.status).toBe(201);
+      expect(body.project).toMatchObject({
+        id: 'mirror-demo',
+        name: 'Mirror Demo',
+        root: targetRoot,
+      });
+      expect(fs.existsSync(path.join(targetRoot, 'package.json'))).toBe(true);
+      expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(targetRoot), 'utf8'))).toMatchObject({
+        repository: TEMPLATE_MIRROR_SOURCE_URL,
+        project: {
+          id: 'mirror-demo',
+          name: 'Mirror Demo',
+        },
+      });
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        'git',
+        expect.arrayContaining(['clone', TEMPLATE_GIT_URL, expect.any(String)]),
+        expect.objectContaining({ cwd: expect.any(String) }),
+      );
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        'git',
+        expect.arrayContaining(['clone', TEMPLATE_MIRROR_GIT_URL, expect.any(String)]),
+        expect.objectContaining({ cwd: expect.any(String) }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
   it('ignores request-supplied templateRoot because the template is server-owned', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
     const parentRoot = createTempRoot('axhub-make-parent-');
-    const templateRoot = createTempRoot('axhub-make-template-');
-    writeMakeClientTemplate(templateRoot);
     const missingTemplateRoot = path.join(createTempRoot('axhub-make-missing-template-parent-'), 'missing-template');
-    const server = await startTestServer(defaultRoot, undefined, { makeClientTemplateRoot: templateRoot });
+    const server = await startTestServer(defaultRoot);
 
-    runLocalCommandMock.mockImplementation(async (command: string, args: string[], options: any) => {
-      if (command === 'pnpm' && args[0] === 'metadata:sync') {
-        writeMakeClientMetadata(String(options?.cwd || ''), 'owned-template', 'Owned Template');
-      }
-      return {
-        stdout: '',
-        stderr: '',
-        command,
-        escapedCommand: [command, ...args].join(' '),
-      };
+    installRemoteTemplateCommandMock({
+      metadataId: 'owned-template',
+      metadataName: 'Owned Template',
     });
     childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
       const targetRoot = String(options.cwd || '');
@@ -1069,12 +1730,15 @@ describe('make-server make client project APIs', () => {
     }
   });
 
-  it('reports a clear error when the embedded make client template is unavailable', async () => {
+  it('reports a clear error when all remote make client template sources fail', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
     const parentRoot = createTempRoot('axhub-make-parent-');
-    const missingTemplateRoot = path.join(createTempRoot('axhub-make-missing-template-parent-'), 'missing-template');
-    const server = await startTestServer(defaultRoot, undefined, { makeClientTemplateRoot: missingTemplateRoot });
+    const server = await startTestServer(defaultRoot);
+    installRemoteTemplateCommandMock({
+      failPrimary: true,
+      failMirror: true,
+    });
 
     try {
       const response = await fetch(`${server.origin}/api/projects/make/create`, {
@@ -1090,7 +1754,12 @@ describe('make-server make client project APIs', () => {
       expect(response.status).toBe(500);
       expect(body).toMatchObject({
         code: 'MAKE_CLIENT_TEMPLATE_UNAVAILABLE',
+        phase: 'template',
       });
+      expect(body.details.sources).toEqual([
+        expect.objectContaining({ repository: TEMPLATE_GIT_URL }),
+        expect.objectContaining({ repository: TEMPLATE_MIRROR_GIT_URL }),
+      ]);
       expect(childProcessMock.execFile).not.toHaveBeenCalled();
       expect(childProcessMock.spawn).not.toHaveBeenCalled();
     } finally {

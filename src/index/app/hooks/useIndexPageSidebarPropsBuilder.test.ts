@@ -90,6 +90,7 @@ function createBuilderParams(overrides: Partial<Parameters<typeof useIndexPageSi
       setResourceSection,
       setSearchText: vi.fn(),
       switchProject: vi.fn(),
+      stopProjectDevServer: vi.fn(),
       addProjectFromLocalPath: vi.fn(),
       selectMakeProjectParentFolder: vi.fn(async () => null),
       createBlankMakeProject: vi.fn(async () => ({})),

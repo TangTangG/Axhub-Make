@@ -1,14 +1,14 @@
 export type ModifierShortcutKey = 'Shift' | 'Alt' | 'Control' | 'Meta';
 
-export interface AnnotationShortcutSettings {
+export interface CommentShortcutSettings {
   enabled: boolean;
   middleClickEnabled: boolean;
   shortcuts: [ModifierShortcutKey | null, ModifierShortcutKey | null];
 }
 
-export const ANNOTATION_SHORTCUT_LONG_PRESS_MS = 500;
+export const COMMENT_SHORTCUT_LONG_PRESS_MS = 500;
 
-export const DEFAULT_ANNOTATION_SHORTCUT_SETTINGS: AnnotationShortcutSettings = {
+export const DEFAULT_COMMENT_SHORTCUT_SETTINGS: CommentShortcutSettings = {
   enabled: false,
   middleClickEnabled: false,
   shortcuts: [null, null],
@@ -36,9 +36,9 @@ export function formatModifierShortcutLabel(value: ModifierShortcutKey | null | 
   return value ?? '未设置';
 }
 
-export function sanitizeAnnotationShortcutSettings(
-  value: Partial<AnnotationShortcutSettings> | null | undefined,
-): AnnotationShortcutSettings {
+export function sanitizeCommentShortcutSettings(
+  value: Partial<CommentShortcutSettings> | null | undefined,
+): CommentShortcutSettings {
   const shortcuts = Array.isArray(value?.shortcuts) ? value?.shortcuts : [];
 
   return {
@@ -51,9 +51,9 @@ export function sanitizeAnnotationShortcutSettings(
   };
 }
 
-export function annotationShortcutSettingsEqual(
-  a: AnnotationShortcutSettings,
-  b: AnnotationShortcutSettings,
+export function commentShortcutSettingsEqual(
+  a: CommentShortcutSettings,
+  b: CommentShortcutSettings,
 ): boolean {
   return (
     a.enabled === b.enabled &&

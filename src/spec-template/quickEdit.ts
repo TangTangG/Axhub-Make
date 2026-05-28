@@ -17,7 +17,7 @@ export interface MarkdownQuickEditModifiedElement {
     locator?: { selectors?: string[]; path?: number[] };
 }
 
-export type MarkdownAnnotationPromptTemplate = (params: {
+export type MarkdownCommentPromptTemplate = (params: {
     meta: MarkdownQuickEditMeta;
     docLabel: string;
     docPath: string;
@@ -178,11 +178,11 @@ export function resolveMarkdownQuickEditMeta(docUrl?: string): MarkdownQuickEdit
     return defaultMeta;
 }
 
-export function buildMarkdownAnnotationPrompt(options: {
+export function buildMarkdownCommentPrompt(options: {
     docLabel: string;
     docUrl?: string;
     modifiedElements: MarkdownQuickEditModifiedElement[];
-    promptTemplate?: MarkdownAnnotationPromptTemplate;
+    promptTemplate?: MarkdownCommentPromptTemplate;
 }): { prompt: string; targetPath: string; meta: MarkdownQuickEditMeta } {
     const { docLabel, docUrl, modifiedElements, promptTemplate } = options;
     const meta = resolveMarkdownQuickEditMeta(docUrl);
@@ -199,7 +199,7 @@ export function buildMarkdownAnnotationPrompt(options: {
     }
 
     const lines: string[] = [];
-    lines.push('请根据以下 Markdown 文档预览上的标注，完成对应文档更新。');
+    lines.push('请根据以下 Markdown 文档预览上的批注，完成对应文档更新。');
     lines.push('');
     lines.push(`文档名称: ${docLabel || '文档'}`);
     lines.push(`文档路径: ${docPath}`);
@@ -208,23 +208,23 @@ export function buildMarkdownAnnotationPrompt(options: {
     }
     lines.push('');
     lines.push('执行要求：');
-    lines.push(`1. 所有标注都要优先落到文档文件 ${docPath}。`);
+    lines.push(`1. 所有批注都要优先落到文档文件 ${docPath}。`);
 
     lines.push('2. 仅修改这个 Markdown 文档本身，不要额外同步更新页面、组件、原型或其他文件。');
     lines.push('3. 输出修改文件清单、关键改动摘要，以及需要我验证的点。');
 
     lines.push('');
-    lines.push('标注列表：');
+    lines.push('批注列表：');
 
     modifiedElements.forEach((item, index) => {
-        lines.push(`- 标注项 ${index + 1}`);
-        lines.push(`  - 标注目标: ${item.label || '未命名元素'}`);
+        lines.push(`- 批注项 ${index + 1}`);
+        lines.push(`  - 批注目标: ${item.label || '未命名元素'}`);
         const selectorPath = formatLocatorPath(item.locator);
         if (selectorPath) {
             lines.push(`  - 预览定位: ${selectorPath}`);
         }
         if (item.note) {
-            lines.push(`  - 标注说明: ${item.note}`);
+            lines.push(`  - 批注说明: ${item.note}`);
         }
         if (item.imageCount > 0) {
             lines.push(`  - 附带图片: ${item.imageCount} 张`);

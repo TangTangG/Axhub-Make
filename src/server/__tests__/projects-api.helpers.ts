@@ -81,7 +81,7 @@ export function getTestProjectRegistryPath(registryHome: string) {
 export async function startTestServer(
   projectRoot: string,
   registryHome = createTempRoot('axhub-make-projects-api-home-'),
-  options: { makeClientTemplateRoot?: string; runtimeOrigin?: string } = {},
+  options: { runtimeOrigin?: string } = {},
 ) {
   return startMakeServer({
     projectRoot,
@@ -89,7 +89,6 @@ export async function startTestServer(
     port: 0,
     adminRoot: path.join(projectRoot, 'missing-admin'),
     registryPath: getProjectRegistryPath(registryHome),
-    makeClientTemplateRoot: options.makeClientTemplateRoot,
     runtimeOrigin: options.runtimeOrigin,
   });
 }

@@ -113,7 +113,7 @@ export function useAssistantPanelController({
 }: UseAssistantPanelControllerParams) {
     const ASSISTANT_RUNTIME_UI_LOG_PREFIX = '[assistant-runtime-ui]';
     const DEFAULT_ASSISTANT_WEB_BASE_URL = 'http://localhost:32123';
-    const DEFAULT_ASSISTANT_INSTALL_CMD = 'npx @axhub/genie';
+    const DEFAULT_ASSISTANT_INSTALL_CMD = 'npx @axhub/genie@latest';
     const DEFAULT_ASSISTANT_PANEL_WIDTH = 320;
     const MIN_ASSISTANT_PANEL_WIDTH = 320;
     const MAX_ASSISTANT_PANEL_WIDTH = 640;
@@ -130,8 +130,8 @@ export function useAssistantPanelController({
             commandSource: 'default',
             hints: {
                 installGlobal: DEFAULT_ASSISTANT_INSTALL_CMD,
-                start: 'npx @axhub/genie',
-                status: 'npx @axhub/genie status --json',
+                start: 'npx @axhub/genie@latest',
+                status: 'npx @axhub/genie@latest status --json',
             },
         },
     };

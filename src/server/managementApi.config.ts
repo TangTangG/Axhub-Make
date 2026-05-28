@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   getConfigPath,
@@ -11,6 +12,8 @@ import { readJsonBody, sendJson, streamDirectoryAsZip } from './http.ts';
 import { detectAgentAvailabilityAtStartup } from './agentAvailability.ts';
 import { detectIDEAvailabilityAtStartup } from './ideAvailability.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
+
+const makePackageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
 
 interface ConfigProject {
   id: string;
@@ -177,10 +180,13 @@ export function handleConfigApi(
           }
           if (nextConfig.projectInfo && typeof nextConfig.projectInfo === 'object') {
             const nextProjectName = handlers.stringValue((nextConfig.projectInfo as Record<string, unknown>).name);
-            projectConfig.projectInfo = {
-              ...nextConfig.projectInfo,
-              name: nextProjectName,
-            };
+            const nextProjectInfo = { ...nextConfig.projectInfo } as Record<string, unknown>;
+            delete nextProjectInfo.name;
+            if (Object.keys(nextProjectInfo).length > 0) {
+              projectConfig.projectInfo = nextProjectInfo;
+            } else {
+              delete projectConfig.projectInfo;
+            }
             handlers.updateRegisteredProjectTitle(options, activeProject, nextProjectName);
           }
           if (nextConfig.projectDefaults && typeof nextConfig.projectDefaults === 'object') {
@@ -218,8 +224,9 @@ export function handleConfigApi(
   }
 
   if (pathname === '/api/version') {
-    const pkgPath = path.join(activeProjectRoot, 'package.json');
-    const version = fs.existsSync(pkgPath) ? JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version ?? null : null;
+    const version = fs.existsSync(makePackageJsonPath)
+      ? JSON.parse(fs.readFileSync(makePackageJsonPath, 'utf8')).version ?? null
+      : null;
     sendJson(res, { version, projectId: activeProject?.id ?? null });
     return true;
   }

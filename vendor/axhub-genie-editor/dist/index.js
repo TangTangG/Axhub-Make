@@ -1346,9 +1346,9 @@ function resolveMarkerAnchorRect(anchor, options) {
   };
 }
 
-// src/core/editor/text-annotation-target.ts
-var TEXT_ANNOTATION_TARGET_ATTR = "data-we-text-annotation-target";
-var TEXT_ANNOTATION_ID_DATASET_KEY = "weTextAnnotationId";
+// src/core/editor/text-comment-target.ts
+var TEXT_COMMENT_TARGET_ATTR = "data-we-text-comment-target";
+var TEXT_COMMENT_ID_DATASET_KEY = "weTextCommentId";
 function buildFallbackLocator(selectedText) {
   return {
     selectors: [],
@@ -1356,28 +1356,28 @@ function buildFallbackLocator(selectedText) {
     path: []
   };
 }
-function isTextAnnotationTargetElement(element) {
-  return element instanceof HTMLElement && element.getAttribute(TEXT_ANNOTATION_TARGET_ATTR) === "true";
+function isTextCommentTargetElement(element) {
+  return element instanceof HTMLElement && element.getAttribute(TEXT_COMMENT_TARGET_ATTR) === "true";
 }
-function formatTextAnnotationLabel(selectedText) {
+function formatTextCommentLabel(selectedText) {
   const preview = String(selectedText ?? "").trim();
   return `\u300C${preview.slice(0, 30)}${preview.length > 30 ? "\u2026" : ""}\u300D`;
 }
-function resolveTextAnnotationElementMeta(state2, element) {
-  if (!isTextAnnotationTargetElement(element)) return null;
-  const annotationId = String(element.dataset[TEXT_ANNOTATION_ID_DATASET_KEY] ?? "").trim() || String(state2.activeTextAnnotation?.id ?? "").trim();
-  if (!annotationId) return null;
-  const annotation = state2.activeTextAnnotation?.id === annotationId ? state2.activeTextAnnotation : state2.textAnnotationManager?.getAnnotations().get(annotationId) ?? null;
-  if (annotation) {
-    const sourceElement = annotation.sourceElement?.isConnected ? annotation.sourceElement : null;
+function resolveTextCommentElementMeta(state2, element) {
+  if (!isTextCommentTargetElement(element)) return null;
+  const commentId = String(element.dataset[TEXT_COMMENT_ID_DATASET_KEY] ?? "").trim() || String(state2.activeTextComment?.id ?? "").trim();
+  if (!commentId) return null;
+  const comment = state2.activeTextComment?.id === commentId ? state2.activeTextComment : state2.textCommentManager?.getComments().get(commentId) ?? null;
+  if (comment) {
+    const sourceElement = comment.sourceElement?.isConnected ? comment.sourceElement : null;
     return {
-      elementKey: annotation.id,
-      locator: sourceElement ? createElementLocator(sourceElement) : buildFallbackLocator(annotation.selectedText),
-      label: formatTextAnnotationLabel(annotation.selectedText),
+      elementKey: comment.id,
+      locator: sourceElement ? createElementLocator(sourceElement) : buildFallbackLocator(comment.selectedText),
+      label: formatTextCommentLabel(comment.selectedText),
       sourceElement
     };
   }
-  const existingMeta = state2.editMetaByKey.get(annotationId) ?? null;
+  const existingMeta = state2.editMetaByKey.get(commentId) ?? null;
   if (!existingMeta) return null;
   return {
     elementKey: existingMeta.elementKey,
@@ -1387,9 +1387,9 @@ function resolveTextAnnotationElementMeta(state2, element) {
   };
 }
 
-// src/core/editor/annotation-shortcut-settings.ts
-var ANNOTATION_SHORTCUT_LONG_PRESS_MS = 500;
-var DEFAULT_ANNOTATION_SHORTCUT_SETTINGS = {
+// src/core/editor/comment-shortcut-settings.ts
+var COMMENT_SHORTCUT_LONG_PRESS_MS = 500;
+var DEFAULT_COMMENT_SHORTCUT_SETTINGS = {
   enabled: false,
   middleClickEnabled: false,
   shortcuts: [null, null]
@@ -1411,7 +1411,7 @@ function formatModifierShortcutLabel(value) {
   if (value === "Meta") return "Command";
   return value ?? "\u672A\u8BBE\u7F6E";
 }
-function sanitizeAnnotationShortcutSettings(value) {
+function sanitizeCommentShortcutSettings(value) {
   const shortcuts = Array.isArray(value?.shortcuts) ? value?.shortcuts : [];
   return {
     enabled: Boolean(value?.enabled),
@@ -1422,7 +1422,7 @@ function sanitizeAnnotationShortcutSettings(value) {
     ]
   };
 }
-function annotationShortcutSettingsEqual(a, b) {
+function commentShortcutSettingsEqual(a, b) {
   return a.enabled === b.enabled && a.middleClickEnabled === b.middleClickEnabled && a.shortcuts[0] === b.shortcuts[0] && a.shortcuts[1] === b.shortcuts[1];
 }
 
@@ -1516,7 +1516,7 @@ function sanitizeWebEditorUiSettings(value) {
   };
 }
 function applyInteractionProfileToUiSettings(settings, profile) {
-  if (profile !== "text-annotation") {
+  if (profile !== "text-comment") {
     return settings;
   }
   return {
@@ -1627,14 +1627,14 @@ function createEditorRuntimeState() {
     tokensService: null,
     perfMonitor: null,
     perfHotkeyCleanup: null,
-    annotationShortcutCleanup: null,
+    commentShortcutCleanup: null,
     hoveredElement: null,
     pendingHoverTransition: false,
     selectedElement: null,
     selectionAnchor: null,
-    annotationEntryMode: "bubble-card",
-    annotationShortcutSettings: { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS },
-    annotationShortcutDialogOpen: false,
+    commentEntryMode: "bubble-card",
+    commentShortcutSettings: { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS },
+    commentShortcutDialogOpen: false,
     propertyPanelPosition: null,
     uiResizeCleanup: null,
     editMetaByKey: /* @__PURE__ */ new Map(),
@@ -1650,9 +1650,9 @@ function createEditorRuntimeState() {
     genieTaskByElementKey: /* @__PURE__ */ new Map(),
     genieTaskByRequestId: /* @__PURE__ */ new Map(),
     externalEditingTaskByElementKey: /* @__PURE__ */ new Map(),
-    textAnnotationManager: null,
-    textAnnotationTargetElement: null,
-    activeTextAnnotation: null
+    textCommentManager: null,
+    textCommentTargetElement: null,
+    activeTextComment: null
   };
 }
 function resetEditorTransientState(state2) {
@@ -1664,15 +1664,15 @@ function resetEditorTransientState(state2) {
   state2.selectedElement = null;
   state2.selectionAnchor = null;
   state2.pendingHoverTransition = false;
-  state2.annotationShortcutDialogOpen = false;
+  state2.commentShortcutDialogOpen = false;
   state2.inlineTextEditingActive = false;
   state2.promptCardVisible = false;
   state2.genieConversationByScopeKey.clear();
   state2.genieTaskByElementKey.clear();
   state2.genieTaskByRequestId.clear();
   state2.externalEditingTaskByElementKey.clear();
-  state2.textAnnotationTargetElement = null;
-  state2.activeTextAnnotation = null;
+  state2.textCommentTargetElement = null;
+  state2.activeTextComment = null;
 }
 function clearEditorRuntimeRefs(state2) {
   state2.shadowHost = null;
@@ -1689,22 +1689,22 @@ function clearEditorRuntimeRefs(state2) {
   state2.tokensService = null;
   state2.perfMonitor = null;
   state2.perfHotkeyCleanup = null;
-  state2.annotationShortcutCleanup = null;
+  state2.commentShortcutCleanup = null;
   state2.uiResizeCleanup = null;
   state2.markerLayer = null;
   state2.hoveredElement = null;
   state2.selectedElement = null;
   state2.selectionAnchor = null;
   state2.pendingHoverTransition = false;
-  state2.annotationShortcutDialogOpen = false;
+  state2.commentShortcutDialogOpen = false;
   state2.promptCardVisible = false;
   state2.genieConversationByScopeKey.clear();
   state2.genieTaskByElementKey.clear();
   state2.genieTaskByRequestId.clear();
   state2.externalEditingTaskByElementKey.clear();
-  state2.textAnnotationManager = null;
-  state2.textAnnotationTargetElement = null;
-  state2.activeTextAnnotation = null;
+  state2.textCommentManager = null;
+  state2.textCommentTargetElement = null;
+  state2.activeTextComment = null;
   state2.pendingMarkerAnchors.clear();
   state2.editMetaByKey.clear();
   state2.processedEditTimestampsByKey.clear();
@@ -1725,6 +1725,106 @@ function filterUnprocessedTransactions(state2, transactions) {
     if (!resolvedKey) return true;
     return !shouldIgnoreProcessedEdit(state2, resolvedKey, Number(tx.timestamp ?? 0));
   });
+}
+
+// src/ui/runtime/prompt-card-skills.ts
+var PROMPT_CARD_SKILLS = [
+  {
+    id: "compare-options",
+    label: "\u591A\u65B9\u6848\u5BF9\u6BD4",
+    description: "\u5148\u6BD4\u8F83\u591A\u4E2A\u4FEE\u6539\u65B9\u6848\uFF0C\u518D\u9009\u6700\u5408\u9002\u7684\u6267\u884C",
+    prompt: "\u8BF7\u5BF9\u6BD4 2-3 \u4E2A\u53EF\u884C\u4FEE\u6539\u65B9\u6848\uFF0C\u9009\u62E9\u6700\u9002\u5408\u5F53\u524D\u9875\u9762\u7684\u4E00\u79CD\u540E\u518D\u6267\u884C\u3002"
+  },
+  {
+    id: "prototype-annotation",
+    label: "\u539F\u578B\u6807\u6CE8",
+    description: "\u7ED3\u5408\u5F53\u524D\u539F\u578B\u6807\u6CE8\u7406\u89E3\u4FEE\u6539\u610F\u56FE",
+    prompt: "\u8BF7\u7ED3\u5408\u5F53\u524D\u539F\u578B\u6807\u6CE8\u7406\u89E3\u4FEE\u6539\u610F\u56FE\uFF0C\u4F18\u5148\u5904\u7406\u6279\u6CE8\u5BF9\u5E94\u533A\u57DF\u3002"
+  }
+];
+var SKILL_TRIGGER_QUERY_PATTERN = /^[\p{Script=Han}\p{Letter}\p{Number}_-]*$/u;
+var SKILL_BY_ID = new Map(PROMPT_CARD_SKILLS.map((skill) => [skill.id, skill]));
+function normalizeSkillQuery(value) {
+  return value.trim().toLocaleLowerCase();
+}
+function findPromptCardSkillTrigger(text) {
+  const value = String(text ?? "");
+  const start = value.lastIndexOf("/");
+  if (start < 0) return null;
+  const query = value.slice(start + 1);
+  if (!SKILL_TRIGGER_QUERY_PATTERN.test(query)) return null;
+  const previousChar = start > 0 ? value[start - 1] : "";
+  const previousWhitespaceIndex = Math.max(
+    value.lastIndexOf(" ", start - 1),
+    value.lastIndexOf("\n", start - 1),
+    value.lastIndexOf("	", start - 1)
+  );
+  const currentTokenPrefix = value.slice(previousWhitespaceIndex + 1, start);
+  if (previousChar === "/") {
+    return null;
+  }
+  if (currentTokenPrefix.includes("/")) return null;
+  return {
+    query,
+    start,
+    end: value.length
+  };
+}
+function clearPromptCardSkillTrigger(text) {
+  const value = String(text ?? "");
+  const trigger = findPromptCardSkillTrigger(value);
+  if (!trigger) return value;
+  return value.slice(0, trigger.start).trimEnd();
+}
+function filterPromptCardSkills(query) {
+  const normalizedQuery = normalizeSkillQuery(query);
+  if (!normalizedQuery) return [...PROMPT_CARD_SKILLS];
+  return PROMPT_CARD_SKILLS.filter((skill) => {
+    const searchableText = `${skill.label} ${skill.description}`.toLocaleLowerCase();
+    return searchableText.includes(normalizedQuery);
+  });
+}
+function addPromptCardSkillSelection(selectedSkills, skill) {
+  if (selectedSkills.some((selected) => selected.id === skill.id)) {
+    return [...selectedSkills];
+  }
+  return [...selectedSkills, skill];
+}
+function buildPromptCardSkillPrefix(selectedSkills) {
+  if (selectedSkills.length === 0) return "";
+  return [
+    "\u6280\u80FD:",
+    ...selectedSkills.map((skill) => `- ${skill.label}: ${skill.prompt}`)
+  ].join("\n");
+}
+function normalizePromptCardSkillIds(skillIds) {
+  const result = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const skillId of skillIds) {
+    const normalizedId = String(skillId ?? "").trim();
+    if (!normalizedId || seen.has(normalizedId) || !SKILL_BY_ID.has(normalizedId)) continue;
+    seen.add(normalizedId);
+    result.push(normalizedId);
+  }
+  return result;
+}
+function buildPromptCardSkillSavePayload(note, selectedSkills) {
+  return {
+    note: String(note ?? "").replace(/\r\n/g, "\n").trim(),
+    skillIds: selectedSkills.map((skill) => skill.id)
+  };
+}
+function deserializePromptCardSkillSelection(payload) {
+  return normalizePromptCardSkillIds(payload?.skillIds ?? []).map((skillId) => SKILL_BY_ID.get(skillId)).filter((skill) => Boolean(skill));
+}
+function mergePromptCardSkillsIntoPromptNote(note, selectedSkills) {
+  const prefix = buildPromptCardSkillPrefix(selectedSkills);
+  const normalizedNote = String(note ?? "").replace(/\r\n/g, "\n").trim();
+  if (!prefix) return normalizedNote;
+  if (!normalizedNote) return prefix;
+  return `${prefix}
+
+${normalizedNote}`;
 }
 
 // src/core/editor/changes.ts
@@ -1922,15 +2022,15 @@ function createChangesService(options) {
   }
   function getMetaForElement(element) {
     if (!element) return null;
-    const textAnnotationMeta = resolveTextAnnotationElementMeta(state2, element);
-    if (textAnnotationMeta) {
-      return state2.editMetaByKey.get(textAnnotationMeta.elementKey) ?? getOrCreateEditMeta(
-        textAnnotationMeta.elementKey,
-        textAnnotationMeta.locator,
-        textAnnotationMeta.label
+    const textCommentMeta = resolveTextCommentElementMeta(state2, element);
+    if (textCommentMeta) {
+      return state2.editMetaByKey.get(textCommentMeta.elementKey) ?? getOrCreateEditMeta(
+        textCommentMeta.elementKey,
+        textCommentMeta.locator,
+        textCommentMeta.label
       );
     }
-    if (isTextAnnotationTargetElement(element)) {
+    if (isTextCommentTargetElement(element)) {
       return null;
     }
     const locator = createElementLocator(element);
@@ -1952,7 +2052,7 @@ function createChangesService(options) {
   function resolveLiveAnchor(locator, fallbackAnchor) {
     let element = locateElement(locator);
     if (!element || !element.isConnected) {
-      const src = state2.activeTextAnnotation?.sourceElement;
+      const src = state2.activeTextComment?.sourceElement;
       if (src && src.isConnected) {
         element = src;
       }
@@ -2008,6 +2108,8 @@ function createChangesService(options) {
     const note = normalizeNote2(meta.note).trim();
     if (note) {
       lines.push(note);
+    } else if ((meta.skillIds?.length ?? 0) > 0) {
+      lines.push("\u5DF2\u9009\u62E9 AI \u6280\u80FD");
     } else if (meta.images.length > 0) {
       lines.push(`\u5DF2\u9644\u52A0 ${meta.images.length} \u5F20\u53C2\u8003\u56FE\u7247`);
     } else if (meta.changeKinds.length > 0) {
@@ -2034,6 +2136,7 @@ function createChangesService(options) {
     if (!meta) return;
     const hasNote = Boolean(normalizeNote2(meta.note).trim());
     if (hasNote) return;
+    if ((meta.skillIds?.length ?? 0) > 0) return;
     if (meta.images.length > 0) return;
     if (meta.dirtySince !== null) return;
     if (meta.changeKinds.length > 0) return;
@@ -2055,7 +2158,7 @@ function createChangesService(options) {
       return a.label.localeCompare(b.label);
     });
     const activeMarkerKey = (() => {
-      if (state2.annotationEntryMode !== "bubble-card") return null;
+      if (state2.commentEntryMode !== "bubble-card") return null;
       const selected = state2.selectedElement;
       if (!selected || !selected.isConnected) return null;
       const locator = createElementLocator(selected);
@@ -2167,7 +2270,7 @@ function createChangesService(options) {
     }
     for (const meta of state2.editMetaByKey.values()) {
       if (dirtyKeys.has(meta.elementKey)) continue;
-      if (normalizeNote2(meta.note).trim()) {
+      if (normalizeNote2(meta.note).trim() || (meta.skillIds?.length ?? 0) > 0) {
         if (meta.dirtySince === null) {
           meta.dirtySince = Date.now();
         }
@@ -2223,6 +2326,7 @@ function createChangesService(options) {
     meta.locator = locator;
     meta.label = generateFullElementLabel(element, locator.shadowHostChain);
     meta.note = "";
+    delete meta.skillIds;
     meta.images = [];
     meta.dirtySince = null;
     meta.changeKinds = [];
@@ -2243,10 +2347,18 @@ function createChangesService(options) {
     state2.propertyPanel?.refresh();
     renderChangeMarkers();
   }
-  function setNoteForElement(element, note) {
+  function setNoteForElement(element, note, options2 = {}) {
     const meta = getMetaForElement(element);
     if (!meta) return;
     meta.note = normalizeNote2(note);
+    if (options2.skillIds) {
+      const nextSkillIds = normalizePromptCardSkillIds(options2.skillIds);
+      if (nextSkillIds.length > 0) {
+        meta.skillIds = nextSkillIds;
+      } else {
+        delete meta.skillIds;
+      }
+    }
     const pendingAnchor = state2.pendingMarkerAnchors.get(meta.elementKey);
     if (pendingAnchor) {
       meta.anchor = pendingAnchor;
@@ -2255,7 +2367,7 @@ function createChangesService(options) {
       const fallbackElement = element && element.isConnected ? element : locateElement(meta.locator);
       meta.anchor = fallbackElement ? buildFallbackAnchor(fallbackElement) : null;
     }
-    if (normalizeNote2(meta.note).trim()) {
+    if (normalizeNote2(meta.note).trim() || (meta.skillIds?.length ?? 0) > 0) {
       if (meta.dirtySince === null) {
         meta.dirtySince = Date.now();
       }
@@ -2391,7 +2503,7 @@ function createChangesService(options) {
     options.onStatusChange?.();
   }
   function getSelectedElementNote() {
-    return getMetaForElement(state2.selectedElement ?? state2.textAnnotationTargetElement)?.note ?? "";
+    return getMetaForElement(state2.selectedElement ?? state2.textCommentTargetElement)?.note ?? "";
   }
   function setChangeMarkersVisible(visible, config = {}) {
     state2.changeMarkersVisible = visible;
@@ -2409,6 +2521,7 @@ function createChangesService(options) {
       selector: formatSelectorPath(meta.locator),
       label: meta.label,
       note: meta.note,
+      skillIds: meta.skillIds?.slice(),
       changeKinds: meta.changeKinds.slice(),
       marker: meta.anchor ? {
         index: index + 1,
@@ -2420,7 +2533,7 @@ function createChangesService(options) {
       } : null
     }));
   }
-  function buildAnnotationCommentsContext(element) {
+  function buildCommentCommentsContext(element) {
     const targetMeta = element === void 0 ? null : getMetaForElement(element);
     const sourceMetas = targetMeta ? [targetMeta] : Array.from(state2.editMetaByKey.values()).sort((a, b) => Number(a.dirtySince ?? 0) - Number(b.dirtySince ?? 0));
     return sourceMetas.map((meta) => {
@@ -2481,7 +2594,7 @@ function createChangesService(options) {
     clearAllEditMeta,
     getSelectedElementNote,
     setChangeMarkersVisible,
-    buildAnnotationCommentsContext,
+    buildCommentCommentsContext,
     buildModifiedElementsContext
   };
 }
@@ -4059,9 +4172,9 @@ function createGenieBridgeService(options) {
   }
   function getElementTaskState(element) {
     if (!element || !element.isConnected) return null;
-    const textAnnotationMeta = resolveTextAnnotationElementMeta(state2, element);
-    if (textAnnotationMeta) {
-      return getDisplayTaskStateByKey(textAnnotationMeta.elementKey);
+    const textCommentMeta = resolveTextCommentElementMeta(state2, element);
+    if (textCommentMeta) {
+      return getDisplayTaskStateByKey(textCommentMeta.elementKey);
     }
     const locator = createElementLocator(element);
     const elementKey = generateStableElementKey(element, locator.shadowHostChain);
@@ -4090,12 +4203,12 @@ function createGenieBridgeService(options) {
     state2.genieTaskByRequestId.delete(requestId);
   }
   function resolveElementTaskMeta(element) {
-    const textAnnotationMeta = resolveTextAnnotationElementMeta(state2, element);
-    if (textAnnotationMeta) {
+    const textCommentMeta = resolveTextCommentElementMeta(state2, element);
+    if (textCommentMeta) {
       return {
-        elementKey: textAnnotationMeta.elementKey,
-        locator: textAnnotationMeta.locator,
-        label: textAnnotationMeta.label
+        elementKey: textCommentMeta.elementKey,
+        locator: textCommentMeta.locator,
+        label: textCommentMeta.label
       };
     }
     const locator = createElementLocator(element);
@@ -5684,7 +5797,7 @@ function createGenieBridgeService(options) {
     const currentFilePath = options.summaries.resolveCurrentFilePath();
     const pageUrl = readPageUrl();
     const updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    const comments = mode === "replace" ? options.changes.buildAnnotationCommentsContext() : element ? options.changes.buildAnnotationCommentsContext(element) : [];
+    const comments = mode === "replace" ? options.changes.buildCommentCommentsContext() : element ? options.changes.buildCommentCommentsContext(element) : [];
     return comments.map((comment) => {
       const target = {
         ...currentFilePath ? { filePath: currentFilePath } : {},
@@ -5719,7 +5832,7 @@ function createGenieBridgeService(options) {
       }];
     });
   }
-  function buildAnnotationCommentsOnlyContext(element, mode) {
+  function buildCommentCommentsOnlyContext(element, mode) {
     const comments = buildGenieContextComments(element, mode);
     const commentRecords = buildGenieCommentRecords(comments);
     const currentFilePath = comments.length > 0 ? options.summaries.resolveCurrentFilePath() : "";
@@ -5750,13 +5863,13 @@ function createGenieBridgeService(options) {
     const comments = buildGenieContextComments(selectedElement);
     const selectedElements = (() => {
       if (!selectedElement) return [];
-      const textAnnotationMeta = resolveTextAnnotationElementMeta(state2, selectedElement);
-      if (textAnnotationMeta) {
+      const textCommentMeta = resolveTextCommentElementMeta(state2, selectedElement);
+      if (textCommentMeta) {
         return [
           {
-            tag: textAnnotationMeta.sourceElement?.tagName.toLowerCase() ?? "text-selection",
-            selector: options.summaries.formatSelectorPath(textAnnotationMeta.locator),
-            label: textAnnotationMeta.label
+            tag: textCommentMeta.sourceElement?.tagName.toLowerCase() ?? "text-selection",
+            selector: options.summaries.formatSelectorPath(textCommentMeta.locator),
+            label: textCommentMeta.label
           }
         ];
       }
@@ -5793,20 +5906,20 @@ function createGenieBridgeService(options) {
       }
     };
   }
-  async function handleSyncAnnotationContextToGenie(element, mode) {
+  async function handleSyncCommentContextToGenie(element, mode) {
     if (!enabled) return;
     try {
-      const context = buildAnnotationCommentsOnlyContext(element, mode);
-      logInfo("Syncing annotation comments to Genie context", {
+      const context = buildCommentCommentsOnlyContext(element, mode);
+      logInfo("Syncing comment comments to Genie context", {
         integrationChannel,
         targetClientId,
         mode
       });
       assertFrontendAvailable();
       if (!normalizeString2(targetClientId)) {
-        await resolveOnlineFrontendTargetForContext(context, "annotation_context");
+        await resolveOnlineFrontendTargetForContext(context, "comment_context");
       }
-      const requestId = createRequestId("genie_annotation_context");
+      const requestId = createRequestId("genie_comment_context");
       const request = createPendingRequest(
         requestId,
         getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS),
@@ -5827,7 +5940,7 @@ function createGenieBridgeService(options) {
         throw error;
       }
       await request;
-      logInfo("Annotation comments synced to Genie context", {
+      logInfo("Comment comments synced to Genie context", {
         requestId,
         integrationChannel,
         targetClientId,
@@ -5835,7 +5948,7 @@ function createGenieBridgeService(options) {
       });
     } catch (error) {
       const message3 = error instanceof Error ? error.message : String(error);
-      logWarn("Failed to sync annotation comments to Genie context", {
+      logWarn("Failed to sync comment comments to Genie context", {
         message: message3,
         integrationChannel,
         targetClientId,
@@ -6180,7 +6293,7 @@ function createGenieBridgeService(options) {
     },
     interruptElementTask,
     handleSendSelectionToGenie,
-    handleSyncAnnotationContextToGenie,
+    handleSyncCommentContextToGenie,
     handleSendPromptToGenieForElements,
     handleSendPromptToGenieForElement,
     rehydratePersistedGenieState
@@ -6647,8 +6760,8 @@ function createInteractionService(options) {
     const anchor = state2.selectionAnchor;
     if (!anchor) return null;
     const selected = state2.selectedElement;
-    const textAnnotationSource = state2.activeTextAnnotation?.sourceElement;
-    const liveAnchorElement = selected && selected.isConnected ? selected : textAnnotationSource && textAnnotationSource.isConnected ? textAnnotationSource : null;
+    const textCommentSource = state2.activeTextComment?.sourceElement;
+    const liveAnchorElement = selected && selected.isConnected ? selected : textCommentSource && textCommentSource.isConnected ? textCommentSource : null;
     const liveRect = liveAnchorElement instanceof HTMLElement ? liveAnchorElement.getBoundingClientRect() : null;
     return resolveMarkerAnchorRect(anchor, {
       liveRect,
@@ -6691,14 +6804,14 @@ function createInteractionService(options) {
     console.log(`${options.logPrefix} Selected${modInfo}:`, element.tagName, element);
   }
   function handleDeselect() {
-    if (!state2.selectedElement && state2.activeTextAnnotation) {
+    if (!state2.selectedElement && state2.activeTextComment) {
       options.changes.clearPendingSelectionAnchor();
       state2.selectionAnchor = null;
-      state2.activeTextAnnotation = null;
+      state2.activeTextComment = null;
       state2.canvasOverlay?.setTextHighlightRects(null);
-      state2.textAnnotationManager?.clearActiveHighlight();
-      if (state2.textAnnotationTargetElement) {
-        delete state2.textAnnotationTargetElement.dataset.weTextAnnotationId;
+      state2.textCommentManager?.clearActiveHighlight();
+      if (state2.textCommentTargetElement) {
+        delete state2.textCommentTargetElement.dataset.weTextCommentId;
       }
       state2.positionTracker?.setSelectionElement(null);
       state2.positionTracker?.forceUpdate();
@@ -6726,9 +6839,9 @@ function createInteractionService(options) {
   }
   function handlePositionUpdate(rects) {
     const selectionAnchorRect = getSelectionAnchorRect();
-    const textAnnotationActive = Boolean(state2.activeTextAnnotation);
+    const textCommentActive = Boolean(state2.activeTextComment);
     state2.breadcrumbs?.setAnchorRect(
-      textAnnotationActive ? selectionAnchorRect : rects.selection ?? selectionAnchorRect
+      textCommentActive ? selectionAnchorRect : rects.selection ?? selectionAnchorRect
     );
     const animateHover = state2.pendingHoverTransition;
     state2.pendingHoverTransition = false;
@@ -6736,11 +6849,11 @@ function createInteractionService(options) {
     const suppressHover = !!state2.selectedElement && state2.hoveredElement === state2.selectedElement;
     const hideChrome = !state2.selectionChromeVisible;
     const hoverRect = hideChrome ? null : suppressHover ? null : rects.hover;
-    const selectionRect = hideChrome || textAnnotationActive ? null : rects.selection;
+    const selectionRect = hideChrome || textCommentActive ? null : rects.selection;
     const selectionLocked = genieBridge.isElementInteractionLocked(state2.selectedElement);
     const inlineTextEditing = Boolean(state2.inlineTextEditingActive);
     const selectionEffect = !hideChrome && !!selectionRect ? inlineTextEditing ? "inline-editing" : selectionLocked ? "ai-editing" : "default" : "default";
-    const handlesRect = hideChrome || state2.annotationEntryMode === "bubble-card" || selectionLocked || inlineTextEditing ? null : rects.selection;
+    const handlesRect = hideChrome || state2.commentEntryMode === "bubble-card" || selectionLocked || inlineTextEditing ? null : rects.selection;
     state2.canvasOverlay.setHoverRect(hoverRect, { animate: animateHover });
     state2.canvasOverlay.setSelectionEffect(selectionEffect);
     state2.canvasOverlay.setSelectionRect(selectionRect);
@@ -6765,11 +6878,11 @@ function createInteractionService(options) {
     options.persistence.scheduleWrite();
     options.onStatusChange?.();
   }
-  function enterAnnotationInput(mode = "bubble-card") {
-    state2.annotationEntryMode = mode;
-    state2.propertyPanel?.enterAnnotationInput?.(mode);
+  function enterCommentInput(mode = "bubble-card") {
+    state2.commentEntryMode = mode;
+    state2.propertyPanel?.enterCommentInput?.(mode);
   }
-  function enterAnnotationFromTrigger(selectionAnchor) {
+  function enterCommentFromTrigger(selectionAnchor) {
     const selected = state2.selectedElement;
     let target = selected && selected.isConnected ? selected : null;
     if (!target && selectionAnchor) {
@@ -6784,24 +6897,24 @@ function createInteractionService(options) {
     if (state2.selectedElement !== target) {
       handleSelect(target, DEFAULT_MODIFIERS, selectionAnchor);
     }
-    enterAnnotationInput("bubble-card");
+    enterCommentInput("bubble-card");
     return true;
   }
   function clearSelection() {
     const hadElementSelection = Boolean(state2.selectedElement);
-    const hadTextAnnotationSelection = Boolean(state2.activeTextAnnotation);
-    if (!hadElementSelection && !hadTextAnnotationSelection && !state2.selectionAnchor) return;
-    const clearIdleTextAnnotationMeta = () => {
+    const hadTextCommentSelection = Boolean(state2.activeTextComment);
+    if (!hadElementSelection && !hadTextCommentSelection && !state2.selectionAnchor) return;
+    const clearIdleTextCommentMeta = () => {
       if (typeof options.changes.getMetaForElement !== "function" || typeof options.changes.normalizeNote !== "function" || typeof options.changes.setNoteForElement !== "function") {
         return;
       }
-      const textAnnotationTarget = state2.textAnnotationTargetElement ?? null;
-      const textAnnotationMeta = options.changes.getMetaForElement(textAnnotationTarget);
-      const hasCommittedTextAnnotationContent = Boolean(
-        textAnnotationMeta && (options.changes.normalizeNote(textAnnotationMeta.note).trim() || textAnnotationMeta.images.length > 0 || textAnnotationMeta.changeKinds.length > 0)
+      const textCommentTarget = state2.textCommentTargetElement ?? null;
+      const textCommentMeta = options.changes.getMetaForElement(textCommentTarget);
+      const hasCommittedTextCommentContent = Boolean(
+        textCommentMeta && (options.changes.normalizeNote(textCommentMeta.note).trim() || textCommentMeta.images.length > 0 || textCommentMeta.changeKinds.length > 0)
       );
-      if (textAnnotationTarget && !hasCommittedTextAnnotationContent) {
-        options.changes.setNoteForElement(textAnnotationTarget, "");
+      if (textCommentTarget && !hasCommittedTextCommentContent) {
+        options.changes.setNoteForElement(textCommentTarget, "");
       }
     };
     if (state2.eventController) {
@@ -6809,14 +6922,14 @@ function createInteractionService(options) {
       if (state2.selectedElement) {
         handleDeselect();
       } else {
-        clearIdleTextAnnotationMeta();
+        clearIdleTextCommentMeta();
         options.changes.clearPendingSelectionAnchor();
         state2.selectionAnchor = null;
-        state2.activeTextAnnotation = null;
+        state2.activeTextComment = null;
         state2.canvasOverlay?.setTextHighlightRects(null);
-        state2.textAnnotationManager?.clearActiveHighlight();
-        if (state2.textAnnotationTargetElement) {
-          delete state2.textAnnotationTargetElement.dataset.weTextAnnotationId;
+        state2.textCommentManager?.clearActiveHighlight();
+        if (state2.textCommentTargetElement) {
+          delete state2.textCommentTargetElement.dataset.weTextCommentId;
         }
         syncShadowHostMount(null);
         state2.breadcrumbs?.setTarget(null);
@@ -6831,14 +6944,14 @@ function createInteractionService(options) {
       if (state2.selectedElement) {
         handleDeselect();
       } else {
-        clearIdleTextAnnotationMeta();
+        clearIdleTextCommentMeta();
         options.changes.clearPendingSelectionAnchor();
         state2.selectionAnchor = null;
-        state2.activeTextAnnotation = null;
+        state2.activeTextComment = null;
         state2.canvasOverlay?.setTextHighlightRects(null);
-        state2.textAnnotationManager?.clearActiveHighlight();
-        if (state2.textAnnotationTargetElement) {
-          delete state2.textAnnotationTargetElement.dataset.weTextAnnotationId;
+        state2.textCommentManager?.clearActiveHighlight();
+        if (state2.textCommentTargetElement) {
+          delete state2.textCommentTargetElement.dataset.weTextCommentId;
         }
         syncShadowHostMount(null);
         state2.breadcrumbs?.setTarget(null);
@@ -6938,10 +7051,10 @@ function createInteractionService(options) {
       };
     }
   }
-  function enterTextAnnotation(annotation, anchor) {
-    const elementKey = annotation.id;
-    const sourceElement = annotation.sourceElement?.isConnected ? annotation.sourceElement : null;
-    const selectionRect = annotation.boundingRect;
+  function enterTextComment(comment, anchor) {
+    const elementKey = comment.id;
+    const sourceElement = comment.sourceElement?.isConnected ? comment.sourceElement : null;
+    const selectionRect = comment.boundingRect;
     const hasFiniteSelectionRect = Number.isFinite(selectionRect.left) && Number.isFinite(selectionRect.top) && Number.isFinite(selectionRect.width) && Number.isFinite(selectionRect.height);
     const anchorClientX = hasFiniteSelectionRect ? selectionRect.left + selectionRect.width / 2 : anchor.clientX;
     const anchorClientY = hasFiniteSelectionRect ? selectionRect.top + selectionRect.height / 2 : anchor.clientY;
@@ -6950,10 +7063,10 @@ function createInteractionService(options) {
     const offsetY = sourceRect && Number.isFinite(sourceRect.top) && Number.isFinite(sourceRect.height) ? anchorClientY - sourceRect.top : void 0;
     const locator = sourceElement ? createElementLocator(sourceElement) : {
       selectors: [],
-      fingerprint: annotation.selectedText.slice(0, 80),
+      fingerprint: comment.selectedText.slice(0, 80),
       path: []
     };
-    const label = formatTextAnnotationLabel(annotation.selectedText);
+    const label = formatTextCommentLabel(comment.selectedText);
     const meta = options.changes.getOrCreateEditMeta(elementKey, locator, label);
     const markerAnchor = createMarkerAnchor({
       clientX: anchorClientX,
@@ -6968,30 +7081,30 @@ function createInteractionService(options) {
     state2.selectedElement = null;
     state2.selectionAnchor = markerAnchor;
     state2.hoveredElement = null;
-    state2.activeTextAnnotation = annotation;
+    state2.activeTextComment = comment;
     state2.positionTracker?.setSelectionElement(sourceElement);
     meta.anchor = markerAnchor;
     syncShadowHostMount(sourceElement);
-    const textAnnotationTargetElement = state2.textAnnotationTargetElement;
-    if (textAnnotationTargetElement) {
-      textAnnotationTargetElement.dataset.weTextAnnotationId = annotation.id;
-      textAnnotationTargetElement.style.left = `${Math.round(anchorClientX)}px`;
-      textAnnotationTargetElement.style.top = `${Math.round(anchorClientY)}px`;
+    const textCommentTargetElement = state2.textCommentTargetElement;
+    if (textCommentTargetElement) {
+      textCommentTargetElement.dataset.weTextCommentId = comment.id;
+      textCommentTargetElement.style.left = `${Math.round(anchorClientX)}px`;
+      textCommentTargetElement.style.top = `${Math.round(anchorClientY)}px`;
       state2.breadcrumbs?.setTarget(null);
       state2.propertyPanel?.setTarget(null);
-      state2.breadcrumbs?.setTarget(textAnnotationTargetElement);
-      state2.propertyPanel?.setTarget(textAnnotationTargetElement);
+      state2.breadcrumbs?.setTarget(textCommentTargetElement);
+      state2.propertyPanel?.setTarget(textCommentTargetElement);
     } else {
       state2.breadcrumbs?.setTarget(null);
       state2.propertyPanel?.setTarget(null);
     }
-    state2.breadcrumbs?.setAnchorRect(annotation.boundingRect);
+    state2.breadcrumbs?.setAnchorRect(comment.boundingRect);
     state2.handlesController?.setTarget(null);
     state2.parentSelectController?.setTarget(null);
-    enterAnnotationInput("bubble-card");
+    enterCommentInput("bubble-card");
     state2.propertyPanel?.refresh();
     options.onStatusChange?.();
-    console.log(`${options.logPrefix} Text annotation:`, annotation.selectedText.slice(0, 50));
+    console.log(`${options.logPrefix} Text comment:`, comment.selectedText.slice(0, 50));
   }
   return {
     handleHover,
@@ -6999,9 +7112,9 @@ function createInteractionService(options) {
     handleDeselect,
     handlePositionUpdate,
     handleTransactionChange,
-    enterAnnotationInput,
-    enterAnnotationFromTrigger,
-    enterTextAnnotation,
+    enterCommentInput,
+    enterCommentFromTrigger,
+    enterTextComment,
     clearSelection,
     revertElement
   };
@@ -10138,8 +10251,7 @@ async function executePromptCardCurrentElementAction(options) {
     onConfirmText,
     onConfirmNote,
     onDismissSelection,
-    onSendCurrentElementPromptToGenie,
-    promptPrefix
+    onSendCurrentElementPromptToGenie
   } = options;
   if (!currentTarget || !onSendCurrentElementPromptToGenie) {
     return false;
@@ -10147,10 +10259,7 @@ async function executePromptCardCurrentElementAction(options) {
   await onConfirmText();
   await onConfirmNote();
   onDismissSelection?.();
-  await onSendCurrentElementPromptToGenie(
-    currentTarget,
-    promptPrefix ? { promptPrefix } : void 0
-  );
+  await onSendCurrentElementPromptToGenie(currentTarget);
   return true;
 }
 
@@ -12822,67 +12931,6 @@ function PromptCardDesignEditor(props) {
   ] });
 }
 
-// src/ui/runtime/prompt-card-skills.ts
-var PROMPT_CARD_SKILLS = [
-  {
-    id: "compare-options",
-    label: "\u591A\u65B9\u6848\u5BF9\u6BD4",
-    description: "\u5148\u6BD4\u8F83\u591A\u4E2A\u4FEE\u6539\u65B9\u6848\uFF0C\u518D\u9009\u6700\u5408\u9002\u7684\u6267\u884C",
-    prompt: "\u8BF7\u5BF9\u6BD4 2-3 \u4E2A\u53EF\u884C\u4FEE\u6539\u65B9\u6848\uFF0C\u9009\u62E9\u6700\u9002\u5408\u5F53\u524D\u9875\u9762\u7684\u4E00\u79CD\u540E\u518D\u6267\u884C\u3002"
-  },
-  {
-    id: "prototype-annotation",
-    label: "\u539F\u578B\u6807\u6CE8",
-    description: "\u7ED3\u5408\u5F53\u524D\u539F\u578B\u6807\u6CE8\u7406\u89E3\u4FEE\u6539\u610F\u56FE",
-    prompt: "\u8BF7\u7ED3\u5408\u5F53\u524D\u539F\u578B\u6807\u6CE8\u7406\u89E3\u4FEE\u6539\u610F\u56FE\uFF0C\u4F18\u5148\u5904\u7406\u6807\u6CE8\u5BF9\u5E94\u533A\u57DF\u3002"
-  }
-];
-var TRAILING_SKILL_TRIGGER_PATTERN = /(?:^|\s)\/([\p{Script=Han}\p{Letter}\p{Number}_-]*)$/u;
-function normalizeSkillQuery(value) {
-  return value.trim().toLocaleLowerCase();
-}
-function findPromptCardSkillTrigger(text) {
-  const value = String(text ?? "");
-  const match = value.match(TRAILING_SKILL_TRIGGER_PATTERN);
-  if (!match || match.index === void 0) return null;
-  const query = match[1] ?? "";
-  const slashOffset = match[0].lastIndexOf("/");
-  if (slashOffset < 0) return null;
-  const start = match.index + slashOffset;
-  return {
-    query,
-    start,
-    end: value.length
-  };
-}
-function clearPromptCardSkillTrigger(text) {
-  const value = String(text ?? "");
-  const trigger = findPromptCardSkillTrigger(value);
-  if (!trigger) return value;
-  return value.slice(0, trigger.start).trimEnd();
-}
-function filterPromptCardSkills(query) {
-  const normalizedQuery = normalizeSkillQuery(query);
-  if (!normalizedQuery) return [...PROMPT_CARD_SKILLS];
-  return PROMPT_CARD_SKILLS.filter((skill) => {
-    const searchableText = `${skill.label} ${skill.description}`.toLocaleLowerCase();
-    return searchableText.includes(normalizedQuery);
-  });
-}
-function addPromptCardSkillSelection(selectedSkills, skill) {
-  if (selectedSkills.some((selected) => selected.id === skill.id)) {
-    return [...selectedSkills];
-  }
-  return [...selectedSkills, skill];
-}
-function buildPromptCardSkillPrefix(selectedSkills) {
-  if (selectedSkills.length === 0) return "";
-  return [
-    "\u6280\u80FD:",
-    ...selectedSkills.map((skill) => `- ${skill.label}: ${skill.prompt}`)
-  ].join("\n");
-}
-
 // src/ui/runtime/prompt-card-view.tsx
 var import_jsx_runtime8 = require("react/jsx-runtime");
 function normalizePromptStyleSummaryLine(line) {
@@ -12993,6 +13041,7 @@ var PromptCardView = import_react10.default.forwardRef(
       onRemoveImage,
       onNotePasteCapture,
       canEditNote,
+      savedNoteMeta,
       draftNote,
       noteDirty,
       onDraftChange,
@@ -13018,6 +13067,11 @@ var PromptCardView = import_react10.default.forwardRef(
       () => filterPromptCardSkills(skillTrigger?.query ?? ""),
       [skillTrigger?.query]
     );
+    const selectedSkillsDirty = import_react10.default.useMemo(() => {
+      const savedSkillIds = savedNoteMeta?.skillIds ?? [];
+      const selectedSkillIds = selectedSkills.map((skill) => skill.id);
+      return selectedSkillIds.join("\0") !== savedSkillIds.join("\0");
+    }, [savedNoteMeta?.skillIds, selectedSkills]);
     const skillMenuOpen = Boolean(
       skillTrigger && !inlineTextEditing && canEditNote && filteredSkills.length > 0
     );
@@ -13025,8 +13079,12 @@ var PromptCardView = import_react10.default.forwardRef(
       inlineTextEditingRef.current = inlineTextEditing;
     }, [inlineTextEditing]);
     import_react10.default.useEffect(() => {
-      setSelectedSkills([]);
-    }, [currentTarget]);
+      setSelectedSkills(deserializePromptCardSkillSelection(savedNoteMeta));
+    }, [savedNoteMeta, currentTarget]);
+    const onConfirmNoteWithSelectedSkills = import_react10.default.useCallback(async () => {
+      const payload = buildPromptCardSkillSavePayload(draftNote, selectedSkills);
+      await onConfirmNote({ skillIds: payload.skillIds });
+    }, [draftNote, onConfirmNote, selectedSkills]);
     import_react10.default.useImperativeHandle(
       ref,
       () => ({
@@ -13219,14 +13277,14 @@ var PromptCardView = import_react10.default.forwardRef(
       };
     }, [promptVisible, uiMode]);
     const saveAndCloseNoteComposer = import_react10.default.useCallback(async () => {
-      await onConfirmNote();
+      await onConfirmNoteWithSelectedSkills();
       setSelectedSkills([]);
       const textarea = noteComposerRef.current?.querySelector("textarea");
       if (textarea instanceof HTMLTextAreaElement) {
         textarea.blur();
       }
       onDismissSelection?.();
-    }, [onConfirmNote, onDismissSelection]);
+    }, [onConfirmNoteWithSelectedSkills, onDismissSelection]);
     const cancelAndDismissSelection = import_react10.default.useCallback(() => {
       onCancelNote();
       setSelectedSkills([]);
@@ -13238,21 +13296,22 @@ var PromptCardView = import_react10.default.forwardRef(
     }, [onCancelNote, onDismissSelection]);
     const saveAndDismissPromptCard = import_react10.default.useCallback(async () => {
       await onConfirmText();
-      await onConfirmNote();
+      await onConfirmNoteWithSelectedSkills();
       setSelectedSkills([]);
       const activeElement = document.activeElement;
       if (activeElement instanceof HTMLElement && rootRef.current?.contains(activeElement)) {
         activeElement.blur();
       }
       onDismissSelection?.();
-    }, [onConfirmNote, onConfirmText, onDismissSelection]);
+    }, [onConfirmNoteWithSelectedSkills, onConfirmText, onDismissSelection]);
     const clearSelectedSkills = import_react10.default.useCallback(() => {
       setSelectedSkills([]);
     }, []);
     const handleSkillSelect = import_react10.default.useCallback(
       (skill) => {
+        const nextDraftNote = clearPromptCardSkillTrigger(draftNote);
         setSelectedSkills((current) => addPromptCardSkillSelection(current, skill));
-        onDraftChange(clearPromptCardSkillTrigger(draftNote));
+        onDraftChange(nextDraftNote);
         window.requestAnimationFrame(() => {
           ensurePromptPrimaryFocus(2);
         });
@@ -13295,7 +13354,7 @@ var PromptCardView = import_react10.default.forwardRef(
       canExportSelectionToDesignTool,
       getExportSelectionToDesignToolBlockReason
     });
-    const textAnnotationMode = interactionProfile === "text-annotation";
+    const textCommentMode = interactionProfile === "text-comment";
     const {
       currentTask: currentGenieTask,
       currentTaskRunning,
@@ -13370,14 +13429,12 @@ var PromptCardView = import_react10.default.forwardRef(
     const handleConfirmSendCurrentElementPrompt = import_react10.default.useCallback(async () => {
       setSendingCurrentElementPrompt(true);
       try {
-        const promptPrefix = buildPromptCardSkillPrefix(selectedSkills);
         const sent = await executePromptCardCurrentElementAction({
           currentTarget,
           onConfirmText,
-          onConfirmNote,
+          onConfirmNote: onConfirmNoteWithSelectedSkills,
           onDismissSelection,
-          onSendCurrentElementPromptToGenie,
-          promptPrefix
+          onSendCurrentElementPromptToGenie
         });
         if (sent) {
           clearSelectedSkills();
@@ -13389,7 +13446,7 @@ var PromptCardView = import_react10.default.forwardRef(
     }, [
       clearSelectedSkills,
       currentTarget,
-      onConfirmNote,
+      onConfirmNoteWithSelectedSkills,
       onConfirmText,
       onDismissSelection,
       onSendCurrentElementPromptToGenie,
@@ -13432,7 +13489,7 @@ var PromptCardView = import_react10.default.forwardRef(
     const promptTarget = currentTarget;
     const showPromptTextInput = false;
     const showPromptDesignEditor = Boolean(
-      currentTarget && transactionManager && bubbleStyleEditorOpen && styleDesignEnabled && !textAnnotationMode
+      currentTarget && transactionManager && bubbleStyleEditorOpen && styleDesignEnabled && !textCommentMode
     );
     const styleEditorToggleTitle = bubbleStyleEditorOpen ? "\u5173\u95ED\u6837\u5F0F\u7F16\u8F91" : "\u6253\u5F00\u6837\u5F0F\u7F16\u8F91";
     const promptCardSendShortcutLabel = resolvePromptCardSendShortcutLabel();
@@ -13441,7 +13498,7 @@ var PromptCardView = import_react10.default.forwardRef(
       currentElementPromptAction.disabled,
       promptCardSendShortcutLabel
     );
-    const genieSelectionShortcutSettings = options.getAnnotationShortcutSettings?.();
+    const genieSelectionShortcutSettings = options.getCommentShortcutSettings?.();
     const genieSelectionShortcutLabels = genieSelectionShortcutSettings?.enabled ? genieSelectionShortcutSettings.shortcuts.filter((shortcut) => Boolean(shortcut)).map((shortcut) => formatModifierShortcutLabel(shortcut)) : [];
     const genieSelectionShortcutHint = genieSelectionShortcutLabels.length > 0 ? `\uFF0C\u957F\u6309 ${genieSelectionShortcutLabels.join(" / ")} \u4E5F\u53EF\u5524\u8D77` : "";
     const genieSelectionActionTitle = currentTaskRunning ? "\u6DFB\u52A0\u5230 AI \u5BF9\u8BDD" : `\u6DFB\u52A0\u5230 AI \u5BF9\u8BDD${genieSelectionShortcutHint}`;
@@ -13535,7 +13592,7 @@ var PromptCardView = import_react10.default.forwardRef(
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { style: { flex: 1 } }),
             /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 2 }, children: [
-              propertyPanelEnabled && styleDesignEnabled && !textAnnotationMode ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+              propertyPanelEnabled && styleDesignEnabled && !textCommentMode ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
                 IconActionButton,
                 {
                   title: styleEditorToggleTitle,
@@ -13544,7 +13601,7 @@ var PromptCardView = import_react10.default.forwardRef(
                   onClick: () => onBubbleStyleEditorOpenChange(!bubbleStyleEditorOpen)
                 }
               ) : null,
-              designToolExportAction.visible && !textAnnotationMode ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+              designToolExportAction.visible && !textCommentMode ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
                 IconActionButton,
                 {
                   title: designToolExportAction.title,
@@ -13765,8 +13822,8 @@ var PromptCardView = import_react10.default.forwardRef(
                             if (nextTarget instanceof Node && noteComposerRef.current?.contains(nextTarget)) {
                               return;
                             }
-                            if (!noteDirty) return;
-                            void onConfirmNote();
+                            if (!noteDirty && !selectedSkillsDirty) return;
+                            void onConfirmNoteWithSelectedSkills();
                           }
                         }
                       ),
@@ -15888,7 +15945,7 @@ function notifyRuntimeMessage(type, content) {
 
 // src/ui/runtime/property-panel-view.tsx
 var import_jsx_runtime13 = require("react/jsx-runtime");
-var GENIE_WAKE_FAILURE_MESSAGE = "AI \u5524\u9192\u5931\u8D25\uFF0C\u8BF7\u5728\u7EC8\u7AEF\u6267\u884C npx @axhub/genie\uFF0C\u518D\u91CD\u8BD5";
+var GENIE_WAKE_FAILURE_MESSAGE = "AI \u5524\u9192\u5931\u8D25\uFF0C\u8BF7\u5728\u7EC8\u7AEF\u6267\u884C npx @axhub/genie@latest\uFF0C\u518D\u91CD\u8BD5";
 var GENIE_WAKE_TIMEOUT_MS = 12e3;
 var GENIE_INTERRUPT_TIMEOUT_MS = 12e3;
 var GENIE_EDITOR_SKILL_URL = "https://github.com/lintendo/Axhub-Skills/blob/main/skills/genie-editor-workflow/SKILL.md";
@@ -16063,7 +16120,7 @@ var PropertyPanelView = import_react16.default.forwardRef(
     const [compactAnchorRect, setCompactAnchorRect] = import_react16.default.useState(null);
     const [shortcutDialogOpen, setShortcutDialogOpen] = import_react16.default.useState(false);
     const [shortcutDraft, setShortcutDraft] = import_react16.default.useState(
-      options.getAnnotationShortcutSettings?.() ?? { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS }
+      options.getCommentShortcutSettings?.() ?? { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS }
     );
     const [capturingShortcutIndex, setCapturingShortcutIndex] = import_react16.default.useState(null);
     const [panelRefreshKey, setPanelRefreshKey] = import_react16.default.useState(0);
@@ -16356,7 +16413,7 @@ var PropertyPanelView = import_react16.default.forwardRef(
     const closeShortcutDialog = import_react16.default.useCallback(() => {
       setShortcutDialogOpen(false);
       setCapturingShortcutIndex(null);
-      options.onAnnotationShortcutDialogOpenChange?.(false);
+      options.onCommentShortcutDialogOpenChange?.(false);
     }, [options]);
     const shortcutValidationError = import_react16.default.useMemo(() => {
       const [first, second] = shortcutDraft.shortcuts;
@@ -16405,18 +16462,18 @@ var PropertyPanelView = import_react16.default.forwardRef(
     }, [genieAwake]);
     const handleShortcutDraftChange = import_react16.default.useCallback(
       (updater) => {
-        setShortcutDraft((prev) => sanitizeAnnotationShortcutSettings(updater(prev)));
+        setShortcutDraft((prev) => sanitizeCommentShortcutSettings(updater(prev)));
       },
       []
     );
     const handleShortcutSave = import_react16.default.useCallback(() => {
       if (shortcutValidationError) return;
-      const nextSettings = sanitizeAnnotationShortcutSettings(shortcutDraft);
-      const currentSettings = sanitizeAnnotationShortcutSettings(
-        options.getAnnotationShortcutSettings?.() ?? DEFAULT_ANNOTATION_SHORTCUT_SETTINGS
+      const nextSettings = sanitizeCommentShortcutSettings(shortcutDraft);
+      const currentSettings = sanitizeCommentShortcutSettings(
+        options.getCommentShortcutSettings?.() ?? DEFAULT_COMMENT_SHORTCUT_SETTINGS
       );
-      if (!annotationShortcutSettingsEqual(nextSettings, currentSettings)) {
-        options.onAnnotationShortcutSettingsChange?.(nextSettings);
+      if (!commentShortcutSettingsEqual(nextSettings, currentSettings)) {
+        options.onCommentShortcutSettingsChange?.(nextSettings);
       }
       closeShortcutDialog();
     }, [closeShortcutDialog, options, shortcutDraft, shortcutValidationError]);
@@ -16534,7 +16591,7 @@ var PropertyPanelView = import_react16.default.forwardRef(
     }, [currentTarget, requestPanelRefresh]);
     import_react16.default.useEffect(() => {
       return () => {
-        options.onAnnotationShortcutDialogOpenChange?.(false);
+        options.onCommentShortcutDialogOpenChange?.(false);
       };
     }, [options]);
     const blockingLayerOpen = settingsPopoverOpen || shortcutDialogOpen || keyboardShortcutsDialogOpen;
@@ -17583,7 +17640,7 @@ var PropertyPanelView = import_react16.default.forwardRef(
         setPosition(position) {
           applyPanelPosition(position);
         },
-        enterAnnotationInput(mode = "bubble-card") {
+        enterCommentInput(mode = "bubble-card") {
           if (toolMinimized) {
             restoreTool();
           }
@@ -18042,7 +18099,7 @@ var PropertyPanelView = import_react16.default.forwardRef(
                       children: [
                         /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { children: [
                           /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { style: { fontSize: 13, fontWeight: 600, color: EDITOR_CHROME.textPrimary }, children: "\u542F\u7528\u9F20\u6807\u4E2D\u952E\u76D1\u542C" }),
-                          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { style: shortcutCaptureHintStyle, children: "\u9F20\u6807\u4E2D\u952E\u5355\u51FB\u4F1A\u76F4\u63A5\u8FDB\u5165\u6807\u6CE8\u6C14\u6CE1\u5361\u7247\u3002" })
+                          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { style: shortcutCaptureHintStyle, children: "\u9F20\u6807\u4E2D\u952E\u5355\u51FB\u4F1A\u76F4\u63A5\u8FDB\u5165\u6279\u6CE8\u6C14\u6CE1\u5361\u7247\u3002" })
                         ] }),
                         /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
                           import_antd9.Switch,
@@ -18100,7 +18157,7 @@ var PropertyPanelView = import_react16.default.forwardRef(
                   )) }),
                   /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { style: shortcutCaptureHintStyle, children: [
                     "\u4EC5\u652F\u6301 Shift / Alt / Ctrl / Command\uFF0C\u957F\u6309 ",
-                    ANNOTATION_SHORTCUT_LONG_PRESS_MS,
+                    COMMENT_SHORTCUT_LONG_PRESS_MS,
                     "ms \u89E6\u53D1\u3002"
                   ] }),
                   shortcutValidationError ? /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { style: { fontSize: 12, color: EDITOR_CHROME.textDanger }, children: shortcutValidationError }) : null
@@ -18132,12 +18189,12 @@ var PropertyPanelView = import_react16.default.forwardRef(
                   {
                     keys: ["Enter", "Esc"],
                     label: "\u4FDD\u5B58\u5E76\u5173\u95ED\u6C14\u6CE1\u5361\u7247",
-                    desc: "\u5728\u6C14\u6CE1\u5361\u7247\u7684\u8F93\u5165\u6846\u4E2D\u6309\u4E0B\uFF0C\u4FDD\u5B58\u5F53\u524D\u6807\u6CE8\u5185\u5BB9\u5E76\u5173\u95ED\u5361\u7247"
+                    desc: "\u5728\u6C14\u6CE1\u5361\u7247\u7684\u8F93\u5165\u6846\u4E2D\u6309\u4E0B\uFF0C\u4FDD\u5B58\u5F53\u524D\u6279\u6CE8\u5185\u5BB9\u5E76\u5173\u95ED\u5361\u7247"
                   },
                   {
                     keys: [`${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + Enter`],
                     label: "\u5FEB\u6377\u6267\u884C\u5E76\u5173\u95ED",
-                    desc: "\u4FDD\u5B58\u5F53\u524D\u6807\u6CE8\u5E76\u7ACB\u5373\u53D1\u9001\u7ED9 AI \u6267\u884C\uFF0C\u540C\u65F6\u5173\u95ED\u6C14\u6CE1\u5361\u7247"
+                    desc: "\u4FDD\u5B58\u5F53\u524D\u6279\u6CE8\u5E76\u7ACB\u5373\u53D1\u9001\u7ED9 AI \u6267\u884C\uFF0C\u540C\u65F6\u5173\u95ED\u6C14\u6CE1\u5361\u7247"
                   },
                   {
                     keys: [`${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + V`],
@@ -18527,7 +18584,7 @@ function useSelectionModeGuards(params) {
   };
 }
 
-// src/ui/runtime/runtime-effects/use-clipboard-annotation-paste.ts
+// src/ui/runtime/runtime-effects/use-clipboard-comment-paste.ts
 var import_react20 = __toESM(require("react"));
 
 // src/ui/runtime/dom-utils.ts
@@ -18638,7 +18695,7 @@ function buildPromptImageAttachmentSignature(elementKey, image) {
   ].join("::");
 }
 
-// src/ui/runtime/runtime-effects/use-clipboard-annotation-paste.ts
+// src/ui/runtime/runtime-effects/use-clipboard-comment-paste.ts
 var IMAGE_DEDUP_WINDOW_MS = 450;
 function getWindowRuntimeRecord(target) {
   return target;
@@ -18646,7 +18703,7 @@ function getWindowRuntimeRecord(target) {
 function getFrameRuntimeRecord(target) {
   return target;
 }
-function useClipboardAnnotationPaste(params) {
+function useClipboardCommentPaste(params) {
   const {
     propertyPanelOptions,
     currentTargetRef,
@@ -19265,7 +19322,7 @@ function normalizeRuntimeUiSettings(settings, interactionProfile) {
       interactionProfile
     )
   );
-  if (interactionProfile === "text-annotation" || isMobileDevice()) {
+  if (interactionProfile === "text-comment" || isMobileDevice()) {
     return normalized;
   }
   return {
@@ -19349,7 +19406,8 @@ function WebEditorUiApp(props) {
   const [noteState, setNoteState] = import_react22.default.useState({
     savedNote: "",
     draftNote: "",
-    noteDirty: false
+    noteDirty: false,
+    savedNoteMeta: { skillIds: [] }
   });
   const [textState, setTextState] = import_react22.default.useState({
     savedText: "",
@@ -19444,6 +19502,7 @@ function WebEditorUiApp(props) {
   const syncSavedNote = import_react22.default.useCallback(
     (element, resetDraft) => {
       const nextSavedNote = propertyPanelOptions?.getAiNote?.(element) ?? "";
+      const nextSkillIds = propertyPanelOptions?.getAiNoteSkillIds?.(element) ?? [];
       setNoteState((prev) => {
         const next = syncDraftAgainstSaved(
           {
@@ -19457,7 +19516,8 @@ function WebEditorUiApp(props) {
         return {
           savedNote: next.saved,
           draftNote: next.draft,
-          noteDirty: next.dirty
+          noteDirty: next.dirty,
+          savedNoteMeta: { skillIds: nextSkillIds.slice() }
         };
       });
     },
@@ -19495,17 +19555,20 @@ function WebEditorUiApp(props) {
     [propertyPanelOptions]
   );
   const commitDraftNote = import_react22.default.useCallback(
-    async (elementOverride) => {
+    async (elementOverride, options2 = {}) => {
       const element = elementOverride ?? currentTargetRef.current;
       if (!propertyPanelOptions?.onAiNoteChange) return false;
-      if (!noteStateRef.current.noteDirty) return false;
       const nextValue = noteStateRef.current.draftNote;
-      await propertyPanelOptions.onAiNoteChange(element, nextValue);
+      const nextSkillIds = options2.skillIds?.slice() ?? noteStateRef.current.savedNoteMeta?.skillIds ?? [];
+      const skillsDirty = nextSkillIds.join("\0") !== (noteStateRef.current.savedNoteMeta?.skillIds ?? []).join("\0");
+      if (!noteStateRef.current.noteDirty && !skillsDirty) return false;
+      await propertyPanelOptions.onAiNoteChange(element, nextValue, { skillIds: nextSkillIds });
       if (currentTargetRef.current === element) {
         setNoteState({
           savedNote: nextValue,
           draftNote: nextValue,
-          noteDirty: false
+          noteDirty: false,
+          savedNoteMeta: { skillIds: nextSkillIds.slice() }
         });
       }
       return true;
@@ -19636,8 +19699,8 @@ function WebEditorUiApp(props) {
       noteDirty: false
     }));
   }, []);
-  const handleConfirmNote = import_react22.default.useCallback(async () => {
-    await commitDraftNote();
+  const handleConfirmNote = import_react22.default.useCallback(async (options2 = {}) => {
+    await commitDraftNote(void 0, options2);
   }, [commitDraftNote]);
   const handleTextDraftChange = import_react22.default.useCallback((value) => {
     setTextState((prev) => ({
@@ -19694,7 +19757,7 @@ function WebEditorUiApp(props) {
         return { acceptedCount: 0, droppedCount: 0 };
       }
       if (propertyPanelOptions.getGenieBridgeConnected && !propertyPanelOptions.getGenieBridgeConnected()) {
-        notifyRuntimeMessage("info", "AI \u672A\u542F\u52A8\uFF0C\u6682\u4E0D\u652F\u6301\u7C98\u8D34\u6807\u6CE8\u56FE\u7247\u3002");
+        notifyRuntimeMessage("info", "AI \u672A\u542F\u52A8\uFF0C\u6682\u4E0D\u652F\u6301\u7C98\u8D34\u6279\u6CE8\u56FE\u7247\u3002");
         return {
           acceptedCount: 0,
           droppedCount: incomingImages.length
@@ -19762,13 +19825,13 @@ function WebEditorUiApp(props) {
     if (!propertyPanelOptions?.onSendCurrentElementPromptToGenie) {
       return void 0;
     }
-    return async (element, options2) => {
+    return async (element) => {
       await commitDraftText(element);
       await commitDraftNote(element);
-      await propertyPanelOptions.onSendCurrentElementPromptToGenie?.(element, options2);
+      await propertyPanelOptions.onSendCurrentElementPromptToGenie?.(element);
     };
   }, [commitDraftNote, commitDraftText, propertyPanelOptions]);
-  useClipboardAnnotationPaste({
+  useClipboardCommentPaste({
     propertyPanelOptions,
     currentTargetRef,
     latestPointerPositionRef,
@@ -19985,6 +20048,7 @@ function WebEditorUiApp(props) {
         onConfirmText: handleConfirmText,
         canEditNote,
         savedNote: noteState.savedNote,
+        savedNoteMeta: noteState.savedNoteMeta,
         draftNote: noteState.draftNote,
         noteDirty: noteState.noteDirty,
         onDraftChange: handleDraftChange,
@@ -20035,6 +20099,7 @@ function WebEditorUiApp(props) {
         onConfirmText: handleConfirmText,
         canEditNote,
         savedNote: noteState.savedNote,
+        savedNoteMeta: noteState.savedNoteMeta,
         draftNote: noteState.draftNote,
         noteDirty: noteState.noteDirty,
         onDraftChange: handleDraftChange,
@@ -20253,8 +20318,8 @@ function createWebEditorUiRuntime(options) {
       setPosition(position) {
         propertyPanelBridge.runOrQueue((api) => api.setPosition(position));
       },
-      enterAnnotationInput(mode) {
-        propertyPanelBridge.runOrQueue((api) => api.enterAnnotationInput?.(mode));
+      enterCommentInput(mode) {
+        propertyPanelBridge.runOrQueue((api) => api.enterCommentInput?.(mode));
       },
       enterInlineTextEdit() {
         propertyPanelBridge.runOrQueue((api) => api.enterInlineTextEdit?.());
@@ -22517,10 +22582,10 @@ function createSelectionEngine(options) {
   };
 }
 
-// src/selection/text-annotation-manager.ts
+// src/selection/text-comment-manager.ts
 var CONTEXT_CHARS = 50;
-var TEXT_ANNOTATION_HIGHLIGHT_NAME = "axhub-web-editor-text-annotation";
-var TEXT_ANNOTATION_HIGHLIGHT_STYLE_ID = "axhub-web-editor-text-annotation-style";
+var TEXT_COMMENT_HIGHLIGHT_NAME = "axhub-web-editor-text-comment";
+var TEXT_COMMENT_HIGHLIGHT_STYLE_ID = "axhub-web-editor-text-comment-style";
 function fnv1aHash(input) {
   let hash = 2166136261;
   for (let i = 0; i < input.length; i++) {
@@ -22529,8 +22594,8 @@ function fnv1aHash(input) {
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
-function generateAnnotationId(selectedText, contextBefore) {
-  return `text-ann::${fnv1aHash(selectedText + "||" + contextBefore)}`;
+function generateCommentId(selectedText, contextBefore) {
+  return `text-comment::${fnv1aHash(selectedText + "||" + contextBefore)}`;
 }
 function buildTagPath(node) {
   const tags = [];
@@ -22634,11 +22699,11 @@ function supportsCssHighlights() {
   return typeof CSS !== "undefined" && "highlights" in CSS && typeof globalThis.Highlight === "function";
 }
 function ensureHighlightStyle() {
-  if (document.getElementById(TEXT_ANNOTATION_HIGHLIGHT_STYLE_ID)) return;
+  if (document.getElementById(TEXT_COMMENT_HIGHLIGHT_STYLE_ID)) return;
   const style = document.createElement("style");
-  style.id = TEXT_ANNOTATION_HIGHLIGHT_STYLE_ID;
+  style.id = TEXT_COMMENT_HIGHLIGHT_STYLE_ID;
   style.textContent = `
-    ::highlight(${TEXT_ANNOTATION_HIGHLIGHT_NAME}) {
+    ::highlight(${TEXT_COMMENT_HIGHLIGHT_NAME}) {
       background: rgba(0, 143, 93, 0.18);
       color: inherit;
     }
@@ -22649,15 +22714,15 @@ function updateCssHighlight(range) {
   if (!supportsCssHighlights()) return false;
   ensureHighlightStyle();
   const highlightRegistry = CSS.highlights;
-  highlightRegistry.delete(TEXT_ANNOTATION_HIGHLIGHT_NAME);
+  highlightRegistry.delete(TEXT_COMMENT_HIGHLIGHT_NAME);
   if (!range) return true;
   const HighlightCtor = globalThis.Highlight;
-  highlightRegistry.set(TEXT_ANNOTATION_HIGHLIGHT_NAME, new HighlightCtor(range.cloneRange()));
+  highlightRegistry.set(TEXT_COMMENT_HIGHLIGHT_NAME, new HighlightCtor(range.cloneRange()));
   return true;
 }
-function createTextAnnotationManager(options) {
+function createTextCommentManager(options) {
   const { isOverlayElement } = options;
-  const annotations = /* @__PURE__ */ new Map();
+  const comments = /* @__PURE__ */ new Map();
   function commitSelection() {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
@@ -22675,8 +22740,8 @@ function createTextAnnotationManager(options) {
     const boundingRect = toPlainRect(range.getBoundingClientRect());
     const clientRects = dedupeRects(range.getClientRects());
     const sourceElement = resolveSelectionSourceElement(range);
-    const id = generateAnnotationId(text, contextBefore);
-    const annotation = {
+    const id = generateCommentId(text, contextBefore);
+    const comment = {
       id,
       selectedText: text,
       contextBefore,
@@ -22688,33 +22753,33 @@ function createTextAnnotationManager(options) {
       range: range.cloneRange(),
       sourceElement
     };
-    annotations.set(id, annotation);
-    return annotation;
+    comments.set(id, comment);
+    return comment;
   }
-  function getAnnotations() {
-    return annotations;
+  function getComments() {
+    return comments;
   }
-  function removeAnnotation(id) {
-    annotations.delete(id);
+  function removeComment(id) {
+    comments.delete(id);
   }
   function clearAll() {
-    annotations.clear();
+    comments.clear();
     clearActiveHighlight();
   }
-  function setActiveHighlight(annotation) {
-    return updateCssHighlight(annotation?.range ?? null);
+  function setActiveHighlight(comment) {
+    return updateCssHighlight(comment?.range ?? null);
   }
   function clearActiveHighlight() {
     updateCssHighlight(null);
   }
   function dispose() {
-    annotations.clear();
+    comments.clear();
     clearActiveHighlight();
   }
   return {
     commitSelection,
-    getAnnotations,
-    removeAnnotation,
+    getComments,
+    removeComment,
     clearAll,
     setActiveHighlight,
     clearActiveHighlight,
@@ -25327,7 +25392,7 @@ function createLifecycleService(deps) {
     options.genieBridge.enableContextAppend = void 0;
   }
   let inlineTextEditingElement = null;
-  let pendingAnnotationContextSync = false;
+  let pendingCommentContextSync = false;
   function isEventWithinElement(event, element) {
     try {
       if (typeof event.composedPath === "function") {
@@ -25351,50 +25416,43 @@ function createLifecycleService(deps) {
     }
     return event.type.startsWith("key") || event.type === "beforeinput" || event.type === "input" || event.type === "change" || event.type.startsWith("composition") || event.type === "selectionchange";
   }
-  function sendAnnotationContextSync(element, mode) {
-    void services.genieBridge.handleSyncAnnotationContextToGenie(element, mode).then(() => {
+  function sendCommentContextSync(element, mode) {
+    void services.genieBridge.handleSyncCommentContextToGenie(element, mode).then(() => {
       if (mode === "replace") {
-        pendingAnnotationContextSync = false;
+        pendingCommentContextSync = false;
       }
     }).catch((error) => {
-      pendingAnnotationContextSync = true;
+      pendingCommentContextSync = true;
       const message3 = error instanceof Error ? error.message : String(error);
-      console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to sync annotation context:`, message3);
+      console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to sync comment context:`, message3);
     });
   }
-  function hasAnnotationCommentsToSync() {
+  function hasCommentContextToSync() {
     try {
-      return (services.changes.buildAnnotationCommentsContext?.() ?? []).length > 0;
+      return (services.changes.buildCommentCommentsContext?.() ?? []).length > 0;
     } catch {
-      return pendingAnnotationContextSync;
+      return pendingCommentContextSync;
     }
   }
-  function prependPromptPrefix(prompt, promptPrefix) {
-    const normalizedPrefix = String(promptPrefix ?? "").trim();
-    if (!normalizedPrefix) return prompt;
-    return `${normalizedPrefix}
-
-${prompt}`;
-  }
-  function flushPendingAnnotationContextSync() {
+  function flushPendingCommentContextSync() {
     if (!options.genieBridge.enabled || !services.genieBridge.isAvailable()) {
       return;
     }
-    if (!pendingAnnotationContextSync && !hasAnnotationCommentsToSync()) {
+    if (!pendingCommentContextSync && !hasCommentContextToSync()) {
       return;
     }
-    sendAnnotationContextSync(null, "replace");
+    sendCommentContextSync(null, "replace");
   }
-  function syncAnnotationContextAfterNoteSave(element, note) {
+  function syncCommentContextAfterNoteSave(element, note) {
     const mode = String(note ?? "").trim() ? "append" : "replace";
     if (!options.genieBridge.enabled) {
       return;
     }
     if (!services.genieBridge.isAvailable()) {
-      pendingAnnotationContextSync = true;
+      pendingCommentContextSync = true;
       return;
     }
-    sendAnnotationContextSync(element, mode);
+    sendCommentContextSync(element, mode);
   }
   function resolvePromptTargetsFromEditHistory() {
     const metas = Array.from(state2.editMetaByKey.values()).filter(
@@ -25483,11 +25541,11 @@ ${prompt}`;
     state2.breadcrumbs = null;
     state2.eventController?.dispose();
     state2.eventController = null;
-    state2.annotationShortcutCleanup?.();
-    state2.annotationShortcutCleanup = null;
-    if (state2.textAnnotationTargetElement) {
-      state2.textAnnotationTargetElement.remove();
-      state2.textAnnotationTargetElement = null;
+    state2.commentShortcutCleanup?.();
+    state2.commentShortcutCleanup = null;
+    if (state2.textCommentTargetElement) {
+      state2.textCommentTargetElement.remove();
+      state2.textCommentTargetElement = null;
     }
     state2.dragReorderController?.dispose();
     state2.dragReorderController = null;
@@ -25609,7 +25667,7 @@ ${prompt}`;
       };
       state2.changeMarkersVisible = services.persistence.readMarkerVisibility();
       ensureMarkersVisible();
-      state2.annotationShortcutSettings = services.persistence.readAnnotationShortcutSettings();
+      state2.commentShortcutSettings = services.persistence.readCommentShortcutSettings();
       state2.uiSettings = {
         ...services.persistence.readUiSettings(),
         darkMode: options.ui.initialDarkMode
@@ -25628,12 +25686,12 @@ ${prompt}`;
         memorySampleIntervalMs: 1e3
       });
       installPerfHotkey();
-      const isTextAnnotation = options.interactionProfile === "text-annotation";
-      if (isTextAnnotation) {
-        const textAnnotationTarget = document.createElement("div");
-        textAnnotationTarget.setAttribute(TEXT_ANNOTATION_TARGET_ATTR, "true");
-        textAnnotationTarget.setAttribute("aria-hidden", "true");
-        Object.assign(textAnnotationTarget.style, {
+      const isTextComment = options.interactionProfile === "text-comment";
+      if (isTextComment) {
+        const textCommentTarget = document.createElement("div");
+        textCommentTarget.setAttribute(TEXT_COMMENT_TARGET_ATTR, "true");
+        textCommentTarget.setAttribute("aria-hidden", "true");
+        Object.assign(textCommentTarget.style, {
           position: "fixed",
           left: "0px",
           top: "0px",
@@ -25643,9 +25701,9 @@ ${prompt}`;
           pointerEvents: "none",
           userSelect: "none"
         });
-        elements.overlayRoot.append(textAnnotationTarget);
-        state2.textAnnotationTargetElement = textAnnotationTarget;
-        state2.textAnnotationManager = createTextAnnotationManager({
+        elements.overlayRoot.append(textCommentTarget);
+        state2.textCommentTargetElement = textCommentTarget;
+        state2.textCommentManager = createTextCommentManager({
           isOverlayElement: state2.shadowHost.isOverlayElement
         });
         state2.selectionEngine = null;
@@ -25653,13 +25711,13 @@ ${prompt}`;
         state2.selectionEngine = createSelectionEngine({
           isOverlayElement: state2.shadowHost.isOverlayElement
         });
-        state2.textAnnotationManager = null;
-        state2.textAnnotationTargetElement = null;
+        state2.textCommentManager = null;
+        state2.textCommentTargetElement = null;
       }
       state2.positionTracker = createPositionTracker({
         onPositionUpdate: services.interaction.handlePositionUpdate
       });
-      state2.annotationShortcutCleanup = null;
+      state2.commentShortcutCleanup = null;
       state2.transactionManager = createTransactionManager({
         enableKeyBindings: true,
         isEventFromEditorUi: (event) => {
@@ -25708,31 +25766,31 @@ ${prompt}`;
       state2.eventController = createEventController({
         isOverlayElement: state2.shadowHost.isOverlayElement,
         shouldAllowPageEvent: (event) => Boolean(options.host.shouldAllowPageEvent?.(event)) || shouldAllowInlineEditingPageEvent(event),
-        allowNativeTextSelection: isTextAnnotation,
-        onHover: isTextAnnotation ? () => {
+        allowNativeTextSelection: isTextComment,
+        onHover: isTextComment ? () => {
         } : services.interaction.handleHover,
-        onSelect: isTextAnnotation ? () => {
+        onSelect: isTextComment ? () => {
         } : (event) => services.interaction.handleSelect(event.element, event.modifiers, {
           clientX: event.clientX,
           clientY: event.clientY
         }),
-        onDoubleClickSelected: isTextAnnotation ? void 0 : (event) => {
+        onDoubleClickSelected: isTextComment ? void 0 : (event) => {
           if (!services.textSession.isEditable(event.element)) return;
           if (services.genieBridge.isElementInteractionLocked(event.element)) return;
           state2.breadcrumbs?.enterInlineTextEdit?.();
           state2.propertyPanel?.enterInlineTextEdit?.();
         },
         onDeselect: services.interaction.handleDeselect,
-        resolveTargetForHover: isTextAnnotation ? void 0 : (target) => services.genieBridge.resolveSelectableElement(target),
-        findTargetForSelect: isTextAnnotation ? void 0 : (_x, _y, modifiers, event) => {
+        resolveTargetForHover: isTextComment ? void 0 : (target) => services.genieBridge.resolveSelectableElement(target),
+        findTargetForSelect: isTextComment ? void 0 : (_x, _y, modifiers, event) => {
           const target = state2.selectionEngine?.findBestTargetFromEvent(event, modifiers) ?? null;
           return services.genieBridge.resolveSelectableElement(target);
         },
         getSelectedElement: () => state2.selectedElement,
         isElementInteractionLocked: (element) => services.genieBridge.isElementInteractionLocked(element)
       });
-      if (isTextAnnotation && state2.textAnnotationManager) {
-        const textAnnotationManager = state2.textAnnotationManager;
+      if (isTextComment && state2.textCommentManager) {
+        const textCommentManager = state2.textCommentManager;
         let pendingTextSelectionCommitTimer = null;
         const queueTextSelectionCommit = () => {
           if (pendingTextSelectionCommitTimer !== null) {
@@ -25740,23 +25798,23 @@ ${prompt}`;
           }
           pendingTextSelectionCommitTimer = window.setTimeout(() => {
             pendingTextSelectionCommitTimer = null;
-            const annotation = textAnnotationManager.commitSelection();
-            if (!annotation) return;
-            state2.activeTextAnnotation = annotation;
-            const usedNativeHighlight = textAnnotationManager.setActiveHighlight(annotation);
+            const comment = textCommentManager.commitSelection();
+            if (!comment) return;
+            state2.activeTextComment = comment;
+            const usedNativeHighlight = textCommentManager.setActiveHighlight(comment);
             state2.canvasOverlay?.setTextHighlightRects(
-              usedNativeHighlight ? null : annotation.clientRects
+              usedNativeHighlight ? null : comment.clientRects
             );
             state2.canvasOverlay?.render();
-            const rect = annotation.boundingRect;
+            const rect = comment.boundingRect;
             const clientX = rect.left + rect.width / 2;
             const clientY = rect.top;
-            services.interaction.enterTextAnnotation(annotation, { clientX, clientY });
+            services.interaction.enterTextComment(comment, { clientX, clientY });
           }, 10);
         };
         window.addEventListener("pointerup", queueTextSelectionCommit, { capture: true });
         window.addEventListener("mouseup", queueTextSelectionCommit, { capture: true });
-        state2.annotationShortcutCleanup = () => {
+        state2.commentShortcutCleanup = () => {
           if (pendingTextSelectionCommitTimer !== null) {
             window.clearTimeout(pendingTextSelectionCommitTimer);
             pendingTextSelectionCommitTimer = null;
@@ -25792,20 +25850,20 @@ ${prompt}`;
           transactionManager: state2.transactionManager,
           tokensService: state2.tokensService ?? void 0,
           initialPosition: state2.propertyPanelPosition,
-          initialUiMode: state2.annotationEntryMode,
+          initialUiMode: state2.commentEntryMode,
           onPositionChange: (position) => {
             state2.propertyPanelPosition = position;
           },
-          getUiMode: () => state2.annotationEntryMode,
+          getUiMode: () => state2.commentEntryMode,
           onUiModeChange: (mode) => {
-            state2.annotationEntryMode = mode;
+            state2.commentEntryMode = mode;
             state2.positionTracker?.forceUpdate(true);
             services.changes.renderChangeMarkers();
           },
-          getAnnotationShortcutSettings: () => state2.annotationShortcutSettings,
-          onAnnotationShortcutSettingsChange: (settings) => {
-            state2.annotationShortcutSettings = settings;
-            services.persistence.setAnnotationShortcutSettings(settings);
+          getCommentShortcutSettings: () => state2.commentShortcutSettings,
+          onCommentShortcutSettingsChange: (settings) => {
+            state2.commentShortcutSettings = settings;
+            services.persistence.setCommentShortcutSettings(settings);
           },
           getUiSettings: () => state2.uiSettings,
           interactionProfile: options.interactionProfile,
@@ -25821,8 +25879,8 @@ ${prompt}`;
             state2.eventController?.setProgrammaticHoverElement(target);
             services.interaction.handleHover(target);
           },
-          onAnnotationShortcutDialogOpenChange: (open) => {
-            state2.annotationShortcutDialogOpen = open;
+          onCommentShortcutDialogOpenChange: (open) => {
+            state2.commentShortcutDialogOpen = open;
           },
           onUndo: () => state2.transactionManager?.undo(),
           onRedo: () => state2.transactionManager?.redo(),
@@ -25853,7 +25911,7 @@ ${prompt}`;
               state2.positionTracker?.forceUpdate(true);
             }
           },
-          onSendCurrentElementPromptToGenie: async (element, sendOptions) => {
+          onSendCurrentElementPromptToGenie: async (element) => {
             if (!element?.isConnected) {
               throw new Error("\u5F53\u524D\u5143\u7D20\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u540E\u518D\u8BD5\u3002");
             }
@@ -25862,10 +25920,7 @@ ${prompt}`;
               throw new Error("\u5F53\u524D\u5143\u7D20\u6CA1\u6709\u53EF\u53D1\u9001\u7ED9 AI \u7684\u7F16\u8F91\u3002");
             }
             try {
-              await services.genieBridge.handleSendPromptToGenieForElement(
-                element,
-                prependPromptPrefix(prompt, sendOptions?.promptPrefix)
-              );
+              await services.genieBridge.handleSendPromptToGenieForElement(element, prompt);
             } finally {
               state2.positionTracker?.forceUpdate(true);
             }
@@ -25982,15 +26037,20 @@ ${prompt}`;
           },
           subscribeTweak: (listener) => getTweakProtocol()?.subscribe(listener) ?? (() => void 0),
           getAiNote: (element) => services.changes.getMetaForElement(element)?.note ?? "",
+          getAiNoteSkillIds: (element) => services.changes.getMetaForElement(element)?.skillIds?.slice() ?? [],
           getAiNoteImages: (element) => services.changes.getImagesForElement(element),
           getHoveredElement: () => state2.hoveredElement,
           onRememberSelectionAnchor: (element, selectionAnchor) => {
             services.changes.rememberSelectionAnchor(element, selectionAnchor);
           },
-          onAiNoteChange: (element, note) => {
-            services.changes.setNoteForElement(element, note);
+          onAiNoteChange: (element, note, noteOptions) => {
+            if (noteOptions) {
+              services.changes.setNoteForElement(element, note, noteOptions);
+            } else {
+              services.changes.setNoteForElement(element, note);
+            }
             state2.positionTracker?.forceUpdate(true);
-            syncAnnotationContextAfterNoteSave(element, note);
+            syncCommentContextAfterNoteSave(element, note);
           },
           onAiNoteImagesChange: (element, images) => {
             services.changes.setImagesForElement(element, images);
@@ -26046,7 +26106,7 @@ ${prompt}`;
             onSelect: selectElementWithCenterAnchor,
             getGenieBridgeAvailable: () => services.genieBridge.isAvailable(),
             hideExecutionControls: options.ui.hideExecutionControls,
-            getAnnotationShortcutSettings: () => state2.annotationShortcutSettings,
+            getCommentShortcutSettings: () => state2.commentShortcutSettings,
             getElementGenieTaskState: (element) => services.genieBridge.getElementTaskState(element),
             getVisibleElementGenieTaskStates: () => services.genieBridge.getVisibleTaskStates(),
             dismissElementGenieTaskState: (element) => services.genieBridge.dismissElementTaskState(element),
@@ -26105,11 +26165,11 @@ ${prompt}`;
     state2.tokensService = null;
     state2.eventController?.dispose();
     state2.eventController = null;
-    state2.annotationShortcutCleanup?.();
-    state2.annotationShortcutCleanup = null;
-    if (state2.textAnnotationTargetElement) {
-      state2.textAnnotationTargetElement.remove();
-      state2.textAnnotationTargetElement = null;
+    state2.commentShortcutCleanup?.();
+    state2.commentShortcutCleanup = null;
+    if (state2.textCommentTargetElement) {
+      state2.textCommentTargetElement.remove();
+      state2.textCommentTargetElement = null;
     }
     state2.dragReorderController?.dispose();
     state2.dragReorderController = null;
@@ -26197,18 +26257,18 @@ ${prompt}`;
           transactionManager: null,
           tokensService: state2.tokensService ?? void 0,
           initialPosition: state2.propertyPanelPosition,
-          initialUiMode: state2.annotationEntryMode,
+          initialUiMode: state2.commentEntryMode,
           onPositionChange: (position) => {
             state2.propertyPanelPosition = position;
           },
-          getUiMode: () => state2.annotationEntryMode,
+          getUiMode: () => state2.commentEntryMode,
           onUiModeChange: (mode) => {
-            state2.annotationEntryMode = mode;
+            state2.commentEntryMode = mode;
           },
-          getAnnotationShortcutSettings: () => state2.annotationShortcutSettings,
-          onAnnotationShortcutSettingsChange: (settings) => {
-            state2.annotationShortcutSettings = settings;
-            services.persistence.setAnnotationShortcutSettings(settings);
+          getCommentShortcutSettings: () => state2.commentShortcutSettings,
+          onCommentShortcutSettingsChange: (settings) => {
+            state2.commentShortcutSettings = settings;
+            services.persistence.setCommentShortcutSettings(settings);
           },
           getUiSettings: () => state2.uiSettings,
           interactionProfile: options.interactionProfile,
@@ -26218,8 +26278,8 @@ ${prompt}`;
           },
           onLocateElement: () => {
           },
-          onAnnotationShortcutDialogOpenChange: (open) => {
-            state2.annotationShortcutDialogOpen = open;
+          onCommentShortcutDialogOpenChange: (open) => {
+            state2.commentShortcutDialogOpen = open;
           },
           onUndo: () => {
           },
@@ -26285,6 +26345,7 @@ ${prompt}`;
           },
           subscribeTweak: (listener) => getTweakProtocol()?.subscribe(listener) ?? (() => void 0),
           getAiNote: () => "",
+          getAiNoteSkillIds: () => [],
           getAiNoteImages: () => [],
           getHoveredElement: () => null,
           onRememberSelectionAnchor: () => {
@@ -26363,7 +26424,7 @@ ${prompt}`;
       onStatusChange?.();
     }
   }
-  return { start, startPanelOnly, stop, stopPanelOnly, flushPendingAnnotationContextSync };
+  return { start, startPanelOnly, stop, stopPanelOnly, flushPendingCommentContextSync };
 }
 
 // src/core/editor/local-actions.ts
@@ -26513,7 +26574,7 @@ function preparePersistedWebEditorUiSettings(settings) {
 var CACHE_VERSION = 5;
 var CACHE_KEY_PREFIX = "web-editor-v2-cache:";
 var MARKER_VISIBILITY_KEY_PREFIX = "web-editor-v2-markers:";
-var ANNOTATION_SHORTCUT_SETTINGS_KEY_PREFIX = "web-editor-v2-annotation-shortcuts:";
+var COMMENT_SHORTCUT_SETTINGS_KEY_PREFIX = "web-editor-v2-comment-shortcuts:";
 var UI_SETTINGS_KEY = "web-editor-v2-ui-settings";
 var GENIE_CONVERSATION_KEY_PREFIX = "web-editor-v2-genie-conversation:";
 var GENIE_TASKS_KEY_PREFIX = "web-editor-v2-genie-tasks:";
@@ -26539,7 +26600,7 @@ function createPersistenceService(options) {
   let cacheWriteTimer = null;
   let cacheRestoreInProgress = false;
   let currentAdapterDocument = null;
-  const annotationTaskStateByElementKey = /* @__PURE__ */ new Map();
+  const commentTaskStateByElementKey = /* @__PURE__ */ new Map();
   function readResourceMetaString2(key) {
     try {
       const resource = getResourceContext();
@@ -26673,12 +26734,12 @@ function createPersistenceService(options) {
     }
     return true;
   }
-  function resolveAnnotationShortcutSettingsKey() {
+  function resolveCommentShortcutSettingsKey() {
     if (typeof window === "undefined") return null;
     const path = resolveStorageScope() ?? "";
     const key = String(path ?? "").trim();
     if (!key) return null;
-    return `${ANNOTATION_SHORTCUT_SETTINGS_KEY_PREFIX}${key}`;
+    return `${COMMENT_SHORTCUT_SETTINGS_KEY_PREFIX}${key}`;
   }
   function readStorageJson(key) {
     if (typeof window === "undefined") return null;
@@ -26703,7 +26764,7 @@ function createPersistenceService(options) {
     if (status === "error") return "error";
     return "idle";
   }
-  function isPrototypeEditAnnotationTaskStatus(value) {
+  function isPrototypeEditCommentTaskStatus(value) {
     return value === "idle" || value === "editing" || value === "completed" || value === "error";
   }
   function normalizeNullableString(value) {
@@ -26723,7 +26784,7 @@ function createPersistenceService(options) {
       const task = rawTask;
       const updatedAt = Number(task.updatedAt ?? 0);
       tasks[elementKey] = {
-        state: isPrototypeEditAnnotationTaskStatus(task.state) ? task.state : "idle",
+        state: isPrototypeEditCommentTaskStatus(task.state) ? task.state : "idle",
         provider: normalizeNullableString(task.provider),
         requestId: normalizeNullableString(task.requestId),
         sessionId: normalizeNullableString(task.sessionId),
@@ -26735,7 +26796,7 @@ function createPersistenceService(options) {
   }
   function buildDocumentTasks() {
     const tasks = Object.fromEntries(
-      Array.from(annotationTaskStateByElementKey.entries()).map(([elementKey, task]) => [elementKey, { ...task }])
+      Array.from(commentTaskStateByElementKey.entries()).map(([elementKey, task]) => [elementKey, { ...task }])
     );
     const allTasks = [
       ...state2.genieTaskByElementKey.values(),
@@ -26768,18 +26829,32 @@ function createPersistenceService(options) {
       }))
     );
   }
+  function cacheEntryToCommentEntry(entry) {
+    const { note, ...rest } = entry;
+    return {
+      ...rest,
+      ...note ? { comment: note } : {}
+    };
+  }
+  function commentEntryToCacheEntry(entry) {
+    const { comment, ...rest } = entry;
+    return {
+      ...rest,
+      ...comment ? { note: comment } : {}
+    };
+  }
   function buildAdapterDocument(entries) {
     const scope = resolvePersistenceScope();
     if (!scope) return null;
     return {
       schemaVersion: 1,
-      kind: "prototype-edit-annotations",
+      kind: "prototype-edit-comments",
       resource: {
         id: scope.prototypeId,
         targetPath: scope.targetPath,
-        filePath: `src/${scope.targetPath}/.spec/prototype-annotations.json`
+        filePath: `src/${scope.targetPath}/.spec/prototype-comments.json`
       },
-      entries,
+      comments: entries.map(cacheEntryToCommentEntry),
       tasks: buildDocumentTasks(),
       images: buildDocumentImages()
     };
@@ -26787,17 +26862,17 @@ function createPersistenceService(options) {
   function normalizeAdapterDocument(value) {
     if (!value || typeof value !== "object") return null;
     const record = value;
-    if (record.schemaVersion !== 1 || record.kind !== "prototype-edit-annotations") return null;
-    if (!Array.isArray(record.entries)) return null;
+    if (record.schemaVersion !== 1 || record.kind !== "prototype-edit-comments") return null;
+    if (!Array.isArray(record.comments)) return null;
     return {
       schemaVersion: 1,
-      kind: "prototype-edit-annotations",
+      kind: "prototype-edit-comments",
       resource: {
         id: String(record.resource?.id ?? "").trim(),
         targetPath: String(record.resource?.targetPath ?? "").trim(),
         filePath: String(record.resource?.filePath ?? "").trim()
       },
-      entries: record.entries,
+      comments: record.comments,
       tasks: normalizeAdapterTasks(record.tasks),
       images: Array.isArray(record.images) ? record.images : []
     };
@@ -26806,7 +26881,7 @@ function createPersistenceService(options) {
     for (const [elementKey, task] of Object.entries(document2.tasks ?? {})) {
       const normalizedElementKey = String(elementKey ?? "").trim();
       if (!normalizedElementKey) continue;
-      annotationTaskStateByElementKey.set(normalizedElementKey, { ...task });
+      commentTaskStateByElementKey.set(normalizedElementKey, { ...task });
     }
   }
   function writeAdapterDocument(entries, reason) {
@@ -26816,7 +26891,7 @@ function createPersistenceService(options) {
     const document2 = buildAdapterDocument(entries);
     if (!document2) return;
     void Promise.resolve(persistenceAdapter.write(scope, document2, reason)).catch((error) => {
-      console.warn("[GenieEditor] Failed to persist prototype annotations:", error);
+      console.warn("[GenieEditor] Failed to persist prototype comments:", error);
     });
   }
   function removeStorageKey(key) {
@@ -26900,32 +26975,32 @@ function createPersistenceService(options) {
     } catch {
     }
   }
-  function readAnnotationShortcutSettings() {
+  function readCommentShortcutSettings() {
     if (typeof window === "undefined") {
-      return { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS };
+      return { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS };
     }
-    const key = resolveAnnotationShortcutSettingsKey();
+    const key = resolveCommentShortcutSettingsKey();
     if (!key) {
-      return { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS };
+      return { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS };
     }
     try {
       const raw = window.localStorage.getItem(key);
       if (!raw) {
-        return { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS };
+        return { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS };
       }
-      return sanitizeAnnotationShortcutSettings(JSON.parse(raw));
+      return sanitizeCommentShortcutSettings(JSON.parse(raw));
     } catch {
-      return { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS };
+      return { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS };
     }
   }
-  function setAnnotationShortcutSettings(settings) {
+  function setCommentShortcutSettings(settings) {
     if (typeof window === "undefined") return;
-    const key = resolveAnnotationShortcutSettingsKey();
+    const key = resolveCommentShortcutSettingsKey();
     if (!key) return;
     try {
       window.localStorage.setItem(
         key,
-        JSON.stringify(sanitizeAnnotationShortcutSettings(settings))
+        JSON.stringify(sanitizeCommentShortcutSettings(settings))
       );
     } catch {
     }
@@ -27001,10 +27076,10 @@ function createPersistenceService(options) {
     }
     writeStorageJson(resolveGenieTasksKey(normalizedScopeKey), sanitized);
   }
-  function recordAnnotationTaskState(elementKey, stateValue, taskRef = null) {
+  function recordCommentTaskState(elementKey, stateValue, taskRef = null) {
     const normalizedElementKey = String(elementKey ?? "").trim();
     if (!normalizedElementKey) return;
-    annotationTaskStateByElementKey.set(normalizedElementKey, {
+    commentTaskStateByElementKey.set(normalizedElementKey, {
       state: stateValue,
       provider: typeof taskRef?.provider === "string" && taskRef.provider.trim() ? taskRef.provider.trim() : null,
       requestId: typeof taskRef?.requestId === "string" && taskRef.requestId.trim() ? taskRef.requestId.trim() : null,
@@ -27026,11 +27101,12 @@ function createPersistenceService(options) {
   function buildCacheEntriesFromTransactions() {
     const tm = state2.transactionManager;
     if (!tm) {
-      return Array.from(state2.editMetaByKey.values()).filter((meta) => meta.note || meta.anchor).map((meta) => ({
+      return Array.from(state2.editMetaByKey.values()).filter((meta) => meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.anchor).map((meta) => ({
         elementKey: meta.elementKey,
         label: meta.label,
         locator: stripLocatorDebugSource(meta.locator),
         note: meta.note || void 0,
+        skillIds: meta.skillIds?.slice(),
         marker: meta.anchor ? {
           ...meta.anchor,
           dirtySince: meta.dirtySince
@@ -27123,13 +27199,14 @@ function createPersistenceService(options) {
         };
       }
       if (meta?.note) entry.note = meta.note;
+      if ((meta?.skillIds?.length ?? 0) > 0) entry.skillIds = meta?.skillIds?.slice();
       if (meta?.anchor) {
         entry.marker = {
           ...meta.anchor,
           dirtySince: meta.dirtySince
         };
       }
-      if (!entry.textChange && !entry.styleChanges && !entry.tweak && !entry.note) continue;
+      if (!entry.textChange && !entry.styleChanges && !entry.tweak && !entry.note && !(entry.skillIds?.length ?? 0)) continue;
       entries.push(entry);
       if (elementKey) {
         appendedKeys.add(elementKey);
@@ -27139,7 +27216,7 @@ function createPersistenceService(options) {
       if (appendedKeys.has(meta.elementKey)) continue;
       const hasRecordedTweak = (meta.tweakSummaryLines?.length ?? 0) > 0;
       const hasImages = meta.images.length > 0;
-      if (!meta.note && !hasRecordedTweak && !hasImages) continue;
+      if (!meta.note && !hasRecordedTweak && !hasImages && !(meta.skillIds?.length ?? 0)) continue;
       entries.push({
         elementKey: meta.elementKey,
         label: meta.label,
@@ -27150,6 +27227,7 @@ function createPersistenceService(options) {
           currentValues: cloneTweakValues(meta.tweakCurrentValues)
         } : void 0,
         note: meta.note || void 0,
+        skillIds: meta.skillIds?.slice(),
         marker: meta.anchor ? {
           ...meta.anchor,
           dirtySince: meta.dirtySince
@@ -27188,8 +27266,8 @@ function createPersistenceService(options) {
     if (!tm) return;
     for (const entry of entries) {
       const entryElementKey = String(entry.elementKey ?? "").trim();
-      const isLegacyTextAnnotationCacheEntry = interactionProfile === "text-annotation" && !entryElementKey && Boolean(entry.note) && Boolean(entry.marker) && !entry.textChange && !entry.styleChanges;
-      if (isLegacyTextAnnotationCacheEntry) {
+      const isLegacyTextCommentCacheEntry = interactionProfile === "text-comment" && !entryElementKey && Boolean(entry.note) && Boolean(entry.marker) && !entry.textChange && !entry.styleChanges;
+      if (isLegacyTextCommentCacheEntry) {
         continue;
       }
       const element = locateElement(entry.locator);
@@ -27204,6 +27282,10 @@ function createPersistenceService(options) {
       meta.locator = entry.locator;
       meta.label = resolvedLabel;
       meta.note = changes.normalizeNote(entry.note ?? meta.note);
+      const entrySkillIds = normalizePromptCardSkillIds(entry.skillIds ?? []);
+      if (entrySkillIds.length > 0) {
+        meta.skillIds = entrySkillIds;
+      }
       meta.anchor = entry.marker ? normalizeMarkerAnchor(entry.marker) ?? meta.anchor : meta.anchor;
       if (entry.marker && Number.isFinite(Number(entry.marker.dirtySince))) {
         meta.dirtySince = Number(entry.marker.dirtySince);
@@ -27212,7 +27294,7 @@ function createPersistenceService(options) {
       if (documentImages.length > 0) {
         const hydratedImages = documentImages.filter((image) => typeof image.data === "string" && image.data.trim()).map((image) => ({
           id: String(image.id ?? "").trim() || `image-${meta.images.length + 1}`,
-          name: String(image.name ?? "").trim() || "annotation-image.png",
+          name: String(image.name ?? "").trim() || "comment-image.png",
           data: String(image.data ?? ""),
           mimeType: String(image.mimeType ?? "").trim() || "image/png",
           size: Number(image.size ?? 0),
@@ -27269,7 +27351,7 @@ function createPersistenceService(options) {
       const document2 = await Promise.resolve(persistenceAdapter.read(scope));
       return normalizeAdapterDocument(document2);
     } catch (error) {
-      console.warn("[GenieEditor] Failed to read prototype annotations:", error);
+      console.warn("[GenieEditor] Failed to read prototype comments:", error);
       return null;
     }
   }
@@ -27284,7 +27366,7 @@ function createPersistenceService(options) {
       path: adapterDocument.resource.targetPath || resolveStorageScope() || "",
       updatedAt: Date.now(),
       showMarkers: state2.changeMarkersVisible,
-      entries: adapterDocument.entries
+      entries: adapterDocument.comments.map(commentEntryToCacheEntry)
     } : readCache();
     if (!payload) return;
     if (payload.entries.length === 0) {
@@ -27328,13 +27410,14 @@ function createPersistenceService(options) {
       if (entry.label) next.label = entry.label;
       if (entry.tweak) next.tweak = entry.tweak;
       if (entry.note) next.note = entry.note;
+      if (entry.skillIds) next.skillIds = entry.skillIds;
       if (entry.marker) next.marker = entry.marker;
       if (kind === "text") {
         if (entry.styleChanges) next.styleChanges = entry.styleChanges;
       } else {
         if (entry.textChange) next.textChange = entry.textChange;
       }
-      if (!next.textChange && !next.styleChanges && !next.tweak && !next.note) continue;
+      if (!next.textChange && !next.styleChanges && !next.tweak && !next.note && !(next.skillIds?.length ?? 0)) continue;
       nextEntries.push(next);
     }
     cacheRestoreInProgress = true;
@@ -27352,8 +27435,8 @@ function createPersistenceService(options) {
   return {
     readMarkerVisibility,
     setMarkerVisibility,
-    readAnnotationShortcutSettings,
-    setAnnotationShortcutSettings,
+    readCommentShortcutSettings,
+    setCommentShortcutSettings,
     readUiSettings,
     setUiSettings,
     readGenieConversationState,
@@ -27365,7 +27448,7 @@ function createPersistenceService(options) {
       persistTaskDocument();
     },
     pruneExpiredGenieTaskStates,
-    recordAnnotationTaskState,
+    recordCommentTaskState,
     scheduleWrite,
     persistFromTransactions,
     flushPendingWrite,
@@ -27378,6 +27461,12 @@ function createPersistenceService(options) {
 // src/core/editor/summaries.ts
 function normalizeNote(value) {
   return String(value ?? "").replace(/\r\n/g, "\n").trim();
+}
+function buildPromptNoteWithSkills(note, payload) {
+  return mergePromptCardSkillsIntoPromptNote(
+    normalizeNote(note),
+    deserializePromptCardSkillSelection(payload)
+  );
 }
 function normalizeInlineText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -27504,9 +27593,9 @@ function createEditorSummariesService(options) {
   }
   function resolveElementKey(element) {
     if (!element || !element.isConnected) return "";
-    const textAnnotationMeta = resolveTextAnnotationElementMeta(state2, element);
-    if (textAnnotationMeta) {
-      return textAnnotationMeta.elementKey;
+    const textCommentMeta = resolveTextCommentElementMeta(state2, element);
+    if (textCommentMeta) {
+      return textCommentMeta.elementKey;
     }
     const locator = createElementLocator(element);
     return generateStableElementKey(element, locator.shadowHostChain);
@@ -27651,24 +27740,26 @@ ${lines.join("\n")}
       elementKey: String(meta.elementKey),
       label: meta.label,
       locator: meta.locator,
-      note: normalizeNote(meta.note),
+      note: buildPromptNoteWithSkills(meta.note, meta),
+      skillIds: meta.skillIds?.slice(),
       actions: buildMetaActionLines(meta),
       dirtySince: Number(meta.dirtySince ?? 0)
     })).filter(
-      (meta) => !summarizedKeys.has(meta.elementKey) && (Boolean(meta.note) || meta.actions.length > 0)
+      (meta) => !summarizedKeys.has(meta.elementKey) && (Boolean(meta.note) || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0)
     ).sort((a, b) => b.dirtySince - a.dirtySince || a.label.localeCompare(b.label));
   }
-  function collectSaveRunAnnotationOnlyMetas(summarizedKeys) {
+  function collectSaveRunCommentOnlyMetas(summarizedKeys) {
     return Array.from(state2.editMetaByKey.values()).map((meta) => ({
       elementKey: String(meta.elementKey),
       label: meta.label,
       locator: meta.locator,
-      note: normalizeNote(meta.note),
+      note: buildPromptNoteWithSkills(meta.note, meta),
+      skillIds: meta.skillIds?.slice(),
       actions: buildMetaActionLines(meta),
       imageCount: Array.isArray(meta.images) ? meta.images.length : 0,
       dirtySince: Number(meta.dirtySince ?? 0)
     })).filter(
-      (meta) => !summarizedKeys.has(meta.elementKey) && (Boolean(meta.note) || meta.imageCount > 0 || meta.actions.length > 0)
+      (meta) => !summarizedKeys.has(meta.elementKey) && (Boolean(meta.note) || (meta.skillIds?.length ?? 0) > 0 || meta.imageCount > 0 || meta.actions.length > 0)
     ).sort((a, b) => b.dirtySince - a.dirtySince || a.label.localeCompare(b.label));
   }
   function readElementSnapshot(locator, options2 = {}) {
@@ -27712,30 +27803,34 @@ ${lines.join("\n")}
     const allActions = [...params.actions];
     if (params.note) allActions.push(params.note);
     for (const action of allActions) {
-      lines.push(`  \u2192 ${action}`);
+      for (const line of String(action ?? "").replace(/\r\n/g, "\n").split("\n")) {
+        const normalizedLine = line.trim();
+        if (!normalizedLine) continue;
+        lines.push(`  \u2192 ${normalizedLine}`);
+      }
     }
   }
-  function appendTextAnnotationItem(lines, params) {
-    const { annotation } = params;
-    lines.push(`- \u6807\u6CE8\u9879 ${params.index}`);
-    lines.push(`  - \u6807\u6CE8\u6587\u672C: \u300C${annotation.selectedText}\u300D`);
-    if (annotation.contextBefore) lines.push(`  - \u6587\u672C\u524D\u6587: "...${annotation.contextBefore}"`);
-    if (annotation.contextAfter) lines.push(`  - \u6587\u672C\u540E\u6587: "${annotation.contextAfter}..."`);
-    if (annotation.tagPath.length > 0) lines.push(`  - \u6807\u7B7E\u8DEF\u5F84: ${annotation.tagPath.join(" > ")}`);
-    if (annotation.segments.length > 1) {
+  function appendTextCommentItem(lines, params) {
+    const { comment } = params;
+    lines.push(`- \u6279\u6CE8\u9879 ${params.index}`);
+    lines.push(`  - \u6279\u6CE8\u6587\u672C: \u300C${comment.selectedText}\u300D`);
+    if (comment.contextBefore) lines.push(`  - \u6587\u672C\u524D\u6587: "...${comment.contextBefore}"`);
+    if (comment.contextAfter) lines.push(`  - \u6587\u672C\u540E\u6587: "${comment.contextAfter}..."`);
+    if (comment.tagPath.length > 0) lines.push(`  - \u6807\u7B7E\u8DEF\u5F84: ${comment.tagPath.join(" > ")}`);
+    if (comment.segments.length > 1) {
       lines.push(`  - \u8DE8\u6807\u7B7E\u7247\u6BB5:`);
-      for (const seg of annotation.segments) {
+      for (const seg of comment.segments) {
         lines.push(`    - [${seg.tags.join(" > ")}]: "${seg.text}"`);
       }
     }
     if (params.note) lines.push(`  \u2192 ${params.note}`);
   }
-  function isTextAnnotationKey(key) {
-    return key.startsWith("text-ann::");
+  function isTextCommentKey(key) {
+    return key.startsWith("text-comment::");
   }
-  function findTextAnnotation(elementKey) {
-    if (state2.activeTextAnnotation?.id === elementKey) return state2.activeTextAnnotation;
-    return state2.textAnnotationManager?.getAnnotations().get(elementKey) ?? null;
+  function findTextComment(elementKey) {
+    if (state2.activeTextComment?.id === elementKey) return state2.activeTextComment;
+    return state2.textCommentManager?.getComments().get(elementKey) ?? null;
   }
   function buildSummaryActionLines(summary) {
     const actionLines = [];
@@ -27781,10 +27876,10 @@ ${lines.join("\n")}
     const currentFilePath = resolveCurrentFilePath();
     const prototypeFilePath = resolvePrototypeFilePath();
     const includeDebugFileHint = !hasExplicitHostFilePath();
-    const isDocAnnotation = currentFilePath.toLowerCase().endsWith(".md") || readResourceMetaString(resolveResourceContext(), "docType") !== "";
+    const isDocComment = currentFilePath.toLowerCase().endsWith(".md") || readResourceMetaString(resolveResourceContext(), "docType") !== "";
     const lines = [];
-    if (isDocAnnotation) {
-      lines.push("\u8BF7\u6839\u636E\u4EE5\u4E0B Markdown \u6587\u6863\u9884\u89C8\u4E0A\u7684\u6807\u6CE8\uFF0C\u5728\u4EE3\u7801\u5E93\u4E2D\u5B8C\u6210\u5BF9\u5E94\u66F4\u65B0\u3002");
+    if (isDocComment) {
+      lines.push("\u8BF7\u6839\u636E\u4EE5\u4E0B Markdown \u6587\u6863\u9884\u89C8\u4E0A\u7684\u6279\u6CE8\uFF0C\u5728\u4EE3\u7801\u5E93\u4E2D\u5B8C\u6210\u5BF9\u5E94\u66F4\u65B0\u3002");
     } else {
       lines.push("\u8BF7\u6839\u636E\u4EE5\u4E0B\u9875\u9762\u5185\u5BB9\u6279\u6CE8\uFF0C\u5728\u4EE3\u7801\u4E2D\u5B9E\u73B0\u5BF9\u5E94\u6539\u52A8\u3002");
     }
@@ -27794,13 +27889,13 @@ ${lines.join("\n")}
       currentFilePath
     });
     lines.push("");
-    if (isDocAnnotation) {
+    if (isDocComment) {
       lines.push("\u5168\u5C40\u7EA6\u675F:");
       lines.push("- \u5F53\u524D\u64CD\u4F5C\u5BF9\u8C61\u662F Markdown \u6587\u6863\u9884\u89C8\uFF0C\u4E0D\u662F\u9875\u9762\u6E90\u7801 DOM\u3002");
-      lines.push(`- \u6240\u6709\u6807\u6CE8\u90FD\u8981\u4F18\u5148\u843D\u5B9E\u5230\u6587\u6863\u6587\u4EF6 ${currentFilePath || "(unknown)"}\u3002`);
+      lines.push(`- \u6240\u6709\u6279\u6CE8\u90FD\u8981\u4F18\u5148\u843D\u5B9E\u5230\u6587\u6863\u6587\u4EF6 ${currentFilePath || "(unknown)"}\u3002`);
       lines.push("- \u672A\u660E\u786E\u6307\u51FA\u7684\u5185\u5BB9\u4E0D\u8981\u64C5\u81EA\u6539\u5199\u3002");
       lines.push("");
-      lines.push("\u6807\u6CE8\u5217\u8868:");
+      lines.push("\u6279\u6CE8\u5217\u8868:");
     } else {
       appendGlobalConstraints(lines);
       lines.push("");
@@ -27809,7 +27904,7 @@ ${lines.join("\n")}
     let itemIndex = 1;
     for (const summary of summaries) {
       const meta = state2.editMetaByKey.get(summary.elementKey);
-      const note = normalizeNote(meta?.note ?? "");
+      const note = buildPromptNoteWithSkills(meta?.note ?? "", meta);
       const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
       appendChangeItem(lines, {
         index: itemIndex,
@@ -27823,14 +27918,14 @@ ${lines.join("\n")}
       itemIndex += 1;
     }
     for (const meta of noteOnlyMetas) {
-      const annotation = isTextAnnotationKey(meta.elementKey) ? findTextAnnotation(meta.elementKey) : null;
-      if (annotation) {
-        appendTextAnnotationItem(lines, {
+      const comment = isTextCommentKey(meta.elementKey) ? findTextComment(meta.elementKey) : null;
+      if (comment) {
+        appendTextCommentItem(lines, {
           index: itemIndex,
-          annotation,
+          comment,
           note: meta.note
         });
-      } else if (meta.note || meta.actions.length > 0) {
+      } else if (meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0) {
         appendChangeItem(lines, {
           index: itemIndex,
           locator: meta.locator,
@@ -27858,7 +27953,7 @@ ${lines.join("\n")}
     }
     lines.push("");
     lines.push("\u8F93\u51FA\u8981\u6C42:");
-    if (isDocAnnotation) {
+    if (isDocComment) {
       lines.push("- \u4F18\u5148\u8BF4\u660E\u4FEE\u6539\u4E86\u54EA\u4E9B\u6587\u6863\u6587\u4EF6\uFF1B\u82E5\u540C\u6B65\u4E86\u539F\u578B\uFF0C\u4E5F\u4E00\u5E76\u5217\u51FA\u3002");
       lines.push("- \u7ED9\u51FA\u5173\u952E\u6539\u52A8\u6458\u8981\uFF0C\u4EE5\u53CA\u4ECD\u9700\u4EBA\u5DE5\u9A8C\u8BC1\u7684\u5DEE\u5F02\u70B9\u3002");
     } else {
@@ -27872,7 +27967,8 @@ ${lines.join("\n")}
       elementKey: meta.elementKey,
       locator: stripLocatorDebugSource2(meta.locator),
       label: meta.label,
-      note: meta.note,
+      note: buildPromptNoteWithSkills(meta.note, meta),
+      skillIds: meta.skillIds?.slice(),
       imageCount: meta.images.length,
       changeKinds: meta.changeKinds.slice()
     }));
@@ -27921,12 +28017,12 @@ ${lines.join("\n")}
     }) || Array.from(state2.editMetaByKey.values()).some(
       (meta) => !summarizedKeys.has(meta.elementKey) && (meta.images.length ?? 0) > 0
     );
-    return hasFilteredImages ? "\u4E0D\u652F\u6301\u6807\u6CE8\u56FE\u7247\uFF0C\u5DF2\u8FC7\u6EE4\u3002" : void 0;
+    return hasFilteredImages ? "\u4E0D\u652F\u6301\u6279\u6CE8\u56FE\u7247\uFF0C\u5DF2\u8FC7\u6EE4\u3002" : void 0;
   }
   function buildSaveRunPromptFromParts(params) {
-    const { summaries, annotationOnlyMetas, moveSummaries } = params;
+    const { summaries, commentOnlyMetas, moveSummaries } = params;
     const mode = params.mode ?? "initial";
-    if (summaries.length === 0 && annotationOnlyMetas.length === 0 && moveSummaries.length === 0) return "";
+    if (summaries.length === 0 && commentOnlyMetas.length === 0 && moveSummaries.length === 0) return "";
     const currentFilePath = resolveCurrentFilePath();
     const includeDebugFileHint = !hasExplicitHostFilePath();
     const lines = [];
@@ -27952,7 +28048,7 @@ ${lines.join("\n")}
     let itemIndex = 1;
     for (const summary of summaries) {
       const meta = state2.editMetaByKey.get(summary.elementKey);
-      const note = normalizeNote(meta?.note ?? "");
+      const note = buildPromptNoteWithSkills(meta?.note ?? "", meta);
       const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
       if ((meta?.images.length ?? 0) > 0) {
         actions.push("\u8BF7\u7ED3\u5408\u9644\u5E26\u56FE\u7247\u8C03\u6574\u5F53\u524D\u5143\u7D20");
@@ -27968,12 +28064,12 @@ ${lines.join("\n")}
       });
       itemIndex += 1;
     }
-    for (const meta of annotationOnlyMetas) {
-      const annotation = isTextAnnotationKey(meta.elementKey) ? findTextAnnotation(meta.elementKey) : null;
-      if (annotation) {
-        appendTextAnnotationItem(lines, {
+    for (const meta of commentOnlyMetas) {
+      const comment = isTextCommentKey(meta.elementKey) ? findTextComment(meta.elementKey) : null;
+      if (comment) {
+        appendTextCommentItem(lines, {
           index: itemIndex,
-          annotation,
+          comment,
           note: meta.note
         });
       } else {
@@ -28012,13 +28108,13 @@ ${lines.join("\n")}
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
     const moveSummaries = collectMoveSummaries(undoStack);
-    const annotationOnlyMetas = collectSaveRunAnnotationOnlyMetas(
+    const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     );
     return buildSaveRunPromptFromParts({
       mode: "initial",
       summaries,
-      annotationOnlyMetas,
+      commentOnlyMetas,
       moveSummaries
     });
   }
@@ -28026,13 +28122,13 @@ ${lines.join("\n")}
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
     const moveSummaries = collectMoveSummaries(undoStack);
-    const annotationOnlyMetas = collectSaveRunAnnotationOnlyMetas(
+    const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     );
     return buildSaveRunPromptFromParts({
       mode: "append",
       summaries,
-      annotationOnlyMetas,
+      commentOnlyMetas,
       moveSummaries
     });
   }
@@ -28041,14 +28137,14 @@ ${lines.join("\n")}
     if (!elementKey) return "";
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack).filter((summary) => String(summary.elementKey) === elementKey);
-    const annotationOnlyMetas = collectSaveRunAnnotationOnlyMetas(
+    const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     ).filter((meta) => meta.elementKey === elementKey);
     const moveSummaries = collectMoveSummariesWithKeys(undoStack).filter((summary) => summary.elementKey === elementKey).map(({ elementKey: _elementKey, ...summary }) => summary);
     return buildSaveRunPromptFromParts({
       mode: "initial",
       summaries,
-      annotationOnlyMetas,
+      commentOnlyMetas,
       moveSummaries
     });
   }
@@ -28057,14 +28153,14 @@ ${lines.join("\n")}
     if (!elementKey) return "";
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack).filter((summary) => String(summary.elementKey) === elementKey);
-    const annotationOnlyMetas = collectSaveRunAnnotationOnlyMetas(
+    const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     ).filter((meta) => meta.elementKey === elementKey);
     const moveSummaries = collectMoveSummariesWithKeys(undoStack).filter((summary) => summary.elementKey === elementKey).map(({ elementKey: _elementKey, ...summary }) => summary);
     return buildSaveRunPromptFromParts({
       mode: "append",
       summaries,
-      annotationOnlyMetas,
+      commentOnlyMetas,
       moveSummaries
     });
   }
@@ -28544,7 +28640,7 @@ function createGenieEditor(options = {}) {
     }
     notifyStatusChange();
     const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
-    persistence?.recordAnnotationTaskState?.(elementKey, nextState, normalizedTaskRef);
+    persistence?.recordCommentTaskState?.(elementKey, nextState, normalizedTaskRef);
     return {
       elementKey,
       state: nextState,
@@ -28589,7 +28685,7 @@ function createGenieEditor(options = {}) {
     getResourceContext: resolvedOptions.host.getResourceContext,
     interactionProfile: resolvedOptions.interactionProfile
   });
-  let flushPendingAnnotationContextSync = null;
+  let flushPendingCommentContextSync = null;
   genieBridge = createGenieBridgeService({
     state: state2,
     changes,
@@ -28608,7 +28704,7 @@ function createGenieEditor(options = {}) {
         };
       }
       if (available) {
-        flushPendingAnnotationContextSync?.();
+        flushPendingCommentContextSync?.();
       }
       state2.breadcrumbs?.refresh();
       state2.propertyPanel?.refresh();
@@ -28669,7 +28765,7 @@ function createGenieEditor(options = {}) {
     services,
     onStatusChange: notifyStatusChange
   });
-  flushPendingAnnotationContextSync = lifecycle.flushPendingAnnotationContextSync;
+  flushPendingCommentContextSync = lifecycle.flushPendingCommentContextSync;
   function start() {
     if (destroyed) return;
     lifecycle.start();

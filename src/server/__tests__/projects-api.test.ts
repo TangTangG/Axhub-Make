@@ -517,6 +517,44 @@ describe('make-server project APIs', () => {
     }
   });
 
+  it('treats legacy official make-project default names as unnamed during startup registration', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'make-project', 'Axhub Make');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'make-project', name: 'Axhub Make' },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const list = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
+      expect(list.projects).toEqual([
+        expect.objectContaining({
+          id: 'make-project',
+          name: '',
+        }),
+      ]);
+
+      const resources = await fetch(`${server.origin}/api/projects/make-project/resources`).then((response) => response.json());
+      expect(resources.project).toEqual({
+        id: 'make-project',
+        name: '',
+      });
+
+      const marker = JSON.parse(fs.readFileSync(getMakeClientMarkerPath(projectRoot), 'utf8'));
+      expect(marker.project).toEqual({
+        id: 'make-project',
+        name: '',
+      });
+      const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
+      expect(metadata.project).toEqual({
+        id: 'make-project',
+        name: '',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects doc content reads when metadata points outside the project root', async () => {
     const projectRoot = createTempRoot();
     const outsideRoot = createTempRoot('axhub-make-projects-api-outside-');

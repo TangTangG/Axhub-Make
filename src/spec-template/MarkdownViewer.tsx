@@ -22,7 +22,7 @@ import { SimpleEditor, type UploadFunction } from 'tiptap-editor';
 import { defaultThemeConfig } from '../theme';
 import type { GenieContextV1 } from '@/common/genie/types';
 import {
-    buildMarkdownAnnotationPrompt,
+    buildMarkdownCommentPrompt,
     resolveMarkdownQuickEditMeta,
     shouldIgnoreInitialMarkdownEditorChange,
     type MarkdownQuickEditMeta,
@@ -55,7 +55,7 @@ interface HeadingItem {
     children?: HeadingItem[];
 }
 
-type SpecQuickEditMode = 'none' | 'annotation' | 'edit';
+type SpecQuickEditMode = 'none' | 'comment' | 'edit';
 
 interface SpecPromptRequestResult {
     prompt: string;
@@ -71,7 +71,7 @@ export interface MarkdownViewerHandle {
     getHostToolbarState: () => GenieEditorHostToolbarState | null;
     subscribeHostToolbarState: (listener: (state: GenieEditorHostToolbarState) => void) => () => void;
     runHostToolbarAction: (action: GenieEditorHostToolbarAction) => Promise<boolean>;
-    setQuickEditMode: (mode: 'annotation' | 'edit', options?: { saveBehavior?: 'none' | 'save' | 'discard' }) => Promise<boolean>;
+    setQuickEditMode: (mode: 'comment' | 'edit', options?: { saveBehavior?: 'none' | 'save' | 'discard' }) => Promise<boolean>;
     getQuickEditStatus: () => {
         enabled: boolean;
         dirty: boolean;
@@ -474,12 +474,12 @@ function parseQuickEditModeFromUrl(): SpecQuickEditMode {
     if (typeof window === 'undefined') return 'none';
     try {
         const params = new URLSearchParams(window.location.search);
-        if (params.get('editor') === 'specAnnotation') {
-            return 'annotation';
+        if (params.get('editor') === 'specComment') {
+            return 'comment';
         }
         const value = params.get(SPEC_EDIT_QUERY_KEY) ?? params.get('edit');
         if (!value) return 'none';
-        return value === '1' || value.toLowerCase() === 'true' ? 'annotation' : 'none';
+        return value === '1' || value.toLowerCase() === 'true' ? 'comment' : 'none';
     } catch {
         return 'none';
     }
@@ -550,8 +550,8 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     const draftPersistTimerRef = useRef<number | null>(null);
     const draftPromptedDocKeysRef = useRef<Set<string>>(new Set());
     const draftConfirmingDocKeyRef = useRef<string | null>(null);
-    const annotationEditorRef = useRef<GenieEditorApi | null>(null);
-    const annotationEditorDarkModeRef = useRef(false);
+    const commentEditorRef = useRef<GenieEditorApi | null>(null);
+    const commentEditorDarkModeRef = useRef(false);
     const editorUserChangedDocKeysRef = useRef<Set<string>>(new Set());
     const currentDoc = useMemo(
         () => localDocuments.find((doc) => doc.key === activeKey) || localDocuments[0],
@@ -559,7 +559,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     );
     const isQuickEditing = quickEditMode !== 'none';
     const isEditing = quickEditMode === 'edit';
-    const isAnnotationMode = quickEditMode === 'annotation';
+    const isCommentMode = quickEditMode === 'comment';
 
     const clearPendingDraftPersist = useCallback(() => {
         if (draftPersistTimerRef.current !== null) {
@@ -594,7 +594,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
         });
     }, [clearPendingDraftPersist]);
 
-    const buildAnnotationResourceContext = useCallback((doc: MarkdownDocument | undefined) => {
+    const buildCommentResourceContext = useCallback((doc: MarkdownDocument | undefined) => {
         if (!doc) return null;
         const meta = resolveMarkdownQuickEditMeta(doc.url);
         const targetPath = meta.docPath;
@@ -619,22 +619,22 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
         };
     }, []);
 
-    const ensureAnnotationEditor = useCallback((options?: { initialDarkMode?: boolean }) => {
-        const initialDarkMode = Boolean(options?.initialDarkMode ?? annotationEditorDarkModeRef.current);
-        if (annotationEditorRef.current && annotationEditorDarkModeRef.current === initialDarkMode) {
-            return annotationEditorRef.current;
+    const ensureCommentEditor = useCallback((options?: { initialDarkMode?: boolean }) => {
+        const initialDarkMode = Boolean(options?.initialDarkMode ?? commentEditorDarkModeRef.current);
+        if (commentEditorRef.current && commentEditorDarkModeRef.current === initialDarkMode) {
+            return commentEditorRef.current;
         }
 
-        annotationEditorRef.current?.destroy();
+        commentEditorRef.current?.destroy();
         const editor = createGenieEditor({
-            interactionProfile: 'text-annotation',
+            interactionProfile: 'text-comment',
             ui: {
                 toolbarMode: 'host',
                 initialDarkMode,
-                skillInstallSource: '.agents/skills/prototype-edit-annotations/SKILL.md',
+                skillInstallSource: '.agents/skills/prototype-comments/SKILL.md',
             },
             host: {
-                getResourceContext: () => buildAnnotationResourceContext(currentDocRef.current),
+                getResourceContext: () => buildCommentResourceContext(currentDocRef.current),
             },
             genieBridge: {
                 apiBaseUrl: resolveDefaultEditorApiBaseUrl(),
@@ -650,31 +650,31 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
                 source: 'make-doc',
             },
         });
-        annotationEditorRef.current = editor;
-        annotationEditorDarkModeRef.current = initialDarkMode;
+        commentEditorRef.current = editor;
+        commentEditorDarkModeRef.current = initialDarkMode;
         return editor;
-    }, [buildAnnotationResourceContext]);
+    }, [buildCommentResourceContext]);
 
-    const stopAnnotationEditor = useCallback(() => {
-        annotationEditorRef.current?.stop();
+    const stopCommentEditor = useCallback(() => {
+        commentEditorRef.current?.stop();
     }, []);
 
-    const buildAnnotationPromptPayload = useCallback((): SpecPromptRequestResult => {
+    const buildCommentPromptPayload = useCallback((): SpecPromptRequestResult => {
         if (!currentDoc) {
             throw new Error('当前没有可用文档');
         }
 
-        const editor = annotationEditorRef.current;
+        const editor = commentEditorRef.current;
         if (!editor) {
-            throw new Error('标注编辑器尚未就绪');
+            throw new Error('批注编辑器尚未就绪');
         }
 
         const snapshot = editor.getEditedSnapshot();
         if (!snapshot.modifiedElements.length) {
-            throw new Error('当前没有可生成 Prompt 的标注');
+            throw new Error('当前没有可生成 Prompt 的批注');
         }
 
-        const { prompt, targetPath, meta } = buildMarkdownAnnotationPrompt({
+        const { prompt, targetPath, meta } = buildMarkdownCommentPrompt({
             docLabel: currentDoc.label,
             docUrl: currentDoc.url,
             modifiedElements: snapshot.modifiedElements.map((item) => ({
@@ -698,7 +698,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
                 },
                 selectedElements: [],
                 extensions: {
-                    source: 'spec-annotation-editor',
+                    source: 'spec-comment-editor',
                     pageUrl: typeof window !== 'undefined' ? window.location.href : '',
                     docLabel: currentDoc.label,
                     docUrl: currentDoc.url || '',
@@ -1037,11 +1037,11 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     ]);
 
     const setQuickEditSessionMode = useCallback(async (
-        mode: 'annotation' | 'edit',
+        mode: 'comment' | 'edit',
         options?: { saveBehavior?: 'none' | 'save' | 'discard' },
     ) => {
         const saveBehavior = options?.saveBehavior ?? 'none';
-        if (mode === 'annotation' && quickEditModeRef.current === 'edit') {
+        if (mode === 'comment' && quickEditModeRef.current === 'edit') {
             if (saveBehavior === 'save') {
                 const saved = await saveCurrentDoc({
                     suppressNoChangeNotice: true,
@@ -1088,32 +1088,32 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     }, [isQuickEditing]);
 
     useEffect(() => {
-        if (!isAnnotationMode || !currentDoc) {
-            stopAnnotationEditor();
+        if (!isCommentMode || !currentDoc) {
+            stopCommentEditor();
             return;
         }
 
         const timerId = window.setTimeout(() => {
-            ensureAnnotationEditor().start();
+            ensureCommentEditor().start();
         }, 0);
 
         return () => {
             window.clearTimeout(timerId);
-            stopAnnotationEditor();
+            stopCommentEditor();
         };
-    }, [currentDoc, ensureAnnotationEditor, isAnnotationMode, stopAnnotationEditor]);
+    }, [currentDoc, ensureCommentEditor, isCommentMode, stopCommentEditor]);
 
     useEffect(() => {
         const handleBeforeUnload = () => {
             flushDraftsNow();
-            stopAnnotationEditor();
+            stopCommentEditor();
         };
 
         window.addEventListener('beforeunload', handleBeforeUnload);
         return () => {
             window.removeEventListener('beforeunload', handleBeforeUnload);
         };
-    }, [flushDraftsNow, stopAnnotationEditor]);
+    }, [flushDraftsNow, stopCommentEditor]);
 
     useEffect(() => {
         if (!isEditing || !currentDoc) {
@@ -1210,12 +1210,12 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
 
             if (data.type === 'SPEC_EDIT_ENABLE') {
                 draftPromptedDocKeysRef.current.clear();
-                setQuickEditModeState('annotation');
+                setQuickEditModeState('comment');
                 return;
             }
 
             if (data.type === 'SPEC_EDIT_SET_MODE') {
-                const nextMode = data.mode === 'edit' ? 'edit' : 'annotation';
+                const nextMode = data.mode === 'edit' ? 'edit' : 'comment';
                 void setQuickEditSessionMode(nextMode, {
                     saveBehavior:
                         data.saveBehavior === 'save' || data.saveBehavior === 'discard'
@@ -1250,10 +1250,10 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
                 if (!requestId) return;
                 void (async () => {
                     try {
-                        if (quickEditModeRef.current !== 'annotation') {
-                            throw new Error('请先切换到标注模式');
+                        if (quickEditModeRef.current !== 'comment') {
+                            throw new Error('请先切换到批注模式');
                         }
-                        const payload = buildAnnotationPromptPayload();
+                        const payload = buildCommentPromptPayload();
                         postToParent({
                             type: 'SPEC_EDIT_PROMPT_RESPONSE',
                             requestId,
@@ -1279,7 +1279,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
             window.removeEventListener('message', handleMessage);
         };
     }, [
-        buildAnnotationPromptPayload,
+        buildCommentPromptPayload,
         clearDraftForAllDocs,
         clearPendingDraftPersist,
         emitSpecEditStatus,
@@ -1291,7 +1291,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     useImperativeHandle(ref, () => ({
         enableQuickEdit() {
             draftPromptedDocKeysRef.current.clear();
-            setQuickEditModeState('annotation');
+            setQuickEditModeState('comment');
         },
         disableQuickEdit(options) {
             if (options?.discardChanges) {
@@ -1303,21 +1303,21 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
         },
         enableDocumentEditor(options) {
             draftPromptedDocKeysRef.current.clear();
-            setQuickEditModeState('annotation');
-            ensureAnnotationEditor({ initialDarkMode: options?.initialDarkMode }).start();
+            setQuickEditModeState('comment');
+            ensureCommentEditor({ initialDarkMode: options?.initialDarkMode }).start();
         },
         disableDocumentEditor() {
-            stopAnnotationEditor();
+            stopCommentEditor();
         },
         getHostToolbarState() {
-            return annotationEditorRef.current?.getHostToolbarState?.() ?? null;
+            return commentEditorRef.current?.getHostToolbarState?.() ?? null;
         },
         subscribeHostToolbarState(listener) {
-            const editor = ensureAnnotationEditor();
+            const editor = ensureCommentEditor();
             return editor.subscribeHostToolbarState(listener);
         },
         runHostToolbarAction(action) {
-            const editor = ensureAnnotationEditor();
+            const editor = ensureCommentEditor();
             return editor.runHostToolbarAction(action);
         },
         async setQuickEditMode(mode, options) {
@@ -1334,30 +1334,30 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
             };
         },
         handleCopyPrompt() {
-            return Promise.resolve(buildAnnotationPromptPayload());
+            return Promise.resolve(buildCommentPromptPayload());
         },
         saveCurrentDoc,
     }), [
         activeKey,
-        buildAnnotationPromptPayload,
+        buildCommentPromptPayload,
         clearDraftForAllDocs,
         clearPendingDraftPersist,
         dirtyCount,
         hasDirtyChanges,
-        ensureAnnotationEditor,
+        ensureCommentEditor,
         isQuickEditing,
         isSaving,
         quickEditMode,
         restoreDirtyChanges,
         saveCurrentDoc,
         setQuickEditSessionMode,
-        stopAnnotationEditor,
+        stopCommentEditor,
     ]);
 
     useEffect(() => {
         return () => {
-            annotationEditorRef.current?.destroy();
-            annotationEditorRef.current = null;
+            commentEditorRef.current?.destroy();
+            commentEditorRef.current = null;
         };
     }, []);
 

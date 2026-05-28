@@ -3,11 +3,13 @@ import path from 'node:path';
 
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
+import { stampAdminAssetUrlsForContent } from './src/chunking/adminAssetStamping';
 import { getManualChunkName } from './src/chunking/manualChunks';
 import { canvasHotUpdateFilterPlugin } from './src/server/canvasHotUpdateFilter';
 import { DEFAULT_MAKE_SERVER_PORT } from './src/server/defaults';
+import { releaseListeningProcessesOnPort } from './src/server/portOccupancy';
 
 const adminOutDir = path.resolve(__dirname, 'dist/admin');
 
@@ -129,9 +131,6 @@ function renameHtmlPlugin() {
 
 function stampAdminAssetUrlsPlugin() {
   const buildVersion = Date.now().toString();
-  const assetReferencePattern = /((?:href|src)=["'])(\/(?:assets|images)\/[^"'?#]+|(?:\.\.?\/)+(?:assets|images)\/[^"'?#]+)(?:\?[^"']*)?(["'])/g;
-  const jsCssReferencePattern = /((?:["'`(]\s*))(\/(?:assets|images)\/[^"'`)#?]+|(?:\.\.?\/)+(?:assets|images|chunks)\/[^"'`)#?]+|(?:\.\.?\/)[^"'`)#?]+\.(?:js|css|png|jpe?g|gif|svg|ico|woff2?|ttf|eot|json))(?:\?[^"'`)]*)?((?:\s*["'`)]))/g;
-
   const collectFiles = (rootDir: string, extensions: Set<string>): string[] => {
     const files: string[] = [];
     const walk = (currentDir: string) => {
@@ -156,21 +155,9 @@ function stampAdminAssetUrlsPlugin() {
       if (!fs.existsSync(adminOutDir)) {
         return;
       }
-      for (const filePath of collectFiles(adminOutDir, new Set(['.html', '.js', '.css']))) {
+      for (const filePath of collectFiles(adminOutDir, new Set(['.html', '.css']))) {
         const originalContent = fs.readFileSync(filePath, 'utf8');
-        const stampedContent = originalContent
-          .replace(assetReferencePattern, `$1$2?v=${buildVersion}$3`)
-          .replace(jsCssReferencePattern, (_, prefix, assetPath, suffix) => {
-            if (
-              assetPath.startsWith('http://')
-              || assetPath.startsWith('https://')
-              || assetPath.startsWith('//')
-              || assetPath.includes('?v=')
-            ) {
-              return `${prefix}${assetPath}${suffix}`;
-            }
-            return `${prefix}${assetPath}?v=${buildVersion}${suffix}`;
-          });
+        const stampedContent = stampAdminAssetUrlsForContent(originalContent, buildVersion, path.extname(filePath).toLowerCase());
 
         if (stampedContent !== originalContent) {
           fs.writeFileSync(filePath, stampedContent, 'utf8');
@@ -234,6 +221,17 @@ function excalidrawSiblingsPlugin() {
   };
 }
 
+function portReleaseBeforeListenPlugin(): Plugin {
+  return {
+    name: 'axhub-port-release-before-listen',
+    configResolved(config) {
+      if (config.command === 'serve' && !config.server.middlewareMode) {
+        releaseListeningProcessesOnPort(config.server.port ?? DEFAULT_MAKE_SERVER_PORT);
+      }
+    },
+  };
+}
+
 export default defineConfig({
   css: {
     preprocessorOptions: {
@@ -242,6 +240,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    portReleaseBeforeListenPlugin(),
     excalidrawSiblingsPlugin(),
     canvasHotUpdateFilterPlugin(),
     react(),
@@ -260,7 +259,7 @@ export default defineConfig({
     port: DEFAULT_MAKE_SERVER_PORT,
     open: '/',
     cors: true,
-    strictPort: false,
+    strictPort: true,
     watch: {
       ignored: ['**/client/**'],
     },

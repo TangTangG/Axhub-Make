@@ -1,19 +1,19 @@
-export type SpecQuickEditMode = 'annotation' | 'edit';
+export type SpecQuickEditMode = 'comment' | 'edit';
 
 export type SpecQuickEditActionKey = 'copyPrompt' | 'save' | 'exit';
 
 export const SPEC_QUICK_EDIT_SEGMENT_OPTIONS = [
-    { label: '批注', value: 'annotation' as const },
+    { label: '批注', value: 'comment' as const },
     { label: '编辑', value: 'edit' as const },
 ];
 
 export type SpecQuickEditSwitchDecision =
     | { type: 'noop' }
     | { type: 'switch'; mode: SpecQuickEditMode }
-    | { type: 'confirm'; mode: 'annotation' };
+    | { type: 'confirm'; mode: 'comment' };
 
 export function getSpecQuickEditActionKeys(mode: SpecQuickEditMode): SpecQuickEditActionKey[] {
-    return mode === 'annotation' ? ['copyPrompt', 'exit'] : ['save', 'exit'];
+    return mode === 'comment' ? ['copyPrompt', 'exit'] : ['save', 'exit'];
 }
 
 export function resolveSpecQuickEditSwitchDecision(params: {
@@ -32,5 +32,5 @@ export function resolveSpecQuickEditSwitchDecision(params: {
         return { type: 'switch', mode: nextMode };
     }
 
-    return { type: 'confirm', mode: 'annotation' };
+    return { type: 'confirm', mode: 'comment' };
 }

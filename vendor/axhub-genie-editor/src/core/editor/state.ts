@@ -12,7 +12,7 @@ import type { WebEditorGenieProvider } from '../../genie-bridge';
 import type { ShadowHostManager } from '../../ui/shadow-host';
 import type { Breadcrumbs } from '../../ui/breadcrumbs';
 import type { PropertyPanel } from '../../ui/property-panel';
-import type { AnnotationEntryMode } from '../../ui/selection-ui-mode';
+import type { CommentEntryMode } from '../../ui/selection-ui-mode';
 import type { CanvasOverlay } from '../../overlay/canvas-overlay';
 import type { HandlesController } from '../../overlay/handles-controller';
 import type { ParentSelectCornerController } from '../../overlay/parent-select-corner';
@@ -21,15 +21,15 @@ import type { EventController } from '../event-controller';
 import type { PositionTracker } from '../position-tracker';
 import type { SelectionEngine } from '../../selection/selection-engine';
 import type {
-  TextAnnotationManager,
-  TextAnnotation,
-} from '../../selection/text-annotation-manager';
+  TextCommentManager,
+  TextComment,
+} from '../../selection/text-comment-manager';
 import type { TransactionManager } from '../transaction-manager';
 import type { DesignTokensService } from '../design-tokens';
 import type { PerfMonitor } from '../perf-monitor';
 import { locatorKey } from '../locator';
-import type { AnnotationShortcutSettings } from './annotation-shortcut-settings';
-import { DEFAULT_ANNOTATION_SHORTCUT_SETTINGS } from './annotation-shortcut-settings';
+import type { CommentShortcutSettings } from './comment-shortcut-settings';
+import { DEFAULT_COMMENT_SHORTCUT_SETTINGS } from './comment-shortcut-settings';
 import type {
   WebEditorInteractionProfile,
   WebEditorUiSettings,
@@ -208,6 +208,7 @@ export interface ElementEditMeta {
   locator: ElementLocator;
   label: string;
   note: string;
+  skillIds?: string[];
   images: PromptImageAttachment[];
   anchor: MarkerAnchor | null;
   dirtySince: number | null;
@@ -238,14 +239,14 @@ export interface EditorRuntimeState {
   tokensService: DesignTokensService | null;
   perfMonitor: PerfMonitor | null;
   perfHotkeyCleanup: (() => void) | null;
-  annotationShortcutCleanup: (() => void) | null;
+  commentShortcutCleanup: (() => void) | null;
   hoveredElement: Element | null;
   pendingHoverTransition: boolean;
   selectedElement: Element | null;
   selectionAnchor: MarkerAnchor | null;
-  annotationEntryMode: AnnotationEntryMode;
-  annotationShortcutSettings: AnnotationShortcutSettings;
-  annotationShortcutDialogOpen: boolean;
+  commentEntryMode: CommentEntryMode;
+  commentShortcutSettings: CommentShortcutSettings;
+  commentShortcutDialogOpen: boolean;
   propertyPanelPosition: { left: number; top: number } | null;
   uiResizeCleanup: (() => void) | null;
   editMetaByKey: Map<WebEditorElementKey, ElementEditMeta>;
@@ -261,9 +262,9 @@ export interface EditorRuntimeState {
   genieTaskByElementKey: Map<WebEditorElementKey, ElementGenieTaskState>;
   genieTaskByRequestId: Map<string, ElementGenieTaskState>;
   externalEditingTaskByElementKey: Map<WebEditorElementKey, ElementGenieTaskState>;
-  textAnnotationManager: TextAnnotationManager | null;
-  textAnnotationTargetElement: HTMLElement | null;
-  activeTextAnnotation: TextAnnotation | null;
+  textCommentManager: TextCommentManager | null;
+  textCommentTargetElement: HTMLElement | null;
+  activeTextComment: TextComment | null;
 }
 
 export const DEFAULT_MODIFIERS = {
@@ -365,14 +366,14 @@ export function createEditorRuntimeState(): EditorRuntimeState {
     tokensService: null,
     perfMonitor: null,
     perfHotkeyCleanup: null,
-    annotationShortcutCleanup: null,
+    commentShortcutCleanup: null,
     hoveredElement: null,
     pendingHoverTransition: false,
     selectedElement: null,
     selectionAnchor: null,
-    annotationEntryMode: 'bubble-card',
-    annotationShortcutSettings: { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS },
-    annotationShortcutDialogOpen: false,
+    commentEntryMode: 'bubble-card',
+    commentShortcutSettings: { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS },
+    commentShortcutDialogOpen: false,
     propertyPanelPosition: null,
     uiResizeCleanup: null,
     editMetaByKey: new Map(),
@@ -388,9 +389,9 @@ export function createEditorRuntimeState(): EditorRuntimeState {
     genieTaskByElementKey: new Map(),
     genieTaskByRequestId: new Map(),
     externalEditingTaskByElementKey: new Map(),
-    textAnnotationManager: null,
-    textAnnotationTargetElement: null,
-    activeTextAnnotation: null,
+    textCommentManager: null,
+    textCommentTargetElement: null,
+    activeTextComment: null,
   };
 }
 
@@ -403,15 +404,15 @@ export function resetEditorTransientState(state: EditorRuntimeState): void {
   state.selectedElement = null;
   state.selectionAnchor = null;
   state.pendingHoverTransition = false;
-  state.annotationShortcutDialogOpen = false;
+  state.commentShortcutDialogOpen = false;
   state.inlineTextEditingActive = false;
   state.promptCardVisible = false;
   state.genieConversationByScopeKey.clear();
   state.genieTaskByElementKey.clear();
   state.genieTaskByRequestId.clear();
   state.externalEditingTaskByElementKey.clear();
-  state.textAnnotationTargetElement = null;
-  state.activeTextAnnotation = null;
+  state.textCommentTargetElement = null;
+  state.activeTextComment = null;
 }
 
 export function clearEditorRuntimeRefs(state: EditorRuntimeState): void {
@@ -429,22 +430,22 @@ export function clearEditorRuntimeRefs(state: EditorRuntimeState): void {
   state.tokensService = null;
   state.perfMonitor = null;
   state.perfHotkeyCleanup = null;
-  state.annotationShortcutCleanup = null;
+  state.commentShortcutCleanup = null;
   state.uiResizeCleanup = null;
   state.markerLayer = null;
   state.hoveredElement = null;
   state.selectedElement = null;
   state.selectionAnchor = null;
   state.pendingHoverTransition = false;
-  state.annotationShortcutDialogOpen = false;
+  state.commentShortcutDialogOpen = false;
   state.promptCardVisible = false;
   state.genieConversationByScopeKey.clear();
   state.genieTaskByElementKey.clear();
   state.genieTaskByRequestId.clear();
   state.externalEditingTaskByElementKey.clear();
-  state.textAnnotationManager = null;
-  state.textAnnotationTargetElement = null;
-  state.activeTextAnnotation = null;
+  state.textCommentManager = null;
+  state.textCommentTargetElement = null;
+  state.activeTextComment = null;
   state.pendingMarkerAnchors.clear();
   state.editMetaByKey.clear();
   state.processedEditTimestampsByKey.clear();

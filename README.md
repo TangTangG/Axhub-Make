@@ -72,3 +72,11 @@ npx -y @axhub/make@latest
 ![空原型引导](assets/images/make-demo-empty-prototype.png)
 
 ![设计系统浏览](assets/images/make-demo-design-system.png)
+
+## 用户群
+
+扫码加入 Axhub Make 用户群，获取使用交流、问题反馈和新版本动态。
+
+如果你已经加入过 Axhub 其他用户群，不需要重复添加。
+
+![Axhub Make 用户群二维码](assets/images/axhub-make-user-group-qrcode.png)

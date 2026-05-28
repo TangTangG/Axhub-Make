@@ -33,6 +33,7 @@ import {
     Wand2,
     Loader2,
     LayoutGrid,
+    Square,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { GenieProvider } from '@/common/genie/types';
@@ -90,6 +91,7 @@ interface ContentPanelProps {
     onTitleChange: (title: string) => void | Promise<void>;
     onProjectSwitch: (projectId: string) => void | Promise<void>;
     onProjectDelete: (projectId: string) => void | Promise<void>;
+    onProjectStop: (projectId: string) => void | Promise<void>;
     onAddProject: () => boolean | void | Promise<boolean | void>;
     onSelectMakeProjectParentFolder: () => Promise<string | null>;
     onCreateBlankMakeProject: (params: {
@@ -877,6 +879,7 @@ export default function ContentPanel({
     onTitleChange,
     onProjectSwitch,
     onProjectDelete,
+    onProjectStop,
     onAddProject,
     onSelectMakeProjectParentFolder,
     onCreateBlankMakeProject,
@@ -941,6 +944,7 @@ export default function ContentPanel({
     const [projectSetupOpen, setProjectSetupOpen] = useState(Boolean(projectSetupRequired));
     const [switchingProjectId, setSwitchingProjectId] = useState<string | null>(null);
     const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+    const [stoppingProjectId, setStoppingProjectId] = useState<string | null>(null);
     const [isAddingProject, setIsAddingProject] = useState(false);
     const [isSelectingParentFolder, setIsSelectingParentFolder] = useState(false);
     const [isCreatingBlankProject, setIsCreatingBlankProject] = useState(false);
@@ -1166,6 +1170,22 @@ export default function ContentPanel({
             toast.error(error?.message || '移除项目失败');
         } finally {
             setDeletingProjectId(null);
+        }
+    };
+
+    const handleProjectStop = async (projectId: string) => {
+        const normalizedProjectId = projectId.trim();
+        if (!normalizedProjectId || stoppingProjectId) {
+            return;
+        }
+        setStoppingProjectId(normalizedProjectId);
+        try {
+            await Promise.resolve(onProjectStop(normalizedProjectId));
+            toast.success('已终止客户端');
+        } catch (error: any) {
+            toast.error(error?.message || '终止客户端失败');
+        } finally {
+            setStoppingProjectId(null);
         }
     };
 
@@ -2071,13 +2091,15 @@ export default function ContentPanel({
                                         <ChevronDown className="h-3.5 w-3.5" />
                                     </Button>
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="start" className="w-[260px] p-1 text-sm">
+                                <DropdownMenuContent align="start" className="w-[360px] p-1 text-sm">
                                     <div className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground">项目列表</div>
                                     <div className="max-h-[280px] overflow-y-auto">
                                         {projects.length > 0 ? projects.map((project) => {
                                             const active = project.id === activeProjectId;
                                             const switching = project.id === switchingProjectId;
                                             const deleting = project.id === deletingProjectId;
+                                            const stopping = project.id === stoppingProjectId;
+                                            const running = project.runtimeStatus?.running === true;
                                             const displayRoot = formatProjectRootDisplayPath(project.root);
                                             return (
                                                 <DropdownMenuItem
@@ -2086,23 +2108,47 @@ export default function ContentPanel({
                                                         'group/project-item flex min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left',
                                                         active && 'bg-accent text-accent-foreground',
                                                     )}
-                                                    disabled={Boolean(switchingProjectId || deletingProjectId)}
+                                                    disabled={Boolean(switchingProjectId || deletingProjectId || stoppingProjectId)}
                                                     onSelect={(event) => {
                                                         event.preventDefault();
                                                         void handleProjectSwitch(project.id);
                                                     }}
                                                 >
                                                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                                                        <span className="max-w-full truncate text-[13px] font-medium">{project.name || UNTITLED_PROJECT_LABEL}</span>
+                                                        <span className="flex max-w-full min-w-0 items-center gap-1.5">
+                                                            <span className="min-w-0 truncate text-[13px] font-medium">{project.name || UNTITLED_PROJECT_LABEL}</span>
+                                                            {running ? (
+                                                                <span className="shrink-0 rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-emerald-700">
+                                                                    运行中
+                                                                </span>
+                                                            ) : null}
+                                                        </span>
                                                         <span className="max-w-full truncate text-[11px] text-muted-foreground" title={project.root}>{displayRoot}</span>
                                                     </span>
+                                                    {running ? (
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-7 w-7 shrink-0 opacity-0 group-hover/project-item:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
+                                                            aria-label={`终止 ${project.name || UNTITLED_PROJECT_LABEL}`}
+                                                            disabled={Boolean(switchingProjectId || deletingProjectId || stoppingProjectId)}
+                                                            onClick={(event) => {
+                                                                event.preventDefault();
+                                                                event.stopPropagation();
+                                                                void handleProjectStop(project.id);
+                                                            }}
+                                                        >
+                                                            {stopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
+                                                        </Button>
+                                                    ) : null}
                                                     <Button
                                                         type="button"
                                                         variant="ghost"
                                                         size="icon"
                                                         className="h-7 w-7 shrink-0 opacity-0 group-hover/project-item:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
                                                         aria-label={`从列表移除 ${project.name || UNTITLED_PROJECT_LABEL}`}
-                                                        disabled={Boolean(switchingProjectId || deletingProjectId)}
+                                                        disabled={Boolean(switchingProjectId || deletingProjectId || stoppingProjectId)}
                                                         onClick={(event) => {
                                                             event.preventDefault();
                                                             event.stopPropagation();
@@ -2115,8 +2161,6 @@ export default function ContentPanel({
                                                         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
                                                     ) : deleting ? (
                                                         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-                                                    ) : active ? (
-                                                        <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
                                                     ) : null}
                                                 </DropdownMenuItem>
                                             );
@@ -2131,7 +2175,7 @@ export default function ContentPanel({
                                             <DropdownMenuSeparator />
                                             <DropdownMenuItem
                                                 className="h-8 gap-2 text-sm"
-                                                disabled={Boolean(switchingProjectId || deletingProjectId)}
+                                                disabled={Boolean(switchingProjectId || deletingProjectId || stoppingProjectId)}
                                                 onSelect={(event) => {
                                                     event.preventDefault();
                                                     setProjectSwitcherMenuOpen(false);

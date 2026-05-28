@@ -1,22 +1,23 @@
 import type {
   ElementLocator,
   GenieEditorHostResource,
-  PrototypeEditAnnotationImageEntry,
-  PrototypeEditAnnotationTaskEntry,
-  PrototypeEditAnnotationTaskStatus,
-  PrototypeEditAnnotationsDocument,
-  PrototypeEditAnnotationsPersistenceAdapter,
-  PrototypeEditAnnotationsPersistenceScope,
-  PrototypeEditAnnotationsWriteReason,
+  PrototypeEditCommentEntry,
+  PrototypeEditCommentImageEntry,
+  PrototypeEditCommentTaskEntry,
+  PrototypeEditCommentTaskStatus,
+  PrototypeEditCommentsDocument,
+  PrototypeEditCommentsPersistenceAdapter,
+  PrototypeEditCommentsPersistenceScope,
+  PrototypeEditCommentsWriteReason,
   WebEditorElementKey,
 } from '../../web-editor-types';
 import { locateElement, locatorKey } from '../locator';
 import { generateFullElementLabel, generateStableElementKey } from '../element-key';
 import {
-  DEFAULT_ANNOTATION_SHORTCUT_SETTINGS,
-  sanitizeAnnotationShortcutSettings,
-  type AnnotationShortcutSettings,
-} from './annotation-shortcut-settings';
+  DEFAULT_COMMENT_SHORTCUT_SETTINGS,
+  sanitizeCommentShortcutSettings,
+  type CommentShortcutSettings,
+} from './comment-shortcut-settings';
 import {
   DEFAULT_WEB_EDITOR_UI_SETTINGS,
   type WebEditorUiSettings,
@@ -36,6 +37,7 @@ import type {
 import { filterUnprocessedTransactions as filterTransactionsAfterProcessed } from './state';
 import { normalizeMarkerAnchor } from './marker-anchor';
 import type { GenieEditorTweakValues } from '../../tweak/protocol';
+import { normalizePromptCardSkillIds } from '../../ui/runtime/prompt-card-skills';
 
 type CachedTweakEntry = {
   summaryLines?: string[];
@@ -55,7 +57,12 @@ type CachedChangeEntry = {
   styleChanges?: { before: Record<string, string>; after: Record<string, string> };
   tweak?: CachedTweakEntry;
   note?: string;
+  skillIds?: string[];
   marker?: CachedMarkerEntry | null;
+};
+
+type PrototypeCommentEntryDocumentShape = Omit<CachedChangeEntry, 'note'> & {
+  comment?: string;
 };
 
 type CachedChangePayload = {
@@ -69,7 +76,7 @@ type CachedChangePayload = {
 const CACHE_VERSION = 5;
 const CACHE_KEY_PREFIX = 'web-editor-v2-cache:';
 const MARKER_VISIBILITY_KEY_PREFIX = 'web-editor-v2-markers:';
-const ANNOTATION_SHORTCUT_SETTINGS_KEY_PREFIX = 'web-editor-v2-annotation-shortcuts:';
+const COMMENT_SHORTCUT_SETTINGS_KEY_PREFIX = 'web-editor-v2-comment-shortcuts:';
 const UI_SETTINGS_KEY = 'web-editor-v2-ui-settings';
 const GENIE_CONVERSATION_KEY_PREFIX = 'web-editor-v2-genie-conversation:';
 const GENIE_TASKS_KEY_PREFIX = 'web-editor-v2-genie-tasks:';
@@ -95,8 +102,8 @@ export function createPersistenceService(options: {
   state: EditorRuntimeState;
   changes: EditorChangesService;
   getResourceContext?: () => GenieEditorHostResource | null;
-  persistenceAdapter?: PrototypeEditAnnotationsPersistenceAdapter;
-  interactionProfile?: 'design' | 'text-annotation';
+  persistenceAdapter?: PrototypeEditCommentsPersistenceAdapter;
+  interactionProfile?: 'design' | 'text-comment';
 }): EditorPersistenceService {
   const { state, changes } = options;
   const getResourceContext = options.getResourceContext ?? (() => null);
@@ -105,8 +112,8 @@ export function createPersistenceService(options: {
 
   let cacheWriteTimer: number | null = null;
   let cacheRestoreInProgress = false;
-  let currentAdapterDocument: PrototypeEditAnnotationsDocument | null = null;
-  const annotationTaskStateByElementKey = new Map<WebEditorElementKey, PrototypeEditAnnotationTaskEntry>();
+  let currentAdapterDocument: PrototypeEditCommentsDocument | null = null;
+  const commentTaskStateByElementKey = new Map<WebEditorElementKey, PrototypeEditCommentTaskEntry>();
 
   function readResourceMetaString(key: string): string {
     try {
@@ -177,7 +184,7 @@ export function createPersistenceService(options: {
     );
   }
 
-  function resolvePersistenceScope(): PrototypeEditAnnotationsPersistenceScope | null {
+  function resolvePersistenceScope(): PrototypeEditCommentsPersistenceScope | null {
     const targetPath = resolveTargetPath();
     if (!targetPath || !targetPath.startsWith('prototypes/')) {
       return null;
@@ -272,12 +279,12 @@ export function createPersistenceService(options: {
     return true;
   }
 
-  function resolveAnnotationShortcutSettingsKey(): string | null {
+  function resolveCommentShortcutSettingsKey(): string | null {
     if (typeof window === 'undefined') return null;
     const path = resolveStorageScope() ?? '';
     const key = String(path ?? '').trim();
     if (!key) return null;
-    return `${ANNOTATION_SHORTCUT_SETTINGS_KEY_PREFIX}${key}`;
+    return `${COMMENT_SHORTCUT_SETTINGS_KEY_PREFIX}${key}`;
   }
 
   function readStorageJson<T>(key: string): T | null {
@@ -300,14 +307,14 @@ export function createPersistenceService(options: {
     }
   }
 
-  function normalizeDocumentTaskState(status: string | null | undefined): PrototypeEditAnnotationTaskEntry['state'] {
+  function normalizeDocumentTaskState(status: string | null | undefined): PrototypeEditCommentTaskEntry['state'] {
     if (status === 'pending' || status === 'created') return 'editing';
     if (status === 'completed') return 'completed';
     if (status === 'error') return 'error';
     return 'idle';
   }
 
-  function isPrototypeEditAnnotationTaskStatus(value: unknown): value is PrototypeEditAnnotationTaskStatus {
+  function isPrototypeEditCommentTaskStatus(value: unknown): value is PrototypeEditCommentTaskStatus {
     return value === 'idle' || value === 'editing' || value === 'completed' || value === 'error';
   }
 
@@ -316,20 +323,20 @@ export function createPersistenceService(options: {
     return normalized || null;
   }
 
-  function normalizeAdapterTasks(value: unknown): Record<WebEditorElementKey, PrototypeEditAnnotationTaskEntry> {
+  function normalizeAdapterTasks(value: unknown): Record<WebEditorElementKey, PrototypeEditCommentTaskEntry> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return {};
     }
-    const tasks: Record<WebEditorElementKey, PrototypeEditAnnotationTaskEntry> = {};
+    const tasks: Record<WebEditorElementKey, PrototypeEditCommentTaskEntry> = {};
     for (const [rawElementKey, rawTask] of Object.entries(value as Record<string, unknown>)) {
       const elementKey = String(rawElementKey ?? '').trim();
       if (!elementKey || !rawTask || typeof rawTask !== 'object' || Array.isArray(rawTask)) {
         continue;
       }
-      const task = rawTask as Partial<PrototypeEditAnnotationTaskEntry>;
+      const task = rawTask as Partial<PrototypeEditCommentTaskEntry>;
       const updatedAt = Number(task.updatedAt ?? 0);
       tasks[elementKey] = {
-        state: isPrototypeEditAnnotationTaskStatus(task.state) ? task.state : 'idle',
+        state: isPrototypeEditCommentTaskStatus(task.state) ? task.state : 'idle',
         provider: normalizeNullableString(task.provider),
         requestId: normalizeNullableString(task.requestId),
         sessionId: normalizeNullableString(task.sessionId),
@@ -340,9 +347,9 @@ export function createPersistenceService(options: {
     return tasks;
   }
 
-  function buildDocumentTasks(): Record<WebEditorElementKey, PrototypeEditAnnotationTaskEntry> {
-    const tasks: Record<WebEditorElementKey, PrototypeEditAnnotationTaskEntry> = Object.fromEntries(
-      Array.from(annotationTaskStateByElementKey.entries()).map(([elementKey, task]) => [elementKey, { ...task }]),
+  function buildDocumentTasks(): Record<WebEditorElementKey, PrototypeEditCommentTaskEntry> {
+    const tasks: Record<WebEditorElementKey, PrototypeEditCommentTaskEntry> = Object.fromEntries(
+      Array.from(commentTaskStateByElementKey.entries()).map(([elementKey, task]) => [elementKey, { ...task }]),
     );
     const allTasks = [
       ...state.genieTaskByElementKey.values(),
@@ -362,7 +369,7 @@ export function createPersistenceService(options: {
     return tasks;
   }
 
-  function buildDocumentImages(): PrototypeEditAnnotationImageEntry[] {
+  function buildDocumentImages(): PrototypeEditCommentImageEntry[] {
     return Array.from(state.editMetaByKey.values()).flatMap((meta) =>
       meta.images.map((image) => ({
         id: image.id,
@@ -379,55 +386,71 @@ export function createPersistenceService(options: {
     );
   }
 
+  function cacheEntryToCommentEntry(entry: CachedChangeEntry): PrototypeCommentEntryDocumentShape {
+    const { note, ...rest } = entry;
+    return {
+      ...rest,
+      ...(note ? { comment: note } : {}),
+    };
+  }
+
+  function commentEntryToCacheEntry(entry: PrototypeEditCommentEntry): CachedChangeEntry {
+    const { comment, ...rest } = entry;
+    return {
+      ...(rest as CachedChangeEntry),
+      ...(comment ? { note: comment } : {}),
+    };
+  }
+
   function buildAdapterDocument(
     entries: CachedChangeEntry[],
-  ): PrototypeEditAnnotationsDocument | null {
+  ): PrototypeEditCommentsDocument | null {
     const scope = resolvePersistenceScope();
     if (!scope) return null;
     return {
       schemaVersion: 1,
-      kind: 'prototype-edit-annotations',
+      kind: 'prototype-edit-comments',
       resource: {
         id: scope.prototypeId,
         targetPath: scope.targetPath,
-        filePath: `src/${scope.targetPath}/.spec/prototype-annotations.json`,
+        filePath: `src/${scope.targetPath}/.spec/prototype-comments.json`,
       },
-      entries,
+      comments: entries.map(cacheEntryToCommentEntry),
       tasks: buildDocumentTasks(),
       images: buildDocumentImages(),
     };
   }
 
-  function normalizeAdapterDocument(value: unknown): PrototypeEditAnnotationsDocument | null {
+  function normalizeAdapterDocument(value: unknown): PrototypeEditCommentsDocument | null {
     if (!value || typeof value !== 'object') return null;
-    const record = value as Partial<PrototypeEditAnnotationsDocument>;
-    if (record.schemaVersion !== 1 || record.kind !== 'prototype-edit-annotations') return null;
-    if (!Array.isArray(record.entries)) return null;
+    const record = value as Partial<PrototypeEditCommentsDocument>;
+    if (record.schemaVersion !== 1 || record.kind !== 'prototype-edit-comments') return null;
+    if (!Array.isArray(record.comments)) return null;
     return {
       schemaVersion: 1,
-      kind: 'prototype-edit-annotations',
+      kind: 'prototype-edit-comments',
       resource: {
         id: String(record.resource?.id ?? '').trim(),
         targetPath: String(record.resource?.targetPath ?? '').trim(),
         filePath: String(record.resource?.filePath ?? '').trim(),
       },
-      entries: record.entries as CachedChangeEntry[],
+      comments: record.comments,
       tasks: normalizeAdapterTasks(record.tasks),
       images: Array.isArray(record.images) ? record.images : [],
     };
   }
 
-  function mergeAdapterTaskStates(document: PrototypeEditAnnotationsDocument): void {
+  function mergeAdapterTaskStates(document: PrototypeEditCommentsDocument): void {
     for (const [elementKey, task] of Object.entries(document.tasks ?? {})) {
       const normalizedElementKey = String(elementKey ?? '').trim();
       if (!normalizedElementKey) continue;
-      annotationTaskStateByElementKey.set(normalizedElementKey, { ...task });
+      commentTaskStateByElementKey.set(normalizedElementKey, { ...task });
     }
   }
 
   function writeAdapterDocument(
     entries: CachedChangeEntry[],
-    reason: PrototypeEditAnnotationsWriteReason,
+    reason: PrototypeEditCommentsWriteReason,
   ): void {
     if (!persistenceAdapter?.write) return;
     const scope = resolvePersistenceScope();
@@ -435,7 +458,7 @@ export function createPersistenceService(options: {
     const document = buildAdapterDocument(entries);
     if (!document) return;
     void Promise.resolve(persistenceAdapter.write(scope, document, reason)).catch((error) => {
-      console.warn('[GenieEditor] Failed to persist prototype annotations:', error);
+      console.warn('[GenieEditor] Failed to persist prototype comments:', error);
     });
   }
 
@@ -559,35 +582,35 @@ export function createPersistenceService(options: {
     }
   }
 
-  function readAnnotationShortcutSettings(): AnnotationShortcutSettings {
+  function readCommentShortcutSettings(): CommentShortcutSettings {
     if (typeof window === 'undefined') {
-      return { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS };
+      return { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS };
     }
 
-    const key = resolveAnnotationShortcutSettingsKey();
+    const key = resolveCommentShortcutSettingsKey();
     if (!key) {
-      return { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS };
+      return { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS };
     }
 
     try {
       const raw = window.localStorage.getItem(key);
       if (!raw) {
-        return { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS };
+        return { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS };
       }
-      return sanitizeAnnotationShortcutSettings(JSON.parse(raw) as AnnotationShortcutSettings);
+      return sanitizeCommentShortcutSettings(JSON.parse(raw) as CommentShortcutSettings);
     } catch {
-      return { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS };
+      return { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS };
     }
   }
 
-  function setAnnotationShortcutSettings(settings: AnnotationShortcutSettings): void {
+  function setCommentShortcutSettings(settings: CommentShortcutSettings): void {
     if (typeof window === 'undefined') return;
-    const key = resolveAnnotationShortcutSettingsKey();
+    const key = resolveCommentShortcutSettingsKey();
     if (!key) return;
     try {
       window.localStorage.setItem(
         key,
-        JSON.stringify(sanitizeAnnotationShortcutSettings(settings)),
+        JSON.stringify(sanitizeCommentShortcutSettings(settings)),
       );
     } catch {
       // Best-effort only.
@@ -702,14 +725,14 @@ export function createPersistenceService(options: {
     writeStorageJson(resolveGenieTasksKey(normalizedScopeKey), sanitized);
   }
 
-  function recordAnnotationTaskState(
+  function recordCommentTaskState(
     elementKey: WebEditorElementKey,
-    stateValue: PrototypeEditAnnotationTaskStatus,
+    stateValue: PrototypeEditCommentTaskStatus,
     taskRef: Partial<ExternalEditingTaskRef> | null = null,
   ): void {
     const normalizedElementKey = String(elementKey ?? '').trim();
     if (!normalizedElementKey) return;
-    annotationTaskStateByElementKey.set(normalizedElementKey, {
+    commentTaskStateByElementKey.set(normalizedElementKey, {
       state: stateValue,
       provider: typeof taskRef?.provider === 'string' && taskRef.provider.trim()
         ? taskRef.provider.trim()
@@ -738,7 +761,7 @@ export function createPersistenceService(options: {
     writeGenieTaskStates(normalizedScopeKey, readGenieTaskStates(normalizedScopeKey));
   }
 
-  function writeCache(entries: CachedChangeEntry[], reason: PrototypeEditAnnotationsWriteReason = 'changes'): void {
+  function writeCache(entries: CachedChangeEntry[], reason: PrototypeEditCommentsWriteReason = 'changes'): void {
     writeLocalCache(entries);
     writeAdapterDocument(entries, reason);
   }
@@ -747,12 +770,13 @@ export function createPersistenceService(options: {
     const tm = state.transactionManager;
     if (!tm) {
       return Array.from(state.editMetaByKey.values())
-        .filter((meta) => meta.note || meta.anchor)
+        .filter((meta) => meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.anchor)
         .map((meta) => ({
           elementKey: meta.elementKey,
           label: meta.label,
           locator: stripLocatorDebugSource(meta.locator),
           note: meta.note || undefined,
+          skillIds: meta.skillIds?.slice(),
           marker: meta.anchor
             ? {
                 ...meta.anchor,
@@ -872,6 +896,7 @@ export function createPersistenceService(options: {
         };
       }
       if (meta?.note) entry.note = meta.note;
+      if ((meta?.skillIds?.length ?? 0) > 0) entry.skillIds = meta?.skillIds?.slice();
       if (meta?.anchor) {
         entry.marker = {
           ...meta.anchor,
@@ -879,7 +904,7 @@ export function createPersistenceService(options: {
         };
       }
 
-      if (!entry.textChange && !entry.styleChanges && !entry.tweak && !entry.note) continue;
+      if (!entry.textChange && !entry.styleChanges && !entry.tweak && !entry.note && !(entry.skillIds?.length ?? 0)) continue;
       entries.push(entry);
       if (elementKey) {
         appendedKeys.add(elementKey);
@@ -890,7 +915,7 @@ export function createPersistenceService(options: {
       if (appendedKeys.has(meta.elementKey)) continue;
       const hasRecordedTweak = (meta.tweakSummaryLines?.length ?? 0) > 0;
       const hasImages = meta.images.length > 0;
-      if (!meta.note && !hasRecordedTweak && !hasImages) continue;
+      if (!meta.note && !hasRecordedTweak && !hasImages && !(meta.skillIds?.length ?? 0)) continue;
       entries.push({
         elementKey: meta.elementKey,
         label: meta.label,
@@ -903,6 +928,7 @@ export function createPersistenceService(options: {
             }
           : undefined,
         note: meta.note || undefined,
+        skillIds: meta.skillIds?.slice(),
         marker: meta.anchor
           ? {
               ...meta.anchor,
@@ -950,15 +976,15 @@ export function createPersistenceService(options: {
 
     for (const entry of entries) {
       const entryElementKey = String(entry.elementKey ?? '').trim();
-      const isLegacyTextAnnotationCacheEntry = (
-        interactionProfile === 'text-annotation' &&
+      const isLegacyTextCommentCacheEntry = (
+        interactionProfile === 'text-comment' &&
         !entryElementKey &&
         Boolean(entry.note) &&
         Boolean(entry.marker) &&
         !entry.textChange &&
         !entry.styleChanges
       );
-      if (isLegacyTextAnnotationCacheEntry) {
+      if (isLegacyTextCommentCacheEntry) {
         continue;
       }
 
@@ -975,6 +1001,10 @@ export function createPersistenceService(options: {
       meta.locator = entry.locator;
       meta.label = resolvedLabel;
       meta.note = changes.normalizeNote(entry.note ?? meta.note);
+      const entrySkillIds = normalizePromptCardSkillIds(entry.skillIds ?? []);
+      if (entrySkillIds.length > 0) {
+        meta.skillIds = entrySkillIds;
+      }
       meta.anchor = entry.marker ? normalizeMarkerAnchor(entry.marker) ?? meta.anchor : meta.anchor;
       if (entry.marker && Number.isFinite(Number(entry.marker.dirtySince))) {
         meta.dirtySince = Number(entry.marker.dirtySince);
@@ -985,7 +1015,7 @@ export function createPersistenceService(options: {
           .filter((image) => typeof image.data === 'string' && image.data.trim())
           .map((image) => ({
             id: String(image.id ?? '').trim() || `image-${meta.images.length + 1}`,
-            name: String(image.name ?? '').trim() || 'annotation-image.png',
+            name: String(image.name ?? '').trim() || 'comment-image.png',
             data: String(image.data ?? ''),
             mimeType: String(image.mimeType ?? '').trim() || 'image/png',
             size: Number(image.size ?? 0),
@@ -1037,7 +1067,7 @@ export function createPersistenceService(options: {
     }
   }
 
-  async function readAdapterDocument(): Promise<PrototypeEditAnnotationsDocument | null> {
+  async function readAdapterDocument(): Promise<PrototypeEditCommentsDocument | null> {
     if (!persistenceAdapter?.read) return null;
     const scope = resolvePersistenceScope();
     if (!scope) return null;
@@ -1045,7 +1075,7 @@ export function createPersistenceService(options: {
       const document = await Promise.resolve(persistenceAdapter.read(scope));
       return normalizeAdapterDocument(document);
     } catch (error) {
-      console.warn('[GenieEditor] Failed to read prototype annotations:', error);
+      console.warn('[GenieEditor] Failed to read prototype comments:', error);
       return null;
     }
   }
@@ -1062,7 +1092,7 @@ export function createPersistenceService(options: {
           path: adapterDocument.resource.targetPath || resolveStorageScope() || '',
           updatedAt: Date.now(),
           showMarkers: state.changeMarkersVisible,
-          entries: adapterDocument.entries as CachedChangeEntry[],
+          entries: adapterDocument.comments.map(commentEntryToCacheEntry),
         }
       : readCache();
     if (!payload) return;
@@ -1109,13 +1139,14 @@ export function createPersistenceService(options: {
       if (entry.label) next.label = entry.label;
       if (entry.tweak) next.tweak = entry.tweak;
       if (entry.note) next.note = entry.note;
+      if (entry.skillIds) next.skillIds = entry.skillIds;
       if (entry.marker) next.marker = entry.marker;
       if (kind === 'text') {
         if (entry.styleChanges) next.styleChanges = entry.styleChanges;
       } else {
         if (entry.textChange) next.textChange = entry.textChange;
       }
-      if (!next.textChange && !next.styleChanges && !next.tweak && !next.note) continue;
+      if (!next.textChange && !next.styleChanges && !next.tweak && !next.note && !(next.skillIds?.length ?? 0)) continue;
       nextEntries.push(next);
     }
 
@@ -1136,8 +1167,8 @@ export function createPersistenceService(options: {
   return {
     readMarkerVisibility,
     setMarkerVisibility,
-    readAnnotationShortcutSettings,
-    setAnnotationShortcutSettings,
+    readCommentShortcutSettings,
+    setCommentShortcutSettings,
     readUiSettings,
     setUiSettings,
     readGenieConversationState,
@@ -1149,7 +1180,7 @@ export function createPersistenceService(options: {
       persistTaskDocument();
     },
     pruneExpiredGenieTaskStates,
-    recordAnnotationTaskState,
+    recordCommentTaskState,
     scheduleWrite,
     persistFromTransactions,
     flushPendingWrite,

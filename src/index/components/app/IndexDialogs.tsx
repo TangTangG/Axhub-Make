@@ -8,6 +8,8 @@ import type { CloudPublishTarget } from '../../services/api';
 import type { ResourceWriteCapabilities } from '../../services/projectResources';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
 import PromptActionButton from '../PromptActionButton';
+import CreateDialogContainer from '../dialogs/CreateDialogContainer';
+import CreateThemeDialogContainer from '../dialogs/CreateThemeDialogContainer';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
@@ -18,8 +20,6 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 
-const CreateDialogContainer = React.lazy(() => import('../dialogs/CreateDialogContainer'));
-const CreateThemeDialogContainer = React.lazy(() => import('../dialogs/CreateThemeDialogContainer'));
 const ExportModalContainer = React.lazy(() => import('../dialogs/ExportModalContainer'));
 const ExportReviewDialogView = React.lazy(() => import('../dialogs/ExportReviewDialogView'));
 const FigmaMakeExportDialog = React.lazy(() => import('../dialogs/FigmaMakeExportDialog'));
@@ -195,61 +195,57 @@ export default function IndexDialogs({
             </Dialog>
 
             {createDialog.visible ? (
-                <React.Suspense fallback={null}>
-                    <CreateDialogContainer
-                        state={{
-                            visible: createDialog.visible,
-                            activeTab: createDialog.activeTab,
-                            initialTab: createDialog.initialTab,
-                            selectedThemes: createDialog.selectedThemes,
-                            availableThemes: createDialog.availableThemes,
-                            selectedDocs: createDialog.selectedDocs,
-                            availableDocs: createDialog.availableDocs,
-                            selectedDataAssets: createDialog.selectedDataAssets,
-                            availableDataAssets: createDialog.availableDataAssets,
-                            resourceWriteCapabilities: createDialog.resourceWriteCapabilities,
-                            preferredPromptClient,
-                            preferredIDE,
-                            ideAvailability,
-                        }}
-                        actions={{
-                            onClose: createDialog.onClose,
-                            setSelectedDocs: createDialog.setSelectedDocs,
-                            setSelectedThemes: createDialog.setSelectedThemes,
-                            setSelectedDataAssets: createDialog.setSelectedDataAssets,
-                            buildCreatePrompt: createDialog.buildPrompt,
-                            onAfterCreatePromptAction: createDialog.onAfterCreatePromptAction,
-                            onUploadSuccess: createDialog.onUploadSuccess,
-                        }}
-                    />
-                </React.Suspense>
+                <CreateDialogContainer
+                    state={{
+                        visible: createDialog.visible,
+                        activeTab: createDialog.activeTab,
+                        initialTab: createDialog.initialTab,
+                        selectedThemes: createDialog.selectedThemes,
+                        availableThemes: createDialog.availableThemes,
+                        selectedDocs: createDialog.selectedDocs,
+                        availableDocs: createDialog.availableDocs,
+                        selectedDataAssets: createDialog.selectedDataAssets,
+                        availableDataAssets: createDialog.availableDataAssets,
+                        resourceWriteCapabilities: createDialog.resourceWriteCapabilities,
+                        preferredPromptClient,
+                        preferredIDE,
+                        ideAvailability,
+                    }}
+                    actions={{
+                        onClose: createDialog.onClose,
+                        setSelectedDocs: createDialog.setSelectedDocs,
+                        setSelectedThemes: createDialog.setSelectedThemes,
+                        setSelectedDataAssets: createDialog.setSelectedDataAssets,
+                        buildCreatePrompt: createDialog.buildPrompt,
+                        onAfterCreatePromptAction: createDialog.onAfterCreatePromptAction,
+                        onUploadSuccess: createDialog.onUploadSuccess,
+                    }}
+                />
             ) : null}
 
             {createThemeDialog.visible ? (
-                <React.Suspense fallback={null}>
-                    <CreateThemeDialogContainer
-                        state={{
-                            visible: createThemeDialog.visible,
-                            initialTab: createThemeDialog.initialTab,
-                            selectedDocs: createThemeDialog.selectedDocs,
-                            availableDocs: createThemeDialog.availableDocs,
-                            selectedReferencePages: createThemeDialog.selectedReferencePages,
-                            availableReferencePages: createThemeDialog.availableReferencePages,
-                            resourceWriteCapabilities: createThemeDialog.resourceWriteCapabilities,
-                            preferredPromptClient,
-                            preferredIDE,
-                            ideAvailability,
-                        }}
-                        actions={{
-                            onClose: createThemeDialog.onClose,
-                            setSelectedDocs: createThemeDialog.setSelectedDocs,
-                            setSelectedReferencePages: createThemeDialog.setSelectedReferencePages,
-                            buildCreateThemePrompt: createThemeDialog.buildCreateThemePrompt,
-                            onAfterCreatePromptAction: createThemeDialog.onAfterCreatePromptAction,
-                            onImportSuccess: createThemeDialog.onImportSuccess,
-                        }}
-                    />
-                </React.Suspense>
+                <CreateThemeDialogContainer
+                    state={{
+                        visible: createThemeDialog.visible,
+                        initialTab: createThemeDialog.initialTab,
+                        selectedDocs: createThemeDialog.selectedDocs,
+                        availableDocs: createThemeDialog.availableDocs,
+                        selectedReferencePages: createThemeDialog.selectedReferencePages,
+                        availableReferencePages: createThemeDialog.availableReferencePages,
+                        resourceWriteCapabilities: createThemeDialog.resourceWriteCapabilities,
+                        preferredPromptClient,
+                        preferredIDE,
+                        ideAvailability,
+                    }}
+                    actions={{
+                        onClose: createThemeDialog.onClose,
+                        setSelectedDocs: createThemeDialog.setSelectedDocs,
+                        setSelectedReferencePages: createThemeDialog.setSelectedReferencePages,
+                        buildCreateThemePrompt: createThemeDialog.buildCreateThemePrompt,
+                        onAfterCreatePromptAction: createThemeDialog.onAfterCreatePromptAction,
+                        onImportSuccess: createThemeDialog.onImportSuccess,
+                    }}
+                />
             ) : null}
 
             {exportDialog.open ? (

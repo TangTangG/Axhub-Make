@@ -12,11 +12,11 @@ describe('normalizeSkillPath', () => {
       '/skills/stitch-skills/design-md/SKILL.md'
     );
     expect(normalizeSkillPath(' /skills/foo/./bar.md ')).toBe('/skills/foo/bar.md');
-    expect(normalizeSkillPath('.agents/skills/prototype-edit-annotations/SKILL.md')).toBe(
-      '.agents/skills/prototype-edit-annotations/SKILL.md',
+    expect(normalizeSkillPath('.agents/skills/prototype-comments/SKILL.md')).toBe(
+      '.agents/skills/prototype-comments/SKILL.md',
     );
-    expect(normalizeSkillPath('.claude\\skills\\prototype-edit-annotations\\SKILL.md')).toBe(
-      '.claude/skills/prototype-edit-annotations/SKILL.md',
+    expect(normalizeSkillPath('.claude\\skills\\prototype-comments\\SKILL.md')).toBe(
+      '.claude/skills/prototype-comments/SKILL.md',
     );
   });
 

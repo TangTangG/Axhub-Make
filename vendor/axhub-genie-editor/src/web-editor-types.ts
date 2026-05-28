@@ -465,15 +465,15 @@ export interface GenieEditorHostResource {
   meta?: Record<string, unknown>;
 }
 
-export type PrototypeEditAnnotationTaskStatus = 'idle' | 'editing' | 'completed' | 'error';
+export type PrototypeEditCommentTaskStatus = 'idle' | 'editing' | 'completed' | 'error';
 
-export interface PrototypeEditAnnotationTweakEntry {
+export interface PrototypeEditCommentTweakEntry {
   summaryLines?: string[];
   baselineValues?: GenieEditorTweakValues | null;
   currentValues?: GenieEditorTweakValues | null;
 }
 
-export interface PrototypeEditAnnotationMarkerEntry {
+export interface PrototypeEditCommentMarkerEntry {
   clientX: number;
   clientY: number;
   documentX: number;
@@ -486,19 +486,20 @@ export interface PrototypeEditAnnotationMarkerEntry {
   dirtySince?: number | null;
 }
 
-export interface PrototypeEditAnnotationEntry {
+export interface PrototypeEditCommentEntry {
   elementKey?: WebEditorElementKey;
   label?: string;
   locator: ElementLocator;
   textChange?: { before: string; after: string };
   styleChanges?: { before: Record<string, string>; after: Record<string, string> };
-  tweak?: PrototypeEditAnnotationTweakEntry;
-  note?: string;
-  marker?: PrototypeEditAnnotationMarkerEntry | null;
+  tweak?: PrototypeEditCommentTweakEntry;
+  comment?: string;
+  skillIds?: string[];
+  marker?: PrototypeEditCommentMarkerEntry | null;
 }
 
-export interface PrototypeEditAnnotationTaskEntry {
-  state: PrototypeEditAnnotationTaskStatus;
+export interface PrototypeEditCommentTaskEntry {
+  state: PrototypeEditCommentTaskStatus;
   provider?: string | null;
   requestId?: string | null;
   sessionId?: string | null;
@@ -506,7 +507,7 @@ export interface PrototypeEditAnnotationTaskEntry {
   message?: string | null;
 }
 
-export interface PrototypeEditAnnotationImageEntry {
+export interface PrototypeEditCommentImageEntry {
   id: string;
   elementKey?: WebEditorElementKey;
   name?: string;
@@ -517,20 +518,20 @@ export interface PrototypeEditAnnotationImageEntry {
   data?: string;
 }
 
-export interface PrototypeEditAnnotationsDocument {
+export interface PrototypeEditCommentsDocument {
   schemaVersion: 1;
-  kind: 'prototype-edit-annotations';
+  kind: 'prototype-edit-comments';
   resource: {
     id: string;
     targetPath: string;
     filePath: string;
   };
-  entries: PrototypeEditAnnotationEntry[];
-  tasks: Record<WebEditorElementKey, PrototypeEditAnnotationTaskEntry>;
-  images: PrototypeEditAnnotationImageEntry[];
+  comments: PrototypeEditCommentEntry[];
+  tasks: Record<WebEditorElementKey, PrototypeEditCommentTaskEntry>;
+  images: PrototypeEditCommentImageEntry[];
 }
 
-export interface PrototypeEditAnnotationsPersistenceScope {
+export interface PrototypeEditCommentsPersistenceScope {
   targetPath: string;
   storageScope: string;
   prototypeId: string;
@@ -538,20 +539,20 @@ export interface PrototypeEditAnnotationsPersistenceScope {
   resource: GenieEditorHostResource | null;
 }
 
-export type PrototypeEditAnnotationsWriteReason =
+export type PrototypeEditCommentsWriteReason =
   | 'changes'
   | 'restore'
   | 'clear'
   | 'tasks';
 
-export interface PrototypeEditAnnotationsPersistenceAdapter {
+export interface PrototypeEditCommentsPersistenceAdapter {
   read(
-    scope: PrototypeEditAnnotationsPersistenceScope,
-  ): PrototypeEditAnnotationsDocument | null | Promise<PrototypeEditAnnotationsDocument | null>;
+    scope: PrototypeEditCommentsPersistenceScope,
+  ): PrototypeEditCommentsDocument | null | Promise<PrototypeEditCommentsDocument | null>;
   write(
-    scope: PrototypeEditAnnotationsPersistenceScope,
-    document: PrototypeEditAnnotationsDocument,
-    reason: PrototypeEditAnnotationsWriteReason,
+    scope: PrototypeEditCommentsPersistenceScope,
+    document: PrototypeEditCommentsDocument,
+    reason: PrototypeEditCommentsWriteReason,
   ): void | Promise<void>;
 }
 
@@ -560,6 +561,7 @@ export interface GenieEditorModifiedElementSummary {
   locator: ElementLocator;
   label: string;
   note: string;
+  skillIds?: string[];
   imageCount: number;
   changeKinds: Array<'text' | 'tweak' | 'style' | 'class'>;
 }
@@ -677,7 +679,7 @@ export interface GenieEditorCopyPromptContext {
 
 export interface GenieEditorHostOptions {
   getResourceContext?: () => GenieEditorHostResource | null;
-  persistenceAdapter?: PrototypeEditAnnotationsPersistenceAdapter;
+  persistenceAdapter?: PrototypeEditCommentsPersistenceAdapter;
   /**
    * Optional host-specific escape hatch for page controls that must remain
    * interactive while the editor is active.

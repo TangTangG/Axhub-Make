@@ -15,9 +15,9 @@ import {
   getViewportPointFromMarkerAnchor,
 } from './marker-anchor';
 import {
-  isTextAnnotationTargetElement,
-  resolveTextAnnotationElementMeta,
-} from './text-annotation-target';
+  isTextCommentTargetElement,
+  resolveTextCommentElementMeta,
+} from './text-comment-target';
 import { filterUnprocessedTransactions as filterTransactionsAfterProcessed } from './state';
 import type {
   GenieEditorTweakSchema,
@@ -25,6 +25,7 @@ import type {
   GenieEditorTweakValues,
 } from '../../tweak/protocol';
 import { getGlobalGenieEditorTweakProtocol } from '../../tweak/protocol';
+import { normalizePromptCardSkillIds } from '../../ui/runtime/prompt-card-skills';
 
 export function filterVisibleChangeMarkerMetas(
   metas: readonly ElementEditMeta[],
@@ -290,18 +291,18 @@ export function createChangesService(options: {
 
   function getMetaForElement(element: Element | null): ElementEditMeta | null {
     if (!element) return null;
-    const textAnnotationMeta = resolveTextAnnotationElementMeta(state, element);
-    if (textAnnotationMeta) {
+    const textCommentMeta = resolveTextCommentElementMeta(state, element);
+    if (textCommentMeta) {
       return (
-        state.editMetaByKey.get(textAnnotationMeta.elementKey) ??
+        state.editMetaByKey.get(textCommentMeta.elementKey) ??
         getOrCreateEditMeta(
-          textAnnotationMeta.elementKey,
-          textAnnotationMeta.locator,
-          textAnnotationMeta.label,
+          textCommentMeta.elementKey,
+          textCommentMeta.locator,
+          textCommentMeta.label,
         )
       );
     }
-    if (isTextAnnotationTargetElement(element)) {
+    if (isTextCommentTargetElement(element)) {
       return null;
     }
     const locator = createElementLocator(element);
@@ -332,12 +333,12 @@ export function createChangesService(options: {
   ): MarkerAnchor | null {
     let element = locateElement(locator);
 
-    // For text annotations the locator is synthetic (empty selectors),
+    // For text comments the locator is synthetic (empty selectors),
     // so locateElement finds nothing.  Fall back to the live source element
-    // stored on the active text annotation – its getBoundingClientRect()
+    // stored on the active text comment – its getBoundingClientRect()
     // correctly tracks viewport position inside nested scroll containers.
     if (!element || !element.isConnected) {
-      const src = state.activeTextAnnotation?.sourceElement;
+      const src = state.activeTextComment?.sourceElement;
       if (src && src.isConnected) {
         element = src;
       }
@@ -417,6 +418,8 @@ export function createChangesService(options: {
     const note = normalizeNote(meta.note).trim();
     if (note) {
       lines.push(note);
+    } else if ((meta.skillIds?.length ?? 0) > 0) {
+      lines.push('已选择 AI 技能');
     } else if (meta.images.length > 0) {
       lines.push(`已附加 ${meta.images.length} 张参考图片`);
     } else if (meta.changeKinds.length > 0) {
@@ -449,6 +452,7 @@ export function createChangesService(options: {
     if (!meta) return;
     const hasNote = Boolean(normalizeNote(meta.note).trim());
     if (hasNote) return;
+    if ((meta.skillIds?.length ?? 0) > 0) return;
     if (meta.images.length > 0) return;
     if (meta.dirtySince !== null) return;
     if (meta.changeKinds.length > 0) return;
@@ -481,7 +485,7 @@ export function createChangesService(options: {
       });
 
     const activeMarkerKey = (() => {
-      if (state.annotationEntryMode !== 'bubble-card') return null;
+      if (state.commentEntryMode !== 'bubble-card') return null;
       const selected = state.selectedElement;
       if (!selected || !selected.isConnected) return null;
       const locator = createElementLocator(selected);
@@ -618,7 +622,7 @@ export function createChangesService(options: {
 
     for (const meta of state.editMetaByKey.values()) {
       if (dirtyKeys.has(meta.elementKey)) continue;
-      if (normalizeNote(meta.note).trim()) {
+      if (normalizeNote(meta.note).trim() || (meta.skillIds?.length ?? 0) > 0) {
         if (meta.dirtySince === null) {
           meta.dirtySince = Date.now();
         }
@@ -679,6 +683,7 @@ export function createChangesService(options: {
     meta.locator = locator;
     meta.label = generateFullElementLabel(element, locator.shadowHostChain);
     meta.note = '';
+    delete meta.skillIds;
     meta.images = [];
     meta.dirtySince = null;
     meta.changeKinds = [];
@@ -700,10 +705,22 @@ export function createChangesService(options: {
     renderChangeMarkers();
   }
 
-  function setNoteForElement(element: Element | null, note: string): void {
+  function setNoteForElement(
+    element: Element | null,
+    note: string,
+    options: { skillIds?: readonly string[] } = {},
+  ): void {
     const meta = getMetaForElement(element);
     if (!meta) return;
     meta.note = normalizeNote(note);
+    if (options.skillIds) {
+      const nextSkillIds = normalizePromptCardSkillIds(options.skillIds);
+      if (nextSkillIds.length > 0) {
+        meta.skillIds = nextSkillIds;
+      } else {
+        delete meta.skillIds;
+      }
+    }
     const pendingAnchor = state.pendingMarkerAnchors.get(meta.elementKey);
     if (pendingAnchor) {
       meta.anchor = pendingAnchor;
@@ -713,7 +730,7 @@ export function createChangesService(options: {
       meta.anchor = fallbackElement ? buildFallbackAnchor(fallbackElement) : null;
     }
 
-    if (normalizeNote(meta.note).trim()) {
+    if (normalizeNote(meta.note).trim() || (meta.skillIds?.length ?? 0) > 0) {
       if (meta.dirtySince === null) {
         meta.dirtySince = Date.now();
       }
@@ -884,7 +901,7 @@ export function createChangesService(options: {
   }
 
   function getSelectedElementNote(): string {
-    return getMetaForElement(state.selectedElement ?? state.textAnnotationTargetElement)?.note ?? '';
+    return getMetaForElement(state.selectedElement ?? state.textCommentTargetElement)?.note ?? '';
   }
 
   function setChangeMarkersVisible(
@@ -910,6 +927,7 @@ export function createChangesService(options: {
       selector: formatSelectorPath(meta.locator),
       label: meta.label,
       note: meta.note,
+      skillIds: meta.skillIds?.slice(),
       changeKinds: meta.changeKinds.slice(),
       marker: meta.anchor
         ? {
@@ -924,7 +942,7 @@ export function createChangesService(options: {
     }));
   }
 
-  function buildAnnotationCommentsContext(element?: Element | null) {
+  function buildCommentCommentsContext(element?: Element | null) {
     const targetMeta = element === undefined ? null : getMetaForElement(element);
     const sourceMetas = targetMeta
       ? [targetMeta]
@@ -1005,7 +1023,7 @@ export function createChangesService(options: {
     clearAllEditMeta,
     getSelectedElementNote,
     setChangeMarkersVisible,
-    buildAnnotationCommentsContext,
+    buildCommentCommentsContext,
     buildModifiedElementsContext,
   };
 }

@@ -14,10 +14,14 @@ import type {
   EditorRuntimeState,
   WebEditorV2PromptContextOptions,
 } from './state';
-import { resolveTextAnnotationElementMeta } from './text-annotation-target';
+import { resolveTextCommentElementMeta } from './text-comment-target';
 import { filterUnprocessedTransactions } from './state';
 import type { EditorSummariesService, MoveSummary } from './contracts';
-import type { TextAnnotation } from '../../selection/text-annotation-manager';
+import type { TextComment } from '../../selection/text-comment-manager';
+import {
+  deserializePromptCardSkillSelection,
+  mergePromptCardSkillsIntoPromptNote,
+} from '../../ui/runtime/prompt-card-skills';
 
 type ResolvedPromptContext = {
   workspacePaths: string[];
@@ -25,11 +29,12 @@ type ResolvedPromptContext = {
   extraContext: string[];
 };
 
-type SaveRunAnnotationMeta = {
+type SaveRunCommentMeta = {
   elementKey: string;
   label: string;
   locator: ElementLocator;
   note: string;
+  skillIds?: string[];
   actions: string[];
   imageCount: number;
   dirtySince: number;
@@ -46,6 +51,16 @@ type InternalMoveSummary = MoveSummary & {
 
 function normalizeNote(value: string): string {
   return String(value ?? '').replace(/\r\n/g, '\n').trim();
+}
+
+function buildPromptNoteWithSkills(
+  note: string,
+  payload: { skillIds?: readonly unknown[] | null } | null | undefined,
+): string {
+  return mergePromptCardSkillsIntoPromptNote(
+    normalizeNote(note),
+    deserializePromptCardSkillSelection(payload),
+  );
 }
 
 function normalizeInlineText(value: unknown): string {
@@ -241,9 +256,9 @@ export function createEditorSummariesService(options: {
 
   function resolveElementKey(element: Element | null): string {
     if (!element || !element.isConnected) return '';
-    const textAnnotationMeta = resolveTextAnnotationElementMeta(state, element);
-    if (textAnnotationMeta) {
-      return textAnnotationMeta.elementKey;
+    const textCommentMeta = resolveTextCommentElementMeta(state, element);
+    if (textCommentMeta) {
+      return textCommentMeta.elementKey;
     }
     const locator = createElementLocator(element);
     return generateStableElementKey(element, locator.shadowHostChain);
@@ -436,6 +451,7 @@ export function createEditorSummariesService(options: {
     label: string;
     locator: ElementLocator;
     note: string;
+    skillIds?: string[];
     actions: string[];
     dirtySince: number;
   }> {
@@ -444,25 +460,27 @@ export function createEditorSummariesService(options: {
         elementKey: String(meta.elementKey),
         label: meta.label,
         locator: meta.locator,
-        note: normalizeNote(meta.note),
+        note: buildPromptNoteWithSkills(meta.note, meta),
+        skillIds: meta.skillIds?.slice(),
         actions: buildMetaActionLines(meta),
         dirtySince: Number(meta.dirtySince ?? 0),
       }))
       .filter(
         (meta) =>
           !summarizedKeys.has(meta.elementKey) &&
-          (Boolean(meta.note) || meta.actions.length > 0),
+          (Boolean(meta.note) || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0),
       )
       .sort((a, b) => b.dirtySince - a.dirtySince || a.label.localeCompare(b.label));
   }
 
-  function collectSaveRunAnnotationOnlyMetas(
+  function collectSaveRunCommentOnlyMetas(
     summarizedKeys: ReadonlySet<string>,
   ): Array<{
     elementKey: string;
     label: string;
     locator: ElementLocator;
     note: string;
+    skillIds?: string[];
     actions: string[];
     imageCount: number;
     dirtySince: number;
@@ -472,7 +490,8 @@ export function createEditorSummariesService(options: {
         elementKey: String(meta.elementKey),
         label: meta.label,
         locator: meta.locator,
-        note: normalizeNote(meta.note),
+        note: buildPromptNoteWithSkills(meta.note, meta),
+        skillIds: meta.skillIds?.slice(),
         actions: buildMetaActionLines(meta),
         imageCount: Array.isArray(meta.images) ? meta.images.length : 0,
         dirtySince: Number(meta.dirtySince ?? 0),
@@ -480,7 +499,7 @@ export function createEditorSummariesService(options: {
       .filter(
         (meta) =>
           !summarizedKeys.has(meta.elementKey) &&
-          (Boolean(meta.note) || meta.imageCount > 0 || meta.actions.length > 0),
+          (Boolean(meta.note) || (meta.skillIds?.length ?? 0) > 0 || meta.imageCount > 0 || meta.actions.length > 0),
       )
       .sort((a, b) => b.dirtySince - a.dirtySince || a.label.localeCompare(b.label));
   }
@@ -555,45 +574,49 @@ export function createEditorSummariesService(options: {
     const allActions = [...params.actions];
     if (params.note) allActions.push(params.note);
     for (const action of allActions) {
-      lines.push(`  → ${action}`);
+      for (const line of String(action ?? '').replace(/\r\n/g, '\n').split('\n')) {
+        const normalizedLine = line.trim();
+        if (!normalizedLine) continue;
+        lines.push(`  → ${normalizedLine}`);
+      }
     }
   }
 
   /**
-   * Format a text annotation item with rich context for AI source-file location.
+   * Format a text comment item with rich context for AI source-file location.
    */
-  function appendTextAnnotationItem(
+  function appendTextCommentItem(
     lines: string[],
     params: {
       index: number;
-      annotation: TextAnnotation;
+      comment: TextComment;
       note?: string;
     },
   ): void {
-    const { annotation } = params;
-    lines.push(`- 标注项 ${params.index}`);
-    lines.push(`  - 标注文本: 「${annotation.selectedText}」`);
-    if (annotation.contextBefore) lines.push(`  - 文本前文: "...${annotation.contextBefore}"`);
-    if (annotation.contextAfter) lines.push(`  - 文本后文: "${annotation.contextAfter}..."`);
-    if (annotation.tagPath.length > 0) lines.push(`  - 标签路径: ${annotation.tagPath.join(' > ')}`);
-    if (annotation.segments.length > 1) {
+    const { comment } = params;
+    lines.push(`- 批注项 ${params.index}`);
+    lines.push(`  - 批注文本: 「${comment.selectedText}」`);
+    if (comment.contextBefore) lines.push(`  - 文本前文: "...${comment.contextBefore}"`);
+    if (comment.contextAfter) lines.push(`  - 文本后文: "${comment.contextAfter}..."`);
+    if (comment.tagPath.length > 0) lines.push(`  - 标签路径: ${comment.tagPath.join(' > ')}`);
+    if (comment.segments.length > 1) {
       lines.push(`  - 跨标签片段:`);
-      for (const seg of annotation.segments) {
+      for (const seg of comment.segments) {
         lines.push(`    - [${seg.tags.join(' > ')}]: "${seg.text}"`);
       }
     }
     if (params.note) lines.push(`  → ${params.note}`);
   }
 
-  /** Check if an elementKey belongs to a text annotation */
-  function isTextAnnotationKey(key: string): boolean {
-    return key.startsWith('text-ann::');
+  /** Check if an elementKey belongs to a text comment */
+  function isTextCommentKey(key: string): boolean {
+    return key.startsWith('text-comment::');
   }
 
-  /** Look up the TextAnnotation for a text-ann:: key from state */
-  function findTextAnnotation(elementKey: string): TextAnnotation | null {
-    if (state.activeTextAnnotation?.id === elementKey) return state.activeTextAnnotation;
-    return state.textAnnotationManager?.getAnnotations().get(elementKey) ?? null;
+  /** Look up the TextComment for a text-comment:: key from state */
+  function findTextComment(elementKey: string): TextComment | null {
+    if (state.activeTextComment?.id === elementKey) return state.activeTextComment;
+    return state.textCommentManager?.getComments().get(elementKey) ?? null;
   }
 
   function buildSummaryActionLines(summary: ReturnType<typeof aggregateTransactionsByElement>[number]): string[] {
@@ -649,13 +672,13 @@ export function createEditorSummariesService(options: {
     const currentFilePath = resolveCurrentFilePath();
     const prototypeFilePath = resolvePrototypeFilePath();
     const includeDebugFileHint = !hasExplicitHostFilePath();
-    const isDocAnnotation =
+    const isDocComment =
       currentFilePath.toLowerCase().endsWith('.md') ||
       readResourceMetaString(resolveResourceContext(), 'docType') !== '';
     const lines: string[] = [];
 
-    if (isDocAnnotation) {
-      lines.push('请根据以下 Markdown 文档预览上的标注，在代码库中完成对应更新。');
+    if (isDocComment) {
+      lines.push('请根据以下 Markdown 文档预览上的批注，在代码库中完成对应更新。');
     } else {
       lines.push('请根据以下页面内容批注，在代码中实现对应改动。');
     }
@@ -665,13 +688,13 @@ export function createEditorSummariesService(options: {
       currentFilePath,
     });
     lines.push('');
-    if (isDocAnnotation) {
+    if (isDocComment) {
       lines.push('全局约束:');
       lines.push('- 当前操作对象是 Markdown 文档预览，不是页面源码 DOM。');
-      lines.push(`- 所有标注都要优先落实到文档文件 ${currentFilePath || '(unknown)'}。`);
+      lines.push(`- 所有批注都要优先落实到文档文件 ${currentFilePath || '(unknown)'}。`);
       lines.push('- 未明确指出的内容不要擅自改写。');
       lines.push('');
-      lines.push('标注列表:');
+      lines.push('批注列表:');
     } else {
       appendGlobalConstraints(lines);
       lines.push('');
@@ -682,7 +705,7 @@ export function createEditorSummariesService(options: {
 
     for (const summary of summaries) {
       const meta = state.editMetaByKey.get(summary.elementKey);
-      const note = normalizeNote(meta?.note ?? '');
+      const note = buildPromptNoteWithSkills(meta?.note ?? '', meta);
       const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
 
       appendChangeItem(lines, {
@@ -698,24 +721,24 @@ export function createEditorSummariesService(options: {
     }
 
     for (const meta of noteOnlyMetas) {
-      const annotation = isTextAnnotationKey(meta.elementKey)
-        ? findTextAnnotation(meta.elementKey)
+      const comment = isTextCommentKey(meta.elementKey)
+        ? findTextComment(meta.elementKey)
         : null;
 
-      if (annotation) {
-        appendTextAnnotationItem(lines, {
+      if (comment) {
+        appendTextCommentItem(lines, {
           index: itemIndex,
-          annotation,
+          comment,
           note: meta.note,
         });
-      } else if (meta.note || meta.actions.length > 0) {
+      } else if (meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0) {
         appendChangeItem(lines, {
           index: itemIndex,
           locator: meta.locator,
           fallbackLabel: meta.label,
           actions: meta.actions,
-          note: meta.note,
-        });
+	        note: meta.note,
+	      });
       }
       itemIndex += 1;
     }
@@ -738,7 +761,7 @@ export function createEditorSummariesService(options: {
 
     lines.push('');
     lines.push('输出要求:');
-    if (isDocAnnotation) {
+    if (isDocComment) {
       lines.push('- 优先说明修改了哪些文档文件；若同步了原型，也一并列出。');
       lines.push('- 给出关键改动摘要，以及仍需人工验证的差异点。');
     } else {
@@ -756,7 +779,8 @@ export function createEditorSummariesService(options: {
         elementKey: meta.elementKey,
         locator: stripLocatorDebugSource(meta.locator),
         label: meta.label,
-        note: meta.note,
+        note: buildPromptNoteWithSkills(meta.note, meta),
+        skillIds: meta.skillIds?.slice(),
         imageCount: meta.images.length,
         changeKinds: meta.changeKinds.slice(),
       }));
@@ -813,18 +837,18 @@ export function createEditorSummariesService(options: {
       (meta) => !summarizedKeys.has(meta.elementKey) && (meta.images.length ?? 0) > 0,
     );
 
-    return hasFilteredImages ? '不支持标注图片，已过滤。' : undefined;
+    return hasFilteredImages ? '不支持批注图片，已过滤。' : undefined;
   }
 
   function buildSaveRunPromptFromParts(params: {
     mode?: 'initial' | 'append';
     summaries: ReturnType<typeof aggregateTransactionsByElement>;
-    annotationOnlyMetas: SaveRunAnnotationMeta[];
+    commentOnlyMetas: SaveRunCommentMeta[];
     moveSummaries: readonly MoveSummary[];
   }): string {
-    const { summaries, annotationOnlyMetas, moveSummaries } = params;
+    const { summaries, commentOnlyMetas, moveSummaries } = params;
     const mode = params.mode ?? 'initial';
-    if (summaries.length === 0 && annotationOnlyMetas.length === 0 && moveSummaries.length === 0) return '';
+    if (summaries.length === 0 && commentOnlyMetas.length === 0 && moveSummaries.length === 0) return '';
 
     const currentFilePath = resolveCurrentFilePath();
     const includeDebugFileHint = !hasExplicitHostFilePath();
@@ -854,7 +878,7 @@ export function createEditorSummariesService(options: {
 
     for (const summary of summaries) {
       const meta = state.editMetaByKey.get(summary.elementKey);
-      const note = normalizeNote(meta?.note ?? '');
+      const note = buildPromptNoteWithSkills(meta?.note ?? '', meta);
       const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
       if ((meta?.images.length ?? 0) > 0) {
         actions.push('请结合附带图片调整当前元素');
@@ -872,15 +896,15 @@ export function createEditorSummariesService(options: {
       itemIndex += 1;
     }
 
-    for (const meta of annotationOnlyMetas) {
-      const annotation = isTextAnnotationKey(meta.elementKey)
-        ? findTextAnnotation(meta.elementKey)
+    for (const meta of commentOnlyMetas) {
+      const comment = isTextCommentKey(meta.elementKey)
+        ? findTextComment(meta.elementKey)
         : null;
 
-      if (annotation) {
-        appendTextAnnotationItem(lines, {
+      if (comment) {
+        appendTextCommentItem(lines, {
           index: itemIndex,
-          annotation,
+          comment,
           note: meta.note,
         });
       } else {
@@ -922,13 +946,13 @@ export function createEditorSummariesService(options: {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
     const moveSummaries = collectMoveSummaries(undoStack);
-    const annotationOnlyMetas = collectSaveRunAnnotationOnlyMetas(
+    const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey))),
     );
     return buildSaveRunPromptFromParts({
       mode: 'initial',
       summaries,
-      annotationOnlyMetas,
+      commentOnlyMetas,
       moveSummaries,
     });
   }
@@ -937,13 +961,13 @@ export function createEditorSummariesService(options: {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
     const moveSummaries = collectMoveSummaries(undoStack);
-    const annotationOnlyMetas = collectSaveRunAnnotationOnlyMetas(
+    const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey))),
     );
     return buildSaveRunPromptFromParts({
       mode: 'append',
       summaries,
-      annotationOnlyMetas,
+      commentOnlyMetas,
       moveSummaries,
     });
   }
@@ -955,7 +979,7 @@ export function createEditorSummariesService(options: {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack)
       .filter((summary) => String(summary.elementKey) === elementKey);
-    const annotationOnlyMetas = collectSaveRunAnnotationOnlyMetas(
+    const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey))),
     ).filter((meta) => meta.elementKey === elementKey);
     const moveSummaries = collectMoveSummariesWithKeys(undoStack)
@@ -965,7 +989,7 @@ export function createEditorSummariesService(options: {
     return buildSaveRunPromptFromParts({
       mode: 'initial',
       summaries,
-      annotationOnlyMetas,
+      commentOnlyMetas,
       moveSummaries,
     });
   }
@@ -977,7 +1001,7 @@ export function createEditorSummariesService(options: {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack)
       .filter((summary) => String(summary.elementKey) === elementKey);
-    const annotationOnlyMetas = collectSaveRunAnnotationOnlyMetas(
+    const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey))),
     ).filter((meta) => meta.elementKey === elementKey);
     const moveSummaries = collectMoveSummariesWithKeys(undoStack)
@@ -987,7 +1011,7 @@ export function createEditorSummariesService(options: {
     return buildSaveRunPromptFromParts({
       mode: 'append',
       summaries,
-      annotationOnlyMetas,
+      commentOnlyMetas,
       moveSummaries,
     });
   }
