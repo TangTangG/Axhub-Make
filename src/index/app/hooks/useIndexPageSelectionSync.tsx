@@ -13,6 +13,7 @@ import {
 export interface PendingReturnTarget {
     sidebarTab: SidebarTab;
     resourceId: string | null;
+    pageId: string | null;
     viewMode: ViewMode;
 }
 
@@ -289,7 +290,7 @@ export function useIndexPageSelectionSync({
         if (pendingReturnTarget?.sidebarTab === 'prototype') {
             setSidebarTab('prototype');
             setViewMode(pendingReturnTarget.viewMode);
-            setSelectedPrototypePageId(null);
+            setSelectedPrototypePageId(pendingReturnTarget.pageId || null);
             if (pendingTargetItem) {
                 if (currentItem?.name !== pendingTargetItem.name) {
                     setSelectedItem(pendingTargetItem);

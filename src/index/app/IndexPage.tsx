@@ -512,6 +512,7 @@ export default function IndexPage({
             : sidebarTab === 'document'
                 ? resources.selectedDoc?.name ?? null
                 : null,
+        pageId: sidebarTab === 'prototype' ? selectedPrototypePageId : null,
         viewMode,
     });
 
@@ -767,6 +768,7 @@ export default function IndexPage({
             setSearchText: workspace.setSearchText,
             switchProject: switchProjectWithReturnTarget,
             deleteProject: workspace.deleteProject,
+            stopProjectDevServer: workspace.stopProjectDevServer,
             addProjectFromLocalPath: workspace.addProjectFromLocalPath,
             selectMakeProjectParentFolder: workspace.selectMakeProjectParentFolder,
             createBlankMakeProject: workspace.createBlankMakeProject,

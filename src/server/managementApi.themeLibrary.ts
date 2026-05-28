@@ -306,6 +306,7 @@ function toPublicDesignSystem(designSystem: ThemeLibraryIndexItem, branch: strin
   const branchPath = branch === 'local' ? 'HEAD' : encodeURIComponent(branch);
   return {
     ...designSystem,
+    coverUrl: `https://raw.githubusercontent.com/${THEME_LIBRARY_REPO}/${branchPath}/${createRemoteLibraryPath(designSystem.coverPath)}`,
     sourceUrl: `https://github.com/${THEME_LIBRARY_REPO}/tree/${branchPath}/${createRemoteLibraryPath(designSystem.sourcePath)}`,
     canDirectImport: true,
   };

@@ -9,7 +9,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const PROJECT_ID = 'make-project';
-export const PROJECT_NAME = 'Axhub Make';
+export const PROJECT_NAME = '';
+export const PRODUCT_NAME = 'Axhub Make';
 export const MAKE_CLIENT_MARKER_KIND = 'axhub-make-client';
 export const MAKE_CLIENT_MARKER_RELATIVE_PATH = '.axhub/make/client.json';
 export const DEFAULT_CLIENT_ORIGIN = 'http://localhost:51720';
@@ -145,6 +146,22 @@ function stringValue(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function isLegacyOfficialProjectName(projectId, name) {
+  return projectId === PROJECT_ID && (name === 'Axhub Make' || name === 'Axhub-Make');
+}
+
+export function normalizeMakeClientProjectIdentity(project) {
+  const rawProject = project && typeof project === 'object' && !Array.isArray(project)
+    ? project
+    : {};
+  const id = stringValue(rawProject.id) || PROJECT_ID;
+  const name = typeof rawProject.name === 'string' ? rawProject.name.trim() : '';
+  return {
+    id,
+    name: isLegacyOfficialProjectName(id, name) ? '' : name,
+  };
+}
+
 const PAGE_ID_RE = /^[a-z0-9-]+$/u;
 
 function normalizePageId(value) {
@@ -158,14 +175,13 @@ export function readMakeClientProjectIdentity(projectRoot) {
     ? marker.project
     : {};
   const id = stringValue(project.id);
-  const name = stringValue(project.name) || PROJECT_NAME;
   if (marker?.schemaVersion !== 1 || marker?.kind !== MAKE_CLIENT_MARKER_KIND || !id) {
     return {
       id: PROJECT_ID,
       name: PROJECT_NAME,
     };
   }
-  return { id, name };
+  return normalizeMakeClientProjectIdentity(project);
 }
 
 function writeJsonAtomic(filePath, value) {
@@ -613,5 +629,5 @@ export function syncMakeProjectMetadata(projectRoot, options = {}) {
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
   const appRoot = path.resolve(__dirname, '..');
   const { metadata, metadataPath } = syncMakeProjectMetadata(appRoot);
-  console.log(`Synced ${metadata.project.name} metadata: ${metadataPath}`);
+  console.log(`Synced ${metadata.project.name || 'unnamed project'} metadata: ${metadataPath}`);
 }

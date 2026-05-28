@@ -538,7 +538,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     notifyStatusChange();
 
     const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
-    persistence?.recordAnnotationTaskState?.(elementKey, nextState, normalizedTaskRef);
+    persistence?.recordCommentTaskState?.(elementKey, nextState, normalizedTaskRef);
     return {
       elementKey,
       state: nextState,
@@ -588,7 +588,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     interactionProfile: resolvedOptions.interactionProfile,
   });
 
-  let flushPendingAnnotationContextSync: (() => void) | null = null;
+  let flushPendingCommentContextSync: (() => void) | null = null;
 
   genieBridge = createGenieBridgeService({
     state,
@@ -608,7 +608,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
         };
       }
       if (available) {
-        flushPendingAnnotationContextSync?.();
+        flushPendingCommentContextSync?.();
       }
       state.breadcrumbs?.refresh();
       state.propertyPanel?.refresh();
@@ -676,7 +676,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     services,
     onStatusChange: notifyStatusChange,
   });
-  flushPendingAnnotationContextSync = lifecycle.flushPendingAnnotationContextSync;
+  flushPendingCommentContextSync = lifecycle.flushPendingCommentContextSync;
 
   function start(): void {
     if (destroyed) return;

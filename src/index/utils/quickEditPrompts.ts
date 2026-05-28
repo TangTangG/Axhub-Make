@@ -65,7 +65,7 @@ export function buildQuickEditGeniePrompt(params: {
 ${renderSelectedElements(selectedElements)}
 
 【执行要求】
-1. 本地文件优先：优先读取目标原型的 .spec/prototype-annotations.json；只有需要截图、导出图片或页面状态同步时才使用页面同步能力。
+1. 本地文件优先：优先读取目标原型的 .spec/prototype-comments.json；只有需要截图、导出图片或页面状态同步时才使用页面同步能力。
 2. 小范围精准修改：涵盖结构、样式或文案的调整。请以目标文件为主进行修改，避免扩大影响范围。无法准确定位时请先利用截图辅助确认，严禁盲改。
 3. 状态记录：修改前后都要更新本地批注 JSON 的 entries/tasks，页面状态同步为 best-effort，失败不影响核心修改流程。
 4. 如实反馈进度：结束后说明哪些批注已完成，若页面状态同步异常，只做简短说明即可。

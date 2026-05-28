@@ -216,7 +216,7 @@ function createLocalCommandResult(command: string, args: string[], stdout = '', 
 function mockAssistantStatus(payload: unknown) {
   return createLocalCommandResult(
     'npx',
-    ['@axhub/genie', 'status', '--json'],
+    ['@axhub/genie@latest', 'status', '--json'],
     typeof payload === 'string' ? payload : JSON.stringify(payload),
   );
 }
@@ -435,7 +435,7 @@ describe('make-server assistant runtime API', () => {
       });
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
         'npx',
-        ['@axhub/genie'],
+        ['@axhub/genie@latest'],
         expect.objectContaining({
           cwd: projectRoot,
           detached: true,
@@ -448,7 +448,7 @@ describe('make-server assistant runtime API', () => {
       );
       expect(runLocalCommandMock).toHaveBeenCalledWith(
         'npx',
-        ['@axhub/genie', 'status', '--json'],
+        ['@axhub/genie@latest', 'status', '--json'],
         expect.objectContaining({ timeoutMs: expect.any(Number) }),
       );
       expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
@@ -545,7 +545,7 @@ describe('make-server assistant runtime API', () => {
       });
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
         'npx',
-        ['@axhub/genie'],
+        ['@axhub/genie@latest'],
         expect.objectContaining({
           cwd: projectRoot,
           detached: true,

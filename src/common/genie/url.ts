@@ -11,7 +11,7 @@ const GENIE_SLASH_COMMANDS_PARAM = 'slashCommands';
 const GENIE_EDITOR_TODO_COMMAND = {
   name: '/editor-todo',
   description: '按原型批注处理当前项目',
-  prompt: '请优先读取 .agents/skills/prototype-edit-annotations/SKILL.md；如果你的环境使用 Claude skills，则读取 .claude/skills/prototype-edit-annotations/SKILL.md。然后按这个技能处理当前项目里的原型批注。',
+  prompt: '请优先读取 .agents/skills/prototype-comments/SKILL.md；如果你的环境使用 Claude skills，则读取 .claude/skills/prototype-comments/SKILL.md。然后按这个技能处理当前项目里的原型批注。',
   autoSend: false,
 } as const;
 

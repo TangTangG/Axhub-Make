@@ -1,13 +1,13 @@
 /**
- * Text Annotation Manager
+ * Text Comment Manager
  *
- * Manages text-based annotations for the `text-annotation` interaction profile.
+ * Manages text-based comments for the `text-comment` interaction profile.
  *
  * Responsibilities:
  * - Detect text selections from `window.getSelection()` after `mouseup`
  * - Extract rich context from selected text: tag paths, surrounding text, segments
  * - Compute viewport rectangles for overlay highlighting
- * - Generate stable annotation IDs for editMetaByKey integration
+ * - Generate stable comment IDs for editMetaByKey integration
  * - Lifetime management (create, remove, clear, dispose)
  *
  * Design principles:
@@ -22,16 +22,16 @@
 // =============================================================================
 
 /** A single text segment within a selection, with its tag ancestry */
-export interface TextAnnotationSegment {
+export interface TextCommentSegment {
   /** The text content of this segment */
   text: string;
   /** Tag path from the closest block ancestor, e.g. ["p", "strong"] */
   tags: string[];
 }
 
-/** A complete text annotation produced from a user selection */
-export interface TextAnnotation {
-  /** Unique identifier: `text-ann::{hash}` */
+/** A complete text comment produced from a user selection */
+export interface TextComment {
+  /** Unique identifier: `text-comment::{hash}` */
   id: string;
   /** The full selected text (concatenated, trimmed) */
   selectedText: string;
@@ -43,7 +43,7 @@ export interface TextAnnotation {
   /** Outermost tag path of the selection container */
   tagPath: string[];
   /** Per-segment tag info for cross-element selections */
-  segments: TextAnnotationSegment[];
+  segments: TextCommentSegment[];
 
   /** Selection bounding rect (viewport coordinates) */
   boundingRect: { left: number; top: number; width: number; height: number };
@@ -55,25 +55,25 @@ export interface TextAnnotation {
   sourceElement: Element | null;
 }
 
-export interface TextAnnotationManager {
+export interface TextCommentManager {
   /**
    * Inspect the current browser text selection and, if valid, produce a
-   * `TextAnnotation` with full context.  Returns `null` when the selection
+   * `TextComment` with full context.  Returns `null` when the selection
    * is collapsed, empty, or originates from the editor overlay.
    */
-  commitSelection(): TextAnnotation | null;
+  commitSelection(): TextComment | null;
 
-  /** All annotations created so far (keyed by id) */
-  getAnnotations(): ReadonlyMap<string, TextAnnotation>;
+  /** All comments created so far (keyed by id) */
+  getComments(): ReadonlyMap<string, TextComment>;
 
-  /** Remove a single annotation */
-  removeAnnotation(id: string): void;
+  /** Remove a single comment */
+  removeComment(id: string): void;
 
-  /** Remove all annotations */
+  /** Remove all comments */
   clearAll(): void;
 
-  /** Apply the active visual highlight for an annotation selection */
-  setActiveHighlight(annotation: TextAnnotation | null): boolean;
+  /** Apply the active visual highlight for an comment selection */
+  setActiveHighlight(comment: TextComment | null): boolean;
 
   /** Remove the active visual highlight */
   clearActiveHighlight(): void;
@@ -82,7 +82,7 @@ export interface TextAnnotationManager {
   dispose(): void;
 }
 
-export interface TextAnnotationManagerOptions {
+export interface TextCommentManagerOptions {
   /** Predicate to exclude selection events originating from the editor overlay */
   isOverlayElement: (node: unknown) => boolean;
 }
@@ -92,8 +92,8 @@ export interface TextAnnotationManagerOptions {
 // =============================================================================
 
 const CONTEXT_CHARS = 50;
-const TEXT_ANNOTATION_HIGHLIGHT_NAME = 'axhub-web-editor-text-annotation';
-const TEXT_ANNOTATION_HIGHLIGHT_STYLE_ID = 'axhub-web-editor-text-annotation-style';
+const TEXT_COMMENT_HIGHLIGHT_NAME = 'axhub-web-editor-text-comment';
+const TEXT_COMMENT_HIGHLIGHT_STYLE_ID = 'axhub-web-editor-text-comment-style';
 
 // =============================================================================
 // Helpers
@@ -109,8 +109,8 @@ function fnv1aHash(input: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-function generateAnnotationId(selectedText: string, contextBefore: string): string {
-  return `text-ann::${fnv1aHash(selectedText + '||' + contextBefore)}`;
+function generateCommentId(selectedText: string, contextBefore: string): string {
+  return `text-comment::${fnv1aHash(selectedText + '||' + contextBefore)}`;
 }
 
 /**
@@ -146,8 +146,8 @@ function maybeGetComputedDisplay(el: Element): string | null {
  * Collect all text nodes (or partial text) within a Range, together with
  * per-segment tag info.
  */
-function collectSegments(range: Range): TextAnnotationSegment[] {
-  const segments: TextAnnotationSegment[] = [];
+function collectSegments(range: Range): TextCommentSegment[] {
+  const segments: TextCommentSegment[] = [];
   const appendSegmentFromTextNode = (textNode: Text) => {
     let text = textNode.textContent ?? '';
 
@@ -255,12 +255,12 @@ function supportsCssHighlights(): boolean {
 }
 
 function ensureHighlightStyle(): void {
-  if (document.getElementById(TEXT_ANNOTATION_HIGHLIGHT_STYLE_ID)) return;
+  if (document.getElementById(TEXT_COMMENT_HIGHLIGHT_STYLE_ID)) return;
 
   const style = document.createElement('style');
-  style.id = TEXT_ANNOTATION_HIGHLIGHT_STYLE_ID;
+  style.id = TEXT_COMMENT_HIGHLIGHT_STYLE_ID;
   style.textContent = `
-    ::highlight(${TEXT_ANNOTATION_HIGHLIGHT_NAME}) {
+    ::highlight(${TEXT_COMMENT_HIGHLIGHT_NAME}) {
       background: rgba(0, 143, 93, 0.18);
       color: inherit;
     }
@@ -274,12 +274,12 @@ function updateCssHighlight(range: Range | null): boolean {
   ensureHighlightStyle();
 
   const highlightRegistry = (CSS as { highlights: Map<string, unknown> }).highlights;
-  highlightRegistry.delete(TEXT_ANNOTATION_HIGHLIGHT_NAME);
+  highlightRegistry.delete(TEXT_COMMENT_HIGHLIGHT_NAME);
 
   if (!range) return true;
 
   const HighlightCtor = (globalThis as { Highlight: new (...ranges: Range[]) => unknown }).Highlight;
-  highlightRegistry.set(TEXT_ANNOTATION_HIGHLIGHT_NAME, new HighlightCtor(range.cloneRange()));
+  highlightRegistry.set(TEXT_COMMENT_HIGHLIGHT_NAME, new HighlightCtor(range.cloneRange()));
   return true;
 }
 
@@ -287,13 +287,13 @@ function updateCssHighlight(range: Range | null): boolean {
 // Factory
 // =============================================================================
 
-export function createTextAnnotationManager(
-  options: TextAnnotationManagerOptions,
-): TextAnnotationManager {
+export function createTextCommentManager(
+  options: TextCommentManagerOptions,
+): TextCommentManager {
   const { isOverlayElement } = options;
-  const annotations = new Map<string, TextAnnotation>();
+  const comments = new Map<string, TextComment>();
 
-  function commitSelection(): TextAnnotation | null {
+  function commitSelection(): TextComment | null {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
 
@@ -316,9 +316,9 @@ export function createTextAnnotationManager(
     const clientRects = dedupeRects(range.getClientRects());
     const sourceElement = resolveSelectionSourceElement(range);
 
-    const id = generateAnnotationId(text, contextBefore);
+    const id = generateCommentId(text, contextBefore);
 
-    const annotation: TextAnnotation = {
+    const comment: TextComment = {
       id,
       selectedText: text,
       contextBefore,
@@ -331,25 +331,25 @@ export function createTextAnnotationManager(
       sourceElement,
     };
 
-    annotations.set(id, annotation);
-    return annotation;
+    comments.set(id, comment);
+    return comment;
   }
 
-  function getAnnotations(): ReadonlyMap<string, TextAnnotation> {
-    return annotations;
+  function getComments(): ReadonlyMap<string, TextComment> {
+    return comments;
   }
 
-  function removeAnnotation(id: string): void {
-    annotations.delete(id);
+  function removeComment(id: string): void {
+    comments.delete(id);
   }
 
   function clearAll(): void {
-    annotations.clear();
+    comments.clear();
     clearActiveHighlight();
   }
 
-  function setActiveHighlight(annotation: TextAnnotation | null): boolean {
-    return updateCssHighlight(annotation?.range ?? null);
+  function setActiveHighlight(comment: TextComment | null): boolean {
+    return updateCssHighlight(comment?.range ?? null);
   }
 
   function clearActiveHighlight(): void {
@@ -357,14 +357,14 @@ export function createTextAnnotationManager(
   }
 
   function dispose(): void {
-    annotations.clear();
+    comments.clear();
     clearActiveHighlight();
   }
 
   return {
     commitSelection,
-    getAnnotations,
-    removeAnnotation,
+    getComments,
+    removeComment,
     clearAll,
     setActiveHighlight,
     clearActiveHighlight,

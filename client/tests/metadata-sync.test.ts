@@ -221,7 +221,6 @@ describe('make-project metadata sync', () => {
     expect(metadata.resources.prototypes.map((item: any) => item.id)).toEqual([
       'annotation-demo',
       'beginner-guide',
-      'untitled-4',
     ]);
     expect(annotationDemo).toMatchObject({
       pages: [
@@ -249,7 +248,7 @@ describe('make-project metadata sync', () => {
     expect(secondMetadata).toEqual(metadata);
     expect(metadata.project).toEqual({
       id: 'make-project',
-      name: 'Axhub Make',
+      name: '',
     });
     expect(Object.keys(metadata.resources)).toEqual([
       'prototypes',
@@ -487,5 +486,51 @@ describe('make-project metadata sync', () => {
       id: 'sales-demo',
       name: 'Sales Demo',
     });
+  });
+
+  it('keeps an explicit empty make client marker project name empty', () => {
+    const projectRoot = createFixtureProject();
+    writeFile(path.join(projectRoot, '.axhub/make/client.json'), JSON.stringify({
+      schemaVersion: 1,
+      kind: 'axhub-make-client',
+      repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+      project: {
+        id: 'make-project',
+        name: '',
+      },
+    }, null, 2));
+
+    const metadata = buildMakeProjectMetadata(projectRoot, {
+      clientOrigin: 'http://localhost:51720',
+    });
+
+    expect(metadata.project).toEqual({
+      id: 'make-project',
+      name: '',
+    });
+  });
+
+  it('normalizes legacy official make-project default names to unnamed', () => {
+    for (const legacyName of ['Axhub Make', 'Axhub-Make']) {
+      const projectRoot = createFixtureProject();
+      writeFile(path.join(projectRoot, '.axhub/make/client.json'), JSON.stringify({
+        schemaVersion: 1,
+        kind: 'axhub-make-client',
+        repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+        project: {
+          id: 'make-project',
+          name: legacyName,
+        },
+      }, null, 2));
+
+      const metadata = buildMakeProjectMetadata(projectRoot, {
+        clientOrigin: 'http://localhost:51720',
+      });
+
+      expect(metadata.project).toEqual({
+        id: 'make-project',
+        name: '',
+      });
+    }
   });
 });

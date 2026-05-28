@@ -1,3 +1,3 @@
-export type AnnotationEntryMode = 'bubble-card' | 'panel-note';
+export type CommentEntryMode = 'bubble-card' | 'panel-note';
 
-export type SelectionUiMode = AnnotationEntryMode;
+export type SelectionUiMode = CommentEntryMode;

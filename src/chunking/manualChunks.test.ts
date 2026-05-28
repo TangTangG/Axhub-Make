@@ -33,6 +33,12 @@ describe('getManualChunkName', () => {
 
   it('routes markdown rendering packages into the spec-template vendor chunk', () => {
     expect(
+      getManualChunkName('/repo/node_modules/.pnpm/@ant-design+x@2.1.1/node_modules/@ant-design/x/es/index.js'),
+    ).toBe('spec-template-vendor');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/@ant-design+x-markdown@2.1.1/node_modules/@ant-design/x-markdown/es/index.js'),
+    ).toBe('spec-template-vendor');
+    expect(
       getManualChunkName('/repo/node_modules/.pnpm/highlight.js@10.7.3/node_modules/highlight.js/es/index.js'),
     ).toBe('spec-template-vendor');
     expect(
@@ -62,6 +68,15 @@ describe('getManualChunkName', () => {
     expect(
       getManualChunkName('/repo/node_modules/.pnpm/antd@5.27.3/node_modules/antd/dist/reset.css'),
     ).toBe('spec-template-reset');
+  });
+
+  it('keeps Babel interop helpers with Ant Design to avoid an early vendor-common read in chunk cycles', () => {
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/@babel+runtime@7.28.6/node_modules/@babel/runtime/helpers/interopRequireDefault.js'),
+    ).toBe('vendor-antd');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/@babel+runtime@7.28.6/node_modules/@babel/runtime/helpers/esm/interopRequireDefault.js'),
+    ).toBe('vendor-antd');
   });
 
   it('keeps mermaid graph dependencies in vendor-common to avoid chunk cycles', () => {
@@ -131,6 +146,18 @@ describe('getManualChunkName', () => {
     expect(
       getManualChunkName('/repo/vendor/axhub-genie-editor/dist/index.mjs'),
     ).toBe('vendor-genie');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/axhub-genie-editor@file+vendor+axhub-genie-editor/node_modules/axhub-genie-editor/dist/index.mjs'),
+    ).toBe('vendor-genie');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/@axhub+excalidraw@file+vendor+axhub-excalidraw/node_modules/@axhub/excalidraw/index.js'),
+    ).toBe('vendor-excalidraw');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/tiptap-editor@file+vendor+tiptap-editor/node_modules/tiptap-editor/dist/index.js'),
+    ).toBe('vendor-editor');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/axhub-export-core@file+vendor+axhub-export-core/node_modules/axhub-export-core/dist/index.mjs'),
+    ).toBe('vendor-export');
   });
 
   it('keeps export dependencies in the same chunk as axhub-export-core', () => {

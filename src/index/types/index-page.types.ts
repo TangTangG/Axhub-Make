@@ -203,6 +203,7 @@ export interface NewSidebarActions {
     onTitleChange: (title: string) => void | Promise<void>;
     onProjectSwitch: (projectId: string) => void | Promise<void>;
     onProjectDelete: (projectId: string) => void | Promise<void>;
+    onProjectStop: (projectId: string) => void | Promise<void>;
     onAddProject: () => boolean | void | Promise<boolean | void>;
     onSelectMakeProjectParentFolder: () => Promise<string | null>;
     onCreateBlankMakeProject: (params: {

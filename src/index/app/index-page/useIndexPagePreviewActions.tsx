@@ -1226,8 +1226,8 @@ export function useIndexPagePreviewActions(params: any) {
                 return;
             }
 
-            if (docEditState.quickEditMode !== 'annotation') {
-                reject(new Error('请先切换到标注模式'));
+            if (docEditState.quickEditMode !== 'comment') {
+                reject(new Error('请先切换到批注模式'));
                 return;
             }
 
@@ -1541,7 +1541,7 @@ export function useIndexPagePreviewActions(params: any) {
         }
         if (postToPreview({ type: 'SPEC_EDIT_ENABLE' })) {
             markdownPromptCacheRef.current = null;
-            setDocEditState((previous) => ({ ...previous, enabled: true, quickEditMode: 'annotation' }));
+            setDocEditState((previous) => ({ ...previous, enabled: true, quickEditMode: 'comment' }));
             void enterDocumentEditor();
         }
     }, [currentMarkdownItem, currentMarkdownLabel, enterDocumentEditor, messageApi, postToPreview]);
@@ -1591,20 +1591,20 @@ export function useIndexPagePreviewActions(params: any) {
         }
         void (async () => {
             const confirmed = await appDialog.confirm({
-                title: '切换到标注模式',
-                description: `检测到未保存的${currentMarkdownLabel}更改，是否先保存后再切换到标注模式？`,
+                title: '切换到批注模式',
+                description: `检测到未保存的${currentMarkdownLabel}更改，是否先保存后再切换到批注模式？`,
                 confirmText: '保存并切换',
                 cancelText: '不保存切换',
                 tone: 'brand',
                 dismissible: false,
             });
             if (confirmed) {
-                postToPreview({ type: 'SPEC_EDIT_SET_MODE', mode: 'annotation', saveBehavior: 'save' });
+                postToPreview({ type: 'SPEC_EDIT_SET_MODE', mode: 'comment', saveBehavior: 'save' });
                 setDocEditState((previous) => ({ ...previous, saving: true }));
                 return;
             }
-            postToPreview({ type: 'SPEC_EDIT_SET_MODE', mode: 'annotation', saveBehavior: 'discard' });
-            setDocEditState((previous) => ({ ...previous, quickEditMode: 'annotation' }));
+            postToPreview({ type: 'SPEC_EDIT_SET_MODE', mode: 'comment', saveBehavior: 'discard' });
+            setDocEditState((previous) => ({ ...previous, quickEditMode: 'comment' }));
         })();
     }, [
         appDialog,
@@ -1656,8 +1656,8 @@ export function useIndexPagePreviewActions(params: any) {
 
     const handleCopyMarkdownPrompt = useCallback(async () => {
         if (markdownPromptCopying) return;
-        if (docEditState.quickEditMode !== 'annotation') {
-            messageApi.warning('请先切换到标注模式');
+        if (docEditState.quickEditMode !== 'comment') {
+            messageApi.warning('请先切换到批注模式');
             return;
         }
         setMarkdownPromptCopying(true);
@@ -2497,7 +2497,7 @@ export function useIndexPagePreviewActions(params: any) {
                 return;
             }
             if (event.data?.type === 'SPEC_EDIT_STATUS') {
-                const nextMode: SpecQuickEditMode = event.data.quickEditMode === 'edit' ? 'edit' : 'annotation';
+                const nextMode: SpecQuickEditMode = event.data.quickEditMode === 'edit' ? 'edit' : 'comment';
                 const nextState = {
                     enabled: Boolean(event.data.enabled),
                     dirty: Boolean(event.data.dirty),

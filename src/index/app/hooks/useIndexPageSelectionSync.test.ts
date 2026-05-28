@@ -44,9 +44,11 @@ describe('useIndexPageSelectionSync source', () => {
     expect(source).toContain('pendingReturnTarget');
     expect(source).toContain('setPendingReturnTarget');
     expect(source).toContain('resourceId');
+    expect(source).toContain('pageId: string | null;');
     expect(source).toContain('viewMode');
     expect(source).toContain('pendingTargetItem');
     expect(source).toContain('setViewMode(pendingReturnTarget.viewMode)');
+    expect(source).toContain('setSelectedPrototypePageId(pendingReturnTarget.pageId || null);');
     expect(source).toContain('setSelectedItem(pendingTargetItem)');
     expect(source).toContain("pendingReturnTarget?.sidebarTab === 'document'");
     expect(source).toContain('const nextDocItem = pendingDocItem ?? fallbackDocItem');

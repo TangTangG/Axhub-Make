@@ -1,31 +1,36 @@
 ---
-name: prototype-edit-annotations
-description: Use when handling prototype edit annotations in the Axhub Make client preview. Reads local .spec annotation files first, edits project files, updates annotation status, and only uses page sync or screenshots when needed.
+name: prototype-comments
+description: Use when handling prototype edit comments in the Axhub Make client preview. Reads local .spec comment files first, edits project files, updates comment status, and only uses page sync or screenshots when needed.
 ---
 
 # 原型批注处理
 
 当页面上存在原型批注，或 `/editor-todo` 要求处理当前项目的批注时使用本技能。
 
+术语边界：
+
+- 批注 / comment：Genie Editor 里的原型改稿意见，本技能只处理这类内容。
+- 标注 / annotation：AnnotationViewer 的原型说明层，例如 `annotation-source.json` 和 `@axhub/annotation`，不属于本技能处理范围。
+
 ## 默认读取顺序
 
 1. 先定位目标原型目录：`src/prototypes/<prototype-id>/`。
-2. 优先读取本地文件：`src/prototypes/<prototype-id>/.spec/prototype-annotations.json`。
+2. 优先读取本地文件：`src/prototypes/<prototype-id>/.spec/prototype-comments.json`。
 3. 若文件不存在，再结合当前页面、用户上下文或旧缓存提示判断；需要截图、导出图片或同步页面状态时才使用页面同步能力。
 
 ## 本地文件结构
 
-批注记录固定在 `.spec/prototype-annotations.json`：
+批注记录固定在 `.spec/prototype-comments.json`：
 
-- `entries`：批注和修改记录，包含 locator、note、marker，以及 text/style/tweak 的修改前后。
+- `comments`：批注和修改记录，包含 locator、comment、marker，以及 text/style/tweak 的修改前后。
 - `tasks`：按 `elementKey` 记录 `idle`、`editing`、`completed`、`error` 状态。
-- `images`：只记录 metadata 和 `assetPath`。图片文件在 `.spec/prototype-annotation-assets/`。
+- `images`：只记录 metadata 和 `assetPath`。图片文件在 `.spec/prototype-comment-assets/`。
 
 不要把新的 base64 图片内容写回 JSON；需要新增图片素材时放入 assets 目录，并在 `images[].assetPath` 里引用。
 
 ## 处理流程
 
-1. 读取 `.spec/prototype-annotations.json`，按 `entries` 理解修改意图和定位信息。
+1. 读取 `.spec/prototype-comments.json`，按 `comments` 理解修改意图和定位信息。
 2. 只在定位不清、需要检查页面现状、需要导出批注图片时，使用页面截图或同步命令。
 3. 修改 `src/prototypes/<prototype-id>/` 下的实现文件，保持改动范围聚焦。
 4. 修改前后都更新本地 JSON：

@@ -13,6 +13,8 @@ describe('useWorkspaceNavigationController source', () => {
     expect(source).toContain("fetch('/api/projects/make/register-existing'");
     expect(source).toContain("fetch('/api/projects/make/create'");
     expect(source).toContain("fetch(`/api/projects/${encodeURIComponent(projectId)}/dev/ensure`");
+    expect(source).toContain('const MAKE_CLIENT_DEV_START_TIMEOUT_MS = 60_000;');
+    expect(source).toContain('body: JSON.stringify({ timeoutMs: MAKE_CLIENT_DEV_START_TIMEOUT_MS })');
     expect(source).toContain('addProjectFromLocalPath');
     expect(source).toContain('createBlankMakeProject');
     expect(source).toContain('switchProject');

@@ -34,6 +34,7 @@ interface UseWorkspaceNavigationControllerOptions {
 }
 
 const UNTITLED_PROJECT_LABEL = '未命名项目';
+const MAKE_CLIENT_DEV_START_TIMEOUT_MS = 60_000;
 
 function readInitialProjectIdFromUrl(): string | null {
     if (typeof window === 'undefined') {
@@ -300,7 +301,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/dev/ensure`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}),
+            body: JSON.stringify({ timeoutMs: MAKE_CLIENT_DEV_START_TIMEOUT_MS }),
         });
         const payload = await response.json().catch(() => null);
         if (!response.ok) {
@@ -383,6 +384,26 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             }
         }
     }, [activeProjectId, loadProjectResourcesFor, loadProjects, probeProjectRuntimeStatus, resetProjectScopedState]);
+
+    const stopProjectDevServer = useCallback(async (projectId: string) => {
+        const normalizedProjectId = projectId.trim();
+        if (!normalizedProjectId) {
+            return;
+        }
+        const response = await fetch(`/api/projects/${encodeURIComponent(normalizedProjectId)}/dev/stop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw new Error(formatMakeClientProjectError(payload, '终止客户端失败'));
+        }
+        await loadProjects();
+        if (normalizedProjectId === activeProjectId) {
+            await probeProjectRuntimeStatus(normalizedProjectId);
+        }
+    }, [activeProjectId, loadProjects, probeProjectRuntimeStatus]);
 
     const addProjectFromLocalPath = useCallback(async () => {
         const pickerResponse = await fetch('/api/projects/select-root?kind=existing', { method: 'POST' });
@@ -688,6 +709,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         loadProjects,
         loadProjectResources,
         startActiveProjectServer,
+        stopProjectDevServer,
         switchProject,
         deleteProject,
         addProjectFromLocalPath,

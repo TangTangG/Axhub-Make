@@ -12,9 +12,9 @@ import {
   createGenieEditor,
   getGlobalGenieEditorTweakProtocol,
   type WebEditorGenieAgent,
-  type PrototypeEditAnnotationsDocument,
-  type PrototypeEditAnnotationsPersistenceAdapter,
-  type PrototypeEditAnnotationsPersistenceScope,
+  type PrototypeEditCommentsDocument,
+  type PrototypeEditCommentsPersistenceAdapter,
+  type PrototypeEditCommentsPersistenceScope,
   type WebEditorV2InitOptions,
 } from 'axhub-genie-editor';
 import {
@@ -152,7 +152,7 @@ function resolveTargetPathFromResource(resource: GenieEditorHostResource | null)
   return normalizeString(resource?.path);
 }
 
-function resolvePrototypeAnnotationsTargetPath(scope: PrototypeEditAnnotationsPersistenceScope): string {
+function resolvePrototypeCommentsTargetPath(scope: PrototypeEditCommentsPersistenceScope): string {
   const scopedTargetPath = normalizeString(scope.targetPath);
   if (scopedTargetPath.startsWith('prototypes/')) {
     return scopedTargetPath;
@@ -161,42 +161,42 @@ function resolvePrototypeAnnotationsTargetPath(scope: PrototypeEditAnnotationsPe
   return resourceTargetPath.startsWith('prototypes/') ? resourceTargetPath : '';
 }
 
-function buildPrototypeAnnotationsUrl(
-  scope: PrototypeEditAnnotationsPersistenceScope,
+function buildPrototypeCommentsUrl(
+  scope: PrototypeEditCommentsPersistenceScope,
   extraSearchParams: Record<string, string> = {},
 ): string {
-  const targetPath = resolvePrototypeAnnotationsTargetPath(scope);
+  const targetPath = resolvePrototypeCommentsTargetPath(scope);
   if (!targetPath) return '';
   const params = new URLSearchParams({ targetPath, ...extraSearchParams });
-  return `/api/prototype-annotations?${params.toString()}`;
+  return `/api/prototype-comments?${params.toString()}`;
 }
 
-export function createPrototypeAnnotationsPersistenceAdapter(): PrototypeEditAnnotationsPersistenceAdapter {
+export function createPrototypeCommentsPersistenceAdapter(): PrototypeEditCommentsPersistenceAdapter {
   return {
     async read(scope) {
-      const url = buildPrototypeAnnotationsUrl(scope, { hydrateImages: '1' });
+      const url = buildPrototypeCommentsUrl(scope, { hydrateImages: '1' });
       if (!url) return null;
       try {
         const response = await fetch(url, { method: 'GET' });
         if (!response.ok) {
-          console.warn('[MakeWebEditor] Failed to read prototype annotations:', response.status);
+          console.warn('[MakeWebEditor] Failed to read prototype comments:', response.status);
           return null;
         }
         const payload = await response.json().catch(() => null) as {
           exists?: boolean;
-          document?: PrototypeEditAnnotationsDocument | null;
+          document?: PrototypeEditCommentsDocument | null;
         } | null;
         if (!payload?.exists || !payload.document) {
           return null;
         }
         return payload.document;
       } catch (error) {
-        console.warn('[MakeWebEditor] Failed to read prototype annotations:', error);
+        console.warn('[MakeWebEditor] Failed to read prototype comments:', error);
         return null;
       }
     },
     async write(scope, document) {
-      const url = buildPrototypeAnnotationsUrl(scope);
+      const url = buildPrototypeCommentsUrl(scope);
       if (!url) return;
       try {
         const response = await fetch(url, {
@@ -205,10 +205,10 @@ export function createPrototypeAnnotationsPersistenceAdapter(): PrototypeEditAnn
           body: JSON.stringify({ document }),
         });
         if (!response.ok) {
-          console.warn('[MakeWebEditor] Failed to write prototype annotations:', response.status);
+          console.warn('[MakeWebEditor] Failed to write prototype comments:', response.status);
         }
       } catch (error) {
-        console.warn('[MakeWebEditor] Failed to write prototype annotations:', error);
+        console.warn('[MakeWebEditor] Failed to write prototype comments:', error);
       }
     },
   };
@@ -777,7 +777,7 @@ export const createWebEditorV2Controller = (
             ?? buildHostCopyPrompt,
           persistenceAdapter:
             options.host?.persistenceAdapter
-            ?? createPrototypeAnnotationsPersistenceAdapter(),
+            ?? createPrototypeCommentsPersistenceAdapter(),
         },
         genieBridge: {
           ...(options.genieBridge ?? {}),

@@ -29,7 +29,7 @@ function getFrameRuntimeRecord(target: HTMLIFrameElement): Record<string, unknow
   return target as unknown as Record<string, unknown>;
 }
 
-export function useClipboardAnnotationPaste(params: {
+export function useClipboardCommentPaste(params: {
   propertyPanelOptions?: PropertyPanelOptions | null;
   currentTargetRef: React.MutableRefObject<Element | null>;
   latestPointerPositionRef: React.MutableRefObject<{ clientX: number; clientY: number } | null>;

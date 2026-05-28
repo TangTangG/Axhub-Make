@@ -11,6 +11,11 @@ export interface PromptCardSkillTrigger {
   end: number;
 }
 
+export interface PromptCardSkillSavePayload {
+  note: string;
+  skillIds: string[];
+}
+
 export const PROMPT_CARD_SKILLS: readonly PromptCardSkill[] = [
   {
     id: 'compare-options',
@@ -22,11 +27,12 @@ export const PROMPT_CARD_SKILLS: readonly PromptCardSkill[] = [
     id: 'prototype-annotation',
     label: '原型标注',
     description: '结合当前原型标注理解修改意图',
-    prompt: '请结合当前原型标注理解修改意图，优先处理标注对应区域。',
+    prompt: '请结合当前原型标注理解修改意图，优先处理批注对应区域。',
   },
 ] as const;
 
-const TRAILING_SKILL_TRIGGER_PATTERN = /(?:^|\s)\/([\p{Script=Han}\p{Letter}\p{Number}_-]*)$/u;
+const SKILL_TRIGGER_QUERY_PATTERN = /^[\p{Script=Han}\p{Letter}\p{Number}_-]*$/u;
+const SKILL_BY_ID = new Map(PROMPT_CARD_SKILLS.map((skill) => [skill.id, skill]));
 
 function normalizeSkillQuery(value: string): string {
   return value.trim().toLocaleLowerCase();
@@ -34,12 +40,21 @@ function normalizeSkillQuery(value: string): string {
 
 export function findPromptCardSkillTrigger(text: string): PromptCardSkillTrigger | null {
   const value = String(text ?? '');
-  const match = value.match(TRAILING_SKILL_TRIGGER_PATTERN);
-  if (!match || match.index === undefined) return null;
-  const query = match[1] ?? '';
-  const slashOffset = match[0].lastIndexOf('/');
-  if (slashOffset < 0) return null;
-  const start = match.index + slashOffset;
+  const start = value.lastIndexOf('/');
+  if (start < 0) return null;
+  const query = value.slice(start + 1);
+  if (!SKILL_TRIGGER_QUERY_PATTERN.test(query)) return null;
+  const previousChar = start > 0 ? value[start - 1] : '';
+  const previousWhitespaceIndex = Math.max(
+    value.lastIndexOf(' ', start - 1),
+    value.lastIndexOf('\n', start - 1),
+    value.lastIndexOf('\t', start - 1),
+  );
+  const currentTokenPrefix = value.slice(previousWhitespaceIndex + 1, start);
+  if (previousChar === '/') {
+    return null;
+  }
+  if (currentTokenPrefix.includes('/')) return null;
   return {
     query,
     start,
@@ -80,4 +95,51 @@ export function buildPromptCardSkillPrefix(selectedSkills: readonly PromptCardSk
     '技能:',
     ...selectedSkills.map((skill) => `- ${skill.label}: ${skill.prompt}`),
   ].join('\n');
+}
+
+export function normalizePromptCardSkillIds(skillIds: readonly unknown[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const skillId of skillIds) {
+    const normalizedId = String(skillId ?? '').trim();
+    if (!normalizedId || seen.has(normalizedId) || !SKILL_BY_ID.has(normalizedId)) continue;
+    seen.add(normalizedId);
+    result.push(normalizedId);
+  }
+
+  return result;
+}
+
+export function buildPromptCardSkillSavePayload(
+  note: string,
+  selectedSkills: readonly PromptCardSkill[],
+): PromptCardSkillSavePayload {
+  return {
+    note: String(note ?? '').replace(/\r\n/g, '\n').trim(),
+    skillIds: selectedSkills.map((skill) => skill.id),
+  };
+}
+
+export function serializePromptCardSkillSelection(skillIds: readonly string[]): string {
+  return JSON.stringify({ skillIds: normalizePromptCardSkillIds(skillIds) });
+}
+
+export function deserializePromptCardSkillSelection(
+  payload: { skillIds?: readonly unknown[] | null } | null | undefined,
+): PromptCardSkill[] {
+  return normalizePromptCardSkillIds(payload?.skillIds ?? [])
+    .map((skillId) => SKILL_BY_ID.get(skillId))
+    .filter((skill): skill is PromptCardSkill => Boolean(skill));
+}
+
+export function mergePromptCardSkillsIntoPromptNote(
+  note: string,
+  selectedSkills: readonly PromptCardSkill[],
+): string {
+  const prefix = buildPromptCardSkillPrefix(selectedSkills);
+  const normalizedNote = String(note ?? '').replace(/\r\n/g, '\n').trim();
+  if (!prefix) return normalizedNote;
+  if (!normalizedNote) return prefix;
+  return `${prefix}\n\n${normalizedNote}`;
 }

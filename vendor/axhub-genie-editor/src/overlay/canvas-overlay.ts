@@ -96,7 +96,7 @@ export interface CanvasOverlay {
   setSelectionEffect(effect: 'default' | 'ai-editing' | 'inline-editing'): void;
   /** Update additional editing highlight rects */
   setEditingRects(rects: readonly ViewportRect[] | null): void;
-  /** Update text annotation highlight rects (multiple per-line rects) */
+  /** Update text comment highlight rects (multiple per-line rects) */
   setTextHighlightRects(rects: readonly ViewportRect[] | null): void;
   /** Update drag ghost highlight (Phase 2.4) */
   setDragGhostRect(rect: ViewportRect | null): void;
@@ -742,7 +742,7 @@ export function createCanvasOverlay(options: CanvasOverlayOptions): CanvasOverla
   // ==========================================================================
 
   /**
-   * Draw text annotation highlight rectangles.
+   * Draw text comment highlight rectangles.
    * Renders semi-transparent highlight fills for each per-line rect.
    */
   function drawTextHighlightRects(rects: readonly ViewportRect[] | null): void {

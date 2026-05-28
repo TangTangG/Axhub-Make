@@ -518,8 +518,8 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain("url.searchParams.set('genieToolbar', 'host');");
     expect(source).not.toContain("url.searchParams.set('editor', 'webEditorV2');");
     expect(source).not.toContain("editorStatus.mode === 'webEditorV2'");
-    expect(source).not.toContain("'specAnnotation'");
-    expect(source).not.toContain("editors.enable?.('annotation'");
+    expect(source).not.toContain("'specComment'");
+    expect(source).not.toContain("editors.enable?.('comment'");
     expect(source).not.toContain("type: 'axhub.quickEdit.enter'");
     expect(source).not.toContain('TEXT_EDIT_');
     expect(source).not.toContain('const isSinglePaneHostToolbarPreview =');
@@ -808,7 +808,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("return selectedTemplate?.previewUrl || selectedTemplate?.specUrl || '';");
   });
 
-  it('routes document editing through the spec-template Genie text annotation editor', () => {
+  it('routes document editing through the spec-template Genie text comment editor', () => {
     const source = readPreviewActionsSource();
 
     expect(source).toContain("contentMode === 'doc' || contentMode === 'template'");
@@ -960,7 +960,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('textEditAvailable');
   });
 
-  it('keeps user-triggerable Markdown annotation/edit parent-window protocols without old prototype annotation mode', () => {
+  it('keeps user-triggerable Markdown comment/edit parent-window protocols without old prototype comment mode', () => {
     const source = readPreviewActionsSource();
 
     expect(source).toContain('SPEC_EDIT_');
@@ -969,7 +969,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('handleEnableSpecEdit');
     expect(source).not.toContain('handleSwitchSpecQuickEditMode');
     expect(source).toContain('handleSwitchDocQuickEditMode');
-    expect(source).toContain("'annotation'");
-    expect(source).not.toContain("'specAnnotation'");
+    expect(source).toContain("'comment'");
+    expect(source).not.toContain("'specComment'");
   });
 });

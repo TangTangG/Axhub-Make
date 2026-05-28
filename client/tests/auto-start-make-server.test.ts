@@ -10,6 +10,7 @@ import {
 } from '../scripts/utils/serverInfo.mjs';
 
 import {
+  autoStartMakeServerPlugin,
   createAdminUrl,
   getReusableAdminOrigin,
   registerOfficialProject,
@@ -25,6 +26,19 @@ function createTempProjectRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'make-project-auto-server-'));
   tempRoots.push(root);
   return root;
+}
+
+function writeClientMarker(projectRoot: string, project: { id?: string; name?: string }) {
+  fs.mkdirSync(path.join(projectRoot, '.axhub', 'make'), { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, '.axhub', 'make', 'client.json'), JSON.stringify({
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: {
+      id: project.id ?? 'make-project',
+      name: project.name ?? '',
+    },
+  }, null, 2), 'utf8');
 }
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
@@ -58,7 +72,7 @@ afterEach(() => {
 });
 
 describe('auto make-server registration', () => {
-  it('registers a new official client project without switching the server active project', async () => {
+  it('registers a new official client project through the make-client registration API', async () => {
     const projectRoot = createTempProjectRoot();
     const calls: Array<{ pathname: string; method: string; body: any }> = [];
     mockFetch((url, init) => {
@@ -71,6 +85,12 @@ describe('auto make-server registration', () => {
         return jsonResponse({ activeProjectId: null, projects: [] });
       }
       if (url.pathname === '/api/projects' && init?.method === 'POST') {
+        return jsonResponse({
+          error: 'Generic project registration is no longer supported. Register an official Make client project instead.',
+          code: 'MAKE_CLIENT_PROJECT_REQUIRED',
+        }, { status: 410 });
+      }
+      if (url.pathname === '/api/projects/make/register-existing' && init?.method === 'POST') {
         return jsonResponse({ project: { id: 'make-project' } }, { status: 201 });
       }
       return jsonResponse({ error: 'unexpected request' }, { status: 500 });
@@ -78,18 +98,15 @@ describe('auto make-server registration', () => {
 
     await expect(registerOfficialProject(projectRoot, 'http://localhost:5174'))
       .resolves
-      .toEqual({ projectId: 'make-project', projectName: 'Axhub Make' });
+      .toEqual({ projectId: 'make-project', projectName: '' });
 
     expect(calls).toEqual([
       expect.objectContaining({ pathname: '/api/projects', method: 'GET' }),
       expect.objectContaining({
-        pathname: '/api/projects',
+        pathname: '/api/projects/make/register-existing',
         method: 'POST',
         body: {
-          id: 'make-project',
-          name: 'Axhub Make',
           root: projectRoot,
-          metadataPath: path.join(projectRoot, '.axhub/make/project.json'),
         },
       }),
     ]);
@@ -125,7 +142,7 @@ describe('auto make-server registration', () => {
 
     await expect(registerOfficialProject(projectRoot, 'http://localhost:5174'))
       .resolves
-      .toEqual({ projectId: 'official-existing', projectName: 'Axhub Make' });
+      .toEqual({ projectId: 'official-existing', projectName: '' });
 
     expect(calls).toEqual([
       expect.objectContaining({ pathname: '/api/projects', method: 'GET' }),
@@ -133,9 +150,44 @@ describe('auto make-server registration', () => {
         pathname: '/api/projects/official-existing',
         method: 'PATCH',
         body: {
-          name: 'Axhub Make',
+          name: '',
           root: projectRoot,
           metadataPath: path.join(projectRoot, '.axhub/make/project.json'),
+        },
+      }),
+    ]);
+  });
+
+  it('registers the canonical project name from client.json when the user named the project', async () => {
+    const projectRoot = createTempProjectRoot();
+    writeClientMarker(projectRoot, { id: 'sales-demo', name: 'Sales Demo' });
+    const calls: Array<{ pathname: string; method: string; body: any }> = [];
+    mockFetch((url, init) => {
+      calls.push({
+        pathname: url.pathname,
+        method: init?.method || 'GET',
+        body: init?.body ? readBody(init) : null,
+      });
+      if (url.pathname === '/api/projects' && !init?.method) {
+        return jsonResponse({ activeProjectId: null, projects: [] });
+      }
+      if (url.pathname === '/api/projects/make/register-existing' && init?.method === 'POST') {
+        return jsonResponse({ project: { id: 'sales-demo' } }, { status: 201 });
+      }
+      return jsonResponse({ error: 'unexpected request' }, { status: 500 });
+    });
+
+    await expect(registerOfficialProject(projectRoot, 'http://localhost:5174'))
+      .resolves
+      .toEqual({ projectId: 'sales-demo', projectName: 'Sales Demo' });
+
+    expect(calls).toEqual([
+      expect.objectContaining({ pathname: '/api/projects', method: 'GET' }),
+      expect.objectContaining({
+        pathname: '/api/projects/make/register-existing',
+        method: 'POST',
+        body: {
+          root: projectRoot,
         },
       }),
     ]);
@@ -176,7 +228,7 @@ describe('auto make-server registration', () => {
       if (url.pathname === '/api/projects' && !init?.method) {
         return jsonResponse({ activeProjectId: 'other', projects: [] });
       }
-      if (url.pathname === '/api/projects' && init?.method === 'POST') {
+      if (url.pathname === '/api/projects/make/register-existing' && init?.method === 'POST') {
         return jsonResponse({ project: { id: 'make-project' } }, { status: 201 });
       }
       return jsonResponse({ error: 'unexpected request' }, { status: 500 });
@@ -467,5 +519,31 @@ describe('auto make-server registration', () => {
     await expect(registerOfficialProject(projectRoot, 'http://localhost:5174'))
       .rejects
       .toThrow('GET /api/projects failed with 503');
+  });
+
+  it('does not auto-start make-server on Vite listening when the parent server already launched the client', () => {
+    const previousSkip = process.env.AXHUB_MAKE_SKIP_AUTO_START_SERVER;
+    process.env.AXHUB_MAKE_SKIP_AUTO_START_SERVER = '1';
+    const server = {
+      middlewares: { use: vi.fn() },
+      httpServer: {
+        address: vi.fn(() => ({ port: 51720 })),
+        once: vi.fn(),
+      },
+      config: { server: { port: 51720 } },
+    };
+
+    try {
+      (autoStartMakeServerPlugin().configureServer as any)(server);
+    } finally {
+      if (previousSkip === undefined) {
+        delete process.env.AXHUB_MAKE_SKIP_AUTO_START_SERVER;
+      } else {
+        process.env.AXHUB_MAKE_SKIP_AUTO_START_SERVER = previousSkip;
+      }
+    }
+
+    expect(server.middlewares.use).toHaveBeenCalledTimes(1);
+    expect(server.httpServer.once).not.toHaveBeenCalled();
   });
 });

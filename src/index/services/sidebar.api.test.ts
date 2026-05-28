@@ -5,6 +5,8 @@ import { sidebarApi } from './sidebar.api';
 describe('sidebarApi', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.stubGlobal('window', { location: { search: '' } });
   });
 
   it('preserves explicit empty project titles from the workspace API', async () => {
@@ -38,6 +40,42 @@ describe('sidebarApi', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: 'research/notes.md' }),
     });
+  });
+
+  it('targets the URL-selected project when saving dynamic design folders', async () => {
+    vi.stubGlobal('window', { location: { search: '?projectId=design-folder-client' } });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        tab: 'themes',
+        version: 1,
+        tree: [],
+      }),
+    } as Response);
+
+    await sidebarApi.saveSidebarTree('themes', []);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/workspace/navigation?tab=themes&projectId=design-folder-client', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tree: [] }),
+    });
+  });
+
+  it('keeps active-project fallback when the URL has no project id', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        tab: 'themes',
+        version: 1,
+        tree: [],
+      }),
+    } as Response);
+
+    await sidebarApi.getSidebarTree('themes');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/workspace/navigation?tab=themes');
   });
 
   it('passes the resource type when opening design resources', async () => {

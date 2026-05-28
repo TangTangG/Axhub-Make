@@ -15,6 +15,7 @@ import {
   ensureMakeClientDevServer,
   getMakeClientDevStatus,
   makeClientErrorPayload,
+  stopMakeClientDevServer,
   validateExistingMakeClientProject,
 } from './makeClientProject.ts';
 
@@ -101,7 +102,6 @@ export function handleMakeClientProjectApi(
         parentRoot,
         folderName,
         projectName: typeof body?.projectName === 'string' ? body.projectName : undefined,
-        templateRoot: options.makeClientTemplateRoot,
       }, {
         adminServerInfo: options.serverInfo,
       });
@@ -147,7 +147,7 @@ export function handleMakeClientProjectApi(
             success: true as const,
             reused: true,
             phase: 'ready' as const,
-            runtime: existingRuntime,
+            runtime: status.runtime || existingRuntime,
           };
         }
       }
@@ -176,6 +176,18 @@ export function handleMakeClientProjectApi(
   if (rest === 'dev/status' && req.method === 'GET') {
     getMakeClientDevStatus(projectId, project.root)
       .then((status) => sendJson(res, status))
+      .catch((error: any) => {
+        sendJson(res, makeClientErrorPayload(error, {
+          projectId,
+          projectRoot: project.root,
+        }), { status: Number(error?.status || 500) });
+      });
+    return true;
+  }
+
+  if (rest === 'dev/stop' && req.method === 'POST') {
+    stopMakeClientDevServer(projectId, project.root)
+      .then((result) => sendJson(res, result))
       .catch((error: any) => {
         sendJson(res, makeClientErrorPayload(error, {
           projectId,

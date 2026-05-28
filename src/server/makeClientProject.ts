@@ -1,17 +1,18 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import {
   DEFAULT_MAKE_CLIENT_REPOSITORY,
   fetchHealth,
-  getAdminServerInfoPath,
-  getProjectMetadataPath,
-  isHealthyServerInfo,
+  getRuntimeServerInfoPath,
+  isProcessAlive,
+  isLiveLocalServerInfo,
   normalizeHealthServerInfo,
   readMakeClientMarker,
   readServerInfo,
+  resolveProjectRoot,
   validateMakeClientProject,
   writeMakeClientMarker,
   writeServerInfo,
@@ -56,6 +57,14 @@ export interface MakeClientDevStatus {
   reason?: 'not-make-client' | 'not-running' | 'stale-runtime';
 }
 
+export interface MakeClientStopResult {
+  success: true;
+  projectId: string;
+  stopped: boolean;
+  runtime?: AxhubServerInfo;
+  status: MakeClientDevStatus;
+}
+
 export const MAKE_CLIENT_ERROR_STATUS: Record<string, number> = {
   NOT_MAKE_CLIENT_PROJECT: 400,
   MAKE_PROJECT_ID_CONFLICT: 409,
@@ -88,8 +97,27 @@ function defaultCommandRunner(): MakeClientCommandRunner {
   return { runCommand: runLocalCommand, spawn };
 }
 
-const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
-const EMBEDDED_MAKE_CLIENT_TEMPLATE_ROOT = path.resolve(SERVER_DIR, '..', '..', 'client');
+export const MAKE_CLIENT_TEMPLATE_PATH = 'client';
+export const PRIMARY_MAKE_CLIENT_TEMPLATE_REPOSITORY = 'https://github.com/lintendo/Axhub-Make.git';
+export const GITEE_MAKE_CLIENT_TEMPLATE_REPOSITORY = 'https://gitee.com/axhub/Axhub-Make.git';
+export const MAKE_CLIENT_TEMPLATE_SOURCES = [
+  {
+    repository: PRIMARY_MAKE_CLIENT_TEMPLATE_REPOSITORY,
+    markerRepository: DEFAULT_MAKE_CLIENT_REPOSITORY,
+  },
+  {
+    repository: GITEE_MAKE_CLIENT_TEMPLATE_REPOSITORY,
+    markerRepository: 'https://gitee.com/axhub/Axhub-Make/tree/main/client',
+  },
+] as const;
+const SKIP_AUTO_START_SERVER_ENV = 'AXHUB_MAKE_SKIP_AUTO_START_SERVER';
+const MAKE_CLIENT_RUNTIME_HEARTBEAT_MAX_AGE_MS = 15_000;
+const DEFAULT_MAKE_CLIENT_DEV_TIMEOUT_MS = 60_000;
+const DEFAULT_MAKE_CLIENT_DEV_POLL_INTERVAL_MS = 250;
+const DEFAULT_MAKE_CLIENT_DEV_PORT = 51720;
+const MAKE_CLIENT_RUNTIME_DISCOVERY_PORT_SPAN = 20;
+const MAKE_CLIENT_RUNTIME_DISCOVERY_HEALTH_TIMEOUT_MS = 250;
+
 const TEMPLATE_COPY_IGNORED_NAMES = new Set([
   '.git',
   'node_modules',
@@ -120,10 +148,6 @@ const TEMPLATE_COPY_IGNORED_AXHUB_MAKE_NAMES = new Set([
   'exports',
   'sessions',
 ]);
-
-export function getEmbeddedMakeClientTemplateRoot(): string {
-  return EMBEDDED_MAKE_CLIENT_TEMPLATE_ROOT;
-}
 
 export function slugifyMakeClientFolderName(input: string): string {
   return String(input || '')
@@ -211,7 +235,7 @@ function copyMakeClientTemplateDirectory(sourceRoot: string, targetRoot: string)
   if (!fs.existsSync(sourceRoot) || !fs.statSync(sourceRoot).isDirectory()) {
     throw new MakeClientProjectError(
       'MAKE_CLIENT_TEMPLATE_UNAVAILABLE',
-      'Embedded Make client template is missing',
+      'Make client template is missing',
       { status: 500, phase: 'template', details: { templateRoot: sourceRoot } },
     );
   }
@@ -249,8 +273,206 @@ function copyMakeClientTemplateDirectory(sourceRoot: string, targetRoot: string)
   }
 }
 
+function templateErrorMessage(error: unknown): string {
+  const looseError = error as { stderr?: unknown; stdout?: unknown; message?: unknown } | null;
+  return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Remote template download failed').trim();
+}
+
+function commandErrorMessage(error: unknown): string {
+  const looseError = error as { stderr?: unknown; stdout?: unknown; message?: unknown } | null;
+  return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Command failed').trim();
+}
+
+function npmCommand(): string {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+function viteBinPath(projectRoot: string): string {
+  const binName = process.platform === 'win32' ? 'vite.cmd' : 'vite';
+  return path.join(projectRoot, 'node_modules', '.bin', binName);
+}
+
+function viteNodeEntrypoint(projectRoot: string): string {
+  const viteRoot = path.join(projectRoot, 'node_modules', 'vite');
+  const packagePath = path.join(viteRoot, 'package.json');
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+    const bin = pkg?.bin;
+    const viteBin = typeof bin === 'string'
+      ? bin
+      : typeof bin?.vite === 'string'
+        ? bin.vite
+        : 'bin/vite.js';
+    return path.join(viteRoot, viteBin);
+  } catch {
+    return path.join(viteRoot, 'bin', 'vite.js');
+  }
+}
+
+function hasInstalledMakeClientDependencies(projectRoot: string): boolean {
+  return fs.existsSync(viteBinPath(projectRoot))
+    || fs.existsSync(path.join(projectRoot, 'node_modules', 'vite'));
+}
+
+async function ensureMakeClientDependencies(
+  runner: MakeClientCommandRunner,
+  projectRoot: string,
+): Promise<'skipped' | 'pnpm' | 'npm'> {
+  if (hasInstalledMakeClientDependencies(projectRoot)) {
+    return 'skipped';
+  }
+
+  try {
+    await runMakeClientCommand(runner, 'pnpm', ['install'], projectRoot, 'install');
+    return 'pnpm';
+  } catch (pnpmError) {
+    try {
+      await runMakeClientCommand(runner, npmCommand(), ['install'], projectRoot, 'install');
+      return 'npm';
+    } catch (npmError) {
+      throw new MakeClientProjectError(
+        'MAKE_CLIENT_INSTALL_FAILED',
+        [
+          `pnpm install failed: ${commandErrorMessage(pnpmError)}`,
+          `${npmCommand()} install failed: ${commandErrorMessage(npmError)}`,
+        ].join('\n'),
+        {
+          status: 500,
+          phase: 'install',
+          details: {
+            pnpm: commandErrorMessage(pnpmError),
+            npm: commandErrorMessage(npmError),
+          },
+        },
+      );
+    }
+  }
+}
+
+async function canRunPnpm(runner: MakeClientCommandRunner, projectRoot: string): Promise<boolean> {
+  try {
+    await runMakeClientCommand(runner, 'pnpm', ['--version'], projectRoot, 'dev');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveMakeClientDevCommand(installMethod: 'skipped' | 'pnpm' | 'npm', projectRoot: string): { command: string; args: string[] } {
+  if (installMethod === 'npm') {
+    const viteEntrypoint = viteNodeEntrypoint(projectRoot);
+    if (!fs.existsSync(viteEntrypoint)) {
+      throw new MakeClientProjectError(
+        'MAKE_CLIENT_INSTALL_FAILED',
+        'Make client vite dependency is missing after npm install',
+        { status: 500, phase: 'install', details: { viteEntrypoint } },
+      );
+    }
+    return { command: process.execPath, args: [viteEntrypoint] };
+  }
+  return { command: 'pnpm', args: ['dev'] };
+}
+
+async function resolveMakeClientDevCommandForProject(
+  runner: MakeClientCommandRunner,
+  installMethod: 'skipped' | 'pnpm' | 'npm',
+  projectRoot: string,
+): Promise<{ command: string; args: string[] }> {
+  if (installMethod === 'skipped' && !(await canRunPnpm(runner, projectRoot))) {
+    return resolveMakeClientDevCommand('npm', projectRoot);
+  }
+  return resolveMakeClientDevCommand(installMethod, projectRoot);
+}
+
+async function fetchMakeClientTemplateFromRemote(
+  runner: MakeClientCommandRunner,
+  targetRoot: string,
+): Promise<{ markerRepository: string }> {
+  const runCommand = runner.runCommand || runLocalCommand;
+  const failures: Array<{ repository: string; error: string }> = [];
+  const tempParent = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-make-client-template-'));
+
+  try {
+    for (const source of MAKE_CLIENT_TEMPLATE_SOURCES) {
+      const checkoutRoot = path.join(tempParent, failures.length === 0 ? 'primary' : `fallback-${failures.length}`);
+      try {
+        await runCommand('git', [
+          'clone',
+          '--depth',
+          '1',
+          '--filter=blob:none',
+          '--sparse',
+          source.repository,
+          checkoutRoot,
+        ], {
+          cwd: tempParent,
+          maxBuffer: 1024 * 1024 * 20,
+          timeoutMs: 30_000,
+        });
+        await runCommand('git', ['sparse-checkout', 'set', MAKE_CLIENT_TEMPLATE_PATH], {
+          cwd: checkoutRoot,
+          maxBuffer: 1024 * 1024 * 20,
+          timeoutMs: 30_000,
+        });
+        const sourceRoot = path.join(checkoutRoot, MAKE_CLIENT_TEMPLATE_PATH);
+        copyMakeClientTemplateDirectory(sourceRoot, targetRoot);
+        return { markerRepository: source.markerRepository };
+      } catch (error) {
+        failures.push({
+          repository: source.repository,
+          error: templateErrorMessage(error),
+        });
+        fs.rmSync(checkoutRoot, { recursive: true, force: true });
+        fs.rmSync(targetRoot, { recursive: true, force: true });
+      }
+    }
+  } finally {
+    fs.rmSync(tempParent, { recursive: true, force: true });
+  }
+
+  throw new MakeClientProjectError(
+    'MAKE_CLIENT_TEMPLATE_UNAVAILABLE',
+    'Failed to download Make client template from all remote sources',
+    {
+      status: 500,
+      phase: 'template',
+      details: { sources: failures },
+    },
+  );
+}
+
 function isSameProjectRuntime(info: AxhubServerInfo | null, projectRoot: string): info is AxhubServerInfo {
   return Boolean(info && path.resolve(info.projectRoot) === path.resolve(projectRoot));
+}
+
+function clearRuntimeServerInfo(projectRoot: string): void {
+  fs.rmSync(getRuntimeServerInfoPath(projectRoot), { force: true });
+}
+
+function isLiveMakeClientRuntime(info: AxhubServerInfo | null, projectRoot: string): info is AxhubServerInfo {
+  return isLiveLocalServerInfo(info, projectRoot, { maxAgeMs: MAKE_CLIENT_RUNTIME_HEARTBEAT_MAX_AGE_MS });
+}
+
+function isSameProjectHealthRuntime(info: AxhubServerInfo | null, projectRoot: string): info is AxhubServerInfo {
+  return Boolean(info && resolveProjectRoot(info.projectRoot) === resolveProjectRoot(projectRoot));
+}
+
+async function discoverMakeClientRuntime(projectRoot: string, options: { healthTimeoutMs?: number } = {}): Promise<AxhubServerInfo | null> {
+  for (let port = DEFAULT_MAKE_CLIENT_DEV_PORT; port <= DEFAULT_MAKE_CLIENT_DEV_PORT + MAKE_CLIENT_RUNTIME_DISCOVERY_PORT_SPAN; port += 1) {
+    const origin = `http://localhost:${port}`;
+    const health = await fetchHealth(origin, options.healthTimeoutMs ?? MAKE_CLIENT_RUNTIME_DISCOVERY_HEALTH_TIMEOUT_MS);
+    const runtime = normalizeHealthServerInfo(health);
+    if (!isSameProjectHealthRuntime(runtime, projectRoot)) {
+      continue;
+    }
+    return writeServerInfo(projectRoot, 'runtime', {
+      ...runtime,
+      origin: runtime.origin || origin,
+      projectRoot,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return null;
 }
 
 function sleep(ms: number) {
@@ -344,6 +566,15 @@ export async function getMakeClientDevStatus(
 
   const runtime = readServerInfo(root, 'runtime');
   if (!runtime) {
+    const discoveredRuntime = await discoverMakeClientRuntime(root, options);
+    if (discoveredRuntime) {
+      return {
+        projectId,
+        makeClient: true,
+        running: true,
+        runtime: discoveredRuntime,
+      };
+    }
     return {
       projectId,
       makeClient: true,
@@ -351,18 +582,7 @@ export async function getMakeClientDevStatus(
       reason: 'not-running',
     };
   }
-  if (!isSameProjectRuntime(runtime, root)) {
-    return {
-      projectId,
-      makeClient: true,
-      running: false,
-      reason: 'stale-runtime',
-    };
-  }
-
-  const health = await fetchHealth(runtime.origin, options.healthTimeoutMs ?? 750);
-  const healthRuntime = normalizeHealthServerInfo(health);
-  if (isHealthyServerInfo(healthRuntime, root)) {
+  if (isLiveMakeClientRuntime(runtime, root)) {
     return {
       projectId,
       makeClient: true,
@@ -371,11 +591,80 @@ export async function getMakeClientDevStatus(
     };
   }
 
+  const discoveredRuntime = await discoverMakeClientRuntime(root, options);
+  if (discoveredRuntime) {
+    return {
+      projectId,
+      makeClient: true,
+      running: true,
+      runtime: discoveredRuntime,
+    };
+  }
+
+  clearRuntimeServerInfo(root);
   return {
     projectId,
     makeClient: true,
     running: false,
     reason: 'stale-runtime',
+  };
+}
+
+export async function stopMakeClientDevServer(
+  projectId: string,
+  projectRoot: string,
+): Promise<MakeClientStopResult> {
+  const root = path.resolve(projectRoot);
+  const marker = readMakeClientMarker(root);
+  if (!marker) {
+    return {
+      success: true,
+      projectId,
+      stopped: false,
+      status: {
+        projectId,
+        makeClient: false,
+        running: false,
+        reason: 'not-make-client',
+      },
+    };
+  }
+
+  const runtime = readServerInfo(root, 'runtime');
+  if (!runtime || !isSameProjectRuntime(runtime, root) || !isProcessAlive(runtime.pid)) {
+    clearRuntimeServerInfo(root);
+    return {
+      success: true,
+      projectId,
+      stopped: false,
+      status: {
+        projectId,
+        makeClient: true,
+        running: false,
+        reason: 'not-running',
+      },
+    };
+  }
+
+  try {
+    process.kill(runtime.pid, 'SIGTERM');
+  } catch (error: any) {
+    if (String(error?.code || '') !== 'ESRCH') {
+      throw error;
+    }
+  }
+  clearRuntimeServerInfo(root);
+  return {
+    success: true,
+    projectId,
+    stopped: true,
+    runtime,
+    status: {
+      projectId,
+      makeClient: true,
+      running: false,
+      reason: 'not-running',
+    },
   };
 }
 
@@ -388,31 +677,40 @@ export async function ensureMakeClientDevServer(
   ensureAdminServerInfo(root, options.adminServerInfo);
 
   const existingRuntime = readServerInfo(root, 'runtime');
-  if (isSameProjectRuntime(existingRuntime, root)) {
-    const health = await fetchHealth(existingRuntime.origin, options.healthTimeoutMs ?? 750);
-    const healthRuntime = normalizeHealthServerInfo(health);
-    if (isHealthyServerInfo(healthRuntime, root)) {
-      return {
-        success: true,
-        reused: true,
-        phase: 'ready',
-        runtime: existingRuntime,
-      };
-    }
+  if (isLiveMakeClientRuntime(existingRuntime, root)) {
+    return {
+      success: true,
+      reused: true,
+      phase: 'ready',
+      runtime: existingRuntime,
+    };
+  }
+
+  const discoveredRuntime = await discoverMakeClientRuntime(root, options);
+  if (discoveredRuntime) {
+    return {
+      success: true,
+      reused: true,
+      phase: 'ready',
+      runtime: discoveredRuntime,
+    };
   }
 
   const runner = options.commandRunner || defaultCommandRunner();
-  await runMakeClientCommand(runner, 'pnpm', ['install'], root, 'install');
-  await runMakeClientCommand(runner, 'pnpm', ['metadata:sync'], root, 'metadata');
+  const installMethod = await ensureMakeClientDependencies(runner, root);
+  const devCommand = await resolveMakeClientDevCommandForProject(runner, installMethod, root);
 
-  const child = runner.spawn('pnpm', ['dev'], {
+  const child = runner.spawn(devCommand.command, devCommand.args, {
     cwd: root,
     detached: true,
-    env: buildLocalCommandEnv(),
+    env: {
+      ...buildLocalCommandEnv(),
+      [SKIP_AUTO_START_SERVER_ENV]: '1',
+    },
     stdio: 'ignore',
   });
   child.unref?.();
-  const runtime = await waitForRuntimeInfo(root, options.devTimeoutMs ?? 10000, options.pollIntervalMs ?? 250, {
+  const runtime = await waitForRuntimeInfo(root, options.devTimeoutMs ?? DEFAULT_MAKE_CLIENT_DEV_TIMEOUT_MS, options.pollIntervalMs ?? DEFAULT_MAKE_CLIENT_DEV_POLL_INTERVAL_MS, {
     healthTimeoutMs: options.healthTimeoutMs,
     ignoredRuntime: existingRuntime,
   });
@@ -436,7 +734,6 @@ export async function createBlankMakeClientProject(
     parentRoot: string;
     folderName: string;
     projectName?: string;
-    templateRoot?: string;
   },
   options: MakeClientOrchestrationOptions = {},
 ): Promise<{ projectRoot: string; marker: MakeClientMarker; dev: MakeClientDevResult }> {
@@ -450,15 +747,13 @@ export async function createBlankMakeClientProject(
     throw new MakeClientProjectError('MAKE_PROJECT_TARGET_NOT_EMPTY', 'Target folder is not empty', { status: 409 });
   }
 
-  const templateRoot = path.resolve(params.templateRoot || getEmbeddedMakeClientTemplateRoot());
-  copyMakeClientTemplateDirectory(templateRoot, projectRoot);
-
   const runner = options.commandRunner || defaultCommandRunner();
+  const templateSource = await fetchMakeClientTemplateFromRemote(runner, projectRoot);
   const existingMarker = readMakeClientMarker(projectRoot);
   const marker = writeMakeClientMarker(projectRoot, {
     schemaVersion: 1,
     kind: 'axhub-make-client',
-    repository: DEFAULT_MAKE_CLIENT_REPOSITORY,
+    repository: templateSource.markerRepository,
     project: {
       id: folderName,
       name: typeof params.projectName === 'string'

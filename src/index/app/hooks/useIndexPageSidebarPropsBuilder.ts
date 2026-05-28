@@ -56,6 +56,7 @@ interface UseIndexPageSidebarPropsBuilderParams {
         setSearchText: (text: string) => void;
         switchProject: (projectId: string) => void | Promise<void>;
         deleteProject: (projectId: string) => void | Promise<void>;
+        stopProjectDevServer: (projectId: string) => void | Promise<void>;
         addProjectFromLocalPath: () => boolean | void | Promise<boolean | void>;
         selectMakeProjectParentFolder: () => Promise<string | null>;
         createBlankMakeProject: (params: {
@@ -182,6 +183,7 @@ export function useIndexPageSidebarPropsBuilder({
             onTitleChange: deps.resources.handleProjectTitleChange,
             onProjectSwitch: deps.switchProject,
             onProjectDelete: deps.deleteProject,
+            onProjectStop: deps.stopProjectDevServer,
             onAddProject: deps.addProjectFromLocalPath,
             onSelectMakeProjectParentFolder: deps.selectMakeProjectParentFolder,
             onCreateBlankMakeProject: deps.createBlankMakeProject,

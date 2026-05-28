@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { App, ConfigProvider } from 'antd';
 import { StyleProvider, createCache } from '@ant-design/cssinjs';
-import type { AnnotationEntryMode } from '../selection-ui-mode';
+import type { CommentEntryMode } from '../selection-ui-mode';
 import type { PropertyPanelTab } from '../property-panel';
 import type { ViewportRect } from '../../overlay/canvas-overlay';
 import type { FloatingPosition } from '../floating-drag';
@@ -224,8 +224,8 @@ export function createWebEditorUiRuntime(options: WebEditorUiRuntimeOptions): We
           setPosition(position: FloatingPosition | null) {
             propertyPanelBridge.runOrQueue((api) => api.setPosition(position));
           },
-          enterAnnotationInput(mode?: AnnotationEntryMode) {
-            propertyPanelBridge.runOrQueue((api) => api.enterAnnotationInput?.(mode));
+          enterCommentInput(mode?: CommentEntryMode) {
+            propertyPanelBridge.runOrQueue((api) => api.enterCommentInput?.(mode));
           },
           enterInlineTextEdit() {
             propertyPanelBridge.runOrQueue((api) => api.enterInlineTextEdit?.());

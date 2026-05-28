@@ -5,6 +5,7 @@ import { getMakeClientMarkerPath, resolveProjectRoot } from './paths.ts';
 
 export const MAKE_CLIENT_MARKER_KIND = 'axhub-make-client';
 export const DEFAULT_MAKE_CLIENT_REPOSITORY = 'https://github.com/lintendo/Axhub-Make/tree/main/client';
+export const DEFAULT_MAKE_CLIENT_PROJECT_ID = 'make-project';
 
 export interface MakeClientMarker {
   schemaVersion: 1;
@@ -48,6 +49,15 @@ function isSafeProjectId(value: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,80}$/u.test(value);
 }
 
+function isLegacyOfficialProjectName(projectId: string, name: string): boolean {
+  return projectId === DEFAULT_MAKE_CLIENT_PROJECT_ID && (name === 'Axhub Make' || name === 'Axhub-Make');
+}
+
+export function normalizeMakeClientProjectName(projectId: string, name: unknown): string {
+  const normalizedName = typeof name === 'string' ? name.trim() : '';
+  return isLegacyOfficialProjectName(projectId, normalizedName) ? '' : normalizedName;
+}
+
 export function normalizeMakeClientMarker(value: unknown): MakeClientMarker | null {
   const raw = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -57,7 +67,7 @@ export function normalizeMakeClientMarker(value: unknown): MakeClientMarker | nu
     : {};
   const kind = stringValue(raw.kind);
   const id = stringValue(project.id);
-  const name = typeof project.name === 'string' ? project.name.trim() : id;
+  const name = normalizeMakeClientProjectName(id, project.name);
   const repository = stringValue(raw.repository) || DEFAULT_MAKE_CLIENT_REPOSITORY;
 
   if (raw.schemaVersion !== 1 || kind !== MAKE_CLIENT_MARKER_KIND || !id) {

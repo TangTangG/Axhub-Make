@@ -16,7 +16,7 @@ vi.mock('../index/components/dialogs/AppDialogProvider', () => ({
 
 import {
   createWebEditorV2Controller,
-  createPrototypeAnnotationsPersistenceAdapter,
+  createPrototypeCommentsPersistenceAdapter,
   readHostToolbarModeFromSearch,
   readEditorIntegrationOptionsFromSearch,
   readGenieBridgeOptionsFromSearch,
@@ -390,22 +390,22 @@ describe('createWebEditorV2Controller', () => {
     expect(start).toHaveBeenCalledTimes(1);
   });
 
-  it('uses prototype annotation file adapter for host persistence', async () => {
+  it('uses prototype comment file adapter for host persistence', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).startsWith('/api/prototype-annotations?') && init?.method !== 'PUT') {
+      if (String(input).startsWith('/api/prototype-comments?') && init?.method !== 'PUT') {
         return {
           ok: true,
           json: async () => ({
             exists: true,
             document: {
               schemaVersion: 1,
-              kind: 'prototype-edit-annotations',
+              kind: 'prototype-comments',
               resource: {
                 id: 'home',
                 targetPath: 'prototypes/home',
-                filePath: 'src/prototypes/home/.spec/prototype-annotations.json',
+                filePath: 'src/prototypes/home/.spec/prototype-comments.json',
               },
-              entries: [],
+              comments: [],
               tasks: {},
               images: [],
             },
@@ -419,7 +419,7 @@ describe('createWebEditorV2Controller', () => {
     }) as typeof fetch;
     vi.stubGlobal('fetch', fetchMock);
 
-    const adapter = createPrototypeAnnotationsPersistenceAdapter();
+    const adapter = createPrototypeCommentsPersistenceAdapter();
     const scope = {
       targetPath: 'prototypes/home',
       storageScope: 'prototypes/home',
@@ -429,32 +429,32 @@ describe('createWebEditorV2Controller', () => {
     };
 
     await expect(adapter.read(scope)).resolves.toMatchObject({
-      kind: 'prototype-edit-annotations',
+      kind: 'prototype-comments',
       resource: {
         targetPath: 'prototypes/home',
       },
     });
     await expect(adapter.write(scope, {
       schemaVersion: 1,
-      kind: 'prototype-edit-annotations',
+      kind: 'prototype-comments',
       resource: {
         id: 'home',
         targetPath: 'prototypes/home',
-        filePath: 'src/prototypes/home/.spec/prototype-annotations.json',
+        filePath: 'src/prototypes/home/.spec/prototype-comments.json',
       },
-      entries: [],
+      comments: [],
       tasks: {},
       images: [],
     }, 'changes')).resolves.toBeUndefined();
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      '/api/prototype-annotations?targetPath=prototypes%2Fhome&hydrateImages=1',
+      '/api/prototype-comments?targetPath=prototypes%2Fhome&hydrateImages=1',
       { method: 'GET' },
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      '/api/prototype-annotations?targetPath=prototypes%2Fhome',
+      '/api/prototype-comments?targetPath=prototypes%2Fhome',
       expect.objectContaining({
         method: 'PUT',
       }),
@@ -556,7 +556,7 @@ describe('createWebEditorV2Controller', () => {
 
     const controller = createWebEditorV2Controller({
       ui: {
-        skillInstallSource: '.agents/skills/prototype-edit-annotations/SKILL.md',
+        skillInstallSource: '.agents/skills/prototype-comments/SKILL.md',
       },
     });
     await controller.enable();
@@ -567,7 +567,7 @@ describe('createWebEditorV2Controller', () => {
           breadcrumbs: true,
           propertyPanel: true,
           showCopyPromptAction: true,
-          skillInstallSource: '.agents/skills/prototype-edit-annotations/SKILL.md',
+          skillInstallSource: '.agents/skills/prototype-comments/SKILL.md',
         },
       }),
     );

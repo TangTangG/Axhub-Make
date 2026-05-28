@@ -73,4 +73,19 @@ describe('make-project client-only defaults', () => {
     expect(viteConfig).not.toContain("'**/prototypes/**/spec.md'");
     expect(viteConfig).not.toContain("'**/prototypes/**/prd.md'");
   });
+
+  it('allows Vite to choose the next available dev port from the official default', () => {
+    const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
+
+    expect(viteConfig).toContain('port: OFFICIAL_CLIENT_DEV_PORT');
+    expect(viteConfig).toContain('strictPort: false');
+    expect(viteConfig).not.toContain('strictPort: true');
+  });
+
+  it('does not terminate another process before the official client starts', () => {
+    const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
+
+    expect(viteConfig).not.toContain('releaseListeningProcessesOnPort');
+    expect(viteConfig).not.toContain('portReleaseBeforeListenPlugin');
+  });
 });

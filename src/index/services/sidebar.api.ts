@@ -4,6 +4,7 @@ const WORKSPACE_API_ROUTES = {
     project: '/api/workspace/project',
     navigation: '/api/workspace/navigation',
     navigationFolders: '/api/workspace/navigation/folders',
+    openResourceInSystem: '/api/workspace/resources/open-system',
     resourcesOrder: '/api/workspace/resources/order',
 } as const;
 
@@ -54,15 +55,34 @@ async function parseJsonResponse<T>(response: Response, fallbackMessage: string)
     return response.json() as Promise<T>;
 }
 
+function getCurrentProjectIdFromUrl(): string {
+    if (typeof window === 'undefined') {
+        return '';
+    }
+    return new URLSearchParams(window.location.search).get('projectId')?.trim() || '';
+}
+
+function withWorkspaceProject(url: string): string {
+    const projectId = getCurrentProjectIdFromUrl();
+    if (!projectId) {
+        return url;
+    }
+    const [path, query = ''] = url.split('?');
+    const params = new URLSearchParams(query);
+    params.set('projectId', projectId);
+    const nextQuery = params.toString();
+    return nextQuery ? `${path}?${nextQuery}` : path;
+}
+
 export const sidebarApi = {
     async getProjectTitle(): Promise<string> {
-        const response = await fetch(WORKSPACE_API_ROUTES.project);
+        const response = await fetch(withWorkspaceProject(WORKSPACE_API_ROUTES.project));
         const data = await parseJsonResponse<{ title?: string }>(response, '加载项目标题失败');
         return typeof data.title === 'string' ? data.title.trim() : '';
     },
 
     async updateProjectTitle(title: string): Promise<UpdateProjectTitleResponse> {
-        const response = await fetch(WORKSPACE_API_ROUTES.project, {
+        const response = await fetch(withWorkspaceProject(WORKSPACE_API_ROUTES.project), {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title }),
@@ -71,12 +91,12 @@ export const sidebarApi = {
     },
 
     async getSidebarTree(tab: SidebarTreeTab): Promise<SidebarTreeResponse> {
-        const response = await fetch(`${WORKSPACE_API_ROUTES.navigation}?tab=${encodeURIComponent(tab)}`);
+        const response = await fetch(withWorkspaceProject(`${WORKSPACE_API_ROUTES.navigation}?tab=${encodeURIComponent(tab)}`));
         return parseJsonResponse<SidebarTreeResponse>(response, '加载侧边栏树失败');
     },
 
     async saveSidebarTree(tab: SidebarTreeTab, tree: SidebarTreeNode[]): Promise<SaveSidebarTreeResponse> {
-        const response = await fetch(`${WORKSPACE_API_ROUTES.navigation}?tab=${encodeURIComponent(tab)}`, {
+        const response = await fetch(withWorkspaceProject(`${WORKSPACE_API_ROUTES.navigation}?tab=${encodeURIComponent(tab)}`), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tree }),
@@ -85,7 +105,7 @@ export const sidebarApi = {
     },
 
     async createSidebarFolder(tab: SidebarTreeTab): Promise<CreateSidebarFolderResponse> {
-        const response = await fetch(`${WORKSPACE_API_ROUTES.navigationFolders}?tab=${encodeURIComponent(tab)}`, {
+        const response = await fetch(withWorkspaceProject(`${WORKSPACE_API_ROUTES.navigationFolders}?tab=${encodeURIComponent(tab)}`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
@@ -98,7 +118,7 @@ export const sidebarApi = {
         type: 'docs' | 'themes' = 'docs',
         kind?: 'file' | 'folder',
     ): Promise<OpenResourceInSystemResponse> {
-        const response = await fetch('/api/workspace/resources/open-system', {
+        const response = await fetch(withWorkspaceProject(WORKSPACE_API_ROUTES.openResourceInSystem), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -111,12 +131,12 @@ export const sidebarApi = {
     },
 
     async getResourceOrder(type: ResourceOrderType): Promise<ResourceOrderResponse> {
-        const response = await fetch(`${WORKSPACE_API_ROUTES.resourcesOrder}?type=${encodeURIComponent(type)}`);
+        const response = await fetch(withWorkspaceProject(`${WORKSPACE_API_ROUTES.resourcesOrder}?type=${encodeURIComponent(type)}`));
         return parseJsonResponse<ResourceOrderResponse>(response, '加载资源排序失败');
     },
 
     async saveResourceOrder(type: ResourceOrderType, order: string[]): Promise<SaveResourceOrderResponse> {
-        const response = await fetch(`${WORKSPACE_API_ROUTES.resourcesOrder}?type=${encodeURIComponent(type)}`, {
+        const response = await fetch(withWorkspaceProject(`${WORKSPACE_API_ROUTES.resourcesOrder}?type=${encodeURIComponent(type)}`), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ order }),

@@ -14,10 +14,10 @@ import type {
 } from './contracts';
 import type { EditorRuntimeState } from './state';
 import { DEFAULT_MODIFIERS, filterUnprocessedTransactions } from './state';
-import type { AnnotationEntryMode } from '../../ui/selection-ui-mode';
-import type { TextAnnotation } from '../../selection/text-annotation-manager';
+import type { CommentEntryMode } from '../../ui/selection-ui-mode';
+import type { TextComment } from '../../selection/text-comment-manager';
 import { createMarkerAnchor } from './marker-anchor';
-import { formatTextAnnotationLabel } from './text-annotation-target';
+import { formatTextCommentLabel } from './text-comment-target';
 
 export function createInteractionService(options: {
   state: EditorRuntimeState;
@@ -39,12 +39,12 @@ export function createInteractionService(options: {
     if (!anchor) return null;
 
     const selected = state.selectedElement;
-    const textAnnotationSource = state.activeTextAnnotation?.sourceElement;
+    const textCommentSource = state.activeTextComment?.sourceElement;
     const liveAnchorElement = (
       selected && selected.isConnected
         ? selected
-        : textAnnotationSource && textAnnotationSource.isConnected
-          ? textAnnotationSource
+        : textCommentSource && textCommentSource.isConnected
+          ? textCommentSource
           : null
     );
     const liveRect =
@@ -106,14 +106,14 @@ export function createInteractionService(options: {
   }
 
   function handleDeselect(): void {
-    if (!state.selectedElement && state.activeTextAnnotation) {
+    if (!state.selectedElement && state.activeTextComment) {
       options.changes.clearPendingSelectionAnchor();
       state.selectionAnchor = null;
-      state.activeTextAnnotation = null;
+      state.activeTextComment = null;
       state.canvasOverlay?.setTextHighlightRects(null);
-      state.textAnnotationManager?.clearActiveHighlight();
-      if (state.textAnnotationTargetElement) {
-        delete state.textAnnotationTargetElement.dataset.weTextAnnotationId;
+      state.textCommentManager?.clearActiveHighlight();
+      if (state.textCommentTargetElement) {
+        delete state.textCommentTargetElement.dataset.weTextCommentId;
       }
       state.positionTracker?.setSelectionElement(null);
       state.positionTracker?.forceUpdate();
@@ -147,9 +147,9 @@ export function createInteractionService(options: {
 
   function handlePositionUpdate(rects: TrackedRects): void {
     const selectionAnchorRect = getSelectionAnchorRect();
-    const textAnnotationActive = Boolean(state.activeTextAnnotation);
+    const textCommentActive = Boolean(state.activeTextComment);
     state.breadcrumbs?.setAnchorRect(
-      textAnnotationActive ? selectionAnchorRect : (rects.selection ?? selectionAnchorRect),
+      textCommentActive ? selectionAnchorRect : (rects.selection ?? selectionAnchorRect),
     );
 
     const animateHover = state.pendingHoverTransition;
@@ -161,7 +161,7 @@ export function createInteractionService(options: {
       !!state.selectedElement && state.hoveredElement === state.selectedElement;
     const hideChrome = !state.selectionChromeVisible;
     const hoverRect = hideChrome ? null : suppressHover ? null : rects.hover;
-    const selectionRect = hideChrome || textAnnotationActive ? null : rects.selection;
+    const selectionRect = hideChrome || textCommentActive ? null : rects.selection;
     const selectionLocked = genieBridge.isElementInteractionLocked(state.selectedElement);
     const inlineTextEditing = Boolean(state.inlineTextEditingActive);
     const selectionEffect =
@@ -173,7 +173,7 @@ export function createInteractionService(options: {
             : 'default'
         : 'default';
     const handlesRect =
-      hideChrome || state.annotationEntryMode === 'bubble-card' || selectionLocked || inlineTextEditing
+      hideChrome || state.commentEntryMode === 'bubble-card' || selectionLocked || inlineTextEditing
         ? null
         : rects.selection;
     state.canvasOverlay.setHoverRect(hoverRect, { animate: animateHover });
@@ -205,12 +205,12 @@ export function createInteractionService(options: {
     options.onStatusChange?.();
   }
 
-  function enterAnnotationInput(mode: AnnotationEntryMode = 'bubble-card'): void {
-    state.annotationEntryMode = mode;
-    state.propertyPanel?.enterAnnotationInput?.(mode);
+  function enterCommentInput(mode: CommentEntryMode = 'bubble-card'): void {
+    state.commentEntryMode = mode;
+    state.propertyPanel?.enterCommentInput?.(mode);
   }
 
-  function enterAnnotationFromTrigger(
+  function enterCommentFromTrigger(
     selectionAnchor?: { clientX: number; clientY: number },
   ): boolean {
     const selected = state.selectedElement;
@@ -233,16 +233,16 @@ export function createInteractionService(options: {
       handleSelect(target, DEFAULT_MODIFIERS, selectionAnchor);
     }
 
-    enterAnnotationInput('bubble-card');
+    enterCommentInput('bubble-card');
     return true;
   }
 
   function clearSelection(): void {
     const hadElementSelection = Boolean(state.selectedElement);
-    const hadTextAnnotationSelection = Boolean(state.activeTextAnnotation);
-    if (!hadElementSelection && !hadTextAnnotationSelection && !state.selectionAnchor) return;
+    const hadTextCommentSelection = Boolean(state.activeTextComment);
+    if (!hadElementSelection && !hadTextCommentSelection && !state.selectionAnchor) return;
 
-    const clearIdleTextAnnotationMeta = () => {
+    const clearIdleTextCommentMeta = () => {
       if (
         typeof options.changes.getMetaForElement !== 'function' ||
         typeof options.changes.normalizeNote !== 'function' ||
@@ -250,18 +250,18 @@ export function createInteractionService(options: {
       ) {
         return;
       }
-      const textAnnotationTarget = state.textAnnotationTargetElement ?? null;
-      const textAnnotationMeta = options.changes.getMetaForElement(textAnnotationTarget);
-      const hasCommittedTextAnnotationContent = Boolean(
-        textAnnotationMeta &&
+      const textCommentTarget = state.textCommentTargetElement ?? null;
+      const textCommentMeta = options.changes.getMetaForElement(textCommentTarget);
+      const hasCommittedTextCommentContent = Boolean(
+        textCommentMeta &&
         (
-          options.changes.normalizeNote(textAnnotationMeta.note).trim() ||
-          textAnnotationMeta.images.length > 0 ||
-          textAnnotationMeta.changeKinds.length > 0
+          options.changes.normalizeNote(textCommentMeta.note).trim() ||
+          textCommentMeta.images.length > 0 ||
+          textCommentMeta.changeKinds.length > 0
         )
       );
-      if (textAnnotationTarget && !hasCommittedTextAnnotationContent) {
-        options.changes.setNoteForElement(textAnnotationTarget, '');
+      if (textCommentTarget && !hasCommittedTextCommentContent) {
+        options.changes.setNoteForElement(textCommentTarget, '');
       }
     };
 
@@ -270,14 +270,14 @@ export function createInteractionService(options: {
       if (state.selectedElement) {
         handleDeselect();
       } else {
-        clearIdleTextAnnotationMeta();
+        clearIdleTextCommentMeta();
         options.changes.clearPendingSelectionAnchor();
         state.selectionAnchor = null;
-        state.activeTextAnnotation = null;
+        state.activeTextComment = null;
         state.canvasOverlay?.setTextHighlightRects(null);
-        state.textAnnotationManager?.clearActiveHighlight();
-        if (state.textAnnotationTargetElement) {
-          delete state.textAnnotationTargetElement.dataset.weTextAnnotationId;
+        state.textCommentManager?.clearActiveHighlight();
+        if (state.textCommentTargetElement) {
+          delete state.textCommentTargetElement.dataset.weTextCommentId;
         }
         syncShadowHostMount(null);
         state.breadcrumbs?.setTarget(null);
@@ -292,14 +292,14 @@ export function createInteractionService(options: {
       if (state.selectedElement) {
         handleDeselect();
       } else {
-        clearIdleTextAnnotationMeta();
+        clearIdleTextCommentMeta();
         options.changes.clearPendingSelectionAnchor();
         state.selectionAnchor = null;
-        state.activeTextAnnotation = null;
+        state.activeTextComment = null;
         state.canvasOverlay?.setTextHighlightRects(null);
-        state.textAnnotationManager?.clearActiveHighlight();
-        if (state.textAnnotationTargetElement) {
-          delete state.textAnnotationTargetElement.dataset.weTextAnnotationId;
+        state.textCommentManager?.clearActiveHighlight();
+        if (state.textCommentTargetElement) {
+          delete state.textCommentTargetElement.dataset.weTextCommentId;
         }
         syncShadowHostMount(null);
         state.breadcrumbs?.setTarget(null);
@@ -425,16 +425,16 @@ export function createInteractionService(options: {
   }
 
   /**
-   * Enter text annotation flow: create an editMeta entry from a TextAnnotation
+   * Enter text comment flow: create an editMeta entry from a TextComment
    * and trigger the bubble card UI.
    */
-  function enterTextAnnotation(
-    annotation: TextAnnotation,
+  function enterTextComment(
+    comment: TextComment,
     anchor: { clientX: number; clientY: number },
   ): void {
-    const elementKey = annotation.id as WebEditorElementKey;
-    const sourceElement = annotation.sourceElement?.isConnected ? annotation.sourceElement : null;
-    const selectionRect = annotation.boundingRect;
+    const elementKey = comment.id as WebEditorElementKey;
+    const sourceElement = comment.sourceElement?.isConnected ? comment.sourceElement : null;
+    const selectionRect = comment.boundingRect;
     const hasFiniteSelectionRect = (
       Number.isFinite(selectionRect.left) &&
       Number.isFinite(selectionRect.top) &&
@@ -470,17 +470,17 @@ export function createInteractionService(options: {
       : undefined;
 
     // Build a synthetic ElementLocator so the rest of the system
-    // (persistence, summaries, etc.) can reference this annotation
+    // (persistence, summaries, etc.) can reference this comment
     const locator: ElementLocator = sourceElement
       ? createElementLocator(sourceElement)
       : {
           selectors: [],
-          fingerprint: annotation.selectedText.slice(0, 80),
+          fingerprint: comment.selectedText.slice(0, 80),
           path: [],
         };
 
     // Build a label from the selected text (first 30 chars)
-    const label = formatTextAnnotationLabel(annotation.selectedText);
+    const label = formatTextCommentLabel(comment.selectedText);
 
     // Create/get editMeta
     const meta = options.changes.getOrCreateEditMeta(elementKey, locator, label);
@@ -497,39 +497,39 @@ export function createInteractionService(options: {
       offsetY,
     });
 
-    // Since text annotations don't have a real target element,
+    // Since text comments don't have a real target element,
     // we keep DOM selection empty and use a synthetic target node for UI plumbing.
     state.selectedElement = null;
     state.selectionAnchor = markerAnchor;
     state.hoveredElement = null;
-    state.activeTextAnnotation = annotation;
+    state.activeTextComment = comment;
     state.positionTracker?.setSelectionElement(sourceElement);
     meta.anchor = markerAnchor;
     syncShadowHostMount(sourceElement);
 
-    const textAnnotationTargetElement = state.textAnnotationTargetElement;
-    if (textAnnotationTargetElement) {
-      textAnnotationTargetElement.dataset.weTextAnnotationId = annotation.id;
-      textAnnotationTargetElement.style.left = `${Math.round(anchorClientX)}px`;
-      textAnnotationTargetElement.style.top = `${Math.round(anchorClientY)}px`;
+    const textCommentTargetElement = state.textCommentTargetElement;
+    if (textCommentTargetElement) {
+      textCommentTargetElement.dataset.weTextCommentId = comment.id;
+      textCommentTargetElement.style.left = `${Math.round(anchorClientX)}px`;
+      textCommentTargetElement.style.top = `${Math.round(anchorClientY)}px`;
       state.breadcrumbs?.setTarget(null);
       state.propertyPanel?.setTarget(null);
-      state.breadcrumbs?.setTarget(textAnnotationTargetElement);
-      state.propertyPanel?.setTarget(textAnnotationTargetElement);
+      state.breadcrumbs?.setTarget(textCommentTargetElement);
+      state.propertyPanel?.setTarget(textCommentTargetElement);
     } else {
       state.breadcrumbs?.setTarget(null);
       state.propertyPanel?.setTarget(null);
     }
-    state.breadcrumbs?.setAnchorRect(annotation.boundingRect);
+    state.breadcrumbs?.setAnchorRect(comment.boundingRect);
     state.handlesController?.setTarget(null);
     state.parentSelectController?.setTarget(null);
 
     // Enter bubble card mode
-    enterAnnotationInput('bubble-card');
+    enterCommentInput('bubble-card');
     state.propertyPanel?.refresh();
 
     options.onStatusChange?.();
-    console.log(`${options.logPrefix} Text annotation:`, annotation.selectedText.slice(0, 50));
+    console.log(`${options.logPrefix} Text comment:`, comment.selectedText.slice(0, 50));
   }
 
   return {
@@ -538,9 +538,9 @@ export function createInteractionService(options: {
     handleDeselect,
     handlePositionUpdate,
     handleTransactionChange,
-    enterAnnotationInput,
-    enterAnnotationFromTrigger,
-    enterTextAnnotation,
+    enterCommentInput,
+    enterCommentFromTrigger,
+    enterTextComment,
     clearSelection,
     revertElement,
   };

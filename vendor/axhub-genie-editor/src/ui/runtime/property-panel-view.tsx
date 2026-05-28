@@ -47,12 +47,12 @@ import {
 } from '../panel-compact-position';
 import { ReactPageTweakPanel } from '../property-panel/react-page-tweak-panel';
 import {
-  ANNOTATION_SHORTCUT_LONG_PRESS_MS,
-  annotationShortcutSettingsEqual,
-  DEFAULT_ANNOTATION_SHORTCUT_SETTINGS,
-  sanitizeAnnotationShortcutSettings,
-  type AnnotationShortcutSettings,
-} from '../../core/editor/annotation-shortcut-settings';
+  COMMENT_SHORTCUT_LONG_PRESS_MS,
+  commentShortcutSettingsEqual,
+  DEFAULT_COMMENT_SHORTCUT_SETTINGS,
+  sanitizeCommentShortcutSettings,
+  type CommentShortcutSettings,
+} from '../../core/editor/comment-shortcut-settings';
 import { getGeniePromptToolbarActionState } from '../genie-prompt-action';
 import { resolveExternalEditingStatusDescription } from './external-editing-status-hint';
 import {
@@ -98,7 +98,7 @@ import type {
   GenieEditorHostToolbarState,
 } from '../../web-editor-types';
 
-const GENIE_WAKE_FAILURE_MESSAGE = 'AI 唤醒失败，请在终端执行 npx @axhub/genie，再重试';
+const GENIE_WAKE_FAILURE_MESSAGE = 'AI 唤醒失败，请在终端执行 npx @axhub/genie@latest，再重试';
 const GENIE_WAKE_TIMEOUT_MS = 12000;
 const GENIE_INTERRUPT_TIMEOUT_MS = 12000;
 const GENIE_EDITOR_SKILL_URL =
@@ -299,8 +299,8 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     }));
     const [compactAnchorRect, setCompactAnchorRect] = React.useState<RectLike | null>(null);
     const [shortcutDialogOpen, setShortcutDialogOpen] = React.useState(false);
-    const [shortcutDraft, setShortcutDraft] = React.useState<AnnotationShortcutSettings>(
-      options.getAnnotationShortcutSettings?.() ?? { ...DEFAULT_ANNOTATION_SHORTCUT_SETTINGS },
+    const [shortcutDraft, setShortcutDraft] = React.useState<CommentShortcutSettings>(
+      options.getCommentShortcutSettings?.() ?? { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS },
     );
     const [capturingShortcutIndex, setCapturingShortcutIndex] = React.useState<number | null>(null);
     const [panelRefreshKey, setPanelRefreshKey] = React.useState(0);
@@ -653,7 +653,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     const closeShortcutDialog = React.useCallback(() => {
       setShortcutDialogOpen(false);
       setCapturingShortcutIndex(null);
-      options.onAnnotationShortcutDialogOpenChange?.(false);
+      options.onCommentShortcutDialogOpenChange?.(false);
     }, [options]);
 
     const shortcutValidationError = React.useMemo(() => {
@@ -710,20 +710,20 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     }, [genieAwake]);
 
     const handleShortcutDraftChange = React.useCallback(
-      (updater: (prev: AnnotationShortcutSettings) => AnnotationShortcutSettings) => {
-        setShortcutDraft((prev) => sanitizeAnnotationShortcutSettings(updater(prev)));
+      (updater: (prev: CommentShortcutSettings) => CommentShortcutSettings) => {
+        setShortcutDraft((prev) => sanitizeCommentShortcutSettings(updater(prev)));
       },
       [],
     );
 
     const handleShortcutSave = React.useCallback(() => {
       if (shortcutValidationError) return;
-      const nextSettings = sanitizeAnnotationShortcutSettings(shortcutDraft);
-      const currentSettings = sanitizeAnnotationShortcutSettings(
-        options.getAnnotationShortcutSettings?.() ?? DEFAULT_ANNOTATION_SHORTCUT_SETTINGS,
+      const nextSettings = sanitizeCommentShortcutSettings(shortcutDraft);
+      const currentSettings = sanitizeCommentShortcutSettings(
+        options.getCommentShortcutSettings?.() ?? DEFAULT_COMMENT_SHORTCUT_SETTINGS,
       );
-      if (!annotationShortcutSettingsEqual(nextSettings, currentSettings)) {
-        options.onAnnotationShortcutSettingsChange?.(nextSettings);
+      if (!commentShortcutSettingsEqual(nextSettings, currentSettings)) {
+        options.onCommentShortcutSettingsChange?.(nextSettings);
       }
       closeShortcutDialog();
     }, [closeShortcutDialog, options, shortcutDraft, shortcutValidationError]);
@@ -859,7 +859,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
 
     React.useEffect(() => {
       return () => {
-        options.onAnnotationShortcutDialogOpenChange?.(false);
+        options.onCommentShortcutDialogOpenChange?.(false);
       };
     }, [options]);
 
@@ -2032,7 +2032,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         setPosition(position: FloatingPosition | null) {
           applyPanelPosition(position);
         },
-        enterAnnotationInput(mode = 'bubble-card') {
+        enterCommentInput(mode = 'bubble-card') {
           if (toolMinimized) {
             restoreTool();
           }
@@ -2459,7 +2459,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
                 <div style={{ fontSize: 13, fontWeight: 600, color: EDITOR_CHROME.textPrimary }}>
                   启用鼠标中键监听
                 </div>
-                <div style={shortcutCaptureHintStyle}>鼠标中键单击会直接进入标注气泡卡片。</div>
+                <div style={shortcutCaptureHintStyle}>鼠标中键单击会直接进入批注气泡卡片。</div>
               </div>
               <Switch
                 checked={shortcutDraft.middleClickEnabled}
@@ -2486,7 +2486,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
                     handleShortcutDraftChange((prev) => {
                       const nextShortcuts = [
                         ...prev.shortcuts,
-                      ] as AnnotationShortcutSettings['shortcuts'];
+                      ] as CommentShortcutSettings['shortcuts'];
                       nextShortcuts[index] = key;
                       return {
                         ...prev,
@@ -2500,7 +2500,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
                     handleShortcutDraftChange((prev) => {
                       const nextShortcuts = [
                         ...prev.shortcuts,
-                      ] as AnnotationShortcutSettings['shortcuts'];
+                      ] as CommentShortcutSettings['shortcuts'];
                       nextShortcuts[index] = null;
                       return {
                         ...prev,
@@ -2512,7 +2512,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
               ))}
             </div>
             <div style={shortcutCaptureHintStyle}>
-              仅支持 Shift / Alt / Ctrl / Command，长按 {ANNOTATION_SHORTCUT_LONG_PRESS_MS}ms 触发。
+              仅支持 Shift / Alt / Ctrl / Command，长按 {COMMENT_SHORTCUT_LONG_PRESS_MS}ms 触发。
             </div>
             {shortcutValidationError ? (
               <div style={{ fontSize: 12, color: EDITOR_CHROME.textDanger }}>
@@ -2544,12 +2544,12 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
               {
                 keys: ['Enter', 'Esc'],
                 label: '保存并关闭气泡卡片',
-                desc: '在气泡卡片的输入框中按下，保存当前标注内容并关闭卡片',
+                desc: '在气泡卡片的输入框中按下，保存当前批注内容并关闭卡片',
               },
               {
                 keys: [`${navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'} + Enter`],
                 label: '快捷执行并关闭',
-                desc: '保存当前标注并立即发送给 AI 执行，同时关闭气泡卡片',
+                desc: '保存当前批注并立即发送给 AI 执行，同时关闭气泡卡片',
               },
               {
                 keys: [`${navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'} + V`],

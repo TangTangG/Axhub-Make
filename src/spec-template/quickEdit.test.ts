@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    buildMarkdownAnnotationPrompt,
+    buildMarkdownCommentPrompt,
     formatLocatorPath,
     resolveMarkdownQuickEditMeta,
     shouldIgnoreInitialMarkdownEditorChange,
@@ -29,8 +29,8 @@ describe('spec-template quickEdit helpers', () => {
         });
     });
 
-    it('builds an actionable prompt from Markdown annotations', () => {
-        const result = buildMarkdownAnnotationPrompt({
+    it('builds an actionable prompt from Markdown comments', () => {
+        const result = buildMarkdownCommentPrompt({
             docLabel: '首页说明',
             docUrl: '/docs/home-page.md',
             modifiedElements: [{
@@ -45,7 +45,7 @@ describe('spec-template quickEdit helpers', () => {
         expect(result.targetPath).toBe('src/resources/home-page.md');
         expect(result.prompt).toContain('文档路径: src/resources/home-page.md');
         expect(result.prompt).not.toContain('对应原型入口');
-        expect(result.prompt).toContain('标注目标: 标题');
+        expect(result.prompt).toContain('批注目标: 标题');
         expect(result.prompt).toContain('预览定位: h1 | .hero-title');
         expect(formatLocatorPath({ path: [0, 2, 1] })).toBe('0>2>1');
     });

@@ -14,12 +14,12 @@ describe('Phase 5 quick editing regression boundary', () => {
         expect(existsSync(resolve(indexSrcRoot, 'domains/preview/hooks/useEditorModes.ts'))).toBe(false);
     });
 
-    it('keeps Markdown annotation/edit state defaults in shared index helpers', () => {
+    it('keeps Markdown comment/edit state defaults in shared index helpers', () => {
         const source = readIndexSource('app/index-page.helpers.ts');
 
         expect(source).toContain('MarkdownQuickEditMode');
         expect(source).toContain('MarkdownQuickEditState');
         expect(source).toContain('createDefaultMarkdownQuickEditState');
-        expect(source).toContain("quickEditMode: 'annotation'");
+        expect(source).toContain("quickEditMode: 'comment'");
     });
 });

@@ -9,7 +9,12 @@ import {
   normalizeHealthServerInfo,
   readServerInfo,
 } from '../scripts/utils/serverInfo.mjs';
-import { PROJECT_ID, PROJECT_NAME } from '../scripts/sync-project-metadata.mjs';
+import {
+  PRODUCT_NAME,
+  PROJECT_ID,
+  PROJECT_NAME,
+  readMakeClientProjectIdentity,
+} from '../scripts/sync-project-metadata.mjs';
 import { MAKE_CONFIG_RELATIVE_PATH } from './utils/makeConstants';
 
 const DEFAULT_ADMIN_ORIGIN = 'http://localhost:5174';
@@ -18,6 +23,7 @@ const START_ROUTE = '/__axhub/make-server/start';
 const DEFAULT_ADMIN_HEALTH_TIMEOUT_MS = 1200;
 const DEFAULT_ADMIN_READY_TIMEOUT_MS = 60000;
 const DEFAULT_ADMIN_READY_POLL_INTERVAL_MS = 500;
+const SKIP_AUTO_START_SERVER_ENV = 'AXHUB_MAKE_SKIP_AUTO_START_SERVER';
 
 type RegisteredProject = {
   projectId: string;
@@ -208,9 +214,10 @@ export async function waitForAdminOrigin(
 export async function registerOfficialProject(projectRoot: string, adminOrigin: string): Promise<RegisteredProject> {
   const resolvedProjectRoot = path.resolve(projectRoot);
   const metadataPath = path.join(resolvedProjectRoot, '.axhub/make/project.json');
+  const identity = readMakeClientProjectIdentity(resolvedProjectRoot);
   const body = {
-    id: PROJECT_ID,
-    name: PROJECT_NAME,
+    id: identity.id,
+    name: identity.name,
     root: resolvedProjectRoot,
     metadataPath,
   };
@@ -223,7 +230,7 @@ export async function registerOfficialProject(projectRoot: string, adminOrigin: 
   }
   const registry = await projectsResponse.json() as any;
   const existing = Array.isArray(registry.projects)
-    ? registry.projects.find((project: any) => project.id === PROJECT_ID || path.resolve(project.root || '') === resolvedProjectRoot)
+    ? registry.projects.find((project: any) => project.id === identity.id || path.resolve(project.root || '') === resolvedProjectRoot)
     : null;
 
   if (existing) {
@@ -231,7 +238,7 @@ export async function registerOfficialProject(projectRoot: string, adminOrigin: 
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        name: PROJECT_NAME,
+        name: identity.name,
         root: resolvedProjectRoot,
         metadataPath,
       }),
@@ -240,19 +247,19 @@ export async function registerOfficialProject(projectRoot: string, adminOrigin: 
       throw new Error(`PATCH /api/projects/${existing.id} failed with ${response.status}`);
     }
   } else {
-    const response = await fetch(new URL('/api/projects', adminOrigin), {
+    const response = await fetch(new URL('/api/projects/make/register-existing', adminOrigin), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ root: resolvedProjectRoot }),
     });
     if (!response.ok && response.status !== 409) {
-      throw new Error(`POST /api/projects failed with ${response.status}`);
+      throw new Error(`POST /api/projects/make/register-existing failed with ${response.status}`);
     }
   }
 
   return {
-    projectId: existing?.id || PROJECT_ID,
-    projectName: PROJECT_NAME,
+    projectId: existing?.id || identity.id,
+    projectName: identity.name,
   };
 }
 
@@ -433,6 +440,10 @@ export function autoStartMakeServerPlugin(): Plugin {
         next();
       });
 
+      if (process.env[SKIP_AUTO_START_SERVER_ENV] === '1') {
+        return;
+      }
+
       server.httpServer?.once('listening', async () => {
         try {
           const payload = await startOrReuseMakeServer(projectRoot, {
@@ -440,7 +451,7 @@ export function autoStartMakeServerPlugin(): Plugin {
           });
           if (payload.ready && payload.adminOrigin) {
             console.log(`✅ Axhub Make server ready at ${payload.adminOrigin}`);
-            console.log(`✅ Registered ${PROJECT_NAME}; admin URL ${payload.adminUrl}`);
+            console.log(`✅ Registered ${payload.projectName || 'unnamed project'} in ${PRODUCT_NAME}; admin URL ${payload.adminUrl}`);
             return;
           }
           console.warn(`[make-server] ${payload.error || `Open make-server and register ${metadataPathForLog(projectRoot)} manually if needed.`}`);

@@ -90,6 +90,7 @@ export interface ProjectListItem {
     metadataPath?: string;
     createdAt?: string;
     updatedAt?: string;
+    runtimeStatus?: ProjectRuntimeStatus;
 }
 
 export interface ProjectListPayload {
@@ -166,6 +167,7 @@ export function normalizeProjectsPayload(payload: unknown): ProjectListPayload {
                     metadataPath: pickString(item.metadataPath) || undefined,
                     createdAt: pickString(item.createdAt) || undefined,
                     updatedAt: pickString(item.updatedAt) || undefined,
+                    runtimeStatus: normalizeProjectRuntimeStatusPayload(item.runtimeStatus, id),
                 };
             })
             .filter((project): project is ProjectListItem => Boolean(project))

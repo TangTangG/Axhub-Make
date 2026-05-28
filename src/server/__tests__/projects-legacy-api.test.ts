@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,6 +25,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanupProjectApiTestRoots();
 });
+
+const makePackageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../package.json');
 
 describe('make-server project legacy compatibility APIs', () => {
   it('exposes source and zip compatibility handling from its domain module', () => {
@@ -417,8 +420,14 @@ describe('make-server project legacy compatibility APIs', () => {
       });
 
       await setActiveProject(server.origin, 'second-client');
+      writeJson(path.join(secondRoot, 'package.json'), {
+        version: '0.1.0',
+        scripts: { dev: 'vite' },
+      });
       const version = await fetch(`${server.origin}/api/version`).then((response) => response.json());
       expect(version.projectId).toBe('second-client');
+      expect(version.version).toBe(JSON.parse(fs.readFileSync(makePackageJsonPath, 'utf8')).version);
+      expect(version.version).not.toBe('0.1.0');
 
       fs.mkdirSync(path.join(firstRoot, 'dist'), { recursive: true });
       fs.writeFileSync(path.join(firstRoot, 'dist', 'first.txt'), 'first\n', 'utf8');

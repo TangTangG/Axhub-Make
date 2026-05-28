@@ -5,7 +5,7 @@ import { createCanvasOverlay } from '../../overlay/canvas-overlay';
 import { createHandlesController } from '../../overlay/handles-controller';
 import { createParentSelectCorner } from '../../overlay/parent-select-corner';
 import { createSelectionEngine } from '../../selection/selection-engine';
-import { createTextAnnotationManager } from '../../selection/text-annotation-manager';
+import { createTextCommentManager } from '../../selection/text-comment-manager';
 import { createEventController } from '../event-controller';
 import { createPositionTracker } from '../position-tracker';
 import { createTransactionManager, type TransactionManager } from '../transaction-manager';
@@ -19,7 +19,7 @@ import {
 } from '../../design-tool-export';
 import { clearEditorRuntimeRefs, resetEditorTransientState } from './state';
 import type { EditorLifecycleDeps } from './contracts';
-import { TEXT_ANNOTATION_TARGET_ATTR } from './text-annotation-target';
+import { TEXT_COMMENT_TARGET_ATTR } from './text-comment-target';
 import { getGlobalGenieEditorTweakProtocol } from '../../tweak/protocol';
 import { resolveWebEditorOptions } from './state';
 import type { PropertyPanelOptions } from '../../ui/property-panel';
@@ -29,7 +29,7 @@ interface EditorLifecycle {
   startPanelOnly(): void;
   stop(options?: { keepPanelOnly?: boolean }): void;
   stopPanelOnly(): void;
-  flushPendingAnnotationContextSync(): void;
+  flushPendingCommentContextSync(): void;
 }
 
 export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecycle {
@@ -45,7 +45,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     (options.genieBridge as { enableContextAppend?: boolean }).enableContextAppend = undefined;
   }
   let inlineTextEditingElement: HTMLElement | null = null;
-  let pendingAnnotationContextSync = false;
+  let pendingCommentContextSync = false;
 
   function isEventWithinElement(event: Event, element: Element): boolean {
     try {
@@ -84,54 +84,48 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     );
   }
 
-  function sendAnnotationContextSync(element: Element | null, mode: 'append' | 'replace'): void {
-    void services.genieBridge.handleSyncAnnotationContextToGenie(element, mode).then(() => {
+  function sendCommentContextSync(element: Element | null, mode: 'append' | 'replace'): void {
+    void services.genieBridge.handleSyncCommentContextToGenie(element, mode).then(() => {
       if (mode === 'replace') {
-        pendingAnnotationContextSync = false;
+        pendingCommentContextSync = false;
       }
     }).catch((error) => {
-      pendingAnnotationContextSync = true;
+      pendingCommentContextSync = true;
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to sync annotation context:`, message);
+      console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to sync comment context:`, message);
     });
   }
 
-  function hasAnnotationCommentsToSync(): boolean {
+  function hasCommentContextToSync(): boolean {
     try {
-      return (services.changes.buildAnnotationCommentsContext?.() ?? []).length > 0;
+      return (services.changes.buildCommentCommentsContext?.() ?? []).length > 0;
     } catch {
-      return pendingAnnotationContextSync;
+      return pendingCommentContextSync;
     }
   }
 
-  function prependPromptPrefix(prompt: string, promptPrefix?: string): string {
-    const normalizedPrefix = String(promptPrefix ?? '').trim();
-    if (!normalizedPrefix) return prompt;
-    return `${normalizedPrefix}\n\n${prompt}`;
-  }
-
-  function flushPendingAnnotationContextSync(): void {
+  function flushPendingCommentContextSync(): void {
     if (!options.genieBridge.enabled || !services.genieBridge.isAvailable()) {
       return;
     }
-    if (!pendingAnnotationContextSync && !hasAnnotationCommentsToSync()) {
+    if (!pendingCommentContextSync && !hasCommentContextToSync()) {
       return;
     }
 
-    sendAnnotationContextSync(null, 'replace');
+    sendCommentContextSync(null, 'replace');
   }
 
-  function syncAnnotationContextAfterNoteSave(element: Element | null, note: string): void {
+  function syncCommentContextAfterNoteSave(element: Element | null, note: string): void {
     const mode = String(note ?? '').trim() ? 'append' : 'replace';
     if (!options.genieBridge.enabled) {
       return;
     }
     if (!services.genieBridge.isAvailable()) {
-      pendingAnnotationContextSync = true;
+      pendingCommentContextSync = true;
       return;
     }
 
-    sendAnnotationContextSync(element, mode);
+    sendCommentContextSync(element, mode);
   }
 
   function resolvePromptTargetsFromEditHistory(): Element[] {
@@ -246,12 +240,12 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     state.eventController?.dispose();
     state.eventController = null;
 
-    state.annotationShortcutCleanup?.();
-    state.annotationShortcutCleanup = null;
+    state.commentShortcutCleanup?.();
+    state.commentShortcutCleanup = null;
 
-    if (state.textAnnotationTargetElement) {
-      state.textAnnotationTargetElement.remove();
-      state.textAnnotationTargetElement = null;
+    if (state.textCommentTargetElement) {
+      state.textCommentTargetElement.remove();
+      state.textCommentTargetElement = null;
     }
 
     state.dragReorderController?.dispose();
@@ -405,7 +399,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
 
       state.changeMarkersVisible = services.persistence.readMarkerVisibility();
       ensureMarkersVisible();
-      state.annotationShortcutSettings = services.persistence.readAnnotationShortcutSettings();
+      state.commentShortcutSettings = services.persistence.readCommentShortcutSettings();
       state.uiSettings = {
         ...services.persistence.readUiSettings(),
         darkMode: options.ui.initialDarkMode,
@@ -428,13 +422,13 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
       });
       installPerfHotkey();
 
-      const isTextAnnotation = options.interactionProfile === 'text-annotation';
+      const isTextComment = options.interactionProfile === 'text-comment';
 
-      if (isTextAnnotation) {
-        const textAnnotationTarget = document.createElement('div');
-        textAnnotationTarget.setAttribute(TEXT_ANNOTATION_TARGET_ATTR, 'true');
-        textAnnotationTarget.setAttribute('aria-hidden', 'true');
-        Object.assign(textAnnotationTarget.style, {
+      if (isTextComment) {
+        const textCommentTarget = document.createElement('div');
+        textCommentTarget.setAttribute(TEXT_COMMENT_TARGET_ATTR, 'true');
+        textCommentTarget.setAttribute('aria-hidden', 'true');
+        Object.assign(textCommentTarget.style, {
           position: 'fixed',
           left: '0px',
           top: '0px',
@@ -444,10 +438,10 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           pointerEvents: 'none',
           userSelect: 'none',
         });
-        elements.overlayRoot.append(textAnnotationTarget);
-        state.textAnnotationTargetElement = textAnnotationTarget;
+        elements.overlayRoot.append(textCommentTarget);
+        state.textCommentTargetElement = textCommentTarget;
 
-        state.textAnnotationManager = createTextAnnotationManager({
+        state.textCommentManager = createTextCommentManager({
           isOverlayElement: state.shadowHost.isOverlayElement,
         });
         state.selectionEngine = null;
@@ -455,15 +449,15 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         state.selectionEngine = createSelectionEngine({
           isOverlayElement: state.shadowHost.isOverlayElement,
         });
-        state.textAnnotationManager = null;
-        state.textAnnotationTargetElement = null;
+        state.textCommentManager = null;
+        state.textCommentTargetElement = null;
       }
 
       state.positionTracker = createPositionTracker({
         onPositionUpdate: services.interaction.handlePositionUpdate,
       });
 
-      state.annotationShortcutCleanup = null;
+      state.commentShortcutCleanup = null;
 
       state.transactionManager = createTransactionManager({
         enableKeyBindings: true,
@@ -522,16 +516,16 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         isOverlayElement: state.shadowHost.isOverlayElement,
         shouldAllowPageEvent: (event) =>
           Boolean(options.host.shouldAllowPageEvent?.(event)) || shouldAllowInlineEditingPageEvent(event),
-        allowNativeTextSelection: isTextAnnotation,
-        onHover: isTextAnnotation ? () => {} : services.interaction.handleHover,
-        onSelect: isTextAnnotation
+        allowNativeTextSelection: isTextComment,
+        onHover: isTextComment ? () => {} : services.interaction.handleHover,
+        onSelect: isTextComment
           ? () => {}
           : (event) =>
               services.interaction.handleSelect(event.element, event.modifiers, {
                 clientX: event.clientX,
                 clientY: event.clientY,
               }),
-        onDoubleClickSelected: isTextAnnotation
+        onDoubleClickSelected: isTextComment
           ? undefined
           : (event) => {
               if (!services.textSession.isEditable(event.element)) return;
@@ -540,10 +534,10 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
               state.propertyPanel?.enterInlineTextEdit?.();
             },
         onDeselect: services.interaction.handleDeselect,
-        resolveTargetForHover: isTextAnnotation
+        resolveTargetForHover: isTextComment
           ? undefined
           : (target) => services.genieBridge.resolveSelectableElement(target),
-        findTargetForSelect: isTextAnnotation
+        findTargetForSelect: isTextComment
           ? undefined
           : (_x, _y, modifiers, event) => {
               const target = state.selectionEngine?.findBestTargetFromEvent(event, modifiers) ?? null;
@@ -553,9 +547,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         isElementInteractionLocked: (element) => services.genieBridge.isElementInteractionLocked(element),
       });
 
-      // Text-annotation mode: listen for mouseup to commit text selections
-      if (isTextAnnotation && state.textAnnotationManager) {
-        const textAnnotationManager = state.textAnnotationManager;
+      // Text-comment mode: listen for mouseup to commit text selections
+      if (isTextComment && state.textCommentManager) {
+        const textCommentManager = state.textCommentManager;
         let pendingTextSelectionCommitTimer: number | null = null;
         const queueTextSelectionCommit = (): void => {
           // Delay slightly so the browser has finished updating the selection.
@@ -566,31 +560,31 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           }
           pendingTextSelectionCommitTimer = window.setTimeout(() => {
             pendingTextSelectionCommitTimer = null;
-            const annotation = textAnnotationManager.commitSelection();
-            if (!annotation) return;
+            const comment = textCommentManager.commitSelection();
+            if (!comment) return;
 
-            state.activeTextAnnotation = annotation;
+            state.activeTextComment = comment;
 
-            const usedNativeHighlight = textAnnotationManager.setActiveHighlight(annotation);
+            const usedNativeHighlight = textCommentManager.setActiveHighlight(comment);
             state.canvasOverlay?.setTextHighlightRects(
-              usedNativeHighlight ? null : annotation.clientRects,
+              usedNativeHighlight ? null : comment.clientRects,
             );
             state.canvasOverlay?.render();
 
             // Compute an anchor for the bubble card from the bounding rect
-            const rect = annotation.boundingRect;
+            const rect = comment.boundingRect;
             const clientX = rect.left + rect.width / 2;
             const clientY = rect.top;
 
             // Create a virtual "container element" reference using commonAncestorContainer
-            // and enter the annotation flow via the standard interaction service
-            services.interaction.enterTextAnnotation(annotation, { clientX, clientY });
+            // and enter the comment flow via the standard interaction service
+            services.interaction.enterTextComment(comment, { clientX, clientY });
           }, 10);
         };
 
         window.addEventListener('pointerup', queueTextSelectionCommit, { capture: true });
         window.addEventListener('mouseup', queueTextSelectionCommit, { capture: true });
-        state.annotationShortcutCleanup = () => {
+        state.commentShortcutCleanup = () => {
           if (pendingTextSelectionCommitTimer !== null) {
             window.clearTimeout(pendingTextSelectionCommitTimer);
             pendingTextSelectionCommitTimer = null;
@@ -630,20 +624,20 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           transactionManager: state.transactionManager,
           tokensService: state.tokensService ?? undefined,
           initialPosition: state.propertyPanelPosition,
-          initialUiMode: state.annotationEntryMode,
+          initialUiMode: state.commentEntryMode,
           onPositionChange: (position) => {
             state.propertyPanelPosition = position;
           },
-          getUiMode: () => state.annotationEntryMode,
+          getUiMode: () => state.commentEntryMode,
           onUiModeChange: (mode) => {
-            state.annotationEntryMode = mode;
+            state.commentEntryMode = mode;
             state.positionTracker?.forceUpdate(true);
             services.changes.renderChangeMarkers();
           },
-          getAnnotationShortcutSettings: () => state.annotationShortcutSettings,
-          onAnnotationShortcutSettingsChange: (settings) => {
-            state.annotationShortcutSettings = settings;
-            services.persistence.setAnnotationShortcutSettings(settings);
+          getCommentShortcutSettings: () => state.commentShortcutSettings,
+          onCommentShortcutSettingsChange: (settings) => {
+            state.commentShortcutSettings = settings;
+            services.persistence.setCommentShortcutSettings(settings);
           },
           getUiSettings: () => state.uiSettings,
           interactionProfile: options.interactionProfile,
@@ -659,8 +653,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             state.eventController?.setProgrammaticHoverElement(target);
             services.interaction.handleHover(target);
           },
-          onAnnotationShortcutDialogOpenChange: (open) => {
-            state.annotationShortcutDialogOpen = open;
+          onCommentShortcutDialogOpenChange: (open) => {
+            state.commentShortcutDialogOpen = open;
           },
           onUndo: () => state.transactionManager?.undo(),
           onRedo: () => state.transactionManager?.redo(),
@@ -695,7 +689,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
               state.positionTracker?.forceUpdate(true);
             }
           },
-          onSendCurrentElementPromptToGenie: async (element, sendOptions) => {
+          onSendCurrentElementPromptToGenie: async (element) => {
             if (!element?.isConnected) {
               throw new Error('当前元素已失效，请重新选择后再试。');
             }
@@ -706,10 +700,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
               throw new Error('当前元素没有可发送给 AI 的编辑。');
             }
             try {
-              await services.genieBridge.handleSendPromptToGenieForElement(
-                element,
-                prependPromptPrefix(prompt, sendOptions?.promptPrefix),
-              );
+              await services.genieBridge.handleSendPromptToGenieForElement(element, prompt);
             } finally {
               state.positionTracker?.forceUpdate(true);
             }
@@ -830,15 +821,20 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           },
           subscribeTweak: (listener) => getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
           getAiNote: (element) => services.changes.getMetaForElement(element)?.note ?? '',
+          getAiNoteSkillIds: (element) => services.changes.getMetaForElement(element)?.skillIds?.slice() ?? [],
           getAiNoteImages: (element) => services.changes.getImagesForElement(element),
           getHoveredElement: () => state.hoveredElement,
           onRememberSelectionAnchor: (element, selectionAnchor) => {
             services.changes.rememberSelectionAnchor(element, selectionAnchor);
           },
-          onAiNoteChange: (element, note) => {
-            services.changes.setNoteForElement(element, note);
+          onAiNoteChange: (element, note, noteOptions) => {
+            if (noteOptions) {
+              services.changes.setNoteForElement(element, note, noteOptions);
+            } else {
+              services.changes.setNoteForElement(element, note);
+            }
             state.positionTracker?.forceUpdate(true);
-            syncAnnotationContextAfterNoteSave(element, note);
+            syncCommentContextAfterNoteSave(element, note);
           },
           onAiNoteImagesChange: (element, images) => {
             services.changes.setImagesForElement(element, images);
@@ -899,7 +895,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
                 onSelect: selectElementWithCenterAnchor,
                 getGenieBridgeAvailable: () => services.genieBridge.isAvailable(),
                 hideExecutionControls: options.ui.hideExecutionControls,
-                getAnnotationShortcutSettings: () => state.annotationShortcutSettings,
+                getCommentShortcutSettings: () => state.commentShortcutSettings,
                 getElementGenieTaskState: (element) => services.genieBridge.getElementTaskState(element),
                 getVisibleElementGenieTaskStates: () => services.genieBridge.getVisibleTaskStates(),
                 dismissElementGenieTaskState: (element) => services.genieBridge.dismissElementTaskState(element),
@@ -975,12 +971,12 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     state.eventController?.dispose();
     state.eventController = null;
 
-    state.annotationShortcutCleanup?.();
-    state.annotationShortcutCleanup = null;
+    state.commentShortcutCleanup?.();
+    state.commentShortcutCleanup = null;
 
-    if (state.textAnnotationTargetElement) {
-      state.textAnnotationTargetElement.remove();
-      state.textAnnotationTargetElement = null;
+    if (state.textCommentTargetElement) {
+      state.textCommentTargetElement.remove();
+      state.textCommentTargetElement = null;
     }
 
     state.dragReorderController?.dispose();
@@ -1096,18 +1092,18 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           transactionManager: null as unknown as TransactionManager,
           tokensService: state.tokensService ?? undefined,
           initialPosition: state.propertyPanelPosition,
-          initialUiMode: state.annotationEntryMode,
+          initialUiMode: state.commentEntryMode,
           onPositionChange: (position) => {
             state.propertyPanelPosition = position;
           },
-          getUiMode: () => state.annotationEntryMode,
+          getUiMode: () => state.commentEntryMode,
           onUiModeChange: (mode) => {
-            state.annotationEntryMode = mode;
+            state.commentEntryMode = mode;
           },
-          getAnnotationShortcutSettings: () => state.annotationShortcutSettings,
-          onAnnotationShortcutSettingsChange: (settings) => {
-            state.annotationShortcutSettings = settings;
-            services.persistence.setAnnotationShortcutSettings(settings);
+          getCommentShortcutSettings: () => state.commentShortcutSettings,
+          onCommentShortcutSettingsChange: (settings) => {
+            state.commentShortcutSettings = settings;
+            services.persistence.setCommentShortcutSettings(settings);
           },
           getUiSettings: () => state.uiSettings,
           interactionProfile: options.interactionProfile,
@@ -1116,8 +1112,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             services.persistence.setUiSettings(settings);
           },
           onLocateElement: () => {},
-          onAnnotationShortcutDialogOpenChange: (open) => {
-            state.annotationShortcutDialogOpen = open;
+          onCommentShortcutDialogOpenChange: (open) => {
+            state.commentShortcutDialogOpen = open;
           },
           onUndo: () => {},
           onRedo: () => {},
@@ -1171,6 +1167,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           },
           subscribeTweak: (listener) => getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
           getAiNote: () => '',
+          getAiNoteSkillIds: () => [],
           getAiNoteImages: () => [],
           getHoveredElement: () => null,
           onRememberSelectionAnchor: () => {},
@@ -1263,5 +1260,5 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     }
   }
 
-  return { start, startPanelOnly, stop, stopPanelOnly, flushPendingAnnotationContextSync };
+  return { start, startPanelOnly, stop, stopPanelOnly, flushPendingCommentContextSync };
 }

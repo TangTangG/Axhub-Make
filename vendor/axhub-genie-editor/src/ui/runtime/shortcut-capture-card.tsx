@@ -2,7 +2,7 @@ import React from 'react';
 import {
   formatModifierShortcutLabel,
   normalizeModifierShortcutKey,
-} from '../../core/editor/annotation-shortcut-settings';
+} from '../../core/editor/comment-shortcut-settings';
 import { EDITOR_CHROME } from './theme';
 import type { ShortcutCaptureCardProps } from './types';
 

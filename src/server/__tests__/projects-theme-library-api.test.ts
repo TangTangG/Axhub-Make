@@ -185,9 +185,11 @@ describe('make-server project theme library APIs', () => {
         id: 'trae-design',
         title: 'TRAE Design',
         slug: 'trae-design',
+        coverUrl: `https://raw.githubusercontent.com/${TEMPLATE_REPO}/main/design-systems/trae-design/assets/official-homepage.webp`,
         sourceUrl: `https://github.com/${TEMPLATE_REPO}/tree/main/design-systems/trae-design`,
         canDirectImport: true,
       });
+      expect(listed.body.designSystems[0]).not.toHaveProperty('directImportDisabledReason');
     }).finally(async () => {
       await server.close();
     });
@@ -235,10 +237,11 @@ describe('make-server project theme library APIs', () => {
           entryPath: 'design-systems/hp/index.tsx',
           tokenPath: 'design-systems/hp/designToken.json',
           coverPath: 'design-systems/hp/assets/official-homepage.webp',
+          coverUrl: `https://raw.githubusercontent.com/${TEMPLATE_REPO}/HEAD/design-systems/hp/assets/official-homepage.webp`,
+          sourceUrl: `https://github.com/${TEMPLATE_REPO}/tree/HEAD/design-systems/hp`,
           canDirectImport: true,
         }),
       ]));
-      expect(listed.body.designSystems[0].sourceUrl).toContain('/design-systems/hp');
     } finally {
       await server.close();
     }

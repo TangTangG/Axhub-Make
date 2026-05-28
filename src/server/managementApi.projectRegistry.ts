@@ -13,6 +13,7 @@ import {
 
 import { getRequestUrl, readJsonBody, sendJson } from './http.ts';
 import { backfillMakeClientResourcePreviewLinks } from './makeClientRuntimeLinks.ts';
+import { getMakeClientDevStatus } from './makeClientProject.ts';
 import { handleMakeClientProjectApi } from './managementApi.makeClient.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { PROTOTYPE_PLACEHOLDER_GUIDE } from './prototypePlaceholderGuide.ts';
@@ -440,7 +441,7 @@ interface ProjectRegistryApiHandlers {
   ) => RegisteredProject;
   toProjectEntry: (project: RegisteredProject) => RegisteredProject;
   toProjectIdentity: (project: RegisteredProject) => { id: string; name: string };
-  syncProjectConfigName: (projectRoot: string, title: string) => void;
+  updateRegisteredProjectTitle: (options: ManagementApiOptions, project: RegisteredProject, title: string) => RegisteredProject;
   selectLocalProjectRootForKind: (kind: string) => Promise<string | null>;
   getExistingMetadataStore: (res: ServerResponse, project: RegisteredProject) => ProjectMetadataStore | null;
   createEffectiveProjectCapabilities: (context: ProjectRegistryRequestContext) => EffectiveProjectCapabilities;
@@ -527,10 +528,15 @@ export function handleProjectRegistryApi(
 
   if (pathname === '/api/projects' && req.method === 'GET') {
     const data = registry.getRegistry();
-    sendJson(res, {
-      activeProjectId: data.activeProjectId,
-      projects: data.projects.map(handlers.toProjectEntry),
-    });
+    Promise.all(data.projects.map(async (project) => ({
+      ...handlers.toProjectEntry(project),
+      runtimeStatus: await getMakeClientDevStatus(project.id, project.root),
+    })))
+      .then((projects) => sendJson(res, {
+        activeProjectId: data.activeProjectId,
+        projects,
+      }))
+      .catch((error) => sendJson(res, { error: error.message }, { status: 500 }));
     return true;
   }
 
@@ -612,13 +618,12 @@ export function handleProjectRegistryApi(
 
   if (!rest && req.method === 'PATCH') {
     readJsonBody(req).then((body) => {
-      const updated = registry.updateProject(projectId, {
-        ...(typeof body?.name === 'string' ? { name: body.name } : {}),
+      let updated = registry.updateProject(projectId, {
         ...(typeof body?.root === 'string' ? { root: body.root } : {}),
         ...(typeof body?.metadataPath === 'string' ? { metadataPath: body.metadataPath } : {}),
       });
       if (typeof body?.name === 'string') {
-        handlers.syncProjectConfigName(updated.root, handlers.toProjectIdentity(updated).name);
+        updated = handlers.updateRegisteredProjectTitle(options, updated, body.name);
       }
       sendJson(res, { project: handlers.toProjectEntry(updated) });
     }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));

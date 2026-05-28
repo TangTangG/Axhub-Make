@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -23,6 +23,7 @@ import {
 } from './vite-plugins/utils/entriesManifest';
 
 const projectRoot = process.cwd();
+const OFFICIAL_CLIENT_DEV_PORT = 51720;
 
 /** Read allowLAN from the shared make config to align with make-server. */
 function readAllowLAN(): boolean {
@@ -117,7 +118,7 @@ export default defineConfig(({ command }) => {
     },
 
     server: {
-      port: 51720,
+      port: OFFICIAL_CLIENT_DEV_PORT,
       strictPort: false,
       host: readAllowLAN() ? '0.0.0.0' : 'localhost',
       open: false,

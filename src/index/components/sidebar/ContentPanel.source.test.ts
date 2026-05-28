@@ -193,7 +193,7 @@ describe('ContentPanel project switcher source', () => {
     expect(projectSwitcherSource).toContain('const deleting = project.id === deletingProjectId;');
   });
 
-  it('keeps the selected project indicator fixed at the far right when delete is hidden', () => {
+  it('uses the selected project background without a trailing check icon', () => {
     const source = readContentPanelSource();
     const projectSwitcherSource = source.slice(
       source.indexOf('{projects.length > 0 ? projects.map((project) => {'),
@@ -201,13 +201,32 @@ describe('ContentPanel project switcher source', () => {
     );
 
     const deleteButtonIndex = projectSwitcherSource.indexOf('aria-label={`从列表移除 ${project.name || UNTITLED_PROJECT_LABEL}`}');
-    const activeCheckIndex = projectSwitcherSource.indexOf('<Check className="h-3.5 w-3.5 shrink-0 text-primary" />');
 
     expect(source).toContain("const UNTITLED_PROJECT_LABEL = '未命名项目';");
     expect(projectSwitcherSource).toContain('{project.name || UNTITLED_PROJECT_LABEL}');
+    expect(projectSwitcherSource).toContain("active && 'bg-accent text-accent-foreground'");
     expect(deleteButtonIndex).toBeGreaterThan(-1);
-    expect(activeCheckIndex).toBeGreaterThan(-1);
-    expect(deleteButtonIndex).toBeLessThan(activeCheckIndex);
+    expect(projectSwitcherSource).not.toContain('<Check className="h-3.5 w-3.5 shrink-0 text-primary" />');
+  });
+
+  it('shows local runtime state and a stop action for running projects', () => {
+    const source = readContentPanelSource();
+    const projectSwitcherSource = source.slice(
+      source.indexOf('{projects.length > 0 ? projects.map((project) => {'),
+      source.indexOf(') : (', source.indexOf('{projects.length > 0 ? projects.map((project) => {')),
+    );
+
+    expect(source).toContain('onProjectStop: (projectId: string) => void | Promise<void>;');
+    expect(source).toContain('const [stoppingProjectId, setStoppingProjectId] = useState<string | null>(null);');
+    expect(source).toContain('const handleProjectStop = async (projectId: string) => {');
+    expect(source).toContain('w-[360px]');
+    expect(projectSwitcherSource).toContain('const running = project.runtimeStatus?.running === true;');
+    expect(projectSwitcherSource).toContain('运行中');
+    expect(projectSwitcherSource).toContain('aria-label={`终止 ${project.name || UNTITLED_PROJECT_LABEL}`}');
+    expect(projectSwitcherSource).toContain('className="h-7 w-7 shrink-0 opacity-0 group-hover/project-item:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"');
+    expect(projectSwitcherSource).toContain('<Square className="h-3.5 w-3.5" />');
+    expect(projectSwitcherSource).toContain('void handleProjectStop(project.id);');
+    expect(projectSwitcherSource).toContain('event.stopPropagation();');
   });
 });
 

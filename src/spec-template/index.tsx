@@ -213,7 +213,7 @@ if (typeof window !== 'undefined') {
       markdownViewerRef.current?.disableQuickEdit(options);
       disableDocumentEditor();
     },
-    setQuickEditMode(mode: 'annotation' | 'edit', options?: { saveBehavior?: 'none' | 'save' | 'discard' }) {
+    setQuickEditMode(mode: 'comment' | 'edit', options?: { saveBehavior?: 'none' | 'save' | 'discard' }) {
       return markdownViewerRef.current?.setQuickEditMode(mode, options) ?? Promise.resolve(false);
     },
     getStatus() {

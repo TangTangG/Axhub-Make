@@ -1,8 +1,8 @@
 import {
-  ANNOTATION_SHORTCUT_LONG_PRESS_MS,
+  COMMENT_SHORTCUT_LONG_PRESS_MS,
   normalizeModifierShortcutKey,
   type ModifierShortcutKey,
-} from './annotation-shortcut-settings';
+} from './comment-shortcut-settings';
 import type { EditorInteractionService } from './contracts';
 import type { EditorRuntimeState } from './state';
 
@@ -27,7 +27,7 @@ function isEditableOrFormControl(element: Element | null): boolean {
   return element.isContentEditable;
 }
 
-export function createAnnotationShortcutController(options: {
+export function createCommentShortcutController(options: {
   state: EditorRuntimeState;
   interaction: EditorInteractionService;
 }): () => void {
@@ -55,7 +55,7 @@ export function createAnnotationShortcutController(options: {
 
   function shouldIgnoreTrigger(event?: Event): boolean {
     if (!state.active) return true;
-    if (state.annotationShortcutDialogOpen) return true;
+    if (state.commentShortcutDialogOpen) return true;
 
     const controllerMode = state.eventController?.getMode();
     if (controllerMode === 'dragging') return true;
@@ -85,12 +85,12 @@ export function createAnnotationShortcutController(options: {
     if (state.shadowHost?.isEventFromUi(event)) return;
     trackPointer(event.clientX, event.clientY);
 
-    const settings = state.annotationShortcutSettings;
+    const settings = state.commentShortcutSettings;
     if (!settings.enabled || !settings.middleClickEnabled) return;
     if (event.button !== 1) return;
     if (shouldIgnoreTrigger(event)) return;
 
-    const didTrigger = options.interaction.enterAnnotationFromTrigger({
+    const didTrigger = options.interaction.enterCommentFromTrigger({
       clientX: event.clientX,
       clientY: event.clientY,
     });
@@ -106,7 +106,7 @@ export function createAnnotationShortcutController(options: {
     const key = normalizeModifierShortcutKey(event.key);
     if (!key) return;
 
-    const settings = state.annotationShortcutSettings;
+    const settings = state.commentShortcutSettings;
     if (!settings.enabled) return;
     if (!settings.shortcuts.includes(key)) return;
     if (shouldIgnoreTrigger(event)) return;
@@ -126,11 +126,11 @@ export function createAnnotationShortcutController(options: {
         if (!pressedKeys.has(key) || firedKeys.has(key)) return;
         if (shouldIgnoreTrigger()) return;
 
-        const didTrigger = options.interaction.enterAnnotationFromTrigger(lastPointer ?? undefined);
+        const didTrigger = options.interaction.enterCommentFromTrigger(lastPointer ?? undefined);
         if (didTrigger) {
           firedKeys.add(key);
         }
-      }, ANNOTATION_SHORTCUT_LONG_PRESS_MS),
+      }, COMMENT_SHORTCUT_LONG_PRESS_MS),
     );
   }
 

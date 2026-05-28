@@ -19,6 +19,7 @@ import { closeManagedOpenCodeServers, readManagedOpenCodeServerUrl } from './age
 import { getLocalIP, sendJson } from './http.ts';
 import { handleManagementApi } from './managementApi.ts';
 import type { CommandExecutor } from './managementApi.cloudPublishing.ts';
+import { releaseListeningProcessesOnPort } from './portOccupancy.ts';
 import { isRuntimeHtmlProxyRequest, isRuntimeOnlyRoute, proxyToRuntime } from './runtimeProxy.ts';
 import type { ViteDevMiddleware } from './viteDevServer.ts';
 
@@ -32,7 +33,6 @@ export interface StartMakeServerOptions {
   registryPath?: string;
   devMode?: boolean;
   cloudPublishingCommandExecutor?: CommandExecutor;
-  makeClientTemplateRoot?: string;
 }
 
 export interface RunningMakeServer {
@@ -121,25 +121,6 @@ function listen(server: http.Server, port: number, host: string): Promise<number
   });
 }
 
-async function listenWithFallback(server: http.Server, requestedPort: number, host: string): Promise<number> {
-  if (requestedPort === 0) {
-    return listen(server, requestedPort, host);
-  }
-
-  let port = requestedPort;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    try {
-      return await listen(server, port, host);
-    } catch (error: any) {
-      if (error?.code !== 'EADDRINUSE') {
-        throw error;
-      }
-      port += 1;
-    }
-  }
-  throw new Error(`No available port found from ${requestedPort}`);
-}
-
 function resolveRuntimeOrigin(projectRoot: string, explicitRuntimeOrigin?: string): string | undefined {
   if (explicitRuntimeOrigin) {
     return explicitRuntimeOrigin;
@@ -215,7 +196,6 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         serverInfo: adminServerInfo || undefined,
         devMode,
         cloudPublishingCommandExecutor: options.cloudPublishingCommandExecutor,
-        makeClientTemplateRoot: options.makeClientTemplateRoot,
       })) {
         return;
       }
@@ -358,7 +338,11 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
     // In dev mode, unhandled upgrades fall through to Vite's HMR WebSocket.
   });
 
-  const actualPort = await listenWithFallback(server, requestedPort, host);
+  if (devMode && requestedPort !== 0) {
+    releaseListeningProcessesOnPort(requestedPort);
+  }
+
+  const actualPort = await listen(server, requestedPort, host);
   origin = `http://${resolvePublicOriginHost(host)}:${actualPort}`;
   adminServerInfo = writeServerInfo(projectRoot, 'admin', {
     pid: process.pid,

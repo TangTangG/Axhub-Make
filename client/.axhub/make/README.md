@@ -1,31 +1,38 @@
 # .axhub/make
 
-这个目录用于存放 Axhub Make 项目的本地运行数据和项目配置索引。
+这个目录用于存放 Make client 的项目身份 marker，以及本地运行时生成的数据。
 
-## 目录职责
+## 事实源
 
 - `client.json`
-  - 客户端身份与运行配置，可作为模板 marker 提交。
+  - Make client 项目身份唯一来源。
+  - `project.id` 是项目 id。
+  - `project.name` 是项目名；空字符串表示未命名，管理端显示为「未命名项目」。
+
+## 派生缓存
+
+这些文件可以由同步脚本或运行时重新生成，不应作为项目身份来源：
+
 - `project.json`
-  - 项目级 metadata 和资源声明，由同步脚本/运行时生成，不作为通用模板提交。
+  - 资源 metadata、导航顺序和资源写入目标。
+  - `project.name` 由 `client.json` 派生。
 - `entries.json`
-  - 入口扫描结果，通常由程序生成或刷新。
-- `sidebar-tree.json`
-  - 侧边栏树数据，通常由程序生成或刷新。
+  - 构建/入口扫描缓存。
 - `.dev-server-info.json`
-  - 当前开发服务的本地运行信息。
+- `.admin-server-info.json`
+  - 本地服务运行信息。
+- `sidebar-tree.json`
+  - 只在用户自定义侧边栏结构后保存；默认树由 metadata 或文件扫描派生。
+
+## 运行记录和产物
+
+这些目录记录历史操作或导出结果，不参与配置同步：
+
+- `sessions/`
+- `exports/`
+- `edit-history/`
 - `artifacts/`
-  - 导出或交付产物，例如 Axure artifact。
-- `backups/`
-  - 本地维护备份目录；不应提交临时备份内容。
 
-## 不建议直接手改的文件
+## 模板提交边界
 
-以下文件通常属于运行时或扫描产物，除非明确知道影响，否则不要手动编辑：
-
-- `entries.json`
-- `sidebar-tree.json`
-- `.dev-server-info.json`
-- `project.json`
-
-涉及资源路径、上传、删除、代理、下载或资源写入时，必须遵循仓库根 `AGENTS.md` 和 Make server 的安全路径约束。
+官方 client 模板只提交 `client.json` 和本 README。其它运行缓存、记录和产物应保持本地忽略。

@@ -1,7 +1,7 @@
 import React from 'react';
 import { WEB_EDITOR_V2_HOST_ID } from '../../constants';
 import type { ViewportRect } from '../../overlay/canvas-overlay';
-import type { AnnotationEntryMode } from '../selection-ui-mode';
+import type { CommentEntryMode } from '../selection-ui-mode';
 import { isMobileDevice } from '../../utils/mobile-detect';
 import { panelContainerStyle, WEB_EDITOR_POPUP_ROOT_STYLES } from './styles';
 import { ElementGenieTaskOverlays } from './element-genie-task-overlays';
@@ -11,7 +11,7 @@ import { syncDraftAgainstSaved } from './shared-state';
 import { useFeedbackBridge } from './runtime-effects/use-feedback-bridge';
 import { usePointerTracker } from './runtime-effects/use-pointer-tracker';
 import { useSelectionModeGuards } from './runtime-effects/use-selection-mode-guards';
-import { useClipboardAnnotationPaste } from './runtime-effects/use-clipboard-annotation-paste';
+import { useClipboardCommentPaste } from './runtime-effects/use-clipboard-comment-paste';
 import { useOutsideClickSelectionRestore } from './runtime-effects/use-outside-click-selection-restore';
 import {
   MAX_PROMPT_IMAGE_ATTACHMENTS,
@@ -36,7 +36,7 @@ import {
 
 function normalizeRuntimeUiSettings(
   settings: unknown,
-  interactionProfile: 'design' | 'text-annotation',
+  interactionProfile: 'design' | 'text-comment',
 ): WebEditorUiSettings {
   const normalized = applyMobileSettingsOverride(
     applyInteractionProfileToUiSettings(
@@ -45,7 +45,7 @@ function normalizeRuntimeUiSettings(
     ),
   );
 
-  if (interactionProfile === 'text-annotation' || isMobileDevice()) {
+  if (interactionProfile === 'text-comment' || isMobileDevice()) {
     return normalized;
   }
 
@@ -74,7 +74,7 @@ function replaceTextInControl(
   );
 }
 
-function normalizeRuntimeUiMode(mode: AnnotationEntryMode | null | undefined): AnnotationEntryMode {
+function normalizeRuntimeUiMode(mode: CommentEntryMode | null | undefined): CommentEntryMode {
   return mode === 'panel-note' ? 'bubble-card' : (mode ?? 'bubble-card');
 }
 
@@ -143,7 +143,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
 
   const [currentTarget, setCurrentTarget] = React.useState<Element | null>(null);
   const [anchorRect, setAnchorRect] = React.useState<ViewportRect | null>(null);
-  const [uiMode, setUiMode] = React.useState<AnnotationEntryMode>(initialUiMode);
+  const [uiMode, setUiMode] = React.useState<CommentEntryMode>(initialUiMode);
   const [toolMinimized, setToolMinimized] = React.useState(false);
   const [propertyPanelOpen, setPropertyPanelOpen] = React.useState<boolean>(initialPropertyPanelOpen);
   const [bubbleStyleEditorOpen, setBubbleStyleEditorOpen] = React.useState(false);
@@ -167,6 +167,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
     savedNote: '',
     draftNote: '',
     noteDirty: false,
+    savedNoteMeta: { skillIds: [] },
   });
   const [textState, setTextState] = React.useState<SharedTextState>({
     savedText: '',
@@ -178,7 +179,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
   });
 
   const currentTargetRef = React.useRef<Element | null>(null);
-  const uiModeRef = React.useRef<AnnotationEntryMode>(initialUiMode);
+  const uiModeRef = React.useRef<CommentEntryMode>(initialUiMode);
   const noteStateRef = React.useRef<SharedNoteState>(noteState);
   const textStateRef = React.useRef<SharedTextState>(textState);
   const imageStateRef = React.useRef<SharedImageState>(imageState);
@@ -287,6 +288,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
   const syncSavedNote = React.useCallback(
     (element: Element | null, resetDraft: boolean) => {
       const nextSavedNote = propertyPanelOptions?.getAiNote?.(element) ?? '';
+      const nextSkillIds = propertyPanelOptions?.getAiNoteSkillIds?.(element) ?? [];
       setNoteState((prev) => {
         const next = syncDraftAgainstSaved(
           {
@@ -301,6 +303,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
           savedNote: next.saved,
           draftNote: next.draft,
           noteDirty: next.dirty,
+          savedNoteMeta: { skillIds: nextSkillIds.slice() },
         };
       });
     },
@@ -341,19 +344,23 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
   );
 
   const commitDraftNote = React.useCallback(
-    async (elementOverride?: Element | null) => {
+    async (elementOverride?: Element | null, options: { skillIds?: readonly string[] } = {}) => {
       const element = elementOverride ?? currentTargetRef.current;
       if (!propertyPanelOptions?.onAiNoteChange) return false;
-      if (!noteStateRef.current.noteDirty) return false;
 
       const nextValue = noteStateRef.current.draftNote;
-      await propertyPanelOptions.onAiNoteChange(element, nextValue);
+      const nextSkillIds = options.skillIds?.slice() ?? noteStateRef.current.savedNoteMeta?.skillIds ?? [];
+      const skillsDirty = nextSkillIds.join('\0') !== (noteStateRef.current.savedNoteMeta?.skillIds ?? []).join('\0');
+      if (!noteStateRef.current.noteDirty && !skillsDirty) return false;
+
+      await propertyPanelOptions.onAiNoteChange(element, nextValue, { skillIds: nextSkillIds });
 
       if (currentTargetRef.current === element) {
         setNoteState({
           savedNote: nextValue,
           draftNote: nextValue,
           noteDirty: false,
+          savedNoteMeta: { skillIds: nextSkillIds.slice() },
         });
       }
 
@@ -421,7 +428,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
   }, []);
 
   const handleUiModeChange = React.useCallback(
-    (mode: AnnotationEntryMode) => {
+    (mode: CommentEntryMode) => {
       const normalizedMode = normalizeRuntimeUiMode(mode);
       if (uiModeRef.current === normalizedMode) return;
       uiModeRef.current = normalizedMode;
@@ -500,8 +507,8 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
     }));
   }, []);
 
-  const handleConfirmNote = React.useCallback(async () => {
-    await commitDraftNote();
+  const handleConfirmNote = React.useCallback(async (options: { skillIds?: readonly string[] } = {}) => {
+    await commitDraftNote(undefined, options);
   }, [commitDraftNote]);
 
   const handleTextDraftChange = React.useCallback((value: string) => {
@@ -565,7 +572,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
         return { acceptedCount: 0, droppedCount: 0 };
       }
       if (propertyPanelOptions.getGenieBridgeConnected && !propertyPanelOptions.getGenieBridgeConnected()) {
-        notifyRuntimeMessage('info', 'AI 未启动，暂不支持粘贴标注图片。');
+        notifyRuntimeMessage('info', 'AI 未启动，暂不支持粘贴批注图片。');
         return {
           acceptedCount: 0,
           droppedCount: incomingImages.length,
@@ -645,14 +652,14 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
       return undefined;
     }
 
-    return async (element: Element, options?: { promptPrefix?: string }) => {
+    return async (element: Element) => {
       await commitDraftText(element);
       await commitDraftNote(element);
-      await propertyPanelOptions.onSendCurrentElementPromptToGenie?.(element, options);
+      await propertyPanelOptions.onSendCurrentElementPromptToGenie?.(element);
     };
   }, [commitDraftNote, commitDraftText, propertyPanelOptions]);
 
-  useClipboardAnnotationPaste({
+  useClipboardCommentPaste({
     propertyPanelOptions,
     currentTargetRef,
     latestPointerPositionRef,
@@ -903,6 +910,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
           onConfirmText={handleConfirmText}
           canEditNote={canEditNote}
           savedNote={noteState.savedNote}
+          savedNoteMeta={noteState.savedNoteMeta}
           draftNote={noteState.draftNote}
           noteDirty={noteState.noteDirty}
           onDraftChange={handleDraftChange}
@@ -956,6 +964,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
           onConfirmText={handleConfirmText}
           canEditNote={canEditNote}
           savedNote={noteState.savedNote}
+          savedNoteMeta={noteState.savedNoteMeta}
           draftNote={noteState.draftNote}
           noteDirty={noteState.noteDirty}
           onDraftChange={handleDraftChange}

@@ -27,7 +27,7 @@ describe('buildQuickEditGeniePrompt', () => {
     expect(prompt).toContain('原型批注处理');
     expect(prompt).toContain('页面同步与截图参考');
     expect(prompt).not.toContain('完整走通 CLI 流程');
-    expect(prompt).toContain('.spec/prototype-annotations.json');
+    expect(prompt).toContain('.spec/prototype-comments.json');
     expect(prompt).not.toContain('src/prototypes/home/index.tsx');
     expect(prompt).toContain('首页');
     expect(prompt).not.toContain('/Users/demo/project');

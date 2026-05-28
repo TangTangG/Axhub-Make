@@ -27,51 +27,51 @@ afterEach(() => {
   cleanupProjectApiTestRoots();
 });
 
-describe('prototype annotations API', () => {
-  it('returns exists:false when the prototype annotations file is missing', async () => {
-    const projectRoot = createTempRoot('axhub-make-prototype-annotations-');
+describe('prototype comments API', () => {
+  it('returns exists:false when the prototype comments file is missing', async () => {
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/prototype-annotations?targetPath=prototypes/home`);
+      const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`);
       const body = await response.json();
 
       expect(response.status).toBe(200);
       expect(body).toEqual({
         exists: false,
         document: null,
-        path: 'src/prototypes/home/.spec/prototype-annotations.json',
+        path: 'src/prototypes/home/.spec/prototype-comments.json',
       });
     } finally {
       await server.close();
     }
   });
 
-  it('writes and reads prototype annotations under the fixed .spec file', async () => {
-    const projectRoot = createTempRoot('axhub-make-prototype-annotations-');
+  it('writes and reads prototype comments under the fixed .spec file', async () => {
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
     const server = await startTestServer(projectRoot);
 
     try {
-      const put = await fetch(`${server.origin}/api/prototype-annotations?targetPath=prototypes/home`, {
+      const put = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           document: {
             schemaVersion: 1,
-            kind: 'prototype-edit-annotations',
+            kind: 'prototype-comments',
             resource: {
               id: 'home',
               targetPath: 'prototypes/home',
               filePath: '',
             },
-            entries: [
+            comments: [
               {
                 elementKey: 'hero',
                 label: 'Hero',
                 locator: { selectors: ['#hero'], fingerprint: 'hero', path: [], shadowHostChain: [] },
-                note: '调整首屏文案',
+                comment: '调整首屏文案',
               },
             ],
             tasks: {},
@@ -85,31 +85,31 @@ describe('prototype annotations API', () => {
       expect(written).toMatchObject({
         ok: true,
         exists: true,
-        path: 'src/prototypes/home/.spec/prototype-annotations.json',
+        path: 'src/prototypes/home/.spec/prototype-comments.json',
         document: {
           schemaVersion: 1,
-          kind: 'prototype-edit-annotations',
+          kind: 'prototype-comments',
           resource: {
             id: 'home',
             targetPath: 'prototypes/home',
-            filePath: 'src/prototypes/home/.spec/prototype-annotations.json',
+            filePath: 'src/prototypes/home/.spec/prototype-comments.json',
           },
         },
       });
 
-      const filePath = path.join(projectRoot, 'src/prototypes/home/.spec/prototype-annotations.json');
+      const filePath = path.join(projectRoot, 'src/prototypes/home/.spec/prototype-comments.json');
       expect(fs.existsSync(filePath)).toBe(true);
-      expect(JSON.parse(fs.readFileSync(filePath, 'utf8')).entries[0].note).toBe('调整首屏文案');
+      expect(JSON.parse(fs.readFileSync(filePath, 'utf8')).comments[0].comment).toBe('调整首屏文案');
 
-      const get = await fetch(`${server.origin}/api/prototype-annotations?targetPath=prototypes/home`);
+      const get = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`);
       expect(get.status).toBe(200);
       expect(await get.json()).toMatchObject({
         exists: true,
         document: {
-          entries: [
+          comments: [
             expect.objectContaining({
               elementKey: 'hero',
-              note: '调整首屏文案',
+              comment: '调整首屏文案',
             }),
           ],
         },
@@ -120,18 +120,18 @@ describe('prototype annotations API', () => {
   });
 
   it('rejects non-prototype and escaped target paths', async () => {
-    const projectRoot = createTempRoot('axhub-make-prototype-annotations-');
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
     const server = await startTestServer(projectRoot);
 
     try {
-      const nonPrototype = await fetch(`${server.origin}/api/prototype-annotations?targetPath=components/home`);
+      const nonPrototype = await fetch(`${server.origin}/api/prototype-comments?targetPath=components/home`);
       expect(nonPrototype.status).toBe(400);
 
-      const escaped = await fetch(`${server.origin}/api/prototype-annotations?targetPath=prototypes/../home`);
+      const escaped = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/../home`);
       expect(escaped.status).toBe(403);
 
-      const hidden = await fetch(`${server.origin}/api/prototype-annotations?targetPath=prototypes/.hidden`);
+      const hidden = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/.hidden`);
       expect(hidden.status).toBe(400);
     } finally {
       await server.close();
@@ -139,24 +139,24 @@ describe('prototype annotations API', () => {
   });
 
   it('extracts image payloads into .spec assets and keeps base64 out of JSON', async () => {
-    const projectRoot = createTempRoot('axhub-make-prototype-annotations-');
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/prototype-annotations?targetPath=prototypes/home`, {
+      const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           document: {
             schemaVersion: 1,
-            kind: 'prototype-edit-annotations',
+            kind: 'prototype-comments',
             resource: {
               id: 'home',
               targetPath: 'prototypes/home',
               filePath: '',
             },
-            entries: [],
+            comments: [],
             tasks: {},
             images: [
               {
@@ -178,28 +178,28 @@ describe('prototype annotations API', () => {
       expect(body.document.images).toEqual([
         expect.objectContaining({
           id: 'hero-image',
-          assetPath: 'prototype-annotation-assets/hero-image.png',
+          assetPath: 'prototype-comment-assets/hero-image.png',
         }),
       ]);
       expect(JSON.stringify(body.document)).not.toContain('base64');
 
-      const jsonPath = path.join(projectRoot, 'src/prototypes/home/.spec/prototype-annotations.json');
+      const jsonPath = path.join(projectRoot, 'src/prototypes/home/.spec/prototype-comments.json');
       const rawJson = fs.readFileSync(jsonPath, 'utf8');
       expect(rawJson).not.toContain('base64');
 
       const assetResponse = await fetch(
-        `${server.origin}/api/prototype-annotations/asset?targetPath=prototypes/home&asset=${encodeURIComponent('prototype-annotation-assets/hero-image.png')}`,
+        `${server.origin}/api/prototype-comments/asset?targetPath=prototypes/home&asset=${encodeURIComponent('prototype-comment-assets/hero-image.png')}`,
       );
       expect(assetResponse.status).toBe(200);
       expect(assetResponse.headers.get('content-type')).toContain('image/png');
       expect(Buffer.from(await assetResponse.arrayBuffer()).length).toBeGreaterThan(0);
 
-      const hydratedResponse = await fetch(`${server.origin}/api/prototype-annotations?targetPath=prototypes/home&hydrateImages=1`);
+      const hydratedResponse = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home&hydrateImages=1`);
       const hydratedBody = await hydratedResponse.json();
       expect(hydratedResponse.status).toBe(200);
       expect(hydratedBody.document.images[0]).toMatchObject({
         id: 'hero-image',
-        assetPath: 'prototype-annotation-assets/hero-image.png',
+        assetPath: 'prototype-comment-assets/hero-image.png',
         data: expect.stringMatching(/^data:image\/png;base64,/u),
       });
     } finally {
@@ -208,7 +208,7 @@ describe('prototype annotations API', () => {
   });
 
   it('requires a declared prototype write target so third-party projects can degrade to localStorage', async () => {
-    const projectRoot = createTempRoot('axhub-make-prototype-annotations-');
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writeProjectMetadata(projectRoot);
     const prototypeDir = path.join(projectRoot, 'src/prototypes/home');
     fs.mkdirSync(prototypeDir, { recursive: true });
@@ -216,18 +216,18 @@ describe('prototype annotations API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/prototype-annotations?targetPath=prototypes/home`);
+      const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`);
       expect(response.status).toBe(424);
       expect(await response.json()).toMatchObject({
-        error: 'Prototype annotation persistence requires declared prototype write target',
+        error: 'Prototype comment persistence requires declared prototype write target',
       });
     } finally {
       await server.close();
     }
   });
 
-  it('rejects prototype annotation targets outside the fixed src/prototypes directory', async () => {
-    const projectRoot = createTempRoot('axhub-make-prototype-annotations-');
+  it('rejects prototype comment targets outside the fixed src/prototypes directory', async () => {
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writeProjectMetadata(projectRoot, {
       resourceWriteTargets: {
         prototypes: { type: 'project-relative-path', path: 'screens' },
@@ -237,10 +237,10 @@ describe('prototype annotations API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/prototype-annotations?targetPath=prototypes/home`);
+      const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`);
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({
-        error: 'Prototype annotation persistence is limited to src/prototypes',
+        error: 'Prototype comment persistence is limited to src/prototypes',
       });
     } finally {
       await server.close();
@@ -248,18 +248,18 @@ describe('prototype annotations API', () => {
   });
 
   it('rejects unsafe asset paths', async () => {
-    const projectRoot = createTempRoot('axhub-make-prototype-annotations-');
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
     const server = await startTestServer(projectRoot);
 
     try {
       const escaped = await fetch(
-        `${server.origin}/api/prototype-annotations/asset?targetPath=prototypes/home&asset=${encodeURIComponent('../secret.png')}`,
+        `${server.origin}/api/prototype-comments/asset?targetPath=prototypes/home&asset=${encodeURIComponent('../secret.png')}`,
       );
       expect(escaped.status).toBe(403);
 
       const hidden = await fetch(
-        `${server.origin}/api/prototype-annotations/asset?targetPath=prototypes/home&asset=${encodeURIComponent('.secret/image.png')}`,
+        `${server.origin}/api/prototype-comments/asset?targetPath=prototypes/home&asset=${encodeURIComponent('.secret/image.png')}`,
       );
       expect(hidden.status).toBe(400);
     } finally {

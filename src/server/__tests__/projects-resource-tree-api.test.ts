@@ -23,6 +23,7 @@ vi.mock('node:child_process', async (importActual) => {
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
+  registerProject,
   startTestServer,
   writeJson,
   writeProjectMetadata,
@@ -583,6 +584,76 @@ describe('make-server resource sidebar filesystem tree API', () => {
       expect(validTree.status).toBe(200);
       expect(findNode(validTree.body.tree, (node) => node.itemKey === 'canvas/board.excalidraw')?.title).toBe('Board');
       expect(JSON.stringify(validTree.body.tree)).not.toContain('Duplicate Board');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('persists dynamic design folders on the registered Make client project', async () => {
+    const serverRoot = createTempRoot();
+    const clientRoot = createTempRoot();
+    writeProjectMetadata(clientRoot, {
+      project: { id: 'design-folder-client', name: 'Design Folder Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [
+          { id: 'brand', name: 'brand', title: 'Brand' },
+          { id: 'system', name: 'system', title: 'System' },
+        ],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: ['brand', 'system'], data: [], templates: [] },
+    });
+    fs.mkdirSync(path.join(clientRoot, 'src/themes/brand'), { recursive: true });
+    fs.mkdirSync(path.join(clientRoot, 'src/themes/system'), { recursive: true });
+
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    let server = await startTestServer(serverRoot, registryHome);
+    try {
+      await registerProject(server.origin, clientRoot, 'design-folder-client', 'Design Folder Client');
+      const saveTree = await fetch(`${server.origin}/api/workspace/navigation?tab=themes&projectId=design-folder-client`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tree: [
+            {
+              id: 'folder-themes-cn',
+              kind: 'folder',
+              title: '品牌',
+              children: [
+                { id: 'item-themes-brand', kind: 'item', title: 'Brand', itemKey: 'themes/brand' },
+              ],
+            },
+            { id: 'item-themes-system', kind: 'item', title: 'System', itemKey: 'themes/system' },
+          ],
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saveTree.status).toBe(200);
+      expect(saveTree.body.success).toBe(true);
+      const stored = JSON.parse(fs.readFileSync(path.join(clientRoot, '.axhub/make/sidebar-tree.json'), 'utf8'));
+      expect(stored.themesTree).toEqual(saveTree.body.tree);
+      expect(fs.existsSync(path.join(serverRoot, '.axhub/make/sidebar-tree.json'))).toBe(false);
+    } finally {
+      await server.close();
+    }
+
+    server = await startTestServer(serverRoot, registryHome);
+    try {
+      const navigation = await fetch(`${server.origin}/api/workspace/navigation?tab=themes&projectId=design-folder-client`)
+        .then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(navigation.status).toBe(200);
+      expect(navigation.body.tree[0]).toMatchObject({
+        id: 'folder-themes-cn',
+        kind: 'folder',
+        title: '品牌',
+      });
+      expect(findNode(navigation.body.tree, (node) => node.itemKey === 'themes/brand')?.title).toBe('Brand');
+      expect(findNode(navigation.body.tree, (node) => node.itemKey === 'themes/system')?.title).toBe('System');
     } finally {
       await server.close();
     }

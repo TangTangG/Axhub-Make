@@ -226,7 +226,7 @@ export default function CreateDialog({
         fetch('/api/template-library')
             .then(async (response) => {
                 const result = await response.json();
-                if (!response.ok) {
+                if (!response.ok || result?.ok === false) {
                     throw new Error(result?.error || '模板库读取失败');
                 }
                 if (cancelled) return;

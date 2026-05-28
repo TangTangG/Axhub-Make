@@ -632,7 +632,7 @@ describe('make-server agent open API', () => {
       agent: 'genie',
       targetPath: projectRoot,
     });
-    expect(web.command).toContain('npx @axhub/genie');
+    expect(web.command).toContain('npx @axhub/genie@latest');
   });
 
   it('surfaces direct launcher failures and delayed terminal launcher success', async () => {

@@ -30,13 +30,13 @@ describe('spec-template quick editing regression boundary', () => {
     expect(bootstrapSource).toContain('save(');
   });
 
-  it('keeps the Markdown annotation prompt helper used by quick-edit annotation mode', () => {
+  it('keeps the Markdown comment prompt helper used by quick-edit comment mode', () => {
     const helperPath = resolve(__dirname, 'quickEdit.ts');
     expect(existsSync(helperPath)).toBe(true);
     const helperSource = readFileSync(helperPath, 'utf8');
 
     expect(helperSource).toContain('resolveMarkdownQuickEditMeta');
-    expect(helperSource).toContain('buildMarkdownAnnotationPrompt');
+    expect(helperSource).toContain('buildMarkdownCommentPrompt');
     expect(helperSource).toContain('formatLocatorPath');
   });
 
@@ -48,7 +48,7 @@ describe('spec-template quick editing regression boundary', () => {
     expect(bootstrapSource).toContain("typeof payload?.content === 'string'");
   });
 
-  it('initializes Genie text annotation editing for Markdown documents', () => {
+  it('initializes Genie text comment editing for Markdown documents', () => {
     const bootstrapSource = readSpecTemplateSource('index.tsx');
     const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
 
@@ -60,7 +60,7 @@ describe('spec-template quick editing regression boundary', () => {
     expect(bootstrapSource).toContain('markdownViewerRef.current?.runHostToolbarAction');
     expect(bootstrapSource).not.toContain("import { createGenieEditor } from 'axhub-genie-editor';");
     expect(viewerSource).toContain("createGenieEditor({");
-    expect(viewerSource).toContain("interactionProfile: 'text-annotation'");
+    expect(viewerSource).toContain("interactionProfile: 'text-comment'");
     expect(viewerSource).toContain("toolbarMode: 'host'");
     expect(viewerSource).toContain('initialDarkMode');
     expect(viewerSource).not.toContain('showCopyPromptAction: false');

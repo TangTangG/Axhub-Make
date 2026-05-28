@@ -93,6 +93,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         onTitleChange,
         onProjectSwitch,
         onProjectDelete,
+        onProjectStop,
         onAddProject,
         onSelectMakeProjectParentFolder,
         onCreateBlankMakeProject,
@@ -233,6 +234,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 onTitleChange={onTitleChange}
                 onProjectSwitch={onProjectSwitch}
                 onProjectDelete={onProjectDelete}
+                onProjectStop={onProjectStop}
                 onAddProject={onAddProject}
                 onSelectMakeProjectParentFolder={onSelectMakeProjectParentFolder}
                 onCreateBlankMakeProject={onCreateBlankMakeProject}
