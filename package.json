@@ -1,6 +1,6 @@
 {
   "name": "@axhub/make",
-  "version": "0.5.1-beta.1",
+  "version": "0.5.1-beta.2",
   "description": "Axhub Make management server and admin UI",
   "private": true,
   "type": "module",
