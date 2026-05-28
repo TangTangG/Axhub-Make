@@ -43,9 +43,8 @@ const requiredNpmPackageFiles = [
   'bin/cli.mjs',
   'dist/server/cli.mjs',
   'dist/admin/index.html',
-  'assets/images/make-demo-prd-annotation.png',
-  'assets/images/make-demo-empty-prototype.png',
-  'assets/images/make-demo-design-system.png',
+  'dist/admin/assets/favicon.ico',
+  'dist/admin/auto-debug-client.js',
   'scripts/canvas-fig-sync.mjs',
 ];
 const serverBundleExternalPackages = [
@@ -64,6 +63,9 @@ const disallowedNpmPackagePathPatterns = [
   /(?:^|\/)\.local(?:\/|$)/u,
   /\.tsbuildinfo$/u,
   /\.timestamp-[^/]+$/u,
+  /^README\.md$/u,
+  /^assets(?:\/|$)/u,
+  /^dist\/admin\/images(?:\/|$)/u,
 ];
 
 const executableTargets = [
@@ -299,9 +301,7 @@ export function createPublishPackageJson(sourcePackage) {
     files: [
       'bin',
       'dist',
-      'assets',
       'scripts',
-      'README.md',
       'package.json',
     ],
     engines: {
@@ -510,9 +510,7 @@ function createNpmPackage(sourcePackage) {
   writeNpmBin();
   copyDir(releaseAdminDir, path.join(npmPackageDistDir, 'admin'));
   copyOpenCodeWebUiToNpmPackage();
-  copyDir(path.join(makeServerRoot, 'assets'), path.join(npmPackageDir, 'assets'));
   copyFile(canvasFigSyncSource, path.join(npmPackageScriptsDir, 'canvas-fig-sync.mjs'), 0o755);
-  copyFile(path.join(makeServerRoot, 'README.md'), path.join(npmPackageDir, 'README.md'));
   buildServerBundle();
 }
 
