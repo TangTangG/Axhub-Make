@@ -34,18 +34,27 @@ afterEach(() => {
 });
 
 describe('release make artifact helpers', () => {
-  it('builds make client template zip metadata for release manifests and uploads', () => {
+  it('builds independent make client template zip metadata', () => {
     const metadata = releaseMake.createTemplateZipMetadata({
-      version: '1.2.3',
+      templateVersion: '0.2.0-beta.1',
+      githubRepo: 'lintendo/Axhub-Make',
+    });
+    const prefixedMetadata = releaseMake.createTemplateZipMetadata({
+      templateVersion: 'v0.2.0-beta.1',
       githubRepo: 'lintendo/Axhub-Make',
     });
 
     assert.deepEqual(metadata, {
+      templateVersion: '0.2.0-beta.1',
+      tagName: 'make-client-template-v0.2.0-beta.1',
       githubReleaseAssetName: 'axhub-make-client-template.zip',
-      primaryUrl: 'https://github.com/lintendo/Axhub-Make/releases/download/make-v1.2.3/axhub-make-client-template.zip',
-      mirrorUrl: 'https://gitee.com/axhub/Axhub-Make/releases/download/make-v1.2.3/axhub-make-client-template.zip',
+      primaryUrl: 'https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v0.2.0-beta.1/axhub-make-client-template.zip',
+      mirrorUrl: 'https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v0.2.0-beta.1/axhub-make-client-template.zip',
     });
+    assert.deepEqual(prefixedMetadata, metadata);
+  });
 
+  it('keeps ordinary make release commands free of the client template zip', () => {
     const commands = releaseMake.publishCommands({
       tagName: 'make-v1.2.3',
       templateZip: {
@@ -58,7 +67,33 @@ describe('release make artifact helpers', () => {
       githubRepo: 'lintendo/Axhub-Make',
       npmTag: 'latest',
     });
-    assert(commands.releaseArgs.includes('/tmp/axhub-make-client-template.zip'));
+
+    assert(commands.releaseArgs.includes('/tmp/axhub-make-1.2.3-macos-arm64.zip'));
+    assert(!commands.releaseArgs.includes('/tmp/axhub-make-client-template.zip'));
+  });
+
+  it('builds template-only release commands with only the client template zip', () => {
+    const commands = releaseMake.publishTemplateCommands({
+      tagName: 'make-client-template-v0.2.0-beta.1',
+      templateVersion: '0.2.0-beta.1',
+      templateZip: {
+        path: '/tmp/axhub-make-client-template.zip',
+      },
+    }, {
+      githubRepo: 'lintendo/Axhub-Make',
+    });
+
+    assert.deepEqual(commands.releaseArgs, [
+      'release',
+      'create',
+      'make-client-template-v0.2.0-beta.1',
+      '/tmp/axhub-make-client-template.zip',
+      '--repo',
+      'lintendo/Axhub-Make',
+      '--title',
+      'Axhub Make Client Template 0.2.0-beta.1',
+      '--generate-notes',
+    ]);
   });
 
   it('packages the make client template zip without local runtime artifacts', async () => {
@@ -67,6 +102,9 @@ describe('release make artifact helpers', () => {
     const clientRoot = path.join(sourceRoot, 'client');
     writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
     writeFile(path.join(clientRoot, 'src/prototypes/template-home/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.ttf'), 'source font\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'), 'subset font\n');
+    writeFile(path.join(clientRoot, 'tests/template.test.mjs'), 'export {};\n');
     writeFile(path.join(clientRoot, '.git/config'), '[core]\n');
     writeFile(path.join(clientRoot, 'node_modules/left-pad/index.js'), 'module.exports = null;\n');
     writeFile(path.join(clientRoot, 'dist/build.js'), 'console.log("built");\n');
@@ -74,8 +112,13 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, '.claude/skills/local/SKILL.md'), 'npm run typecheck\n');
     writeFile(path.join(clientRoot, '.trae/local.json'), '{}\n');
     writeFile(path.join(clientRoot, 'temp/scratch.txt'), 'scratch\n');
+    writeFile(path.join(clientRoot, '.axhub/make/client.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/README.md'), '# Make client\n');
+    writeFile(path.join(clientRoot, '.axhub/make/project.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/.dev-server-info.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/axhub.config.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/sessions/stale.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/exports/stale.json'), '{}\n');
 
     const result = await releaseMake.createMakeClientTemplateZip({
       sourceClientDir: clientRoot,
@@ -87,6 +130,9 @@ describe('release make artifact helpers', () => {
     const entries = releaseMake.listZipEntries(result.path);
     assert(entries.includes('package.json'));
     assert(entries.includes('src/prototypes/template-home/index.tsx'));
+    assert(!entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.ttf'));
+    assert(entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'));
+    assert(!entries.some((entry) => entry.startsWith('tests/')));
     assert(!entries.some((entry) => entry.startsWith('.git/')));
     assert(!entries.some((entry) => entry.startsWith('node_modules/')));
     assert(!entries.some((entry) => entry.startsWith('dist/')));
@@ -94,7 +140,13 @@ describe('release make artifact helpers', () => {
     assert(entries.includes('.claude/skills/local/SKILL.md'));
     assert(!entries.some((entry) => entry.startsWith('.trae/')));
     assert(!entries.some((entry) => entry.startsWith('temp/')));
-    assert(!entries.some((entry) => entry.startsWith('.axhub/make/')));
+    assert(entries.includes('.axhub/make/client.json'));
+    assert(entries.includes('.axhub/make/README.md'));
+    assert(!entries.includes('.axhub/make/project.json'));
+    assert(!entries.includes('.axhub/make/.dev-server-info.json'));
+    assert(!entries.includes('.axhub/make/axhub.config.json'));
+    assert(!entries.some((entry) => entry.startsWith('.axhub/make/sessions/')));
+    assert(!entries.some((entry) => entry.startsWith('.axhub/make/exports/')));
   });
 
   it('exposes npm-only latest and beta release scripts from the workspace root', () => {
@@ -107,6 +159,14 @@ describe('release make artifact helpers', () => {
     assert.equal(
       rootPackageJson.scripts['release:make:npm:beta'],
       'node scripts/release-make.mjs --skip-github --npm-tag beta',
+    );
+    assert.equal(
+      rootPackageJson.scripts['release:make-client-template:prepare'],
+      'node scripts/release-make.mjs --template-only --prepare-only',
+    );
+    assert.equal(
+      rootPackageJson.scripts['release:make-client-template'],
+      'node scripts/release-make.mjs --template-only',
     );
   });
 

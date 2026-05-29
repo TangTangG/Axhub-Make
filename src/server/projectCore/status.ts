@@ -53,6 +53,15 @@ function normalizeServerInfo(data: unknown): AxhubServerInfo | null {
   };
 }
 
+export function resolveComparableProjectRoot(projectRoot: string): string {
+  const resolved = resolveProjectRoot(projectRoot);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 export function getServerInfoFilePath(projectRoot: string, role: AxhubServerRole): string {
   return getServerInfoPath(projectRoot, role);
 }
@@ -95,7 +104,7 @@ export function isHealthyServerInfo(info: AxhubServerInfo | null, expectedProjec
   if (!info) {
     return false;
   }
-  return resolveProjectRoot(info.projectRoot) === resolveProjectRoot(expectedProjectRoot);
+  return resolveComparableProjectRoot(info.projectRoot) === resolveComparableProjectRoot(expectedProjectRoot);
 }
 
 export function isProcessAlive(

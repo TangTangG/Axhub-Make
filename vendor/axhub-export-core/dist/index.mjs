@@ -24064,7 +24064,7 @@ var loadHtmlToFigmaModule = async () => {
   return await import("./html-to-figma-ZI5TQE6X.mjs");
 };
 var loadHtmlToAxureModule = async () => {
-  return await import("./html-to-axure-M25M62KI.mjs");
+  return await import("./html-to-axure-P56J7N3E.mjs");
 };
 var htmlToFigma = async (selector = "body", options) => {
   const mod = await loadHtmlToFigmaModule();

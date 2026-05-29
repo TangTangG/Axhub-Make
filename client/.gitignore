@@ -12,6 +12,10 @@ dist/
 !vendor/**/dist/**
 *.tsbuildinfo
 
+# Large source fonts are kept outside the published client template.
+src/prototypes/beginner-guide/TsangerJinKai02-W04.ttf
+src/prototypes/beginner-guide/TsangerJinKai02-W05.ttf
+
 # Vite
 .vite/
 vite.config.*.timestamp-*

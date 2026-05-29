@@ -5798,7 +5798,6 @@ async function htmlToAxure(selector = "body", options = {}) {
           const explicitLineHeight = hasExplicitLineHeight ? Math.max(0, toNumber(lineHeightCss, fontSize)) : 0;
           const resolvedLineHeight = hasExplicitLineHeight ? Math.max(fontSize, explicitLineHeight) : round(fontSize * 1.4);
           const fontWeight = Math.max(100, Math.min(900, toNumber(computedStyle.fontWeight, 400)));
-          const familyStack = normalizeFontFamilyStack2(computedStyle.fontFamily);
           const primaryFamily = normalizePrimaryFontFamily(computedStyle.fontFamily);
           const textColor = parseCssColor2(computedStyle.color) || {
             r: 0,
@@ -5922,7 +5921,7 @@ async function htmlToAxure(selector = "body", options = {}) {
                     {
                       type: 0,
                       text: textContent,
-                      family: familyStack,
+                      family: primaryFamily,
                       typeface: `${primaryFamily} - ${getWeightName(fontWeight)}`,
                       weight: fontWeight,
                       size: round(fontSize),
@@ -6001,7 +6000,7 @@ async function htmlToAxure(selector = "body", options = {}) {
     }
   };
 }
-var EXPORT_OVERLAY_ROOT_ID2, HIDDEN_TAGS, MEDIA_TAGS, SVG_GEOMETRY_TAGS, DEFAULT_TEXT_ALIGN, SOLID_FILL_TYPE, IMAGE_FILL_TYPE, ITEM_TYPE_GROUP, ITEM_TYPE_LAYER, ITEM_TYPE_ARTBOARD, OVERFLOW_CLIPPING_VALUES, round, toNumber, getPageSize2, isTransparentColor, parseCssColor2, splitCssCommaList, parseShadowColor, parseShadowList, getSolidFill, createStroke, getResizingConstraints, getFreeResizingConstraints, mapTextAlign, mapAxisAlignKeyword, mapAxisAlignToTextAlign, mapAxisAlignToVerticalAlign, resolveFlexTextAlignment, getBoxOffsets, resolveVerticalTextAlign, getMeasuredTextHeight, getMeasuredTextWidth, resolveTextDecorations, getWeightName, normalizePrimaryFontFamily, normalizeFontFamilyStack2, getDirectText, getDirectTextRectRelativeToRoot, isExportOverlayElement2, REACT_RUNTIME_COMMENT_RE, MEASUREMENT_HELPER_RE, FAR_OFFSCREEN_THRESHOLD, isReactRuntimeCommentNode, isFrameworkPlaceholderElement, hasMeasurementHelperMarker, isPotentialMeasurementHelperElement, isFarOffscreenRect, isOffscreenMeasurementElement, isElementVisible, getElementRectRelativeToRoot, getElementName, getBackgroundImageUrl, hasSpecialBorderStyle, hasNonUrlBackgroundImage, needsScreenshotFillFallback, captureElementFillImage, captureSvgAsPngDataUrl, getMediaUrl, normalizeImageMapValue, fallbackHash, sha1Hex, createBaseLayerNode, getBorderInfo, getCornerRadii, hasRoundedCorners, isOverflowClipping, isNearlySameRect, resolveClipContainer, resolveMediaClipContainer, resolveMediaCorners, createMaskWrapperNode, createHierarchyMaskContainerNode, createHierarchyGroupContainerNode, getContainerItems, shouldCreateRectangle, createBackgroundShape, isSvgGeometryVisible, normalizePathPoint, getSvgGeometryClientPoints, tokenizePathData, reflectPoint, toCubicFromQuadratic, parsePathDataToSegments, parseSvgPointsAttr, buildEllipsePathSegments, getSvgGeometryLocalSegments, transformLocalPointToClient, normalizeSegmentDataToRect, buildSvgVectorNode, buildSvgContainerNode, buildSvgImageNode, html_to_axure_default;
+var EXPORT_OVERLAY_ROOT_ID2, HIDDEN_TAGS, MEDIA_TAGS, SVG_GEOMETRY_TAGS, DEFAULT_TEXT_ALIGN, SOLID_FILL_TYPE, IMAGE_FILL_TYPE, ITEM_TYPE_GROUP, ITEM_TYPE_LAYER, ITEM_TYPE_ARTBOARD, OVERFLOW_CLIPPING_VALUES, round, toNumber, getPageSize2, isTransparentColor, parseCssColor2, splitCssCommaList, parseShadowColor, parseShadowList, getSolidFill, createStroke, getResizingConstraints, getFreeResizingConstraints, mapTextAlign, mapAxisAlignKeyword, mapAxisAlignToTextAlign, mapAxisAlignToVerticalAlign, resolveFlexTextAlignment, getBoxOffsets, resolveVerticalTextAlign, getMeasuredTextHeight, getMeasuredTextWidth, resolveTextDecorations, getWeightName, normalizePrimaryFontFamily, getDirectText, getDirectTextRectRelativeToRoot, isExportOverlayElement2, REACT_RUNTIME_COMMENT_RE, MEASUREMENT_HELPER_RE, FAR_OFFSCREEN_THRESHOLD, isReactRuntimeCommentNode, isFrameworkPlaceholderElement, hasMeasurementHelperMarker, isPotentialMeasurementHelperElement, isFarOffscreenRect, isOffscreenMeasurementElement, isElementVisible, getElementRectRelativeToRoot, getElementName, getBackgroundImageUrl, hasSpecialBorderStyle, hasNonUrlBackgroundImage, needsScreenshotFillFallback, captureElementFillImage, captureSvgAsPngDataUrl, getMediaUrl, normalizeImageMapValue, fallbackHash, sha1Hex, createBaseLayerNode, getBorderInfo, getCornerRadii, hasRoundedCorners, isOverflowClipping, isNearlySameRect, resolveClipContainer, resolveMediaClipContainer, resolveMediaCorners, createMaskWrapperNode, createHierarchyMaskContainerNode, createHierarchyGroupContainerNode, getContainerItems, shouldCreateRectangle, createBackgroundShape, isSvgGeometryVisible, normalizePathPoint, getSvgGeometryClientPoints, tokenizePathData, reflectPoint, toCubicFromQuadratic, parsePathDataToSegments, parseSvgPointsAttr, buildEllipsePathSegments, getSvgGeometryLocalSegments, transformLocalPointToClient, normalizeSegmentDataToRect, buildSvgVectorNode, buildSvgContainerNode, buildSvgImageNode, html_to_axure_default;
 var init_html_to_axure = __esm({
   "src/export-core/dom/html-to-figma/html-to-axure.js"() {
     "use strict";
@@ -6303,24 +6302,6 @@ var init_html_to_axure = __esm({
       if (!fontFamily) return "Roboto";
       const family = fontFamily.split(",")[0]?.trim() || "Roboto";
       return family.replace(/^["']|["']$/g, "");
-    };
-    normalizeFontFamilyStack2 = (fontFamily) => {
-      if (!fontFamily || typeof fontFamily !== "string") return "Roboto";
-      const tokens = fontFamily.split(",").map((token) => token.trim().replace(/^["']|["']$/g, "").trim()).filter(Boolean);
-      if (tokens.length === 0) {
-        return "Roboto";
-      }
-      const deduped = [];
-      const seen = /* @__PURE__ */ new Set();
-      for (const token of tokens) {
-        const key = token.toLowerCase();
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        deduped.push(token);
-      }
-      return deduped.join(", ");
     };
     getDirectText = (element) => {
       if (isFrameworkPlaceholderElement(element) || isPotentialMeasurementHelperElement(element)) {

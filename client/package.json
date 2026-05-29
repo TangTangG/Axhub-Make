@@ -1,6 +1,6 @@
 {
   "name": "@axhub/make-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Official Axhub Make client runtime",
   "type": "module",
@@ -19,7 +19,8 @@
     "test:ui": "vitest --ui",
     "coverage": "npm run test:coverage",
     "check-ready": "node scripts/check-app-ready.mjs",
-    "capture:theme": "node scripts/capture-theme-homepage.mjs"
+    "capture:theme": "node scripts/capture-theme-homepage.mjs",
+    "font:subset:beginner-guide": "node scripts/subset-beginner-guide-fonts.mjs"
   },
   "devDependencies": {
     "@floating-ui/react": "^0.27.17",
@@ -35,6 +36,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "sass": "^1.97.3",
+    "subset-font": "^2.5.0",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "vite": "^5.0.0",

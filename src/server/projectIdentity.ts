@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 import {
   createProjectMetadataStore,
   readMakeClientMarker,
@@ -41,7 +43,11 @@ function saveMetadataIdentity(
   metadata: ProjectMetadata,
   identity: { id: string; name: string },
 ): ProjectMetadata {
-  if (metadata.project.id === identity.id && metadata.project.name === identity.name) {
+  if (
+    fs.existsSync(metadataStore.getMetadataPath())
+    && metadata.project.id === identity.id
+    && metadata.project.name === identity.name
+  ) {
     return metadata;
   }
   return metadataStore.saveMetadata({

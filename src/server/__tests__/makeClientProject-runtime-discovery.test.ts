@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getMakeClientMarkerPath,
+  getRuntimeServerInfoPath,
   readServerInfo,
 } from '../projectCore/index.ts';
 import { ensureMakeClientDevServer, getMakeClientDevStatus } from '../makeClientProject.ts';
@@ -145,5 +146,95 @@ describe('make client runtime discovery', () => {
     });
     expect(runCommand).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('accepts runtime info written with a realpath-equivalent project root after spawning dev', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarker(projectRoot);
+    writeJson(path.join(projectRoot, 'package.json'), {
+      scripts: {
+        dev: 'vite',
+        'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+      },
+    });
+    const viteRoot = path.join(projectRoot, 'node_modules', 'vite');
+    writeJson(path.join(viteRoot, 'package.json'), { bin: { vite: 'bin/vite.js' } });
+    writeJson(path.join(viteRoot, 'bin', 'vite.js'), '');
+
+    const realProjectRoot = fs.realpathSync.native(projectRoot);
+    if (realProjectRoot === path.resolve(projectRoot)) {
+      return;
+    }
+
+    const spawn = vi.fn((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      setTimeout(() => {
+        writeJson(path.join(targetRoot, '.axhub', 'make', '.dev-server-info.json'), {
+          pid: process.pid,
+          port: 51729,
+          host: 'localhost',
+          origin: 'http://localhost:51729',
+          projectRoot: realProjectRoot,
+          startedAt: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+        });
+      }, 0);
+      return {
+        once: vi.fn(),
+        unref: vi.fn(),
+      } as any;
+    });
+    const runCommand = vi.fn();
+
+    const result = await ensureMakeClientDevServer(projectRoot, {
+      commandRunner: {
+        runCommand,
+        spawn: spawn as any,
+      },
+      devTimeoutMs: 250,
+      pollIntervalMs: 5,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      reused: false,
+      phase: 'ready',
+      runtime: {
+        origin: 'http://localhost:51729',
+      },
+    });
+  });
+
+  it('reports local runtime info as running when the recorded project root is realpath-equivalent', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarker(projectRoot, 'realpath-runtime-client');
+    const realProjectRoot = fs.realpathSync.native(projectRoot);
+    if (realProjectRoot === path.resolve(projectRoot)) {
+      return;
+    }
+    writeJson(getRuntimeServerInfoPath(projectRoot), {
+      pid: process.pid,
+      port: 51730,
+      host: 'localhost',
+      origin: 'http://localhost:51730',
+      projectRoot: realProjectRoot,
+      startedAt: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 404 }));
+
+    const status = await getMakeClientDevStatus('realpath-runtime-client', projectRoot, {
+      healthTimeoutMs: 1,
+    });
+
+    expect(status).toMatchObject({
+      projectId: 'realpath-runtime-client',
+      makeClient: true,
+      running: true,
+      runtime: {
+        origin: 'http://localhost:51730',
+      },
+    });
+    expect(status.reason).toBeUndefined();
   });
 });

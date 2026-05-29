@@ -27,14 +27,14 @@ function createFixture() {
   writeFile(assetPath, 'zip payload');
   const manifestPath = path.join(root, 'manifest.json');
   writeFile(manifestPath, `${JSON.stringify({
-    version: '1.2.3-beta.4',
-    tagName: 'make-v1.2.3-beta.4',
+    templateVersion: '1.2.3-beta.4',
+    tagName: 'make-client-template-v1.2.3-beta.4',
     templateZip: {
       path: assetPath,
       sha256: 'a'.repeat(64),
       githubReleaseAssetName: 'axhub-make-client-template.zip',
-      primaryUrl: 'https://github.com/lintendo/Axhub-Make/releases/download/make-v1.2.3-beta.4/axhub-make-client-template.zip',
-      mirrorUrl: 'https://gitee.com/axhub/Axhub-Make/releases/download/make-v1.2.3-beta.4/axhub-make-client-template.zip',
+      primaryUrl: 'https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v1.2.3-beta.4/axhub-make-client-template.zip',
+      mirrorUrl: 'https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v1.2.3-beta.4/axhub-make-client-template.zip',
     },
   }, null, 2)}\n`);
   return { root, assetPath, manifestPath };
@@ -66,11 +66,11 @@ afterEach(() => {
 describe('gitee make release mirror helper', () => {
   it('parses the Gitee mirror release URL from the manifest', () => {
     assert.deepEqual(
-      mirrorGitee.parseGiteeReleaseDownloadUrl('https://gitee.com/axhub/Axhub-Make/releases/download/make-v1.2.3/axhub-make-client-template.zip'),
+      mirrorGitee.parseGiteeReleaseDownloadUrl('https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v1.2.3/axhub-make-client-template.zip'),
       {
         owner: 'axhub',
         repo: 'Axhub-Make',
-        tagName: 'make-v1.2.3',
+        tagName: 'make-client-template-v1.2.3',
         assetName: 'axhub-make-client-template.zip',
       },
     );
@@ -95,7 +95,7 @@ describe('gitee make release mirror helper', () => {
     const { manifestPath } = createFixture();
     const fetchImpl = createFetchMock([
       (url) => {
-        if (url.includes('/releases/tags/make-v1.2.3-beta.4')) {
+        if (url.includes('/releases/tags/make-client-template-v1.2.3-beta.4')) {
           return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
         }
         return null;
@@ -103,10 +103,12 @@ describe('gitee make release mirror helper', () => {
       (url, init) => {
         if (url.endsWith('/api/v5/repos/axhub/Axhub-Make/releases') && init.method === 'POST') {
           assert.equal(init.body.get('access_token'), token);
-          assert.equal(init.body.get('tag_name'), 'make-v1.2.3-beta.4');
+          assert.equal(init.body.get('tag_name'), 'make-client-template-v1.2.3-beta.4');
+          assert.equal(init.body.get('name'), 'Axhub Make Client Template 1.2.3-beta.4');
+          assert.equal(init.body.get('body'), 'Axhub Make client template 1.2.3-beta.4 mirror release.');
           assert.equal(init.body.get('prerelease'), 'true');
           assert.equal(init.body.get('target_commitish'), 'main');
-          return new Response(JSON.stringify({ id: 42, tag_name: 'make-v1.2.3-beta.4' }), { status: 201 });
+          return new Response(JSON.stringify({ id: 42, tag_name: 'make-client-template-v1.2.3-beta.4' }), { status: 201 });
         }
         return null;
       },
@@ -125,7 +127,7 @@ describe('gitee make release mirror helper', () => {
         return null;
       },
       (url, init) => {
-        if (url === 'https://gitee.com/axhub/Axhub-Make/releases/download/make-v1.2.3-beta.4/axhub-make-client-template.zip') {
+        if (url === 'https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v1.2.3-beta.4/axhub-make-client-template.zip') {
           assert.equal(init.method, 'HEAD');
           return new Response(null, { status: 200, headers: { 'content-length': '11' } });
         }
@@ -150,8 +152,8 @@ describe('gitee make release mirror helper', () => {
     const { manifestPath } = createFixture();
     const fetchImpl = createFetchMock([
       (url) => {
-        if (url.includes('/releases/tags/make-v1.2.3-beta.4')) {
-          return new Response(JSON.stringify({ id: 42, tag_name: 'make-v1.2.3-beta.4' }), { status: 200 });
+        if (url.includes('/releases/tags/make-client-template-v1.2.3-beta.4')) {
+          return new Response(JSON.stringify({ id: 42, tag_name: 'make-client-template-v1.2.3-beta.4' }), { status: 200 });
         }
         return null;
       },
@@ -162,7 +164,7 @@ describe('gitee make release mirror helper', () => {
         return null;
       },
       (url) => {
-        if (url === 'https://gitee.com/axhub/Axhub-Make/releases/download/make-v1.2.3-beta.4/axhub-make-client-template.zip') {
+        if (url === 'https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v1.2.3-beta.4/axhub-make-client-template.zip') {
           return new Response(null, { status: 200 });
         }
         return null;
@@ -211,6 +213,13 @@ describe('gitee make release mirror helper', () => {
     });
 
     assert.equal(result.dryRun, true);
+  });
+
+  it('defaults to the independent make client template manifest path', async () => {
+    const scriptSource = fs.readFileSync(path.resolve('scripts/release-make-mirror-gitee.mjs'), 'utf8');
+
+    assert.match(scriptSource, /\.release\/make-client-template\/manifest\.json/u);
+    assert.doesNotMatch(scriptSource, /defaultManifestPath = path\.join\(repoRoot, '\.release\/make\/manifest\.json'\)/u);
   });
 
   it('exposes a package script for publishing the Gitee mirror', () => {

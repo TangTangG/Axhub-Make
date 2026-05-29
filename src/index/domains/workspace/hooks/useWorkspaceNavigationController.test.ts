@@ -39,6 +39,9 @@ describe('useWorkspaceNavigationController source', () => {
     const addProjectStart = source.indexOf('const addProjectFromLocalPath = useCallback', switchProjectStart);
     const switchProjectSource = source.slice(switchProjectStart, addProjectStart);
 
+    expect(switchProjectSource).toContain('const alreadyActiveProject = normalizedProjectId === activeProjectId;');
+    expect(switchProjectSource).toContain('if (!normalizedProjectId || (alreadyActiveProject && projectResourcesLoadedRef.current)) {');
+    expect(switchProjectSource).toContain('if (!alreadyActiveProject) {');
     expect(switchProjectSource).toContain("fetch('/api/projects/active'");
     expect(switchProjectSource).toContain('await loadProjectResourcesFor(normalizedProjectId);');
     expect(switchProjectSource).not.toContain('await ensureProjectDevServer(normalizedProjectId);');
@@ -70,6 +73,19 @@ describe('useWorkspaceNavigationController source', () => {
     expect(addProjectSource).toContain('return false;');
     expect(addProjectSource).toContain('return true;');
     expect(addProjectSource).toContain('async (root: string)');
+  });
+
+  it('activates a newly created blank project even if its first resource load fails', () => {
+    const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
+    const createBlankStart = source.indexOf('const createBlankMakeProject = useCallback');
+    const reloadStart = source.indexOf('const reloadSidebarAssets = useCallback', createBlankStart);
+    const createBlankSource = source.slice(createBlankStart, reloadStart);
+
+    expect(createBlankSource).toContain('setActiveProjectId(projectId);');
+    expect(createBlankSource).toContain("setProjectTitle(typeof payload?.project?.name === 'string'");
+    expect(createBlankSource).toContain('const loaded = await loadProjectResourcesFor(projectId);');
+    expect(createBlankSource).toContain("messageApi.error('项目已创建，但加载资源失败，请刷新或重新切换项目');");
+    expect(createBlankSource).not.toContain("throw new Error('加载项目资源失败');");
   });
 
   it('requires project setup instead of falling back to legacy entries when no projects exist', () => {
@@ -122,11 +138,13 @@ describe('useWorkspaceNavigationController source', () => {
     expect(source).toContain('formatMakeClientProjectError');
   });
 
-  it('shows the make client setup template phase as a template zip download', () => {
+  it('shows blank make client project creation as a single pending request', () => {
     const source = readFileSync(resolve(__dirname, '../../../components/sidebar/ContentPanel.tsx'), 'utf8');
 
     expect(source).toContain("{ key: 'template', label: '下载模板包' }");
-    expect(source).toContain("setRunningPhase('template')");
+    expect(source).toContain("const MAKE_CLIENT_SETUP_PENDING_LABEL = '创建并启动项目';");
+    expect(source).toContain("setRunningPhase('creating')");
+    expect(source).not.toContain("setRunningPhase('template')");
     expect(source).not.toContain("{ key: 'clone', label: '获取源码' }");
   });
 

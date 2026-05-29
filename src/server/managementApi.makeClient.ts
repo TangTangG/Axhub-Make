@@ -15,6 +15,7 @@ import {
   ensureMakeClientDevServer,
   getMakeClientDevStatus,
   makeClientErrorPayload,
+  suggestMakeClientFolderName,
   stopMakeClientDevServer,
   validateExistingMakeClientProject,
 } from './makeClientProject.ts';
@@ -128,6 +129,18 @@ export function handleMakeClientProjectApi(
         marker: result.marker,
         runtime: result.dev.runtime,
       }, { status: 201 });
+    }).catch((error: any) => {
+      sendJson(res, makeClientErrorPayload(error), { status: Number(error?.status || 500) });
+    });
+    return true;
+  }
+
+  if (pathname === '/api/projects/make/folder-name-suggestion' && req.method === 'POST') {
+    readJsonBody(req).then(async (body) => {
+      const parentRoot = String(body?.parentRoot || '').trim();
+      const projectName = String(body?.projectName || '').trim();
+      const folderName = suggestMakeClientFolderName({ parentRoot, projectName });
+      sendJson(res, { folderName });
     }).catch((error: any) => {
       sendJson(res, makeClientErrorPayload(error), { status: Number(error?.status || 500) });
     });

@@ -301,24 +301,6 @@ var normalizePrimaryFontFamily = (fontFamily) => {
   const family = fontFamily.split(",")[0]?.trim() || "Roboto";
   return family.replace(/^["']|["']$/g, "");
 };
-var normalizeFontFamilyStack = (fontFamily) => {
-  if (!fontFamily || typeof fontFamily !== "string") return "Roboto";
-  const tokens = fontFamily.split(",").map((token) => token.trim().replace(/^["']|["']$/g, "").trim()).filter(Boolean);
-  if (tokens.length === 0) {
-    return "Roboto";
-  }
-  const deduped = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const token of tokens) {
-    const key = token.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    deduped.push(token);
-  }
-  return deduped.join(", ");
-};
 var getDirectText = (element) => {
   if (isFrameworkPlaceholderElement(element) || isPotentialMeasurementHelperElement(element)) {
     return "";
@@ -1862,7 +1844,6 @@ async function htmlToAxure(selector = "body", options = {}) {
           const explicitLineHeight = hasExplicitLineHeight ? Math.max(0, toNumber(lineHeightCss, fontSize)) : 0;
           const resolvedLineHeight = hasExplicitLineHeight ? Math.max(fontSize, explicitLineHeight) : round(fontSize * 1.4);
           const fontWeight = Math.max(100, Math.min(900, toNumber(computedStyle.fontWeight, 400)));
-          const familyStack = normalizeFontFamilyStack(computedStyle.fontFamily);
           const primaryFamily = normalizePrimaryFontFamily(computedStyle.fontFamily);
           const textColor = parseCssColor(computedStyle.color) || {
             r: 0,
@@ -1986,7 +1967,7 @@ async function htmlToAxure(selector = "body", options = {}) {
                     {
                       type: 0,
                       text: textContent,
-                      family: familyStack,
+                      family: primaryFamily,
                       typeface: `${primaryFamily} - ${getWeightName(fontWeight)}`,
                       weight: fontWeight,
                       size: round(fontSize),

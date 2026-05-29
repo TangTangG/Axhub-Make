@@ -6,7 +6,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const defaultManifestPath = path.join(repoRoot, '.release/make/manifest.json');
+const defaultManifestPath = path.join(repoRoot, '.release/make-client-template/manifest.json');
 const defaultTokenFile = path.join(repoRoot, '.local/gitee-token');
 const giteeApiBaseUrl = 'https://gitee.com/api/v5';
 
@@ -18,7 +18,7 @@ function printUsage() {
   console.log(`Usage: pnpm release:make:mirror:gitee [options]
 
 Options:
-  --manifest <path>          Release manifest path. Defaults to .release/make/manifest.json.
+  --manifest <path>          Template release manifest path. Defaults to .release/make-client-template/manifest.json.
   --token-file <path>        Local token file. Defaults to .local/gitee-token.
   --target <commitish>       Gitee release target branch or commit. Defaults to main.
   --replace                  Delete and re-upload an existing template attachment.
@@ -109,7 +109,7 @@ function assertManifestHasTemplateZip(manifest, manifestPath) {
     throw new Error(`Manifest is missing templateZip.path or templateZip.mirrorUrl: ${manifestPath}`);
   }
   if (!fs.existsSync(manifest.templateZip.path)) {
-    throw new Error(`Template zip asset does not exist. Run release:make:prepare first: ${manifest.templateZip.path}`);
+    throw new Error(`Template zip asset does not exist. Run release:make-client-template:prepare first: ${manifest.templateZip.path}`);
   }
 }
 
@@ -144,13 +144,20 @@ async function getReleaseByTag({ fetchImpl, token, owner, repo, tagName }) {
   return readGiteeJson(response, `Get Gitee release ${tagName}`);
 }
 
-async function createRelease({ fetchImpl, token, owner, repo, tagName, version, targetCommitish }) {
+async function createRelease({ fetchImpl, token, owner, repo, tagName, version, templateVersion, targetCommitish }) {
+  const releaseVersion = templateVersion || version;
+  if (!releaseVersion) {
+    throw new Error(`Manifest is missing templateVersion or version for ${tagName}`);
+  }
+  const isTemplateRelease = Boolean(templateVersion);
   const body = new FormData();
   body.set('access_token', token);
   body.set('tag_name', tagName);
-  body.set('name', `@axhub/make ${version}`);
-  body.set('body', `Axhub Make ${version} mirror release for Make client template zip.`);
-  body.set('prerelease', version.includes('-') ? 'true' : 'false');
+  body.set('name', isTemplateRelease ? `Axhub Make Client Template ${releaseVersion}` : `@axhub/make ${releaseVersion}`);
+  body.set('body', isTemplateRelease
+    ? `Axhub Make client template ${releaseVersion} mirror release.`
+    : `Axhub Make ${releaseVersion} mirror release for Make client template zip.`);
+  body.set('prerelease', releaseVersion.includes('-') ? 'true' : 'false');
   body.set('target_commitish', targetCommitish);
   const response = await fetchImpl(`${giteeApiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases`, {
     method: 'POST',
@@ -261,6 +268,7 @@ export async function runGiteeMirrorRelease({
       repo: parsedMirror.repo,
       tagName: parsedMirror.tagName,
       version: manifest.version,
+      templateVersion: manifest.templateVersion,
       targetCommitish: options.targetCommitish,
     });
     created = true;

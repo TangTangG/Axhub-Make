@@ -99,7 +99,9 @@ describe('IndexPage source', () => {
     expect(source).toContain('item.name !== selectedItem.name');
     expect(source).toContain('pages: nextPages');
     expect(source).toContain('defaultPageId: normalizePrototypeRoutePageId(routeInfo.defaultPageId) || nextPages[0]?.id || \'\'');
-    expect(source).toContain('setSelectedPrototypePageId(normalizePrototypeRoutePageId(routeInfo.activePageId) || null)');
+    expect(source).toContain('resolveSelectedPrototypePageAfterRouteInfo');
+    expect(source).toContain('setSelectedPrototypePageId((previousPageId) =>');
+    expect(source).not.toContain('setSelectedPrototypePageId(normalizePrototypeRoutePageId(routeInfo.activePageId) || null)');
     expect(source).toContain('onPrototypeRouteInfo:');
   });
 
