@@ -22,7 +22,8 @@
 - `.admin-server-info.json`
   - 本地服务运行信息。
 - `sidebar-tree.json`
-  - 只在用户自定义侧边栏结构后保存；默认树由 metadata 或文件扫描派生。
+  - 官方模板的初始侧边栏树。
+  - 用户项目中由运行时继续更新，表示用户自定义后的侧边栏结构。
 
 ## 运行记录和产物
 
@@ -35,4 +36,4 @@
 
 ## 模板提交边界
 
-官方 client 模板只提交 `client.json` 和本 README。其它运行缓存、记录和产物应保持本地忽略。
+官方 client 模板只提交 `client.json`、本 README 和 `sidebar-tree.json`。其它运行缓存、记录和产物应保持本地忽略。

@@ -108,6 +108,7 @@ const templateCopyIgnoredAxhubMakeNames = new Set([
 const templateCopyAllowedAxhubMakeFiles = new Set([
   '.axhub/make/client.json',
   '.axhub/make/README.md',
+  '.axhub/make/sidebar-tree.json',
 ]);
 
 const executableTargets = [
@@ -250,20 +251,13 @@ function walkFiles(rootDir) {
 }
 
 function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
-  if (templateCopyIgnoredNames.has(entryName) || templateCopyIgnoredFiles.has(entryName)) {
-    return true;
-  }
   const normalizedRelativePath = relativePath.split(path.sep).join('/');
   if (
     normalizedRelativePath.startsWith('.axhub/make/')
-    && !templateCopyAllowedAxhubMakeFiles.has(normalizedRelativePath)
   ) {
-    return true;
+    return !templateCopyAllowedAxhubMakeFiles.has(normalizedRelativePath);
   }
-  if (
-    normalizedRelativePath.startsWith('.axhub/make/')
-    && templateCopyIgnoredAxhubMakeNames.has(entryName)
-  ) {
+  if (templateCopyIgnoredNames.has(entryName) || templateCopyIgnoredFiles.has(entryName)) {
     return true;
   }
   if (entryName.endsWith('.tsbuildinfo')) {

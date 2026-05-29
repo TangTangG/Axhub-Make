@@ -56,10 +56,12 @@
 
 1. 如果用户已指定 `DESIGN.md` 或主题，直接采用。
 2. 如果用户未指定，先从项目默认主题、已有同类原型和 `src/themes/` 中整理 3-4 个最匹配候选，让用户选择。
-3. 候选说明只写适用理由、主要风格和取舍，不替用户决定最终基底。
+3. 候选说明只写适用理由、主要风格、取舍和预览链接，不替用户决定最终基底。
 4. 不自行新建 `DESIGN.md`；没有合适候选时，停止并请用户提供设计基底或主题方向。
 
 整理候选时优先读取主题 `theme.json`，用 `tags.*`、`display.distributionTags`、`identity.title*/description*` 和 `display.variant` 做检索与候选说明；用 `identity.slug` 和 `assets.designMd.path` 校验目录与 `DESIGN.md` 路径。
+
+候选必须提供可打开的主题预览链接。优先使用资源 metadata 里的 `clientUrl` / `previewUrl`；没有时使用 `/themes/<theme-slug>`。同时标出对应 `DESIGN.md` 路径，便于用户核对。
 
 `DESIGN.md` 确定后，用户零散提出的颜色、字体、布局、动效、组件形态等需求，都作为基于该设计基底的调整处理，不另起一套视觉系统。
 

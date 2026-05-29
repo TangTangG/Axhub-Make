@@ -105,6 +105,21 @@ describe('ContentPanel make client project setup source', () => {
     expect(renderSource).toContain('setProjectSwitcherMenuOpen(false);');
   });
 
+  it('switches to the prototype tab after an existing or blank project setup succeeds', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+    const renderSource = source.slice(
+      source.indexOf('<ProjectSetupDialog'),
+      source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
+    );
+
+    expect(dialogSource.match(/onSetupComplete\(\);/gu)).toHaveLength(2);
+    expect(renderSource).toContain("onTabChange('prototype');");
+  });
+
   it('does not show blue borders or focus rings on setup option buttons', () => {
     const source = readContentPanelSource();
     const menuSource = source.slice(
@@ -145,7 +160,7 @@ describe('ContentPanel make client project setup source', () => {
 
     expect(source).toContain('async function suggestProjectFolderName');
     expect(dialogSource).toContain('void refreshSuggestedFolderName(projectName, parentRoot);');
-    expect(dialogSource).toContain('if (manualFolderName) {');
+    expect(dialogSource).toContain('if (manualFolderName && !options.force) {');
     expect(dialogSource).toContain('setManualFolderName(true);');
     expect(source).toContain("fetch('/api/projects/make/folder-name-suggestion'");
   });
@@ -164,6 +179,22 @@ describe('ContentPanel make client project setup source', () => {
     expect(dialogSource).toContain('writeStoredMakeClientParentRoot(selectedPath);');
     expect(source).toContain('window.localStorage.getItem(MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY)');
     expect(source).toContain('window.localStorage.setItem(MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY, normalizedParentRoot)');
+  });
+
+  it('resets blank project name and folder name while keeping the remembered parent directory', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+
+    expect(source).toContain("const DEFAULT_MAKE_CLIENT_PROJECT_NAME = '新建 Make 项目';");
+    expect(dialogSource).toContain('function resetBlankProjectFields()');
+    expect(dialogSource).toContain('setProjectName(DEFAULT_MAKE_CLIENT_PROJECT_NAME);');
+    expect(dialogSource).toContain('setManualFolderName(false);');
+    expect(dialogSource).toContain('void refreshSuggestedFolderName(DEFAULT_MAKE_CLIENT_PROJECT_NAME, parentRoot, { force: true });');
+    expect(dialogSource).toContain('resetBlankProjectFields();');
+    expect(dialogSource).not.toContain('setParentRoot(readStoredMakeClientParentRoot())');
   });
 });
 

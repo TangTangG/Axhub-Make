@@ -159,6 +159,7 @@ describe('useIndexPageSelectionSync source', () => {
       kind: 'select',
       item: firstPrototype,
       markExplicitSelection: false,
+      resetPageSelection: true,
       nextCanvasItem: previousCanvasPrototype,
     });
   });
@@ -198,6 +199,7 @@ describe('useIndexPageSelectionSync source', () => {
       kind: 'select',
       item: refreshedSelectedPlaceholder,
       markExplicitSelection: false,
+      resetPageSelection: false,
       nextCanvasItem: null,
     });
   });
@@ -232,6 +234,7 @@ describe('useIndexPageSelectionSync source', () => {
       kind: 'select',
       item: refreshedSelectedPrototype,
       markExplicitSelection: true,
+      resetPageSelection: false,
       nextCanvasItem: null,
     });
   });
