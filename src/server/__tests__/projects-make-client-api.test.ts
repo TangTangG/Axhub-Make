@@ -963,9 +963,14 @@ describe('make-server make client project APIs', () => {
         expect.anything(),
       );
       expect(childProcessMock.execFile).not.toHaveBeenCalled();
-      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
         'pnpm',
         ['dev'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
         expect.objectContaining({
           cwd: projectRoot,
           env: expect.objectContaining({
@@ -1073,6 +1078,95 @@ describe('make-server make client project APIs', () => {
             PATH: expect.any(String),
           }),
         }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('falls back to npm install when pnpm is not installed on the host', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-no-pnpm-npm-fallback-');
+    writeMakeClientMarker(projectRoot, 'no-pnpm-npm-fallback-client', 'No PNPM NPM Fallback Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'no-pnpm-npm-fallback-client', 'No PNPM NPM Fallback Client');
+    runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'pnpm' && args[0] === 'install') {
+        throw Object.assign(new Error('spawn pnpm ENOENT'), {
+          code: 'ENOENT',
+        });
+      }
+      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+        writeInstalledMakeClientDependencies(projectRoot);
+      }
+      return localCommandResult(command, args);
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51733,
+        host: 'localhost',
+        origin: 'http://localhost:51733',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/no-pnpm-npm-fallback-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(ensureResponse.status).toBe(200);
+      expect(ensureBody).toMatchObject({
+        success: true,
+        projectId: 'no-pnpm-npm-fallback-client',
+        runtime: {
+          origin: 'http://localhost:51733',
+        },
+      });
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        'pnpm',
+        ['install'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'pnpm',
+        ['dev'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
+        expect.objectContaining({ cwd: projectRoot }),
       );
     } finally {
       await server.close();
@@ -1232,6 +1326,140 @@ describe('make-server make client project APIs', () => {
             PATH: expect.any(String),
           }),
         }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('starts with local vite after pnpm install so pnpm dev is not required at runtime', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-spawn-enoent-');
+    writeMakeClientMarker(projectRoot, 'pnpm-install-local-vite-client', 'PNPM Install Local Vite Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'pnpm-install-local-vite-client', 'PNPM Install Local Vite Client');
+    runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'pnpm' && args[0] === 'install') {
+        writeInstalledMakeClientDependencies(projectRoot);
+      }
+      return localCommandResult(command, args);
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51732,
+        host: 'localhost',
+        origin: 'http://localhost:51732',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/pnpm-install-local-vite-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(ensureResponse.status).toBe(200);
+      expect(ensureBody).toMatchObject({
+        success: true,
+        projectId: 'pnpm-install-local-vite-client',
+        runtime: {
+          origin: 'http://localhost:51732',
+        },
+      });
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        'pnpm',
+        ['install'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'pnpm',
+        ['dev'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('returns a dev startup error instead of crashing when the dev spawn command is missing', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-spawn-enoent-');
+    writeMakeClientMarker(projectRoot, 'spawn-enoent-client', 'Spawn ENOENT Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'spawn-enoent-client', 'Spawn ENOENT Client');
+    childProcessMock.spawn.mockImplementation(() => {
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'error') {
+            setTimeout(() => callback(Object.assign(new Error('spawn pnpm ENOENT'), {
+              code: 'ENOENT',
+              syscall: 'spawn pnpm',
+            })), 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/spawn-enoent-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(ensureResponse.status).toBe(500);
+      expect(ensureBody).toMatchObject({
+        code: 'MAKE_CLIENT_DEV_FAILED',
+        phase: 'dev',
+      });
+      expect(String(ensureBody.error)).toContain('spawn pnpm ENOENT');
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'pnpm',
+        ['dev'],
+        expect.objectContaining({ cwd: projectRoot }),
       );
     } finally {
       await server.close();
