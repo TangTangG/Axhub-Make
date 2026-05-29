@@ -386,6 +386,22 @@ function commandErrorMessage(error: unknown): string {
   return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Command failed').trim();
 }
 
+function makeClientDevSpawnError(error: unknown, command: string, args: string[]): MakeClientProjectError {
+  return new MakeClientProjectError(
+    'MAKE_CLIENT_DEV_FAILED',
+    commandErrorMessage(error),
+    {
+      status: 500,
+      phase: 'dev',
+      details: {
+        command,
+        args,
+        error: commandErrorMessage(error),
+      },
+    },
+  );
+}
+
 function npmCommand(): string {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm';
 }
@@ -466,16 +482,16 @@ async function canRunPnpm(runner: MakeClientCommandRunner, projectRoot: string):
 }
 
 function resolveMakeClientDevCommand(installMethod: 'skipped' | 'pnpm' | 'npm', projectRoot: string): { command: string; args: string[] } {
+  const viteEntrypoint = viteNodeEntrypoint(projectRoot);
+  if (fs.existsSync(viteEntrypoint)) {
+    return { command: process.execPath, args: [viteEntrypoint] };
+  }
   if (installMethod === 'npm') {
-    const viteEntrypoint = viteNodeEntrypoint(projectRoot);
-    if (!fs.existsSync(viteEntrypoint)) {
       throw new MakeClientProjectError(
         'MAKE_CLIENT_INSTALL_FAILED',
         'Make client vite dependency is missing after npm install',
         { status: 500, phase: 'install', details: { viteEntrypoint } },
       );
-    }
-    return { command: process.execPath, args: [viteEntrypoint] };
   }
   return { command: 'pnpm', args: ['dev'] };
 }
@@ -790,20 +806,33 @@ export async function ensureMakeClientDevServer(
   const installMethod = await ensureMakeClientDependencies(runner, root);
   const devCommand = await resolveMakeClientDevCommandForProject(runner, installMethod, root);
 
-  const child = runner.spawn(devCommand.command, devCommand.args, {
-    cwd: root,
-    detached: true,
-    env: {
-      ...buildLocalCommandEnv(),
-      [SKIP_AUTO_START_SERVER_ENV]: '1',
-    },
-    stdio: 'ignore',
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = runner.spawn(devCommand.command, devCommand.args, {
+      cwd: root,
+      detached: true,
+      env: {
+        ...buildLocalCommandEnv(),
+        [SKIP_AUTO_START_SERVER_ENV]: '1',
+      },
+      stdio: 'ignore',
+    });
+  } catch (error) {
+    throw makeClientDevSpawnError(error, devCommand.command, devCommand.args);
+  }
+  const spawnError = new Promise<never>((_resolve, reject) => {
+    child.once?.('error', (error) => {
+      reject(makeClientDevSpawnError(error, devCommand.command, devCommand.args));
+    });
   });
   child.unref?.();
-  const runtime = await waitForRuntimeInfo(root, options.devTimeoutMs ?? DEFAULT_MAKE_CLIENT_DEV_TIMEOUT_MS, options.pollIntervalMs ?? DEFAULT_MAKE_CLIENT_DEV_POLL_INTERVAL_MS, {
-    healthTimeoutMs: options.healthTimeoutMs,
-    ignoredRuntime: existingRuntime,
-  });
+  const runtime = await Promise.race([
+    waitForRuntimeInfo(root, options.devTimeoutMs ?? DEFAULT_MAKE_CLIENT_DEV_TIMEOUT_MS, options.pollIntervalMs ?? DEFAULT_MAKE_CLIENT_DEV_POLL_INTERVAL_MS, {
+      healthTimeoutMs: options.healthTimeoutMs,
+      ignoredRuntime: existingRuntime,
+    }),
+    spawnError,
+  ]);
   if (!runtime) {
     throw new MakeClientProjectError(
       'MAKE_CLIENT_DEV_TIMEOUT',

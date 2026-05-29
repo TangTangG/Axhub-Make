@@ -113,9 +113,11 @@ describe('useWorkspaceNavigationController source', () => {
     expect(source).toContain('MAKE_CLIENT_TEMPLATE_UNAVAILABLE');
     expect(source).toContain('无法下载 Make 客户端模板包');
     expect(source).toContain('MAKE_CLIENT_INSTALL_FAILED');
+    expect(source).toContain('npm 或 pnpm install');
     expect(source).toContain('MAKE_CLIENT_METADATA_SYNC_FAILED');
     expect(source).toContain('MAKE_CLIENT_DEV_TIMEOUT');
     expect(source).toContain('PNPM_NOT_FOUND');
+    expect(source).toContain('MAKE_CLIENT_DEV_FAILED');
     expect(source).toContain("template: '下载模板包'");
     expect(source).toContain('formatMakeClientProjectError');
   });
