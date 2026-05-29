@@ -32,6 +32,7 @@ type PrototypeAutoSelectionDecision =
         kind: 'select';
         item: ItemData;
         markExplicitSelection: boolean;
+        resetPageSelection: boolean;
         nextCanvasItem: ItemData | null;
     };
 
@@ -99,6 +100,7 @@ export function resolvePrototypeAutoSelectionDecision({
                 kind: 'select',
                 item: currentItem,
                 markExplicitSelection: true,
+                resetPageSelection: false,
                 nextCanvasItem,
             };
         }
@@ -112,6 +114,7 @@ export function resolvePrototypeAutoSelectionDecision({
                 kind: 'select',
                 item: nextCanvasItem,
                 markExplicitSelection: true,
+                resetPageSelection: false,
                 nextCanvasItem,
             };
     }
@@ -123,6 +126,7 @@ export function resolvePrototypeAutoSelectionDecision({
                 kind: 'select',
                 item: currentItem,
                 markExplicitSelection: true,
+                resetPageSelection: false,
                 nextCanvasItem,
             };
         }
@@ -145,6 +149,7 @@ export function resolvePrototypeAutoSelectionDecision({
             kind: 'select',
             item: currentItem,
             markExplicitSelection: false,
+            resetPageSelection: false,
             nextCanvasItem,
         };
     }
@@ -172,6 +177,7 @@ export function resolvePrototypeAutoSelectionDecision({
         kind: 'select',
         item: autoSelectedItem,
         markExplicitSelection: false,
+        resetPageSelection: currentItem?.name !== autoSelectedItem.name,
         nextCanvasItem,
     };
 }
@@ -328,7 +334,9 @@ export function useIndexPageSelectionSync({
         }
 
         setSelectedItem(decision.item);
-        setSelectedPrototypePageId(null);
+        if (decision.resetPageSelection) {
+            setSelectedPrototypePageId(null);
+        }
         if (pendingReturnTarget?.sidebarTab === 'prototype') {
             setPendingReturnTarget(null);
         }

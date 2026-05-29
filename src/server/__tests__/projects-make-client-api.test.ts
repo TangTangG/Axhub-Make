@@ -212,12 +212,30 @@ function writeMakeClientTemplate(templateRoot: string) {
   fs.mkdirSync(path.join(templateRoot, '.axhub', 'make'), { recursive: true });
   fs.writeFileSync(path.join(templateRoot, '.axhub', 'make', 'client.json'), '{}\n', 'utf8');
   fs.writeFileSync(path.join(templateRoot, '.axhub', 'make', 'README.md'), '# Make client metadata\n', 'utf8');
+  writeJson(path.join(templateRoot, '.axhub', 'make', 'sidebar-tree.json'), {
+    version: 1,
+    updatedAt: '2026-05-29T00:00:00.000Z',
+    prototypes: [],
+    docs: [],
+    themesTree: [
+      {
+        id: 'folder-themes-test',
+        kind: 'folder',
+        title: '行业',
+        children: [
+          { id: 'item-themes-test', kind: 'item', title: 'Test Theme', itemKey: 'themes/test-theme' },
+        ],
+      },
+    ],
+    themes: [],
+    data: [],
+    templates: [],
+  });
   fs.writeFileSync(path.join(templateRoot, '.axhub', 'make', 'project.json'), '{}\n', 'utf8');
   fs.writeFileSync(path.join(templateRoot, '.axhub', 'make', '.dev-server-info.json'), JSON.stringify({
     origin: 'http://template-stale-runtime.invalid',
   }), 'utf8');
   fs.writeFileSync(path.join(templateRoot, '.axhub', 'make', 'axhub.config.json'), '{}\n', 'utf8');
-  fs.writeFileSync(path.join(templateRoot, '.axhub', 'make', 'sidebar-tree.json'), '{}\n', 'utf8');
   fs.mkdirSync(path.join(templateRoot, '.axhub', 'make', 'sessions'), { recursive: true });
   fs.writeFileSync(path.join(templateRoot, '.axhub', 'make', 'sessions', 'stale.json'), '{}\n', 'utf8');
   fs.mkdirSync(path.join(templateRoot, '.axhub', 'make', 'exports'), { recursive: true });
@@ -2026,7 +2044,14 @@ describe('make-server make client project APIs', () => {
       expect(fs.existsSync(path.join(targetRoot, '.trae'))).toBe(false);
       expect(fs.existsSync(path.join(targetRoot, 'temp'))).toBe(false);
       expect(fs.existsSync(path.join(targetRoot, '.axhub', 'make', 'axhub.config.json'))).toBe(false);
-      expect(fs.existsSync(path.join(targetRoot, '.axhub', 'make', 'sidebar-tree.json'))).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(targetRoot, '.axhub', 'make', 'sidebar-tree.json'), 'utf8'))).toMatchObject({
+        themesTree: [
+          expect.objectContaining({
+            id: 'folder-themes-test',
+            title: '行业',
+          }),
+        ],
+      });
       expect(fs.existsSync(path.join(targetRoot, '.axhub', 'make', 'client.json'))).toBe(true);
       expect(fs.existsSync(path.join(targetRoot, '.axhub', 'make', 'README.md'))).toBe(true);
       expect(fs.existsSync(path.join(targetRoot, '.axhub', 'make', 'sessions'))).toBe(false);

@@ -141,7 +141,6 @@ const TEMPLATE_COPY_IGNORED_FILES = new Set([
   '.dev-server-info.json',
   'axhub.config.json',
   'entries.json',
-  'sidebar-tree.json',
 ]);
 const TEMPLATE_COPY_IGNORED_AXHUB_MAKE_NAMES = new Set([
   'edit-history',
@@ -151,6 +150,7 @@ const TEMPLATE_COPY_IGNORED_AXHUB_MAKE_NAMES = new Set([
 const TEMPLATE_COPY_ALLOWED_AXHUB_MAKE_FILES = new Set([
   '.axhub/make/client.json',
   '.axhub/make/README.md',
+  '.axhub/make/sidebar-tree.json',
 ]);
 
 export interface MakeClientTemplateSource {

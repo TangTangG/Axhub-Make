@@ -6,7 +6,7 @@
 |------|------|----------|
 | ① 读取上下文 | 系统规则、用户资料、相关规范、已有原型与资源目录 | — |
 | ② 产品需求对齐 | 新建原型、明显重构或需求模糊时，先收敛目标用户、核心任务、范围、功能清单、内容来源和验收重点 | `rules/requirements-alignment-guide.md` |
-| ③ 设计方案对齐 | 产品需求确认后，先让用户从 3-4 个匹配的 `DESIGN.md` 候选中确认设计基底，再把布局、交互、视觉和内容呈现收敛为设计决策 | `rules/requirements-alignment-guide.md` |
+| ③ 设计方案对齐 | 产品需求确认后，先让用户从 3-4 个带预览链接的 `DESIGN.md` 候选中确认设计基底，再收敛为设计决策 | `rules/requirements-alignment-guide.md` |
 | ④ 原型开发与验收 | 根据已确认方案实现原型；遇到问题按错误信息定位修复，并完成预览验收 | `rules/prototype-development-guide.md` |
 
 ## 额外产物

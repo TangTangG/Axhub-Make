@@ -114,6 +114,7 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, 'temp/scratch.txt'), 'scratch\n');
     writeFile(path.join(clientRoot, '.axhub/make/client.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/README.md'), '# Make client\n');
+    writeFile(path.join(clientRoot, '.axhub/make/sidebar-tree.json'), '{"version":1,"themesTree":[]}\n');
     writeFile(path.join(clientRoot, '.axhub/make/project.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/.dev-server-info.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/axhub.config.json'), '{}\n');
@@ -142,6 +143,7 @@ describe('release make artifact helpers', () => {
     assert(!entries.some((entry) => entry.startsWith('temp/')));
     assert(entries.includes('.axhub/make/client.json'));
     assert(entries.includes('.axhub/make/README.md'));
+    assert(entries.includes('.axhub/make/sidebar-tree.json'));
     assert(!entries.includes('.axhub/make/project.json'));
     assert(!entries.includes('.axhub/make/.dev-server-info.json'));
     assert(!entries.includes('.axhub/make/axhub.config.json'));

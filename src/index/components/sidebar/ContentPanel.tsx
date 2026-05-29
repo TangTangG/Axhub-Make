@@ -163,6 +163,7 @@ const MAKE_CLIENT_SETUP_PENDING_LABEL = '创建并启动项目';
 const MAKE_CLIENT_SETUP_PENDING_DESCRIPTION = '正在下载模板、安装依赖并启动客户端，可能需要几分钟';
 const MAKE_CLIENT_SETUP_FAILED_LABEL = '创建项目失败';
 const MAKE_CLIENT_SETUP_FAILED_DESCRIPTION = '请检查网络、本地 Node 环境或目标目录后重试';
+const DEFAULT_MAKE_CLIENT_PROJECT_NAME = '新建 Make 项目';
 const MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY = 'axhub.make.lastProjectParentRoot';
 
 function slugifyProjectFolderName(input: string): string {
@@ -862,7 +863,7 @@ function ProjectSetupDialog({
 }: ProjectSetupDialogProps) {
     const [setupMode, setSetupMode] = useState<ProjectSetupMode>(forceBlankProjectCreation ? 'blank' : 'menu');
     const [parentRoot, setParentRoot] = useState(readStoredMakeClientParentRoot);
-    const [projectName, setProjectName] = useState('新建 Make 项目');
+    const [projectName, setProjectName] = useState(DEFAULT_MAKE_CLIENT_PROJECT_NAME);
     const [folderName, setFolderName] = useState('make-project');
     const [manualFolderName, setManualFolderName] = useState(false);
     const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
@@ -873,8 +874,12 @@ function ProjectSetupDialog({
     const allowCloseRef = useRef(false);
     const suggestionRequestRef = useRef(0);
 
-    const refreshSuggestedFolderName = useCallback(async (nextProjectName: string, nextParentRoot: string) => {
-        if (manualFolderName) {
+    const refreshSuggestedFolderName = useCallback(async (
+        nextProjectName: string,
+        nextParentRoot: string,
+        options: { force?: boolean } = {},
+    ) => {
+        if (manualFolderName && !options.force) {
             return;
         }
         const requestId = suggestionRequestRef.current + 1;
@@ -895,6 +900,15 @@ function ProjectSetupDialog({
             }
         }
     }, [manualFolderName]);
+
+    function resetBlankProjectFields() {
+        setProjectName(DEFAULT_MAKE_CLIENT_PROJECT_NAME);
+        setManualFolderName(false);
+        setRunningPhase('');
+        setFailedPhase('');
+        setFailedMessage('');
+        void refreshSuggestedFolderName(DEFAULT_MAKE_CLIENT_PROJECT_NAME, parentRoot, { force: true });
+    }
 
     useEffect(() => {
         void refreshSuggestedFolderName(projectName, parentRoot);
@@ -1014,7 +1028,10 @@ function ProjectSetupDialog({
                             <button
                                 type="button"
                                 className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 bg-primary/5 px-3 py-3 text-left transition-colors hover:bg-primary/10 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none disabled:opacity-50"
-                                onClick={() => setSetupMode('blank')}
+                                onClick={() => {
+                                    resetBlankProjectFields();
+                                    setSetupMode('blank');
+                                }}
                                 disabled={busy}
                             >
                                 <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
@@ -2747,6 +2764,7 @@ export default function ContentPanel({
                 setProjectSetupOpen(open);
             }}
             onSetupComplete={() => {
+                onTabChange('prototype');
                 setProjectSetupOpen(false);
                 setProjectSwitcherMenuOpen(false);
             }}
