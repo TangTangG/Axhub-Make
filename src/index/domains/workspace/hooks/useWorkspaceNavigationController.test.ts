@@ -110,11 +110,22 @@ describe('useWorkspaceNavigationController source', () => {
     expect(source).toContain('NOT_MAKE_CLIENT_PROJECT');
     expect(source).toContain('MAKE_PROJECT_ID_CONFLICT');
     expect(source).toContain('MAKE_CLIENT_SOURCE_UNAVAILABLE');
+    expect(source).toContain('MAKE_CLIENT_TEMPLATE_UNAVAILABLE');
+    expect(source).toContain('无法下载 Make 客户端模板包');
     expect(source).toContain('MAKE_CLIENT_INSTALL_FAILED');
     expect(source).toContain('MAKE_CLIENT_METADATA_SYNC_FAILED');
     expect(source).toContain('MAKE_CLIENT_DEV_TIMEOUT');
     expect(source).toContain('PNPM_NOT_FOUND');
+    expect(source).toContain("template: '下载模板包'");
     expect(source).toContain('formatMakeClientProjectError');
+  });
+
+  it('shows the make client setup template phase as a template zip download', () => {
+    const source = readFileSync(resolve(__dirname, '../../../components/sidebar/ContentPanel.tsx'), 'utf8');
+
+    expect(source).toContain("{ key: 'template', label: '下载模板包' }");
+    expect(source).toContain("setRunningPhase('template')");
+    expect(source).not.toContain("{ key: 'clone', label: '获取源码' }");
   });
 
   it('stores active project capabilities for preview and export gating', () => {
