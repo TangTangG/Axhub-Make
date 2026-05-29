@@ -44,6 +44,7 @@
     "release:make:dry-run": "node scripts/release-make.mjs --dry-run",
     "release:make:npm:latest": "node scripts/release-make.mjs --skip-github --npm-tag latest",
     "release:make:npm:beta": "node scripts/release-make.mjs --skip-github --npm-tag beta",
+    "release:make:mirror:gitee": "node scripts/release-make-mirror-gitee.mjs",
     "release:make": "node scripts/release-make.mjs"
   },
   "dependencies": {
