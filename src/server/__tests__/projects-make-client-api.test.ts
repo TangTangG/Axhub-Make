@@ -186,6 +186,10 @@ function writeMakeClientTemplate(templateRoot: string) {
   });
   fs.mkdirSync(path.join(templateRoot, '.git'), { recursive: true });
   fs.writeFileSync(path.join(templateRoot, '.git', 'config'), '[core]\n', 'utf8');
+  fs.mkdirSync(path.join(templateRoot, '.agents', 'skills', 'local'), { recursive: true });
+  fs.writeFileSync(path.join(templateRoot, '.agents', 'skills', 'local', 'SKILL.md'), 'npm run typecheck\n', 'utf8');
+  fs.mkdirSync(path.join(templateRoot, '.claude', 'skills', 'local'), { recursive: true });
+  fs.writeFileSync(path.join(templateRoot, '.claude', 'skills', 'local', 'SKILL.md'), 'npm run typecheck\n', 'utf8');
   fs.mkdirSync(path.join(templateRoot, 'node_modules', 'left-pad'), { recursive: true });
   fs.writeFileSync(path.join(templateRoot, 'node_modules', 'left-pad', 'index.js'), 'module.exports = null;\n', 'utf8');
   fs.mkdirSync(path.join(templateRoot, 'dist'), { recursive: true });
@@ -886,8 +890,8 @@ describe('make-server make client project APIs', () => {
         },
       });
       expect(runLocalCommandMock).toHaveBeenCalledWith(
-        'pnpm',
-        ['install'],
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install', '--include=dev'],
         expect.objectContaining({ cwd: projectRoot }),
       );
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
@@ -992,20 +996,20 @@ describe('make-server make client project APIs', () => {
     }
   });
 
-  it('falls back to npm install when make client dependencies are missing and pnpm install fails', async () => {
+  it('falls back to pnpm install when npm install fails', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
-    const projectRoot = createTempRoot('axhub-make-client-npm-fallback-');
-    writeMakeClientMarker(projectRoot, 'npm-fallback-client', 'NPM Fallback Client');
+    const projectRoot = createTempRoot('axhub-make-client-pnpm-fallback-');
+    writeMakeClientMarker(projectRoot, 'pnpm-fallback-client', 'PNPM Fallback Client');
     writeMakeClientPackage(projectRoot);
-    writeMakeClientMetadata(projectRoot, 'npm-fallback-client', 'NPM Fallback Client');
+    writeMakeClientMetadata(projectRoot, 'pnpm-fallback-client', 'PNPM Fallback Client');
     runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
-      if (command === 'pnpm' && args[0] === 'install') {
-        throw Object.assign(new Error('pnpm registry unavailable'), {
-          stderr: 'pnpm registry unavailable',
+      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+        throw Object.assign(new Error('npm registry unavailable'), {
+          stderr: 'npm registry unavailable',
         });
       }
-      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+      if (command === 'pnpm' && args[0] === 'install') {
         writeInstalledMakeClientDependencies(projectRoot);
       }
       return {
@@ -1046,7 +1050,7 @@ describe('make-server make client project APIs', () => {
       });
       expect(registerResponse.status).toBe(201);
 
-      const ensureResponse = await fetch(`${server.origin}/api/projects/npm-fallback-client/dev/ensure`, {
+      const ensureResponse = await fetch(`${server.origin}/api/projects/pnpm-fallback-client/dev/ensure`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
@@ -1056,19 +1060,19 @@ describe('make-server make client project APIs', () => {
       expect(ensureResponse.status).toBe(200);
       expect(ensureBody).toMatchObject({
         success: true,
-        projectId: 'npm-fallback-client',
+        projectId: 'pnpm-fallback-client',
         runtime: {
           origin: 'http://localhost:51729',
         },
       });
       expect(runLocalCommandMock).toHaveBeenCalledWith(
-        'pnpm',
-        ['install'],
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install', '--include=dev'],
         expect.objectContaining({ cwd: projectRoot }),
       );
       expect(runLocalCommandMock).toHaveBeenCalledWith(
-        process.platform === 'win32' ? 'npm.cmd' : 'npm',
-        ['install'],
+        'pnpm',
+        ['install', '--prod=false'],
         expect.objectContaining({ cwd: projectRoot }),
       );
       expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
@@ -1092,7 +1096,7 @@ describe('make-server make client project APIs', () => {
     }
   });
 
-  it('falls back to npm install when pnpm is not installed on the host', async () => {
+  it('does not require pnpm when npm install succeeds', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
     const projectRoot = createTempRoot('axhub-make-client-no-pnpm-npm-fallback-');
@@ -1156,14 +1160,10 @@ describe('make-server make client project APIs', () => {
           origin: 'http://localhost:51733',
         },
       });
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
-        'pnpm',
-        ['install'],
-        expect.objectContaining({ cwd: projectRoot }),
-      );
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith('pnpm', expect.any(Array), expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith(
         process.platform === 'win32' ? 'npm.cmd' : 'npm',
-        ['install'],
+        ['install', '--include=dev'],
         expect.objectContaining({ cwd: projectRoot }),
       );
       expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
@@ -1189,12 +1189,12 @@ describe('make-server make client project APIs', () => {
     writeMakeClientPackage(projectRoot);
     writeMakeClientMetadata(projectRoot, 'install-timeout-client', 'Install Timeout Client');
     runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
-      if (command === 'pnpm' && args[0] === 'install') {
-        throw Object.assign(new Error('pnpm registry unavailable'), {
-          stderr: 'pnpm registry unavailable',
+      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+        throw Object.assign(new Error('npm registry unavailable'), {
+          stderr: 'npm registry unavailable',
         });
       }
-      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+      if (command === 'pnpm' && args[0] === 'install') {
         writeInstalledMakeClientDependencies(projectRoot);
       }
       return localCommandResult(command, args);
@@ -1340,7 +1340,7 @@ describe('make-server make client project APIs', () => {
     }
   });
 
-  it('starts with local vite after pnpm install so pnpm dev is not required at runtime', async () => {
+  it('starts with local vite after pnpm fallback install so pnpm dev is not required at runtime', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
     const projectRoot = createTempRoot('axhub-make-client-spawn-enoent-');
@@ -1348,6 +1348,11 @@ describe('make-server make client project APIs', () => {
     writeMakeClientPackage(projectRoot);
     writeMakeClientMetadata(projectRoot, 'pnpm-install-local-vite-client', 'PNPM Install Local Vite Client');
     runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
+      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+        throw Object.assign(new Error('npm registry unavailable'), {
+          stderr: 'npm registry unavailable',
+        });
+      }
       if (command === 'pnpm' && args[0] === 'install') {
         writeInstalledMakeClientDependencies(projectRoot);
       }
@@ -1400,8 +1405,13 @@ describe('make-server make client project APIs', () => {
         },
       });
       expect(runLocalCommandMock).toHaveBeenCalledWith(
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install', '--include=dev'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
         'pnpm',
-        ['install'],
+        ['install', '--prod=false'],
         expect.objectContaining({ cwd: projectRoot }),
       );
       expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
@@ -1451,10 +1461,11 @@ describe('make-server make client project APIs', () => {
       });
       expect(String(ensureBody.error)).toContain('Make client vite dependency is missing after install');
       expect(runLocalCommandMock).toHaveBeenCalledWith(
-        'pnpm',
-        ['install'],
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install', '--include=dev'],
         expect.objectContaining({ cwd: projectRoot }),
       );
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith('pnpm', expect.any(Array), expect.any(Object));
       expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
         'pnpm',
         ['dev'],
@@ -1946,6 +1957,8 @@ describe('make-server make client project APIs', () => {
       expect(fs.existsSync(path.join(targetRoot, 'scripts', 'sync-project-metadata.mjs'))).toBe(true);
       expect(fs.existsSync(path.join(targetRoot, 'src', 'prototypes', 'template-home', 'index.tsx'))).toBe(true);
       expect(fs.existsSync(path.join(targetRoot, '.git'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, '.agents', 'skills', 'local', 'SKILL.md'))).toBe(true);
+      expect(fs.existsSync(path.join(targetRoot, '.claude', 'skills', 'local', 'SKILL.md'))).toBe(true);
       expect(fs.existsSync(path.join(targetRoot, 'node_modules', 'left-pad'))).toBe(false);
       expect(fs.existsSync(path.join(targetRoot, 'node_modules', 'vite'))).toBe(true);
       expect(fs.existsSync(path.join(targetRoot, 'dist'))).toBe(false);
@@ -1986,8 +1999,8 @@ describe('make-server make client project APIs', () => {
         expect.any(Object),
       );
       expect(runLocalCommandMock).toHaveBeenCalledWith(
-        'pnpm',
-        ['install'],
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install', '--include=dev'],
         expect.objectContaining({ cwd: targetRoot }),
       );
       expect(runLocalCommandMock).not.toHaveBeenCalledWith(

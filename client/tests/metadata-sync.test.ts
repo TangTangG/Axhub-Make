@@ -69,6 +69,17 @@ describe('make-project metadata sync', () => {
     expect(packageJson.scripts?.start).toBe('npm run dev');
   });
 
+  it('keeps shipped agent guidance from requiring pnpm in generated client projects', () => {
+    const converterGuide = fs.readFileSync(path.join(makeProjectRoot, 'rules', 'v0-project-converter.md'), 'utf8');
+    const captureThemeSource = fs.readFileSync(path.join(makeProjectRoot, 'scripts', 'capture-theme-homepage.mjs'), 'utf8');
+
+    expect(converterGuide).toContain('npm install');
+    expect(converterGuide).not.toContain('pnpm add');
+    expect(captureThemeSource).toContain('npm run capture:theme');
+    expect(captureThemeSource).not.toContain('Install it with pnpm');
+    expect(captureThemeSource).not.toContain('pnpm --filter');
+  });
+
   it('keeps generated project metadata ignored in the reusable client template', () => {
     const ignoreRules = fs.readFileSync(path.join(makeProjectRoot, '.gitignore'), 'utf8');
 

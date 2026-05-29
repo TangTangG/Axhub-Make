@@ -30,7 +30,7 @@ description: 当 Axhub Make 客户端的任意原型需要接入或维护 @axhub
 7. 目录 `route` 节点只会回调宿主；在 `onDirectoryRoute` 里切换页面、状态、数据源或 URL。
 8. 按改动范围运行验证，通常是：
    ```bash
-   pnpm typecheck
+   npm run typecheck
    node scripts/check-app-ready.mjs /prototypes/<prototype-name>
    ```
 

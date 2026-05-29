@@ -442,29 +442,29 @@ async function ensureMakeClientDependencies(
   }
 
   try {
-    await runMakeClientCommand(runner, 'pnpm', ['install'], projectRoot, 'install', {
+    await runMakeClientCommand(runner, npmCommand(), ['install', '--include=dev'], projectRoot, 'install', {
       timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
     });
-    return 'pnpm';
-  } catch (pnpmError) {
+    return 'npm';
+  } catch (npmError) {
     try {
-      await runMakeClientCommand(runner, npmCommand(), ['install'], projectRoot, 'install', {
+      await runMakeClientCommand(runner, 'pnpm', ['install', '--prod=false'], projectRoot, 'install', {
         timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
       });
-      return 'npm';
-    } catch (npmError) {
+      return 'pnpm';
+    } catch (pnpmError) {
       throw new MakeClientProjectError(
         'MAKE_CLIENT_INSTALL_FAILED',
         [
-          `pnpm install failed: ${commandErrorMessage(pnpmError)}`,
           `${npmCommand()} install failed: ${commandErrorMessage(npmError)}`,
+          `pnpm install failed: ${commandErrorMessage(pnpmError)}`,
         ].join('\n'),
         {
           status: 500,
           phase: 'install',
           details: {
-            pnpm: commandErrorMessage(pnpmError),
             npm: commandErrorMessage(npmError),
+            pnpm: commandErrorMessage(pnpmError),
           },
         },
       );

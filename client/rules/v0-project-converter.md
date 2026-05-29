@@ -92,10 +92,10 @@ import { cn } from "../lib/utils";
 - `recharts`
 - `date-fns`
 
-新增依赖使用 pnpm：
+新增依赖优先使用 npm，便于生成项目在没有 pnpm 的用户环境中继续运行：
 
 ```bash
-pnpm add <package-name>
+npm install <package-name>
 ```
 
 ## 验收
