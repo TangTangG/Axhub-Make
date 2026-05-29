@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,7 +15,7 @@ import {
   normalizeHealthServerInfo,
   readMakeClientMarker,
   readServerInfo,
-  resolveProjectRoot,
+  resolveComparableProjectRoot,
   validateMakeClientProject,
   writeMakeClientMarker,
   writeServerInfo,
@@ -23,8 +24,6 @@ import {
 } from './projectCore/index.ts';
 
 import { buildLocalCommandEnv, runLocalCommand } from './localCommand.ts';
-
-const makePackageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
 
 export type MakeClientPhase =
   | 'template'
@@ -103,8 +102,11 @@ function defaultCommandRunner(): MakeClientCommandRunner {
 
 export const MAKE_CLIENT_TEMPLATE_PATH = 'client';
 export const MAKE_CLIENT_TEMPLATE_ZIP_NAME = 'axhub-make-client-template.zip';
+export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.1';
+export const MAKE_CLIENT_TEMPLATE_URL_ENV = 'AXHUB_MAKE_CLIENT_TEMPLATE_URL';
 export const PRIMARY_MAKE_CLIENT_TEMPLATE_RELEASE_REPOSITORY = 'lintendo/Axhub-Make';
 export const GITEE_MAKE_CLIENT_TEMPLATE_RELEASE_BASE_URL = 'https://gitee.com/axhub/Axhub-Make/releases/download';
+const MAKE_CLIENT_TEMPLATE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const SKIP_AUTO_START_SERVER_ENV = 'AXHUB_MAKE_SKIP_AUTO_START_SERVER';
 const MAKE_CLIENT_RUNTIME_HEARTBEAT_MAX_AGE_MS = 15_000;
 const DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS = 3 * 60_000;
@@ -124,6 +126,7 @@ const TEMPLATE_COPY_IGNORED_NAMES = new Set([
   '.opencode',
   '.trae',
   'coverage',
+  'tests',
   '.cache',
   'tmp',
   'temp',
@@ -145,42 +148,103 @@ const TEMPLATE_COPY_IGNORED_AXHUB_MAKE_NAMES = new Set([
   'exports',
   'sessions',
 ]);
+const TEMPLATE_COPY_ALLOWED_AXHUB_MAKE_FILES = new Set([
+  '.axhub/make/client.json',
+  '.axhub/make/README.md',
+]);
 
-function readMakePackageVersion(): string {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(makePackageJsonPath, 'utf8'));
-    return typeof pkg?.version === 'string' && pkg.version.trim() ? pkg.version.trim() : 'latest';
-  } catch {
-    return 'latest';
-  }
+export interface MakeClientTemplateSource {
+  id: 'env' | 'github' | 'gitee';
+  url: string;
+  markerRepository: string;
+  templateVersion?: string;
 }
 
-export function makeClientTemplateSources(version = readMakePackageVersion()) {
-  const tagName = `make-v${version}`;
+export function makeClientTemplateSources(options: { env?: NodeJS.ProcessEnv; version?: string } = {}): MakeClientTemplateSource[] {
+  const env = options.env || process.env;
+  const overrideUrl = typeof env[MAKE_CLIENT_TEMPLATE_URL_ENV] === 'string'
+    ? env[MAKE_CLIENT_TEMPLATE_URL_ENV]?.trim()
+    : '';
+  if (overrideUrl) {
+    return [{
+      id: 'env',
+      url: overrideUrl,
+      markerRepository: overrideUrl,
+    }];
+  }
+  const version = options.version || DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION;
+  const tagName = `make-client-template-v${version}`;
   return [
     {
+      id: 'github',
       url: `https://github.com/${PRIMARY_MAKE_CLIENT_TEMPLATE_RELEASE_REPOSITORY}/releases/download/${tagName}/${MAKE_CLIENT_TEMPLATE_ZIP_NAME}`,
       markerRepository: DEFAULT_MAKE_CLIENT_REPOSITORY,
+      templateVersion: version,
     },
     {
+      id: 'gitee',
       url: `${GITEE_MAKE_CLIENT_TEMPLATE_RELEASE_BASE_URL}/${tagName}/${MAKE_CLIENT_TEMPLATE_ZIP_NAME}`,
       markerRepository: 'https://gitee.com/axhub/Axhub-Make/tree/main/client',
+      templateVersion: version,
     },
-  ] as const;
+  ];
 }
 
 export function slugifyMakeClientFolderName(input: string): string {
-  return String(input || '')
+    return String(input || '')
     .trim()
     .toLowerCase()
-    .replace(/[<>:"|?*\u0000-\u001f/\\]+/gu, '-')
-    .replace(/\s+/gu, '-')
-    .replace(/[.-]+$/gu, '')
-    .replace(/^-+|-+$/gu, '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .replace(/[^a-z0-9._-]+/gu, '-')
+    .replace(/[._-]{2,}/gu, '-')
+    .replace(/[._-]+$/gu, '')
+    .replace(/^[._-]+/gu, '')
     .slice(0, 80);
 }
 
 const WINDOWS_RESERVED_FOLDER_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
+
+function formatLocalDateStamp(now = new Date()): string {
+  const year = String(now.getFullYear());
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
+}
+
+function normalizeSuggestedFolderBase(projectName: string, now = new Date()): string {
+  const baseName = slugifyMakeClientFolderName(projectName);
+  const safeBaseName = baseName && !WINDOWS_RESERVED_FOLDER_NAMES.test(baseName)
+    ? baseName
+    : `make-project-${formatLocalDateStamp(now)}`;
+  return safeBaseName.slice(0, 64);
+}
+
+export function suggestMakeClientFolderName(params: {
+  parentRoot?: string;
+  projectName?: string;
+  now?: Date;
+}): string {
+  const baseName = normalizeSuggestedFolderBase(String(params.projectName || ''), params.now);
+  const parentRoot = String(params.parentRoot || '').trim();
+  if (!parentRoot) {
+    return baseName;
+  }
+  const resolvedParentRoot = path.resolve(parentRoot);
+  if (!fs.existsSync(resolvedParentRoot) || !fs.statSync(resolvedParentRoot).isDirectory()) {
+    throw new MakeClientProjectError('INVALID_MAKE_PROJECT_FOLDER_NAME', 'Parent folder does not exist', { status: 400 });
+  }
+  if (!fs.existsSync(path.join(resolvedParentRoot, baseName))) {
+    return baseName;
+  }
+  for (let index = 2; index < 10000; index += 1) {
+    const candidate = `${baseName}-${index}`;
+    if (!fs.existsSync(path.join(resolvedParentRoot, candidate))) {
+      return candidate;
+    }
+  }
+  throw new MakeClientProjectError('MAKE_PROJECT_TARGET_NOT_EMPTY', 'No available Make project folder name', { status: 409 });
+}
 
 export function assertSafeMakeClientFolderName(input: string): string {
   const raw = String(input || '').trim();
@@ -239,6 +303,12 @@ function shouldSkipTemplateCopyEntry(entryName: string, relativePath = entryName
     return true;
   }
   const normalizedRelativePath = relativePath.split(path.sep).join('/');
+  if (
+    normalizedRelativePath.startsWith('.axhub/make/')
+    && !TEMPLATE_COPY_ALLOWED_AXHUB_MAKE_FILES.has(normalizedRelativePath)
+  ) {
+    return true;
+  }
   if (
     normalizedRelativePath.startsWith('.axhub/make/')
     && TEMPLATE_COPY_IGNORED_AXHUB_MAKE_NAMES.has(entryName)
@@ -381,6 +451,48 @@ async function downloadTemplateZip(url: string): Promise<Uint8Array> {
   }
 }
 
+function makeClientTemplateCacheRoot(): string {
+  return path.join(os.tmpdir(), 'axhub-make', 'make-client-template-cache');
+}
+
+function makeClientTemplateCachePath(url: string): string {
+  const key = crypto.createHash('sha256').update(url).digest('hex');
+  return path.join(makeClientTemplateCacheRoot(), `${key}.zip`);
+}
+
+function getTemplateCacheStatus(cachePath: string): 'hit' | 'miss' | 'expired' {
+  if (!fs.existsSync(cachePath)) {
+    return 'miss';
+  }
+  const ageMs = Date.now() - fs.statSync(cachePath).mtimeMs;
+  return ageMs >= 0 && ageMs < MAKE_CLIENT_TEMPLATE_CACHE_TTL_MS ? 'hit' : 'expired';
+}
+
+async function readTemplateZipWithCache(url: string): Promise<{ zipBuffer: Uint8Array; cache: { status: 'hit' | 'miss' | 'expired'; path: string } }> {
+  const cachePath = makeClientTemplateCachePath(url);
+  const status = getTemplateCacheStatus(cachePath);
+  if (status === 'hit') {
+    return {
+      zipBuffer: new Uint8Array(fs.readFileSync(cachePath)),
+      cache: { status, path: cachePath },
+    };
+  }
+
+  const zipBuffer = await downloadTemplateZip(url);
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+  const tempPath = `${cachePath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    fs.writeFileSync(tempPath, zipBuffer);
+    fs.renameSync(tempPath, cachePath);
+  } finally {
+    fs.rmSync(tempPath, { force: true });
+  }
+  return {
+    zipBuffer,
+    cache: { status, path: cachePath },
+  };
+}
+
 function commandErrorMessage(error: unknown): string {
   const looseError = error as { stderr?: unknown; stdout?: unknown; message?: unknown } | null;
   return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Command failed').trim();
@@ -496,22 +608,30 @@ async function resolveMakeClientDevCommandForProject(
 async function fetchMakeClientTemplateFromRemote(
   runner: MakeClientCommandRunner,
   targetRoot: string,
-): Promise<{ markerRepository: string }> {
+): Promise<{ markerRepository: string; templateUrl: string; templateVersion?: string }> {
   void runner;
-  const failures: Array<{ url: string; error: string }> = [];
+  const failures: Array<{ url: string; cache: { status: 'hit' | 'miss' | 'expired'; path: string } | null; error: string }> = [];
   const tempParent = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-make-client-template-'));
 
   try {
     for (const source of makeClientTemplateSources()) {
       const checkoutRoot = path.join(tempParent, failures.length === 0 ? 'primary' : `fallback-${failures.length}`);
+      let cache: { status: 'hit' | 'miss' | 'expired'; path: string } | null = null;
       try {
-        const zipBuffer = await downloadTemplateZip(source.url);
+        const cached = await readTemplateZipWithCache(source.url);
+        cache = cached.cache;
+        const zipBuffer = cached.zipBuffer;
         extractTemplateZip(zipBuffer, checkoutRoot);
         copyMakeClientTemplateDirectory(checkoutRoot, targetRoot);
-        return { markerRepository: source.markerRepository };
+        return {
+          markerRepository: source.markerRepository,
+          templateUrl: source.url,
+          ...(source.templateVersion ? { templateVersion: source.templateVersion } : {}),
+        };
       } catch (error) {
         failures.push({
           url: source.url,
+          cache,
           error: templateErrorMessage(error),
         });
         fs.rmSync(checkoutRoot, { recursive: true, force: true });
@@ -534,7 +654,7 @@ async function fetchMakeClientTemplateFromRemote(
 }
 
 function isSameProjectRuntime(info: AxhubServerInfo | null, projectRoot: string): info is AxhubServerInfo {
-  return Boolean(info && path.resolve(info.projectRoot) === path.resolve(projectRoot));
+  return isLiveLocalServerInfo(info, projectRoot);
 }
 
 function clearRuntimeServerInfo(projectRoot: string): void {
@@ -546,7 +666,7 @@ function isLiveMakeClientRuntime(info: AxhubServerInfo | null, projectRoot: stri
 }
 
 function isSameProjectHealthRuntime(info: AxhubServerInfo | null, projectRoot: string): info is AxhubServerInfo {
-  return Boolean(info && resolveProjectRoot(info.projectRoot) === resolveProjectRoot(projectRoot));
+  return Boolean(info && resolveComparableProjectRoot(info.projectRoot) === resolveComparableProjectRoot(projectRoot));
 }
 
 async function discoverMakeClientRuntime(projectRoot: string, options: { healthTimeoutMs?: number } = {}): Promise<AxhubServerInfo | null> {
@@ -859,6 +979,8 @@ export async function createBlankMakeClientProject(
     schemaVersion: 1,
     kind: 'axhub-make-client',
     repository: templateSource.markerRepository,
+    templateUrl: templateSource.templateUrl,
+    ...(templateSource.templateVersion ? { templateVersion: templateSource.templateVersion } : {}),
     project: {
       id: folderName,
       name: typeof params.projectName === 'string'

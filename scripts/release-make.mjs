@@ -23,8 +23,12 @@ const binDir = path.join(releaseRoot, 'bin');
 const artifactsDir = path.join(releaseRoot, 'artifacts');
 const tmpDir = path.join(releaseRoot, 'tmp');
 const manifestPath = path.join(releaseRoot, 'manifest.json');
+const templateReleaseRoot = path.join(repoRoot, '.release/make-client-template');
+const templateArtifactsDir = path.join(templateReleaseRoot, 'artifacts');
+const templateManifestPath = path.join(templateReleaseRoot, 'manifest.json');
 const canvasFigSyncSource = path.join(makeServerRoot, 'vendor/axhub-export-core/scripts/canvas-fig-sync.mjs');
 const makeClientTemplateSourceDir = path.join(makeServerRoot, 'client');
+const makeClientTemplatePackageJsonPath = path.join(makeClientTemplateSourceDir, 'package.json');
 const makeClientTemplateZipName = 'axhub-make-client-template.zip';
 const includeOpenCodeWebUi = false;
 const npmPackagePackedSizeLimit = 35 * 1024 * 1024;
@@ -79,6 +83,7 @@ const templateCopyIgnoredNames = new Set([
   '.opencode',
   '.trae',
   'coverage',
+  'tests',
   '.cache',
   'tmp',
   'temp',
@@ -99,6 +104,10 @@ const templateCopyIgnoredAxhubMakeNames = new Set([
   'edit-history',
   'exports',
   'sessions',
+]);
+const templateCopyAllowedAxhubMakeFiles = new Set([
+  '.axhub/make/client.json',
+  '.axhub/make/README.md',
 ]);
 
 const executableTargets = [
@@ -247,11 +256,20 @@ function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
   const normalizedRelativePath = relativePath.split(path.sep).join('/');
   if (
     normalizedRelativePath.startsWith('.axhub/make/')
+    && !templateCopyAllowedAxhubMakeFiles.has(normalizedRelativePath)
+  ) {
+    return true;
+  }
+  if (
+    normalizedRelativePath.startsWith('.axhub/make/')
     && templateCopyIgnoredAxhubMakeNames.has(entryName)
   ) {
     return true;
   }
   if (entryName.endsWith('.tsbuildinfo')) {
+    return true;
+  }
+  if (/\.(?:otf|ttf)$/iu.test(entryName)) {
     return true;
   }
   if (/^\.env\./u.test(entryName)) {
@@ -280,19 +298,46 @@ function buildTemplateZippable(sourceDir, currentDir = sourceDir, relativeDir = 
 }
 
 export function createTemplateZipMetadata({
-  version,
+  templateVersion,
   githubRepo = 'lintendo/Axhub-Make',
   mirrorBaseUrl = 'https://gitee.com/axhub/Axhub-Make/releases/download',
 } = {}) {
-  if (!version) {
-    throw new Error('version is required for template zip metadata');
+  const normalizedTemplateVersion = normalizeTemplateVersion(templateVersion);
+  if (!normalizedTemplateVersion) {
+    throw new Error('templateVersion is required for template zip metadata');
   }
-  const tagName = `make-v${version}`;
+  const tagName = `make-client-template-v${normalizedTemplateVersion}`;
   return {
+    templateVersion: normalizedTemplateVersion,
+    tagName,
     githubReleaseAssetName: makeClientTemplateZipName,
     primaryUrl: `https://github.com/${githubRepo}/releases/download/${tagName}/${makeClientTemplateZipName}`,
     mirrorUrl: `${mirrorBaseUrl}/${tagName}/${makeClientTemplateZipName}`,
   };
+}
+
+function normalizeTemplateVersion(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '';
+  }
+  const withoutTagPrefix = raw.startsWith('make-client-template-v')
+    ? raw.slice('make-client-template-v'.length)
+    : raw;
+  const normalized = withoutTagPrefix.startsWith('v') ? withoutTagPrefix.slice(1) : withoutTagPrefix;
+  if (!normalized || /[\\/\s]/u.test(normalized)) {
+    throw new Error(`Invalid make client template version: ${value}`);
+  }
+  return normalized;
+}
+
+function readMakeClientTemplateVersion() {
+  const pkg = readJson(makeClientTemplatePackageJsonPath);
+  const version = normalizeTemplateVersion(pkg?.version);
+  if (!version) {
+    throw new Error(`Make client template package version is missing: ${makeClientTemplatePackageJsonPath}`);
+  }
+  return version;
 }
 
 export function createMakeClientTemplateZip({
@@ -340,6 +385,8 @@ function parseArgs(args) {
     testLocal: false,
     skipNpm: false,
     skipGithub: false,
+    templateOnly: false,
+    templateVersion: '',
     npmTag: 'latest',
     githubRepo: process.env.GITHUB_REPOSITORY || '',
     otp: '',
@@ -369,6 +416,10 @@ function parseArgs(args) {
       options.skipNpm = true;
     } else if (arg === '--skip-github') {
       options.skipGithub = true;
+    } else if (arg === '--template-only') {
+      options.templateOnly = true;
+    } else if (arg === '--template-version') {
+      options.templateVersion = normalizeTemplateVersion(readValue('--template-version'));
     } else if (arg === '--github-repo') {
       options.githubRepo = readValue('--github-repo');
     } else if (arg === '--npm-tag') {
@@ -391,6 +442,8 @@ function printUsage() {
 Options:
   --github-repo <owner/repo>  GitHub repository for the Release. Required unless --skip-github is used.
   --npm-tag <tag>            npm dist-tag. Defaults to latest.
+  --template-only            Prepare or publish only the Make client template zip release.
+  --template-version <ver>   Template version for --template-only. A leading v is accepted.
   --otp <code>               npm one-time password for 2FA.
   --dry-run                  Prepare and test locally, then print publish/upload commands.
   --prepare-only             Build local release artifacts only.
@@ -678,13 +731,6 @@ function prepareRelease() {
   createNpmPackage(sourcePackage);
   const { dryRunInfo, tarballPath } = packNpmPackage();
 
-  logStep('Creating Make client template zip');
-  const templateArchive = createMakeClientTemplateZip();
-  const templateMetadata = createTemplateZipMetadata({
-    version: sourcePackage.version,
-    githubRepo: process.env.GITHUB_REPOSITORY || 'lintendo/Axhub-Make',
-  });
-
   logStep('Compiling Bun executables');
   const bunEntry = createBunEntrypoint();
   const releaseAssets = executableTargets.map((target) => {
@@ -702,11 +748,6 @@ function prepareRelease() {
     npmPackageDir,
     npmTarballPath: tarballPath,
     npmPackDryRun: dryRunInfo,
-    templateZip: {
-      path: templateArchive.path,
-      sha256: templateArchive.sha256,
-      ...templateMetadata,
-    },
     releaseAssets,
   };
   writeJson(manifestPath, manifest);
@@ -714,11 +755,44 @@ function prepareRelease() {
   return manifest;
 }
 
-function readPreparedManifest() {
-  if (!fs.existsSync(manifestPath)) {
-    throw new Error(`Release manifest not found. Run pnpm release:make:prepare first.\nMissing: ${manifestPath}`);
+function prepareTemplateRelease(options = {}) {
+  const sourcePackage = readJson(makeClientTemplatePackageJsonPath);
+  if (sourcePackage.name !== '@axhub/make-client') {
+    throw new Error(`Expected client package name to be @axhub/make-client, got ${sourcePackage.name}`);
   }
-  return readJson(manifestPath);
+  const templateVersion = normalizeTemplateVersion(options.templateVersion || readMakeClientTemplateVersion());
+
+  fs.rmSync(templateReleaseRoot, { recursive: true, force: true });
+  fs.mkdirSync(templateReleaseRoot, { recursive: true });
+
+  logStep('Creating Make client template zip');
+  const templateArchive = createMakeClientTemplateZip({ outputDir: templateArtifactsDir });
+  const templateMetadata = createTemplateZipMetadata({
+    templateVersion,
+    githubRepo: process.env.GITHUB_REPOSITORY || 'lintendo/Axhub-Make',
+  });
+  const manifest = {
+    packageName: sourcePackage.name,
+    templateVersion,
+    tagName: templateMetadata.tagName,
+    preparedAt: new Date().toISOString(),
+    templateSourceDir: makeClientTemplateSourceDir,
+    templateZip: {
+      path: templateArchive.path,
+      sha256: templateArchive.sha256,
+      ...templateMetadata,
+    },
+  };
+  writeJson(templateManifestPath, manifest);
+  printTemplateArtifacts(manifest);
+  return manifest;
+}
+
+function readPreparedManifest(pathName = manifestPath, command = 'pnpm release:make:prepare') {
+  if (!fs.existsSync(pathName)) {
+    throw new Error(`Release manifest not found. Run ${command} first.\nMissing: ${pathName}`);
+  }
+  return readJson(pathName);
 }
 
 function assertPreparedManifestCurrent(manifest) {
@@ -740,6 +814,22 @@ function assertPreparedManifestCurrent(manifest) {
     if (!requiredPath || !fs.existsSync(requiredPath)) {
       throw new Error(`Prepared artifact is missing: ${requiredPath}`);
     }
+  }
+}
+
+function assertPreparedTemplateManifestCurrent(manifest, options = {}) {
+  const expectedVersion = normalizeTemplateVersion(options.templateVersion || manifest.templateVersion);
+  if (!expectedVersion) {
+    throw new Error('Prepared template manifest is missing templateVersion.');
+  }
+  if (manifest.templateVersion !== expectedVersion || manifest.tagName !== `make-client-template-v${expectedVersion}`) {
+    throw new Error(
+      `Prepared template artifacts are stale. Manifest has ${manifest.templateVersion || 'unknown'}, `
+      + `expected ${expectedVersion}. Run pnpm release:make-client-template:prepare.`,
+    );
+  }
+  if (!manifest.templateZip?.path || !fs.existsSync(manifest.templateZip.path)) {
+    throw new Error(`Prepared template zip is missing: ${manifest.templateZip?.path || '(none)'}`);
   }
 }
 
@@ -905,17 +995,42 @@ async function testPreparedArtifacts() {
   printArtifacts(manifest);
 }
 
+async function testPreparedTemplateArtifacts(options = {}) {
+  const manifest = readPreparedManifest(templateManifestPath, 'pnpm release:make-client-template:prepare');
+  assertPreparedTemplateManifestCurrent(manifest, options);
+
+  const entries = listZipEntries(manifest.templateZip.path);
+  if (!entries.includes('package.json')) {
+    throw new Error('Make client template zip is missing package.json');
+  }
+  if (entries.some((entry) => entry.startsWith('node_modules/') || entry.startsWith('dist/'))) {
+    throw new Error('Make client template zip includes local runtime artifacts');
+  }
+  const disallowedAxhubMakeEntries = entries.filter((entry) => (
+    entry.startsWith('.axhub/make/')
+    && !templateCopyAllowedAxhubMakeFiles.has(entry)
+  ));
+  if (disallowedAxhubMakeEntries.length > 0) {
+    throw new Error(`Make client template zip includes local Make runtime metadata: ${disallowedAxhubMakeEntries.slice(0, 5).join(', ')}`);
+  }
+  printTemplateArtifacts(manifest);
+}
+
 function printArtifacts(manifest) {
   console.log('\nRelease artifacts:');
   console.log(`  npm package: ${manifest.npmPackageDir}`);
   console.log(`  npm tarball: ${manifest.npmTarballPath}`);
-  if (manifest.templateZip?.path) {
-    console.log(`  make client template: ${manifest.templateZip.path}`);
-    console.log(`  make client template mirror upload target: ${manifest.templateZip.mirrorUrl}`);
-  }
   for (const asset of manifest.releaseAssets || []) {
     console.log(`  ${asset.targetId}: ${asset.zipPath}`);
   }
+}
+
+function printTemplateArtifacts(manifest) {
+  console.log('\nMake client template release artifacts:');
+  console.log(`  template version: ${manifest.templateVersion}`);
+  console.log(`  template tag: ${manifest.tagName}`);
+  console.log(`  make client template: ${manifest.templateZip.path}`);
+  console.log(`  make client template mirror upload target: ${manifest.templateZip.mirrorUrl}`);
 }
 
 export function publishCommands(manifest, options) {
@@ -928,7 +1043,6 @@ export function publishCommands(manifest, options) {
     'create',
     manifest.tagName,
     ...(manifest.releaseAssets || []).map((asset) => asset.zipPath),
-    ...(manifest.templateZip?.path ? [manifest.templateZip.path] : []),
     '--repo',
     options.githubRepo,
     '--title',
@@ -936,6 +1050,24 @@ export function publishCommands(manifest, options) {
     '--generate-notes',
   ];
   return { npmArgs, releaseArgs };
+}
+
+export function publishTemplateCommands(manifest, options) {
+  if (!manifest.templateZip?.path) {
+    throw new Error('Template release manifest is missing templateZip.path');
+  }
+  const releaseArgs = [
+    'release',
+    'create',
+    manifest.tagName,
+    manifest.templateZip.path,
+    '--repo',
+    options.githubRepo,
+    '--title',
+    `Axhub Make Client Template ${manifest.templateVersion}`,
+    '--generate-notes',
+  ];
+  return { releaseArgs };
 }
 
 function runRelease(manifest, options) {
@@ -964,6 +1096,26 @@ function runRelease(manifest, options) {
   }
 }
 
+function runTemplateRelease(manifest, options) {
+  if (!options.skipGithub && !options.githubRepo) {
+    throw new Error('Missing --github-repo OWNER/REPO for template GitHub Release. Use --skip-github to prepare locally only.');
+  }
+
+  const { releaseArgs } = publishTemplateCommands(manifest, options);
+
+  if (options.dryRun) {
+    logStep('Dry-run template release commands');
+    if (!options.skipGithub) console.log(quoteCommand('gh', releaseArgs));
+    return;
+  }
+
+  if (!options.skipGithub) {
+    logStep(`Creating GitHub Release ${manifest.tagName}`);
+    assertTool('gh');
+    run('gh', releaseArgs);
+  }
+}
+
 async function main() {
   if (process.env.AXHUB_MAKE_RELEASE_SKIP_MAIN === '1') {
     return;
@@ -972,6 +1124,23 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     printUsage();
+    return;
+  }
+
+  if (options.templateOnly) {
+    if (options.testLocal && !options.prepareOnly && !options.dryRun) {
+      await testPreparedTemplateArtifacts(options);
+      return;
+    }
+
+    const manifest = prepareTemplateRelease(options);
+    if (options.prepareOnly) {
+      return;
+    }
+
+    await testPreparedTemplateArtifacts(options);
+    assertPreparedTemplateManifestCurrent(manifest, options);
+    runTemplateRelease(manifest, options);
     return;
   }
 

@@ -159,15 +159,63 @@ const MAKE_CLIENT_SETUP_PHASES = [
     { key: 'install', label: '安装依赖' },
     { key: 'dev', label: '启动客户端' },
 ] as const;
+const MAKE_CLIENT_SETUP_PENDING_LABEL = '创建并启动项目';
+const MAKE_CLIENT_SETUP_PENDING_DESCRIPTION = '正在下载模板、安装依赖并启动客户端，可能需要几分钟';
+const MAKE_CLIENT_SETUP_FAILED_LABEL = '创建项目失败';
+const MAKE_CLIENT_SETUP_FAILED_DESCRIPTION = '请检查网络、本地 Node 环境或目标目录后重试';
+const MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY = 'axhub.make.lastProjectParentRoot';
 
 function slugifyProjectFolderName(input: string): string {
     return String(input || '')
         .trim()
-        .replace(/[<>:"|?*\u0000-\u001f/\\]+/gu, '-')
-        .replace(/\s+/gu, '-')
-        .replace(/[.-]+$/gu, '')
-        .replace(/^-+|-+$/gu, '')
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/gu, '')
+        .replace(/[^a-z0-9._-]+/gu, '-')
+        .replace(/[._-]{2,}/gu, '-')
+        .replace(/[._-]+$/gu, '')
+        .replace(/^[._-]+/gu, '')
         .slice(0, 80);
+}
+
+async function suggestProjectFolderName(projectName: string, parentRoot: string): Promise<string> {
+    const response = await fetch('/api/projects/make/folder-name-suggestion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName, parentRoot }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+        throw new Error(payload?.error || '生成文件夹名称失败');
+    }
+    return String(payload?.folderName || '').trim();
+}
+
+function fallbackProjectFolderName(input: string): string {
+    return slugifyProjectFolderName(input) || 'make-project';
+}
+
+function readStoredMakeClientParentRoot(): string {
+    if (typeof window === 'undefined') {
+        return '';
+    }
+    try {
+        return window.localStorage.getItem(MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY)?.trim() || '';
+    } catch {
+        return '';
+    }
+}
+
+function writeStoredMakeClientParentRoot(parentRoot: string): void {
+    const normalizedParentRoot = parentRoot.trim();
+    if (!normalizedParentRoot || typeof window === 'undefined') {
+        return;
+    }
+    try {
+        window.localStorage.setItem(MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY, normalizedParentRoot);
+    } catch {
+        // Browser storage can be unavailable in private or embedded contexts.
+    }
 }
 
 function getProjectSetupErrorPhase(error: unknown): string {
@@ -177,6 +225,10 @@ function getProjectSetupErrorPhase(error: unknown): string {
     if (message.includes('metadata')) return 'metadata';
     if (message.includes('启动客户端')) return 'dev';
     return '';
+}
+
+function getProjectSetupPhaseLabel(phaseKey: string): string {
+    return MAKE_CLIENT_SETUP_PHASES.find((phase) => phase.key === phaseKey)?.label || MAKE_CLIENT_SETUP_FAILED_LABEL;
 }
 
 function matchesFilePattern(value: unknown, pattern: RegExp): boolean {
@@ -645,23 +697,6 @@ async function browseProjectFolders(pathValue?: string): Promise<FolderBrowserPa
     };
 }
 
-async function createProjectFolder(parentPath: string, folderName: string): Promise<string> {
-    const response = await fetch('/api/projects/folders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentPath, folderName }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-        throw new Error(payload?.error || '创建文件夹失败');
-    }
-    const createdPath = typeof payload?.path === 'string' ? payload.path.trim() : '';
-    if (!createdPath) {
-        throw new Error('创建文件夹后未返回路径');
-    }
-    return createdPath;
-}
-
 interface FolderBrowserDialogProps {
     open: boolean;
     title: string;
@@ -683,9 +718,7 @@ function FolderBrowserDialog({
 }: FolderBrowserDialogProps) {
     const [payload, setPayload] = useState<FolderBrowserPayload | null>(null);
     const [pathInput, setPathInput] = useState('');
-    const [newFolderName, setNewFolderName] = useState('');
     const [loading, setLoading] = useState(false);
-    const [creating, setCreating] = useState(false);
 
     const selectedPath = payload?.path || '';
     const loadPath = useCallback(async (nextPath?: string) => {
@@ -705,31 +738,12 @@ function FolderBrowserDialog({
         if (!open) {
             return;
         }
-        setNewFolderName('');
         void loadPath(initialPath || undefined);
     }, [initialPath, loadPath, open]);
 
-    const handleCreateFolder = async () => {
-        const parentPath = selectedPath.trim();
-        const folderName = newFolderName.trim();
-        if (!parentPath || !folderName) {
-            return;
-        }
-        setCreating(true);
-        try {
-            const createdPath = await createProjectFolder(parentPath, folderName);
-            setNewFolderName('');
-            await loadPath(createdPath);
-        } catch (error: any) {
-            toast.error(error?.message || '创建文件夹失败');
-        } finally {
-            setCreating(false);
-        }
-    };
-
     return (
         <Dialog open={open} onOpenChange={(nextOpen) => {
-            if (!busy && !creating) {
+            if (!busy) {
                 onOpenChange(nextOpen);
             }
         }}>
@@ -794,22 +808,9 @@ function FolderBrowserDialog({
                             )}
                         </div>
                     </ScrollArea>
-                    <div className="flex gap-2">
-                        <Input
-                            value={newFolderName}
-                            onChange={(event) => setNewFolderName(event.target.value)}
-                            placeholder="新建文件夹名称"
-                            className="h-8 min-w-0 flex-1 text-[12px]"
-                            disabled={creating || loading || !selectedPath}
-                        />
-                        <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void handleCreateFolder()} disabled={creating || loading || !newFolderName.trim() || !selectedPath}>
-                            {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}
-                            新建
-                        </Button>
-                    </div>
                 </div>
                 <DialogFooter className="border-t p-3">
-                    <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onOpenChange(false)} disabled={busy || creating}>
+                    <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onOpenChange(false)} disabled={busy}>
                         取消
                     </Button>
                     <Button
@@ -821,7 +822,7 @@ function FolderBrowserDialog({
                                 void onConfirm(selectedPath);
                             }
                         }}
-                        disabled={busy || creating || loading || !selectedPath}
+                        disabled={busy || loading || !selectedPath}
                     >
                         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                         {confirmLabel}
@@ -860,7 +861,7 @@ function ProjectSetupDialog({
     onCreateBlankProject,
 }: ProjectSetupDialogProps) {
     const [setupMode, setSetupMode] = useState<ProjectSetupMode>(forceBlankProjectCreation ? 'blank' : 'menu');
-    const [parentRoot, setParentRoot] = useState('');
+    const [parentRoot, setParentRoot] = useState(readStoredMakeClientParentRoot);
     const [projectName, setProjectName] = useState('新建 Make 项目');
     const [folderName, setFolderName] = useState('make-project');
     const [manualFolderName, setManualFolderName] = useState(false);
@@ -868,14 +869,36 @@ function ProjectSetupDialog({
     const [folderBrowserPurpose, setFolderBrowserPurpose] = useState<'existing' | 'parent'>('existing');
     const [runningPhase, setRunningPhase] = useState('');
     const [failedPhase, setFailedPhase] = useState('');
+    const [failedMessage, setFailedMessage] = useState('');
     const allowCloseRef = useRef(false);
+    const suggestionRequestRef = useRef(0);
 
-    useEffect(() => {
+    const refreshSuggestedFolderName = useCallback(async (nextProjectName: string, nextParentRoot: string) => {
         if (manualFolderName) {
             return;
         }
-        setFolderName(slugifyProjectFolderName(projectName) || 'make-project');
-    }, [manualFolderName, projectName]);
+        const requestId = suggestionRequestRef.current + 1;
+        suggestionRequestRef.current = requestId;
+        const fallbackFolderName = fallbackProjectFolderName(nextProjectName);
+        if (!nextParentRoot.trim()) {
+            setFolderName(fallbackFolderName);
+            return;
+        }
+        try {
+            const suggestedFolderName = await suggestProjectFolderName(nextProjectName, nextParentRoot);
+            if (suggestionRequestRef.current === requestId) {
+                setFolderName(suggestedFolderName || fallbackFolderName);
+            }
+        } catch {
+            if (suggestionRequestRef.current === requestId) {
+                setFolderName(fallbackFolderName);
+            }
+        }
+    }, [manualFolderName]);
+
+    useEffect(() => {
+        void refreshSuggestedFolderName(projectName, parentRoot);
+    }, [parentRoot, projectName, refreshSuggestedFolderName]);
 
     useEffect(() => {
         if (open) {
@@ -885,6 +908,7 @@ function ProjectSetupDialog({
         setSetupMode('menu');
         setRunningPhase('');
         setFailedPhase('');
+        setFailedMessage('');
         setFolderBrowserOpen(false);
     }, [open]);
 
@@ -928,8 +952,10 @@ function ProjectSetupDialog({
             return;
         }
         setFailedPhase('');
-        setRunningPhase('template');
+        setFailedMessage('');
+        setRunningPhase('creating');
         try {
+            writeStoredMakeClientParentRoot(normalizedParent);
             await onCreateBlankProject({
                 parentRoot: normalizedParent,
                 folderName: normalizedFolder,
@@ -939,12 +965,19 @@ function ProjectSetupDialog({
             onSetupComplete();
             onOpenChange(false);
         } catch (error: any) {
+            const errorMessage = error?.message || '新建空白项目失败';
             setFailedPhase(getProjectSetupErrorPhase(error));
-            toast.error(error?.message || '新建空白项目失败');
+            setFailedMessage(errorMessage);
+            toast.error(errorMessage);
         } finally {
             setRunningPhase('');
         }
     };
+
+    const pendingCreate = Boolean(runningPhase || (creatingBlankProject && !failedPhase));
+    const failedTitle = failedPhase
+        ? `${getProjectSetupPhaseLabel(failedPhase)}失败`
+        : MAKE_CLIENT_SETUP_FAILED_LABEL;
 
     return (
         <>
@@ -1052,26 +1085,25 @@ function ProjectSetupDialog({
                                     className="h-8 text-[12px]"
                                 />
                             </div>
-                            {(creatingBlankProject || runningPhase || failedPhase) ? (
+                            {(pendingCreate || failedPhase) ? (
                                 <div className="rounded-md border border-border/70 bg-muted/30 p-3">
-                                    <div className="grid gap-2">
-                                        {MAKE_CLIENT_SETUP_PHASES.map((phase) => {
-                                            const active = runningPhase === phase.key;
-                                            const failed = failedPhase === phase.key;
-                                            return (
-                                                <div key={phase.key} className="flex items-center gap-2 text-[12px]">
-                                                    {active ? (
-                                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                                                    ) : failed ? (
-                                                        <span className="h-3.5 w-3.5 rounded-full border border-destructive" />
-                                                    ) : (
-                                                        <span className="h-3.5 w-3.5 rounded-full border border-border bg-background" />
-                                                    )}
-                                                    <span className={cn(failed && 'text-destructive')}>{phase.label}</span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
+                                    {pendingCreate ? (
+                                        <div className="flex items-start gap-2 text-[12px]">
+                                            <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+                                            <div className="min-w-0 space-y-1">
+                                                <div className="font-medium">{MAKE_CLIENT_SETUP_PENDING_LABEL}</div>
+                                                <div className="leading-5 text-muted-foreground">{MAKE_CLIENT_SETUP_PENDING_DESCRIPTION}</div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-start gap-2 text-[12px]">
+                                            <span className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-destructive" />
+                                            <div className="min-w-0 space-y-1">
+                                                <div className="font-medium text-destructive">{failedTitle}</div>
+                                                <div className="break-words leading-5 text-muted-foreground">{failedMessage || MAKE_CLIENT_SETUP_FAILED_DESCRIPTION}</div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ) : null}
                         </div>
@@ -1107,6 +1139,7 @@ function ProjectSetupDialog({
                 onConfirm={(selectedPath) => {
                     if (folderBrowserPurpose === 'parent') {
                         setParentRoot(selectedPath);
+                        writeStoredMakeClientParentRoot(selectedPath);
                         setFolderBrowserOpen(false);
                         return;
                     }

@@ -322,18 +322,21 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
 
     const switchProject = useCallback(async (projectId: string) => {
         const normalizedProjectId = projectId.trim();
-        if (!normalizedProjectId || normalizedProjectId === activeProjectId) {
+        const alreadyActiveProject = normalizedProjectId === activeProjectId;
+        if (!normalizedProjectId || (alreadyActiveProject && projectResourcesLoadedRef.current)) {
             return;
         }
         initialProjectIdRef.current = null;
-        const response = await fetch('/api/projects/active', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectId: normalizedProjectId }),
-        });
-        if (!response.ok) {
-            const payload = await response.json().catch(() => null);
-            throw new Error(payload?.error || '切换项目失败');
+        if (!alreadyActiveProject) {
+            const response = await fetch('/api/projects/active', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projectId: normalizedProjectId }),
+            });
+            if (!response.ok) {
+                const payload = await response.json().catch(() => null);
+                throw new Error(payload?.error || '切换项目失败');
+            }
         }
         resetProjectScopedState();
         setLoading(true);
@@ -446,18 +449,20 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             throw new Error('新建项目后未返回项目 ID');
         }
         resetProjectScopedState();
+        setActiveProjectId(projectId);
+        setProjectTitle(typeof payload?.project?.name === 'string' ? payload.project.name || UNTITLED_PROJECT_LABEL : projectId);
         setLoading(true);
         try {
             await loadProjects();
             const loaded = await loadProjectResourcesFor(projectId);
             if (!loaded) {
-                throw new Error('加载项目资源失败');
+                messageApi.error('项目已创建，但加载资源失败，请刷新或重新切换项目');
             }
         } finally {
             setLoading(false);
         }
         return payload;
-    }, [loadProjectResourcesFor, loadProjects, resetProjectScopedState]);
+    }, [loadProjectResourcesFor, loadProjects, messageApi, resetProjectScopedState]);
 
     const reloadSidebarAssets = useCallback(async () => {
         try {

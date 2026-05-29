@@ -18,6 +18,36 @@ describe('ContentPanel make client project setup source', () => {
     expect(setupPhasesSource).not.toContain('同步 metadata');
   });
 
+  it('uses an overall pending state for blank project creation instead of pinning it to template download', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+
+    expect(source).toContain("const MAKE_CLIENT_SETUP_PENDING_LABEL = '创建并启动项目';");
+    expect(dialogSource).toContain("setRunningPhase('creating')");
+    expect(dialogSource).not.toContain("setRunningPhase('template')");
+    expect(dialogSource).toContain('MAKE_CLIENT_SETUP_PENDING_LABEL');
+    expect(dialogSource).toContain('MAKE_CLIENT_SETUP_PENDING_DESCRIPTION');
+  });
+
+  it('keeps blank project creation failures as a single inline error with details', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+
+    expect(source).toContain("const MAKE_CLIENT_SETUP_FAILED_LABEL = '创建项目失败';");
+    expect(dialogSource).toContain('const [failedMessage, setFailedMessage]');
+    expect(dialogSource).toContain('setFailedMessage(errorMessage);');
+    expect(dialogSource).toContain('toast.error(errorMessage);');
+    expect(dialogSource).toContain('MAKE_CLIENT_SETUP_FAILED_LABEL');
+    expect(dialogSource).toContain('failedMessage || MAKE_CLIENT_SETUP_FAILED_DESCRIPTION');
+    expect(dialogSource).not.toContain('MAKE_CLIENT_SETUP_PHASES.map((phase)');
+  });
+
   it('preserves an explicitly blank project name when creating a blank make client project', () => {
     const source = readContentPanelSource();
     const handlerSource = source.slice(
@@ -86,7 +116,7 @@ describe('ContentPanel make client project setup source', () => {
     expect(menuSource).toContain('focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none');
   });
 
-  it('uses the in-app folder browser for project setup paths instead of a native picker', () => {
+  it('uses the in-app folder browser for project setup paths without exposing folder creation', () => {
     const source = readContentPanelSource();
     const browserSource = source.slice(
       source.indexOf('function FolderBrowserDialog'),
@@ -99,9 +129,41 @@ describe('ContentPanel make client project setup source', () => {
 
     expect(dialogSource).toContain('FolderBrowserDialog');
     expect(browserSource).toContain('browseProjectFolders');
-    expect(browserSource).toContain('createProjectFolder');
+    expect(browserSource).not.toContain('createProjectFolder');
+    expect(browserSource).not.toContain('新建文件夹名称');
+    expect(browserSource).not.toContain('新建');
     expect(dialogSource).toContain('onAddProject(selectedPath)');
     expect(dialogSource).not.toContain('onSelectParentFolder');
+  });
+
+  it('requests ASCII folder name suggestions until the user manually edits the folder name', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+
+    expect(source).toContain('async function suggestProjectFolderName');
+    expect(dialogSource).toContain('void refreshSuggestedFolderName(projectName, parentRoot);');
+    expect(dialogSource).toContain('if (manualFolderName) {');
+    expect(dialogSource).toContain('setManualFolderName(true);');
+    expect(source).toContain("fetch('/api/projects/make/folder-name-suggestion'");
+  });
+
+  it('remembers the last selected blank project parent directory in browser storage', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+
+    expect(source).toContain("const MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY = 'axhub.make.lastProjectParentRoot';");
+    expect(source).toContain('function readStoredMakeClientParentRoot()');
+    expect(source).toContain('function writeStoredMakeClientParentRoot(parentRoot: string)');
+    expect(dialogSource).toContain('useState(readStoredMakeClientParentRoot)');
+    expect(dialogSource).toContain('writeStoredMakeClientParentRoot(selectedPath);');
+    expect(source).toContain('window.localStorage.getItem(MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY)');
+    expect(source).toContain('window.localStorage.setItem(MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY, normalizedParentRoot)');
   });
 });
 

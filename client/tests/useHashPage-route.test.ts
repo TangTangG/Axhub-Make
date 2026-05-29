@@ -1,9 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const reactMockState = vi.hoisted(() => ({
+  effectCursor: 0,
+  effectDepsByCursor: new Map<number, unknown[] | undefined>(),
+}));
+
 vi.mock('react', () => ({
   useCallback: (callback: unknown) => callback,
-  useEffect: (effect: () => void | (() => void)) => {
-    effect();
+  useEffect: (effect: () => void | (() => void), deps?: unknown[]) => {
+    const index = reactMockState.effectCursor;
+    reactMockState.effectCursor += 1;
+    const previousDeps = reactMockState.effectDepsByCursor.get(index);
+    const shouldRun = !deps
+      || !previousDeps
+      || deps.length !== previousDeps.length
+      || deps.some((dep, depIndex) => !Object.is(dep, previousDeps[depIndex]));
+    reactMockState.effectDepsByCursor.set(index, deps ? [...deps] : undefined);
+    if (shouldRun) {
+      effect();
+    }
   },
   useRef: (initialValue: unknown) => ({ current: initialValue }),
   useState: (initialValue: unknown) => [
@@ -13,6 +28,11 @@ vi.mock('react', () => ({
 }));
 
 import { defineHashPageRoute, parseHashPage, parseSearchPage, useHashPage } from '../src/common/useHashPage';
+
+function renderUseHashPage(routeOrDefault?: Parameters<typeof useHashPage>[0]) {
+  reactMockState.effectCursor = 0;
+  return useHashPage(routeOrDefault);
+}
 
 function createPreviewWindowStub(initialHash = '', initialSearch = '') {
   const listeners = new Map<string, Array<() => void>>();
@@ -42,6 +62,8 @@ function createPreviewWindowStub(initialHash = '', initialSearch = '') {
 
 describe('useHashPage route definition', () => {
   afterEach(() => {
+    reactMockState.effectCursor = 0;
+    reactMockState.effectDepsByCursor.clear();
     vi.unstubAllGlobals();
   });
 
@@ -92,7 +114,7 @@ describe('useHashPage route definition', () => {
       { id: 'prototype-directory', title: '原型目录' },
     ], { defaultPageId: 'content-annotation' });
 
-    const result = useHashPage(route);
+    const result = renderUseHashPage(route);
 
     expect(result.page).toBe('state-annotation');
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
@@ -120,6 +142,27 @@ describe('useHashPage route definition', () => {
     ))).toHaveLength(1);
   });
 
+  it('does not republish route info when a non-default iframe page switches internally and rerenders', () => {
+    const { windowStub, parent, dispatch } = createPreviewWindowStub('#page=edit-prototype');
+    vi.stubGlobal('window', windowStub);
+    const route = defineHashPageRoute([
+      { id: 'install-agent', title: '安装 Agent' },
+      { id: 'edit-prototype', title: '编辑原型' },
+      { id: 'publish-prototype', title: '发布原型' },
+    ], { defaultPageId: 'install-agent' });
+
+    expect(renderUseHashPage(route).page).toBe('edit-prototype');
+
+    windowStub.location.hash = '#page=publish-prototype';
+    dispatch('hashchange');
+
+    expect(renderUseHashPage(route).page).toBe('publish-prototype');
+    expect(parent.postMessage.mock.calls.map(([message]) => message.type)).toEqual([
+      'AXHUB_PROTOTYPE_ROUTE_INFO',
+      'AXHUB_PROTOTYPE_PAGE_CHANGE',
+    ]);
+  });
+
   it('uses query page when the preview url has no page hash', () => {
     const { windowStub } = createPreviewWindowStub('', '?projectId=make-project&p=annotation-demo&page=prototype-directory');
     vi.stubGlobal('window', windowStub);
@@ -128,7 +171,7 @@ describe('useHashPage route definition', () => {
       { id: 'prototype-directory', title: '原型目录' },
     ], { defaultPageId: 'prototype-as-prd' });
 
-    const result = useHashPage(route);
+    const result = renderUseHashPage(route);
 
     expect(result.page).toBe('prototype-directory');
   });
@@ -137,7 +180,7 @@ describe('useHashPage route definition', () => {
     const { windowStub, parent } = createPreviewWindowStub('');
     vi.stubGlobal('window', windowStub);
 
-    const result = useHashPage('home');
+    const result = renderUseHashPage('home');
 
     expect(result.page).toBe('home');
     expect(parent.postMessage).not.toHaveBeenCalled();

@@ -94,6 +94,14 @@ export function resolvePrototypeAutoSelectionDecision({
 
     if (isBrowsingResourceSidebarInPrototypeCanvas({ sidebarTab, viewMode }) && currentCanvasItem) {
         const nextCanvasItem = currentCanvasItem;
+        if (currentItem && selectedItem && currentItem !== selectedItem) {
+            return {
+                kind: 'select',
+                item: currentItem,
+                markExplicitSelection: true,
+                nextCanvasItem,
+            };
+        }
         return currentItem
             ? {
                 kind: 'keep',
@@ -110,6 +118,14 @@ export function resolvePrototypeAutoSelectionDecision({
 
     const nextCanvasItem = viewMode === 'canvas' && currentItem ? currentItem : lastCanvasItem;
     if (hasExplicitSelection && currentItem) {
+        if (selectedItem && currentItem !== selectedItem) {
+            return {
+                kind: 'select',
+                item: currentItem,
+                markExplicitSelection: true,
+                nextCanvasItem,
+            };
+        }
         return {
             kind: 'keep',
             markExplicitSelection: true,

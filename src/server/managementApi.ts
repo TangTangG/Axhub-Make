@@ -510,6 +510,13 @@ function sendMissingProjectMetadata(res: ServerResponse, project: RegisteredProj
 
 function getExistingMetadataStore(res: ServerResponse, project: RegisteredProject) {
   if (!fs.existsSync(project.metadataPath)) {
+    if (readMakeClientMarker(project.root)) {
+      syncProjectIdentitySource(project.root, {
+        metadataPath: project.metadataPath,
+        fallback: project,
+      });
+      return createProjectMetadataStore(project.root, { metadataPath: project.metadataPath });
+    }
     sendMissingProjectMetadata(res, project);
     return null;
   }

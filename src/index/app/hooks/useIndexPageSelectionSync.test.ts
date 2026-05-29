@@ -202,6 +202,40 @@ describe('useIndexPageSelectionSync source', () => {
     });
   });
 
+  it('refreshes an explicit selected prototype object when resource metadata changes', () => {
+    const staleSelectedPrototype = {
+      ...createPrototype('beginner-guide', '新手指导'),
+      clientUrl: '/prototypes/beginner-guide',
+      previewUrl: '/prototypes/beginner-guide',
+    };
+    const refreshedSelectedPrototype = {
+      ...staleSelectedPrototype,
+      clientUrl: 'http://localhost:51720/prototypes/beginner-guide',
+      previewUrl: 'http://localhost:51720/prototypes/beginner-guide',
+    };
+    const sidebarTrees = {
+      prototypes: [createItemNode(staleSelectedPrototype.name)],
+      docs: [],
+      canvas: [],
+    };
+
+    expect(resolvePrototypeAutoSelectionDecision({
+      activeTab: 'prototypes',
+      hasExplicitSelection: true,
+      items: [refreshedSelectedPrototype],
+      lastCanvasItem: null,
+      selectedItem: staleSelectedPrototype,
+      sidebarTab: 'prototype',
+      sidebarTrees,
+      viewMode: 'demo',
+    })).toMatchObject({
+      kind: 'select',
+      item: refreshedSelectedPrototype,
+      markExplicitSelection: true,
+      nextCanvasItem: null,
+    });
+  });
+
   it('handleTabChange source guards explicit selection for file canvas sidebar tab', () => {
     const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
 

@@ -113,6 +113,7 @@ function notifyHostPrototypeRouteInfo(
 export function useHashPage(routeOrDefault: HashPageRoute | string = 'home') {
     const route = normalizeRouteInput(routeOrDefault);
     const { pages, defaultPageId } = route;
+    const routeSignature = `${defaultPageId}:${pages.map((routePage) => `${routePage.id}=${routePage.title}`).join('|')}`;
     const [page, setPageState] = useState<string>(() => {
         if (typeof window === 'undefined') {
             return defaultPageId;
@@ -122,7 +123,7 @@ export function useHashPage(routeOrDefault: HashPageRoute | string = 'home') {
 
     useEffect(() => {
         notifyHostPrototypeRouteInfo(pages, defaultPageId, page);
-    }, [defaultPageId, page, pages]);
+    }, [routeSignature]);
 
     useEffect(() => {
         if (typeof window === 'undefined') {

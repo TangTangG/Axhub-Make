@@ -24,6 +24,22 @@ describe('previewActions.helpers', () => {
     expect(getClientUrlOrigin('/prototypes/%E6%A0%87%E6%B3%A8%E6%BC%94%E7%A4%BA')).toBe('http://localhost:51723');
   });
 
+  it('builds relative prototype iframe URLs from the runtime origin instead of the admin origin', () => {
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://localhost:53817',
+      },
+      __RUNTIME_ORIGIN__: 'http://localhost:51723',
+    });
+
+    expect(buildProjectPrototypeIframeUrl({
+      name: 'beginner-guide',
+      displayName: '新手指导',
+      clientUrl: '/prototypes/beginner-guide',
+      previewUrl: '/prototypes/beginner-guide',
+    })).toBe('http://localhost:51723/prototypes/beginner-guide');
+  });
+
   it('keeps explicit client URL origins unchanged', () => {
     vi.stubGlobal('window', {
       location: {

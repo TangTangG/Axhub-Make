@@ -11,6 +11,8 @@ export interface MakeClientMarker {
   schemaVersion: 1;
   kind: typeof MAKE_CLIENT_MARKER_KIND;
   repository: string;
+  templateUrl?: string;
+  templateVersion?: string;
   project: {
     id: string;
     name: string;
@@ -73,6 +75,8 @@ export function normalizeMakeClientMarker(value: unknown): MakeClientMarker | nu
   const id = stringValue(project.id);
   const name = normalizeMakeClientProjectName(id, project.name);
   const repository = stringValue(raw.repository) || DEFAULT_MAKE_CLIENT_REPOSITORY;
+  const templateUrl = stringValue(raw.templateUrl);
+  const templateVersion = stringValue(raw.templateVersion);
 
   if (raw.schemaVersion !== 1 || kind !== MAKE_CLIENT_MARKER_KIND || !id) {
     return null;
@@ -85,6 +89,8 @@ export function normalizeMakeClientMarker(value: unknown): MakeClientMarker | nu
     schemaVersion: 1,
     kind: MAKE_CLIENT_MARKER_KIND,
     repository,
+    ...(templateUrl ? { templateUrl } : {}),
+    ...(templateVersion ? { templateVersion } : {}),
     project: {
       id,
       name,

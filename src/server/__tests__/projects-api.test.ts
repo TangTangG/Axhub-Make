@@ -628,7 +628,7 @@ describe('make-server project APIs', () => {
     }
   });
 
-  it('returns a clear error when a registered official project metadata file is missing', async () => {
+  it('repairs a registered make client project when its metadata file is missing', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
       project: { id: 'client-a', name: 'Client A' },
@@ -660,12 +660,12 @@ describe('make-server project APIs', () => {
       const response = await fetch(`${server.origin}/api/projects/stale/resources`);
       const body = await response.json();
 
-      expect(response.status).toBe(404);
-      expect(body).toMatchObject({
-        code: 'PROJECT_METADATA_MISSING',
-        projectId: 'stale',
-        metadataPath: getProjectMetadataPath(missingMetadataRoot),
+      expect(response.status).toBe(200);
+      expect(body.project).toMatchObject({
+        id: 'stale',
+        name: 'Stale Project',
       });
+      expect(fs.existsSync(getProjectMetadataPath(missingMetadataRoot))).toBe(true);
     } finally {
       await server.close();
     }

@@ -1,6 +1,6 @@
 {
   "name": "@axhub/make",
-  "version": "0.5.1-beta.5",
+  "version": "0.5.1-beta.8",
   "description": "Axhub Make management server and admin UI",
   "private": true,
   "type": "module",
@@ -44,6 +44,8 @@
     "release:make:dry-run": "node scripts/release-make.mjs --dry-run",
     "release:make:npm:latest": "node scripts/release-make.mjs --skip-github --npm-tag latest",
     "release:make:npm:beta": "node scripts/release-make.mjs --skip-github --npm-tag beta",
+    "release:make-client-template:prepare": "node scripts/release-make.mjs --template-only --prepare-only",
+    "release:make-client-template": "node scripts/release-make.mjs --template-only",
     "release:make:mirror:gitee": "node scripts/release-make-mirror-gitee.mjs",
     "release:make": "node scripts/release-make.mjs"
   },

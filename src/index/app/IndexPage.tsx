@@ -81,6 +81,23 @@ function normalizePrototypeRoutePage(value: { id?: unknown; title?: unknown } | 
     return id && title ? { id, title } : null;
 }
 
+function resolveSelectedPrototypePageAfterRouteInfo(
+    previousPageId: string | null,
+    routeInfo: PrototypeRouteInfo,
+    pages: { id: string; title: string }[],
+): string | null {
+    const previous = normalizePrototypeRoutePageId(previousPageId);
+    if (previous && pages.some((page) => page.id === previous)) {
+        return previous;
+    }
+    const active = normalizePrototypeRoutePageId(routeInfo.activePageId);
+    if (active && pages.some((page) => page.id === active)) {
+        return active;
+    }
+    const fallback = normalizePrototypeRoutePageId(routeInfo.defaultPageId) || pages[0]?.id || '';
+    return fallback || null;
+}
+
 export default function IndexPage({
     isDarkMode,
     setIsDarkMode,
@@ -316,7 +333,9 @@ export default function IndexPage({
                     defaultPageId: normalizePrototypeRoutePageId(routeInfo.defaultPageId) || nextPages[0]?.id || '',
                 };
             });
-            setSelectedPrototypePageId(normalizePrototypeRoutePageId(routeInfo.activePageId) || null);
+            setSelectedPrototypePageId((previousPageId) => (
+                resolveSelectedPrototypePageAfterRouteInfo(previousPageId, routeInfo, nextPages)
+            ));
         },
     });
 
