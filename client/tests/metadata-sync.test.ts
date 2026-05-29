@@ -43,6 +43,32 @@ describe('make-project metadata sync', () => {
     expect(packageJson.scripts?.['metadata:sync']).toBe('node scripts/sync-project-metadata.mjs');
   });
 
+  it('keeps reusable client package scripts runnable with npm alone outside the monorepo', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(makeProjectRoot, 'package.json'), 'utf8'));
+    const runtimeScripts = [
+      'dev',
+      'start',
+      'build',
+      'preview',
+      'typecheck',
+      'test',
+      'test:run',
+      'test:coverage',
+      'test:watch',
+      'test:ui',
+      'coverage',
+      'check-ready',
+    ];
+
+    for (const scriptName of runtimeScripts) {
+      expect(packageJson.scripts?.[scriptName], scriptName).toBeTypeOf('string');
+      expect(packageJson.scripts?.[scriptName], scriptName).not.toContain('pnpm');
+    }
+    expect(packageJson.scripts?.['vendor:sync']).toBe('node scripts/sync-vendor-if-present.mjs');
+    expect(packageJson.scripts?.dev).toBe('node scripts/sync-vendor-if-present.mjs && vite');
+    expect(packageJson.scripts?.start).toBe('npm run dev');
+  });
+
   it('keeps generated project metadata ignored in the reusable client template', () => {
     const ignoreRules = fs.readFileSync(path.join(makeProjectRoot, '.gitignore'), 'utf8');
 

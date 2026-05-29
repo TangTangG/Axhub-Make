@@ -37,6 +37,8 @@ https://github.com/lintendo/Axhub-Make/tree/main/client
 
 拉取完成后，本地会生成一个可运行的 Make Client 项目，用来承载后续创建的原型、主题、项目资料和预览运行时。
 
+面向用户的运行环境要尽量保守：需要兼容 macOS、Windows 和 Linux，也要考虑用户本机没有 Git 或 pnpm 的情况。Make 管理服务器和生成的 Client 项目在非开发场景不要强制依赖 pnpm；启动、安装和自检流程优先使用用户更容易具备的 `npm` / `npx`。
+
 ## 让 AI 帮你启动
 
 把下面这段发给你的 AI Agent，让它帮你检查环境、启动 Make，并创建一个以后可以直接双击运行的桌面脚本：

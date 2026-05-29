@@ -1,8 +1,21 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const childProcessMock = vi.hoisted(() => ({
+  spawn: vi.fn(),
+}));
+
+vi.mock('node:child_process', async (importActual) => {
+  const actual = await importActual<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    ...childProcessMock,
+  };
+});
 
 import {
   getAdminServerInfoPath,
@@ -63,9 +76,17 @@ function readBody(init?: RequestInit) {
   return JSON.parse(String(init?.body || '{}'));
 }
 
+function createSpawnChild() {
+  const child = new EventEmitter() as EventEmitter & { unref: ReturnType<typeof vi.fn> };
+  child.unref = vi.fn();
+  child.on('error', () => {});
+  return child;
+}
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
+  childProcessMock.spawn.mockReset();
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -412,6 +433,42 @@ describe('auto make-server registration', () => {
 
     await expect(getReusableAdminOrigin(projectRoot, { requireDevMode: true })).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns an error payload when the make-server spawn command is unavailable', async () => {
+    const projectRoot = createTempProjectRoot();
+    const child = createSpawnChild();
+    childProcessMock.spawn.mockReturnValue(child);
+    mockFetch((url) => {
+      expect(url.pathname).toBe('/api/health');
+      throw new Error('connect ECONNREFUSED');
+    });
+
+    const startPromise = startOrReuseMakeServer(projectRoot, {
+      adminReadyTimeoutMs: 1,
+      pollIntervalMs: 1,
+      healthTimeoutMs: 1,
+    });
+    await vi.waitFor(() => expect(childProcessMock.spawn).toHaveBeenCalled());
+    child.emit('error', Object.assign(new Error('spawn npx ENOENT'), {
+      code: 'ENOENT',
+      syscall: 'spawn npx',
+    }));
+
+    await expect(startPromise).resolves.toMatchObject({
+      ready: false,
+      error: 'spawn npx ENOENT',
+    });
+    expect(childProcessMock.spawn).toHaveBeenCalledWith(
+      process.platform === 'win32' ? 'npx.cmd' : 'npx',
+      ['@axhub/make', projectRoot],
+      expect.objectContaining({
+        cwd: projectRoot,
+        detached: true,
+        stdio: 'ignore',
+      }),
+    );
+    expect(child.unref).not.toHaveBeenCalled();
   });
 
   it('ignores stale admin server info when the saved origin is unavailable', async () => {
