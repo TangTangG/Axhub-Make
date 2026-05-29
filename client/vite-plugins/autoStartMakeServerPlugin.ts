@@ -298,15 +298,21 @@ async function getRegisteredMakeServerStatus(
   return createStatusPayload(adminOrigin, registration);
 }
 
-function spawnMakeServer(projectRoot: string, options: MakeServerStartOptions = {}): void {
+function spawnMakeServer(projectRoot: string, options: MakeServerStartOptions = {}): Promise<void> {
   const startCommand = resolveMakeServerStartCommand(projectRoot, options);
-  const child = spawn(startCommand.command, startCommand.args, {
-    cwd: projectRoot,
-    detached: true,
-    stdio: 'ignore',
+  return new Promise((resolve, reject) => {
+    const child = spawn(startCommand.command, startCommand.args, {
+      cwd: projectRoot,
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      console.log(`🚀 Starting Axhub Make server via ${startCommand.label}...`);
+      resolve();
+    });
   });
-  child.unref();
-  console.log(`🚀 Starting Axhub Make server via ${startCommand.label}...`);
 }
 
 export async function startOrReuseMakeServer(
@@ -330,7 +336,7 @@ export async function startOrReuseMakeServer(
         return createStatusPayload(reusableOrigin, registration);
       }
 
-      spawnMakeServer(projectRoot, options);
+      await spawnMakeServer(projectRoot, options);
       const adminOrigin = await waitForAdminOrigin(projectRoot, {
         ...reuseOptions,
         timeoutMs: options.adminReadyTimeoutMs,

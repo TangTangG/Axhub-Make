@@ -472,28 +472,16 @@ async function ensureMakeClientDependencies(
   }
 }
 
-async function canRunPnpm(runner: MakeClientCommandRunner, projectRoot: string): Promise<boolean> {
-  try {
-    await runMakeClientCommand(runner, 'pnpm', ['--version'], projectRoot, 'dev');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function resolveMakeClientDevCommand(installMethod: 'skipped' | 'pnpm' | 'npm', projectRoot: string): { command: string; args: string[] } {
   const viteEntrypoint = viteNodeEntrypoint(projectRoot);
   if (fs.existsSync(viteEntrypoint)) {
     return { command: process.execPath, args: [viteEntrypoint] };
   }
-  if (installMethod === 'npm') {
-      throw new MakeClientProjectError(
-        'MAKE_CLIENT_INSTALL_FAILED',
-        'Make client vite dependency is missing after npm install',
-        { status: 500, phase: 'install', details: { viteEntrypoint } },
-      );
-  }
-  return { command: 'pnpm', args: ['dev'] };
+  throw new MakeClientProjectError(
+    'MAKE_CLIENT_INSTALL_FAILED',
+    'Make client vite dependency is missing after install',
+    { status: 500, phase: 'install', details: { viteEntrypoint, installMethod } },
+  );
 }
 
 async function resolveMakeClientDevCommandForProject(
@@ -501,9 +489,7 @@ async function resolveMakeClientDevCommandForProject(
   installMethod: 'skipped' | 'pnpm' | 'npm',
   projectRoot: string,
 ): Promise<{ command: string; args: string[] }> {
-  if (installMethod === 'skipped' && !(await canRunPnpm(runner, projectRoot))) {
-    return resolveMakeClientDevCommand('npm', projectRoot);
-  }
+  void runner;
   return resolveMakeClientDevCommand(installMethod, projectRoot);
 }
 

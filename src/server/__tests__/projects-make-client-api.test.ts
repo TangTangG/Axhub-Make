@@ -89,7 +89,12 @@ function localCommandResult(command: string, args: string[]) {
 
 beforeEach(() => {
   runLocalCommandMock.mockReset();
-  runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => localCommandResult(command, args));
+  runLocalCommandMock.mockImplementation(async (command: string, args: string[], commandOptions: any) => {
+    if ((command === 'pnpm' || command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+      writeInstalledMakeClientDependencies(String(commandOptions?.cwd || ''));
+    }
+    return localCommandResult(command, args);
+  });
   childProcessMock.execFile.mockReset();
   childProcessMock.execFile.mockImplementation((_file: string, _args: string[], optionsOrCallback?: unknown, maybeCallback?: unknown) => {
     const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
@@ -257,6 +262,9 @@ function installRemoteTemplateCommandMock(options: {
   metadataName?: string;
 } = {}) {
   runLocalCommandMock.mockImplementation(async (command: string, args: string[], commandOptions: any) => {
+    if ((command === 'pnpm' || command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+      writeInstalledMakeClientDependencies(String(commandOptions?.cwd || ''));
+    }
     if (command === 'pnpm' && args[0] === 'metadata:sync') {
       writeMakeClientMetadata(
         String(commandOptions?.cwd || ''),
@@ -883,8 +891,8 @@ describe('make-server make client project APIs', () => {
         expect.objectContaining({ cwd: projectRoot }),
       );
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
-        'pnpm',
-        ['dev'],
+        process.execPath,
+        [path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
         expect.objectContaining({
           cwd: projectRoot,
           env: expect.objectContaining({
@@ -1301,10 +1309,10 @@ describe('make-server make client project APIs', () => {
           origin: 'http://localhost:51730',
         },
       });
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         'pnpm',
-        ['--version'],
-        expect.objectContaining({ cwd: projectRoot }),
+        ['install'],
+        expect.anything(),
       );
       expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         'pnpm',
@@ -1411,20 +1419,68 @@ describe('make-server make client project APIs', () => {
     }
   });
 
+  it('returns an install error instead of falling back to pnpm dev when Vite is missing after install', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-missing-vite-');
+    writeMakeClientMarker(projectRoot, 'missing-vite-client', 'Missing Vite Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'missing-vite-client', 'Missing Vite Client');
+    runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => localCommandResult(command, args));
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/missing-vite-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(ensureResponse.status).toBe(500);
+      expect(ensureBody).toMatchObject({
+        code: 'MAKE_CLIENT_INSTALL_FAILED',
+        phase: 'install',
+      });
+      expect(String(ensureBody.error)).toContain('Make client vite dependency is missing after install');
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        'pnpm',
+        ['install'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'pnpm',
+        ['dev'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
   it('returns a dev startup error instead of crashing when the dev spawn command is missing', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
     const projectRoot = createTempRoot('axhub-make-client-spawn-enoent-');
     writeMakeClientMarker(projectRoot, 'spawn-enoent-client', 'Spawn ENOENT Client');
     writeMakeClientPackage(projectRoot);
+    writeInstalledMakeClientDependencies(projectRoot);
     writeMakeClientMetadata(projectRoot, 'spawn-enoent-client', 'Spawn ENOENT Client');
     childProcessMock.spawn.mockImplementation(() => {
       const child = {
         once: vi.fn((event: string, callback: (...args: any[]) => void) => {
           if (event === 'error') {
-            setTimeout(() => callback(Object.assign(new Error('spawn pnpm ENOENT'), {
+            setTimeout(() => callback(Object.assign(new Error('spawn node ENOENT'), {
               code: 'ENOENT',
-              syscall: 'spawn pnpm',
+              syscall: 'spawn node',
             })), 0);
           }
           return child;
@@ -1455,10 +1511,10 @@ describe('make-server make client project APIs', () => {
         code: 'MAKE_CLIENT_DEV_FAILED',
         phase: 'dev',
       });
-      expect(String(ensureBody.error)).toContain('spawn pnpm ENOENT');
+      expect(String(ensureBody.error)).toContain('spawn node ENOENT');
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
-        'pnpm',
-        ['dev'],
+        process.execPath,
+        [path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
         expect.objectContaining({ cwd: projectRoot }),
       );
     } finally {
@@ -1472,6 +1528,7 @@ describe('make-server make client project APIs', () => {
     const projectRoot = createTempRoot('axhub-make-client-fresh-ensure-');
     writeMakeClientMarker(projectRoot, 'fresh-ensure-client', 'Fresh Ensure Client');
     writeMakeClientPackage(projectRoot);
+    writeInstalledMakeClientDependencies(projectRoot);
     writeMakeClientMetadata(projectRoot, 'fresh-ensure-client', 'Fresh Ensure Client');
     writeServerInfo(projectRoot, 'runtime', {
       pid: process.pid,
@@ -1729,6 +1786,7 @@ describe('make-server make client project APIs', () => {
     const projectRoot = createTempRoot('axhub-make-client-register-dev-');
     writeMakeClientMarker(projectRoot, 'register-dev-client', 'Register Dev Client');
     writeMakeClientPackage(projectRoot);
+    writeInstalledMakeClientDependencies(projectRoot);
     writeMakeClientMetadata(projectRoot, 'register-dev-client', 'Register Dev Client');
     childProcessMock.spawn.mockImplementation((_file?: string, _args?: string[], options?: { cwd?: string }) => {
       const targetRoot = String(options?.cwd || '');
@@ -1771,14 +1829,19 @@ describe('make-server make client project APIs', () => {
           origin: 'http://localhost:51722',
         },
       });
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         'pnpm',
         ['install'],
-        expect.objectContaining({ cwd: projectRoot }),
+        expect.anything(),
       );
-      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
         'pnpm',
         ['dev'],
+        expect.anything(),
+      );
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
         expect.objectContaining({
           cwd: projectRoot,
           env: expect.objectContaining({
@@ -1798,6 +1861,7 @@ describe('make-server make client project APIs', () => {
     const projectRoot = createTempRoot('axhub-make-client-register-fails-');
     writeMakeClientMarker(projectRoot, 'register-fails-client', 'Register Fails Client');
     writeMakeClientPackage(projectRoot);
+    writeInstalledMakeClientDependencies(projectRoot);
     writeMakeClientMetadata(projectRoot, 'register-fails-client', 'Register Fails Client');
     const server = await startTestServer(defaultRoot);
 
@@ -1882,7 +1946,8 @@ describe('make-server make client project APIs', () => {
       expect(fs.existsSync(path.join(targetRoot, 'scripts', 'sync-project-metadata.mjs'))).toBe(true);
       expect(fs.existsSync(path.join(targetRoot, 'src', 'prototypes', 'template-home', 'index.tsx'))).toBe(true);
       expect(fs.existsSync(path.join(targetRoot, '.git'))).toBe(false);
-      expect(fs.existsSync(path.join(targetRoot, 'node_modules'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, 'node_modules', 'left-pad'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, 'node_modules', 'vite'))).toBe(true);
       expect(fs.existsSync(path.join(targetRoot, 'dist'))).toBe(false);
       expect(fs.existsSync(path.join(targetRoot, '.trae'))).toBe(false);
       expect(fs.existsSync(path.join(targetRoot, 'temp'))).toBe(false);
@@ -1931,8 +1996,8 @@ describe('make-server make client project APIs', () => {
         expect.anything(),
       );
       expect(childProcessMock.spawn).toHaveBeenCalledWith(
-        'pnpm',
-        ['dev'],
+        process.execPath,
+        [path.join(targetRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
         expect.objectContaining({
           cwd: targetRoot,
           detached: true,
@@ -2400,6 +2465,7 @@ describe('make-server make client project APIs', () => {
     const projectRoot = createTempRoot('axhub-make-client-timeout-');
     writeMakeClientMarker(projectRoot, 'timeout-client', 'Timeout Client');
     writeMakeClientPackage(projectRoot);
+    writeInstalledMakeClientDependencies(projectRoot);
     writeMakeClientMetadata(projectRoot, 'timeout-client', 'Timeout Client');
     const server = await startTestServer(defaultRoot);
 
