@@ -28,7 +28,7 @@ export function generateTemplateImportPrompt(params: {
         ? template.extraDependencies.map((dependency) => String(dependency || '').trim()).filter(Boolean)
         : [];
     const dependencySection = dependencies.length > 0
-        ? `\n\n**额外依赖**：\n- ${dependencies.join('\n- ')}\n\n先用 pnpm 检查当前项目是否已安装；缺失时只安装缺失依赖，并验证项目构建/运行。`
+        ? `\n\n**额外依赖**：\n- ${dependencies.join('\n- ')}\n\n先检查当前项目是否已安装；缺失时使用 npm 只安装缺失依赖，并验证项目构建/运行。`
         : '\n\n**额外依赖**：无；除非验证明确报缺包，否则不要安装依赖。';
 
     return `请导入 Make Template 原型 \`${template.slug}\`。

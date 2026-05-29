@@ -29,7 +29,7 @@ describe('generateTemplateImportPrompt', () => {
         expect(prompt).not.toContain('同步或补充');
         expect(prompt).not.toContain('标题：');
         expect(prompt).not.toContain('描述：');
-        expect(prompt).not.toContain('npm install');
+        expect(prompt).not.toContain('pnpm');
     });
 
     it('requires dependency installation work when extraDependencies is non-empty', () => {
@@ -47,7 +47,8 @@ describe('generateTemplateImportPrompt', () => {
         expect(prompt).toContain('额外依赖');
         expect(prompt).toContain('three');
         expect(prompt).toContain('@react-three/fiber');
-        expect(prompt).toContain('pnpm');
+        expect(prompt).toContain('npm');
+        expect(prompt).not.toContain('pnpm');
         expect(prompt).toContain('安装缺失依赖');
         expect(prompt).toContain('验证项目构建/运行');
     });

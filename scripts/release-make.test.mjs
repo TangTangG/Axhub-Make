@@ -70,6 +70,8 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, '.git/config'), '[core]\n');
     writeFile(path.join(clientRoot, 'node_modules/left-pad/index.js'), 'module.exports = null;\n');
     writeFile(path.join(clientRoot, 'dist/build.js'), 'console.log("built");\n');
+    writeFile(path.join(clientRoot, '.agents/skills/local/SKILL.md'), 'npm run typecheck\n');
+    writeFile(path.join(clientRoot, '.claude/skills/local/SKILL.md'), 'npm run typecheck\n');
     writeFile(path.join(clientRoot, '.trae/local.json'), '{}\n');
     writeFile(path.join(clientRoot, 'temp/scratch.txt'), 'scratch\n');
     writeFile(path.join(clientRoot, '.axhub/make/.dev-server-info.json'), '{}\n');
@@ -88,6 +90,8 @@ describe('release make artifact helpers', () => {
     assert(!entries.some((entry) => entry.startsWith('.git/')));
     assert(!entries.some((entry) => entry.startsWith('node_modules/')));
     assert(!entries.some((entry) => entry.startsWith('dist/')));
+    assert(entries.includes('.agents/skills/local/SKILL.md'));
+    assert(entries.includes('.claude/skills/local/SKILL.md'));
     assert(!entries.some((entry) => entry.startsWith('.trae/')));
     assert(!entries.some((entry) => entry.startsWith('temp/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/')));

@@ -485,7 +485,7 @@ async function loadPlaywright() {
   }
 
   throw new Error(
-    'Playwright is not available. Install it with pnpm, or run the existing clone-page tool once to populate the shared cache.',
+    'Playwright is not available. Install it with npm, or run the existing clone-page tool once to populate the shared cache.',
   );
 }
 
@@ -964,9 +964,9 @@ function showHelp() {
 Capture a long full-page official homepage screenshot for a theme.
 
 Usage:
-  pnpm --filter @axhub/make-client capture:theme -- --theme linear
-  pnpm --filter @axhub/make-client capture:theme -- --theme linear --url https://linear.app
-  pnpm --filter @axhub/make-client capture:theme -- --config theme-capture.json --all
+  npm run capture:theme -- --theme linear
+  npm run capture:theme -- --theme linear --url https://linear.app
+  npm run capture:theme -- --config theme-capture.json --all
 
 Options:
   --theme NAME                 Theme directory name under src/themes
