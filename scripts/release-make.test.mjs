@@ -34,6 +34,65 @@ afterEach(() => {
 });
 
 describe('release make artifact helpers', () => {
+  it('builds make client template zip metadata for release manifests and uploads', () => {
+    const metadata = releaseMake.createTemplateZipMetadata({
+      version: '1.2.3',
+      githubRepo: 'lintendo/Axhub-Make',
+    });
+
+    assert.deepEqual(metadata, {
+      githubReleaseAssetName: 'axhub-make-client-template.zip',
+      primaryUrl: 'https://github.com/lintendo/Axhub-Make/releases/download/make-v1.2.3/axhub-make-client-template.zip',
+      mirrorUrl: 'https://gitee.com/axhub/Axhub-Make/releases/download/make-v1.2.3/axhub-make-client-template.zip',
+    });
+
+    const commands = releaseMake.publishCommands({
+      tagName: 'make-v1.2.3',
+      templateZip: {
+        path: '/tmp/axhub-make-client-template.zip',
+      },
+      releaseAssets: [
+        { zipPath: '/tmp/axhub-make-1.2.3-macos-arm64.zip' },
+      ],
+    }, {
+      githubRepo: 'lintendo/Axhub-Make',
+      npmTag: 'latest',
+    });
+    assert(commands.releaseArgs.includes('/tmp/axhub-make-client-template.zip'));
+  });
+
+  it('packages the make client template zip without local runtime artifacts', async () => {
+    const sourceRoot = createTempRoot('axhub-release-template-source-');
+    const outputRoot = createTempRoot('axhub-release-template-output-');
+    const clientRoot = path.join(sourceRoot, 'client');
+    writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/template-home/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, '.git/config'), '[core]\n');
+    writeFile(path.join(clientRoot, 'node_modules/left-pad/index.js'), 'module.exports = null;\n');
+    writeFile(path.join(clientRoot, 'dist/build.js'), 'console.log("built");\n');
+    writeFile(path.join(clientRoot, '.trae/local.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'temp/scratch.txt'), 'scratch\n');
+    writeFile(path.join(clientRoot, '.axhub/make/.dev-server-info.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/axhub.config.json'), '{}\n');
+
+    const result = await releaseMake.createMakeClientTemplateZip({
+      sourceClientDir: clientRoot,
+      outputDir: outputRoot,
+    });
+
+    assert.equal(path.basename(result.path), 'axhub-make-client-template.zip');
+    assert.match(result.sha256, /^[a-f0-9]{64}$/u);
+    const entries = releaseMake.listZipEntries(result.path);
+    assert(entries.includes('package.json'));
+    assert(entries.includes('src/prototypes/template-home/index.tsx'));
+    assert(!entries.some((entry) => entry.startsWith('.git/')));
+    assert(!entries.some((entry) => entry.startsWith('node_modules/')));
+    assert(!entries.some((entry) => entry.startsWith('dist/')));
+    assert(!entries.some((entry) => entry.startsWith('.trae/')));
+    assert(!entries.some((entry) => entry.startsWith('temp/')));
+    assert(!entries.some((entry) => entry.startsWith('.axhub/make/')));
+  });
+
   it('exposes npm-only latest and beta release scripts from the workspace root', () => {
     const rootPackageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
 

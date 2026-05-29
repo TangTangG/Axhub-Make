@@ -155,7 +155,7 @@ const SIDEBAR_TITLE_MAX_LENGTH = 40;
 const UNTITLED_PROJECT_LABEL = '未命名项目';
 
 const MAKE_CLIENT_SETUP_PHASES = [
-    { key: 'clone', label: '获取源码' },
+    { key: 'template', label: '下载模板包' },
     { key: 'install', label: '安装依赖' },
     { key: 'dev', label: '启动客户端' },
 ] as const;
@@ -172,7 +172,7 @@ function slugifyProjectFolderName(input: string): string {
 
 function getProjectSetupErrorPhase(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error || '');
-    if (message.includes('获取源码')) return 'clone';
+    if (message.includes('下载模板包') || message.includes('获取源码')) return 'template';
     if (message.includes('安装依赖')) return 'install';
     if (message.includes('metadata')) return 'metadata';
     if (message.includes('启动客户端')) return 'dev';
@@ -928,7 +928,7 @@ function ProjectSetupDialog({
             return;
         }
         setFailedPhase('');
-        setRunningPhase('clone');
+        setRunningPhase('template');
         try {
             await onCreateBlankProject({
                 parentRoot: normalizedParent,

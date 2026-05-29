@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +16,7 @@ import {
 
 import {
   cleanupProjectApiTestRoots,
+  createZipFromDirectory,
   createTempRoot,
   getTestProjectRegistryPath,
   startTestServer,
@@ -46,7 +48,13 @@ const childProcessMock = vi.hoisted(() => ({
   }),
 }));
 
-vi.mock('node:child_process', () => childProcessMock);
+vi.mock('node:child_process', async (importActual) => {
+  const actual = await importActual<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    ...childProcessMock,
+  };
+});
 
 vi.mock('../localCommand.ts', async (importActual) => {
   const actual = await importActual<typeof import('../localCommand.ts')>();
@@ -65,8 +73,9 @@ import { runLocalCommand } from '../localCommand.ts';
 
 const runLocalCommandMock = vi.mocked(runLocalCommand);
 
-const TEMPLATE_GIT_URL = 'https://github.com/lintendo/Axhub-Make.git';
-const TEMPLATE_MIRROR_GIT_URL = 'https://gitee.com/axhub/Axhub-Make.git';
+const MAKE_PACKAGE_VERSION = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8')).version;
+const TEMPLATE_ZIP_URL = `https://github.com/lintendo/Axhub-Make/releases/download/make-v${MAKE_PACKAGE_VERSION}/axhub-make-client-template.zip`;
+const TEMPLATE_MIRROR_ZIP_URL = `https://gitee.com/axhub/Axhub-Make/releases/download/make-v${MAKE_PACKAGE_VERSION}/axhub-make-client-template.zip`;
 const TEMPLATE_MIRROR_SOURCE_URL = 'https://gitee.com/axhub/Axhub-Make/tree/main/client';
 
 function localCommandResult(command: string, args: string[]) {
@@ -105,6 +114,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   cleanupProjectApiTestRoots();
 });
 
@@ -193,32 +203,60 @@ function writeMakeClientTemplate(templateRoot: string) {
   fs.writeFileSync(path.join(templateRoot, '.axhub', 'make', 'edit-history', 'stale.json'), '{}\n', 'utf8');
 }
 
+function createMakeClientTemplateZip(options: { unsafeEntry?: string } = {}) {
+  const sourceRoot = createTempRoot('axhub-make-template-zip-source-');
+  const zipRoot = createTempRoot('axhub-make-template-zip-file-');
+  if (options.unsafeEntry) {
+    fs.mkdirSync(path.join(sourceRoot, 'nested'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'evil.txt'), 'unsafe\n', 'utf8');
+    const zipPath = path.join(zipRoot, 'unsafe.zip');
+    execFileSync('zip', ['-q', zipPath, options.unsafeEntry], { cwd: path.join(sourceRoot, 'nested') });
+    return fs.readFileSync(zipPath);
+  }
+  writeMakeClientTemplate(path.join(sourceRoot, 'axhub-make-client-template'));
+  const zipPath = path.join(zipRoot, 'axhub-make-client-template.zip');
+  createZipFromDirectory(sourceRoot, zipPath);
+  return fs.readFileSync(zipPath);
+}
+
+function installRemoteTemplateFetchMock(options: {
+  failPrimary?: boolean;
+  failMirror?: boolean;
+  unsafePrimaryZipEntry?: string;
+} = {}) {
+  const primaryZip = createMakeClientTemplateZip(
+    options.unsafePrimaryZipEntry ? { unsafeEntry: options.unsafePrimaryZipEntry } : {},
+  );
+  const mirrorZip = createMakeClientTemplateZip();
+  const originalFetch = globalThis.fetch;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === TEMPLATE_ZIP_URL) {
+      if (options.failPrimary) {
+        return new Response('Primary template zip unavailable', { status: 503 });
+      }
+      return new Response(primaryZip, { headers: { 'Content-Type': 'application/zip' } });
+    }
+    if (url === TEMPLATE_MIRROR_ZIP_URL) {
+      if (options.failMirror) {
+        return new Response('Mirror template zip unavailable', { status: 503 });
+      }
+      return new Response(mirrorZip, { headers: { 'Content-Type': 'application/zip' } });
+    }
+    return originalFetch(input, init);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
 function installRemoteTemplateCommandMock(options: {
   failPrimary?: boolean;
   failMirror?: boolean;
+  unsafePrimaryZipEntry?: string;
   metadataId?: string;
   metadataName?: string;
 } = {}) {
   runLocalCommandMock.mockImplementation(async (command: string, args: string[], commandOptions: any) => {
-    if (command === 'git' && args[0] === 'clone') {
-      const repository = String(args[args.length - 2] || '');
-      const checkoutRoot = String(args[args.length - 1] || '');
-      if (repository === TEMPLATE_GIT_URL && options.failPrimary) {
-        throw Object.assign(new Error('Primary template repository unavailable'), {
-          stderr: 'Primary template repository unavailable',
-        });
-      }
-      if (repository === TEMPLATE_MIRROR_GIT_URL && options.failMirror) {
-        throw Object.assign(new Error('Mirror template repository unavailable'), {
-          stderr: 'Mirror template repository unavailable',
-        });
-      }
-      writeMakeClientTemplate(path.join(checkoutRoot, 'client'));
-      return localCommandResult(command, args);
-    }
-    if (command === 'git' && args.includes('sparse-checkout')) {
-      return localCommandResult(command, args);
-    }
     if (command === 'pnpm' && args[0] === 'metadata:sync') {
       writeMakeClientMetadata(
         String(commandOptions?.cwd || ''),
@@ -228,6 +266,7 @@ function installRemoteTemplateCommandMock(options: {
     }
     return localCommandResult(command, args);
   });
+  installRemoteTemplateFetchMock(options);
 }
 
 describe('make-server make client project APIs', () => {
@@ -1640,14 +1679,17 @@ describe('make-server make client project APIs', () => {
         expect.any(Object),
         expect.any(Function),
       );
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
-        'git',
-        expect.arrayContaining(['clone', TEMPLATE_GIT_URL, expect.any(String)]),
-        expect.objectContaining({ cwd: expect.any(String) }),
-      );
       expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         'git',
-        expect.arrayContaining(['clone', TEMPLATE_MIRROR_GIT_URL, expect.any(String)]),
+        expect.any(Array),
+        expect.any(Object),
+      );
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        TEMPLATE_ZIP_URL,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(globalThis.fetch).not.toHaveBeenCalledWith(
+        TEMPLATE_MIRROR_ZIP_URL,
         expect.any(Object),
       );
       expect(runLocalCommandMock).toHaveBeenCalledWith(
@@ -1736,22 +1778,15 @@ describe('make-server make client project APIs', () => {
           name: 'Mirror Demo',
         },
       });
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
-        'git',
-        expect.arrayContaining(['clone', TEMPLATE_GIT_URL, expect.any(String)]),
-        expect.objectContaining({ cwd: expect.any(String) }),
-      );
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
-        'git',
-        expect.arrayContaining(['clone', TEMPLATE_MIRROR_GIT_URL, expect.any(String)]),
-        expect.objectContaining({ cwd: expect.any(String) }),
-      );
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith('git', expect.any(Array), expect.any(Object));
+      expect(globalThis.fetch).toHaveBeenCalledWith(TEMPLATE_ZIP_URL, expect.any(Object));
+      expect(globalThis.fetch).toHaveBeenCalledWith(TEMPLATE_MIRROR_ZIP_URL, expect.any(Object));
     } finally {
       await server.close();
     }
   });
 
-  it('uses a long timeout for remote template clone and sparse checkout commands', async () => {
+  it('uses a long timeout for remote template zip downloads', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
     const parentRoot = createTempRoot('axhub-make-parent-');
@@ -1796,10 +1831,10 @@ describe('make-server make client project APIs', () => {
       });
 
       expect(response.status).toBe(201);
-      const templateTimeouts = runLocalCommandMock.mock.calls
-        .filter(([command, args]) => command === 'git' && (args[0] === 'clone' || args.includes('sparse-checkout')))
-        .map(([, , options]) => Number((options as any)?.timeoutMs));
-      expect(templateTimeouts).toEqual([180_000, 180_000, 180_000]);
+      const signals = (globalThis.fetch as any).mock.calls
+        .filter(([url]: [string]) => [TEMPLATE_ZIP_URL, TEMPLATE_MIRROR_ZIP_URL].includes(String(url)))
+        .map(([, options]: [string, RequestInit]) => options?.signal);
+      expect(signals).toEqual([expect.any(AbortSignal), expect.any(AbortSignal)]);
     } finally {
       await server.close();
     }
@@ -2043,10 +2078,47 @@ describe('make-server make client project APIs', () => {
         phase: 'template',
       });
       expect(body.details.sources).toEqual([
-        expect.objectContaining({ repository: TEMPLATE_GIT_URL }),
-        expect.objectContaining({ repository: TEMPLATE_MIRROR_GIT_URL }),
+        expect.objectContaining({ url: TEMPLATE_ZIP_URL }),
+        expect.objectContaining({ url: TEMPLATE_MIRROR_ZIP_URL }),
       ]);
       expect(childProcessMock.execFile).not.toHaveBeenCalled();
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects unsafe remote make client template zip entries before writing the target project', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const parentRoot = createTempRoot('axhub-make-parent-');
+    const server = await startTestServer(defaultRoot);
+    installRemoteTemplateCommandMock({
+      unsafePrimaryZipEntry: '../evil.txt',
+      failMirror: true,
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/projects/make/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRoot,
+          folderName: 'Unsafe Template',
+        }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(body).toMatchObject({
+        code: 'MAKE_CLIENT_TEMPLATE_UNAVAILABLE',
+        phase: 'template',
+      });
+      expect(body.details.sources[0]).toMatchObject({
+        url: TEMPLATE_ZIP_URL,
+      });
+      expect(String(body.details.sources[0].error)).toContain('unsafe');
+      expect(fs.existsSync(path.join(parentRoot, 'Unsafe Template'))).toBe(false);
       expect(childProcessMock.spawn).not.toHaveBeenCalled();
     } finally {
       await server.close();

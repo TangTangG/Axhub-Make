@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { unzipSync } from 'fflate';
 
 import {
   DEFAULT_MAKE_CLIENT_REPOSITORY,
@@ -21,6 +23,8 @@ import {
 } from './projectCore/index.ts';
 
 import { buildLocalCommandEnv, runLocalCommand } from './localCommand.ts';
+
+const makePackageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
 
 export type MakeClientPhase =
   | 'template'
@@ -98,18 +102,9 @@ function defaultCommandRunner(): MakeClientCommandRunner {
 }
 
 export const MAKE_CLIENT_TEMPLATE_PATH = 'client';
-export const PRIMARY_MAKE_CLIENT_TEMPLATE_REPOSITORY = 'https://github.com/lintendo/Axhub-Make.git';
-export const GITEE_MAKE_CLIENT_TEMPLATE_REPOSITORY = 'https://gitee.com/axhub/Axhub-Make.git';
-export const MAKE_CLIENT_TEMPLATE_SOURCES = [
-  {
-    repository: PRIMARY_MAKE_CLIENT_TEMPLATE_REPOSITORY,
-    markerRepository: DEFAULT_MAKE_CLIENT_REPOSITORY,
-  },
-  {
-    repository: GITEE_MAKE_CLIENT_TEMPLATE_REPOSITORY,
-    markerRepository: 'https://gitee.com/axhub/Axhub-Make/tree/main/client',
-  },
-] as const;
+export const MAKE_CLIENT_TEMPLATE_ZIP_NAME = 'axhub-make-client-template.zip';
+export const PRIMARY_MAKE_CLIENT_TEMPLATE_RELEASE_REPOSITORY = 'lintendo/Axhub-Make';
+export const GITEE_MAKE_CLIENT_TEMPLATE_RELEASE_BASE_URL = 'https://gitee.com/axhub/Axhub-Make/releases/download';
 const SKIP_AUTO_START_SERVER_ENV = 'AXHUB_MAKE_SKIP_AUTO_START_SERVER';
 const MAKE_CLIENT_RUNTIME_HEARTBEAT_MAX_AGE_MS = 15_000;
 const DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS = 3 * 60_000;
@@ -150,6 +145,29 @@ const TEMPLATE_COPY_IGNORED_AXHUB_MAKE_NAMES = new Set([
   'exports',
   'sessions',
 ]);
+
+function readMakePackageVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(makePackageJsonPath, 'utf8'));
+    return typeof pkg?.version === 'string' && pkg.version.trim() ? pkg.version.trim() : 'latest';
+  } catch {
+    return 'latest';
+  }
+}
+
+export function makeClientTemplateSources(version = readMakePackageVersion()) {
+  const tagName = `make-v${version}`;
+  return [
+    {
+      url: `https://github.com/${PRIMARY_MAKE_CLIENT_TEMPLATE_RELEASE_REPOSITORY}/releases/download/${tagName}/${MAKE_CLIENT_TEMPLATE_ZIP_NAME}`,
+      markerRepository: DEFAULT_MAKE_CLIENT_REPOSITORY,
+    },
+    {
+      url: `${GITEE_MAKE_CLIENT_TEMPLATE_RELEASE_BASE_URL}/${tagName}/${MAKE_CLIENT_TEMPLATE_ZIP_NAME}`,
+      markerRepository: 'https://gitee.com/axhub/Axhub-Make/tree/main/client',
+    },
+  ] as const;
+}
 
 export function slugifyMakeClientFolderName(input: string): string {
   return String(input || '')
@@ -283,6 +301,86 @@ function templateErrorMessage(error: unknown): string {
   return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Remote template download failed').trim();
 }
 
+function assertSafeZipEntryName(entryName: string): string {
+  const raw = String(entryName || '');
+  const parts = raw.split('/').filter(Boolean);
+  if (
+    !raw
+    || raw.includes('\\')
+    || path.isAbsolute(raw)
+    || raw.startsWith('/')
+    || /^[a-z]:/iu.test(raw)
+    || parts.some((part) => part === '..')
+  ) {
+    throw new Error(`unsafe template zip path: ${entryName}`);
+  }
+  return raw;
+}
+
+function commonZipRoot(entries: string[]): string {
+  const firstParts = entries[0]?.split('/').filter(Boolean) || [];
+  if (firstParts.length === 0) {
+    return '';
+  }
+  const candidate = firstParts[0];
+  return entries.every((entry) => entry === candidate || entry.startsWith(`${candidate}/`)) ? candidate : '';
+}
+
+function extractTemplateZip(zipBuffer: Uint8Array, destinationRoot: string): void {
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(zipBuffer);
+  } catch (error: any) {
+    throw new Error(error?.message || 'Failed to unzip Make client template');
+  }
+  const safeEntries = Object.keys(entries).map(assertSafeZipEntryName).filter((entry) => !entry.endsWith('/'));
+  if (safeEntries.length === 0) {
+    throw new Error('Make client template zip is empty');
+  }
+  const rootPrefix = commonZipRoot(safeEntries);
+  fs.mkdirSync(destinationRoot, { recursive: true });
+  for (const safeEntry of safeEntries) {
+    const relativePath = rootPrefix
+      ? safeEntry === rootPrefix
+        ? ''
+        : safeEntry.slice(rootPrefix.length + 1)
+      : safeEntry;
+    if (!relativePath) {
+      continue;
+    }
+    const targetPath = path.resolve(destinationRoot, ...relativePath.split('/'));
+    if (!targetPath.startsWith(`${path.resolve(destinationRoot)}${path.sep}`)) {
+      throw new Error(`unsafe template zip path: ${safeEntry}`);
+    }
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, entries[safeEntry]);
+  }
+}
+
+async function downloadTemplateZip(url: string): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`HTTP ${response.status}${body ? `: ${body.slice(0, 240)}` : ''}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength === 0) {
+      throw new Error('Make client template zip is empty');
+    }
+    return new Uint8Array(arrayBuffer);
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Template zip download timed out after ${DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function commandErrorMessage(error: unknown): string {
   const looseError = error as { stderr?: unknown; stdout?: unknown; message?: unknown } | null;
   return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Command failed').trim();
@@ -397,38 +495,21 @@ async function fetchMakeClientTemplateFromRemote(
   runner: MakeClientCommandRunner,
   targetRoot: string,
 ): Promise<{ markerRepository: string }> {
-  const runCommand = runner.runCommand || runLocalCommand;
-  const failures: Array<{ repository: string; error: string }> = [];
+  void runner;
+  const failures: Array<{ url: string; error: string }> = [];
   const tempParent = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-make-client-template-'));
 
   try {
-    for (const source of MAKE_CLIENT_TEMPLATE_SOURCES) {
+    for (const source of makeClientTemplateSources()) {
       const checkoutRoot = path.join(tempParent, failures.length === 0 ? 'primary' : `fallback-${failures.length}`);
       try {
-        await runCommand('git', [
-          'clone',
-          '--depth',
-          '1',
-          '--filter=blob:none',
-          '--sparse',
-          source.repository,
-          checkoutRoot,
-        ], {
-          cwd: tempParent,
-          maxBuffer: 1024 * 1024 * 20,
-          timeoutMs: DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS,
-        });
-        await runCommand('git', ['sparse-checkout', 'set', MAKE_CLIENT_TEMPLATE_PATH], {
-          cwd: checkoutRoot,
-          maxBuffer: 1024 * 1024 * 20,
-          timeoutMs: DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS,
-        });
-        const sourceRoot = path.join(checkoutRoot, MAKE_CLIENT_TEMPLATE_PATH);
-        copyMakeClientTemplateDirectory(sourceRoot, targetRoot);
+        const zipBuffer = await downloadTemplateZip(source.url);
+        extractTemplateZip(zipBuffer, checkoutRoot);
+        copyMakeClientTemplateDirectory(checkoutRoot, targetRoot);
         return { markerRepository: source.markerRepository };
       } catch (error) {
         failures.push({
-          repository: source.repository,
+          url: source.url,
           error: templateErrorMessage(error),
         });
         fs.rmSync(checkoutRoot, { recursive: true, force: true });

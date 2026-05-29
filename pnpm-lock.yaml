@@ -185,6 +185,9 @@ importers:
       execa:
         specifier: ^9.6.1
         version: 9.6.1
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.2
       html-to-image:
         specifier: ^1.11.13
         version: 1.11.13
