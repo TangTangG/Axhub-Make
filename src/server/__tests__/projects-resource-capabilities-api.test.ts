@@ -12,6 +12,7 @@ import {
   createTempRoot,
   startTestServer,
   writeJson,
+  writeMakeClientProjectMarker,
   writeProjectMetadata,
 } from './projects-api.helpers';
 
@@ -205,6 +206,7 @@ describe('make-server project resource capability APIs', () => {
 
   it('rejects unsafe resource write target metadata before create routes write files', async () => {
     const projectRoot = createTempRoot();
+    writeMakeClientProjectMarker(projectRoot, 'unsafe-write-client', 'Unsafe Write Client');
     writeJson(getProjectMetadataPath(projectRoot), {
       schemaVersion: 1,
       project: { id: 'unsafe-write-client', name: 'Unsafe Write Client' },

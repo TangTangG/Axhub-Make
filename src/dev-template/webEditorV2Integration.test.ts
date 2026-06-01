@@ -198,6 +198,69 @@ describe('createWebEditorV2Controller launch options', () => {
     );
     expect(start).toHaveBeenCalledTimes(1);
   });
+
+  it('does not fetch runtime fallback when enable-time options already provide an api base URL and integration channel', async () => {
+    const start = vi.fn();
+    const stop = vi.fn();
+    const fetchRuntime = vi.fn(async () => {
+      throw new Error('runtime fallback should not be fetched');
+    });
+
+    mocked.createGenieEditor.mockReturnValue({
+      start,
+      stop,
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+      getHostToolbarState: vi.fn(),
+      subscribeHostToolbarState: vi.fn(() => () => undefined),
+      runHostToolbarAction: vi.fn(async () => true),
+      destroy: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchRuntime as unknown as typeof fetch);
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({
+      toolbarMode: 'host',
+      genieBridge: {
+        apiBaseUrl: 'http://localhost:32123/api',
+        integrationChannel: 'axhub',
+        targetClientId: '',
+      },
+      integrationWs: {
+        enabled: false,
+        apiBaseUrl: 'http://localhost:32123/api',
+        channel: 'axhub',
+        clientId: '',
+      },
+    } as any);
+
+    expect(fetchRuntime).not.toHaveBeenCalled();
+    expect(mocked.createGenieEditor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        genieBridge: expect.objectContaining({
+          enabled: true,
+          apiBaseUrl: 'http://localhost:32123/api',
+          integrationChannel: 'axhub',
+          projectPath: '',
+        }),
+      }),
+    );
+    expect(start).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('readHostToolbarModeFromSearch', () => {

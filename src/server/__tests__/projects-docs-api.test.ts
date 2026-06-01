@@ -11,12 +11,28 @@ const childProcessMock = vi.hoisted(() => ({
     }
   }),
 }));
+const localCommandMock = vi.hoisted(() => ({
+  runLocalCommand: vi.fn(async (command: string, args: string[]) => ({
+    stdout: '',
+    stderr: '',
+    command,
+    escapedCommand: [command, ...args].join(' '),
+  })),
+}));
 
 vi.mock('node:child_process', async (importActual) => {
   const actual = await importActual<typeof import('node:child_process')>();
   return {
     ...actual,
     execFile: childProcessMock.execFile,
+  };
+});
+
+vi.mock('../localCommand.ts', async (importActual) => {
+  const actual = await importActual<typeof import('../localCommand.ts')>();
+  return {
+    ...actual,
+    runLocalCommand: localCommandMock.runLocalCommand,
   };
 });
 
@@ -32,9 +48,13 @@ import {
 } from './projects-api.helpers';
 import { handleProjectDocsApi } from '../managementApi.docs.ts';
 import { buildSystemOpenCommand } from '../managementApi.workspace.ts';
+import { runLocalCommand } from '../localCommand.ts';
+
+const runLocalCommandMock = vi.mocked(runLocalCommand);
 
 afterEach(() => {
   childProcessMock.execFile.mockClear();
+  runLocalCommandMock.mockClear();
   cleanupProjectApiTestRoots();
 });
 
@@ -242,11 +262,10 @@ describe('make-server project docs APIs', () => {
 
       expect(response.status).toBe(200);
       expect(body).toEqual({ success: true, path: docPath });
-      expect(childProcessMock.execFile).toHaveBeenCalledWith(
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
         openCommand.command,
         openCommand.args,
-        expect.objectContaining({ timeout: 10000 }),
-        expect.any(Function),
+        expect.objectContaining({ timeoutMs: 10000 }),
       );
     } finally {
       await server.close();

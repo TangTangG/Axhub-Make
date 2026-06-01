@@ -342,6 +342,38 @@ export function replaceSidebarItemKey(
     };
 }
 
+export function replaceSidebarItemTitle(
+    nodes: SidebarTreeNode[],
+    itemKey: string,
+    nextTitle: string,
+): { nextTree: SidebarTreeNode[]; changed: boolean } {
+    let changed = false;
+
+    const walk = (list: SidebarTreeNode[]): SidebarTreeNode[] => list.map((node) => {
+        if (node.kind === 'folder') {
+            return {
+                ...node,
+                children: Array.isArray(node.children) ? walk(node.children) : node.children,
+            };
+        }
+
+        if (node.itemKey !== itemKey || node.title === nextTitle) {
+            return node;
+        }
+
+        changed = true;
+        return {
+            ...node,
+            title: nextTitle,
+        };
+    });
+
+    return {
+        nextTree: walk(nodes),
+        changed,
+    };
+}
+
 export function replaceDocNameInSelections(names: string[], oldName: string, newName: string): string[] {
     const deduped: string[] = [];
     const seen = new Set<string>();

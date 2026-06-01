@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  getMakeClientMarkerPath,
   getProjectMetadataPath,
   getProjectRegistryPath,
 } from '../projectCore/index.ts';
@@ -114,6 +115,18 @@ function writeFile(filePath: string, content: string): void {
 }
 
 function writeProjectMetadata(projectRoot: string, projectId = 'agent-client', projectName = 'Agent Client') {
+  writeJson(getMakeClientMarkerPath(projectRoot), {
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: { id: projectId, name: projectName },
+  });
+  writeJson(path.join(projectRoot, 'package.json'), {
+    scripts: {
+      dev: 'vite',
+      'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+    },
+  });
   writeJson(getProjectMetadataPath(projectRoot), {
     schemaVersion: 1,
     project: { id: projectId, name: projectName },

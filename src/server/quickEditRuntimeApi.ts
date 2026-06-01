@@ -58,6 +58,8 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
   function isExportCoreLike(value) {
     return !!value && (
       typeof value.copyDocumentForFigmaNewOfficialClipboard === 'function'
+      || typeof value.captureDocumentForFigmaNew === 'function'
+      || typeof value.buildOfficialClipboardPayloadFromCapturedDocument === 'function'
       || typeof value.htmlToAxure === 'function'
       || typeof value.captureDocumentScreenshot === 'function'
     );
@@ -88,6 +90,17 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
       });
     }
     return exportCorePromise;
+  }
+
+  async function buildFigmaClipboardPayload(exportCore) {
+    if (
+      typeof exportCore.captureDocumentForFigmaNew !== 'function'
+      || typeof exportCore.buildOfficialClipboardPayloadFromCapturedDocument !== 'function'
+    ) {
+      throw new Error('make-server export core missing Figma payload builders');
+    }
+    const capturedDoc = await exportCore.captureDocumentForFigmaNew('#root');
+    return exportCore.buildOfficialClipboardPayloadFromCapturedDocument(capturedDoc);
   }
 
   function getElementSelector(element) {
@@ -252,6 +265,16 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
     try {
       window.focus?.();
       const exportCore = await loadExportCore();
+      if (data.clipboardWriteTarget === 'host') {
+        const payloadText = await buildFigmaClipboardPayload(exportCore);
+        post('axhub.quickEdit.export.copyToFigmaResult', {
+          ...resultPayload,
+          success: true,
+          payloadText,
+          payloadSizeKb: Math.round(payloadText.length / 1024),
+        });
+        return;
+      }
       const result = await exportCore.copyDocumentForFigmaNewOfficialClipboard('#root');
       post('axhub.quickEdit.export.copyToFigmaResult', {
         ...resultPayload,

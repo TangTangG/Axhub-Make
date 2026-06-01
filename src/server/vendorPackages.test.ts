@@ -39,6 +39,10 @@ describe('make-server vendor packages', () => {
 
     expect(viteConfig).not.toContain('../../packages/');
     expect(viteConfig).not.toContain('path.resolve(__dirname, pkg.runtimeEntryRelative)');
+    expect(viteConfig).not.toContain("replacement: path.resolve(__dirname, 'node_modules', pkg.packageName)");
+    expect(viteConfig).toContain("FRESH_VENDOR_ALIAS_PACKAGES = new Set(['axhub-genie-editor'])");
+    expect(viteConfig).toContain('FRESH_VENDOR_ALIAS_PACKAGES.has(pkg.packageName)');
+    expect(viteConfig).toContain('pkg.outputDirRelative');
     expect(viteConfig).toContain('vendor-aliases.generated.json');
     expect(JSON.stringify(tsconfig.compilerOptions.paths)).not.toContain('../../packages/');
     expect(tsconfig.compilerOptions.paths).toMatchObject({

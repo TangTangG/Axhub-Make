@@ -266,7 +266,9 @@ describe('make-server project theme library APIs', () => {
             entryPath: `design-systems/${slug}/index.tsx`,
             tokenPath: `design-systems/${slug}/designToken.json`,
             stylePath: `design-systems/${slug}/globals.css`,
-            coverPath: `design-systems/${slug}/assets/official-homepage.webp`,
+            coverPath: slug === 'mastercard'
+              ? 'design-systems/mastercard/assets/mastercard-design-system-cover.webp'
+              : `design-systems/${slug}/assets/official-homepage.webp`,
             canDirectImport: true,
           }),
         ]));

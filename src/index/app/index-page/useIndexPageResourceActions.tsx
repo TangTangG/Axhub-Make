@@ -13,6 +13,7 @@ import {
     normalizeDocItem,
     normalizeTemplateItem,
     replaceDocNameInSelections,
+    replaceSidebarItemTitle,
     replaceSidebarItemKey,
     sortResourceItemsByOrder,
 } from '../index-page.helpers';
@@ -801,14 +802,41 @@ export function useIndexPageResourceActions(params: any) {
                 const payload = await response.json().catch(() => ({}));
                 throw new Error((payload as any).error || '重命名失败');
             }
+            const itemKey = `prototypes/${item.name}`;
+            const { nextTree, changed } = replaceSidebarItemTitle(sidebarTrees.prototypes || [], itemKey, trimmedName);
+            if (changed) {
+                const optimisticPrototypes = data.prototypes.map((prototype: ItemData) => (
+                    prototype.name === item.name
+                        ? { ...prototype, displayName: trimmedName }
+                        : prototype
+                ));
+                const normalizedTree = sanitizeSidebarTree('prototypes', nextTree, optimisticPrototypes);
+                setSidebarTrees((previous: Record<SidebarTreeTab, SidebarTreeNode[]>) => ({
+                    ...previous,
+                    prototypes: normalizedTree,
+                }));
+                try {
+                    await sidebarApi.saveSidebarTree('prototypes', normalizedTree);
+                } catch {
+                    messageApi.warning('原型已重命名，但侧边栏名称保存失败，刷新后可能需要重新命名');
+                }
+            }
+            setSelectedItem((previous: ItemData | null) => (
+                previous?.name === item.name
+                    ? { ...previous, displayName: trimmedName }
+                    : previous
+            ));
             messageApi.success('原型重命名成功');
             await loadData();
+            if (typeof loadSidebarTree === 'function') {
+                await loadSidebarTree('prototypes', { force: true });
+            }
         } catch (error: any) {
             messageApi.error(error?.message || '重命名失败');
         } finally {
             hide();
         }
-    }, [appDialog, loadData, messageApi]);
+    }, [appDialog, data.prototypes, loadData, loadSidebarTree, messageApi, setSelectedItem, setSidebarTrees, sidebarTrees.prototypes]);
 
     const handleDuplicateItem = useCallback(async (item: ItemData) => {
         const localBasePath = getLocalBasePathForItem(item);
@@ -1385,7 +1413,9 @@ export function useIndexPageResourceActions(params: any) {
         setSidebarTrees((previous: Record<SidebarTreeTab, SidebarTreeNode[]>) => ({ ...previous, [tab]: normalizedTree }));
         try {
             const response = await sidebarApi.saveSidebarTree(tab, normalizedTree);
-            const latestItems = getSidebarTabItems(tab);
+            const latestItems = tab === 'docs'
+                ? await reloadDocsItems()
+                : getSidebarTabItems(tab);
             const persistedTree = sanitizeSidebarTree(tab, Array.isArray(response.tree) ? response.tree : [], latestItems);
             setSidebarTrees((previous: Record<SidebarTreeTab, SidebarTreeNode[]>) => ({ ...previous, [tab]: persistedTree }));
         } catch (error: any) {
@@ -1398,7 +1428,7 @@ export function useIndexPageResourceActions(params: any) {
             } catch {
             }
         }
-    }, [getSidebarTabItems, messageApi, setSidebarTrees]);
+    }, [getSidebarTabItems, messageApi, reloadDocsItems, setSidebarTrees]);
 
     const handleVersionManagement = useCallback((item: ItemData) => {
         setCurrentVersionItem(item);

@@ -101,10 +101,8 @@ import type {
 const GENIE_WAKE_FAILURE_MESSAGE = 'AI 唤醒失败，请在终端执行 npx @axhub/genie@latest，再重试';
 const GENIE_WAKE_TIMEOUT_MS = 12000;
 const GENIE_INTERRUPT_TIMEOUT_MS = 12000;
-const GENIE_EDITOR_SKILL_URL =
-  'https://github.com/lintendo/Axhub-Skills/blob/main/skills/genie-editor-workflow/SKILL.md';
-const GENIE_EDITOR_CLIENT_SKILL_URL =
-  'https://github.com/lintendo/Axhub-Skills/blob/main/skills/genie-editor-client/SKILL.md';
+const EXPLORE_OPTIONS_SKILL_PATH = '.agents/skills/explore-options/SKILL.md';
+const CLAUDE_EXPLORE_OPTIONS_SKILL_PATH = '.claude/skills/explore-options/SKILL.md';
 const GENIE_MENU_AGENT_OPTIONS = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
@@ -119,17 +117,16 @@ export function buildSkillInstallPrompt(skillInstallSource?: string | null): str
   const resolvedSkillInstallSource =
     typeof skillInstallSource === 'string' && skillInstallSource.trim()
       ? skillInstallSource.trim()
-      : GENIE_EDITOR_SKILL_URL;
+      : '';
   return [
-    '请先确保以下两个技能已经安装，如果已经安装，可跳过对应安装步骤：',
+    '处理页面或组件相关的设计决策、多方案探索、多方案对比时，使用本地 explore-options（多方案探索）技能。',
     '',
-    '1. genie-editor-workflow',
-    resolvedSkillInstallSource,
+    '技能位置：',
+    `- Codex / OpenAI：${EXPLORE_OPTIONS_SKILL_PATH}`,
+    `- Claude：${CLAUDE_EXPLORE_OPTIONS_SKILL_PATH}`,
+    ...(resolvedSkillInstallSource ? ['', '宿主补充技能来源：', resolvedSkillInstallSource] : []),
     '',
-    '2. genie-editor-client',
-    GENIE_EDITOR_CLIENT_SKILL_URL,
-    '',
-    '安装完成后再继续处理页面或组件相关的设计决策、多方案比稿需求。',
+    '工作口径：先做多方案探索，再做方案对比，最后收敛为设计决策；需要页面内切换时，使用该技能里的方案切换落地规范。',
   ].join('\n');
 }
 
@@ -143,9 +140,9 @@ export function buildGlobalPanelPrompt(
     installPrompt,
     '',
     ...(resolvedPageUrl ? ['当前页面链接：', resolvedPageUrl, ''] : []),
-    '确保安装完成后，请使用下面这段话回复用户：',
+    '请使用下面这段话回复用户：',
     '',
-    '我可以帮你生成和整理页面或组件的设计决策，也可以提供多个方案给你对比。你可以直接告诉我你的需求，我会按照 genie-editor-client 技能帮你处理；如果你回复“默认”，我也可以先帮你生成一版示例。',
+    '我可以帮你生成和整理页面或组件的设计决策，也可以用本地 explore-options（多方案探索）技能生成多个方案，再进行对比和决策。你可以直接告诉我你的需求；如果你回复“默认”，我也可以先帮你生成一版示例。',
   ].join('\n');
 }
 
@@ -1479,7 +1476,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       try {
         await copyRuntimeTextToClipboard(text);
         if (text) {
-          notifyRuntimeMessage('success', '已复制安装提示词，请发给对应 agent 处理');
+          notifyRuntimeMessage('success', '已复制技能说明，请发给对应 agent 处理');
           return;
         }
         notifyRuntimeMessage('info', '提示词暂未配置，已复制空模板');
@@ -1562,7 +1559,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       },
       {
         key: 'copy-skill',
-        label: '安装技能',
+        label: '技能说明',
         icon: <CopyOutlined />,
         disabled: actionBusy || genieProviderRefreshPending,
       },
@@ -1771,8 +1768,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         style={{ padding: '14px 0 4px', display: 'flex', flexDirection: 'column', gap: 8 }}
       >
         <Typography.Text style={{ color: EDITOR_CHROME.textMuted, fontSize: 12, lineHeight: 1.7 }}>
-          这里一般可以生成和整理页面或组件的设计决策，也可以做多方案对比。如果你需要，可以点击下面的按钮，
-          复制提示词到本地 AI 继续处理。
+          暂时没有需要处理的设计决策。可以先生成多个设计方案，再进行对比和决策。
         </Typography.Text>
         <Button
           type="default"

@@ -1,6 +1,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 
+import { buildIDEFileProtocolUrl, getIDEFileProtocolSchemes } from './ideProtocol.ts';
+
 export const MAIN_IDE_VALUES = ['cursor', 'trae', 'vscode', 'trae_cn', 'windsurf', 'kiro', 'qoder', 'antigravity'] as const;
 export type MainIDE = typeof MAIN_IDE_VALUES[number];
 
@@ -47,6 +49,8 @@ const MAIN_IDE_WINDOWS_EXECUTABLE_NAMES: Record<MainIDE, string[]> = {
   qoder: ['Qoder.exe'],
   antigravity: ['Antigravity.exe'],
 };
+
+const WINDOWS_START_PROCESS_RESULT_TIMEOUT_MS = 4_000;
 
 export interface OpenIDEResult {
   success: true;
@@ -208,6 +212,54 @@ function spawnDetached(command: string, args: string[], options: {
   });
 }
 
+function spawnWindowsStartProcess(args: string[], commandLabel: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let stderr = '';
+    let resultTimer: NodeJS.Timeout | null = null;
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (resultTimer) {
+        clearTimeout(resultTimer);
+        resultTimer = null;
+      }
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    };
+
+    const child = spawn('powershell', args, {
+      detached: false,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+      shell: false,
+    });
+
+    child.stderr?.on('data', (chunk) => {
+      stderr += toText(chunk);
+    });
+
+    child.once('error', (error) => {
+      finish(new Error(error.message || `Failed to spawn ${commandLabel}`));
+    });
+    child.once('spawn', () => {
+      resultTimer = setTimeout(() => finish(), WINDOWS_START_PROCESS_RESULT_TIMEOUT_MS);
+    });
+    child.once('close', (code) => {
+      if (code && code !== 0) {
+        const details = stderr.trim();
+        finish(new Error(details || `${commandLabel} exited with code ${code}`));
+        return;
+      }
+      finish();
+    });
+  });
+}
+
 function tryOpenWindowsIDEByAppPathNames(appPathNames: string[], targetPath: string): Promise<void> {
   const candidates = appPathNames.map((name) => name.trim()).filter(Boolean);
   const commandArgs = (candidate: string) => [
@@ -229,14 +281,46 @@ function tryOpenWindowsIDEByAppPathNames(appPathNames: string[], targetPath: str
         return;
       }
 
-      spawnDetached('powershell', commandArgs(candidates[index]), {
-        platform: 'win32',
-        windowsHide: true,
-        commandLabel: `powershell Start-Process ${candidates[index]}`,
-      }).then(resolve).catch((error: Error) => {
+      spawnWindowsStartProcess(
+        commandArgs(candidates[index]),
+        `powershell Start-Process ${candidates[index]}`,
+      ).then(resolve).catch((error: Error) => {
           lastError = error;
           tryNext(index + 1);
         });
+    };
+
+    tryNext(0);
+  });
+}
+
+function tryOpenWindowsIDEByFileProtocol(ide: MainIDE, targetPath: string): Promise<{ command: string; url: string }> {
+  const schemes = getIDEFileProtocolSchemes(ide);
+
+  return new Promise((resolve, reject) => {
+    let lastError: Error | null = null;
+    const tryNext = (index: number) => {
+      if (index >= schemes.length) {
+        reject(lastError || new Error('No compatible Windows file protocol found'));
+        return;
+      }
+
+      const url = buildIDEFileProtocolUrl(schemes[index], targetPath);
+      const command = `powershell -NoProfile -Command Start-Process -FilePath ${quoteForPowerShellSingle(url)} -ErrorAction Stop`;
+      spawnWindowsStartProcess([
+        '-NoProfile',
+        '-NonInteractive',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        'Start-Process -FilePath $args[0] -ErrorAction Stop',
+        url,
+      ], `powershell Start-Process ${url}`).then(() => {
+        resolve({ command, url });
+      }).catch((error: Error) => {
+        lastError = error;
+        tryNext(index + 1);
+      });
     };
 
     tryNext(0);
@@ -257,6 +341,13 @@ function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult
     || resolveWindowsExecutablePath(executableNameCandidates)
     || resolveWindowsExecutableFromRegistry(executableNameCandidates);
 
+  const openByProtocol = () => tryOpenWindowsIDEByFileProtocol(ide, targetPath).then(({ command }) => ({
+    success: true as const,
+    ide,
+    targetPath,
+    command,
+  }));
+
   if (!executablePath) {
     const command = `powershell -NoProfile -Command Start-Process -FilePath ${quoteForPowerShellSingle(appPathNames[0] || ideAppName)} -ArgumentList ${quoteForPowerShellSingle(targetPath)} -ErrorAction Stop`;
     return tryOpenWindowsIDEByAppPathNames(appPathNames, targetPath).then(() => ({
@@ -264,7 +355,7 @@ function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult
       ide,
       targetPath,
       command,
-    }));
+    })).catch(openByProtocol);
   }
 
   const spawnSpec = getSpawnCommandSpec(executablePath, [targetPath], process.platform);
@@ -277,7 +368,7 @@ function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult
     ide,
     targetPath,
     command: `${quoteForShell(executablePath)} ${quoteForShell(targetPath)}`,
-  }));
+  })).catch(openByProtocol);
 }
 
 function openUnixIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult> {

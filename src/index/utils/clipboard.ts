@@ -48,6 +48,23 @@ function normalizeClipboardError(error: unknown): Error {
     return new Error('复制失败，请稍后重试。');
 }
 
+function encodeUtf8ToBase64(text: string): string {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+        const chunk = bytes.subarray(index, index + chunkSize);
+        binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+}
+
+function buildFigmaOfficialClipboardHtmlBlob(payloadText: string): Blob {
+    const payloadBase64 = encodeUtf8ToBase64(payloadText);
+    const html = `<span data-h2d="<!--(figh2d)${payloadBase64}(/figh2d)-->"></span>`;
+    return new Blob([html], { type: 'text/html' });
+}
+
 export async function copyToClipboard(text: string): Promise<void> {
     if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
         throw new Error(
@@ -57,6 +74,23 @@ export async function copyToClipboard(text: string): Promise<void> {
 
     try {
         await navigator.clipboard.writeText(text);
+    } catch (error) {
+        throw normalizeClipboardError(error);
+    }
+}
+
+export async function writeFigmaOfficialClipboardPayload(payloadText: string): Promise<void> {
+    if (!navigator.clipboard || typeof navigator.clipboard.write !== 'function' || typeof ClipboardItem === 'undefined') {
+        throw new Error(
+            appendLanClipboardHint('当前环境不支持 Figma 剪贴板写入，请使用支持 ClipboardItem 的 Chromium 浏览器后重试。'),
+        );
+    }
+
+    try {
+        const htmlBlob = buildFigmaOfficialClipboardHtmlBlob(payloadText);
+        await navigator.clipboard.write([
+            new ClipboardItem({ 'text/html': htmlBlob }),
+        ]);
     } catch (error) {
         throw normalizeClipboardError(error);
     }

@@ -240,6 +240,8 @@ describe('make-server admin static assets', () => {
       const html = await response.text();
 
       expect(response.status).toBe(200);
+      expect(html).toContain('<title>spec - Spec</title>');
+      expect(html).not.toContain('{{TITLE}}');
       expect(html).toContain('/assets/spec-template-bootstrap.js');
       expect(html).not.toContain('/@vite/client');
       expect(html).not.toContain('@vitejs/plugin-react/preamble');

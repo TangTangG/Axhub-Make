@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getConfigPath,
+  getMakeClientMarkerPath,
   getProjectMetadataPath,
   getProjectRegistryPath,
 } from '../projectCore/index.ts';
@@ -38,6 +39,7 @@ const { startMakeServer } = await import('../index');
 const { normalizeMainIDE, openIDEPath } = await import('../ideOpen.ts');
 
 const tempRoots: string[] = [];
+const originalProcessPlatform = process.platform;
 
 function createTempRoot(prefix = 'axhub-make-ide-open-') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -51,6 +53,18 @@ function writeJson(filePath: string, value: unknown): void {
 }
 
 function writeProjectMetadata(projectRoot: string) {
+  writeJson(getMakeClientMarkerPath(projectRoot), {
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: { id: 'ide-client', name: 'IDE Client' },
+  });
+  writeJson(path.join(projectRoot, 'package.json'), {
+    scripts: {
+      dev: 'vite',
+      'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+    },
+  });
   writeJson(getProjectMetadataPath(projectRoot), {
     schemaVersion: 1,
     project: { id: 'ide-client', name: 'IDE Client' },
@@ -74,6 +88,38 @@ function writeProjectMetadata(projectRoot: string) {
   });
 }
 
+function createMockChild(closeCode = 0) {
+  const child = {
+    stderr: {
+      on: vi.fn(),
+    },
+    once: vi.fn((event: string, callback: (value?: unknown) => void) => {
+      if (event === 'spawn') {
+        setTimeout(() => callback(), 0);
+      }
+      if (event === 'close') {
+        setTimeout(() => callback(closeCode), 0);
+      }
+      return child;
+    }),
+    unref: vi.fn(),
+  };
+  return child;
+}
+
+function createSpawnOnlyMockChild() {
+  const child = {
+    once: vi.fn((event: string, callback: () => void) => {
+      if (event === 'spawn') {
+        setTimeout(callback, 0);
+      }
+      return child;
+    }),
+    unref: vi.fn(),
+  };
+  return child;
+}
+
 async function startTestServer(projectRoot: string) {
   const registryHome = createTempRoot('axhub-make-ide-open-registry-');
   return startMakeServer({
@@ -87,6 +133,9 @@ async function startTestServer(projectRoot: string) {
 
 afterEach(() => {
   vi.clearAllMocks();
+  Object.defineProperty(process, 'platform', { value: originalProcessPlatform, configurable: true });
+  childProcessMock.spawn.mockImplementation((_command?: string, _args?: string[]) => createSpawnOnlyMockChild());
+  childProcessMock.spawnSync.mockImplementation(() => ({ status: 1, stdout: '', stderr: '' }));
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -139,8 +188,8 @@ describe('make-server IDE open API', () => {
   });
 
   it('opens Windows IDEs through executable discovery and app-path fallback', async () => {
-    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
-    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     const realExistsSync = fs.existsSync;
     const existsSyncSpy = vi.spyOn(fs, 'existsSync').mockImplementation((target) => {
       if (String(target) === 'C:\\Tools\\cursor.exe') {
@@ -180,30 +229,8 @@ describe('make-server IDE open API', () => {
 
       childProcessMock.spawnSync.mockReturnValue({ status: 1, stdout: '', stderr: '' });
       childProcessMock.spawn
-        .mockImplementationOnce(() => {
-          const child = {
-            once: vi.fn((event: string, callback: (error?: Error) => void) => {
-              if (event === 'error') {
-                callback(new Error('first app path failed'));
-              }
-              return child;
-            }),
-            unref: vi.fn(),
-          };
-          return child;
-        })
-        .mockImplementationOnce(() => {
-          const child = {
-            once: vi.fn((event: string, callback: () => void) => {
-              if (event === 'spawn') {
-                setTimeout(callback, 0);
-              }
-              return child;
-            }),
-            unref: vi.fn(),
-          };
-          return child;
-        });
+        .mockImplementationOnce(() => createMockChild(1))
+        .mockImplementationOnce(() => createMockChild(0));
 
       await expect(openIDEPath({
         ide: 'trae',
@@ -226,16 +253,64 @@ describe('make-server IDE open API', () => {
           'C:\\Projects\\Fallback',
         ]),
         expect.objectContaining({
-          detached: true,
+          detached: false,
+          shell: false,
+          windowsHide: true,
+        }),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'powershell',
+        expect.arrayContaining(['trae://file/C:/Projects/Fallback']),
+        expect.anything(),
+      );
+    } finally {
+      existsSyncSpy.mockRestore();
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it.each([
+    ['cursor', 'cursor://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
+    ['vscode', 'vscode://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
+    ['trae', 'trae://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
+    ['trae_cn', 'trae-cn://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
+    ['windsurf', 'windsurf://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
+    ['kiro', 'kiro://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
+    ['qoder', 'qoder://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
+    ['antigravity', 'antigravity://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
+  ] as const)('falls back to the %s Windows file protocol when executable launches fail', async (ide, expectedUrl) => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    childProcessMock.spawnSync.mockReturnValue({ status: 1, stdout: '', stderr: '' });
+    childProcessMock.spawn.mockImplementation((_command: string, args?: string[]) => {
+      const filePathArg = args?.at(-1) || '';
+      return createMockChild(filePathArg === expectedUrl ? 0 : 1);
+    });
+
+    try {
+      await expect(openIDEPath({
+        ide,
+        targetPath: 'C:\\Projects\\Axhub Runtime\\src\\App #1.tsx',
+      })).resolves.toMatchObject({
+        success: true,
+        ide,
+        targetPath: 'C:\\Projects\\Axhub Runtime\\src\\App #1.tsx',
+        command: `powershell -NoProfile -Command Start-Process -FilePath '${expectedUrl}' -ErrorAction Stop`,
+      });
+
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'powershell',
+        expect.arrayContaining([
+          'Start-Process -FilePath $args[0] -ErrorAction Stop',
+          expectedUrl,
+        ]),
+        expect.objectContaining({
           shell: false,
           windowsHide: true,
         }),
       );
     } finally {
-      existsSyncSpy.mockRestore();
-      if (platformDescriptor) {
-        Object.defineProperty(process, 'platform', platformDescriptor);
-      }
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
   });
 

@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -16,6 +15,7 @@ import {
 } from './projectCore/index.ts';
 
 import { readJsonBody, sendJson } from './http.ts';
+import { runLocalCommand } from './localCommand.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 
 interface WorkspaceProjectContext {
@@ -185,7 +185,7 @@ export function buildSystemOpenCommand(
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        'Start-Process -LiteralPath $args[0]',
+        'Invoke-Item -LiteralPath $args[0] -ErrorAction Stop',
         targetPath,
       ],
     };
@@ -195,15 +195,7 @@ export function buildSystemOpenCommand(
 
 export function openPathInSystem(targetPath: string): Promise<void> {
   const openCommand = buildSystemOpenCommand(targetPath);
-  return new Promise((resolve, reject) => {
-    execFile(openCommand.command, openCommand.args, { timeout: 10000 }, (error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
+  return runLocalCommand(openCommand.command, openCommand.args, { timeoutMs: 10000 }).then(() => undefined);
 }
 
 function createResourceFolderNodeId(relativePath: string): string {
@@ -317,11 +309,8 @@ function normalizeResourceSidebarTreePayload(tree: unknown): {
       const rawSourcePath = rawNode.folderPath || rawNode.path || (kind === 'item'
         ? String(rawNode.itemKey || '').replace(/^docs\//u, '')
         : '');
-      const sourcePath = normalizeResourceRelativePath(rawSourcePath);
+      let sourcePath = normalizeResourceRelativePath(rawSourcePath);
       if (!sourcePath && String(rawSourcePath || '').trim()) {
-        return null;
-      }
-      if (!sourcePath) {
         return null;
       }
       const title = String(rawNode.title || path.basename(sourcePath)).trim();
@@ -329,11 +318,17 @@ function normalizeResourceSidebarTreePayload(tree: unknown): {
         return null;
       }
       const targetName = kind === 'folder'
-        ? sanitizeFolderName(title) || path.basename(sourcePath)
-        : path.basename(sourcePath);
+        ? sanitizeFolderName(title) || (sourcePath ? path.basename(sourcePath) : '')
+        : sourcePath ? path.basename(sourcePath) : '';
       const targetPath = normalizeResourceRelativePath(parentPath ? `${parentPath}/${targetName}` : targetName);
       if (!targetPath || !assertNoDuplicateResourcePath(seenPaths, targetPath)) {
         return null;
+      }
+      if (!sourcePath) {
+        if (kind !== 'folder') {
+          return null;
+        }
+        sourcePath = targetPath;
       }
       const rawId = typeof rawNode.id === 'string' ? rawNode.id.trim() : '';
       const id = makeUniqueId(rawId || (kind === 'folder'

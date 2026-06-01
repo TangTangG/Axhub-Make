@@ -27,6 +27,25 @@ function stripTypeImportQueries(source) {
     .replace(/typeof\s+import\(['"][^'"]+['"]\)/gu, 'type-import-query');
 }
 
+function listSourceFiles(rootDir) {
+  const files = [];
+  const visit = (currentDir) => {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      if (entry.name === '__tests__') {
+        continue;
+      }
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        visit(fullPath);
+      } else if (entry.isFile() && /\.(?:ts|tsx|mjs)$/u.test(entry.name) && !/\.test\./u.test(entry.name)) {
+        files.push(fullPath);
+      }
+    }
+  };
+  visit(rootDir);
+  return files.sort((left, right) => left.localeCompare(right));
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -52,6 +71,28 @@ describe('release make artifact helpers', () => {
       mirrorUrl: 'https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v0.2.0-beta.1/axhub-make-client-template.zip',
     });
     assert.deepEqual(prefixedMetadata, metadata);
+  });
+
+  it('syncs the default make client template version from the template package version', () => {
+    const root = createTempRoot('axhub-release-template-version-sync-');
+    const sourceFile = path.join(root, 'makeClientProject.ts');
+    writeFile(sourceFile, "export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.1';\n");
+
+    const firstResult = releaseMake.syncDefaultMakeClientTemplateVersion({
+      sourceFile,
+      templateVersion: '0.1.2',
+    });
+    const secondResult = releaseMake.syncDefaultMakeClientTemplateVersion({
+      sourceFile,
+      templateVersion: '0.1.2',
+    });
+
+    assert.equal(firstResult.changed, true);
+    assert.equal(secondResult.changed, false);
+    assert.equal(
+      fs.readFileSync(sourceFile, 'utf8'),
+      "export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.2';\n",
+    );
   });
 
   it('keeps ordinary make release commands free of the client template zip', () => {
@@ -220,6 +261,19 @@ describe('release make artifact helpers', () => {
     }
     assert.match(onDemandBuildSource, /importPackageFromProject/u);
     assert.match(viteDevServerSource, /importRuntimePackage/u);
+  });
+
+  it('does not resolve source-only files at runtime from the bundled npm server', () => {
+    const runtimeFiles = [
+      path.resolve('bin/cli.mjs'),
+      ...listSourceFiles(path.resolve('src/server')),
+    ];
+    const sourceOnlyResolvePattern = /\.resolve\(['"][./][^'"]+\.(?:ts|tsx|mts|cts)['"]\)/u;
+
+    for (const filePath of runtimeFiles) {
+      const source = fs.readFileSync(filePath, 'utf8');
+      assert.doesNotMatch(source, sourceOnlyResolvePattern, path.relative(process.cwd(), filePath));
+    }
   });
 
   it('creates a public dependency-free npm package manifest with all CLI aliases', () => {

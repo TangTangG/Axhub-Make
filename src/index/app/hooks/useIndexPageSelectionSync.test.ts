@@ -66,26 +66,47 @@ describe('useIndexPageSelectionSync source', () => {
     expect(source).toContain('setSelectedTheme(resolvedDeepLink.theme);');
   });
 
-  it('does not consume a theme deep link until the requested theme is resolved', () => {
+  it('handles a theme deep link only after attempting to resolve the requested theme', () => {
     const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
     const themeBlockStart = source.indexOf("if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'theme')");
     const resolvedThemeCheck = source.indexOf("resolvedDeepLink?.kind === 'theme'", themeBlockStart);
-    const consumedBeforeResolvedTheme = source.indexOf('resourceDeepLinkConsumedRef.current = true;', themeBlockStart);
+    const handledAfterResolvedTheme = source.indexOf('markInitialResourceDeepLinkHandled();', themeBlockStart);
 
     expect(themeBlockStart).toBeGreaterThanOrEqual(0);
     expect(resolvedThemeCheck).toBeGreaterThan(themeBlockStart);
-    expect(consumedBeforeResolvedTheme).toBeGreaterThan(resolvedThemeCheck);
+    expect(handledAfterResolvedTheme).toBeGreaterThan(resolvedThemeCheck);
   });
 
-  it('does not consume a prototype deep link until the requested prototype is resolved', () => {
+  it('handles a prototype deep link only after attempting to resolve the requested prototype', () => {
     const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
     const prototypeBlockStart = source.indexOf("if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'prototype')");
     const resolvedPrototypeCheck = source.indexOf("resolvedDeepLink?.kind === 'prototype'", prototypeBlockStart);
-    const consumedBeforeResolvedPrototype = source.indexOf('resourceDeepLinkConsumedRef.current = true;', prototypeBlockStart);
+    const handledAfterResolvedPrototype = source.indexOf('markInitialResourceDeepLinkHandled();', prototypeBlockStart);
 
     expect(prototypeBlockStart).toBeGreaterThanOrEqual(0);
     expect(resolvedPrototypeCheck).toBeGreaterThan(prototypeBlockStart);
-    expect(consumedBeforeResolvedPrototype).toBeGreaterThan(resolvedPrototypeCheck);
+    expect(handledAfterResolvedPrototype).toBeGreaterThan(resolvedPrototypeCheck);
+  });
+
+  it('marks unresolved initial resource deep links as handled after resource loading', () => {
+    const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
+
+    expect(source).toContain('markInitialResourceDeepLinkHandled');
+    expect(source).toContain('const markInitialResourceDeepLinkHandled = useCallback(() => {');
+    expect(source).toContain('resourceDeepLinkConsumedRef.current = true;');
+    expect(source).toContain('onInitialResourceDeepLinkHandled?.();');
+
+    const docBlockStart = source.indexOf("if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'doc')");
+    const docResolvedCheck = source.indexOf("resolvedDeepLink?.kind === 'doc'", docBlockStart);
+    const docMissingHandled = source.indexOf('markInitialResourceDeepLinkHandled();', docResolvedCheck);
+    expect(docBlockStart).toBeGreaterThanOrEqual(0);
+    expect(docMissingHandled).toBeGreaterThan(docResolvedCheck);
+
+    const themeBlockStart = source.indexOf("if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'theme')");
+    const themeResolvedCheck = source.indexOf("resolvedDeepLink?.kind === 'theme'", themeBlockStart);
+    const themeMissingHandled = source.indexOf('markInitialResourceDeepLinkHandled();', themeResolvedCheck);
+    expect(themeBlockStart).toBeGreaterThanOrEqual(0);
+    expect(themeMissingHandled).toBeGreaterThan(themeResolvedCheck);
   });
 
   it('keeps the selected prototype while resource tabs are browsed in prototype canvas mode', () => {

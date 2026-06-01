@@ -41,10 +41,19 @@ describe('ContentPanel make client project setup source', () => {
 
     expect(source).toContain("const MAKE_CLIENT_SETUP_FAILED_LABEL = '创建项目失败';");
     expect(dialogSource).toContain('const [failedMessage, setFailedMessage]');
+    expect(dialogSource).toContain('const [failedDiagnostic, setFailedDiagnostic]');
     expect(dialogSource).toContain('setFailedMessage(errorMessage);');
+    expect(dialogSource).toContain('setFailedDiagnostic(buildMakeClientSetupAiPrompt');
+    expect(dialogSource).toContain('const fallbackDiagnostic = buildMakeClientSetupAiPrompt');
     expect(dialogSource).toContain('toast.error(errorMessage);');
     expect(dialogSource).toContain('MAKE_CLIENT_SETUP_FAILED_LABEL');
+    expect(dialogSource).toContain('(pendingCreate || failedMessage)');
     expect(dialogSource).toContain('failedMessage || MAKE_CLIENT_SETUP_FAILED_DESCRIPTION');
+    expect(dialogSource).toContain('复制给 AI 处理');
+    expect(dialogSource).toContain('{failedMessage ? (');
+    expect(dialogSource).toContain('const diagnosticPrompt = failedDiagnostic || fallbackDiagnostic;');
+    expect(dialogSource).toContain('await copyToClipboard(diagnosticPrompt)');
+    expect(dialogSource).not.toContain('{failedDiagnostic ? (');
     expect(dialogSource).not.toContain('MAKE_CLIENT_SETUP_PHASES.map((phase)');
   });
 
@@ -245,6 +254,25 @@ describe('ContentPanel resource folder selection source', () => {
 
     expect(source).toContain('knownFolderIdsRef.current = new Set(collectFolderIds(tree));');
     expect(source).not.toContain('newIds.forEach((id) => next.add(id));');
+  });
+});
+
+describe('ContentPanel resource drag and drop source', () => {
+  it('keeps sidebar tree reordering separate from file upload drops', () => {
+    const source = readContentPanelSource();
+    const fileDropZoneSource = source.slice(
+      source.indexOf('className="relative flex-1 min-h-0"'),
+      source.indexOf('<ScrollArea className="h-full p-2'),
+    );
+    const treeDragSource = source.slice(
+      source.indexOf('onDragStart={(e) => {', source.indexOf('const renderTreeNodes =')),
+      source.indexOf('setDraggingNodeId(node.id);', source.indexOf('const renderTreeNodes =')),
+    );
+
+    expect(source).toContain("const SIDEBAR_TREE_DRAG_MIME = 'application/x-axhub-sidebar-tree-node';");
+    expect(source).toContain('function isSidebarTreeDragEvent');
+    expect(treeDragSource).toContain('e.dataTransfer.setData(SIDEBAR_TREE_DRAG_MIME, node.id);');
+    expect(fileDropZoneSource).toContain('if (isSidebarTreeDragEvent(event)) return;');
   });
 });
 

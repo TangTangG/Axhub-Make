@@ -317,6 +317,54 @@ export function createDefaultHostToolbarState(): GenieEditorHostToolbarState {
     };
 }
 
+type DeferredAssistantRuntimeProbeParams<Runtime> = {
+    probeRuntime?: (() => Runtime | Promise<Runtime>) | null;
+    isEditorActive?: () => boolean;
+    onRuntimeReady?: (runtime: Runtime) => void;
+    onRuntimeError?: (error: unknown) => void;
+};
+
+export function isAssistantRuntimeReady(runtime: unknown): boolean {
+    if (!runtime || typeof runtime !== 'object') {
+        return false;
+    }
+    const health = (runtime as { health?: { status?: unknown } | null }).health;
+    return Boolean(health && typeof health === 'object' && health.status === 'ready');
+}
+
+export function startDeferredAssistantRuntimeProbe<Runtime = unknown>({
+    probeRuntime,
+    isEditorActive,
+    onRuntimeReady,
+    onRuntimeError,
+}: DeferredAssistantRuntimeProbeParams<Runtime>): void {
+    if (!probeRuntime) {
+        return;
+    }
+
+    let probeResult: Runtime | Promise<Runtime>;
+    try {
+        probeResult = probeRuntime();
+    } catch (error) {
+        onRuntimeError?.(error);
+        return;
+    }
+
+    void Promise.resolve(probeResult)
+        .then((runtime) => {
+            if (!isAssistantRuntimeReady(runtime)) {
+                return;
+            }
+            if (isEditorActive && !isEditorActive()) {
+                return;
+            }
+            onRuntimeReady?.(runtime);
+        })
+        .catch((error) => {
+            onRuntimeError?.(error);
+        });
+}
+
 function encodeSvgToBase64(svgContent: string): string {
     const bytes = new TextEncoder().encode(svgContent);
     let binary = '';

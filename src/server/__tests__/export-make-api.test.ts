@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  getMakeClientMarkerPath,
   getProjectExportsDir,
   getProjectMetadataPath,
   getProjectRegistryPath,
@@ -41,6 +42,18 @@ function writeJson(filePath: string, value: unknown): void {
 function writeProjectMetadata(projectRoot: string) {
   const sourceFile = path.join(projectRoot, 'src/prototypes/home/index.tsx');
   writeFile(sourceFile, 'export default function Home() { return null; }\n');
+  writeJson(getMakeClientMarkerPath(projectRoot), {
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: { id: 'figma-client', name: 'Figma Client' },
+  });
+  writeJson(path.join(projectRoot, 'package.json'), {
+    scripts: {
+      dev: 'vite',
+      'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+    },
+  });
   writeJson(getProjectMetadataPath(projectRoot), {
     schemaVersion: 1,
     project: { id: 'figma-client', name: 'Figma Client' },

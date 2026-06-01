@@ -142,6 +142,18 @@ function createFilesystemDocNode(node: SidebarTreeNode, itemKey: string, title: 
     };
 }
 
+function hasFilesystemResourcePath(nodes: SidebarTreeNode[]): boolean {
+    for (const node of nodes) {
+        if (normalizeTreeKey(node.path || node.folderPath || '')) {
+            return true;
+        }
+        if (node.kind === 'folder' && hasFilesystemResourcePath(node.children || [])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function resolveSidebarTreeItemEntry(
     tab: SidebarTreeTab,
     node: SidebarTreeNode,
@@ -263,6 +275,10 @@ export function sanitizeSidebarTree(tab: SidebarTreeTab, tree: SidebarTreeNode[]
     };
 
     const nextTree = walk(tree);
+    if (tab === 'docs' && hasFilesystemResourcePath(tree)) {
+        return nextTree;
+    }
+
     const missingNodes = items
         .filter((item) => !isConsumedItem(tab, `${tab}/${normalizeTreeKey(item.name)}`, consumedKeys))
         .map((item) => createItemNode(tab, item));

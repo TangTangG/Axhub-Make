@@ -149,6 +149,12 @@ describe('make-server project legacy compatibility APIs', () => {
     fs.mkdirSync(path.join(docsDir, 'images'), { recursive: true });
     fs.writeFileSync(path.join(docsDir, 'guide.md'), '# Guide\n![Logo](images/logo.svg)\n', 'utf8');
     fs.writeFileSync(path.join(docsDir, 'images', 'logo.svg'), '<svg />', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'legacy-spec-doc', name: 'Legacy Spec Doc' },
+      resourceWriteTargets: {
+        docs: { type: 'project-relative-path', path: 'src/resources' },
+      },
+    });
 
     const server = await startTestServer(projectRoot);
 

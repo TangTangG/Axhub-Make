@@ -388,6 +388,139 @@ describe('make-server HTTP server', () => {
     }
   });
 
+  it('serves the admin app and context when active project metadata is missing', async () => {
+    const projectRoot = createProjectRoot();
+    fs.rmSync(getMakeClientMarkerPath(projectRoot), { force: true });
+    fs.rmSync(path.join(projectRoot, 'package.json'), { force: true });
+    const adminRoot = path.join(projectRoot, 'admin-dist');
+    const registryPath = createRegistryPath();
+    fs.mkdirSync(adminRoot, { recursive: true });
+    fs.writeFileSync(path.join(adminRoot, 'index.html'), '<html><body>Admin App</body></html>', 'utf8');
+    writeJson(registryPath, {
+      schemaVersion: 1,
+      activeProjectId: 'missing-metadata',
+      projects: [
+        {
+          id: 'missing-metadata',
+          name: 'Missing Metadata',
+          root: projectRoot,
+          metadataPath: getProjectMetadataPath(projectRoot),
+          createdAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:00.000Z',
+        },
+      ],
+    });
+    fs.rmSync(getProjectMetadataPath(projectRoot), { force: true });
+
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot,
+      registryPath,
+    });
+
+    try {
+      const home = await fetch(`${server.origin}/`);
+      await expect(home.text()).resolves.toContain('Admin App');
+      expect(home.status).toBe(200);
+
+      const context = await fetch(`${server.origin}/api/admin/context`);
+      const body = await context.json();
+
+      expect(context.status).toBe(200);
+      expect(body.activeProject).toMatchObject({
+        id: 'missing-metadata',
+        unavailable: true,
+        error: {
+          code: 'PROJECT_METADATA_MISSING',
+          metadataPath: getProjectMetadataPath(projectRoot),
+        },
+      });
+      expect(body.projects).toEqual([
+        expect.objectContaining({
+          id: 'missing-metadata',
+          unavailable: true,
+        }),
+      ]);
+      expect(body.capabilities).toEqual({});
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('serves context with an unavailable active project when metadata is invalid', async () => {
+    const projectRoot = createProjectRoot();
+    fs.rmSync(getMakeClientMarkerPath(projectRoot), { force: true });
+    fs.rmSync(path.join(projectRoot, 'package.json'), { force: true });
+    const registryPath = createRegistryPath();
+    writeJson(registryPath, {
+      schemaVersion: 1,
+      activeProjectId: 'invalid-metadata',
+      projects: [
+        {
+          id: 'invalid-metadata',
+          name: 'Invalid Metadata',
+          root: projectRoot,
+          metadataPath: getProjectMetadataPath(projectRoot),
+          createdAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:00.000Z',
+        },
+      ],
+    });
+    writeJson(getProjectMetadataPath(projectRoot), {
+      schemaVersion: 1,
+      project: { id: 'invalid-metadata', name: 'Invalid Metadata' },
+      resources: {
+        prototypes: [
+          {
+            id: 'broken',
+            name: 'broken',
+            title: 'Broken',
+            clientUrl: '/prototypes/broken',
+            spec: { path: '../outside.md' },
+          },
+        ],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+    });
+
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath,
+    });
+
+    try {
+      const context = await fetch(`${server.origin}/api/admin/context`);
+      const body = await context.json();
+
+      expect(context.status).toBe(200);
+      expect(body.activeProject).toMatchObject({
+        id: 'invalid-metadata',
+        unavailable: true,
+        error: {
+          code: 'PROJECT_METADATA_INVALID',
+          metadataPath: getProjectMetadataPath(projectRoot),
+        },
+      });
+
+      const resources = await fetch(`${server.origin}/api/projects/invalid-metadata/resources`);
+      expect(resources.status).toBe(400);
+      await expect(resources.json()).resolves.toMatchObject({
+        code: 'PROJECT_METADATA_INVALID',
+        projectId: 'invalid-metadata',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('treats legacy websocket send as optional when the runtime route is missing', async () => {
     const projectRoot = createProjectRoot();
     const runtimeServer = http.createServer((_req, res) => {

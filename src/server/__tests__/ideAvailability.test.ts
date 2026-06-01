@@ -103,7 +103,29 @@ describe('IDE availability detector', () => {
     });
     expect(detector.detectIDEAvailability('kiro')).toMatchObject({
       status: 'missing',
-      source: 'windows-where+registry',
+      source: 'windows-where+registry+protocol',
+    });
+  });
+
+  it('detects Windows VS Code style URL protocol registrations as installed IDEs', () => {
+    const spawnSync = vi.fn((command: string, args?: readonly string[]) => {
+      const key = String(args?.[1] || '');
+      if (command === 'reg' && key.includes('Software\\Classes\\trae-cn\\shell\\open\\command')) {
+        return { status: 0, stdout: '    (Default)    REG_SZ    "C:\\Users\\demo\\AppData\\Local\\Programs\\Trae CN\\Trae CN.exe" "%1"\r\n' };
+      }
+      return { status: 1, stdout: '' };
+    });
+    const detector = createIDEAvailabilityDetector({
+      platform: 'win32',
+      checkedAt: () => checkedAt,
+      existsSync: () => false,
+      spawnSync,
+    });
+
+    expect(detector.detectIDEAvailability('trae_cn')).toMatchObject({
+      status: 'installed',
+      source: 'windows-url-protocol',
+      path: 'trae-cn://',
     });
   });
 

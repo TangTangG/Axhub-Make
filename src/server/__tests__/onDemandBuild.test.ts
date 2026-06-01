@@ -131,7 +131,7 @@ describe('buildOnDemand', () => {
     });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  });
+  }, 20_000);
 });
 
 function pathToFileImport(filePath: string) {

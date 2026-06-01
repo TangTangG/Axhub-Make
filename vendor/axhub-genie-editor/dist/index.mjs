@@ -1681,16 +1681,23 @@ function filterUnprocessedTransactions(state2, transactions) {
 // src/ui/runtime/prompt-card-skills.ts
 var PROMPT_CARD_SKILLS = [
   {
-    id: "compare-options",
-    label: "\u591A\u65B9\u6848\u5BF9\u6BD4",
-    description: "\u5148\u6BD4\u8F83\u591A\u4E2A\u4FEE\u6539\u65B9\u6848\uFF0C\u518D\u9009\u6700\u5408\u9002\u7684\u6267\u884C",
-    prompt: "\u8BF7\u5BF9\u6BD4 2-3 \u4E2A\u53EF\u884C\u4FEE\u6539\u65B9\u6848\uFF0C\u9009\u62E9\u6700\u9002\u5408\u5F53\u524D\u9875\u9762\u7684\u4E00\u79CD\u540E\u518D\u6267\u884C\u3002"
+    id: "explore-options",
+    label: "\u591A\u65B9\u6848\u63A2\u7D22",
+    description: "\u4F7F\u7528 explore-options \u505A\u591A\u65B9\u6848\u63A2\u7D22",
+    keywords: "\u591A\u65B9\u6848\u751F\u6210 \u65B9\u6848\u5BF9\u6BD4 \u8BBE\u8BA1\u51B3\u7B56 \u591A\u65B9\u6848\u5BF9\u6BD4",
+    prompt: "\u4F7F\u7528\u672C\u5730 explore-options \u6280\u80FD\uFF0C\u6309\u591A\u65B9\u6848\u63A2\u7D22\u6D41\u7A0B\u5BF9\u9F50\u5F53\u524D\u6279\u6CE8\u3001\u9700\u6C42\u548C\u8BBE\u8BA1\u51B3\u7B56\uFF0C\u751F\u6210 2-3 \u4E2A\u771F\u5B9E\u4E0D\u540C\u7684\u53EF\u884C\u4FEE\u6539\u65B9\u6848\uFF0C\u5BF9\u6BD4\u540E\u9009\u62E9\u6700\u9002\u5408\u5F53\u524D\u9875\u9762\u7684\u4E00\u79CD\u518D\u6267\u884C\u3002"
   },
   {
     id: "prototype-annotation",
     label: "\u539F\u578B\u6807\u6CE8",
-    description: "\u7ED3\u5408\u5F53\u524D\u539F\u578B\u6807\u6CE8\u7406\u89E3\u4FEE\u6539\u610F\u56FE",
-    prompt: "\u8BF7\u7ED3\u5408\u5F53\u524D\u539F\u578B\u6807\u6CE8\u7406\u89E3\u4FEE\u6539\u610F\u56FE\uFF0C\u4F18\u5148\u5904\u7406\u6279\u6CE8\u5BF9\u5E94\u533A\u57DF\u3002"
+    description: "\u4F7F\u7528 prototype-annotation \u7406\u89E3\u6279\u6CE8\u610F\u56FE",
+    prompt: "\u4F7F\u7528\u672C\u5730 prototype-annotation \u6280\u80FD\uFF0C\u7ED3\u5408\u5F53\u524D\u539F\u578B\u6807\u6CE8\u7406\u89E3\u4FEE\u6539\u610F\u56FE\uFF0C\u5904\u7406\u6279\u6CE8\u5BF9\u5E94\u533A\u57DF\u3002"
+  },
+  {
+    id: "impeccable",
+    label: "UI \u8BC4\u5BA1",
+    description: "\u4F7F\u7528 impeccable \u68C0\u67E5\u754C\u9762\u8D28\u91CF",
+    prompt: "\u4F7F\u7528\u672C\u5730 impeccable \u6280\u80FD\uFF0C\u6309 UI critique \u601D\u8DEF\u5BA1\u67E5\u5F53\u524D\u9875\u9762\u6216\u533A\u57DF\uFF0C\u7ED9\u51FA\u5173\u952E\u95EE\u9898\u548C\u4FEE\u590D\u65B9\u5411\u3002"
   }
 ];
 var SKILL_TRIGGER_QUERY_PATTERN = /^[\p{Script=Han}\p{Letter}\p{Number}_-]*$/u;
@@ -1731,7 +1738,7 @@ function filterPromptCardSkills(query) {
   const normalizedQuery = normalizeSkillQuery(query);
   if (!normalizedQuery) return [...PROMPT_CARD_SKILLS];
   return PROMPT_CARD_SKILLS.filter((skill) => {
-    const searchableText = `${skill.label} ${skill.description}`.toLocaleLowerCase();
+    const searchableText = `${skill.id} ${skill.label} ${skill.description} ${skill.keywords ?? ""}`.toLocaleLowerCase();
     return searchableText.includes(normalizedQuery);
   });
 }
@@ -1743,10 +1750,8 @@ function addPromptCardSkillSelection(selectedSkills, skill) {
 }
 function buildPromptCardSkillPrefix(selectedSkills) {
   if (selectedSkills.length === 0) return "";
-  return [
-    "\u6280\u80FD:",
-    ...selectedSkills.map((skill) => `- ${skill.label}: ${skill.prompt}`)
-  ].join("\n");
+  const skillNames = selectedSkills.map((skill) => `${skill.id}\uFF08${skill.label}\uFF09`).join("\u3001");
+  return `\u4F7F\u7528\u672C\u5730 ${skillNames}\u6280\u80FD\u5904\u7406\u8FD9\u6761\u6279\u6CE8\u3002`;
 }
 function normalizePromptCardSkillIds(skillIds) {
   const result = [];
@@ -1773,9 +1778,8 @@ function mergePromptCardSkillsIntoPromptNote(note, selectedSkills) {
   const normalizedNote = String(note ?? "").replace(/\r\n/g, "\n").trim();
   if (!prefix) return normalizedNote;
   if (!normalizedNote) return prefix;
-  return `${prefix}
-
-${normalizedNote}`;
+  return `${normalizedNote}
+${prefix}`;
 }
 
 // src/core/editor/changes.ts
@@ -15966,8 +15970,8 @@ import { Fragment as Fragment6, jsx as jsx13, jsxs as jsxs12 } from "react/jsx-r
 var GENIE_WAKE_FAILURE_MESSAGE = "AI \u5524\u9192\u5931\u8D25\uFF0C\u8BF7\u5728\u7EC8\u7AEF\u6267\u884C npx @axhub/genie@latest\uFF0C\u518D\u91CD\u8BD5";
 var GENIE_WAKE_TIMEOUT_MS = 12e3;
 var GENIE_INTERRUPT_TIMEOUT_MS = 12e3;
-var GENIE_EDITOR_SKILL_URL = "https://github.com/lintendo/Axhub-Skills/blob/main/skills/genie-editor-workflow/SKILL.md";
-var GENIE_EDITOR_CLIENT_SKILL_URL = "https://github.com/lintendo/Axhub-Skills/blob/main/skills/genie-editor-client/SKILL.md";
+var EXPLORE_OPTIONS_SKILL_PATH = ".agents/skills/explore-options/SKILL.md";
+var CLAUDE_EXPLORE_OPTIONS_SKILL_PATH = ".claude/skills/explore-options/SKILL.md";
 var GENIE_MENU_AGENT_OPTIONS = [
   { value: "claude", label: "Claude" },
   { value: "codex", label: "Codex" },
@@ -15977,17 +15981,16 @@ var GENIE_MENU_AGENT_OPTIONS = [
 var GENIE_AGENT_DEFAULT_MENU_KEY = "genie-agent:default";
 var PROPERTY_PANEL_HELP_TOOLTIP = "\u53EF\u4EE5\u76F4\u63A5\u628A\u9700\u6C42\u53D1\u7ED9\u4F60\u6B63\u5728\u7528\u7684 IDE \u6216\u672C\u5730 agent\uFF0C\u4E5F\u53EF\u4EE5\u5148\u5728\u9875\u9762\u4E0A\u6279\u6CE8\uFF0C\u8BA9\u5B83\u5E2E\u4F60\u751F\u6210\u6216\u6574\u7406\u8BBE\u8BA1\u51B3\u7B56\u3002";
 function buildSkillInstallPrompt(skillInstallSource) {
-  const resolvedSkillInstallSource = typeof skillInstallSource === "string" && skillInstallSource.trim() ? skillInstallSource.trim() : GENIE_EDITOR_SKILL_URL;
+  const resolvedSkillInstallSource = typeof skillInstallSource === "string" && skillInstallSource.trim() ? skillInstallSource.trim() : "";
   return [
-    "\u8BF7\u5148\u786E\u4FDD\u4EE5\u4E0B\u4E24\u4E2A\u6280\u80FD\u5DF2\u7ECF\u5B89\u88C5\uFF0C\u5982\u679C\u5DF2\u7ECF\u5B89\u88C5\uFF0C\u53EF\u8DF3\u8FC7\u5BF9\u5E94\u5B89\u88C5\u6B65\u9AA4\uFF1A",
+    "\u5904\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u76F8\u5173\u7684\u8BBE\u8BA1\u51B3\u7B56\u3001\u591A\u65B9\u6848\u63A2\u7D22\u3001\u591A\u65B9\u6848\u5BF9\u6BD4\u65F6\uFF0C\u4F7F\u7528\u672C\u5730 explore-options\uFF08\u591A\u65B9\u6848\u63A2\u7D22\uFF09\u6280\u80FD\u3002",
     "",
-    "1. genie-editor-workflow",
-    resolvedSkillInstallSource,
+    "\u6280\u80FD\u4F4D\u7F6E\uFF1A",
+    `- Codex / OpenAI\uFF1A${EXPLORE_OPTIONS_SKILL_PATH}`,
+    `- Claude\uFF1A${CLAUDE_EXPLORE_OPTIONS_SKILL_PATH}`,
+    ...resolvedSkillInstallSource ? ["", "\u5BBF\u4E3B\u8865\u5145\u6280\u80FD\u6765\u6E90\uFF1A", resolvedSkillInstallSource] : [],
     "",
-    "2. genie-editor-client",
-    GENIE_EDITOR_CLIENT_SKILL_URL,
-    "",
-    "\u5B89\u88C5\u5B8C\u6210\u540E\u518D\u7EE7\u7EED\u5904\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u76F8\u5173\u7684\u8BBE\u8BA1\u51B3\u7B56\u3001\u591A\u65B9\u6848\u6BD4\u7A3F\u9700\u6C42\u3002"
+    "\u5DE5\u4F5C\u53E3\u5F84\uFF1A\u5148\u505A\u591A\u65B9\u6848\u63A2\u7D22\uFF0C\u518D\u505A\u65B9\u6848\u5BF9\u6BD4\uFF0C\u6700\u540E\u6536\u655B\u4E3A\u8BBE\u8BA1\u51B3\u7B56\uFF1B\u9700\u8981\u9875\u9762\u5185\u5207\u6362\u65F6\uFF0C\u4F7F\u7528\u8BE5\u6280\u80FD\u91CC\u7684\u65B9\u6848\u5207\u6362\u843D\u5730\u89C4\u8303\u3002"
   ].join("\n");
 }
 function buildGlobalPanelPrompt(skillInstallSource, pageUrl) {
@@ -15997,9 +16000,9 @@ function buildGlobalPanelPrompt(skillInstallSource, pageUrl) {
     installPrompt,
     "",
     ...resolvedPageUrl ? ["\u5F53\u524D\u9875\u9762\u94FE\u63A5\uFF1A", resolvedPageUrl, ""] : [],
-    "\u786E\u4FDD\u5B89\u88C5\u5B8C\u6210\u540E\uFF0C\u8BF7\u4F7F\u7528\u4E0B\u9762\u8FD9\u6BB5\u8BDD\u56DE\u590D\u7528\u6237\uFF1A",
+    "\u8BF7\u4F7F\u7528\u4E0B\u9762\u8FD9\u6BB5\u8BDD\u56DE\u590D\u7528\u6237\uFF1A",
     "",
-    "\u6211\u53EF\u4EE5\u5E2E\u4F60\u751F\u6210\u548C\u6574\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u7684\u8BBE\u8BA1\u51B3\u7B56\uFF0C\u4E5F\u53EF\u4EE5\u63D0\u4F9B\u591A\u4E2A\u65B9\u6848\u7ED9\u4F60\u5BF9\u6BD4\u3002\u4F60\u53EF\u4EE5\u76F4\u63A5\u544A\u8BC9\u6211\u4F60\u7684\u9700\u6C42\uFF0C\u6211\u4F1A\u6309\u7167 genie-editor-client \u6280\u80FD\u5E2E\u4F60\u5904\u7406\uFF1B\u5982\u679C\u4F60\u56DE\u590D\u201C\u9ED8\u8BA4\u201D\uFF0C\u6211\u4E5F\u53EF\u4EE5\u5148\u5E2E\u4F60\u751F\u6210\u4E00\u7248\u793A\u4F8B\u3002"
+    "\u6211\u53EF\u4EE5\u5E2E\u4F60\u751F\u6210\u548C\u6574\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u7684\u8BBE\u8BA1\u51B3\u7B56\uFF0C\u4E5F\u53EF\u4EE5\u7528\u672C\u5730 explore-options\uFF08\u591A\u65B9\u6848\u63A2\u7D22\uFF09\u6280\u80FD\u751F\u6210\u591A\u4E2A\u65B9\u6848\uFF0C\u518D\u8FDB\u884C\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002\u4F60\u53EF\u4EE5\u76F4\u63A5\u544A\u8BC9\u6211\u4F60\u7684\u9700\u6C42\uFF1B\u5982\u679C\u4F60\u56DE\u590D\u201C\u9ED8\u8BA4\u201D\uFF0C\u6211\u4E5F\u53EF\u4EE5\u5148\u5E2E\u4F60\u751F\u6210\u4E00\u7248\u793A\u4F8B\u3002"
   ].join("\n");
 }
 async function copyRuntimeTextToClipboard(text) {
@@ -17123,7 +17126,7 @@ var PropertyPanelView = React14.forwardRef(
       try {
         await copyRuntimeTextToClipboard(text);
         if (text) {
-          notifyRuntimeMessage("success", "\u5DF2\u590D\u5236\u5B89\u88C5\u63D0\u793A\u8BCD\uFF0C\u8BF7\u53D1\u7ED9\u5BF9\u5E94 agent \u5904\u7406");
+          notifyRuntimeMessage("success", "\u5DF2\u590D\u5236\u6280\u80FD\u8BF4\u660E\uFF0C\u8BF7\u53D1\u7ED9\u5BF9\u5E94 agent \u5904\u7406");
           return;
         }
         notifyRuntimeMessage("info", "\u63D0\u793A\u8BCD\u6682\u672A\u914D\u7F6E\uFF0C\u5DF2\u590D\u5236\u7A7A\u6A21\u677F");
@@ -17196,7 +17199,7 @@ var PropertyPanelView = React14.forwardRef(
       },
       {
         key: "copy-skill",
-        label: "\u5B89\u88C5\u6280\u80FD",
+        label: "\u6280\u80FD\u8BF4\u660E",
         icon: /* @__PURE__ */ jsx13(CopyOutlined, {}),
         disabled: actionBusy || genieProviderRefreshPending
       }
@@ -17407,7 +17410,7 @@ var PropertyPanelView = React14.forwardRef(
         className: "we-runtime-prop-panel__empty-state",
         style: { padding: "14px 0 4px", display: "flex", flexDirection: "column", gap: 8 },
         children: [
-          /* @__PURE__ */ jsx13(Typography2.Text, { style: { color: EDITOR_CHROME.textMuted, fontSize: 12, lineHeight: 1.7 }, children: "\u8FD9\u91CC\u4E00\u822C\u53EF\u4EE5\u751F\u6210\u548C\u6574\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u7684\u8BBE\u8BA1\u51B3\u7B56\uFF0C\u4E5F\u53EF\u4EE5\u505A\u591A\u65B9\u6848\u5BF9\u6BD4\u3002\u5982\u679C\u4F60\u9700\u8981\uFF0C\u53EF\u4EE5\u70B9\u51FB\u4E0B\u9762\u7684\u6309\u94AE\uFF0C \u590D\u5236\u63D0\u793A\u8BCD\u5230\u672C\u5730 AI \u7EE7\u7EED\u5904\u7406\u3002" }),
+          /* @__PURE__ */ jsx13(Typography2.Text, { style: { color: EDITOR_CHROME.textMuted, fontSize: 12, lineHeight: 1.7 }, children: "\u6682\u65F6\u6CA1\u6709\u9700\u8981\u5904\u7406\u7684\u8BBE\u8BA1\u51B3\u7B56\u3002\u53EF\u4EE5\u5148\u751F\u6210\u591A\u4E2A\u8BBE\u8BA1\u65B9\u6848\uFF0C\u518D\u8FDB\u884C\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002" }),
           /* @__PURE__ */ jsx13(
             Button4,
             {
@@ -25369,7 +25372,29 @@ async function copyAxurePayload(payload) {
   if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
     throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6587\u672C\u590D\u5236\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u526A\u8D34\u677F\u6743\u9650\u540E\u91CD\u8BD5\u3002");
   }
-  await navigator.clipboard.writeText(JSON.stringify(payload));
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(payload));
+  } catch (error) {
+    throw normalizeClipboardWriteError(error);
+  }
+}
+function isClipboardPermissionError(error) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const { name, message: message3 } = error;
+  const normalizedName = String(name || "").trim();
+  const normalizedMessage = String(message3 || "").trim();
+  return normalizedName === "NotAllowedError" || /Document is not focused/i.test(normalizedMessage) || /permission/i.test(normalizedMessage) || /denied/i.test(normalizedMessage) || /not allowed/i.test(normalizedMessage);
+}
+function normalizeClipboardWriteError(error) {
+  if (isClipboardPermissionError(error)) {
+    return new Error("\u5F53\u524D\u9875\u9762\u6682\u65F6\u65E0\u6CD5\u5199\u5165\u526A\u8D34\u677F\uFF0C\u8BF7\u5148\u5207\u56DE\u5F53\u524D\u9875\u9762\u540E\u91CD\u8BD5\u3002");
+  }
+  if (error instanceof Error) {
+    return error;
+  }
+  return new Error("\u526A\u8D34\u677F\u5199\u5165\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002");
 }
 async function exportSelectionToDesignTool(tool, element) {
   if (!isExportableDesignElement(element)) {
@@ -25384,6 +25409,8 @@ async function exportSelectionToDesignTool(tool, element) {
     });
     const result = await safeCopyToFigmaWithKiwi({
       layers: Array.isArray(layers) ? layers : []
+    }).catch((error) => {
+      throw normalizeClipboardWriteError(error);
     });
     if (result.skipped) {
       if (result.reason === "clipboard_unavailable") {

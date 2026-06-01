@@ -524,6 +524,22 @@ function sendProjectMetadataError(
   }, { status: 400 });
 }
 
+function readProjectMetadataOrSendError(
+  res: ServerResponse,
+  metadataStore: ProjectMetadataStore,
+  context: {
+    project: RegisteredProject;
+    projectId: string;
+  },
+): ProjectMetadata | null {
+  try {
+    return metadataStore.getMetadata();
+  } catch (error) {
+    sendProjectMetadataError(res, error, context);
+    return null;
+  }
+}
+
 export function handleProjectRegistryApi(
   req: IncomingMessage,
   res: ServerResponse,
@@ -672,7 +688,9 @@ export function handleProjectRegistryApi(
     if (!metadataStore) {
       return true;
     }
-    metadataStore.getMetadata();
+    if (!readProjectMetadataOrSendError(res, metadataStore, { project, projectId })) {
+      return true;
+    }
     const communicationStore = createProjectCommunicationStore(project.root);
     const communicationTarget = rest.slice('communication/'.length);
     if (req.method !== 'POST') {
@@ -733,11 +751,17 @@ export function handleProjectRegistryApi(
       return true;
     }
     if (req.method === 'GET') {
-      const metadata = backfillMakeClientResourcePreviewLinks(
-        reconcileMetadataWithFilesystem(metadataStore, project.root),
-        project.root,
-        options.runtimeOrigin,
-      );
+      let metadata: ProjectMetadata;
+      try {
+        metadata = backfillMakeClientResourcePreviewLinks(
+          reconcileMetadataWithFilesystem(metadataStore, project.root),
+          project.root,
+          options.runtimeOrigin,
+        );
+      } catch (error) {
+        sendProjectMetadataError(res, error, { project, projectId });
+        return true;
+      }
       sendJson(res, {
         project: handlers.toProjectIdentity(project),
         resources: createProjectResourcesPayload(metadata, project.root),
@@ -776,7 +800,10 @@ export function handleProjectRegistryApi(
       return true;
     }
     const resourceId = decodeURIComponent(docMatch[1]);
-    const metadata = metadataStore.getMetadata();
+    const metadata = readProjectMetadataOrSendError(res, metadataStore, { project, projectId });
+    if (!metadata) {
+      return true;
+    }
     const doc = metadata.resources.docs.find((item) => item.id === resourceId || item.name === resourceId);
     if (!doc) {
       sendJson(res, { error: 'Doc not found' }, { status: 404 });

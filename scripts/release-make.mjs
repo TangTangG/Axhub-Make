@@ -29,6 +29,7 @@ const templateManifestPath = path.join(templateReleaseRoot, 'manifest.json');
 const canvasFigSyncSource = path.join(makeServerRoot, 'vendor/axhub-export-core/scripts/canvas-fig-sync.mjs');
 const makeClientTemplateSourceDir = path.join(makeServerRoot, 'client');
 const makeClientTemplatePackageJsonPath = path.join(makeClientTemplateSourceDir, 'package.json');
+const makeClientProjectSourcePath = path.join(makeServerRoot, 'src/server/makeClientProject.ts');
 const makeClientTemplateZipName = 'axhub-make-client-template.zip';
 const includeOpenCodeWebUi = false;
 const npmPackagePackedSizeLimit = 35 * 1024 * 1024;
@@ -332,6 +333,30 @@ function readMakeClientTemplateVersion() {
     throw new Error(`Make client template package version is missing: ${makeClientTemplatePackageJsonPath}`);
   }
   return version;
+}
+
+export function syncDefaultMakeClientTemplateVersion({
+  sourceFile = makeClientProjectSourcePath,
+  templateVersion,
+} = {}) {
+  const normalizedVersion = normalizeTemplateVersion(templateVersion);
+  if (!normalizedVersion) {
+    throw new Error('templateVersion is required to sync the default Make client template version');
+  }
+  const source = fs.readFileSync(sourceFile, 'utf8');
+  const pattern = /export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = ['"][^'"]+['"];/u;
+  if (!pattern.test(source)) {
+    throw new Error(`DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION export was not found: ${sourceFile}`);
+  }
+  const nextSource = source.replace(
+    pattern,
+    `export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '${normalizedVersion}';`,
+  );
+  if (nextSource === source) {
+    return { changed: false, sourceFile, templateVersion: normalizedVersion };
+  }
+  fs.writeFileSync(sourceFile, nextSource, 'utf8');
+  return { changed: true, sourceFile, templateVersion: normalizedVersion };
 }
 
 export function createMakeClientTemplateZip({
@@ -755,6 +780,10 @@ function prepareTemplateRelease(options = {}) {
     throw new Error(`Expected client package name to be @axhub/make-client, got ${sourcePackage.name}`);
   }
   const templateVersion = normalizeTemplateVersion(options.templateVersion || readMakeClientTemplateVersion());
+  const versionSync = syncDefaultMakeClientTemplateVersion({ templateVersion });
+  if (versionSync.changed) {
+    logStep(`Synced DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION to ${templateVersion}`);
+  }
 
   fs.rmSync(templateReleaseRoot, { recursive: true, force: true });
   fs.mkdirSync(templateReleaseRoot, { recursive: true });

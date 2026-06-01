@@ -249,6 +249,11 @@ export function useIndexPageSelectionSync({
     const lastPrototypeCanvasItemRef = useRef<ItemData | null>(null);
     const resourceDeepLinkConsumedRef = useRef(false);
 
+    const markInitialResourceDeepLinkHandled = useCallback(() => {
+        resourceDeepLinkConsumedRef.current = true;
+        onInitialResourceDeepLinkHandled?.();
+    }, [onInitialResourceDeepLinkHandled]);
+
     useEffect(() => {
         localStorage.setItem(STORAGE_KEY_ACTIVE_TAB, activeTab);
     }, [activeTab]);
@@ -265,8 +270,7 @@ export function useIndexPageSelectionSync({
                 docs: docsItems,
             });
             if (resolvedDeepLink?.kind === 'prototype') {
-                resourceDeepLinkConsumedRef.current = true;
-                onInitialResourceDeepLinkHandled?.();
+                markInitialResourceDeepLinkHandled();
                 setSidebarTab(resolvedDeepLink.sidebarTab);
                 setViewMode(resolvedDeepLink.viewMode);
                 setSelectedItem(resolvedDeepLink.item);
@@ -280,6 +284,7 @@ export function useIndexPageSelectionSync({
                 }
                 return;
             }
+            markInitialResourceDeepLinkHandled();
         }
 
         const decision = resolvePrototypeAutoSelectionDecision({
@@ -346,6 +351,7 @@ export function useIndexPageSelectionSync({
         docsItems,
         initialResourceDeepLink,
         loading,
+        markInitialResourceDeepLinkHandled,
         onInitialResourceDeepLinkHandled,
         pendingReturnTarget,
         selectedItem,
@@ -374,8 +380,7 @@ export function useIndexPageSelectionSync({
                 themes,
             });
             if (resolvedDeepLink?.kind === 'doc') {
-                resourceDeepLinkConsumedRef.current = true;
-                onInitialResourceDeepLinkHandled?.();
+                markInitialResourceDeepLinkHandled();
                 setSidebarTab(resolvedDeepLink.sidebarTab);
                 setSelectedResourceFolder?.(null);
                 setSelectedDoc(resolvedDeepLink.item);
@@ -384,6 +389,7 @@ export function useIndexPageSelectionSync({
                 }
                 return;
             }
+            markInitialResourceDeepLinkHandled();
         }
         if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'theme') {
             const resolvedDeepLink = resolveIndexDeepLinkSelection(initialResourceDeepLink, {
@@ -392,8 +398,7 @@ export function useIndexPageSelectionSync({
                 themes,
             });
             if (resolvedDeepLink?.kind === 'theme') {
-                resourceDeepLinkConsumedRef.current = true;
-                onInitialResourceDeepLinkHandled?.();
+                markInitialResourceDeepLinkHandled();
                 setSidebarTab(resolvedDeepLink.sidebarTab);
                 setResourceSection(resolvedDeepLink.resourceSection);
                 setSelectedTheme(resolvedDeepLink.theme);
@@ -403,6 +408,7 @@ export function useIndexPageSelectionSync({
                 }
                 return;
             }
+            markInitialResourceDeepLinkHandled();
         }
         if (pendingReturnTarget?.sidebarTab === 'document') {
             const pendingDocItem = pendingReturnTarget.resourceId
@@ -423,6 +429,7 @@ export function useIndexPageSelectionSync({
         docsItems,
         initialResourceDeepLink,
         loading,
+        markInitialResourceDeepLinkHandled,
         onInitialResourceDeepLinkHandled,
         pendingReturnTarget,
         sidebarAssetsLoaded,

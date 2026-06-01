@@ -442,7 +442,9 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         });
         const payload = await response.json().catch(() => null);
         if (!response.ok) {
-            throw new Error(formatMakeClientProjectError(payload, '新建空白项目失败'));
+            const error = new Error(formatMakeClientProjectError(payload, '新建空白项目失败'));
+            (error as Error & { diagnostic?: unknown }).diagnostic = payload;
+            throw error;
         }
         const projectId = typeof payload?.project?.id === 'string' ? payload.project.id.trim() : '';
         if (!projectId) {
