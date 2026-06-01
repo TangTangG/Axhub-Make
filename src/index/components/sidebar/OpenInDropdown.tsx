@@ -7,6 +7,7 @@ import {
     Cursor,
     GeminiCLI,
     Microsoft,
+    OpenAI,
     OpenCode,
     Qoder,
     Trae,
@@ -269,7 +270,7 @@ export default function OpenInDropdown({
     const getOnlineWebAgentIcon = (option: OnlineWebAgentOption) => {
         if (option.webAgent === 'opencode') return getWebAgentIcon('opencode');
         if (option.genieProvider === 'claude') return <ClaudeCode.Color size={14} />;
-        if (option.genieProvider === 'codex') return <Codex.Color size={14} />;
+        if (option.genieProvider === 'codex') return <OpenAI size={14} />;
         if (option.genieProvider === 'opencode') return <OpenCode size={14} />;
         if (option.genieProvider === 'gemini') return <GeminiCLI.Color size={14} />;
         return getWebAgentIcon('genie');

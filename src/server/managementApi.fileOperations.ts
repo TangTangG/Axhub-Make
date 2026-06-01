@@ -2,7 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { isPathInside, resolveProjectPath, type ProjectMetadata } from './projectCore/index.ts';
+import {
+  createSidebarTreeStore,
+  isPathInside,
+  resolveProjectPath,
+  type ProjectMetadata,
+  type SidebarTreeNode,
+} from './projectCore/index.ts';
 
 import { readJsonBody, sendJson } from './http.ts';
 
@@ -103,6 +109,47 @@ function updatePrototypeDisplayName(
   return { ok: true };
 }
 
+function replacePrototypeSidebarTreeTitle(
+  nodes: SidebarTreeNode[],
+  itemKey: string,
+  title: string,
+): { tree: SidebarTreeNode[]; changed: boolean } {
+  let changed = false;
+
+  const walk = (list: SidebarTreeNode[]): SidebarTreeNode[] => list.map((node) => {
+    if (node.kind === 'folder') {
+      return {
+        ...node,
+        children: Array.isArray(node.children) ? walk(node.children) : node.children,
+      };
+    }
+
+    if (node.itemKey !== itemKey || node.title === title) {
+      return node;
+    }
+
+    changed = true;
+    return {
+      ...node,
+      title,
+    };
+  });
+
+  return {
+    tree: walk(nodes),
+    changed,
+  };
+}
+
+function updatePrototypeSidebarTreeTitle(projectRoot: string, prototypeId: string, displayName: string): void {
+  const sidebarTreeStore = createSidebarTreeStore(projectRoot);
+  const itemKey = `prototypes/${prototypeId}`;
+  const result = replacePrototypeSidebarTreeTitle(sidebarTreeStore.getTree('prototypes'), itemKey, displayName);
+  if (result.changed) {
+    sidebarTreeStore.setTree('prototypes', result.tree);
+  }
+}
+
 export function handleFileOperationsApi(
   req: IncomingMessage,
   res: ServerResponse,
@@ -128,6 +175,7 @@ export function handleFileOperationsApi(
         sendJson(res, { error: result.error }, { status: result.status });
         return;
       }
+      updatePrototypeSidebarTreeTitle(projectRoot, prototypeId, displayName);
       sendJson(res, { success: true, name: prototypeId, displayName });
     }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
     return true;

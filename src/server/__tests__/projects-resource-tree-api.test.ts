@@ -12,11 +12,28 @@ const childProcessMock = vi.hoisted(() => ({
   }),
 }));
 
+const localCommandMock = vi.hoisted(() => ({
+  runLocalCommand: vi.fn(async (command: string, args: string[]) => ({
+    stdout: '',
+    stderr: '',
+    command,
+    escapedCommand: [command, ...args].join(' '),
+  })),
+}));
+
 vi.mock('node:child_process', async (importActual) => {
   const actual = await importActual<typeof import('node:child_process')>();
   return {
     ...actual,
     execFile: childProcessMock.execFile,
+  };
+});
+
+vi.mock('../localCommand.ts', async (importActual) => {
+  const actual = await importActual<typeof import('../localCommand.ts')>();
+  return {
+    ...actual,
+    runLocalCommand: localCommandMock.runLocalCommand,
   };
 });
 
@@ -30,9 +47,13 @@ import {
 } from './projects-api.helpers';
 import { getMakeClientMarkerPath } from '../projectCore/index.ts';
 import { buildSystemOpenCommand } from '../managementApi.workspace.ts';
+import { runLocalCommand } from '../localCommand.ts';
+
+const runLocalCommandMock = vi.mocked(runLocalCommand);
 
 afterEach(() => {
   childProcessMock.execFile.mockClear();
+  runLocalCommandMock.mockClear();
   cleanupProjectApiTestRoots();
 });
 
@@ -202,12 +223,13 @@ describe('make-server resource sidebar filesystem tree API', () => {
         path: 'research/notes.md',
         kind: 'file',
       });
-      expect(childProcessMock.execFile).toHaveBeenCalledWith(
-        buildSystemOpenCommand(path.join(projectRoot, 'content/resources/research')).command,
-        buildSystemOpenCommand(path.join(projectRoot, 'content/resources/research')).args,
-        expect.objectContaining({ timeout: 10000 }),
-        expect.any(Function),
+      const fileOpenCommand = buildSystemOpenCommand(path.join(projectRoot, 'content/resources/research'));
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        fileOpenCommand.command,
+        fileOpenCommand.args,
+        expect.objectContaining({ timeoutMs: 10000 }),
       );
+      expect(childProcessMock.execFile).not.toHaveBeenCalled();
 
       const folderResponse = await fetch(`${server.origin}/api/workspace/resources/open-system`, {
         method: 'POST',
@@ -222,12 +244,13 @@ describe('make-server resource sidebar filesystem tree API', () => {
         path: 'research',
         kind: 'directory',
       });
-      expect(childProcessMock.execFile).toHaveBeenCalledWith(
-        buildSystemOpenCommand(path.join(projectRoot, 'content/resources/research')).command,
-        buildSystemOpenCommand(path.join(projectRoot, 'content/resources/research')).args,
-        expect.objectContaining({ timeout: 10000 }),
-        expect.any(Function),
+      const folderOpenCommand = buildSystemOpenCommand(path.join(projectRoot, 'content/resources/research'));
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        folderOpenCommand.command,
+        folderOpenCommand.args,
+        expect.objectContaining({ timeoutMs: 10000 }),
       );
+      expect(childProcessMock.execFile).not.toHaveBeenCalled();
     } finally {
       await server.close();
     }
@@ -270,12 +293,13 @@ describe('make-server resource sidebar filesystem tree API', () => {
         path: 'brand',
         kind: 'directory',
       });
-      expect(childProcessMock.execFile).toHaveBeenCalledWith(
-        buildSystemOpenCommand(path.join(projectRoot, 'content/themes/brand')).command,
-        buildSystemOpenCommand(path.join(projectRoot, 'content/themes/brand')).args,
-        expect.objectContaining({ timeout: 10000 }),
-        expect.any(Function),
+      const openCommand = buildSystemOpenCommand(path.join(projectRoot, 'content/themes/brand'));
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        openCommand.command,
+        openCommand.args,
+        expect.objectContaining({ timeoutMs: 10000 }),
       );
+      expect(childProcessMock.execFile).not.toHaveBeenCalled();
     } finally {
       await server.close();
     }
@@ -309,22 +333,21 @@ describe('make-server resource sidebar filesystem tree API', () => {
   });
 
   it('builds parameterized local filesystem open commands for each platform', () => {
-    const targetPath = process.platform === 'win32'
-      ? 'C:\\Users\\demo\\Project Files\\notes.md'
-      : '/Users/demo/Project Files/notes.md';
+    const targetPath = '/Users/demo/Project Files/notes.md';
+    const windowsTargetPath = 'E:\\make11\\src\\resources\\新文件夹';
 
     expect(buildSystemOpenCommand(targetPath, 'darwin')).toEqual({
       command: 'open',
       args: [targetPath],
     });
-    expect(buildSystemOpenCommand(targetPath, 'win32')).toEqual({
+    expect(buildSystemOpenCommand(windowsTargetPath, 'win32')).toEqual({
       command: 'powershell.exe',
       args: [
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        'Start-Process -LiteralPath $args[0]',
-        targetPath,
+        'Invoke-Item -LiteralPath $args[0] -ErrorAction Stop',
+        windowsTargetPath,
       ],
     });
     expect(buildSystemOpenCommand(targetPath, 'linux')).toEqual({
@@ -374,6 +397,46 @@ describe('make-server resource sidebar filesystem tree API', () => {
       expect(fs.readFileSync(path.join(projectRoot, 'content/resources/archive/research/notes.md'), 'utf8')).toBe('# Notes\n');
       expect(findNode(body.tree, (node) => node.itemKey === 'docs/archive/overview.md')).toBeTruthy();
       expect(findNode(body.tree, (node) => node.folderPath === 'archive/research')).toBeTruthy();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('moves resource files into folder nodes that only carry a folder title', async () => {
+    const projectRoot = createTempRoot();
+    writeResourceProject(projectRoot);
+    fs.mkdirSync(path.join(projectRoot, 'content/resources/archive'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'content/resources/overview.md'), '# Overview\n', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const current = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`).then((response) => response.json());
+      const archive = findNode(current.tree, (node) => node.folderPath === 'archive');
+      const overview = findNode(current.tree, (node) => node.itemKey === 'docs/overview.md');
+      expect(archive).toBeTruthy();
+      expect(overview).toBeTruthy();
+
+      const update = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tree: [
+            {
+              id: archive.id,
+              kind: 'folder',
+              title: archive.title,
+              children: [overview],
+            },
+          ],
+        }),
+      });
+      const body = await update.json();
+
+      expect(update.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'content/resources/overview.md'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'content/resources/archive/overview.md'), 'utf8')).toBe('# Overview\n');
+      expect(findNode(body.tree, (node) => node.itemKey === 'docs/archive/overview.md')).toBeTruthy();
     } finally {
       await server.close();
     }

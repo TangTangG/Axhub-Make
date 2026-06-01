@@ -1,6 +1,9 @@
 import {
+  buildOfficialClipboardPayloadFromCapturedDocument as buildOfficialClipboardPayloadFromCapturedDocumentImpl,
+  captureDocumentForFigmaNew as captureDocumentForFigmaNewImpl,
   copyDocumentForFigmaNewOfficialClipboard as copyDocumentForFigmaNewOfficialClipboardImpl,
   htmlToAxure as htmlToAxureImpl,
+  type CapturedDocument,
 } from 'axhub-export-core';
 import * as htmlToImage from 'html-to-image';
 
@@ -181,6 +184,14 @@ function collectScreenshotSize(element: HTMLElement): { width: number; height: n
 
 export function copyDocumentForFigmaNewOfficialClipboard(selector: string | Element = 'body') {
   return copyDocumentForFigmaNewOfficialClipboardImpl(selector);
+}
+
+export function captureDocumentForFigmaNew(selector: string | Element = 'body') {
+  return captureDocumentForFigmaNewImpl(selector);
+}
+
+export function buildOfficialClipboardPayloadFromCapturedDocument(capturedDoc: CapturedDocument) {
+  return buildOfficialClipboardPayloadFromCapturedDocumentImpl(capturedDoc);
 }
 
 export function htmlToAxure(selector: string | Element = 'body', options?: any) {

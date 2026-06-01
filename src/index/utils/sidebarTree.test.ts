@@ -330,6 +330,35 @@ describe('sidebarTree', () => {
         expect(sanitizeSidebarTree('docs', scannedTree, items)).toEqual(scannedTree);
     });
 
+    it('does not re-add stale root docs after a filesystem doc moves into a folder', () => {
+        const items = [
+            createPrototype({
+                name: 'index',
+                displayName: 'index',
+            }),
+        ];
+        const scannedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-test',
+                kind: 'folder',
+                title: '测试',
+                path: '测试',
+                folderPath: '测试',
+                children: [
+                    {
+                        id: 'item-docs-test-index-md',
+                        kind: 'item',
+                        title: 'index',
+                        itemKey: 'docs/测试/index.md',
+                        path: '测试/index.md',
+                    },
+                ],
+            },
+        ];
+
+        expect(sanitizeSidebarTree('docs', scannedTree, items)).toEqual(scannedTree);
+    });
+
     it('lifts legacy subpage folders into regular items', () => {
         const items = [
             createPrototype({

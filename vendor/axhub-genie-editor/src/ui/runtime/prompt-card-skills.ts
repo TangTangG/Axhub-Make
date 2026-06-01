@@ -2,6 +2,7 @@ export interface PromptCardSkill {
   id: string;
   label: string;
   description: string;
+  keywords?: string;
   prompt: string;
 }
 
@@ -18,16 +19,23 @@ export interface PromptCardSkillSavePayload {
 
 export const PROMPT_CARD_SKILLS: readonly PromptCardSkill[] = [
   {
-    id: 'compare-options',
-    label: '多方案对比',
-    description: '先比较多个修改方案，再选最合适的执行',
-    prompt: '请对比 2-3 个可行修改方案，选择最适合当前页面的一种后再执行。',
+    id: 'explore-options',
+    label: '多方案探索',
+    description: '使用 explore-options 做多方案探索',
+    keywords: '多方案生成 方案对比 设计决策 多方案对比',
+    prompt: '使用本地 explore-options 技能，按多方案探索流程对齐当前批注、需求和设计决策，生成 2-3 个真实不同的可行修改方案，对比后选择最适合当前页面的一种再执行。',
   },
   {
     id: 'prototype-annotation',
     label: '原型标注',
-    description: '结合当前原型标注理解修改意图',
-    prompt: '请结合当前原型标注理解修改意图，优先处理批注对应区域。',
+    description: '使用 prototype-annotation 理解批注意图',
+    prompt: '使用本地 prototype-annotation 技能，结合当前原型标注理解修改意图，处理批注对应区域。',
+  },
+  {
+    id: 'impeccable',
+    label: 'UI 评审',
+    description: '使用 impeccable 检查界面质量',
+    prompt: '使用本地 impeccable 技能，按 UI critique 思路审查当前页面或区域，给出关键问题和修复方向。',
   },
 ] as const;
 
@@ -74,7 +82,7 @@ export function filterPromptCardSkills(query: string): PromptCardSkill[] {
   if (!normalizedQuery) return [...PROMPT_CARD_SKILLS];
 
   return PROMPT_CARD_SKILLS.filter((skill) => {
-    const searchableText = `${skill.label} ${skill.description}`.toLocaleLowerCase();
+    const searchableText = `${skill.id} ${skill.label} ${skill.description} ${skill.keywords ?? ''}`.toLocaleLowerCase();
     return searchableText.includes(normalizedQuery);
   });
 }
@@ -91,10 +99,10 @@ export function addPromptCardSkillSelection(
 
 export function buildPromptCardSkillPrefix(selectedSkills: readonly PromptCardSkill[]): string {
   if (selectedSkills.length === 0) return '';
-  return [
-    '技能:',
-    ...selectedSkills.map((skill) => `- ${skill.label}: ${skill.prompt}`),
-  ].join('\n');
+  const skillNames = selectedSkills
+    .map((skill) => `${skill.id}（${skill.label}）`)
+    .join('、');
+  return `使用本地 ${skillNames}技能处理这条批注。`;
 }
 
 export function normalizePromptCardSkillIds(skillIds: readonly unknown[]): string[] {
@@ -141,5 +149,5 @@ export function mergePromptCardSkillsIntoPromptNote(
   const normalizedNote = String(note ?? '').replace(/\r\n/g, '\n').trim();
   if (!prefix) return normalizedNote;
   if (!normalizedNote) return prefix;
-  return `${prefix}\n\n${normalizedNote}`;
+  return `${normalizedNote}\n${prefix}`;
 }

@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { getProjectMetadataPath, getProjectRegistryPath } from '../projectCore/index.ts';
+import { getMakeClientMarkerPath, getProjectMetadataPath, getProjectRegistryPath } from '../projectCore/index.ts';
 
 import { startMakeServer } from '../index.ts';
 
@@ -19,6 +19,21 @@ function createTempRoot(prefix = 'axhub-media-api-') {
 function writeJson(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
+}
+
+function writeMakeClientMarker(projectRoot: string, id = 'media-client', name = 'Media Client'): void {
+  writeJson(getMakeClientMarkerPath(projectRoot), {
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: { id, name },
+  });
+  writeJson(path.join(projectRoot, 'package.json'), {
+    scripts: {
+      dev: 'vite',
+      'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+    },
+  });
 }
 
 async function startMediaServer(projectRoot: string) {
@@ -44,6 +59,7 @@ describe('make-server media API', () => {
     const mediaDir = path.join(projectRoot, 'assets/media');
     fs.mkdirSync(path.join(mediaDir, 'icons'), { recursive: true });
     fs.writeFileSync(path.join(mediaDir, 'icons/logo.svg'), '<svg />', 'utf8');
+    writeMakeClientMarker(projectRoot);
     writeJson(getProjectMetadataPath(projectRoot), {
       schemaVersion: 1,
       project: { id: 'media-client', name: 'Media Client' },
@@ -89,6 +105,7 @@ describe('make-server media API', () => {
     const mediaDir = path.join(projectRoot, 'assets/media');
     fs.mkdirSync(mediaDir, { recursive: true });
     fs.writeFileSync(path.join(projectRoot, 'outside.svg'), '<svg />', 'utf8');
+    writeMakeClientMarker(projectRoot);
     writeJson(getProjectMetadataPath(projectRoot), {
       schemaVersion: 1,
       project: { id: 'media-client', name: 'Media Client' },

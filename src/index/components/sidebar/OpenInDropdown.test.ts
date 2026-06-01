@@ -176,6 +176,23 @@ describe('OpenInDropdown source', () => {
     expect(agentTypesSource).toContain("{ value: 'opencode', label: 'OpenCode' }");
   });
 
+  it('uses OpenAI only for the online Codex option and keeps local Codex app branding', () => {
+    const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+    const onlineIconSource = source.slice(
+      source.indexOf('const getOnlineWebAgentIcon'),
+      source.indexOf('/** Get icon for the current open method'),
+    );
+    const localAppIconSource = source.slice(
+      source.indexOf('const getLocalAppIcon'),
+      source.indexOf('const getWebAgentIcon'),
+    );
+
+    expect(source).toContain('OpenAI,');
+    expect(onlineIconSource).toContain("if (option.genieProvider === 'codex') return <OpenAI size={14} />;");
+    expect(onlineIconSource).not.toContain("if (option.genieProvider === 'codex') return <Codex.Color size={14} />;");
+    expect(localAppIconSource).toContain("if (agent === 'codex') return <Codex.Color size={14} />;");
+  });
+
   it('keeps local app and CLI menus fixed regardless of local installation state', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
 

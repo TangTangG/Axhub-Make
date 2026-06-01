@@ -65,7 +65,39 @@ async function copyAxurePayload(payload: unknown): Promise<void> {
     throw new Error('当前环境不支持文本复制，请检查浏览器剪贴板权限后重试。');
   }
 
-  await navigator.clipboard.writeText(JSON.stringify(payload));
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(payload));
+  } catch (error) {
+    throw normalizeClipboardWriteError(error);
+  }
+}
+
+function isClipboardPermissionError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const { name, message } = error as { name?: string; message?: string };
+  const normalizedName = String(name || '').trim();
+  const normalizedMessage = String(message || '').trim();
+
+  return normalizedName === 'NotAllowedError'
+    || /Document is not focused/i.test(normalizedMessage)
+    || /permission/i.test(normalizedMessage)
+    || /denied/i.test(normalizedMessage)
+    || /not allowed/i.test(normalizedMessage);
+}
+
+function normalizeClipboardWriteError(error: unknown): Error {
+  if (isClipboardPermissionError(error)) {
+    return new Error('当前页面暂时无法写入剪贴板，请先切回当前页面后重试。');
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error('剪贴板写入失败，请稍后重试。');
 }
 
 export async function exportSelectionToDesignTool(
@@ -86,6 +118,8 @@ export async function exportSelectionToDesignTool(
     });
     const result = await safeCopyToFigmaWithKiwi({
       layers: Array.isArray(layers) ? layers : [],
+    }).catch((error) => {
+      throw normalizeClipboardWriteError(error);
     });
     if (result.skipped) {
       if (result.reason === 'clipboard_unavailable') {

@@ -32,13 +32,44 @@ export function writeJson(filePath: string, value: unknown): void {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
 }
 
-export function writeProjectMetadata(projectRoot: string, overrides: Record<string, unknown> = {}) {
+export function writeMakeClientProjectMarker(projectRoot: string, id: string, name: string): void {
+  writeJson(getMakeClientMarkerPath(projectRoot), {
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: { id, name },
+  });
+  writeJson(path.join(projectRoot, 'package.json'), {
+    scripts: {
+      dev: 'vite',
+      'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+    },
+  });
+}
+
+export function writeProjectMetadata(
+  projectRoot: string,
+  overrides: Record<string, unknown> = {},
+  options: { makeClientMarker?: boolean } = {},
+) {
   const docPath = path.join(projectRoot, 'docs', 'spec.md');
+  const project = {
+    id: path.basename(projectRoot),
+    name: path.basename(projectRoot),
+    ...(
+      overrides.project && typeof overrides.project === 'object' && !Array.isArray(overrides.project)
+        ? overrides.project as Record<string, unknown>
+        : {}
+    ),
+  };
+  if (options.makeClientMarker !== false) {
+    writeMakeClientProjectMarker(projectRoot, String(project.id), String(project.name));
+  }
   fs.mkdirSync(path.dirname(docPath), { recursive: true });
   fs.writeFileSync(docPath, '# Spec\n', 'utf8');
   writeJson(getProjectMetadataPath(projectRoot), {
     schemaVersion: 1,
-    project: { id: path.basename(projectRoot), name: path.basename(projectRoot) },
+    project,
     resources: {
       prototypes: [
         {

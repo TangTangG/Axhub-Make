@@ -1,6 +1,6 @@
 ---
 name: prototype-annotation
-description: 当 Axhub Make 客户端的任意原型需要接入或维护 @axhub/annotation 标注能力时使用，尤其是多原型项目中的目录入口（原型/文档/链接）、组件标注、组件状态标注、annotation-source.json 或 AnnotationViewer 接入。
+description: 原型标注替代 PRD 时使用：把页面目录、组件说明、状态说明和补充文档接入可运行原型，供评审、交付和后续需求说明使用。
 ---
 
 # 原型标注

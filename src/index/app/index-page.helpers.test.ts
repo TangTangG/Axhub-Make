@@ -6,6 +6,7 @@ import {
     isMarkdownEditableResource,
     normalizeDocItem,
     normalizeTemplateItem,
+    replaceSidebarItemTitle,
     resolveMobileItemOpenUrl,
     setAssistantAutoOpenDismissed,
 } from './index-page.helpers';
@@ -134,5 +135,57 @@ describe('index page helpers', () => {
 	            previewUrl: '',
 	            jsUrl: '',
 	        })).toBe(false);
+    });
+
+    it('updates a persisted sidebar item title without changing its placement', () => {
+        const tree = [
+            {
+                id: 'folder:prototypes:demo',
+                kind: 'folder' as const,
+                title: '演示',
+                children: [
+                    {
+                        id: 'item:prototypes:home',
+                        kind: 'item' as const,
+                        title: '旧名称',
+                        itemKey: 'prototypes/home',
+                    },
+                ],
+            },
+            {
+                id: 'item:prototypes:settings',
+                kind: 'item' as const,
+                title: '设置',
+                itemKey: 'prototypes/settings',
+            },
+        ];
+
+        const result = replaceSidebarItemTitle(tree, 'prototypes/home', '新名称');
+
+        expect(result).toEqual({
+            changed: true,
+            nextTree: [
+                {
+                    id: 'folder:prototypes:demo',
+                    kind: 'folder',
+                    title: '演示',
+                    children: [
+                        {
+                            id: 'item:prototypes:home',
+                            kind: 'item',
+                            title: '新名称',
+                            itemKey: 'prototypes/home',
+                        },
+                    ],
+                },
+                {
+                    id: 'item:prototypes:settings',
+                    kind: 'item',
+                    title: '设置',
+                    itemKey: 'prototypes/settings',
+                },
+            ],
+        });
+        expect(tree[0].children?.[0]?.title).toBe('旧名称');
     });
 });

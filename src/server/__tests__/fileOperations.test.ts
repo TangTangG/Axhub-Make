@@ -333,4 +333,64 @@ describe('legacy file operations API', () => {
     });
     expect(metadata.navigation.prototypes).toEqual(['home', 'settings']);
   });
+
+  it('updates nested prototype sidebar item titles when display names change', async () => {
+    const projectRoot = createTempRoot();
+    const prototypeDir = path.join(projectRoot, 'src/prototypes/home');
+    writeFile(path.join(prototypeDir, 'index.tsx'), 'export default null;\n');
+    const sidebarTreePath = path.join(projectRoot, '.axhub/make/sidebar-tree.json');
+    writeFile(sidebarTreePath, JSON.stringify({
+      version: 1,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      prototypes: [
+        {
+          id: 'folder:prototypes:demo',
+          kind: 'folder',
+          title: '演示目录',
+          children: [
+            {
+              id: 'item:prototypes:home',
+              kind: 'item',
+              title: 'Home',
+              itemKey: 'prototypes/home',
+            },
+          ],
+        },
+      ],
+      docs: [],
+      themesTree: [],
+      themes: [],
+      data: [],
+      templates: [],
+    }));
+    let metadata = createMetadata();
+    const metadataStore = {
+      getMetadata: () => metadata,
+      saveMetadata: (nextMetadata: ProjectMetadata) => {
+        metadata = nextMetadata;
+        return metadata;
+      },
+    };
+
+    const renamed = await callFileOperation({
+      pathname: '/api/prototypes/home',
+      projectRoot,
+      body: { displayName: '首页演示' },
+      metadataStore,
+    });
+
+    expect(renamed).toMatchObject({
+      status: 200,
+      body: {
+        success: true,
+        name: 'home',
+        displayName: '首页演示',
+      },
+    });
+    const storedTree = JSON.parse(fs.readFileSync(sidebarTreePath, 'utf8'));
+    expect(storedTree.prototypes[0].children[0]).toMatchObject({
+      title: '首页演示',
+      itemKey: 'prototypes/home',
+    });
+  });
 });

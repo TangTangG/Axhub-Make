@@ -3,7 +3,7 @@ const MAKE_CLIENT_ERROR_MESSAGES: Record<string, string> = {
     MAKE_PROJECT_ID_CONFLICT: '项目 ID 已存在，请更换 Make 客户端项目 ID',
     MAKE_CLIENT_SOURCE_UNAVAILABLE: '无法获取 Make 客户端源码，请确认仓库权限或网络',
     MAKE_CLIENT_TEMPLATE_UNAVAILABLE: '无法下载 Make 客户端模板包，请检查网络或稍后重试',
-    MAKE_CLIENT_INSTALL_FAILED: '依赖安装失败，请检查 npm install 输出',
+    MAKE_CLIENT_INSTALL_FAILED: '依赖安装失败',
     MAKE_CLIENT_METADATA_SYNC_FAILED: '项目清单生成失败',
     MAKE_CLIENT_DEV_TIMEOUT: 'Make 客户端启动超时',
     PNPM_NOT_FOUND: '未找到可用的 Node 包管理器，请确认 Node.js 和 npm 可用',

@@ -817,7 +817,10 @@ export const createWebEditorV2Controller = (
         const explicitProjectPath = normalizeString(
           options.genieBridge?.projectPath ?? searchBridgeOptions.projectPath,
         );
-        const runtimeFallback = explicitApiBaseUrl && explicitProjectPath
+        const explicitIntegrationChannel = normalizeString(
+          options.genieBridge?.integrationChannel ?? searchBridgeOptions.integrationChannel,
+        );
+        const runtimeFallback = explicitApiBaseUrl && (explicitProjectPath || explicitIntegrationChannel)
           ? {}
           : await readAssistantRuntimeFallback();
         return createEditorInstance(runtimeFallback);

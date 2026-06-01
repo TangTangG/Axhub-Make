@@ -80,13 +80,53 @@ function sendAdminHtml(req: IncomingMessage, res: ServerResponse, filePath: stri
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     return false;
   }
+  const requestUrl = getRequestUrl(req);
   const html = stripViteDevOnlyModuleImports(fs.readFileSync(filePath, 'utf8'))
+    .replace(/\{\{TITLE\}\}/g, resolveAdminHtmlTitle(path.basename(filePath), requestUrl))
     .replace('</head>', `${buildInjectScript(options)}\n</head>`);
   res.statusCode = 200;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.end(html);
   return true;
+}
+
+function decodeURIComponentSafe(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function getMarkdownPreviewTitleFromUrl(url: URL): string {
+  const displayName = String(url.searchParams.get('axhubDisplayName') || '').trim();
+  if (displayName) {
+    return displayName;
+  }
+
+  const sourceUrl = String(url.searchParams.get('url') || '').trim();
+  if (!sourceUrl) {
+    return 'Spec';
+  }
+
+  try {
+    const parsedSourceUrl = new URL(sourceUrl, url.origin);
+    const pathParam = parsedSourceUrl.searchParams.get('path');
+    const titlePath = pathParam || parsedSourceUrl.pathname;
+    const lastSegment = decodeURIComponentSafe(titlePath.replace(/\\/g, '/').split('/').filter(Boolean).at(-1) || '');
+    return lastSegment.replace(/\.md$/iu, '').trim() || 'Spec';
+  } catch {
+    const lastSegment = decodeURIComponentSafe(sourceUrl.replace(/\\/g, '/').split('/').filter(Boolean).at(-1) || '');
+    return lastSegment.replace(/\.md(?:\?.*)?$/iu, '').trim() || 'Spec';
+  }
+}
+
+function resolveAdminHtmlTitle(fileName: string, url: URL): string {
+  if (fileName === 'spec-template.html') {
+    return getMarkdownPreviewTitleFromUrl(url);
+  }
+  return 'Axhub Make';
 }
 
 function sendCanvasTemplateHtml(res: ServerResponse, adminRoot: string, canvasName: string): boolean {

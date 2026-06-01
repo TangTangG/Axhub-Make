@@ -1,6 +1,6 @@
 ---
 name: prototype-comments
-description: Use when handling prototype edit comments in the Axhub Make client preview. Reads local .spec comment files first, edits project files, updates comment status, and only uses page sync or screenshots when needed.
+description: 批注、微调、编辑原型时使用：读取原型批注并定位页面元素，修改文案、样式、布局或交互，同步批注处理状态。
 ---
 
 # 原型批注处理

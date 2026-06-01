@@ -1,4 +1,6 @@
 import vm from 'node:vm';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -276,6 +278,61 @@ describe('quick edit runtime script', () => {
         resourceType: 'prototypes',
       }),
     });
+  });
+
+  it('returns a Figma clipboard payload for host-side clipboard writes without writing from the iframe', async () => {
+    const capturedDocument = { root: { id: 'root' } };
+    const captureDocumentForFigmaNew = vi.fn(async () => capturedDocument);
+    const buildOfficialClipboardPayloadFromCapturedDocument = vi.fn(async () => '{"figma":true}');
+    const copyDocumentForFigmaNewOfficialClipboard = vi.fn();
+    const { listeners, messages, windowStub } = createRuntimeHarness({
+      axhubExportCore: {
+        copyDocumentForFigmaNewOfficialClipboard,
+        captureDocumentForFigmaNew,
+        buildOfficialClipboardPayloadFromCapturedDocument,
+      },
+    });
+
+    listeners.get('window:message')?.({
+      data: {
+        type: 'axhub.quickEdit.export.copyToFigma',
+        requestId: 'copy-host-1',
+        clipboardWriteTarget: 'host',
+        projectId: 'project-1',
+        resourceId: 'home',
+        resourceType: 'prototypes',
+      },
+    });
+    await vi.waitFor(() => {
+      expect(messages.at(-1)?.message?.type).toBe('axhub.quickEdit.export.copyToFigmaResult');
+    });
+
+    expect(windowStub.focus).toHaveBeenCalled();
+    expect(captureDocumentForFigmaNew).toHaveBeenCalledWith('#root');
+    expect(buildOfficialClipboardPayloadFromCapturedDocument).toHaveBeenCalledWith(capturedDocument);
+    expect(copyDocumentForFigmaNewOfficialClipboard).not.toHaveBeenCalled();
+    expect(messages.at(-1)).toEqual({
+      targetOrigin: '*',
+      message: expect.objectContaining({
+        type: 'axhub.quickEdit.export.copyToFigmaResult',
+        requestId: 'copy-host-1',
+        success: true,
+        payloadText: '{"figma":true}',
+        payloadSizeKb: 0,
+        projectId: 'project-1',
+        resourceId: 'home',
+        resourceType: 'prototypes',
+      }),
+    });
+  });
+
+  it('exposes Figma payload builders from the browser runtime export bundle', () => {
+    const source = readFileSync(resolve(__dirname, '../../runtime-export-core.ts'), 'utf8');
+
+    expect(source).toContain('captureDocumentForFigmaNew as captureDocumentForFigmaNewImpl');
+    expect(source).toContain('buildOfficialClipboardPayloadFromCapturedDocument as buildOfficialClipboardPayloadFromCapturedDocumentImpl');
+    expect(source).toContain('export function captureDocumentForFigmaNew');
+    expect(source).toContain('export function buildOfficialClipboardPayloadFromCapturedDocument');
   });
 
   it('handles editable Axure export requests in the make-server runtime and returns the matching request id', async () => {

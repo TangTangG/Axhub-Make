@@ -49,10 +49,13 @@ describe('useIndexPagePreviewActions source', () => {
   it('focuses the preview iframe before requesting figma copy', () => {
     const source = readPreviewActionsSource();
 
+    expect(source).toContain("import { copyToClipboard, writeFigmaOfficialClipboardPayload }");
     expect(source).toContain('targetIframe.focus();');
     expect(source).toContain('targetIframe.contentWindow?.focus?.();');
     expect(source).toContain("type: 'axhub.quickEdit.export.copyToFigma'");
+    expect(source).toContain("clipboardWriteTarget: 'host'");
     expect(source).toContain("event.data.type !== 'axhub.quickEdit.export.copyToFigmaResult'");
+    expect(source).toContain('writeFigmaOfficialClipboardPayload(result.payloadText);');
     expect(source).not.toContain("type: 'COPY_TO_FIGMA'");
     expect(source).not.toContain("event.data.type !== 'COPY_TO_FIGMA_RESULT'");
   });
@@ -299,13 +302,36 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('serverBackedPayload');
   });
 
-  it('silently probes Genie runtime before opening quick edit', () => {
+  it('opens quick edit without waiting for the Genie runtime probe', () => {
     const source = readPreviewActionsSource();
 
     expect(source).toContain('probeAssistantRuntimeSilently');
-    expect(source).toContain('const runtime = await probeAssistantRuntimeSilently?.();');
-    expect(source).toContain('enterPrototypeEditor(primaryIframe, { runtime })');
+    expect(source).not.toContain('await probeAssistantRuntimeSilently?.()');
+    expect(source).toContain('startDeferredAssistantRuntimeProbe({');
+    expect(source).toContain('enterPrototypeEditor(primaryIframe)');
+    expect(source).toContain("messageApi.success('已连接上本地 AI');");
     expect(source).toContain('startAssistantRuntimeForWebEditor');
+  });
+
+  it('keeps the preview iframe launch URL stable while quick edit is active', () => {
+    const source = readPreviewRootSource();
+    const buildPaneIframeUrlSource = getSourceSegment(
+      source,
+      'const buildPaneIframeUrl = useCallback',
+      'const primaryIframeUrl = useMemo',
+    );
+    const exitWebEditorSource = getSourceSegment(
+      source,
+      'const handleExitWebEditor = useCallback',
+      'exitWebEditorRef.current = handleExitWebEditor;',
+    );
+
+    expect(source).toContain('const activePrototypeEditorLaunchOptionsRef = useRef<typeof prototypeEditorLaunchOptions | null>(null);');
+    expect(source).toContain("const iframePrototypeEditorLaunchOptions = editorStatus.mode === 'quickEdit'");
+    expect(source).toContain('activePrototypeEditorLaunchOptionsRef.current = prototypeEditorLaunchOptions;');
+    expect(buildPaneIframeUrlSource).toContain('iframePrototypeEditorLaunchOptions');
+    expect(buildPaneIframeUrlSource).not.toContain('prototypeEditorLaunchOptions, selectedPageId');
+    expect(exitWebEditorSource).toContain('activePrototypeEditorLaunchOptionsRef.current = null;');
   });
 
   it('does not keep the removed quick-edit new-page launch flow', () => {

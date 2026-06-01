@@ -82,6 +82,19 @@ describe('useIndexPageResourceActions source', () => {
     expect(source).not.toContain('switch to its canvas view');
   });
 
+  it('persists the prototype sidebar title after display-name rename', () => {
+    const source = readResourceRootSource();
+    const handlerStart = source.indexOf('const handleRenameItem = useCallback');
+    const handlerEnd = source.indexOf('const handleDuplicateItem', handlerStart);
+    const handlerSource = source.slice(handlerStart, handlerEnd);
+
+    expect(handlerSource).toContain('replaceSidebarItemTitle(');
+    expect(handlerSource).toContain("sidebarApi.saveSidebarTree('prototypes'");
+    expect(handlerSource).toContain("await loadSidebarTree('prototypes', { force: true })");
+    expect(handlerSource.indexOf('replaceSidebarItemTitle('))
+      .toBeLessThan(handlerSource.indexOf('await loadData()'));
+  });
+
   it('copies a theme generation prompt from the prototype menu without opening the theme drawer', () => {
     const source = readResourceRootSource();
     const handlerStart = source.indexOf('const handleGenerateThemeFromPrototype = useCallback');
@@ -94,5 +107,17 @@ describe('useIndexPageResourceActions source', () => {
     expect(handlerSource).not.toContain('setSelectedThemeReferencePages');
     expect(handlerSource).not.toContain("setSidebarTab('assets')");
     expect(handlerSource).not.toContain("setThemeCreateDialogVisible(true)");
+  });
+
+  it('refreshes docs metadata before reconciling a persisted filesystem sidebar tree', () => {
+    const source = readResourceRootSource();
+    const handlerStart = source.indexOf('const handleSidebarTreePersist = useCallback');
+    const handlerEnd = source.indexOf('const handleVersionManagement', handlerStart);
+    const handlerSource = source.slice(handlerStart, handlerEnd);
+
+    expect(handlerSource).toContain('await sidebarApi.saveSidebarTree(tab, normalizedTree)');
+    expect(handlerSource).toMatch(/const latestItems = tab === 'docs'\s+\? await reloadDocsItems\(\)\s+: getSidebarTabItems\(tab\);/);
+    expect(handlerSource.indexOf('await sidebarApi.saveSidebarTree(tab, normalizedTree)'))
+      .toBeLessThan(handlerSource.indexOf('await reloadDocsItems()'));
   });
 });

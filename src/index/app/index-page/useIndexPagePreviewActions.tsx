@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyToClipboard, writeFigmaOfficialClipboardPayload } from '../../utils/clipboard';
 import { buildEditorUrl, buildItemUrl, buildLANItemUrl } from '../../utils/url';
 import { generateSvgContent, svgToPng } from '../../utils/svg';
 import { apiService, type CloudPublishLatestItem, type CloudPublishTarget, type ExportIndexBundle, type ReviewResult } from '../../services/api';
@@ -67,6 +67,7 @@ import {
     readPreviewFrameEditorApi,
     resolveHostToolbarStateAfterClearEdits,
     resolveHostToolbarStateForDisplay,
+    startDeferredAssistantRuntimeProbe,
     waitForHostToolbarActionState,
     type DocumentEditorApi,
     type HostToolbarEditorsApi,
@@ -184,6 +185,7 @@ export function useIndexPagePreviewActions(params: any) {
     const pendingDocSwitchRef = useRef<{ kind: 'doc' | 'template'; item: any } | null>(null);
     const lastQuickEditRuntimeDocumentUrlKeyRef = useRef<string>('');
     const quickEditRuntimeActiveRef = useRef(false);
+    const deferredAssistantRuntimeProbeSeqRef = useRef(0);
     const documentEditorActiveRef = useRef(false);
     const documentHostToolbarUnsubscribeRef = useRef<(() => void) | null>(null);
     const prototypeHostToolbarUnsubscribeRef = useRef<(() => void) | null>(null);
@@ -340,6 +342,11 @@ export function useIndexPagePreviewActions(params: any) {
         assistantProjectPath,
         assistantWebEditorClientId,
     ]);
+    const activePrototypeEditorLaunchOptionsRef = useRef<typeof prototypeEditorLaunchOptions | null>(null);
+    const iframePrototypeEditorLaunchOptions = editorStatus.mode === 'quickEdit'
+        && activePrototypeEditorLaunchOptionsRef.current
+        ? activePrototypeEditorLaunchOptionsRef.current
+        : prototypeEditorLaunchOptions;
     const buildPaneIframeUrl = useCallback((pane: PreviewPane) => {
         if (contentMode === 'doc') {
             return selectedDoc?.previewUrl || selectedDoc?.specUrl || '';
@@ -353,8 +360,8 @@ export function useIndexPagePreviewActions(params: any) {
         const baseUrl = viewMode === 'canvas'
             ? buildPrototypeCanvasIframeUrl(selectedItem)
             : viewMode === 'demo'
-                ? buildProjectPrototypeIframeUrl(selectedItem, prototypeEditorLaunchOptions, selectedPageId)
-                : buildEditorUrl(selectedItem, viewMode, prototypeEditorLaunchOptions);
+                ? buildProjectPrototypeIframeUrl(selectedItem, iframePrototypeEditorLaunchOptions, selectedPageId)
+                : buildEditorUrl(selectedItem, viewMode, iframePrototypeEditorLaunchOptions);
         if (previewConfig.previewMode !== 'split' || !baseUrl) {
             return baseUrl;
         }
@@ -377,7 +384,7 @@ export function useIndexPagePreviewActions(params: any) {
         selectedPageId,
         selectedTemplate,
         selectedTheme,
-        prototypeEditorLaunchOptions,
+        iframePrototypeEditorLaunchOptions,
         viewMode,
     ]);
     const primaryIframeUrl = useMemo(() => buildPaneIframeUrl('primary'), [buildPaneIframeUrl]);
@@ -989,6 +996,7 @@ export function useIndexPagePreviewActions(params: any) {
         prototypeHostToolbarUnsubscribeRef.current = null;
         documentEditorActiveRef.current = false;
         quickEditRuntimeActiveRef.current = false;
+        activePrototypeEditorLaunchOptionsRef.current = null;
         pendingDocSwitchRef.current = null;
         markdownPromptCacheRef.current = null;
         setDocEditState(createDefaultMarkdownQuickEditState());
@@ -1335,7 +1343,7 @@ export function useIndexPagePreviewActions(params: any) {
     }, [getIframeOrigin, getPreviewIframe, selectedItem]);
 
     const requestCopyToFigma = useCallback(() => {
-        return new Promise<{ payloadSizeKb?: number }>((resolve, reject) => {
+        return new Promise<{ payloadSizeKb?: number; payloadText: string }>((resolve, reject) => {
             const targetIframe = getPreviewIframe();
             if (!targetIframe || !targetIframe.contentWindow) {
                 reject(new Error('未找到可导出的预览窗口'));
@@ -1359,8 +1367,14 @@ export function useIndexPagePreviewActions(params: any) {
                 window.removeEventListener('message', handleMessage);
                 window.clearTimeout(timeout);
                 if (event.data.success) {
+                    const payloadText = typeof event.data.payloadText === 'string' ? event.data.payloadText : '';
+                    if (!payloadText) {
+                        reject(new Error('Figma 剪贴板 payload 为空，请刷新预览后重试'));
+                        return;
+                    }
                     resolve({
                         payloadSizeKb: typeof event.data.payloadSizeKb === 'number' ? event.data.payloadSizeKb : undefined,
+                        payloadText,
                     });
                     return;
                 }
@@ -1373,6 +1387,7 @@ export function useIndexPagePreviewActions(params: any) {
                 type: 'axhub.quickEdit.export.copyToFigma',
                 selectedItem,
                 requestId,
+                clipboardWriteTarget: 'host',
             }), targetOrigin);
         });
     }, [getIframeOrigin, getPreviewIframe, selectedItem]);
@@ -1497,10 +1512,10 @@ export function useIndexPagePreviewActions(params: any) {
             return;
         }
         try {
-            await probeAssistantRuntimeSilently?.();
             await Promise.resolve(editorApi.enableDocumentEditor({ toolbarMode: 'host', initialDarkMode: isDarkMode }));
             documentEditorActiveRef.current = true;
             quickEditRuntimeActiveRef.current = false;
+            const probeSeq = deferredAssistantRuntimeProbeSeqRef.current += 1;
             documentHostToolbarUnsubscribeRef.current?.();
             documentHostToolbarUnsubscribeRef.current = editorApi.subscribeHostToolbarState?.((nextState) => {
                 setHostToolbarState((previousState) => resolveHostToolbarStateForDisplay(
@@ -1516,6 +1531,16 @@ export function useIndexPagePreviewActions(params: any) {
                 sidebarCollapsedBeforeWebEditorRef.current = collapsed;
             }
             setCollapsed(true);
+            startDeferredAssistantRuntimeProbe({
+                probeRuntime: probeAssistantRuntimeSilently,
+                isEditorActive: () => (
+                    documentEditorActiveRef.current
+                    && deferredAssistantRuntimeProbeSeqRef.current === probeSeq
+                ),
+                onRuntimeReady: () => {
+                    messageApi.success('已连接上本地 AI');
+                },
+            });
         } catch (error) {
             console.error('[Axhub] 启动文档编辑器失败:', error);
             messageApi.error('启动文档编辑器失败');
@@ -1768,18 +1793,20 @@ export function useIndexPagePreviewActions(params: any) {
         }
         try {
             standalonePanelBeforeQuickEditRef.current = standalonePanelOpen;
-            const runtime = await probeAssistantRuntimeSilently?.();
+            activePrototypeEditorLaunchOptionsRef.current = prototypeEditorLaunchOptions;
             const primaryIframe = getPrimaryPreviewIframe();
-            if (!await enterPrototypeEditor(primaryIframe, { runtime })) {
+            if (!await enterPrototypeEditor(primaryIframe)) {
+                activePrototypeEditorLaunchOptionsRef.current = null;
                 return;
             }
             if (previewConfig.previewMode === 'split') {
                 const secondaryIframe = getSecondaryPreviewIframe();
                 if (secondaryIframe?.contentWindow) {
-                    await enterPrototypeEditor(secondaryIframe, { showMissingWarning: false, runtime });
+                    await enterPrototypeEditor(secondaryIframe, { showMissingWarning: false });
                 }
             }
             quickEditRuntimeActiveRef.current = true;
+            const probeSeq = deferredAssistantRuntimeProbeSeqRef.current += 1;
             setStandalonePanelOpen(false);
             setEditorStatus({ mode: 'quickEdit' });
             refreshEditorStatus();
@@ -1787,7 +1814,27 @@ export function useIndexPagePreviewActions(params: any) {
                 sidebarCollapsedBeforeWebEditorRef.current = collapsed;
             }
             setCollapsed(true);
+            startDeferredAssistantRuntimeProbe({
+                probeRuntime: probeAssistantRuntimeSilently,
+                isEditorActive: () => (
+                    quickEditRuntimeActiveRef.current
+                    && deferredAssistantRuntimeProbeSeqRef.current === probeSeq
+                ),
+                onRuntimeReady: (runtime) => {
+                    messageApi.success('已连接上本地 AI');
+                    const nextPrimaryIframe = getPrimaryPreviewIframe();
+                    void enterPrototypeEditor(nextPrimaryIframe, { showMissingWarning: false, runtime });
+                    if (previewConfig.previewMode !== 'split') {
+                        return;
+                    }
+                    const nextSecondaryIframe = getSecondaryPreviewIframe();
+                    if (nextSecondaryIframe?.contentWindow) {
+                        void enterPrototypeEditor(nextSecondaryIframe, { showMissingWarning: false, runtime });
+                    }
+                },
+            });
         } catch (error) {
+            activePrototypeEditorLaunchOptionsRef.current = null;
             console.error('[Axhub] 启动编辑器失败:', error);
             messageApi.error('启动编辑器失败');
         }
@@ -1801,6 +1848,7 @@ export function useIndexPagePreviewActions(params: any) {
         messageApi,
         previewConfig,
         probeAssistantRuntimeSilently,
+        prototypeEditorLaunchOptions,
         projectCapabilities?.quickEdit,
         quickEditRuntimeStatus,
         refreshEditorStatus,
@@ -1815,6 +1863,7 @@ export function useIndexPagePreviewActions(params: any) {
     const handleExitWebEditor = useCallback(async (_options?: { restoreDevice?: boolean }) => {
         const shouldRestorePanelOnly = standalonePanelBeforeQuickEditRef.current;
         standalonePanelBeforeQuickEditRef.current = false;
+        activePrototypeEditorLaunchOptionsRef.current = null;
         try {
             getPreviewIframes().forEach((iframe) => {
                 exitQuickEditRuntime(iframe);
@@ -1940,6 +1989,7 @@ export function useIndexPagePreviewActions(params: any) {
         const hide = messageApi.loading('正在复制到 Figma...', 0);
         try {
             const result = await requestCopyToFigma();
+            await writeFigmaOfficialClipboardPayload(result.payloadText);
             void postProjectCommunicationRecord(selectedItem, 'exports', {
                 operationType: 'figma.copy',
                 status: 'success',

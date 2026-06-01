@@ -12,6 +12,7 @@ import { DEFAULT_MAKE_SERVER_PORT } from './src/server/defaults';
 import { releaseListeningProcessesOnPort } from './src/server/portOccupancy';
 
 const adminOutDir = path.resolve(__dirname, 'dist/admin');
+const FRESH_VENDOR_ALIAS_PACKAGES = new Set(['axhub-genie-editor']);
 const ADMIN_RUNTIME_ASSETS = [
   {
     source: 'assets/auto-debug-client.js',
@@ -59,16 +60,19 @@ function createVendorResolveAliases() {
   const generatedAliases = readJsonFile<{
     packages?: Array<{
       packageName?: string;
+      outputDirRelative?: string;
     }>;
   }>(path.resolve(__dirname, 'vendor/vendor-aliases.generated.json'));
 
   return (generatedAliases?.packages || []).flatMap((pkg) => {
-    if (!pkg.packageName) {
+    if (!pkg.packageName || !pkg.outputDirRelative) {
       return [];
     }
     return [{
       find: new RegExp(`^${pkg.packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
-      replacement: path.resolve(__dirname, 'node_modules', pkg.packageName),
+      replacement: FRESH_VENDOR_ALIAS_PACKAGES.has(pkg.packageName)
+        ? path.resolve(__dirname, pkg.outputDirRelative)
+        : path.resolve(__dirname, 'node_modules', pkg.packageName),
     }];
   });
 }

@@ -11,6 +11,7 @@ import type { ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import archiver from 'archiver';
 
 import { buildOnDemand } from './onDemandBuild.ts';
@@ -24,6 +25,7 @@ const OFFLINE_REACT_FILE = 'react.production.min.js';
 const OFFLINE_REACT_DOM_FILE = 'react-dom.production.min.js';
 const OFFLINE_BOOTSTRAP_FILE = 'export-html-bootstrap.js';
 const requireFromCurrentModule = createRequire(import.meta.url);
+const currentModuleDir = path.dirname(fileURLToPath(import.meta.url));
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -55,7 +57,7 @@ function findNodeModuleFileFrom(startDir: string, relativePath: string): string 
 }
 
 function resolveNodeModuleFile(projectRoot: string, relativePath: string): string {
-  const searchRoots = [projectRoot, process.cwd(), path.dirname(requireFromCurrentModule.resolve('./exportHtmlArchive.ts'))];
+  const searchRoots = [projectRoot, process.cwd(), currentModuleDir];
 
   for (const searchRoot of searchRoots) {
     const found = findNodeModuleFileFrom(searchRoot, relativePath);

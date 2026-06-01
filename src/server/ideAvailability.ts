@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync as nodeSpawnSync } from 'node:child_process';
 
 import { MAIN_IDE_VALUES, type MainIDE } from './ideOpen.ts';
+import { getIDEFileProtocolSchemes } from './ideProtocol.ts';
 
 export type IDEAvailabilityStatus = 'installed' | 'missing' | 'unknown';
 export type IDEAvailabilityConfidence = 'high' | 'low';
@@ -203,6 +204,38 @@ function resolveWindowsExecutableFromRegistry(
   return null;
 }
 
+function resolveWindowsProtocolRegistration(
+  schemes: string[],
+  spawnSync: SpawnSyncLike,
+): string | null {
+  const keyRoots = [
+    'HKCU\\Software\\Classes',
+    'HKLM\\Software\\Classes',
+    'HKLM\\Software\\WOW6432Node\\Classes',
+  ];
+
+  for (const scheme of schemes) {
+    const normalizedScheme = scheme.trim();
+    if (!normalizedScheme) continue;
+
+    for (const keyRoot of keyRoots) {
+      const query = spawnSync('reg', ['query', `${keyRoot}\\${normalizedScheme}\\shell\\open\\command`, '/ve'], {
+        encoding: 'utf8',
+        windowsHide: true,
+      });
+
+      if (query.error) {
+        throw query.error;
+      }
+      if (query.status === 0) {
+        return `${normalizedScheme}://`;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function createIDEAvailabilityDetector(options: IDEAvailabilityDetectorOptions = {}) {
   const platform = options.platform ?? process.platform;
   const homeDir = options.homeDir ?? os.homedir();
@@ -270,8 +303,16 @@ export function createIDEAvailabilityDetector(options: IDEAvailabilityDetectorOp
         });
       }
 
+      const protocolRegistration = resolveWindowsProtocolRegistration(getIDEFileProtocolSchemes(ide), spawnSync);
+      if (protocolRegistration) {
+        return createInfo('installed', 'high', checkedAt, {
+          source: 'windows-url-protocol',
+          path: protocolRegistration,
+        });
+      }
+
       return createInfo('missing', 'high', checkedAt, {
-        source: 'windows-where+registry',
+        source: 'windows-where+registry+protocol',
       });
     } catch (error: any) {
       return createInfo('unknown', 'low', checkedAt, {

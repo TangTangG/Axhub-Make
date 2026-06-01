@@ -5,6 +5,7 @@ import {
   createDefaultHostToolbarState,
   getClientUrlOrigin,
   resolveHostToolbarStateForDisplay,
+  startDeferredAssistantRuntimeProbe,
   waitForHostToolbarActionState,
 } from './previewActions.helpers';
 
@@ -109,5 +110,29 @@ describe('previewActions.helpers', () => {
 
     await expect(waitPromise).resolves.toEqual(awakeState);
     vi.useRealTimers();
+  });
+
+  it('runs assistant runtime probing in the background and reports readiness later', async () => {
+    let resolveProbe: ((value: unknown) => void) | null = null;
+    const events: string[] = [];
+
+    startDeferredAssistantRuntimeProbe({
+      probeRuntime: () => new Promise((resolve) => {
+        resolveProbe = resolve;
+      }),
+      isEditorActive: () => true,
+      onRuntimeReady: () => {
+        events.push('ready');
+      },
+    });
+    events.push('after-start');
+
+    expect(events).toEqual(['after-start']);
+
+    resolveProbe?.({ health: { status: 'ready' } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(events).toEqual(['after-start', 'ready']);
   });
 });

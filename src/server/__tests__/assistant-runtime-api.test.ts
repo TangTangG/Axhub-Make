@@ -159,6 +159,8 @@ async function startRedirectingAssistantServer(redirectLocation: string) {
 }
 
 function writeProjectMetadata(projectRoot: string, id = 'assistant-client') {
+  writeMakeClientMarker(projectRoot, id);
+  writeMakeClientPackage(projectRoot);
   writeJson(getProjectMetadataPath(projectRoot), {
     schemaVersion: 1,
     project: { id, name: 'Assistant Client' },
