@@ -2960,4 +2960,70 @@ describe('make-server make client project APIs', () => {
       await server.close();
     }
   });
+
+  it('registers an extracted make client project without installed dependencies', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-extracted-');
+    writeMakeClientMarker(projectRoot, 'extracted-client', 'Extracted Client');
+    writeMakeClientPackage(projectRoot);
+    fs.mkdirSync(path.join(projectRoot, 'src', 'prototypes', 'from-zip'), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectRoot, 'src', 'prototypes', 'from-zip', 'index.tsx'),
+      '/** @name From Zip */\nexport default function FromZip() { return null; }\n',
+      'utf8',
+    );
+    fs.rmSync(path.join(projectRoot, 'node_modules'), { recursive: true, force: true });
+    fs.rmSync(getProjectMetadataPath(projectRoot), { force: true });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      const registerBody = await registerResponse.json();
+
+      expect(registerResponse.status).toBe(201);
+      expect(registerBody.project).toMatchObject({
+        id: 'extracted-client',
+        name: 'Extracted Client',
+        root: projectRoot,
+      });
+      expect(fs.existsSync(path.join(projectRoot, 'node_modules'))).toBe(false);
+
+      const activeResponse = await fetch(`${server.origin}/api/projects/active`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'extracted-client' }),
+      });
+      expect(activeResponse.status).toBe(200);
+
+      const resourcesResponse = await fetch(`${server.origin}/api/projects/extracted-client/resources`);
+      const resourcesBody = await resourcesResponse.json();
+
+      expect(resourcesResponse.status).toBe(200);
+      expect(resourcesBody.project).toEqual({ id: 'extracted-client', name: 'Extracted Client' });
+      expect(resourcesBody.resources.prototypes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'from-zip',
+          title: 'From Zip',
+          clientUrl: '/prototypes/from-zip',
+        }),
+      ]));
+      expect(fs.existsSync(getProjectMetadataPath(projectRoot))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'node_modules'))).toBe(false);
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
+        expect.stringMatching(/^(?:npm|npm\.cmd|pnpm)$/u),
+        expect.arrayContaining([expect.stringMatching(/^install$/u)]),
+        expect.any(Object),
+      );
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
 });
