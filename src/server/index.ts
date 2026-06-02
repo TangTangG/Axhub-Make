@@ -451,6 +451,15 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
     releaseListeningProcessesOnPort(requestedPort);
   }
 
+  // Prepare Vite middleware before accepting connections. Otherwise a browser
+  // reload during a tsx restart can hit the dev server before Vite is attached
+  // and get the JSON API fallback for the admin root page.
+  if (devMode) {
+    const { createViteDevMiddleware } = await import('./viteDevServer.ts');
+    viteMiddleware = await createViteDevMiddleware(server, makeServerRoot);
+    console.log('Vite HMR middleware attached (frontend hot reload enabled)');
+  }
+
   const actualPort = await listen(server, requestedPort, host);
   origin = `http://${resolvePublicOriginHost(host)}:${actualPort}`;
   adminServerInfo = {
@@ -467,14 +476,6 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
     if (makeStateHealth.ok) {
       throw error;
     }
-  }
-
-  // Initialize Vite dev middleware after the HTTP server is listening,
-  // so Vite can attach its HMR WebSocket to the same server.
-  if (devMode) {
-    const { createViteDevMiddleware } = await import('./viteDevServer.ts');
-    viteMiddleware = await createViteDevMiddleware(server, makeServerRoot);
-    console.log('Vite HMR middleware attached (frontend hot reload enabled)');
   }
 
   if (lanHost !== 'localhost') {

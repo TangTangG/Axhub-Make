@@ -16174,7 +16174,7 @@ var PropertyPanelView = import_react16.default.forwardRef(
       effectiveVisualState
     } = deriveGenieUiState({
       currentTarget,
-      visualState: genieVisualState,
+      visualState: uiSettings.genieAwake ? "awake" : genieVisualState,
       getElementGenieTaskState: options.getElementGenieTaskState,
       getVisibleElementGenieTaskStates: options.getVisibleElementGenieTaskStates,
       getHasReusableGenieConversation: options.getHasReusableGenieConversation,

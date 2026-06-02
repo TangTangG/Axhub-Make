@@ -52,6 +52,7 @@ function buildConfigBootstrapResponse(params: {
     assistant: params.serverConfig.assistant,
     ai: params.serverConfig.ai,
     uiPreferences: params.serverConfig.uiPreferences,
+    toolOpenState: params.serverConfig.toolOpenState,
     projectPath: params.activeProjectRoot,
     projectId: params.activeProject.id,
   };
@@ -151,7 +152,7 @@ export function handleConfigApi(
           const currentProjectConfig = handlers.readProjectConfig(requestProjectRoot);
           nextConfig.server = currentProjectConfig.server || { host: 'localhost', allowLAN: true };
         }
-        if (nextConfig.automation || nextConfig.assistant || nextConfig.ai || nextConfig.uiPreferences) {
+        if (nextConfig.automation || nextConfig.assistant || nextConfig.ai || nextConfig.uiPreferences || nextConfig.toolOpenState) {
           serverConfigStore.saveConfig({
             ...(nextConfig.automation && typeof nextConfig.automation === 'object'
               ? { automation: nextConfig.automation }
@@ -164,6 +165,9 @@ export function handleConfigApi(
               : {}),
             ...(nextConfig.uiPreferences && typeof nextConfig.uiPreferences === 'object'
               ? { uiPreferences: nextConfig.uiPreferences }
+              : {}),
+            ...(nextConfig.toolOpenState && typeof nextConfig.toolOpenState === 'object'
+              ? { toolOpenState: nextConfig.toolOpenState }
               : {}),
           });
         }
@@ -215,6 +219,7 @@ export function handleConfigApi(
       assistant: serverConfig.assistant,
       ai: serverConfig.ai,
       uiPreferences: serverConfig.uiPreferences,
+      toolOpenState: serverConfig.toolOpenState,
       ideAvailability,
       agentAvailability,
       projectPath: requestProjectRoot,

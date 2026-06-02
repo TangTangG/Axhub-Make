@@ -355,7 +355,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       effectiveVisualState,
     } = deriveGenieUiState({
       currentTarget,
-      visualState: genieVisualState,
+      visualState: uiSettings.genieAwake ? 'awake' : genieVisualState,
       getElementGenieTaskState: options.getElementGenieTaskState,
       getVisibleElementGenieTaskStates: options.getVisibleElementGenieTaskStates,
       getHasReusableGenieConversation: options.getHasReusableGenieConversation,

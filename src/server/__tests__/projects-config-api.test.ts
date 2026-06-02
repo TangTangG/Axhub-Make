@@ -12,6 +12,7 @@ import {
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
+  registerProject,
   startTestServer,
   writeJson,
   writeProjectMetadata,
@@ -22,6 +23,22 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanupProjectApiTestRoots();
 });
+
+async function startRegisteredConfigTestServer(
+  projectRoot: string,
+  registryHome: string,
+  projectId: string,
+  projectName = projectId,
+) {
+  const server = await startTestServer(projectRoot, registryHome);
+  try {
+    await registerProject(server.origin, projectRoot, projectId, projectName);
+    return server;
+  } catch (error) {
+    await server.close();
+    throw error;
+  }
+}
 
 describe('make-server project config APIs', () => {
   it('exposes config handling from its domain module', () => {
@@ -46,7 +63,7 @@ describe('make-server project config APIs', () => {
       },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
-    const server = await startTestServer(projectRoot, registryHome);
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'config-client', 'Config Client');
 
     try {
       const legacyConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
@@ -136,6 +153,7 @@ describe('make-server project config APIs', () => {
           excalidrawPropertyPanelMode: 'collapsed',
           excalidrawPropertyPanelPosition: 'right',
         },
+        toolOpenState: {},
       });
 
       const nextConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
@@ -180,7 +198,7 @@ describe('make-server project config APIs', () => {
       projectInfo: { name: 'Canvas UI Client' },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
-    const server = await startTestServer(projectRoot, registryHome);
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'canvas-ui-client', 'Canvas UI Client');
 
     try {
       const defaultConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
@@ -243,7 +261,7 @@ describe('make-server project config APIs', () => {
       projectDefaults: { defaultTheme: 'brand' },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
-    const server = await startTestServer(projectRoot, registryHome);
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'bootstrap-client', 'Bootstrap Client');
 
     try {
       const bootstrap = await fetch(`${server.origin}/api/config/bootstrap`).then((response) => response.json());
@@ -289,7 +307,7 @@ describe('make-server project config APIs', () => {
       projectDefaults: { defaultTheme: 'brand' },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
-    const server = await startTestServer(projectRoot, registryHome);
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'preferences-client', 'Preferences Client');
 
     try {
       const saved = await fetch(`${server.origin}/api/config`, {
@@ -324,6 +342,60 @@ describe('make-server project config APIs', () => {
     }
   });
 
+  it('normalizes and persists hidden tool open state in global server config', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'tool-state-client', name: 'Tool State Client' },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+      projectInfo: { name: 'Tool State Client' },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'tool-state-client', 'Tool State Client');
+
+    try {
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toolOpenState: {
+            'ide:cursor': {
+              executablePath: '  C:\\Users\\demo\\Cursor.exe  ',
+              lastOpenMode: 'direct-app',
+            },
+            'cli:codex': {
+              commandPath: '/usr/local/bin/codex',
+              lastOpenMode: 'terminal',
+            },
+            'bad key': {
+              executablePath: 'ignore-me',
+              lastOpenMode: 'direct-app',
+            },
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
+      expect(serverConfig.toolOpenState).toEqual({
+        'ide:cursor': {
+          executablePath: 'C:\\Users\\demo\\Cursor.exe',
+          lastOpenMode: 'direct-app',
+        },
+        'cli:codex': {
+          commandPath: '/usr/local/bin/codex',
+          lastOpenMode: 'terminal',
+        },
+      });
+
+      const nextConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(nextConfig.toolOpenState).toEqual(serverConfig.toolOpenState);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('saves AI image generation settings to global server config', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
@@ -334,7 +406,7 @@ describe('make-server project config APIs', () => {
       projectInfo: { name: 'AI Settings Client' },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
-    const server = await startTestServer(projectRoot, registryHome);
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'ai-settings-client', 'AI Settings Client');
 
     try {
       const saved = await fetch(`${server.origin}/api/config`, {
@@ -409,7 +481,9 @@ describe('make-server project config APIs', () => {
       'base_url = "https://codex.example.com/v1"',
       'wire_api = "responses"',
     ].join('\n'), 'utf8');
-    const server = await startTestServer(projectRoot, registryHome);
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'codex-local-config-client', 'Codex Local Config Client');
 
     try {
       const result = await fetch(`${server.origin}/api/config/ai-image/codex-local`).then(async (response) => ({
@@ -433,6 +507,11 @@ describe('make-server project config APIs', () => {
       expect(result.body.discovery.configFiles).toEqual([path.join(codexHome, 'config.toml')]);
       expect(result.body.discovery.authFile).toBe(path.join(codexHome, 'auth.json'));
     } finally {
+      if (previousCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = previousCodexHome;
+      }
       await server.close();
     }
   });
@@ -447,7 +526,7 @@ describe('make-server project config APIs', () => {
       projectInfo: { name: null, description: 'Description' },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
-    const server = await startTestServer(projectRoot, registryHome);
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'empty-name-client', '');
 
     try {
       const initialConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
@@ -505,7 +584,7 @@ describe('make-server project config APIs', () => {
       projectInfo: { name: 'Axhub Make', description: 'Description' },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
-    const server = await startTestServer(projectRoot, registryHome);
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'make-project', 'Axhub Make');
 
     try {
       const initialConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
