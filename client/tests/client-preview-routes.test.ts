@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer as createViteServer, type ViteDevServer } from 'vite';
 
 import { writeServerInfo } from '../scripts/utils/serverInfo.mjs';
@@ -16,6 +16,7 @@ const tempRoots: string[] = [];
 const viteServers: ViteDevServer[] = [];
 const httpServers: http.Server[] = [];
 const originalFetch = globalThis.fetch;
+const originalMakeHomeDir = process.env.AXHUB_MAKE_HOME_DIR;
 const requireFromTest = createRequire(import.meta.url);
 
 function writeFile(filePath: string, content: string) {
@@ -46,6 +47,12 @@ function createFixtureProject() {
   return root;
 }
 
+function createTempMakeHome() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'make-project-preview-home-'));
+  tempRoots.push(root);
+  process.env.AXHUB_MAKE_HOME_DIR = root;
+}
+
 function createMockPreviewServer() {
   let middleware: any;
   const server = {
@@ -62,9 +69,18 @@ function createMockPreviewServer() {
   };
 }
 
+beforeEach(() => {
+  createTempMakeHome();
+});
+
 afterEach(() => {
   process.chdir(originalCwd);
   globalThis.fetch = originalFetch;
+  if (originalMakeHomeDir === undefined) {
+    delete process.env.AXHUB_MAKE_HOME_DIR;
+  } else {
+    process.env.AXHUB_MAKE_HOME_DIR = originalMakeHomeDir;
+  }
   vi.restoreAllMocks();
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });

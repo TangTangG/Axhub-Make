@@ -1,23 +1,29 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const MAKE_STATE_DIR = path.join('.axhub', 'make');
 const RUNTIME_SERVER_INFO_RELATIVE_PATH = path.join(MAKE_STATE_DIR, '.dev-server-info.json');
 const ADMIN_SERVER_INFO_RELATIVE_PATH = path.join(MAKE_STATE_DIR, '.admin-server-info.json');
+const MAKE_HOME_DIR_ENV = 'AXHUB_MAKE_HOME_DIR';
 
 function resolveProjectRoot(projectRoot) {
   return path.resolve(projectRoot);
 }
 
 function getServerInfoPath(projectRoot, role) {
-  return path.join(
-    resolveProjectRoot(projectRoot),
-    role === 'runtime' ? RUNTIME_SERVER_INFO_RELATIVE_PATH : ADMIN_SERVER_INFO_RELATIVE_PATH,
-  );
+  if (role === 'admin') {
+    return getAdminServerInfoPath();
+  }
+  return path.join(resolveProjectRoot(projectRoot), RUNTIME_SERVER_INFO_RELATIVE_PATH);
 }
 
-export function getAdminServerInfoPath(projectRoot) {
-  return getServerInfoPath(projectRoot, 'admin');
+function getGlobalHomeDir(options = {}) {
+  return options.homeDir || process.env[MAKE_HOME_DIR_ENV] || os.homedir();
+}
+
+export function getAdminServerInfoPath(_projectRoot, options = {}) {
+  return path.join(path.resolve(getGlobalHomeDir(options)), ADMIN_SERVER_INFO_RELATIVE_PATH);
 }
 
 export function getRuntimeServerInfoPath(projectRoot) {
@@ -48,8 +54,10 @@ function normalizeServerInfo(data) {
   };
 }
 
-export function readServerInfo(projectRoot, role) {
-  const infoPath = getServerInfoPath(projectRoot, role);
+export function readServerInfo(projectRoot, role, options = {}) {
+  const infoPath = role === 'admin'
+    ? getAdminServerInfoPath(projectRoot, options)
+    : getServerInfoPath(projectRoot, role);
   if (!fs.existsSync(infoPath)) {
     return null;
   }
@@ -60,12 +68,14 @@ export function readServerInfo(projectRoot, role) {
   }
 }
 
-export function writeServerInfo(projectRoot, role, info) {
+export function writeServerInfo(projectRoot, role, info, options = {}) {
   const normalized = {
     ...info,
     projectRoot: resolveProjectRoot(info.projectRoot),
   };
-  const infoPath = getServerInfoPath(projectRoot, role);
+  const infoPath = role === 'admin'
+    ? getAdminServerInfoPath(projectRoot, options)
+    : getServerInfoPath(projectRoot, role);
   fs.mkdirSync(path.dirname(infoPath), { recursive: true });
   fs.writeFileSync(infoPath, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
   return normalized;

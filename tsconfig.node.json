@@ -9,5 +9,12 @@
     "allowSyntheticDefaultImports": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["vite.config.ts", "src/server/**/*", "src/chunking/manualChunks.ts", "src/chunking/adminAssetStamping.ts"]
+  "include": [
+    "vite.config.ts",
+    "src/server/**/*",
+    "src/common/makeClientTemplate.ts",
+    "src/chunking/excalidrawDevCjsInterop.ts",
+    "src/chunking/manualChunks.ts",
+    "src/chunking/adminAssetStamping.ts"
+  ]
 }

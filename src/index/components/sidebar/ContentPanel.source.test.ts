@@ -140,6 +140,44 @@ describe('ContentPanel make client project setup source', () => {
     expect(menuSource).toContain('focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none');
   });
 
+  it('uses beginner-friendly project setup copy and exposes template download links', () => {
+    const source = readContentPanelSource();
+    const menuSource = source.slice(
+      source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? ('),
+      source.indexOf('</div>', source.indexOf('下载客户端包')),
+    );
+    const existingOptionStart = source.indexOf('data-project-setup-option="existing"');
+    const existingOptionSource = source.slice(
+      existingOptionStart,
+      source.indexOf('</div>', existingOptionStart),
+    );
+
+    expect(source).toContain("import { makeClientTemplateMirrorDownloadUrl, makeClientTemplatePrimaryDownloadUrl } from '../../../common/makeClientTemplate';");
+    expect(source).toContain('const primaryTemplateDownloadUrl = makeClientTemplatePrimaryDownloadUrl();');
+    expect(source).toContain('const mirrorTemplateDownloadUrl = makeClientTemplateMirrorDownloadUrl();');
+    expect(source).toContain('function stopProjectSetupLinkPropagation(event: React.SyntheticEvent)');
+    expect(source).toContain('data-project-setup-option="existing"');
+    expect(menuSource).toContain('快速新建项目');
+    expect(menuSource).toContain('从空白一键创建项目，系统会自动准备好基础项目，新手优先使用，不需要自己下载。');
+    expect(menuSource).toContain('选择已有项目');
+    expect(menuSource).toContain('已有项目可直接选择文件夹导入；没有客户端包可先');
+    expect(menuSource).toContain('下载客户端包');
+    expect(menuSource).toContain('打不开可用');
+    expect(menuSource).toContain('备用下载');
+    expect(menuSource).not.toContain('<br />');
+    expect(existingOptionSource).toContain('下载客户端包');
+    expect(existingOptionSource).toContain('备用下载');
+    expect(existingOptionSource).not.toContain('主源下载');
+    expect(existingOptionSource).not.toContain('主源下载地址');
+    expect(existingOptionSource).not.toContain('备用源下载地址');
+    expect(existingOptionSource).toContain('primaryTemplateDownloadUrl');
+    expect(existingOptionSource).toContain('mirrorTemplateDownloadUrl');
+    expect(existingOptionSource.match(/onClick=\{stopProjectSetupLinkPropagation\}/gu)).toHaveLength(2);
+    expect(existingOptionSource.match(/onKeyDown=\{stopProjectSetupLinkPropagation\}/gu)).toHaveLength(2);
+    expect(menuSource).not.toContain('仓库');
+    expect(menuSource).not.toContain('开发服务');
+  });
+
   it('uses the in-app folder browser for project setup paths without exposing folder creation', () => {
     const source = readContentPanelSource();
     const browserSource = source.slice(

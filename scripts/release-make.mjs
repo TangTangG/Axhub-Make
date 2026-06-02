@@ -29,7 +29,7 @@ const templateManifestPath = path.join(templateReleaseRoot, 'manifest.json');
 const canvasFigSyncSource = path.join(makeServerRoot, 'vendor/axhub-export-core/scripts/canvas-fig-sync.mjs');
 const makeClientTemplateSourceDir = path.join(makeServerRoot, 'client');
 const makeClientTemplatePackageJsonPath = path.join(makeClientTemplateSourceDir, 'package.json');
-const makeClientProjectSourcePath = path.join(makeServerRoot, 'src/server/makeClientProject.ts');
+const makeClientTemplateSourcePath = path.join(makeServerRoot, 'src/common/makeClientTemplate.ts');
 const makeClientTemplateZipName = 'axhub-make-client-template.zip';
 const includeOpenCodeWebUi = false;
 const npmPackagePackedSizeLimit = 35 * 1024 * 1024;
@@ -336,7 +336,7 @@ function readMakeClientTemplateVersion() {
 }
 
 export function syncDefaultMakeClientTemplateVersion({
-  sourceFile = makeClientProjectSourcePath,
+  sourceFile = makeClientTemplateSourcePath,
   templateVersion,
 } = {}) {
   const normalizedVersion = normalizeTemplateVersion(templateVersion);

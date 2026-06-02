@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const childProcessMock = vi.hoisted(() => ({
   spawn: vi.fn(),
@@ -34,11 +34,18 @@ import {
 
 const originalFetch = globalThis.fetch;
 const tempRoots: string[] = [];
+const originalMakeHomeDir = process.env.AXHUB_MAKE_HOME_DIR;
 
 function createTempProjectRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'make-project-auto-server-'));
   tempRoots.push(root);
   return root;
+}
+
+function createTempMakeHome() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'make-project-auto-server-home-'));
+  tempRoots.push(root);
+  process.env.AXHUB_MAKE_HOME_DIR = root;
 }
 
 function writeClientMarker(projectRoot: string, project: { id?: string; name?: string }) {
@@ -83,8 +90,17 @@ function createSpawnChild() {
   return child;
 }
 
+beforeEach(() => {
+  createTempMakeHome();
+});
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  if (originalMakeHomeDir === undefined) {
+    delete process.env.AXHUB_MAKE_HOME_DIR;
+  } else {
+    process.env.AXHUB_MAKE_HOME_DIR = originalMakeHomeDir;
+  }
   vi.restoreAllMocks();
   childProcessMock.spawn.mockReset();
   for (const root of tempRoots.splice(0)) {

@@ -14,7 +14,7 @@
 不在本轮 vendor 范围内的依赖：
 
 - `@axhub/project-core`：server 侧已经完成清理和本地化，不再作为 vendor 包处理。
-- `@axhub/annotation`：只由 `client` 使用，并且已经发布为 npm 包，client 直接依赖 `@axhub/annotation@^1.0.0`。
+- `@axhub/annotation`：只由 `client` 使用，并且已经发布为 npm 包，client 直接依赖 `@axhub/annotation@^1.0.3`。
 
 ## 更新方式
 
@@ -31,6 +31,8 @@ pnpm --filter @axhub/make vendor:sync
 3. 生成 vendor alias 和 TypeScript path metadata。
 
 `@axhub/make` 的 `dev`、`build`、`server:build`、`test` 等脚本，以及 `@axhub/make-client` 的 `dev`、`build`、`typecheck`、`test` 等脚本，都会先执行 `vendor:sync`，确保本地开发和构建使用最新 vendor 产物。
+
+`@axhub/annotation` 不走 vendor 流程。升级这类 client npm 依赖时，应先发布对应 npm 版本，再在本仓库根目录运行 `pnpm install --lockfile-only --filter @axhub/make-client` 同步 `client` 依赖锁定。
 
 ## 发布仓库行为
 

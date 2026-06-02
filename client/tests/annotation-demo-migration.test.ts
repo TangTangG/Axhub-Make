@@ -6,21 +6,53 @@ import { describe, expect, it } from 'vitest';
 const { buildMakeProjectMetadata } = await import('../scripts/sync-project-metadata.mjs');
 
 const appRoot = path.resolve(__dirname, '..');
+const makeRoot = path.resolve(appRoot, '..');
+const workspaceRoot = path.resolve(makeRoot, '../..');
 const demoRoot = path.join(appRoot, 'src/prototypes/annotation-demo');
 
 describe('annotation demo migration', () => {
-  it('uses the published annotation runtime instead of a local workspace alias', () => {
+  it('uses the published annotation runtime at 1.0.3', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
     const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
     const tsconfig = JSON.parse(fs.readFileSync(path.join(appRoot, 'tsconfig.base.json'), 'utf8'));
 
-    expect(packageJson.dependencies?.['@axhub/annotation']).toBe('^1.0.0');
+    expect(packageJson.dependencies?.['@axhub/annotation']).toBe('^1.0.3');
     expect(packageJson.dependencies).not.toHaveProperty('@axhub/play-client');
-    expect(viteConfig).not.toContain('packages/axhub-annotation');
     expect(viteConfig).not.toContain("exclude: ['@axhub/annotation']");
     expect(viteConfig).not.toContain("include: [\n        '@ant-design/icons',\n        'antd',\n        'axhub-annotation',");
     expect(viteConfig).not.toContain("'axhub-annotation'");
     expect(tsconfig.compilerOptions.paths).not.toHaveProperty('@axhub/annotation');
+  });
+
+  it('deduplicates React while using the published annotation runtime', () => {
+    const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
+    const dedupeMatch = viteConfig.match(/dedupe:\s*\[([\s\S]*?)\]/);
+
+    expect(dedupeMatch?.[1]).toBeTruthy();
+    for (const reactDependency of [
+      'react',
+      'react-dom',
+      'react/jsx-runtime',
+      'react/jsx-dev-runtime',
+    ]) {
+      expect(dedupeMatch?.[1]).toContain(`'${reactDependency}'`);
+    }
+  });
+
+  it('locks the annotation runtime to the published 1.0.3 package in workspace lockfiles', () => {
+    const lockfiles = [
+      fs.readFileSync(path.join(workspaceRoot, 'pnpm-lock.yaml'), 'utf8'),
+      fs.readFileSync(path.join(makeRoot, 'pnpm-lock.yaml'), 'utf8'),
+    ];
+
+    for (const lockfile of lockfiles) {
+      expect(lockfile).toContain("'@axhub/annotation':");
+      expect(lockfile).toContain('specifier: ^1.0.3');
+      expect(lockfile).toContain("'@axhub/annotation@1.0.3':");
+      expect(lockfile).not.toContain('file:../../../packages/axhub-annotation');
+      expect(lockfile).not.toContain('link:../../../packages/axhub-annotation');
+      expect(lockfile).not.toContain("'@axhub/annotation@1.0.2':");
+    }
   });
 
   it('keeps the migrated annotation demo self-contained in prototypes', () => {
@@ -39,6 +71,8 @@ describe('annotation demo migration', () => {
     expect(indexSource).toContain('<AnnotationViewer');
     expect(annotationSource.format).toBe('axhub-annotation-source');
     expect(annotationSource.markdownMap).toHaveProperty('prototype-as-prd');
+    expect(annotationSource.markdownMap['prototype-as-prd']).toContain('| 对比维度 |');
+    expect(annotationSource.markdownMap['prototype-as-prd']).toContain('| 传统 PRD |');
   });
 
   it('does not expose the retired annotation display-mode controls in demos', () => {

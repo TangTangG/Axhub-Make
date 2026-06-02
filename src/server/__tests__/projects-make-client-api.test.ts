@@ -20,6 +20,7 @@ import {
   createZipFromDirectory,
   createTempRoot,
   getTestProjectRegistryPath,
+  registerProject,
   startTestServer,
   writeJson,
   writeProjectMetadata,
@@ -78,7 +79,7 @@ import { runLocalCommand } from '../localCommand.ts';
 
 const runLocalCommandMock = vi.mocked(runLocalCommand);
 
-const DEFAULT_TEMPLATE_VERSION = '0.1.2';
+const DEFAULT_TEMPLATE_VERSION = '0.1.3';
 const TEMPLATE_ZIP_URL = `https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v${DEFAULT_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
 const TEMPLATE_MIRROR_ZIP_URL = `https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v${DEFAULT_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
 const TEMPLATE_MIRROR_SOURCE_URL = 'https://gitee.com/axhub/Axhub-Make/tree/main/client';
@@ -2838,11 +2839,34 @@ describe('make-server make client project APIs', () => {
     }
   });
 
-  it('rejects unsafe or non-empty blank project target folders', async () => {
+  it('rejects unsafe or existing blank project target folders', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot);
     const parentRoot = createTempRoot('axhub-make-parent-');
     const server = await startTestServer(defaultRoot);
+    installRemoteTemplateCommandMock();
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeMakeClientMetadata(targetRoot, path.basename(targetRoot), path.basename(targetRoot));
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51721,
+        host: 'localhost',
+        origin: 'http://localhost:51721',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
 
     try {
       const unsafe = await fetch(`${server.origin}/api/projects/make/create`, {
@@ -2853,6 +2877,19 @@ describe('make-server make client project APIs', () => {
 
       expect(unsafe.status).toBe(400);
       expect(unsafe.body).toMatchObject({ code: 'INVALID_MAKE_PROJECT_FOLDER_NAME' });
+
+      const emptyRoot = path.join(parentRoot, 'empty-client');
+      fs.mkdirSync(emptyRoot, { recursive: true });
+
+      const empty = await fetch(`${server.origin}/api/projects/make/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentRoot, folderName: 'empty-client' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(empty.status).toBe(409);
+      expect(empty.body).toMatchObject({ code: 'MAKE_PROJECT_TARGET_NOT_EMPTY' });
+      expect(fs.existsSync(getMakeClientMarkerPath(emptyRoot))).toBe(false);
 
       const existingRoot = path.join(parentRoot, 'existing-client');
       fs.mkdirSync(existingRoot, { recursive: true });
@@ -2903,6 +2940,7 @@ describe('make-server make client project APIs', () => {
     });
 
     try {
+      await registerProject(server.origin, defaultRoot, 'default-client', 'Default Client');
       await fetch(`${server.origin}/api/projects/make/register-existing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -351,7 +351,7 @@ function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult
   if (!executablePath) {
     const command = `powershell -NoProfile -Command Start-Process -FilePath ${quoteForPowerShellSingle(appPathNames[0] || ideAppName)} -ArgumentList ${quoteForPowerShellSingle(targetPath)} -ErrorAction Stop`;
     return tryOpenWindowsIDEByAppPathNames(appPathNames, targetPath).then(() => ({
-      success: true,
+      success: true as const,
       ide,
       targetPath,
       command,
@@ -364,7 +364,7 @@ function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult
     windowsHide: spawnSpec.windowsHide,
     commandLabel: executablePath,
   }).then(() => ({
-    success: true,
+    success: true as const,
     ide,
     targetPath,
     command: `${quoteForShell(executablePath)} ${quoteForShell(targetPath)}`,

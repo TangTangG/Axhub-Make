@@ -35,9 +35,6 @@ importers:
       '@assistant-ui/react-ui':
         specifier: ^0.2.1
         version: 0.2.1(@assistant-ui/react-markdown@0.14.0(@assistant-ui/react@0.14.7(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(immer@11.1.3)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)(use-sync-external-store@1.6.0(react@18.2.0)))(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@18.2.0(react@18.2.0))(react@18.2.0))(@assistant-ui/react@0.14.7(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(immer@11.1.3)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)(use-sync-external-store@1.6.0(react@18.2.0)))(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(immer@11.1.3)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)(use-sync-external-store@1.6.0(react@18.2.0))
-      '@axhub/annotation':
-        specifier: link:../../packages/axhub-annotation
-        version: link:../../packages/axhub-annotation
       '@axhub/excalidraw':
         specifier: file:vendor/axhub-excalidraw
         version: file:vendor/axhub-excalidraw(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(immer@11.1.3)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
@@ -289,8 +286,8 @@ importers:
   client:
     dependencies:
       '@axhub/annotation':
-        specifier: ^1.0.2
-        version: 1.0.2(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+        specifier: ^1.0.3
+        version: 1.0.3(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       lucide-react:
         specifier: ^0.562.0
         version: 0.562.0(react@18.2.0)
@@ -488,8 +485,8 @@ packages:
       react:
         optional: true
 
-  '@axhub/annotation@1.0.2':
-    resolution: {integrity: sha512-LU1P6p1jV8Zs5jUMwT7VmkalIfgwDnP3wolFmJgyvm6t2qAjpcArF1vu1Kb2WBVyodP2zXcKNuVF2vBvzrm2OA==}
+  '@axhub/annotation@1.0.3':
+    resolution: {integrity: sha512-pMmtbK0b/AGNi+IzTgznD5yNdeB6DetfvgPKCBZrMUw//Id51GrD3Vte/TGEsl70cwnXnM/a25xm8qnGbXYNyQ==}
     peerDependencies:
       react: 18.2.0
       react-dom: 18.2.0
@@ -6307,7 +6304,7 @@ snapshots:
       '@types/react': 18.3.27
       react: 18.2.0
 
-  '@axhub/annotation@1.0.2(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)':
+  '@axhub/annotation@1.0.3(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)':
     dependencies:
       '@ant-design/cssinjs': 2.1.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       '@ant-design/icons': 6.1.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0)

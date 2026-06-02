@@ -25,7 +25,7 @@ describe('localDirectoryPicker', () => {
   it('uses a PowerShell folder browser on Windows', async () => {
     const command = buildLocalDirectoryPickerCommand({
       platform: 'win32',
-      prompt: '选择新建 Make 项目的父目录',
+      prompt: '选择新建 Make 项目的所在位置',
     });
 
     expect(command?.command).toBe('powershell.exe');

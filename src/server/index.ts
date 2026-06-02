@@ -8,6 +8,7 @@ import { getCanvasBridgeHub, isCanvasBridgeUpgrade } from './canvasBridge.ts';
 
 import {
   getConfigPath,
+  getGlobalMakeStateDir,
   readServerInfo,
   writeServerInfo,
 } from './projectCore/index.ts';
@@ -31,6 +32,7 @@ export interface StartMakeServerOptions {
   adminRoot?: string;
   opencodeWebUiRoot?: string;
   registryPath?: string;
+  serverInfoHomeDir?: string;
   devMode?: boolean;
   cloudPublishingCommandExecutor?: CommandExecutor;
 }
@@ -74,7 +76,10 @@ export function resolveDefaultAdminRoot(options: ResolveDefaultAdminRootOptions 
   return candidates.find((candidate) => exists(candidate)) || candidates[2];
 }
 
-function readProjectLANAccessAllowed(projectRoot: string): boolean {
+function readProjectLANAccessAllowed(projectRoot?: string | null): boolean {
+  if (!projectRoot) {
+    return true;
+  }
   const configPath = getConfigPath(projectRoot);
   if (!fs.existsSync(configPath)) {
     return true;
@@ -88,7 +93,7 @@ function readProjectLANAccessAllowed(projectRoot: string): boolean {
 }
 
 export interface ResolveMakeServerListenHostOptions {
-  projectRoot: string;
+  projectRoot?: string | null;
   explicitHost?: string;
 }
 
@@ -97,7 +102,7 @@ export function resolveMakeServerListenHost(options: ResolveMakeServerListenHost
   if (explicitHost) {
     return explicitHost;
   }
-  return readProjectLANAccessAllowed(path.resolve(options.projectRoot)) ? '0.0.0.0' : 'localhost';
+  return readProjectLANAccessAllowed(options.projectRoot ? path.resolve(options.projectRoot) : null) ? '0.0.0.0' : 'localhost';
 }
 
 function resolvePublicOriginHost(host: string): string {
@@ -121,9 +126,12 @@ function listen(server: http.Server, port: number, host: string): Promise<number
   });
 }
 
-function resolveRuntimeOrigin(projectRoot: string, explicitRuntimeOrigin?: string): string | undefined {
+function resolveRuntimeOrigin(projectRoot?: string | null, explicitRuntimeOrigin?: string): string | undefined {
   if (explicitRuntimeOrigin) {
     return explicitRuntimeOrigin;
+  }
+  if (!projectRoot) {
+    return undefined;
   }
   return readServerInfo(projectRoot, 'runtime')?.origin;
 }
@@ -160,14 +168,16 @@ function resolveOpenCodeWebUiRoot(adminRoot: string, explicitRoot?: string): str
 }
 
 export async function startMakeServer(options: StartMakeServerOptions): Promise<RunningMakeServer> {
-  const projectRoot = path.resolve(options.projectRoot);
-  const host = resolveMakeServerListenHost({ projectRoot, explicitHost: options.host });
   const requestedPort = options.port ?? DEFAULT_MAKE_SERVER_PORT;
   const adminRoot = options.adminRoot || resolveDefaultAdminRoot();
   const opencodeWebUiRoot = resolveOpenCodeWebUiRoot(adminRoot, options.opencodeWebUiRoot);
   const devMode = options.devMode === true;
   const lanHost = getLocalIP();
-  let runtimeOrigin = resolveRuntimeOrigin(projectRoot, options.runtimeOrigin);
+  const serverInfoHomeDir = options.serverInfoHomeDir
+    || (options.registryPath ? path.dirname(path.dirname(path.dirname(options.registryPath))) : undefined);
+  const projectRoot = getGlobalMakeStateDir(serverInfoHomeDir);
+  const host = resolveMakeServerListenHost({ explicitHost: options.host });
+  let runtimeOrigin = resolveRuntimeOrigin(null, options.runtimeOrigin);
   let origin = '';
   let adminServerInfo: ReturnType<typeof writeServerInfo> | null = null;
 
@@ -193,6 +203,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         origin,
         runtimeOrigin,
         registryPath: options.registryPath,
+        serverInfoHomeDir,
         serverInfo: adminServerInfo || undefined,
         devMode,
         cloudPublishingCommandExecutor: options.cloudPublishingCommandExecutor,
@@ -203,7 +214,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       // ── 2. Dev mode: Vite middleware for frontend HMR ──
       if (devMode && viteMiddleware) {
         if (isRuntimeHtmlProxyRequest(requestUrl)) {
-          runtimeOrigin = resolveRuntimeOrigin(projectRoot, runtimeOrigin);
+          runtimeOrigin = resolveRuntimeOrigin(null, runtimeOrigin);
           if (!runtimeOrigin) {
             sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
             return;
@@ -276,7 +287,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
 
           // Then try runtime proxy.
           if (isRuntimeOnlyRoute(pathname)) {
-            runtimeOrigin = resolveRuntimeOrigin(projectRoot, runtimeOrigin);
+            runtimeOrigin = resolveRuntimeOrigin(null, runtimeOrigin);
             if (!runtimeOrigin) {
               sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
               return;
@@ -305,7 +316,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
 
       // ── 4. Runtime proxy ──
       if (isRuntimeOnlyRoute(pathname)) {
-        runtimeOrigin = resolveRuntimeOrigin(projectRoot, runtimeOrigin);
+        runtimeOrigin = resolveRuntimeOrigin(null, runtimeOrigin);
         if (!runtimeOrigin) {
           sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
           return;
@@ -351,7 +362,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
     origin,
     projectRoot,
     startedAt: new Date().toISOString(),
-  });
+  }, { homeDir: serverInfoHomeDir });
 
   // Initialize Vite dev middleware after the HTTP server is listening,
   // so Vite can attach its HMR WebSocket to the same server.

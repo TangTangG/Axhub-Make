@@ -65,6 +65,7 @@ export function handleMakeClientProjectApi(
         const dev = body?.ensureDev
           ? await ensureMakeClientDevServer(root, {
             adminServerInfo: options.serverInfo,
+            serverInfoHomeDir: options.serverInfoHomeDir,
             ...(typeof body?.timeoutMs === 'number' ? { devTimeoutMs: body.timeoutMs } : {}),
             ...(typeof body?.pollIntervalMs === 'number' ? { pollIntervalMs: body.pollIntervalMs } : {}),
           })
@@ -114,6 +115,7 @@ export function handleMakeClientProjectApi(
         projectName: typeof body?.projectName === 'string' ? body.projectName : undefined,
       }, {
         adminServerInfo: options.serverInfo,
+        serverInfoHomeDir: options.serverInfoHomeDir,
       });
       const project = handlers.addOrUpdateMakeClientRegistryProject({
         id: result.marker.project.id,
@@ -163,7 +165,7 @@ export function handleMakeClientProjectApi(
             writeServerInfo(project.root, 'admin', {
               ...options.serverInfo,
               projectRoot: project.root,
-            });
+            }, { homeDir: options.serverInfoHomeDir });
           }
           return {
             success: true as const,
@@ -175,6 +177,7 @@ export function handleMakeClientProjectApi(
       }
       return ensureMakeClientDevServer(project.root, {
         adminServerInfo: options.serverInfo,
+        serverInfoHomeDir: options.serverInfoHomeDir,
         ...(typeof body?.timeoutMs === 'number' ? { devTimeoutMs: body.timeoutMs } : {}),
         ...(typeof body?.pollIntervalMs === 'number' ? { pollIntervalMs: body.pollIntervalMs } : {}),
       });

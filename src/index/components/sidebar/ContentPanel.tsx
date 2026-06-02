@@ -78,6 +78,7 @@ import { CANVAS_DROP_MIME } from '../content/canvasDropTypes';
 import { createSidebarTreeItemLookup, resolveSidebarTreeItem } from '../../utils/sidebarTree';
 import { sidebarApi } from '../../services/sidebar.api';
 import { buildItemUrl, buildLANItemUrl } from '../../utils/url';
+import { makeClientTemplateMirrorDownloadUrl, makeClientTemplatePrimaryDownloadUrl } from '../../../common/makeClientTemplate';
 import { formatProjectRootDisplayPath } from './projectSwitcherPathDisplay';
 import { copyToClipboard } from '../../utils/clipboard';
 
@@ -302,6 +303,10 @@ function resolveCanvasDropPreviewKind(fields: unknown[], fallback: CanvasDropPre
 
 function isSidebarTreeDragEvent(event: React.DragEvent<HTMLElement>): boolean {
     return Array.from(event.dataTransfer?.types || []).includes(SIDEBAR_TREE_DRAG_MIME);
+}
+
+function stopProjectSetupLinkPropagation(event: React.SyntheticEvent) {
+    event.stopPropagation();
 }
 
 interface SidebarRowProps {
@@ -979,6 +984,8 @@ function ProjectSetupDialog({
     }, [forceBlankProjectCreation]);
 
     const busy = addingProject || creatingBlankProject;
+    const primaryTemplateDownloadUrl = makeClientTemplatePrimaryDownloadUrl();
+    const mirrorTemplateDownloadUrl = makeClientTemplateMirrorDownloadUrl();
 
     const handleSelectExisting = async (selectedPath: string) => {
         try {
@@ -1004,7 +1011,7 @@ function ProjectSetupDialog({
         const normalizedFolder = folderName.trim();
         const normalizedProjectName = projectName.trim();
         if (!normalizedParent) {
-            toast.error('请先选择新建项目的父目录');
+            toast.error('请先选择项目所在位置');
             return;
         }
         if (!normalizedFolder) {
@@ -1110,34 +1117,75 @@ function ProjectSetupDialog({
                             >
                                 <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
                                 <span className="flex min-w-0 flex-1 flex-col gap-1">
-                                    <span className="text-[13px] font-medium">新建空白项目</span>
-                                    <span className="text-[12px] leading-5 text-muted-foreground">从官方 Make 客户端仓库创建新项目</span>
+                                    <span className="text-[13px] font-medium">快速新建项目</span>
+                                    <span className="text-[12px] leading-5 text-muted-foreground">从空白一键创建项目，系统会自动准备好基础项目，新手优先使用，不需要自己下载。</span>
                                 </span>
                             </button>
-                            <button
-                                type="button"
-                                className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 px-3 py-3 text-left transition-colors hover:bg-muted/70 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none disabled:opacity-50"
-                                onClick={() => openFolderBrowser('existing')}
-                                disabled={busy}
+                            <div
+                                role="button"
+                                tabIndex={busy ? -1 : 0}
+                                aria-disabled={busy}
+                                data-project-setup-option="existing"
+                                className={cn(
+                                    'flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 px-3 py-3 text-left transition-colors hover:bg-muted/70 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none',
+                                    busy ? 'opacity-50' : null,
+                                )}
+                                onClick={() => {
+                                    if (busy) return;
+                                    openFolderBrowser('existing');
+                                }}
+                                onKeyDown={(event) => {
+                                    if (busy) return;
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault();
+                                        openFolderBrowser('existing');
+                                    }
+                                }}
                             >
                                 <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
                                 <span className="flex min-w-0 flex-1 flex-col gap-1">
                                     <span className="text-[13px] font-medium">选择已有项目</span>
-                                    <span className="text-[12px] leading-5 text-muted-foreground">选择本地 Make 客户端项目目录并启动开发服务</span>
+                                    <span className="text-[12px] leading-5 text-muted-foreground">
+                                        已有项目可直接选择文件夹导入；没有客户端包可先
+                                        <a
+                                            className="inline-flex items-center gap-0.5 px-0.5 text-primary underline-offset-4 hover:underline"
+                                            href={primaryTemplateDownloadUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            onClick={stopProjectSetupLinkPropagation}
+                                            onKeyDown={stopProjectSetupLinkPropagation}
+                                        >
+                                            <Download className="h-3.5 w-3.5" />
+                                            下载客户端包
+                                        </a>
+                                        ，打不开可用
+                                        <a
+                                            className="inline-flex items-center gap-0.5 px-0.5 text-primary underline-offset-4 hover:underline"
+                                            href={mirrorTemplateDownloadUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            onClick={stopProjectSetupLinkPropagation}
+                                            onKeyDown={stopProjectSetupLinkPropagation}
+                                        >
+                                            <Download className="h-3.5 w-3.5" />
+                                            备用下载
+                                        </a>
+                                        。
+                                    </span>
                                 </span>
                                 {addingProject ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
-                            </button>
+                            </div>
                         </div>
                     ) : (
                         <div className="space-y-4 p-4">
                             <div className="space-y-2">
-                                <Label htmlFor="make-project-parent" className="text-[12px]">父目录</Label>
+                                <Label htmlFor="make-project-parent" className="text-[12px]">项目所在位置</Label>
                                 <div className="flex gap-2">
                                     <Input
                                         id="make-project-parent"
                                         value={parentRoot}
                                         readOnly
-                                        placeholder="请选择父目录"
+                                        placeholder="请选择项目所在位置"
                                         className="h-8 min-w-0 flex-1 text-[12px]"
                                     />
                                     <Button
@@ -1234,7 +1282,7 @@ function ProjectSetupDialog({
             </Dialog>
             <FolderBrowserDialog
                 open={folderBrowserOpen}
-                title={folderBrowserPurpose === 'existing' ? '选择已有项目' : '选择父目录'}
+                title={folderBrowserPurpose === 'existing' ? '选择已有项目' : '选择项目所在位置'}
                 confirmLabel={folderBrowserPurpose === 'existing' ? '添加项目' : '使用此目录'}
                 busy={folderBrowserPurpose === 'existing' && addingProject}
                 initialPath={folderBrowserPurpose === 'parent' ? parentRoot : ''}
