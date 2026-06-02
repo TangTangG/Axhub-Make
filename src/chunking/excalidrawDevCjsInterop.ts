@@ -11,6 +11,8 @@ const EXCALIDRAW_CJS_OPTIMIZED_DEPS: Record<string, string> = {
   fuzzy: '@axhub_excalidraw___fuzzy.js',
   '@excalidraw/markdown-to-text': '@axhub_excalidraw___@excalidraw_markdown-to-text.js',
 };
+const MARKDOWN_TO_TEXT_DEP = '@excalidraw/markdown-to-text';
+const MARKDOWN_TO_TEXT_CJS_IMPORT = '__axhubMarkdownToTextCjs';
 
 type RewriteOptions = {
   root: string;
@@ -25,6 +27,15 @@ function isExcalidrawDevBundleId(id: string): boolean {
   const normalizedId = normalizeFilePath(id.split('?')[0] || id);
   return normalizedId.includes('/@axhub/excalidraw/dist/dev/')
     || normalizedId.includes('/vendor/axhub-excalidraw/dist/dev/');
+}
+
+function isMermaidToExcalidrawBundleId(id: string): boolean {
+  const normalizedId = normalizeFilePath(id.split('?')[0] || id);
+  return normalizedId.includes('/@excalidraw/mermaid-to-excalidraw/dist/');
+}
+
+function isExcalidrawDevCjsInteropId(id: string): boolean {
+  return isExcalidrawDevBundleId(id) || isMermaidToExcalidrawBundleId(id);
 }
 
 function toDevServerPath(filePath: string, root: string): string {
@@ -52,18 +63,37 @@ function rewriteImportSpecifiers(code: string, depName: string, optimizedDepUrl:
     .replace(dynamicImportPattern, (_match, prefix: string, quote: string) => `${prefix}${quote}${optimizedDepUrl}${quote}`);
 }
 
+function rewriteMarkdownToTextNamedImport(code: string, optimizedDepUrl: string): string {
+  const escapedDepName = MARKDOWN_TO_TEXT_DEP.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const namedImportPattern = new RegExp(
+    `\\bimport\\s*\\{\\s*removeMarkdown\\s*\\}\\s*from\\s*(["'])${escapedDepName}\\1\\s*;?`,
+    'gu',
+  );
+
+  return code.replace(
+    namedImportPattern,
+    [
+      `import ${MARKDOWN_TO_TEXT_CJS_IMPORT} from "${optimizedDepUrl}";`,
+      `const { removeMarkdown } = ${MARKDOWN_TO_TEXT_CJS_IMPORT};`,
+    ].join('\n'),
+  );
+}
+
 export function rewriteExcalidrawDevCjsImports(
   code: string,
   id: string,
   options: RewriteOptions,
 ): string | null {
-  if (!isExcalidrawDevBundleId(id)) {
+  if (!isExcalidrawDevCjsInteropId(id)) {
     return null;
   }
 
   let rewritten = code;
   for (const [depName, depFileName] of Object.entries(EXCALIDRAW_CJS_OPTIMIZED_DEPS)) {
     const optimizedDepUrl = createOptimizedDepUrl(depFileName, options);
+    if (depName === MARKDOWN_TO_TEXT_DEP) {
+      rewritten = rewriteMarkdownToTextNamedImport(rewritten, optimizedDepUrl);
+    }
     rewritten = rewriteImportSpecifiers(rewritten, depName, optimizedDepUrl);
   }
 
