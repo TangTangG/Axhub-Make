@@ -59,10 +59,52 @@ function encodeUtf8ToBase64(text: string): string {
     return btoa(binary);
 }
 
-function buildFigmaOfficialClipboardHtmlBlob(payloadText: string): Blob {
+function buildFigmaOfficialClipboardHtml(payloadText: string): string {
     const payloadBase64 = encodeUtf8ToBase64(payloadText);
-    const html = `<span data-h2d="<!--(figh2d)${payloadBase64}(/figh2d)-->"></span>`;
-    return new Blob([html], { type: 'text/html' });
+    return `<span data-h2d="<!--(figh2d)${payloadBase64}(/figh2d)-->"></span>`;
+}
+
+function buildFigmaOfficialClipboardHtmlBlob(payloadText: string): Blob {
+    return new Blob([buildFigmaOfficialClipboardHtml(payloadText)], { type: 'text/html' });
+}
+
+function writeHtmlClipboardWithCopyEvent(html: string, plainText: string): boolean {
+    if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
+        return false;
+    }
+
+    let didWriteClipboardData = false;
+    const handleCopy = (event: ClipboardEvent) => {
+        if (!event.clipboardData) return;
+        event.preventDefault();
+        event.clipboardData.setData('text/html', html);
+        event.clipboardData.setData('text/plain', plainText);
+        didWriteClipboardData = true;
+    };
+    const activeElement = document.activeElement && typeof (document.activeElement as HTMLElement).focus === 'function'
+        ? document.activeElement as HTMLElement
+        : null;
+    const textArea = document.createElement('textarea');
+
+    try {
+        textArea.value = plainText;
+        textArea.setAttribute('readonly', '');
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '0';
+        textArea.style.opacity = '0';
+        textArea.style.pointerEvents = 'none';
+        document.body?.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.addEventListener('copy', handleCopy, true);
+        const didCopy = document.execCommand('copy');
+        return didCopy && didWriteClipboardData;
+    } finally {
+        document.removeEventListener('copy', handleCopy, true);
+        textArea.remove();
+        activeElement?.focus?.();
+    }
 }
 
 export async function copyToClipboard(text: string): Promise<void> {
@@ -80,7 +122,13 @@ export async function copyToClipboard(text: string): Promise<void> {
 }
 
 export async function writeFigmaOfficialClipboardPayload(payloadText: string): Promise<void> {
-    if (!navigator.clipboard || typeof navigator.clipboard.write !== 'function' || typeof ClipboardItem === 'undefined') {
+    const html = buildFigmaOfficialClipboardHtml(payloadText);
+    const tryLegacyCopyEventFallback = () => writeHtmlClipboardWithCopyEvent(html, payloadText);
+
+    if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.write !== 'function' || typeof ClipboardItem === 'undefined') {
+        if (tryLegacyCopyEventFallback()) {
+            return;
+        }
         throw new Error(
             appendLanClipboardHint('当前环境不支持 Figma 剪贴板写入，请使用支持 ClipboardItem 的 Chromium 浏览器后重试。'),
         );
@@ -92,6 +140,9 @@ export async function writeFigmaOfficialClipboardPayload(payloadText: string): P
             new ClipboardItem({ 'text/html': htmlBlob }),
         ]);
     } catch (error) {
+        if (tryLegacyCopyEventFallback()) {
+            return;
+        }
         throw normalizeClipboardError(error);
     }
 }

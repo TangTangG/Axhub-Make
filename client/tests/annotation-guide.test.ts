@@ -272,6 +272,12 @@ describe('annotation demo prototype', () => {
     expect(prdDocuments[0].markdown).toContain('状态标注');
     expect(prdDocuments[0].markdown).toContain('原型目录');
     expect(prdDocuments[0].markdown).toContain('生成标注');
+    expect(prdDocuments[0].markdown).toContain('## 4. Markdown 层级案例');
+    expect(prdDocuments[0].markdown).toContain('- [背景](#背景)');
+    expect(prdDocuments[0].markdown).toContain('    - [页面范围](#页面范围)');
+    expect(prdDocuments[0].markdown).toContain('1. 一级事项：评审入口');
+    expect(prdDocuments[0].markdown).toContain('    1. 二级事项：页面切换');
+    expect(prdDocuments[0].markdown).toContain('        - 三级事项：保留当前标注上下文');
     expect(prdDocuments[1].markdown).toContain('## 1. 使用者');
     expect(prdDocuments[1].markdown).toContain('## 2. 协作职责');
     expect(prdDocuments[1].markdown).toContain('产品负责人');

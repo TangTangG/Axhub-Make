@@ -41,6 +41,22 @@ describe('previewActions.helpers', () => {
     })).toBe('http://localhost:51723/prototypes/beginner-guide');
   });
 
+  it('does not resolve relative prototype iframe URLs against the admin origin when runtime origin is unavailable', () => {
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://localhost:53817',
+      },
+      __RUNTIME_ORIGIN__: '',
+    });
+
+    expect(buildProjectPrototypeIframeUrl({
+      name: 'annotation-demo',
+      displayName: '标注演示',
+      clientUrl: '/prototypes/annotation-demo',
+      previewUrl: '/prototypes/annotation-demo',
+    })).toBe('');
+  });
+
   it('keeps explicit client URL origins unchanged', () => {
     vi.stubGlobal('window', {
       location: {

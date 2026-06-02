@@ -47,14 +47,23 @@ describe('ContentPanel make client project setup source', () => {
     expect(dialogSource).toContain('const fallbackDiagnostic = buildMakeClientSetupAiPrompt');
     expect(dialogSource).toContain('toast.error(errorMessage);');
     expect(dialogSource).toContain('MAKE_CLIENT_SETUP_FAILED_LABEL');
-    expect(dialogSource).toContain('(pendingCreate || failedMessage)');
-    expect(dialogSource).toContain('failedMessage || MAKE_CLIENT_SETUP_FAILED_DESCRIPTION');
+    expect(dialogSource).toContain('const renderFailureMessage = () => failedMessage ? (');
+    expect(dialogSource).toContain('{renderFailureMessage()}');
     expect(dialogSource).toContain('复制给 AI 处理');
-    expect(dialogSource).toContain('{failedMessage ? (');
     expect(dialogSource).toContain('const diagnosticPrompt = failedDiagnostic || fallbackDiagnostic;');
     expect(dialogSource).toContain('await copyToClipboard(diagnosticPrompt)');
     expect(dialogSource).not.toContain('{failedDiagnostic ? (');
     expect(dialogSource).not.toContain('MAKE_CLIENT_SETUP_PHASES.map((phase)');
+  });
+
+  it('builds a concise AI prompt for Make state directory permission failures', () => {
+    const source = readContentPanelSource();
+
+    expect(source).toContain('MAKE_STATE_DIR_NOT_WRITABLE');
+    expect(source).toContain('本机项目列表保存失败');
+    expect(source).toContain('Make 数据目录：');
+    expect(source).toContain('请判断当前系统是 macOS、Windows 还是 Linux');
+    expect(source).toContain('不要直接使用 sudo，除非用户确认');
   });
 
   it('preserves an explicitly blank project name when creating a blank make client project', () => {
@@ -167,6 +176,7 @@ describe('ContentPanel make client project setup source', () => {
     expect(menuSource).not.toContain('<br />');
     expect(existingOptionSource).toContain('下载客户端包');
     expect(existingOptionSource).toContain('备用下载');
+    expect(existingOptionSource).not.toContain('<Download');
     expect(existingOptionSource).not.toContain('主源下载');
     expect(existingOptionSource).not.toContain('主源下载地址');
     expect(existingOptionSource).not.toContain('备用源下载地址');
@@ -196,6 +206,19 @@ describe('ContentPanel make client project setup source', () => {
     expect(browserSource).not.toContain('新建');
     expect(dialogSource).toContain('onAddProject(selectedPath)');
     expect(dialogSource).not.toContain('onSelectParentFolder');
+  });
+
+  it('keeps existing project add failures in the setup menu with a copy-to-AI action', () => {
+    const source = readContentPanelSource();
+    const selectExistingSource = source.slice(
+      source.indexOf('const handleSelectExisting = async (selectedPath: string) => {'),
+      source.indexOf('const openFolderBrowser =', source.indexOf('const handleSelectExisting = async (selectedPath: string) => {')),
+    );
+
+    expect(selectExistingSource).toContain('setFailedMessage(errorMessage);');
+    expect(selectExistingSource).toContain('setFailedDiagnostic(buildMakeClientSetupAiPrompt');
+    expect(selectExistingSource).toContain('setFolderBrowserOpen(false);');
+    expect(selectExistingSource).not.toContain("setSetupMode('blank');");
   });
 
   it('requests ASCII folder name suggestions until the user manually edits the folder name', () => {

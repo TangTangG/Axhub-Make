@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getAdminServerInfoPath,
@@ -12,8 +12,10 @@ import {
   getGlobalMakeStateDir,
   getConfigPath,
   getMakeClientMarkerPath,
+  getRuntimeServerInfoPath,
   getProjectMetadataPath,
   getProjectRegistryPath,
+  readServerInfo,
   SIDEBAR_TREE_STORE_RELATIVE_PATH,
 } from '../projectCore/index.ts';
 
@@ -102,6 +104,7 @@ async function registerExistingMakeProject(origin: string, projectRoot: string, 
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -955,6 +958,201 @@ describe('make-server HTTP server', () => {
     } finally {
       await server.close();
       await new Promise<void>((resolve) => runtimeServer.close(() => resolve()));
+    }
+  });
+
+  it('proxies active project runtime routes through the current project runtime instead of a stale admin runtime origin', async () => {
+    const projectRoot = createProjectRoot();
+    writePrototype(projectRoot, 'annotation-demo');
+    writeJson(getProjectMetadataPath(projectRoot), {
+      schemaVersion: 1,
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        prototypes: [
+          {
+            id: 'annotation-demo',
+            name: 'annotation-demo',
+            title: 'Annotation Demo',
+            clientUrl: '/prototypes/annotation-demo',
+          },
+        ],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: ['annotation-demo'], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      capabilities: { quickEdit: true, figmaExport: false, axureExport: false },
+    });
+
+    const activeRuntimeServer = http.createServer((req, res) => {
+      if (req.url === '/api/health') {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({
+          ok: true,
+          role: 'runtime',
+          projectRoot,
+          server: {
+            pid: process.pid,
+            port: (activeRuntimeServer.address() as AddressInfo).port,
+            host: 'localhost',
+            origin: `http://localhost:${(activeRuntimeServer.address() as AddressInfo).port}`,
+            projectRoot,
+            startedAt: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+          },
+        }));
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ upstream: 'active-project-runtime', url: req.url }));
+    });
+    const staleRuntimeServer = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ upstream: 'stale-admin-runtime', url: req.url }));
+    });
+    await new Promise<void>((resolve) => activeRuntimeServer.listen(0, 'localhost', resolve));
+    await new Promise<void>((resolve) => staleRuntimeServer.listen(0, 'localhost', resolve));
+    const activeRuntimeAddress = activeRuntimeServer.address() as AddressInfo;
+    const staleRuntimeAddress = staleRuntimeServer.address() as AddressInfo;
+    const activeRuntimeOrigin = `http://localhost:${activeRuntimeAddress.port}`;
+    const staleRuntimeOrigin = `http://localhost:${staleRuntimeAddress.port}`;
+    writeJson(getRuntimeServerInfoPath(projectRoot), {
+      pid: process.pid,
+      port: activeRuntimeAddress.port,
+      host: 'localhost',
+      origin: activeRuntimeOrigin,
+      projectRoot,
+      startedAt: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+    });
+
+    const registryPath = createRegistryPath();
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath,
+      runtimeOrigin: staleRuntimeOrigin,
+    });
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const response = await fetch(`${server.origin}/prototypes/annotation-demo?editorIntegrationWs=1`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toEqual({
+        upstream: 'active-project-runtime',
+        url: '/prototypes/annotation-demo?editorIntegrationWs=1',
+      });
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => activeRuntimeServer.close(() => resolve()));
+      await new Promise<void>((resolve) => staleRuntimeServer.close(() => resolve()));
+    }
+  });
+
+  it('discovers the active make client runtime before falling back to the stale admin runtime origin', async () => {
+    const projectRoot = createProjectRoot();
+    writePrototype(projectRoot, 'annotation-demo');
+    writeJson(getProjectMetadataPath(projectRoot), {
+      schemaVersion: 1,
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        prototypes: [
+          {
+            id: 'annotation-demo',
+            name: 'annotation-demo',
+            title: 'Annotation Demo',
+            clientUrl: '/prototypes/annotation-demo',
+          },
+        ],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: ['annotation-demo'], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      capabilities: { quickEdit: true, figmaExport: false, axureExport: false },
+    });
+
+    const activeRuntimeServer = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ upstream: 'active-project-runtime', url: req.url }));
+    });
+    const staleRuntimeServer = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ upstream: 'stale-admin-runtime', url: req.url }));
+    });
+    await new Promise<void>((resolve) => activeRuntimeServer.listen(0, 'localhost', resolve));
+    await new Promise<void>((resolve) => staleRuntimeServer.listen(0, 'localhost', resolve));
+    const activeRuntimeAddress = activeRuntimeServer.address() as AddressInfo;
+    const staleRuntimeAddress = staleRuntimeServer.address() as AddressInfo;
+    const activeRuntimeOrigin = `http://localhost:${activeRuntimeAddress.port}`;
+    const staleRuntimeOrigin = `http://localhost:${staleRuntimeAddress.port}`;
+
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      if (url === 'http://localhost:51720/api/health') {
+        return new Response(JSON.stringify({
+          ok: true,
+          role: 'runtime',
+          projectRoot,
+          server: {
+            pid: process.pid,
+            port: activeRuntimeAddress.port,
+            host: 'localhost',
+            origin: activeRuntimeOrigin,
+            projectRoot,
+            startedAt: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+          },
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    });
+
+    const registryPath = createRegistryPath();
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath,
+      runtimeOrigin: staleRuntimeOrigin,
+    });
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const response = await fetch(`${server.origin}/prototypes/annotation-demo?editorIntegrationWs=1`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toEqual({
+        upstream: 'active-project-runtime',
+        url: '/prototypes/annotation-demo?editorIntegrationWs=1',
+      });
+      expect(readServerInfo(projectRoot, 'runtime')).toMatchObject({
+        origin: activeRuntimeOrigin,
+        projectRoot,
+      });
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => activeRuntimeServer.close(() => resolve()));
+      await new Promise<void>((resolve) => staleRuntimeServer.close(() => resolve()));
     }
   });
 

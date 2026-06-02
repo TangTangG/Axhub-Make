@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createProjectRegistry,
   getConfigPath,
   getMakeClientMarkerPath,
   getProjectMetadataPath,
@@ -107,6 +108,30 @@ function createMockChild(closeCode = 0) {
   return child;
 }
 
+function createMockChildWithStderr(closeCode = 0, stderrText = '') {
+  const child = {
+    stderr: {
+      on: vi.fn((event: string, callback: (chunk: Buffer) => void) => {
+        if (event === 'data' && stderrText) {
+          setTimeout(() => callback(Buffer.from(stderrText, 'utf8')), 0);
+        }
+        return child.stderr;
+      }),
+    },
+    once: vi.fn((event: string, callback: (value?: unknown) => void) => {
+      if (event === 'spawn') {
+        setTimeout(() => callback(), 0);
+      }
+      if (event === 'close') {
+        setTimeout(() => callback(closeCode), 0);
+      }
+      return child;
+    }),
+    unref: vi.fn(),
+  };
+  return child;
+}
+
 function createSpawnOnlyMockChild() {
   const child = {
     once: vi.fn((event: string, callback: () => void) => {
@@ -122,12 +147,19 @@ function createSpawnOnlyMockChild() {
 
 async function startTestServer(projectRoot: string) {
   const registryHome = createTempRoot('axhub-make-ide-open-registry-');
+  const registryPath = getProjectRegistryPath(registryHome);
+  createProjectRegistry({ registryPath }).addProject({
+    id: 'ide-client',
+    name: 'IDE Client',
+    root: projectRoot,
+    metadataPath: getProjectMetadataPath(projectRoot),
+  });
   return startMakeServer({
     projectRoot,
     host: 'localhost',
     port: 0,
     adminRoot: path.join(projectRoot, 'missing-admin'),
-    registryPath: getProjectRegistryPath(registryHome),
+    registryPath,
   });
 }
 
@@ -308,6 +340,98 @@ describe('make-server IDE open API', () => {
           shell: false,
           windowsHide: true,
         }),
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it('falls back instead of reporting success when the Windows IDE command wrapper exits unsuccessfully', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    childProcessMock.spawnSync.mockImplementation((...input: unknown[]) => {
+      const command = String(input[0] || '');
+      const args = Array.isArray(input[1]) ? input[1] : [];
+      if (command === 'where' && args[0] === 'cursor') {
+        return { status: 0, stdout: 'C:\\Tools\\cursor.cmd\r\n', stderr: '' };
+      }
+      return { status: 1, stdout: '', stderr: '' };
+    });
+    childProcessMock.spawn.mockImplementation((command: string, args?: string[]) => {
+      if (command === 'cmd.exe') {
+        return createMockChildWithStderr(1, 'Cursor CLI failed');
+      }
+      if (command === 'powershell' && args?.includes('cursor://file/C:/Projects/Make12')) {
+        return createMockChild(0);
+      }
+      return createMockChild(1);
+    });
+
+    try {
+      await expect(openIDEPath({
+        ide: 'cursor',
+        targetPath: 'C:\\Projects\\Make12',
+      })).resolves.toMatchObject({
+        success: true,
+        ide: 'cursor',
+        targetPath: 'C:\\Projects\\Make12',
+        command: "powershell -NoProfile -Command Start-Process -FilePath 'cursor://file/C:/Projects/Make12' -ErrorAction Stop",
+      });
+
+      const commandWrapperCall = childProcessMock.spawn.mock.calls.find(([command]) => command === 'cmd.exe');
+      expect(commandWrapperCall).toBeTruthy();
+      expect(commandWrapperCall?.[1]).toEqual(expect.arrayContaining(['/d', '/s', '/c']));
+      expect(String(commandWrapperCall?.[1]?.[3] || '')).toContain('cursor.cmd');
+      expect(String(commandWrapperCall?.[1]?.[3] || '')).toContain('Make12');
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'powershell',
+        expect.arrayContaining(['cursor://file/C:/Projects/Make12']),
+        expect.objectContaining({
+          shell: false,
+          windowsHide: true,
+        }),
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it('prefers a registered Windows file protocol over direct executable launch', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    childProcessMock.spawnSync.mockImplementation((...input: unknown[]) => {
+      const command = String(input[0] || '');
+      const args = Array.isArray(input[1]) ? input[1] : [];
+      if (command === 'where' && args[0] === 'cursor') {
+        return { status: 0, stdout: 'C:\\Users\\demo\\AppData\\Local\\Programs\\Cursor\\Cursor.exe\r\n', stderr: '' };
+      }
+      if (command === 'reg' && String(args[1] || '').includes('\\cursor\\shell\\open\\command')) {
+        return { status: 0, stdout: '    (Default)    REG_SZ    "Cursor.exe" "%1"\r\n', stderr: '' };
+      }
+      return { status: 1, stdout: '', stderr: '' };
+    });
+    childProcessMock.spawn.mockImplementation((command: string, args?: string[]) => {
+      if (command === 'powershell' && args?.includes('cursor://file/E:/make12')) {
+        return createMockChild(0);
+      }
+      return createMockChild(1);
+    });
+
+    try {
+      await expect(openIDEPath({
+        ide: 'cursor',
+        targetPath: 'E:\\make12',
+      })).resolves.toMatchObject({
+        success: true,
+        ide: 'cursor',
+        targetPath: 'E:\\make12',
+        command: "powershell -NoProfile -Command Start-Process -FilePath 'cursor://file/E:/make12' -ErrorAction Stop",
+      });
+
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'C:\\Users\\demo\\AppData\\Local\\Programs\\Cursor\\Cursor.exe',
+        expect.anything(),
+        expect.anything(),
       );
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });

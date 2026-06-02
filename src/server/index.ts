@@ -7,9 +7,15 @@ import { getOpenCodeBridgeHub, isOpenCodeBridgeUpgrade } from './opencodeBridge.
 import { getCanvasBridgeHub, isCanvasBridgeUpgrade } from './canvasBridge.ts';
 
 import {
+  checkMakeStateHealth,
+  createProjectRegistry,
   getConfigPath,
   getGlobalMakeStateDir,
+  type AxhubServerInfo,
+  type MakeStateHealthResult,
+  normalizeHealthServerInfo,
   readServerInfo,
+  resolveComparableProjectRoot,
   writeServerInfo,
 } from './projectCore/index.ts';
 
@@ -18,6 +24,7 @@ import type { AdminStaticOptions } from './adminStatic.ts';
 import { DEFAULT_MAKE_SERVER_PORT } from './defaults.ts';
 import { closeManagedOpenCodeServers, readManagedOpenCodeServerUrl } from './agentOpen.ts';
 import { getLocalIP, sendJson } from './http.ts';
+import { getMakeClientDevStatus } from './makeClientProject.ts';
 import { handleManagementApi } from './managementApi.ts';
 import type { CommandExecutor } from './managementApi.cloudPublishing.ts';
 import { releaseListeningProcessesOnPort } from './portOccupancy.ts';
@@ -136,6 +143,72 @@ function resolveRuntimeOrigin(projectRoot?: string | null, explicitRuntimeOrigin
   return readServerInfo(projectRoot, 'runtime')?.origin;
 }
 
+async function resolveActiveProjectRuntimeOrigin(options: {
+  registryPath?: string;
+  fallbackRuntimeOrigin?: string;
+  healthTimeoutMs?: number;
+}): Promise<string | undefined> {
+  const activeProject = createProjectRegistry(
+    options.registryPath ? { registryPath: options.registryPath } : undefined,
+  ).getActiveProject();
+  if (!activeProject) {
+    return options.fallbackRuntimeOrigin;
+  }
+
+  const status = await getMakeClientDevStatus(
+    activeProject.id,
+    activeProject.root,
+    options.healthTimeoutMs === undefined ? {} : { healthTimeoutMs: options.healthTimeoutMs },
+  );
+  if (status.makeClient) {
+    return status.running && status.runtime?.origin
+      ? String(status.runtime.origin).trim().replace(/\/+$/u, '')
+      : undefined;
+  }
+
+  const runtime = readServerInfo(activeProject.root, 'runtime');
+  const runtimeOrigin = String(runtime?.origin || '').trim().replace(/\/+$/u, '');
+  if (!runtimeOrigin) {
+    return options.fallbackRuntimeOrigin;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.healthTimeoutMs ?? 1000);
+  try {
+    const response = await fetch(new URL('/api/health', runtimeOrigin), {
+      signal: controller.signal,
+      headers: { accept: 'application/json' },
+    });
+    if (!response.ok) {
+      return options.fallbackRuntimeOrigin;
+    }
+    const health = await response.json();
+    const healthRuntime = normalizeHealthServerInfo(health);
+    if (
+      healthRuntime
+      && resolveComparableProjectRoot(healthRuntime.projectRoot) === resolveComparableProjectRoot(activeProject.root)
+    ) {
+      return runtimeOrigin;
+    }
+  } catch {
+    return options.fallbackRuntimeOrigin;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  return options.fallbackRuntimeOrigin;
+}
+
+async function resolveRuntimeOriginForProxy(options: {
+  registryPath?: string;
+  currentRuntimeOrigin?: string;
+}): Promise<string | undefined> {
+  return resolveActiveProjectRuntimeOrigin({
+    registryPath: options.registryPath,
+    fallbackRuntimeOrigin: resolveRuntimeOrigin(null, options.currentRuntimeOrigin),
+  });
+}
+
 function decodeOpenCodeDirectoryFromPathname(pathname: string): string {
   const encodedDirectory = pathname.match(/^\/opencode\/([^/?#]+)/u)?.[1] || '';
   if (!encodedDirectory || encodedDirectory === 'assets' || encodedDirectory === 'index.html') {
@@ -179,7 +252,10 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   const host = resolveMakeServerListenHost({ explicitHost: options.host });
   let runtimeOrigin = resolveRuntimeOrigin(null, options.runtimeOrigin);
   let origin = '';
-  let adminServerInfo: ReturnType<typeof writeServerInfo> | null = null;
+  let adminServerInfo: AxhubServerInfo | null = null;
+  let makeStateHealth: MakeStateHealthResult = checkMakeStateHealth(
+    options.registryPath ? { registryPath: options.registryPath } : { homeDir: serverInfoHomeDir },
+  );
 
   // Vite middleware is only created in dev mode – the import is dynamic so
   // production never loads vite or its dependencies.
@@ -205,6 +281,13 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         registryPath: options.registryPath,
         serverInfoHomeDir,
         serverInfo: adminServerInfo || undefined,
+        makeStateHealth,
+        refreshMakeStateHealth: () => {
+          makeStateHealth = checkMakeStateHealth(
+            options.registryPath ? { registryPath: options.registryPath } : { homeDir: serverInfoHomeDir },
+          );
+          return makeStateHealth;
+        },
         devMode,
         cloudPublishingCommandExecutor: options.cloudPublishingCommandExecutor,
       })) {
@@ -214,7 +297,10 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       // ── 2. Dev mode: Vite middleware for frontend HMR ──
       if (devMode && viteMiddleware) {
         if (isRuntimeHtmlProxyRequest(requestUrl)) {
-          runtimeOrigin = resolveRuntimeOrigin(null, runtimeOrigin);
+          runtimeOrigin = await resolveRuntimeOriginForProxy({
+            registryPath: options.registryPath,
+            currentRuntimeOrigin: runtimeOrigin,
+          });
           if (!runtimeOrigin) {
             sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
             return;
@@ -271,31 +357,40 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         viteMiddleware.handle(req, res, () => {
           // If Vite didn't handle it, try serving from dist/admin (pre-built
           // template assets like dev-template-bootstrap.js, spec-template, etc.)
-          const adminStaticFallback: AdminStaticOptions = {
-            adminRoot,
-            opencodeWebUiRoot,
-            projectRoot,
-            host,
-            lanHost,
-            port: Number(new URL(origin).port),
-            opencodeServerOrigin: resolveOpenCodeServerOrigin(pathname),
-            runtimeOrigin,
-          };
-          if (handleAdminStatic(req, res, adminStaticFallback)) {
-            return;
-          }
-
-          // Then try runtime proxy.
-          if (isRuntimeOnlyRoute(pathname)) {
-            runtimeOrigin = resolveRuntimeOrigin(null, runtimeOrigin);
-            if (!runtimeOrigin) {
-              sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
+          (async () => {
+            const adminStaticFallback: AdminStaticOptions = {
+              adminRoot,
+              opencodeWebUiRoot,
+              projectRoot,
+              host,
+              lanHost,
+              port: Number(new URL(origin).port),
+              opencodeServerOrigin: resolveOpenCodeServerOrigin(pathname),
+              runtimeOrigin,
+            };
+            if (handleAdminStatic(req, res, adminStaticFallback)) {
               return;
             }
-            proxyToRuntime(req, res, runtimeOrigin);
-            return;
-          }
-          sendJson(res, { error: 'Not found' }, { status: 404 });
+
+            // Then try runtime proxy.
+            if (isRuntimeOnlyRoute(pathname)) {
+              runtimeOrigin = await resolveRuntimeOriginForProxy({
+                registryPath: options.registryPath,
+                currentRuntimeOrigin: runtimeOrigin,
+              });
+              if (!runtimeOrigin) {
+                sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
+                return;
+              }
+              proxyToRuntime(req, res, runtimeOrigin);
+              return;
+            }
+            sendJson(res, { error: 'Not found' }, { status: 404 });
+          })().catch((error: any) => {
+            if (!res.headersSent) {
+              sendJson(res, { error: error?.message || 'Internal server error' }, { status: 500 });
+            }
+          });
         });
         return;
       }
@@ -316,7 +411,10 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
 
       // ── 4. Runtime proxy ──
       if (isRuntimeOnlyRoute(pathname)) {
-        runtimeOrigin = resolveRuntimeOrigin(null, runtimeOrigin);
+        runtimeOrigin = await resolveRuntimeOriginForProxy({
+          registryPath: options.registryPath,
+          currentRuntimeOrigin: runtimeOrigin,
+        });
         if (!runtimeOrigin) {
           sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
           return;
@@ -355,14 +453,21 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
 
   const actualPort = await listen(server, requestedPort, host);
   origin = `http://${resolvePublicOriginHost(host)}:${actualPort}`;
-  adminServerInfo = writeServerInfo(projectRoot, 'admin', {
+  adminServerInfo = {
     pid: process.pid,
     port: actualPort,
     host,
     origin,
     projectRoot,
     startedAt: new Date().toISOString(),
-  }, { homeDir: serverInfoHomeDir });
+  };
+  try {
+    adminServerInfo = writeServerInfo(projectRoot, 'admin', adminServerInfo, { homeDir: serverInfoHomeDir });
+  } catch (error) {
+    if (makeStateHealth.ok) {
+      throw error;
+    }
+  }
 
   // Initialize Vite dev middleware after the HTTP server is listening,
   // so Vite can attach its HMR WebSocket to the same server.

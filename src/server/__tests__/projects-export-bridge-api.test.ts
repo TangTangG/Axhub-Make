@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -485,6 +486,82 @@ describe('make-server project export and bridge APIs', () => {
       expect(copiedBodies).toEqual(['// axvg\n{"widgets":[]}', '// axvg\n{"widgets":[]}']);
     } finally {
       await server.close();
+    }
+  });
+
+  it('forwards Axure bridge copy POSTs with a fixed content length', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'bridge-fixed-length-client', name: 'Bridge Fixed Length Client' },
+    });
+
+    const previousBridgeBaseUrl = process.env.AXHUB_AXURE_BRIDGE_BASE_URL;
+    let receivedRequest: { body: string; headers: http.IncomingHttpHeaders } | null = null;
+    const bridgeServer = http.createServer((bridgeReq, bridgeRes) => {
+      const chunks: Buffer[] = [];
+      bridgeReq.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      bridgeReq.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        receivedRequest = {
+          body,
+          headers: bridgeReq.headers,
+        };
+        const contentLength = bridgeReq.headers['content-length'];
+        const transferEncoding = String(bridgeReq.headers['transfer-encoding'] || '').toLowerCase();
+        if (typeof contentLength !== 'string' || transferEncoding.includes('chunked')) {
+          bridgeRes.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+          bridgeRes.end('A content-length header is required for POST requests; transfer-encoding:chunked is not supported.');
+          return;
+        }
+        bridgeRes.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+        bridgeRes.end(JSON.stringify({ success: true }));
+      });
+    });
+
+    await new Promise<void>((resolve) => {
+      bridgeServer.listen(0, '127.0.0.1', resolve);
+    });
+    const bridgeAddress = bridgeServer.address();
+    if (!bridgeAddress || typeof bridgeAddress === 'string') {
+      throw new Error('Failed to start test Axure bridge');
+    }
+    const bridgeBaseUrl = `http://127.0.0.1:${bridgeAddress.port}`;
+    process.env.AXHUB_AXURE_BRIDGE_BASE_URL = bridgeBaseUrl;
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
+      const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input?.url || '');
+      if (rawUrl === `${bridgeBaseUrl}/copyaxvg`) {
+        return new Response('A content-length header is required for POST requests; transfer-encoding:chunked is not supported.', {
+          status: 400,
+          statusText: 'Bad Request',
+          headers: { 'content-type': 'text/plain; charset=utf-8' },
+        });
+      }
+      return originalFetch(input, init);
+    });
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const response = await fetch(`${server.origin}/api/axure-bridge/copyaxvg`, {
+        method: 'POST',
+        body: '{"widgets":[]}',
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ success: true });
+      expect(receivedRequest).not.toBeNull();
+      expect(receivedRequest?.body).toBe('// axvg\n{"widgets":[]}');
+      expect(receivedRequest?.headers['content-length']).toBe(String(Buffer.byteLength(receivedRequest?.body || '', 'utf8')));
+      expect(receivedRequest?.headers['transfer-encoding']).toBeUndefined();
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => bridgeServer.close(() => resolve()));
+      if (typeof previousBridgeBaseUrl === 'undefined') {
+        delete process.env.AXHUB_AXURE_BRIDGE_BASE_URL;
+      } else {
+        process.env.AXHUB_AXURE_BRIDGE_BASE_URL = previousBridgeBaseUrl;
+      }
     }
   });
 

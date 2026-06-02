@@ -1381,8 +1381,6 @@ export function useIndexPagePreviewActions(params: any) {
                 reject(new Error(event.data.error || '复制到 Figma 失败'));
             };
             window.addEventListener('message', handleMessage);
-            targetIframe.focus();
-            targetIframe.contentWindow?.focus?.();
             targetIframe.contentWindow.postMessage(createRuntimeExportMessage({
                 type: 'axhub.quickEdit.export.copyToFigma',
                 selectedItem,

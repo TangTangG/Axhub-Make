@@ -10,6 +10,7 @@ import {
   getGlobalAdminServerInfoPath,
   getProjectMetadataPath,
   isPathInside,
+  type MakeStateHealthResult,
   readMakeClientMarker,
   readServerInfo,
   resolveProjectPath,
@@ -75,6 +76,8 @@ export interface ManagementApiOptions {
     projectRoot: string;
     startedAt: string;
   };
+  makeStateHealth?: MakeStateHealthResult;
+  refreshMakeStateHealth?: () => MakeStateHealthResult;
   devMode?: boolean;
   cloudPublishingCommandExecutor?: CommandExecutor;
 }
@@ -876,6 +879,7 @@ function createAdminContextPayload(options: ManagementApiOptions) {
       origin: options.origin,
       infoPath: getGlobalAdminServerInfoPath(options.serverInfoHomeDir),
     },
+    makeState: options.makeStateHealth,
     runtime: runtime
       ? { available: true, ...runtime }
       : { available: false },
@@ -896,7 +900,13 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
       runtimeOrigin: options.runtimeOrigin || null,
       devMode: options.devMode === true,
       server: options.serverInfo || readServerInfo(projectRoot, 'admin', { homeDir: options.serverInfoHomeDir }),
+      makeState: options.makeStateHealth,
     });
+    return true;
+  }
+
+  if (pathname === '/api/make-state/health') {
+    sendJson(res, options.refreshMakeStateHealth ? options.refreshMakeStateHealth() : options.makeStateHealth);
     return true;
   }
 

@@ -240,14 +240,16 @@ describe('quick edit runtime script', () => {
     expect(documentStub.addEventListener).not.toHaveBeenCalledWith('input', expect.any(Function), true);
   });
 
-  it('handles copy-to-figma export requests in the make-server runtime and returns the matching request id', async () => {
-    const copyDocumentForFigmaNewOfficialClipboard = vi.fn(async () => ({
-      success: true,
-      payloadSizeKb: 42,
-    }));
+  it('returns a Figma clipboard payload for copy-to-figma export requests without writing from the iframe', async () => {
+    const capturedDocument = { root: { id: 'root' } };
+    const captureDocumentForFigmaNew = vi.fn(async () => capturedDocument);
+    const buildOfficialClipboardPayloadFromCapturedDocument = vi.fn(async () => '{"figma":true}');
+    const copyDocumentForFigmaNewOfficialClipboard = vi.fn();
     const { listeners, messages, windowStub } = createRuntimeHarness({
       axhubExportCore: {
         copyDocumentForFigmaNewOfficialClipboard,
+        captureDocumentForFigmaNew,
+        buildOfficialClipboardPayloadFromCapturedDocument,
       },
     });
 
@@ -264,15 +266,18 @@ describe('quick edit runtime script', () => {
       expect(messages.at(-1)?.message?.type).toBe('axhub.quickEdit.export.copyToFigmaResult');
     });
 
-    expect(windowStub.focus).toHaveBeenCalled();
-    expect(copyDocumentForFigmaNewOfficialClipboard).toHaveBeenCalledWith('#root');
+    expect(windowStub.focus).not.toHaveBeenCalled();
+    expect(captureDocumentForFigmaNew).toHaveBeenCalledWith('#root');
+    expect(buildOfficialClipboardPayloadFromCapturedDocument).toHaveBeenCalledWith(capturedDocument);
+    expect(copyDocumentForFigmaNewOfficialClipboard).not.toHaveBeenCalled();
     expect(messages.at(-1)).toEqual({
       targetOrigin: '*',
       message: expect.objectContaining({
         type: 'axhub.quickEdit.export.copyToFigmaResult',
         requestId: 'copy-1',
         success: true,
-        payloadSizeKb: 42,
+        payloadText: '{"figma":true}',
+        payloadSizeKb: 0,
         projectId: 'project-1',
         resourceId: 'home',
         resourceType: 'prototypes',
@@ -307,7 +312,7 @@ describe('quick edit runtime script', () => {
       expect(messages.at(-1)?.message?.type).toBe('axhub.quickEdit.export.copyToFigmaResult');
     });
 
-    expect(windowStub.focus).toHaveBeenCalled();
+    expect(windowStub.focus).not.toHaveBeenCalled();
     expect(captureDocumentForFigmaNew).toHaveBeenCalledWith('#root');
     expect(buildOfficialClipboardPayloadFromCapturedDocument).toHaveBeenCalledWith(capturedDocument);
     expect(copyDocumentForFigmaNewOfficialClipboard).not.toHaveBeenCalled();
@@ -453,7 +458,7 @@ describe('quick edit runtime script', () => {
         type: 'axhub.quickEdit.export.copyToFigmaResult',
         requestId: 'copy-2',
         success: false,
-        error: 'Error: clipboard denied',
+        error: 'Error: make-server export core missing Figma payload builders',
       }),
     });
   });
