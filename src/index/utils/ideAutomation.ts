@@ -45,6 +45,14 @@ export function resolveOpenIDEErrorMessage(error: unknown, preferredIDE: MainIDE
     return hasFollowupAction ? `${baseMessage}，已继续后续操作` : baseMessage;
 }
 
+function openBrowserDeeplink(url: string): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    window.location.href = url;
+}
+
 export async function openConfiguredIDEBeforeAction({
     preferredIDE,
     projectId,
@@ -55,11 +63,14 @@ export async function openConfiguredIDEBeforeAction({
     }
 
     try {
-        await apiService.openIDE({
+        const result = await apiService.openIDE({
             ide: preferredIDE,
             projectId: projectId && projectId.trim() ? projectId.trim() : undefined,
             targetPath: targetPath && targetPath.trim() ? targetPath.trim() : undefined,
         });
+        if (result?.openInBrowser && result.url) {
+            openBrowserDeeplink(result.url);
+        }
         return true;
     } catch (error: any) {
         console.error('Failed to auto open IDE:', error);

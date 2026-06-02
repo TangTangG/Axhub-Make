@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 
 import { buildIDEFileProtocolUrl, getIDEFileProtocolSchemes } from './ideProtocol.ts';
+import type { ToolOpenMode, ToolOpenStateEntry } from './projectCore/server-config.ts';
 
 export const MAIN_IDE_VALUES = ['cursor', 'trae', 'vscode', 'trae_cn', 'windsurf', 'kiro', 'qoder', 'antigravity'] as const;
 export type MainIDE = typeof MAIN_IDE_VALUES[number];
@@ -57,6 +58,11 @@ export interface OpenIDEResult {
   ide: MainIDE;
   targetPath: string;
   command: string;
+  url?: string;
+  openInBrowser?: boolean;
+  openMode?: ToolOpenMode;
+  executablePath?: string;
+  appPathName?: string;
 }
 
 export function normalizeMainIDE(value: unknown): MainIDE | null {
@@ -334,7 +340,7 @@ function spawnWindowsStartProcess(args: string[], commandLabel: string): Promise
   });
 }
 
-function tryOpenWindowsIDEByAppPathNames(appPathNames: string[], targetPath: string): Promise<void> {
+function tryOpenWindowsIDEByAppPathNames(appPathNames: string[], targetPath: string): Promise<string> {
   const candidates = appPathNames.map((name) => name.trim()).filter(Boolean);
   const commandArgs = (candidate: string) => [
     '-NoProfile',
@@ -358,7 +364,7 @@ function tryOpenWindowsIDEByAppPathNames(appPathNames: string[], targetPath: str
       spawnWindowsStartProcess(
         commandArgs(candidates[index]),
         `powershell Start-Process ${candidates[index]}`,
-      ).then(resolve).catch((error: Error) => {
+      ).then(() => resolve(candidates[index])).catch((error: Error) => {
           lastError = error;
           tryNext(index + 1);
         });
@@ -368,40 +374,30 @@ function tryOpenWindowsIDEByAppPathNames(appPathNames: string[], targetPath: str
   });
 }
 
-function tryOpenWindowsIDEByFileProtocol(ide: MainIDE, targetPath: string): Promise<{ command: string; url: string }> {
+function buildWindowsIDEFileProtocolBrowserResult(
+  ide: MainIDE,
+  targetPath: string,
+  preferredScheme?: string | null,
+): OpenIDEResult {
   const schemes = getIDEFileProtocolSchemes(ide);
+  const scheme = String(preferredScheme || '').trim() || schemes[0];
+  if (!scheme) {
+    throw new Error('No compatible Windows file protocol found');
+  }
 
-  return new Promise((resolve, reject) => {
-    let lastError: Error | null = null;
-    const tryNext = (index: number) => {
-      if (index >= schemes.length) {
-        reject(lastError || new Error('No compatible Windows file protocol found'));
-        return;
-      }
-
-      const url = buildIDEFileProtocolUrl(schemes[index], targetPath);
-      const command = `powershell -NoProfile -Command Start-Process -FilePath ${quoteForPowerShellSingle(url)} -ErrorAction Stop`;
-      spawnWindowsStartProcess([
-        '-NoProfile',
-        '-NonInteractive',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        'Start-Process -FilePath $args[0] -ErrorAction Stop',
-        url,
-      ], `powershell Start-Process ${url}`).then(() => {
-        resolve({ command, url });
-      }).catch((error: Error) => {
-        lastError = error;
-        tryNext(index + 1);
-      });
-    };
-
-    tryNext(0);
-  });
+  const url = buildIDEFileProtocolUrl(scheme, targetPath);
+  return {
+    success: true,
+    ide,
+    targetPath,
+    command: `browser ${url}`,
+    url,
+    openInBrowser: true,
+    openMode: 'browser-deeplink',
+  };
 }
 
-function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult> {
+function openWindowsIDE(ide: MainIDE, targetPath: string, toolOpenState?: ToolOpenStateEntry): Promise<OpenIDEResult> {
   const ideAppName = MAIN_IDE_APP_NAMES[ide];
   const executableCandidates = [
     ...(MAIN_IDE_WINDOWS_COMMAND_CANDIDATES[ide] || []),
@@ -409,18 +405,6 @@ function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult
   ];
   const executableNameCandidates = MAIN_IDE_WINDOWS_EXECUTABLE_NAMES[ide] || [];
   const appPathNames = MAIN_IDE_WINDOWS_APP_PATH_NAMES[ide] || [ideAppName];
-
-  const executablePath =
-    resolveWindowsExecutablePath(executableCandidates)
-    || resolveWindowsExecutablePath(executableNameCandidates)
-    || resolveWindowsExecutableFromRegistry(executableNameCandidates);
-
-  const openByProtocol = () => tryOpenWindowsIDEByFileProtocol(ide, targetPath).then(({ command }) => ({
-    success: true as const,
-    ide,
-    targetPath,
-    command,
-  }));
 
   const openByExecutable = (resolvedExecutablePath: string) => {
     const spawnSpec = getSpawnCommandSpec(resolvedExecutablePath, [targetPath], process.platform);
@@ -437,34 +421,74 @@ function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult
       ide,
       targetPath,
       command: `${quoteForShell(resolvedExecutablePath)} ${quoteForShell(targetPath)}`,
+      openMode: 'direct-app' as const,
+      executablePath: resolvedExecutablePath,
     }));
   };
 
+  const openByAppPath = (candidates: string[]) => tryOpenWindowsIDEByAppPathNames(candidates, targetPath).then((appPathName) => ({
+    success: true as const,
+    ide,
+    targetPath,
+    command: `powershell -NoProfile -Command Start-Process -FilePath ${quoteForPowerShellSingle(appPathName)} -ArgumentList ${quoteForPowerShellSingle(targetPath)} -ErrorAction Stop`,
+    openMode: 'app-path' as const,
+    appPathName,
+  }));
+
+  const openByProtocol = (scheme?: string | null) => Promise.resolve(
+    buildWindowsIDEFileProtocolBrowserResult(ide, targetPath, scheme),
+  );
+
+  const storedOpenMode = toolOpenState?.lastOpenMode || '';
+  const storedExecutablePath = String(toolOpenState?.executablePath || '').trim();
+  const storedAppPathName = String(toolOpenState?.appPathName || '').trim();
+  const appPathCandidates = Array.from(new Set([
+    storedAppPathName,
+    ...appPathNames,
+    ideAppName,
+  ].filter(Boolean)));
+
+  if (storedOpenMode === 'browser-deeplink') {
+    return openByProtocol();
+  }
+
+  if (storedOpenMode === 'direct-app' && storedExecutablePath) {
+    return openByExecutable(storedExecutablePath).catch(() => openByProtocol());
+  }
+
+  if (storedOpenMode === 'app-path' && storedAppPathName) {
+    return openByAppPath(appPathCandidates)
+      .catch(() => (storedExecutablePath ? openByExecutable(storedExecutablePath) : openByProtocol()))
+      .catch(() => openByProtocol());
+  }
+
+  if (storedExecutablePath) {
+    return openByExecutable(storedExecutablePath).catch(() => (
+      storedAppPathName
+        ? openByAppPath(appPathCandidates)
+        : openByProtocol()
+    )).catch(() => openByProtocol());
+  }
+
+  if (storedAppPathName) {
+    return openByAppPath(appPathCandidates).catch(() => openByProtocol());
+  }
+
+  const executablePath = storedExecutablePath
+    || resolveWindowsExecutablePath(executableCandidates)
+    || resolveWindowsExecutablePath(executableNameCandidates)
+    || resolveWindowsExecutableFromRegistry(executableNameCandidates);
+
   const registeredProtocol = resolveWindowsFileProtocolRegistration(getIDEFileProtocolSchemes(ide));
   if (registeredProtocol) {
-    return openByProtocol().catch(() => (
-      executablePath
-        ? openByExecutable(executablePath)
-        : tryOpenWindowsIDEByAppPathNames(appPathNames, targetPath).then(() => ({
-          success: true as const,
-          ide,
-          targetPath,
-          command: `powershell -NoProfile -Command Start-Process -FilePath ${quoteForPowerShellSingle(appPathNames[0] || ideAppName)} -ArgumentList ${quoteForPowerShellSingle(targetPath)} -ErrorAction Stop`,
-        }))
-    ));
+    return openByProtocol(registeredProtocol);
   }
 
   if (!executablePath) {
-    const command = `powershell -NoProfile -Command Start-Process -FilePath ${quoteForPowerShellSingle(appPathNames[0] || ideAppName)} -ArgumentList ${quoteForPowerShellSingle(targetPath)} -ErrorAction Stop`;
-    return tryOpenWindowsIDEByAppPathNames(appPathNames, targetPath).then(() => ({
-      success: true as const,
-      ide,
-      targetPath,
-      command,
-    })).catch(openByProtocol);
+    return openByAppPath(appPathCandidates).catch(() => openByProtocol());
   }
 
-  return openByExecutable(executablePath).catch(openByProtocol);
+  return openByExecutable(executablePath).catch(() => openByProtocol());
 }
 
 function openUnixIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult> {
@@ -484,9 +508,17 @@ function openUnixIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult> {
   }));
 }
 
-export function openIDEPath({ ide, targetPath }: { ide: MainIDE; targetPath: string }): Promise<OpenIDEResult> {
+export function openIDEPath({
+  ide,
+  targetPath,
+  toolOpenState,
+}: {
+  ide: MainIDE;
+  targetPath: string;
+  toolOpenState?: ToolOpenStateEntry;
+}): Promise<OpenIDEResult> {
   if (process.platform === 'win32') {
-    return openWindowsIDE(ide, targetPath);
+    return openWindowsIDE(ide, targetPath, toolOpenState);
   }
 
   return openUnixIDE(ide, targetPath);

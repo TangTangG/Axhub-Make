@@ -5,8 +5,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  createProjectRegistry,
   getConfigPath,
+  getGlobalServerConfigPath,
   getMakeClientMarkerPath,
   getProjectMetadataPath,
   getProjectRegistryPath,
@@ -145,15 +145,25 @@ function createSpawnOnlyMockChild() {
   return child;
 }
 
-async function startTestServer(projectRoot: string) {
+async function startTestServer(projectRoot: string, options: { serverConfig?: unknown } = {}) {
   const registryHome = createTempRoot('axhub-make-ide-open-registry-');
   const registryPath = getProjectRegistryPath(registryHome);
-  createProjectRegistry({ registryPath }).addProject({
-    id: 'ide-client',
-    name: 'IDE Client',
-    root: projectRoot,
-    metadataPath: getProjectMetadataPath(projectRoot),
+  const now = new Date().toISOString();
+  writeJson(registryPath, {
+    schemaVersion: 1,
+    activeProjectId: 'ide-client',
+    projects: [{
+      id: 'ide-client',
+      name: 'IDE Client',
+      root: projectRoot,
+      metadataPath: getProjectMetadataPath(projectRoot),
+      createdAt: now,
+      updatedAt: now,
+    }],
   });
+  if (options.serverConfig) {
+    writeJson(getGlobalServerConfigPath(registryHome), options.serverConfig);
+  }
   return startMakeServer({
     projectRoot,
     host: 'localhost',
@@ -310,14 +320,11 @@ describe('make-server IDE open API', () => {
     ['kiro', 'kiro://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
     ['qoder', 'qoder://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
     ['antigravity', 'antigravity://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
-  ] as const)('falls back to the %s Windows file protocol when executable launches fail', async (ide, expectedUrl) => {
+  ] as const)('returns the %s Windows file protocol for browser execution when executable launches fail', async (ide, expectedUrl) => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     childProcessMock.spawnSync.mockReturnValue({ status: 1, stdout: '', stderr: '' });
-    childProcessMock.spawn.mockImplementation((_command: string, args?: string[]) => {
-      const filePathArg = args?.at(-1) || '';
-      return createMockChild(filePathArg === expectedUrl ? 0 : 1);
-    });
+    childProcessMock.spawn.mockImplementation(() => createMockChild(1));
 
     try {
       await expect(openIDEPath({
@@ -327,26 +334,161 @@ describe('make-server IDE open API', () => {
         success: true,
         ide,
         targetPath: 'C:\\Projects\\Axhub Runtime\\src\\App #1.tsx',
-        command: `powershell -NoProfile -Command Start-Process -FilePath '${expectedUrl}' -ErrorAction Stop`,
+        command: `browser ${expectedUrl}`,
+        url: expectedUrl,
+        openInBrowser: true,
       });
 
-      expect(childProcessMock.spawn).toHaveBeenCalledWith(
-        'powershell',
-        expect.arrayContaining([
-          'Start-Process -FilePath $args[0] -ErrorAction Stop',
-          expectedUrl,
-        ]),
-        expect.objectContaining({
-          shell: false,
-          windowsHide: true,
-        }),
-      );
+      expect(JSON.stringify(childProcessMock.spawn.mock.calls)).not.toContain(expectedUrl);
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
   });
 
-  it('falls back instead of reporting success when the Windows IDE command wrapper exits unsuccessfully', async () => {
+  it('returns Windows file protocol deeplinks for browser-side execution instead of spawning them', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    childProcessMock.spawnSync.mockReturnValue({ status: 1, stdout: '', stderr: '' });
+    childProcessMock.spawn.mockImplementation(() => createMockChild(1));
+
+    try {
+      await expect(openIDEPath({
+        ide: 'cursor',
+        targetPath: 'C:\\Projects\\Axhub Runtime\\src\\App #1.tsx',
+      })).resolves.toMatchObject({
+        success: true,
+        ide: 'cursor',
+        targetPath: 'C:\\Projects\\Axhub Runtime\\src\\App #1.tsx',
+        command: 'browser cursor://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx',
+        url: 'cursor://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx',
+        openInBrowser: true,
+      });
+
+      expect(childProcessMock.spawn).toHaveBeenCalled();
+      expect(JSON.stringify(childProcessMock.spawn.mock.calls)).not.toContain('cursor://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx');
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it('uses a stored Windows IDE executable path before probing and records the direct-app open mode', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    writeJson(getConfigPath(projectRoot), {
+      automation: {
+        defaultIDE: 'cursor',
+      },
+    });
+    childProcessMock.spawnSync.mockImplementation(() => {
+      throw new Error('Windows executable probing should not run when a stored path exists');
+    });
+
+    const server = await startTestServer(projectRoot, {
+      serverConfig: {
+        automation: {
+          defaultPromptClient: 'genie:codex',
+          defaultIDE: 'cursor',
+        },
+        toolOpenState: {
+          'ide:cursor': {
+            executablePath: 'C:\\Stored\\Cursor.exe',
+            lastOpenMode: 'direct-app',
+          },
+        },
+      },
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/ide/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetPath: 'src/prototypes/home/index.tsx' }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        success: true,
+        ide: 'cursor',
+        openMode: 'direct-app',
+      });
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        'C:\\Stored\\Cursor.exe',
+        [path.join(projectRoot, 'src/prototypes/home/index.tsx')],
+        expect.objectContaining({
+          shell: false,
+          windowsHide: true,
+        }),
+      );
+
+      const config = await fetch(`${server.origin}/api/config`).then((configResponse) => configResponse.json());
+      expect(config.toolOpenState['ide:cursor']).toMatchObject({
+        executablePath: 'C:\\Stored\\Cursor.exe',
+        lastOpenMode: 'direct-app',
+      });
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+      await server.close();
+    }
+  });
+
+  it('uses the stored Windows IDE browser-deeplink mode before direct executable launch', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    writeJson(getConfigPath(projectRoot), {
+      automation: {
+        defaultIDE: 'cursor',
+      },
+    });
+    childProcessMock.spawnSync.mockReturnValue({ status: 0, stdout: 'C:\\Tools\\Cursor.exe\r\n', stderr: '' });
+
+    const server = await startTestServer(projectRoot, {
+      serverConfig: {
+        automation: {
+          defaultPromptClient: 'genie:codex',
+          defaultIDE: 'cursor',
+        },
+        toolOpenState: {
+          'ide:cursor': {
+            executablePath: 'C:\\Tools\\Cursor.exe',
+            lastOpenMode: 'browser-deeplink',
+          },
+        },
+      },
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/ide/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetPath: 'src/prototypes/home/index.tsx' }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        success: true,
+        ide: 'cursor',
+        openInBrowser: true,
+        openMode: 'browser-deeplink',
+        url: expect.stringContaining('cursor://file/'),
+      });
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'C:\\Tools\\Cursor.exe',
+        expect.anything(),
+        expect.anything(),
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+      await server.close();
+    }
+  });
+
+  it('falls back to browser-side deeplinks when the Windows IDE command wrapper exits unsuccessfully', async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     childProcessMock.spawnSync.mockImplementation((...input: unknown[]) => {
@@ -357,12 +499,9 @@ describe('make-server IDE open API', () => {
       }
       return { status: 1, stdout: '', stderr: '' };
     });
-    childProcessMock.spawn.mockImplementation((command: string, args?: string[]) => {
+    childProcessMock.spawn.mockImplementation((command: string) => {
       if (command === 'cmd.exe') {
         return createMockChildWithStderr(1, 'Cursor CLI failed');
-      }
-      if (command === 'powershell' && args?.includes('cursor://file/C:/Projects/Make12')) {
-        return createMockChild(0);
       }
       return createMockChild(1);
     });
@@ -375,7 +514,10 @@ describe('make-server IDE open API', () => {
         success: true,
         ide: 'cursor',
         targetPath: 'C:\\Projects\\Make12',
-        command: "powershell -NoProfile -Command Start-Process -FilePath 'cursor://file/C:/Projects/Make12' -ErrorAction Stop",
+        command: 'browser cursor://file/C:/Projects/Make12',
+        url: 'cursor://file/C:/Projects/Make12',
+        openInBrowser: true,
+        openMode: 'browser-deeplink',
       });
 
       const commandWrapperCall = childProcessMock.spawn.mock.calls.find(([command]) => command === 'cmd.exe');
@@ -383,20 +525,13 @@ describe('make-server IDE open API', () => {
       expect(commandWrapperCall?.[1]).toEqual(expect.arrayContaining(['/d', '/s', '/c']));
       expect(String(commandWrapperCall?.[1]?.[3] || '')).toContain('cursor.cmd');
       expect(String(commandWrapperCall?.[1]?.[3] || '')).toContain('Make12');
-      expect(childProcessMock.spawn).toHaveBeenCalledWith(
-        'powershell',
-        expect.arrayContaining(['cursor://file/C:/Projects/Make12']),
-        expect.objectContaining({
-          shell: false,
-          windowsHide: true,
-        }),
-      );
+      expect(JSON.stringify(childProcessMock.spawn.mock.calls)).not.toContain('cursor://file/C:/Projects/Make12');
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
   });
 
-  it('prefers a registered Windows file protocol over direct executable launch', async () => {
+  it('prefers a registered Windows file protocol over direct executable launch for browser execution', async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     childProcessMock.spawnSync.mockImplementation((...input: unknown[]) => {
@@ -410,13 +545,6 @@ describe('make-server IDE open API', () => {
       }
       return { status: 1, stdout: '', stderr: '' };
     });
-    childProcessMock.spawn.mockImplementation((command: string, args?: string[]) => {
-      if (command === 'powershell' && args?.includes('cursor://file/E:/make12')) {
-        return createMockChild(0);
-      }
-      return createMockChild(1);
-    });
-
     try {
       await expect(openIDEPath({
         ide: 'cursor',
@@ -425,7 +553,10 @@ describe('make-server IDE open API', () => {
         success: true,
         ide: 'cursor',
         targetPath: 'E:\\make12',
-        command: "powershell -NoProfile -Command Start-Process -FilePath 'cursor://file/E:/make12' -ErrorAction Stop",
+        command: 'browser cursor://file/E:/make12',
+        url: 'cursor://file/E:/make12',
+        openInBrowser: true,
+        openMode: 'browser-deeplink',
       });
 
       expect(childProcessMock.spawn).not.toHaveBeenCalledWith(

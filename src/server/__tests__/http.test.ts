@@ -46,6 +46,19 @@ function createRegistryPath() {
   return getProjectRegistryPath(root);
 }
 
+async function getFreePort(): Promise<number> {
+  const probe = http.createServer();
+  await new Promise<void>((resolve) => probe.listen(0, 'localhost', resolve));
+  const address = probe.address() as AddressInfo;
+  await new Promise<void>((resolve, reject) => {
+    probe.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  return address.port;
+}
+
 function writePrototype(root: string, name: string, source = 'export default function Page() {}') {
   const dir = path.join(root, 'src/prototypes', name);
   fs.mkdirSync(dir, { recursive: true });
@@ -925,6 +938,66 @@ describe('make-server HTTP server', () => {
       });
     } finally {
       await server.close();
+    }
+  });
+
+  it('does not accept root page requests before Vite dev middleware is ready', async () => {
+    const projectRoot = createProjectRoot();
+    const registryPath = createRegistryPath();
+    const port = await getFreePort();
+    let resolveMiddleware: ((middleware: {
+      handle: any;
+      transformHtml: any;
+      close: any;
+    }) => void) | null = null;
+    const createViteDevMiddleware = vi.fn(() => new Promise((resolve) => {
+      resolveMiddleware = resolve as typeof resolveMiddleware;
+    }));
+
+    vi.resetModules();
+    vi.doMock('../viteDevServer.ts', () => ({ createViteDevMiddleware }));
+    const { startMakeServer: startMakeServerWithMockedVite } = await import('../index.ts');
+
+    const startPromise = startMakeServerWithMockedVite({
+      projectRoot,
+      host: 'localhost',
+      port,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath,
+      devMode: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(createViteDevMiddleware).toHaveBeenCalledTimes(1);
+    });
+
+    const prematureRootResponse = await fetch(`http://localhost:${port}/?projectId=make-project`)
+      .then(async (response) => ({
+        status: response.status,
+        contentType: response.headers.get('content-type') || '',
+        body: await response.text(),
+      }))
+      .catch((error) => ({ error }));
+
+    expect('error' in prematureRootResponse).toBe(true);
+
+    resolveMiddleware?.({
+      handle: vi.fn(),
+      transformHtml: vi.fn(async (_url: string, htmlPath: string) => fs.readFileSync(htmlPath, 'utf8')),
+      close: vi.fn(),
+    });
+
+    const server = await startPromise;
+    try {
+      const health = await fetch(`${server.origin}/api/health`).then((response) => response.json());
+      expect(health).toMatchObject({
+        ok: true,
+        devMode: true,
+      });
+    } finally {
+      await server.close();
+      vi.doUnmock('../viteDevServer.ts');
+      vi.resetModules();
     }
   });
 

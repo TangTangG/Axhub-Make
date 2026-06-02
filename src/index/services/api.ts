@@ -120,6 +120,8 @@ interface OpenIDEResponse {
     ide: string;
     targetPath: string;
     command: string;
+    url?: string;
+    openInBrowser?: boolean;
 }
 
 interface OpenCLIAgentRequest {

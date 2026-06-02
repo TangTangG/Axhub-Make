@@ -16192,7 +16192,7 @@ var PropertyPanelView = React14.forwardRef(
       effectiveVisualState
     } = deriveGenieUiState({
       currentTarget,
-      visualState: genieVisualState,
+      visualState: uiSettings.genieAwake ? "awake" : genieVisualState,
       getElementGenieTaskState: options.getElementGenieTaskState,
       getVisibleElementGenieTaskStates: options.getVisibleElementGenieTaskStates,
       getHasReusableGenieConversation: options.getHasReusableGenieConversation,

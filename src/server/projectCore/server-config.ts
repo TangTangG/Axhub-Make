@@ -26,6 +26,17 @@ export type AiImageGenerationApiMode = 'images' | 'responses';
 export type AiImageGenerationQuality = 'auto' | 'low' | 'medium' | 'high';
 export type AiImageGenerationOutputFormat = 'png' | 'jpeg' | 'webp';
 export type AiImageGenerationModeration = 'auto' | 'low';
+export type ToolOpenKind = 'ide' | 'cli' | 'web' | 'local-app';
+export type ToolOpenMode = 'direct-app' | 'app-path' | 'browser-deeplink' | 'deeplink' | 'terminal' | 'managed-web';
+
+export interface ToolOpenStateEntry {
+  executablePath?: string;
+  commandPath?: string;
+  appPathName?: string;
+  lastOpenMode?: ToolOpenMode | '';
+}
+
+export type ToolOpenState = Record<string, ToolOpenStateEntry>;
 
 export interface AiImageGenerationConfig {
   baseUrl: string;
@@ -64,6 +75,7 @@ export interface MakeServerConfig {
     excalidrawPropertyPanelMode: ExcalidrawPropertyPanelModePreference;
     excalidrawPropertyPanelPosition: ExcalidrawPropertyPanelPositionPreference;
   };
+  toolOpenState: ToolOpenState;
 }
 
 export interface ServerConfigStoreOptions {
@@ -114,6 +126,7 @@ const DEFAULT_SERVER_CONFIG: MakeServerConfig = {
     excalidrawPropertyPanelMode: 'collapsed',
     excalidrawPropertyPanelPosition: 'right',
   },
+  toolOpenState: {},
 };
 
 const PROMPT_CLIENT_VALUES = new Set<ServerPromptClientPreference>([
@@ -135,6 +148,17 @@ const IDE_VALUES = new Set<ServerIDEPreference>([
   'none',
 ]);
 
+const TOOL_OPEN_MODES = new Set<ToolOpenMode>([
+  'direct-app',
+  'app-path',
+  'browser-deeplink',
+  'deeplink',
+  'terminal',
+  'managed-web',
+]);
+
+const TOOL_OPEN_KEY_PATTERN = /^(?:ide|cli|web|local-app):[a-z][a-z0-9_-]*$/u;
+
 function readJsonFile(filePath: string): unknown {
   if (!fs.existsSync(filePath)) {
     return null;
@@ -155,6 +179,10 @@ function normalizeNullableString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function normalizeTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function normalizeOptionalString(value: unknown, fallback: string): string {
@@ -279,6 +307,58 @@ function normalizeAcpxConfig(
   };
 }
 
+function normalizeToolOpenStateEntry(value: unknown, fallback: ToolOpenStateEntry = {}): ToolOpenStateEntry {
+  const data = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const executablePath = hasOwn(data, 'executablePath')
+    ? normalizeTrimmedString(data.executablePath)
+    : fallback.executablePath || '';
+  const commandPath = hasOwn(data, 'commandPath')
+    ? normalizeTrimmedString(data.commandPath)
+    : fallback.commandPath || '';
+  const appPathName = hasOwn(data, 'appPathName')
+    ? normalizeTrimmedString(data.appPathName)
+    : fallback.appPathName || '';
+  const rawOpenMode = hasOwn(data, 'lastOpenMode')
+    ? normalizeTrimmedString(data.lastOpenMode)
+    : fallback.lastOpenMode || '';
+  const lastOpenMode = TOOL_OPEN_MODES.has(rawOpenMode as ToolOpenMode)
+    ? rawOpenMode as ToolOpenMode
+    : '';
+  const entry: ToolOpenStateEntry = {};
+  if (executablePath) entry.executablePath = executablePath;
+  if (commandPath) entry.commandPath = commandPath;
+  if (appPathName) entry.appPathName = appPathName;
+  if (lastOpenMode) entry.lastOpenMode = lastOpenMode;
+  return entry;
+}
+
+function normalizeToolOpenState(value: unknown, fallback: ToolOpenState = {}): ToolOpenState {
+  const current = Object.fromEntries(
+    Object.entries(fallback)
+      .filter(([key]) => TOOL_OPEN_KEY_PATTERN.test(key))
+      .map(([key, entry]) => [key, normalizeToolOpenStateEntry(entry)]),
+  );
+  const data = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const next: ToolOpenState = { ...current };
+  for (const [rawKey, rawEntry] of Object.entries(data)) {
+    const key = rawKey.trim();
+    if (!TOOL_OPEN_KEY_PATTERN.test(key)) {
+      continue;
+    }
+    if (rawEntry === null) {
+      delete next[key];
+      continue;
+    }
+    const entry = normalizeToolOpenStateEntry(rawEntry, next[key]);
+    if (Object.keys(entry).length > 0) {
+      next[key] = entry;
+    } else {
+      delete next[key];
+    }
+  }
+  return next;
+}
+
 function normalizeIDE(value: unknown, fallback: ServerIDEPreference): ServerIDEPreference {
   if (value === null) {
     return 'none';
@@ -375,7 +455,14 @@ function normalizeConfig(input: unknown, fallback: MakeServerConfig = DEFAULT_SE
         )
         : fallback.uiPreferences.excalidrawPropertyPanelPosition,
     },
+    toolOpenState: hasOwn(data, 'toolOpenState')
+      ? normalizeToolOpenState(data.toolOpenState, fallback.toolOpenState)
+      : fallback.toolOpenState,
   };
+}
+
+export function buildToolOpenStateKey(kind: ToolOpenKind, value: string): string {
+  return `${kind}:${String(value || '').trim().toLowerCase()}`;
 }
 
 function getLegacyProjectConfig(projectRoot?: string | null): MakeServerConfig {

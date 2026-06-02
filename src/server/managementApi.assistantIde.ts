@@ -12,7 +12,7 @@ import {
 } from './assistantRuntime.ts';
 import { AcpxPromptExecutionError, executeAcpxPrompt } from './acpxPromptExecutor.ts';
 import { detectAgentAvailabilityAtStartup } from './agentAvailability.ts';
-import type { AgentVersionInfo, CLIAgent } from './agentTypes.ts';
+import type { AgentAvailabilityInfo, AgentVersionInfo, CLIAgent } from './agentTypes.ts';
 import {
   getMissingCLIAgentOpenError,
   getMissingLocalAppOpenError,
@@ -28,6 +28,7 @@ import { getRequestUrl, readJsonBody, sendJson } from './http.ts';
 import { detectIDEAvailabilityAtStartup, getMissingIDEOpenError } from './ideAvailability.ts';
 import { normalizeMainIDE, openIDEPath } from './ideOpen.ts';
 import { runLocalCommand } from './localCommand.ts';
+import { buildToolOpenStateKey, type ToolOpenStateEntry } from './projectCore/server-config.ts';
 import {
   aiImageHistoryToClient,
   persistAiImageReferenceAssets,
@@ -66,6 +67,7 @@ interface AssistantIdeHandlers {
   ) => AssistantIdeProjectContext | null;
   getServerConfigStoreForRequest: (options: ManagementApiOptions) => {
     getConfig: (params: { activeProjectRoot: string }) => any;
+    saveConfig: (config: Record<string, unknown>) => unknown;
   };
   sendDisabledCapability: (
     res: ServerResponse,
@@ -88,6 +90,25 @@ function resolveConfiguredMainIDE(
 ) {
   const config = handlers.getServerConfigStoreForRequest(options).getConfig({ activeProjectRoot: projectRoot });
   return normalizeMainIDE(config.automation.defaultIDE);
+}
+
+function withStoredCommandAvailability(
+  availability: AgentAvailabilityInfo | undefined,
+  toolOpenState: ToolOpenStateEntry | undefined,
+): AgentAvailabilityInfo | undefined {
+  const storedCommandPath = String(toolOpenState?.commandPath || '').trim();
+  if (!storedCommandPath) {
+    return availability;
+  }
+
+  return {
+    ...availability,
+    status: 'installed',
+    confidence: availability?.confidence || 'high',
+    checkedAt: availability?.checkedAt || new Date().toISOString(),
+    source: availability?.source || 'tool-open-state',
+    path: storedCommandPath,
+  };
 }
 
 function firstVersionLine(...outputs: unknown[]): string {
@@ -402,9 +423,18 @@ export function handleAssistantPromptIde(
         return;
       }
 
+      const serverConfigStore = handlers.getServerConfigStoreForRequest(options);
+      const config = serverConfigStore.getConfig({ activeProjectRoot: context.project.root });
+      const toolOpenStateKey = buildToolOpenStateKey('ide', ide);
+      const existingToolOpenState = config.toolOpenState?.[toolOpenStateKey];
+      const hasStoredOpenPreference = Boolean(
+        existingToolOpenState?.executablePath
+        || existingToolOpenState?.appPathName
+        || existingToolOpenState?.lastOpenMode === 'browser-deeplink',
+      );
       const ideAvailability = detectIDEAvailabilityAtStartup();
       const missingIDEOpenError = getMissingIDEOpenError(ide, ideAvailability);
-      if (missingIDEOpenError) {
+      if (missingIDEOpenError && !hasStoredOpenPreference) {
         sendJson(res, {
           ...missingIDEOpenError.body,
           projectId: context.project.id,
@@ -413,7 +443,20 @@ export function handleAssistantPromptIde(
       }
 
       try {
-        const result = await openIDEPath({ ide, targetPath: absoluteTargetPath });
+        const result = await openIDEPath({
+          ide,
+          targetPath: absoluteTargetPath,
+          toolOpenState: existingToolOpenState,
+        });
+        serverConfigStore.saveConfig({
+          toolOpenState: {
+            [toolOpenStateKey]: {
+              executablePath: result.executablePath,
+              appPathName: result.appPathName,
+              lastOpenMode: result.openMode,
+            },
+          },
+        });
         sendJson(res, {
           ...result,
           projectId: context.project.id,
@@ -463,12 +506,16 @@ export function handleAssistantPromptIde(
       }
 
       const availability = detectAgentAvailabilityAtStartup();
-      if (availability.cli[agent]?.status === 'missing') {
+      const serverConfigStore = handlers.getServerConfigStoreForRequest(options);
+      const config = serverConfigStore.getConfig({ activeProjectRoot: context.project.root });
+      const toolOpenStateKey = buildToolOpenStateKey('cli', agent);
+      const agentAvailability = withStoredCommandAvailability(availability.cli[agent], config.toolOpenState?.[toolOpenStateKey]);
+      if (agentAvailability?.status === 'missing') {
         const missingAgentOpenError = getMissingCLIAgentOpenError(agent);
         sendJson(res, {
           ...missingAgentOpenError.body,
           projectId: context.project.id,
-          availability: availability.cli[agent],
+          availability: agentAvailability,
         }, { status: missingAgentOpenError.statusCode });
         return;
       }
@@ -477,7 +524,15 @@ export function handleAssistantPromptIde(
         const result = await openCLIAgent({
           agent,
           targetPath: absoluteTargetPath,
-          availability: availability.cli[agent],
+          availability: agentAvailability,
+        });
+        serverConfigStore.saveConfig({
+          toolOpenState: {
+            [toolOpenStateKey]: {
+              commandPath: agentAvailability?.path,
+              lastOpenMode: 'terminal',
+            },
+          },
         });
         sendJson(res, {
           ...result,
@@ -528,12 +583,16 @@ export function handleAssistantPromptIde(
       }
 
       const availability = detectAgentAvailabilityAtStartup();
-      if (availability.localApp[agent]?.status === 'missing') {
+      const serverConfigStore = handlers.getServerConfigStoreForRequest(options);
+      const config = serverConfigStore.getConfig({ activeProjectRoot: context.project.root });
+      const toolOpenStateKey = buildToolOpenStateKey('local-app', agent);
+      const agentAvailability = withStoredCommandAvailability(availability.localApp[agent], config.toolOpenState?.[toolOpenStateKey]);
+      if (agentAvailability?.status === 'missing') {
         const missingAgentOpenError = getMissingLocalAppOpenError(agent);
         sendJson(res, {
           ...missingAgentOpenError.body,
           projectId: context.project.id,
-          availability: availability.localApp[agent],
+          availability: agentAvailability,
         }, { status: missingAgentOpenError.statusCode });
         return;
       }
@@ -542,7 +601,15 @@ export function handleAssistantPromptIde(
         const result = await openLocalAppAgent({
           agent,
           targetPath: absoluteTargetPath,
-          availability: availability.localApp[agent],
+          availability: agentAvailability,
+        });
+        serverConfigStore.saveConfig({
+          toolOpenState: {
+            [toolOpenStateKey]: {
+              commandPath: agentAvailability?.path,
+              lastOpenMode: result.url || result.command.includes('://') ? 'deeplink' : 'direct-app',
+            },
+          },
         });
         sendJson(res, {
           ...result,
@@ -593,12 +660,16 @@ export function handleAssistantPromptIde(
       }
 
       const availability = detectAgentAvailabilityAtStartup();
-      if (availability.web[agent]?.status === 'missing') {
+      const serverConfigStore = handlers.getServerConfigStoreForRequest(options);
+      const config = serverConfigStore.getConfig({ activeProjectRoot: context.project.root });
+      const toolOpenStateKey = buildToolOpenStateKey('web', agent);
+      const agentAvailability = withStoredCommandAvailability(availability.web[agent], config.toolOpenState?.[toolOpenStateKey]);
+      if (agentAvailability?.status === 'missing') {
         const missingAgentOpenError = getMissingWebAgentOpenError(agent);
         sendJson(res, {
           ...missingAgentOpenError.body,
           projectId: context.project.id,
-          availability: availability.web[agent],
+          availability: agentAvailability,
         }, { status: missingAgentOpenError.statusCode });
         return;
       }
@@ -607,8 +678,16 @@ export function handleAssistantPromptIde(
         const result = await openWebAgent({
           agent,
           targetPath: absoluteTargetPath,
-          availability: availability.web[agent],
+          availability: agentAvailability,
           corsOrigin: typeof body?.corsOrigin === 'string' ? body.corsOrigin.trim() : '',
+        });
+        serverConfigStore.saveConfig({
+          toolOpenState: {
+            [toolOpenStateKey]: {
+              commandPath: agentAvailability?.path,
+              lastOpenMode: result.serverUrl ? 'managed-web' : 'terminal',
+            },
+          },
         });
         sendJson(res, {
           ...result,

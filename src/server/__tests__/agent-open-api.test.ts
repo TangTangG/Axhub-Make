@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  getGlobalServerConfigPath,
   getMakeClientMarkerPath,
   getProjectMetadataPath,
   getProjectRegistryPath,
@@ -143,8 +144,24 @@ function writeProjectMetadata(projectRoot: string, projectId = 'agent-client', p
   });
 }
 
-async function startTestServer(projectRoot: string) {
+async function startTestServer(projectRoot: string, options: { serverConfig?: unknown } = {}) {
   const registryHome = createTempRoot('axhub-make-agent-open-registry-');
+  const now = new Date().toISOString();
+  writeJson(getProjectRegistryPath(registryHome), {
+    schemaVersion: 1,
+    activeProjectId: 'agent-client',
+    projects: [{
+      id: 'agent-client',
+      name: 'Agent Client',
+      root: projectRoot,
+      metadataPath: getProjectMetadataPath(projectRoot),
+      createdAt: now,
+      updatedAt: now,
+    }],
+  });
+  if (options.serverConfig) {
+    writeJson(getGlobalServerConfigPath(registryHome), options.serverConfig);
+  }
   return startMakeServer({
     projectRoot,
     host: 'localhost',
@@ -379,6 +396,55 @@ describe('make-server agent open API', () => {
         projectId: 'agent-client',
       });
       expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('uses a stored CLI command path when command discovery reports the agent missing', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    mockDetectedCommands([]);
+
+    const server = await startTestServer(projectRoot, {
+      serverConfig: {
+        toolOpenState: {
+          'cli:gemini': {
+            commandPath: '/stored/bin/gemini',
+            lastOpenMode: 'terminal',
+          },
+        },
+      },
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/agent/cli/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent: 'gemini' }),
+      });
+      const body = await response.json();
+
+      expect(response.status, JSON.stringify(body)).toBe(200);
+      expect(body).toMatchObject({
+        success: true,
+        agent: 'gemini',
+        targetPath: projectRoot,
+      });
+      const firstSpawnCall = childProcessMock.spawn.mock.calls[0] as unknown[] | undefined;
+      if (process.platform === 'darwin') {
+        const spawnArgs = firstSpawnCall?.[1] as string[];
+        const commandScript = fs.readFileSync(String(spawnArgs[2] || ''), 'utf8');
+        expect(commandScript).toContain('"/stored/bin/gemini"');
+      } else {
+        expect(JSON.stringify(childProcessMock.spawn.mock.calls)).toContain('/stored/bin/gemini');
+      }
+
+      const config = await fetch(`${server.origin}/api/config`).then((configResponse) => configResponse.json());
+      expect(config.toolOpenState['cli:gemini']).toMatchObject({
+        commandPath: '/stored/bin/gemini',
+        lastOpenMode: 'terminal',
+      });
     } finally {
       await server.close();
     }

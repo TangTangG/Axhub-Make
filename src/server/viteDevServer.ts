@@ -36,6 +36,16 @@ type ViteServer = {
   close: () => Promise<void>;
 };
 
+const DEV_ENTRY_ASSET_SOURCE_MAP = new Map<string, string>([
+  ['/assets/dev-template-bootstrap.js', '/src/dev-template/index.tsx'],
+  ['/assets/spec-template-styles.js', '/src/spec-template/styles.ts'],
+  ['/assets/spec-template-bootstrap.js', '/src/spec-template/index.tsx'],
+  ['/assets/canvas-template-bootstrap.js', '/src/canvas-template/index.tsx'],
+  ['/assets/html-template-bootstrap.js', '/src/html-template/index.tsx'],
+  ['/assets/runtime-export-core.js', '/src/runtime-export-core.ts'],
+]);
+const EMBEDDED_VITE_CACHE_DIR_PREFIX = 'axhub-make-dev-';
+
 type CapturedHeaderValue = string | number | string[];
 
 type CapturedViteResult =
@@ -75,6 +85,101 @@ function isEmbeddedOptimizedDepRequest(requestUrl: string, cacheDir: string): bo
 
   const normalizedCacheDir = path.resolve(cacheDir).replace(/\\/gu, '/');
   return normalizedPathname.startsWith(`/@fs/${normalizedCacheDir}/deps/`);
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: any) {
+    return String(error?.code || '') === 'EPERM';
+  }
+}
+
+function extractEmbeddedViteCachePid(name: string): number | null {
+  const match = name.match(/^axhub-make-dev-(\d+)-/u);
+  if (!match?.[1]) {
+    return null;
+  }
+  const pid = Number(match[1]);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+function pruneStaleEmbeddedViteCacheDirs(viteCacheRoot: string): void {
+  if (!fs.existsSync(viteCacheRoot)) {
+    return;
+  }
+  for (const entry of fs.readdirSync(viteCacheRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith(EMBEDDED_VITE_CACHE_DIR_PREFIX)) {
+      continue;
+    }
+    const pid = extractEmbeddedViteCachePid(entry.name);
+    if (pid && isProcessAlive(pid)) {
+      continue;
+    }
+    fs.rmSync(path.join(viteCacheRoot, entry.name), { recursive: true, force: true });
+  }
+}
+
+function rewriteDevEntryAssetRequestUrl(requestUrl: string | undefined): string | undefined {
+  if (!requestUrl) {
+    return requestUrl;
+  }
+
+  const suffixIndex = requestUrl.search(/[?#]/u);
+  const pathname = suffixIndex >= 0 ? requestUrl.slice(0, suffixIndex) : requestUrl;
+  const suffix = suffixIndex >= 0 ? requestUrl.slice(suffixIndex) : '';
+  let decodedPathname = pathname;
+  try {
+    decodedPathname = decodeURIComponent(pathname);
+  } catch {
+    // Keep raw pathname when decoding fails.
+  }
+
+  const sourcePath = DEV_ENTRY_ASSET_SOURCE_MAP.get(decodedPathname);
+  return sourcePath ? `${sourcePath}${suffix}` : requestUrl;
+}
+
+function handleViteRequest(vite: ViteServer, req: IncomingMessage, res: ServerResponse, next: () => void): void {
+  const originalUrl = req.url;
+  const rewrittenUrl = rewriteDevEntryAssetRequestUrl(originalUrl);
+
+  if (rewrittenUrl === originalUrl) {
+    vite.middlewares(req, res, next);
+    return;
+  }
+
+  let restored = false;
+  const originalEnd = res.end.bind(res);
+  const restoreUrl = () => {
+    if (!restored) {
+      req.url = originalUrl;
+      restored = true;
+    }
+  };
+
+  req.url = rewrittenUrl;
+  res.end = function endAndRestoreUrl(
+    chunk?: any,
+    encodingOrCallback?: BufferEncoding | (() => void),
+    callback?: () => void,
+  ) {
+    restoreUrl();
+    return originalEnd(chunk, encodingOrCallback as BufferEncoding, callback);
+  } as ServerResponse['end'];
+
+  try {
+    vite.middlewares(req, res, () => {
+      restoreUrl();
+      next();
+    });
+  } catch (error) {
+    restoreUrl();
+    throw error;
+  }
 }
 
 function flushCapturedResponse(res: ServerResponse, result: Extract<CapturedViteResult, { kind: 'response' }>): void {
@@ -238,6 +343,7 @@ export async function createViteDevMiddleware(
   const configFile = path.resolve(makeServerRoot, 'vite.config.ts');
   const viteCacheRoot = path.join(makeServerRoot, 'node_modules', '.vite');
   fs.mkdirSync(viteCacheRoot, { recursive: true });
+  pruneStaleEmbeddedViteCacheDirs(viteCacheRoot);
   // Keep optimizer output private to this embedded server. A second Vite
   // instance re-optimizing the shared cache can otherwise delete deps still
   // referenced by this server's in-memory metadata.
@@ -317,7 +423,7 @@ export async function createViteDevMiddleware(
         return;
       }
 
-      vite.middlewares(req, res, next ?? (() => {
+      handleViteRequest(vite, req, res, next ?? (() => {
         // Default next: send 404 if Vite didn't handle the request.
         res.statusCode = 404;
         res.end();
