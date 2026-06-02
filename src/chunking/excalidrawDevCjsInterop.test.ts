@@ -13,6 +13,10 @@ const excalidrawDevId = [
   '/repo/node_modules/.pnpm/@axhub+excalidraw@file+apps+axhub-make+vendor+axhub-excalidraw/node_modules',
   '/@axhub/excalidraw/dist/dev/chunk-S4XMSDLZ.js?v=df47ed4b',
 ].join('');
+const mermaidHelperId = [
+  '/repo/node_modules/.pnpm/@excalidraw+mermaid-to-excalidraw@2.2.2/node_modules',
+  '/@excalidraw/mermaid-to-excalidraw/dist/converter/helpers.js?v=f0b00a1f',
+].join('');
 
 describe('rewriteExcalidrawDevCjsImports', () => {
   it('points Excalidraw dev-bundle CommonJS imports at optimized dependency wrappers', () => {
@@ -74,6 +78,22 @@ describe('rewriteExcalidrawDevCjsImports', () => {
     );
 
     expect(rewritten).toBeNull();
+  });
+
+  it('rewrites mermaid helper named imports from markdown-to-text through the optimized CommonJS wrapper', () => {
+    const rewritten = rewriteExcalidrawDevCjsImports(
+      [
+        'import { removeMarkdown } from "@excalidraw/markdown-to-text";',
+        'export const getText = (element) => removeMarkdown(element.text);',
+      ].join('\n'),
+      mermaidHelperId,
+      { root, cacheDir },
+    );
+
+    expect(rewritten).not.toBeNull();
+    expect(rewritten).toContain('import __axhubMarkdownToTextCjs from "/node_modules/.vite/axhub-make-dev-123/deps/@axhub_excalidraw___@excalidraw_markdown-to-text.js";');
+    expect(rewritten).toContain('const { removeMarkdown } = __axhubMarkdownToTextCjs;');
+    expect(rewritten).not.toContain('import { removeMarkdown } from "@excalidraw/markdown-to-text";');
   });
 });
 
