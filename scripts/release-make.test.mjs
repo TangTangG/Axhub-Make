@@ -75,7 +75,7 @@ describe('release make artifact helpers', () => {
 
   it('syncs the default make client template version from the template package version', () => {
     const root = createTempRoot('axhub-release-template-version-sync-');
-    const sourceFile = path.join(root, 'makeClientProject.ts');
+    const sourceFile = path.join(root, 'makeClientTemplate.ts');
     writeFile(sourceFile, "export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.1';\n");
 
     const firstResult = releaseMake.syncDefaultMakeClientTemplateVersion({

@@ -99,6 +99,16 @@ async function startTestServer(projectRoot: string, registryHome = createTempRoo
   });
 }
 
+async function registerExistingMakeProject(origin: string, projectRoot: string, expectedStatus = 201) {
+  const response = await fetch(`${origin}/api/projects/make/register-existing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root: projectRoot }),
+  });
+  expect(response.status).toBe(expectedStatus);
+  return response.json();
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -196,9 +206,56 @@ describe('make-server project APIs', () => {
     }
   });
 
+  it('does not auto-register a marker-backed startup root', async () => {
+    const startupRoot = createTempRoot();
+    writeMakeClientMarkerForProject(startupRoot, 'startup-client', 'Startup Client');
+    writeProjectMetadata(startupRoot, {
+      project: { id: 'startup-client', name: 'Startup Client' },
+    });
+    const server = await startTestServer(startupRoot);
+
+    try {
+      const listResponse = await fetch(`${server.origin}/api/projects`);
+      const list = await listResponse.json();
+
+      expect(listResponse.status).toBe(200);
+      expect(list).toEqual({
+        activeProjectId: null,
+        projects: [],
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('keeps marker-backed startup root untouched when listing projects', async () => {
+    const startupRoot = createTempRoot();
+    writeMakeClientMarkerForProject(startupRoot, 'make-project', 'Axhub Make');
+    writeProjectMetadata(startupRoot, {
+      project: { id: 'make-project', name: 'Axhub Make' },
+    });
+    const markerBefore = fs.readFileSync(getMakeClientMarkerPath(startupRoot), 'utf8');
+    const metadataBefore = fs.readFileSync(getProjectMetadataPath(startupRoot), 'utf8');
+    const server = await startTestServer(startupRoot);
+
+    try {
+      const list = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
+
+      expect(list).toEqual({
+        activeProjectId: null,
+        projects: [],
+      });
+      expect(fs.readFileSync(getMakeClientMarkerPath(startupRoot), 'utf8')).toBe(markerBefore);
+      expect(fs.readFileSync(getProjectMetadataPath(startupRoot), 'utf8')).toBe(metadataBefore);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('exposes current project LAN access capability from project config', async () => {
     const defaultRoot = createTempRoot();
     writeMakeClientMarkerForProject(defaultRoot, 'lan-disabled', 'LAN Disabled');
+    writeMakeClientPackageForProject(defaultRoot);
     writeProjectMetadata(defaultRoot, {
       project: { id: 'lan-disabled', name: 'LAN Disabled' },
     });
@@ -208,6 +265,7 @@ describe('make-server project APIs', () => {
     const server = await startTestServer(defaultRoot);
 
     try {
+      await registerExistingMakeProject(server.origin, defaultRoot);
       const response = await fetch(`${server.origin}/api/projects/lan-disabled/resources`);
       const body = await response.json();
 
@@ -221,12 +279,14 @@ describe('make-server project APIs', () => {
   it('defaults current project LAN access capability to enabled when config omits allowLAN', async () => {
     const defaultRoot = createTempRoot();
     writeMakeClientMarkerForProject(defaultRoot, 'lan-default', 'LAN Default');
+    writeMakeClientPackageForProject(defaultRoot);
     writeProjectMetadata(defaultRoot, {
       project: { id: 'lan-default', name: 'LAN Default' },
     });
     const server = await startTestServer(defaultRoot);
 
     try {
+      await registerExistingMakeProject(server.origin, defaultRoot);
       const response = await fetch(`${server.origin}/api/projects/lan-default/resources`);
       const body = await response.json();
 
@@ -240,6 +300,7 @@ describe('make-server project APIs', () => {
   it('serves project resources by explicit projectId and no longer exposes unused project compatibility endpoints', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
     writeProjectMetadata(projectRoot, {
       project: { id: 'client-a', name: 'Client A' },
     });
@@ -253,6 +314,7 @@ describe('make-server project APIs', () => {
     });
 
     try {
+      await registerExistingMakeProject(server.origin, projectRoot);
       const resources = await fetch(`${server.origin}/api/projects/client-a/resources`).then((response) => response.json());
       expect(resources.project).toEqual({ id: 'client-a', name: 'Client A' });
       expect(resources.navigation).toEqual({ prototypes: ['home'], docs: ['spec'] });
@@ -275,6 +337,7 @@ describe('make-server project APIs', () => {
   it('reconciles project resources from the filesystem when serving resources', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
     const prototypesDir = path.join(projectRoot, 'content', 'prototypes');
     const docsDir = path.join(projectRoot, 'content', 'docs');
     const themesDir = path.join(projectRoot, 'content', 'themes');
@@ -337,6 +400,7 @@ describe('make-server project APIs', () => {
     });
 
     try {
+      await registerExistingMakeProject(server.origin, projectRoot);
       const response = await fetch(`${server.origin}/api/projects/client-a/resources`);
       const body = await response.json();
 
@@ -404,6 +468,7 @@ describe('make-server project APIs', () => {
   it('handles project registry mutations, active project validation, and doc content updates', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
     writeProjectMetadata(projectRoot, {
       project: { id: 'client-a', name: 'Client A' },
     });
@@ -423,6 +488,7 @@ describe('make-server project APIs', () => {
     });
 
     try {
+      await registerExistingMakeProject(server.origin, projectRoot);
       const list = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
       expect(list).toMatchObject({
         activeProjectId: 'client-a',
@@ -497,14 +563,16 @@ describe('make-server project APIs', () => {
     }
   });
 
-  it('repoints the default make client registry entry when the same project id moves roots', async () => {
+  it('does not repoint an existing make client registry entry from a marker-backed startup root', async () => {
     const previousRoot = createTempRoot('axhub-make-old-client-');
     writeMakeClientMarkerForProject(previousRoot, 'make-project', 'Old Make Client');
+    writeMakeClientPackageForProject(previousRoot);
     writeProjectMetadata(previousRoot, {
       project: { id: 'make-project', name: 'Old Make Client' },
     });
     const currentRoot = createTempRoot('axhub-make-current-client-');
     writeMakeClientMarkerForProject(currentRoot, 'make-project', 'Current Make Client');
+    writeMakeClientPackageForProject(currentRoot);
     writeProjectMetadata(currentRoot, {
       project: { id: 'make-project', name: 'Current Make Client' },
     });
@@ -517,9 +585,20 @@ describe('make-server project APIs', () => {
       adminRoot: path.join(previousRoot, 'missing-admin'),
       registryPath,
     });
-    const previousList = await fetch(`${previousServer.origin}/api/projects`).then((response) => response.json());
-    expect(previousList.projects).toEqual([expect.objectContaining({ id: 'make-project', root: previousRoot })]);
-    await previousServer.close();
+
+    try {
+      const previousRegister = await fetch(`${previousServer.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: previousRoot }),
+      });
+      expect(previousRegister.status).toBe(201);
+
+      const previousList = await fetch(`${previousServer.origin}/api/projects`).then((response) => response.json());
+      expect(previousList.projects).toEqual([expect.objectContaining({ id: 'make-project', root: previousRoot })]);
+    } finally {
+      await previousServer.close();
+    }
 
     const server = await startMakeServer({
       projectRoot: currentRoot,
@@ -530,14 +609,13 @@ describe('make-server project APIs', () => {
     });
 
     try {
-      const list = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
-
-      expect(list).toMatchObject({
+      const startupList = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
+      expect(startupList).toMatchObject({
         activeProjectId: 'make-project',
         projects: [expect.objectContaining({
           id: 'make-project',
-          root: currentRoot,
-          metadataPath: getProjectMetadataPath(currentRoot),
+          root: previousRoot,
+          metadataPath: getProjectMetadataPath(previousRoot),
         })],
       });
     } finally {
@@ -545,15 +623,23 @@ describe('make-server project APIs', () => {
     }
   });
 
-  it('treats legacy official make-project default names as unnamed during startup registration', async () => {
+  it('treats legacy official make-project default names as unnamed during explicit registration', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'make-project', 'Axhub Make');
+    writeMakeClientPackageForProject(projectRoot);
     writeProjectMetadata(projectRoot, {
       project: { id: 'make-project', name: 'Axhub Make' },
     });
     const server = await startTestServer(projectRoot);
 
     try {
+      const register = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(register.status).toBe(201);
+
       const list = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
       expect(list.projects).toEqual([
         expect.objectContaining({
@@ -586,6 +672,7 @@ describe('make-server project APIs', () => {
   it('rejects doc content reads when metadata points outside the project root', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
     const outsideRoot = createTempRoot('axhub-make-projects-api-outside-');
     const outsideDocPath = path.join(outsideRoot, 'outside.md');
     fs.writeFileSync(outsideDocPath, '# Outside\n', 'utf8');
@@ -607,12 +694,27 @@ describe('make-server project APIs', () => {
       },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const registryPath = getProjectRegistryPath(registryHome);
+    writeJson(registryPath, {
+      schemaVersion: 1,
+      activeProjectId: 'client-a',
+      projects: [
+        {
+          id: 'client-a',
+          name: 'Client A',
+          root: projectRoot,
+          metadataPath: getProjectMetadataPath(projectRoot),
+          createdAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:00.000Z',
+        },
+      ],
+    });
     const server = await startMakeServer({
       projectRoot,
       host: 'localhost',
       port: 0,
       adminRoot: path.join(projectRoot, 'missing-admin'),
-      registryPath: getProjectRegistryPath(registryHome),
+      registryPath,
     });
 
     try {
@@ -675,9 +777,12 @@ describe('make-server project APIs', () => {
     const projectRoot = createTempRoot();
     const otherProjectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
     writeProjectMetadata(projectRoot, {
       project: { id: 'client-a', name: 'Client A' },
     });
+    writeMakeClientMarkerForProject(otherProjectRoot, 'client-b', 'Client B');
+    writeMakeClientPackageForProject(otherProjectRoot);
     writeProjectMetadata(otherProjectRoot, {
       project: { id: 'client-b', name: 'Client B' },
     });
@@ -691,15 +796,8 @@ describe('make-server project APIs', () => {
     });
 
     try {
-      await fetch(`${server.origin}/api/projects`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: 'client-b',
-          name: 'Client B',
-          root: otherProjectRoot,
-        }),
-      });
+      await registerExistingMakeProject(server.origin, projectRoot);
+      await registerExistingMakeProject(server.origin, otherProjectRoot);
 
       const sessionResponse = await fetch(`${server.origin}/api/projects/client-a/communication/sessions`, {
         method: 'POST',

@@ -1,0 +1,4 @@
+interface:
+  display_name: "原型批注"
+  short_description: "批注、微调或编辑原型时，定位元素并修改文案、样式、布局或交互"
+  default_prompt: "使用 $prototype-comments 读取并处理当前原型批注。"

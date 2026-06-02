@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { assertProjectRoot } from './projectCore/index.ts';
+import { getGlobalMakeStateDir } from './projectCore/index.ts';
 
 import { DEFAULT_MAKE_SERVER_PORT } from './defaults.ts';
 import { startMakeServer } from './index.ts';
@@ -17,11 +17,11 @@ export interface MakeServerCliOptions {
   devMode?: boolean;
 }
 
-export const CLI_USAGE = `Usage: axhub-make [project-root] [options]
+export const CLI_USAGE = `Usage: axhub-make [options]
 
 Options:
   --port <port>              Server port. Defaults to ${DEFAULT_MAKE_SERVER_PORT}.
-  --host <host>              Server host. Defaults to project LAN setting.
+  --host <host>              Server host. Defaults to all interfaces.
   --runtime-origin <origin>  Runtime server origin.
   --admin-root <path>        Admin UI static asset directory.
   --dev                      Enable Vite dev middleware for frontend HMR.
@@ -89,7 +89,7 @@ function readOptionValue(args: string[], index: number, optionName: string): str
 }
 
 export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCliOptions {
-  let explicitProjectRoot = '';
+  let legacyProjectRoot = '';
   let port = DEFAULT_MAKE_SERVER_PORT;
   let host: string | undefined;
   let runtimeOrigin: string | undefined;
@@ -138,14 +138,14 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCli
     if (arg.startsWith('--')) {
       throw new Error(`Unknown option: ${arg}`);
     }
-    if (explicitProjectRoot) {
+    if (legacyProjectRoot) {
       throw new Error(`Unexpected argument: ${arg}`);
     }
-    explicitProjectRoot = arg;
+    legacyProjectRoot = arg;
   }
 
   return {
-    projectRoot: assertProjectRoot(path.resolve(cwd, explicitProjectRoot || '.')),
+    projectRoot: getGlobalMakeStateDir(),
     port,
     ...(host ? { host } : {}),
     ...(runtimeOrigin ? { runtimeOrigin } : {}),

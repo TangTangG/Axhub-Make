@@ -431,7 +431,6 @@ interface ProjectRegistryRequestContext {
 }
 
 interface ProjectRegistryApiHandlers {
-  ensureDefaultRegisteredProject: (options: ManagementApiOptions) => unknown;
   getProjectRegistryForRequest: (options: ManagementApiOptions) => ProjectRegistry;
   addOrUpdateRegistryProjectByRoot: (
     registry: ProjectRegistry,
@@ -556,15 +555,6 @@ export function handleProjectRegistryApi(
     return true;
   }
 
-  try {
-    handlers.ensureDefaultRegisteredProject(options);
-  } catch (error) {
-    if (!readMakeClientMarker(options.projectRoot)) {
-      sendProjectMetadataError(res, error, { projectRoot: options.projectRoot });
-      return true;
-    }
-  }
-
   if (handleMakeClientProjectApi(req, res, options, pathname, registry, {
     addOrUpdateMakeClientRegistryProject: (params) => handlers.addOrUpdateRegistryProjectByRoot(registry, {
       ...params,
@@ -584,13 +574,6 @@ export function handleProjectRegistryApi(
         code: 'LOCAL_PROJECT_PICKER_UNAVAILABLE',
         ...getLocalCommandErrorPayload(error),
       }, { status: 501 }));
-    return true;
-  }
-
-  try {
-    handlers.ensureDefaultRegisteredProject(options);
-  } catch (error) {
-    sendProjectMetadataError(res, error, { projectRoot: options.projectRoot });
     return true;
   }
 

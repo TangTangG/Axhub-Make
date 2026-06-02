@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import {
   getAdminServerInfoPath,
+  getGlobalAdminServerInfoPath,
   getRuntimeServerInfoPath,
   resolveProjectRoot,
 } from './paths.ts';
@@ -19,10 +20,14 @@ export interface AxhubServerInfo {
   timestamp?: string;
 }
 
-function getServerInfoPath(projectRoot: string, role: AxhubServerRole): string {
+function getEffectiveServerInfoPath(
+  projectRoot: string,
+  role: AxhubServerRole,
+  options: { homeDir?: string } = {},
+): string {
   return role === 'runtime'
     ? getRuntimeServerInfoPath(projectRoot)
-    : getAdminServerInfoPath(projectRoot);
+    : getAdminServerInfoPath(projectRoot, options);
 }
 
 function normalizeServerInfo(data: unknown): AxhubServerInfo | null {
@@ -62,14 +67,22 @@ export function resolveComparableProjectRoot(projectRoot: string): string {
   }
 }
 
-export function getServerInfoFilePath(projectRoot: string, role: AxhubServerRole): string {
-  return getServerInfoPath(projectRoot, role);
+export function getServerInfoFilePath(
+  projectRoot: string,
+  role: AxhubServerRole,
+  options: { homeDir?: string } = {},
+): string {
+  return getEffectiveServerInfoPath(projectRoot, role, options);
 }
 
-export { getAdminServerInfoPath, getRuntimeServerInfoPath } from './paths.ts';
+export { getAdminServerInfoPath, getGlobalAdminServerInfoPath, getRuntimeServerInfoPath } from './paths.ts';
 
-export function readServerInfo(projectRoot: string, role: AxhubServerRole): AxhubServerInfo | null {
-  const infoPath = getServerInfoPath(projectRoot, role);
+export function readServerInfo(
+  projectRoot: string,
+  role: AxhubServerRole,
+  options: { homeDir?: string } = {},
+): AxhubServerInfo | null {
+  const infoPath = getEffectiveServerInfoPath(projectRoot, role, options);
   if (!fs.existsSync(infoPath)) {
     return null;
   }
@@ -85,6 +98,7 @@ export function writeServerInfo(
   projectRoot: string,
   role: AxhubServerRole,
   info: AxhubServerInfo,
+  options: { homeDir?: string } = {},
 ): AxhubServerInfo {
   const timestamp = role === 'runtime'
     ? String(info.timestamp || new Date().toISOString())
@@ -94,7 +108,7 @@ export function writeServerInfo(
     projectRoot: resolveProjectRoot(info.projectRoot),
     ...(timestamp ? { timestamp } : {}),
   };
-  const infoPath = getServerInfoPath(projectRoot, role);
+  const infoPath = getEffectiveServerInfoPath(projectRoot, role, options);
   fs.mkdirSync(path.dirname(infoPath), { recursive: true });
   fs.writeFileSync(infoPath, JSON.stringify(normalized, null, 2), 'utf8');
   return normalized;

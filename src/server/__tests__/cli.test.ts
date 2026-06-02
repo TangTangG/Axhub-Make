@@ -21,6 +21,7 @@ vi.mock('../index.ts', () => ({
 }));
 
 import { isCliEntrypoint, parseCliArgs, runCli, shouldAutoRunCli } from '../cli.ts';
+import { getGlobalMakeStateDir } from '../projectCore/index.ts';
 
 const DEFAULT_MAKE_SERVER_PORT = 53817;
 
@@ -38,26 +39,35 @@ afterEach(() => {
   }
   startMakeServerMock.mockReset();
   spawnMock.mockReset();
+  delete process.env.AXHUB_MAKE_HOME_DIR;
   vi.restoreAllMocks();
 });
 
+function useMakeHomeDir() {
+  const homeDir = createProjectRoot();
+  process.env.AXHUB_MAKE_HOME_DIR = homeDir;
+  return homeDir;
+}
+
 describe('make-server CLI args', () => {
-  it('uses cwd as projectRoot when no explicit path is provided', () => {
+  it('uses global make state as projectRoot when no explicit path is provided', () => {
+    const homeDir = useMakeHomeDir();
     const cwd = createProjectRoot();
 
     expect(parseCliArgs([], cwd)).toMatchObject({
-      projectRoot: cwd,
+      projectRoot: getGlobalMakeStateDir(homeDir),
       port: DEFAULT_MAKE_SERVER_PORT,
     });
     expect(parseCliArgs([], cwd)).not.toHaveProperty('host');
   });
 
-  it('uses explicit project path and accepts --port, --host, and --runtime-origin', () => {
+  it('accepts legacy explicit project path without using it as the admin projectRoot', () => {
+    const homeDir = useMakeHomeDir();
     const cwd = createProjectRoot();
-    const projectRoot = createProjectRoot();
+    const legacyProjectRoot = createProjectRoot();
 
     expect(parseCliArgs([
-      projectRoot,
+      legacyProjectRoot,
       '--port',
       '5200',
       '--host',
@@ -65,7 +75,7 @@ describe('make-server CLI args', () => {
       '--runtime-origin',
       'http://localhost:51720',
     ], cwd)).toEqual({
-      projectRoot,
+      projectRoot: getGlobalMakeStateDir(homeDir),
       host: '0.0.0.0',
       port: 5200,
       runtimeOrigin: 'http://localhost:51720',
@@ -73,35 +83,38 @@ describe('make-server CLI args', () => {
   });
 
   it('returns help without requiring a project root', () => {
+    const homeDir = useMakeHomeDir();
     const cwd = createProjectRoot();
 
     expect(parseCliArgs(['--help'], cwd)).toEqual({
       help: true,
-      projectRoot: cwd,
+      projectRoot: getGlobalMakeStateDir(homeDir),
       port: DEFAULT_MAKE_SERVER_PORT,
     });
     expect(parseCliArgs(['-h'], cwd)).toMatchObject({ help: true });
   });
 
   it('accepts an explicit admin root for packaged release assets', () => {
+    const homeDir = useMakeHomeDir();
     const cwd = createProjectRoot();
     const adminRoot = path.join(cwd, 'admin');
 
     expect(parseCliArgs(['--admin-root', adminRoot], cwd)).toMatchObject({
       adminRoot,
-      projectRoot: cwd,
+      projectRoot: getGlobalMakeStateDir(homeDir),
     });
   });
 
-  it('ignores a pnpm script argument separator before the explicit project path', () => {
+  it('ignores a pnpm script argument separator before a legacy explicit project path', () => {
+    const homeDir = useMakeHomeDir();
     const cwd = createProjectRoot();
-    const projectRoot = createProjectRoot();
+    const legacyProjectRoot = createProjectRoot();
 
-    expect(parseCliArgs(['--', projectRoot], cwd)).toMatchObject({
-      projectRoot,
+    expect(parseCliArgs(['--', legacyProjectRoot], cwd)).toMatchObject({
+      projectRoot: getGlobalMakeStateDir(homeDir),
       port: DEFAULT_MAKE_SERVER_PORT,
     });
-    expect(parseCliArgs(['--', projectRoot], cwd)).not.toHaveProperty('host');
+    expect(parseCliArgs(['--', legacyProjectRoot], cwd)).not.toHaveProperty('host');
   });
 
   it('rejects missing option values and invalid ports', () => {
@@ -128,7 +141,8 @@ describe('make-server CLI args', () => {
   });
 
   it('opens the admin page in the default browser after starting the server', async () => {
-    const projectRoot = createProjectRoot();
+    const homeDir = useMakeHomeDir();
+    const legacyProjectRoot = createProjectRoot();
     const unref = vi.fn();
     startMakeServerMock.mockResolvedValue({
       close: vi.fn(),
@@ -139,9 +153,11 @@ describe('make-server CLI args', () => {
     spawnMock.mockReturnValue({ on: vi.fn(), unref });
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await runCli([projectRoot]);
+    await runCli([legacyProjectRoot]);
 
-    expect(startMakeServerMock).toHaveBeenCalledWith(expect.objectContaining({ projectRoot }));
+    expect(startMakeServerMock).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: getGlobalMakeStateDir(homeDir),
+    }));
     expect(spawnMock).toHaveBeenCalledWith(expect.any(String), expect.arrayContaining(['http://localhost:53817']), {
       detached: true,
       stdio: 'ignore',
@@ -150,7 +166,7 @@ describe('make-server CLI args', () => {
   });
 
   it('prints a friendly hint with the visit URL when the server port is occupied', async () => {
-    const projectRoot = createProjectRoot();
+    const legacyProjectRoot = createProjectRoot();
     const originalExitCode = process.exitCode;
     const portInUseError = Object.assign(new Error('listen EADDRINUSE: address already in use 0.0.0.0:53817'), {
       address: '0.0.0.0',
@@ -162,7 +178,7 @@ describe('make-server CLI args', () => {
     process.exitCode = undefined;
 
     try {
-      await runCli([projectRoot]);
+      await runCli([legacyProjectRoot]);
 
       expect(errorSpy).toHaveBeenCalledTimes(1);
       const message = String(errorSpy.mock.calls[0]?.[0] || '');

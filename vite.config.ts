@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, type Plugin } from 'vite';
 
 import { stampAdminAssetUrlsForContent } from './src/chunking/adminAssetStamping';
+import { excalidrawDevCjsInteropPlugin } from './src/chunking/excalidrawDevCjsInterop';
 import { getManualChunkName } from './src/chunking/manualChunks';
 import { canvasHotUpdateFilterPlugin } from './src/server/canvasHotUpdateFilter';
 import { DEFAULT_MAKE_SERVER_PORT } from './src/server/defaults';
@@ -246,6 +247,7 @@ export default defineConfig({
   },
   plugins: [
     portReleaseBeforeListenPlugin(),
+    excalidrawDevCjsInteropPlugin(),
     excalidrawSiblingsPlugin(),
     canvasHotUpdateFilterPlugin(),
     react(),

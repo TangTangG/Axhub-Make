@@ -6,8 +6,8 @@ import {
   createProjectMetadataStore,
   createProjectRegistry,
   createServerConfigStore,
-  getAdminServerInfoPath,
   getConfigPath,
+  getGlobalAdminServerInfoPath,
   getProjectMetadataPath,
   isPathInside,
   readMakeClientMarker,
@@ -66,6 +66,7 @@ export interface ManagementApiOptions {
   origin: string;
   runtimeOrigin?: string;
   registryPath?: string;
+  serverInfoHomeDir?: string;
   serverInfo?: {
     pid: number;
     port: number;
@@ -292,43 +293,7 @@ function updateRegisteredProjectTitle(options: ManagementApiOptions, project: Re
 }
 
 function ensureDefaultRegisteredProject(options: ManagementApiOptions) {
-  const registry = getProjectRegistryForRequest(options);
-  const current = registry.getRegistry();
-  const marker = readMakeClientMarker(options.projectRoot);
-  if (!marker) {
-    return current;
-  }
-  let identity: { id: string; name: string };
-  let metadataPath: string;
-  try {
-    const synced = syncProjectIdentitySource(options.projectRoot);
-    identity = synced.identity;
-    metadataPath = getProjectMetadataPath(options.projectRoot);
-  } catch (error) {
-    if (current.projects.length > 0) {
-      return current;
-    }
-    throw error;
-  }
-  const existingProject = registry.getProject(identity.id);
-  if (existingProject) {
-    registry.updateProject(existingProject.id, {
-      name: identity.name,
-      root: options.projectRoot,
-      metadataPath,
-    });
-    return registry.getRegistry();
-  }
-  if (current.projects.length > 0) {
-    return current;
-  }
-  registry.addProject({
-    id: identity.id,
-    name: identity.name,
-    root: options.projectRoot,
-    metadataPath,
-  });
-  return registry.getRegistry();
+  return getProjectRegistryForRequest(options).getRegistry();
 }
 
 function getActiveProjectContext(options: ManagementApiOptions): ProjectRequestContext | null {
@@ -614,7 +579,7 @@ function stringValue(value: unknown): string {
 
 function getLocalProjectPickerPrompt(kind: string): string {
   if (kind === 'parent') {
-    return '选择新建 Make 项目的父目录';
+    return '选择新建 Make 项目的所在位置';
   }
   return '选择 Axhub Make 客户端项目目录';
 }
@@ -625,7 +590,6 @@ function selectLocalProjectRootForKind(kind: string): Promise<string | null> {
 
 function handleProjectApi(req: IncomingMessage, res: ServerResponse, options: ManagementApiOptions, pathname: string): boolean {
   return handleProjectRegistryApi(req, res, options, pathname, {
-    ensureDefaultRegisteredProject,
     getProjectRegistryForRequest,
     addOrUpdateRegistryProjectByRoot,
     toProjectEntry,
@@ -893,11 +857,11 @@ function createAdminContextPayload(options: ManagementApiOptions) {
     return availabilityErrors.get(project.id) ?? null;
   };
   const activeProjectAvailabilityError = activeRegistryProject ? getAvailabilityError(activeRegistryProject) : null;
-  const runtime = readServerInfo(options.projectRoot, 'runtime');
   const activeProjectContext = activeProjectAvailabilityError ? null : getActiveProjectContext(options);
   const activeProject = activeProjectContext?.project
     ?? activeRegistryProject
     ?? null;
+  const runtime = activeProjectContext ? readServerInfo(activeProjectContext.project.root, 'runtime') : null;
 
   return {
     projectRoot: options.projectRoot,
@@ -910,7 +874,7 @@ function createAdminContextPayload(options: ManagementApiOptions) {
     capabilities: activeProjectContext ? createEffectiveProjectCapabilities(activeProjectContext) : {},
     admin: {
       origin: options.origin,
-      infoPath: getAdminServerInfoPath(options.projectRoot),
+      infoPath: getGlobalAdminServerInfoPath(options.serverInfoHomeDir),
     },
     runtime: runtime
       ? { available: true, ...runtime }
@@ -931,7 +895,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
       origin: options.origin,
       runtimeOrigin: options.runtimeOrigin || null,
       devMode: options.devMode === true,
-      server: options.serverInfo || readServerInfo(projectRoot, 'admin'),
+      server: options.serverInfo || readServerInfo(projectRoot, 'admin', { homeDir: options.serverInfoHomeDir }),
     });
     return true;
   }

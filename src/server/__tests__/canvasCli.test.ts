@@ -11,6 +11,7 @@ import { runCanvasCli } from '../canvasCli.ts';
 
 const tempRoots: string[] = [];
 const servers: http.Server[] = [];
+const originalMakeHomeDir = process.env.AXHUB_MAKE_HOME_DIR;
 
 function createTempRoot(prefix = 'axhub-canvas-cli-') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -85,10 +86,16 @@ function closeServer(server: http.Server): Promise<void> {
 
 beforeEach(() => {
   process.exitCode = undefined;
+  process.env.AXHUB_MAKE_HOME_DIR = createTempRoot('axhub-canvas-cli-home-');
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  if (originalMakeHomeDir === undefined) {
+    delete process.env.AXHUB_MAKE_HOME_DIR;
+  } else {
+    process.env.AXHUB_MAKE_HOME_DIR = originalMakeHomeDir;
+  }
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }

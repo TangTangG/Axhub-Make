@@ -1,6 +1,8 @@
 import os from 'node:os';
 import path from 'node:path';
 
+const MAKE_HOME_DIR_ENV = 'AXHUB_MAKE_HOME_DIR';
+
 export const MAKE_STATE_DIR = path.join('.axhub', 'make');
 export const MAKE_CONFIG_RELATIVE_PATH = path.join(MAKE_STATE_DIR, 'axhub.config.json');
 export const MAKE_ENTRIES_RELATIVE_PATH = path.join(MAKE_STATE_DIR, 'entries.json');
@@ -23,15 +25,16 @@ export function getMakeStateDir(projectRoot: string): string {
   return path.join(resolveProjectRoot(projectRoot), MAKE_STATE_DIR);
 }
 
-export function getGlobalMakeStateDir(homeDir = os.homedir()): string {
-  return path.join(path.resolve(homeDir), MAKE_STATE_DIR);
+export function getGlobalMakeStateDir(homeDir?: string): string {
+  const resolvedHomeDir = homeDir || process.env[MAKE_HOME_DIR_ENV] || os.homedir();
+  return path.join(path.resolve(resolvedHomeDir), MAKE_STATE_DIR);
 }
 
-export function getProjectRegistryPath(homeDir = os.homedir()): string {
+export function getProjectRegistryPath(homeDir?: string): string {
   return path.join(getGlobalMakeStateDir(homeDir), GLOBAL_PROJECTS_REGISTRY_FILE_NAME);
 }
 
-export function getGlobalServerConfigPath(homeDir = os.homedir()): string {
+export function getGlobalServerConfigPath(homeDir?: string): string {
   return path.join(getGlobalMakeStateDir(homeDir), GLOBAL_SERVER_CONFIG_FILE_NAME);
 }
 
@@ -47,8 +50,12 @@ export function getRuntimeServerInfoPath(projectRoot: string): string {
   return path.join(resolveProjectRoot(projectRoot), MAKE_RUNTIME_SERVER_INFO_RELATIVE_PATH);
 }
 
-export function getAdminServerInfoPath(projectRoot: string): string {
-  return path.join(resolveProjectRoot(projectRoot), MAKE_ADMIN_SERVER_INFO_RELATIVE_PATH);
+export function getGlobalAdminServerInfoPath(homeDir?: string): string {
+  return path.join(getGlobalMakeStateDir(homeDir), path.basename(MAKE_ADMIN_SERVER_INFO_RELATIVE_PATH));
+}
+
+export function getAdminServerInfoPath(_projectRoot?: string, options: { homeDir?: string } = {}): string {
+  return getGlobalAdminServerInfoPath(options.homeDir);
 }
 
 export function getSidebarTreeStorePath(projectRoot: string): string {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "画布工作区"
+  short_description: "在 Axhub 画布上绘图、构思方案、整理节点，读取批注、截图或图片"
+  default_prompt: "使用 $canvas-workspace 读取或整理 Axhub 画布内容。"

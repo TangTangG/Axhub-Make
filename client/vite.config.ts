@@ -97,6 +97,12 @@ export default defineConfig(({ command }) => {
     },
 
     resolve: {
+      dedupe: [
+        'react',
+        'react-dom',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+      ],
       alias: [
         { find: '@', replacement: path.resolve(projectRoot, 'src') },
         !isIifeBuild && !isServe && fs.existsSync(path.resolve(projectRoot, 'src/common/react-shim.js')) && {

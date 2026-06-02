@@ -24,6 +24,11 @@ import {
 } from './projectCore/index.ts';
 
 import { buildLocalCommandEnv, runLocalCommand } from './localCommand.ts';
+import {
+  DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION,
+  makeClientTemplateMirrorDownloadUrl,
+  makeClientTemplatePrimaryDownloadUrl,
+} from '../common/makeClientTemplate.ts';
 
 export type MakeClientPhase =
   | 'template'
@@ -40,6 +45,7 @@ export interface MakeClientCommandRunner {
 export interface MakeClientOrchestrationOptions {
   adminServerInfo?: AxhubServerInfo;
   commandRunner?: MakeClientCommandRunner;
+  serverInfoHomeDir?: string;
   devTimeoutMs?: number;
   healthTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -101,11 +107,7 @@ function defaultCommandRunner(): MakeClientCommandRunner {
 }
 
 export const MAKE_CLIENT_TEMPLATE_PATH = 'client';
-export const MAKE_CLIENT_TEMPLATE_ZIP_NAME = 'axhub-make-client-template.zip';
-export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.2';
 export const MAKE_CLIENT_TEMPLATE_URL_ENV = 'AXHUB_MAKE_CLIENT_TEMPLATE_URL';
-export const PRIMARY_MAKE_CLIENT_TEMPLATE_RELEASE_REPOSITORY = 'lintendo/Axhub-Make';
-export const GITEE_MAKE_CLIENT_TEMPLATE_RELEASE_BASE_URL = 'https://gitee.com/axhub/Axhub-Make/releases/download';
 const SKIP_AUTO_START_SERVER_ENV = 'AXHUB_MAKE_SKIP_AUTO_START_SERVER';
 const MAKE_CLIENT_RUNTIME_HEARTBEAT_MAX_AGE_MS = 15_000;
 const DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS = 3 * 60_000;
@@ -181,17 +183,16 @@ export function makeClientTemplateSources(options: { env?: NodeJS.ProcessEnv; ve
     }];
   }
   const version = options.version || DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION;
-  const tagName = `make-client-template-v${version}`;
   return [
     {
       id: 'github',
-      url: `https://github.com/${PRIMARY_MAKE_CLIENT_TEMPLATE_RELEASE_REPOSITORY}/releases/download/${tagName}/${MAKE_CLIENT_TEMPLATE_ZIP_NAME}`,
+      url: makeClientTemplatePrimaryDownloadUrl(version),
       markerRepository: DEFAULT_MAKE_CLIENT_REPOSITORY,
       templateVersion: version,
     },
     {
       id: 'gitee',
-      url: `${GITEE_MAKE_CLIENT_TEMPLATE_RELEASE_BASE_URL}/${tagName}/${MAKE_CLIENT_TEMPLATE_ZIP_NAME}`,
+      url: makeClientTemplateMirrorDownloadUrl(version),
       markerRepository: 'https://gitee.com/axhub/Axhub-Make/tree/main/client',
       templateVersion: version,
     },
@@ -782,14 +783,18 @@ async function waitForRuntimeInfo(
   return null;
 }
 
-function ensureAdminServerInfo(projectRoot: string, adminServerInfo?: AxhubServerInfo): void {
+function ensureAdminServerInfo(
+  projectRoot: string,
+  adminServerInfo?: AxhubServerInfo,
+  options: { homeDir?: string } = {},
+): void {
   if (!adminServerInfo) {
     return;
   }
   writeServerInfo(projectRoot, 'admin', {
     ...adminServerInfo,
     projectRoot,
-  });
+  }, options);
 }
 
 function ensureMakeClientScripts(projectRoot: string): void {
@@ -955,7 +960,7 @@ export async function ensureMakeClientDevServer(
 ): Promise<MakeClientDevResult> {
   const root = path.resolve(projectRoot);
   validateExistingMakeClientProject(root);
-  ensureAdminServerInfo(root, options.adminServerInfo);
+  ensureAdminServerInfo(root, options.adminServerInfo, { homeDir: options.serverInfoHomeDir });
 
   const existingRuntime = readServerInfo(root, 'runtime');
   if (isLiveMakeClientRuntime(existingRuntime, root)) {
@@ -1037,8 +1042,8 @@ export async function createBlankMakeClientProject(
   }
   const folderName = assertSafeMakeClientFolderName(params.folderName);
   const projectRoot = path.join(parentRoot, folderName);
-  if (fs.existsSync(projectRoot) && fs.readdirSync(projectRoot).length > 0) {
-    throw new MakeClientProjectError('MAKE_PROJECT_TARGET_NOT_EMPTY', 'Target folder is not empty', { status: 409 });
+  if (fs.existsSync(projectRoot)) {
+    throw new MakeClientProjectError('MAKE_PROJECT_TARGET_NOT_EMPTY', 'Target folder already exists', { status: 409 });
   }
 
   const runner = options.commandRunner || defaultCommandRunner();
