@@ -6,6 +6,7 @@ import {
   getProjectRegistryPath,
   resolveProjectRoot,
 } from './paths.ts';
+import { createMakeStateNotWritableError } from './make-state-health.ts';
 
 export interface RegisteredProject {
   id: string;
@@ -55,12 +56,22 @@ function readJsonFile(filePath: string): unknown {
   }
 }
 
+function isMakeStateWriteError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === 'EPERM' || code === 'EACCES' || code === 'EROFS';
+}
+
 function writeJsonAtomic(filePath: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
   try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(tempPath, JSON.stringify(value, null, 2), 'utf8');
     fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    if (isMakeStateWriteError(error)) {
+      throw createMakeStateNotWritableError(filePath, error);
+    }
+    throw error;
   } finally {
     if (fs.existsSync(tempPath)) {
       fs.unlinkSync(tempPath);

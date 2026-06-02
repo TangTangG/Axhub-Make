@@ -8,7 +8,11 @@ import React from 'react';
 import * as ReactDOMClient from 'react-dom/client';
 import * as ReactDOM from 'react-dom';
 import { App as AntApp } from 'antd';
-import { copyDocumentForFigmaNewOfficialClipboard, htmlToAxure } from 'axhub-export-core';
+import {
+  buildOfficialClipboardPayloadFromCapturedDocument,
+  captureDocumentForFigmaNew,
+  htmlToAxure,
+} from 'axhub-export-core';
 import { createEditorModeManager } from './editorModeManager';
 import { ErrorDialogProvider } from './ErrorDialog';
 import { autoInjectRootId } from './stableIdInjector';
@@ -797,12 +801,13 @@ if (typeof window !== 'undefined') {
 
     if (event.data && event.data.type === 'COPY_TO_FIGMA') {
       try {
-        window.focus();
-        const result = await copyDocumentForFigmaNewOfficialClipboard('#root');
+        const capturedDoc = await captureDocumentForFigmaNew('#root');
+        const payloadText = await buildOfficialClipboardPayloadFromCapturedDocument(capturedDoc);
         window.parent.postMessage({
           type: 'COPY_TO_FIGMA_RESULT',
           success: true,
-          payloadSizeKb: result.payloadSizeKb,
+          payloadText,
+          payloadSizeKb: Math.round(payloadText.length / 1024),
         }, '*');
       } catch (error) {
         window.parent.postMessage({

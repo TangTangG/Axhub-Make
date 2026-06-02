@@ -1,9 +1,28 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import http from 'node:http';
+import https from 'node:https';
 
 import { sendJson } from './http.ts';
 
 const PROXY_PLACEHOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"></svg>';
-const AXURE_BRIDGE_BASE_URL = 'http://localhost:32767';
+const DEFAULT_AXURE_BRIDGE_BASE_URL = 'http://localhost:32767';
+const AXURE_BRIDGE_BASE_URL_ENV = 'AXHUB_AXURE_BRIDGE_BASE_URL';
+
+type AxureBridgeResponse = {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: Pick<Headers, 'get'>;
+  text: () => Promise<string>;
+};
+
+function getAxureBridgeBaseUrl(): string {
+  return String(process.env[AXURE_BRIDGE_BASE_URL_ENV] || '').trim() || DEFAULT_AXURE_BRIDGE_BASE_URL;
+}
+
+function buildAxureBridgeUrl(pathname: '/available' | '/copyaxvg'): string {
+  return new URL(pathname, getAxureBridgeBaseUrl()).toString();
+}
 
 function readErrorString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -100,6 +119,74 @@ function isAllowedProxyImageUrl(rawUrl: string): boolean {
   }
 }
 
+function getIncomingHeaderValue(headers: http.IncomingHttpHeaders, name: string): string | null {
+  const value = headers[name.toLowerCase()];
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  return null;
+}
+
+function isFixedLengthBridgeRejection(status: number, text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (status === 400 || status === 411)
+    && normalized.includes('content-length')
+    && normalized.includes('transfer-encoding')
+    && normalized.includes('chunked');
+}
+
+function postAxureBridgeFixedLength(bridgeUrl: string, body: string, timeoutMs: number): Promise<AxureBridgeResponse> {
+  return new Promise((resolve, reject) => {
+    const target = new URL(bridgeUrl);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+      reject(new Error(`Unsupported Axure Bridge protocol: ${target.protocol}`));
+      return;
+    }
+
+    const requestBody = body || '';
+    const transport = target.protocol === 'https:' ? https : http;
+    let timeout: NodeJS.Timeout | null = null;
+    const req = transport.request(target, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Length': String(Buffer.byteLength(requestBody, 'utf8')),
+      },
+    }, (bridgeRes) => {
+      const chunks: Buffer[] = [];
+      bridgeRes.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      bridgeRes.on('end', () => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        const responseBody = Buffer.concat(chunks).toString('utf8');
+        const status = bridgeRes.statusCode || 0;
+        resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          statusText: bridgeRes.statusMessage || '',
+          headers: {
+            get: (name: string) => getIncomingHeaderValue(bridgeRes.headers, name),
+          },
+          text: async () => responseBody,
+        });
+      });
+    });
+    req.on('error', (error) => {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      reject(error);
+    });
+    timeout = setTimeout(() => {
+      req.destroy(new Error('Axure Bridge request timed out'));
+    }, timeoutMs);
+    req.end(requestBody);
+  });
+}
+
 function respondWithPlaceholderImage(res: ServerResponse, reason: string, details?: Record<string, unknown>): void {
   res.statusCode = 200;
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -116,7 +203,7 @@ function respondWithPlaceholderImage(res: ServerResponse, reason: string, detail
 async function proxyAxureBridgeRequest(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
   const isAvailableRoute = req.method === 'GET' && pathname === '/api/axure-bridge/available';
   const isCopyRoute = req.method === 'POST' && pathname === '/api/axure-bridge/copyaxvg';
-  const bridgeUrl = `${AXURE_BRIDGE_BASE_URL}${isAvailableRoute ? '/available' : '/copyaxvg'}`;
+  const bridgeUrl = buildAxureBridgeUrl(isAvailableRoute ? '/available' : '/copyaxvg');
   let payloadBytes = 0;
 
   const readCopyBody = async () => new Promise<string>((resolve, reject) => {
@@ -158,9 +245,13 @@ async function proxyAxureBridgeRequest(req: IncomingMessage, res: ServerResponse
 
   try {
     const requestBody = isCopyRoute ? await readCopyBody() : undefined;
-    const response = await fetchBridgeWithRetry(requestBody);
+    let response: AxureBridgeResponse = await fetchBridgeWithRetry(requestBody);
 
-    const text = await response.text();
+    let text = await response.text();
+    if (isCopyRoute && typeof requestBody === 'string' && isFixedLengthBridgeRejection(response.status, text)) {
+      response = await postAxureBridgeFixedLength(bridgeUrl, requestBody, 30000);
+      text = await response.text();
+    }
     if (!response.ok && isAvailableRoute) {
       sendJson(res, buildAxureBridgeUnavailablePayload({
         route: pathname,

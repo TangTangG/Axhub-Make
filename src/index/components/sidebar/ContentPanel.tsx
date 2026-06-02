@@ -166,6 +166,7 @@ const MAKE_CLIENT_SETUP_PENDING_LABEL = '创建并启动项目';
 const MAKE_CLIENT_SETUP_PENDING_DESCRIPTION = '正在下载模板、安装依赖并启动客户端，可能需要几分钟';
 const MAKE_CLIENT_SETUP_FAILED_LABEL = '创建项目失败';
 const MAKE_CLIENT_SETUP_FAILED_DESCRIPTION = '可以复制给 AI 处理';
+const MAKE_STATE_DIR_NOT_WRITABLE = 'MAKE_STATE_DIR_NOT_WRITABLE';
 const DEFAULT_MAKE_CLIENT_PROJECT_NAME = '新建 Make 项目';
 const MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY = 'axhub.make.lastProjectParentRoot';
 
@@ -177,6 +178,43 @@ function stringifyDiagnostic(value: unknown): string {
     }
 }
 
+function readDiagnosticRecord(value: unknown): Record<string, any> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, any>
+        : {};
+}
+
+function readMakeStateDetails(diagnostic: unknown): Record<string, any> {
+    const record = readDiagnosticRecord(diagnostic);
+    return readDiagnosticRecord(record.details);
+}
+
+function isMakeStateNotWritableDiagnostic(diagnostic: unknown): boolean {
+    return readDiagnosticRecord(diagnostic).code === MAKE_STATE_DIR_NOT_WRITABLE;
+}
+
+function buildMakeStatePermissionAiPrompt(params: {
+    diagnostic: unknown;
+    errorMessage: string;
+}): string {
+    const details = readMakeStateDetails(params.diagnostic);
+    const stateDir = String(details.stateDir || '');
+    const registryPath = String(details.registryPath || '');
+    const originalError = readDiagnosticRecord(details.error);
+    return [
+        '请帮我修复 Axhub Make 本机项目列表保存失败的问题。',
+        '',
+        `Make 数据目录：${stateDir || '(未返回)'}`,
+        `项目列表文件：${registryPath || '(未返回)'}`,
+        `错误：${String(originalError.code || MAKE_STATE_DIR_NOT_WRITABLE)} ${String(originalError.message || params.errorMessage || '')}`.trim(),
+        '',
+        '请判断当前系统是 macOS、Windows 还是 Linux，检查这个目录是否存在、当前用户是否有写入权限、是否有残留 projects.json.tmp-* 文件。',
+        '能安全处理时再执行修复；不要直接使用 sudo，除非用户确认。',
+        '',
+        '修复后请让我回到 Axhub Make 页面点“重新检测”或重新新建项目。',
+    ].join('\n');
+}
+
 function buildMakeClientSetupAiPrompt(params: {
     parentRoot: string;
     folderName: string;
@@ -184,6 +222,12 @@ function buildMakeClientSetupAiPrompt(params: {
     errorMessage: string;
     diagnostic: unknown;
 }): string {
+    if (isMakeStateNotWritableDiagnostic(params.diagnostic)) {
+        return buildMakeStatePermissionAiPrompt({
+            diagnostic: params.diagnostic,
+            errorMessage: params.errorMessage,
+        });
+    }
     const trimmedParentRoot = params.parentRoot.replace(/[\\/]+$/u, '');
     const separator = trimmedParentRoot.includes('\\') ? '\\' : '/';
     const projectRoot = `${trimmedParentRoot}${separator}${params.folderName}`;
@@ -261,6 +305,8 @@ function writeStoredMakeClientParentRoot(parentRoot: string): void {
 
 function getProjectSetupErrorPhase(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error || '');
+    const diagnostic = (error as { diagnostic?: unknown } | null)?.diagnostic;
+    if (isMakeStateNotWritableDiagnostic(diagnostic)) return 'make-state';
     if (message.includes('下载模板包') || message.includes('获取源码')) return 'template';
     if (message.includes('安装依赖')) return 'install';
     if (message.includes('metadata')) return 'metadata';
@@ -269,6 +315,9 @@ function getProjectSetupErrorPhase(error: unknown): string {
 }
 
 function getProjectSetupPhaseLabel(phaseKey: string): string {
+    if (phaseKey === 'make-state') {
+        return '本机项目列表保存失败';
+    }
     return MAKE_CLIENT_SETUP_PHASES.find((phase) => phase.key === phaseKey)?.label || MAKE_CLIENT_SETUP_FAILED_LABEL;
 }
 
@@ -989,6 +1038,9 @@ function ProjectSetupDialog({
 
     const handleSelectExisting = async (selectedPath: string) => {
         try {
+            setFailedPhase('');
+            setFailedMessage('');
+            setFailedDiagnostic('');
             const selected = await Promise.resolve(onAddProject(selectedPath));
             if (selected === false) {
                 return;
@@ -997,7 +1049,18 @@ function ProjectSetupDialog({
             onSetupComplete();
             onOpenChange(false);
         } catch (error: any) {
-            toast.error(error?.message || '添加项目失败');
+            const errorMessage = error?.message || '添加项目失败';
+            setFailedPhase(getProjectSetupErrorPhase(error));
+            setFailedMessage(errorMessage);
+            setFailedDiagnostic(buildMakeClientSetupAiPrompt({
+                parentRoot: selectedPath,
+                folderName: '',
+                projectName: '',
+                errorMessage,
+                diagnostic: error?.diagnostic || errorMessage,
+            }));
+            toast.error(errorMessage);
+            setFolderBrowserOpen(false);
         }
     };
 
@@ -1071,8 +1134,29 @@ function ProjectSetupDialog({
 
     const pendingCreate = Boolean(runningPhase || (creatingBlankProject && !failedPhase));
     const failedTitle = failedPhase
-        ? `${getProjectSetupPhaseLabel(failedPhase)}失败`
+        ? getProjectSetupPhaseLabel(failedPhase)
         : MAKE_CLIENT_SETUP_FAILED_LABEL;
+    const renderFailureMessage = () => failedMessage ? (
+        <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+            <div className="flex items-start gap-2 text-[12px]">
+                <span className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-destructive" />
+                <div className="min-w-0 space-y-2">
+                    <div className="font-medium text-destructive">{failedTitle}</div>
+                    <div className="break-words leading-5 text-muted-foreground">{failedMessage}</div>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5"
+                        onClick={() => void handleCopyFailedDiagnostic()}
+                    >
+                        <Copy className="h-3.5 w-3.5" />
+                        复制给 AI 处理
+                    </Button>
+                </div>
+            </div>
+        </div>
+    ) : null;
 
     return (
         <>
@@ -1148,26 +1232,24 @@ function ProjectSetupDialog({
                                     <span className="text-[12px] leading-5 text-muted-foreground">
                                         已有项目可直接选择文件夹导入；没有客户端包可先
                                         <a
-                                            className="inline-flex items-center gap-0.5 px-0.5 text-primary underline-offset-4 hover:underline"
+                                            className="inline px-0.5 text-primary underline-offset-4 hover:underline"
                                             href={primaryTemplateDownloadUrl}
                                             target="_blank"
                                             rel="noreferrer"
                                             onClick={stopProjectSetupLinkPropagation}
                                             onKeyDown={stopProjectSetupLinkPropagation}
                                         >
-                                            <Download className="h-3.5 w-3.5" />
                                             下载客户端包
                                         </a>
                                         ，打不开可用
                                         <a
-                                            className="inline-flex items-center gap-0.5 px-0.5 text-primary underline-offset-4 hover:underline"
+                                            className="inline px-0.5 text-primary underline-offset-4 hover:underline"
                                             href={mirrorTemplateDownloadUrl}
                                             target="_blank"
                                             rel="noreferrer"
                                             onClick={stopProjectSetupLinkPropagation}
                                             onKeyDown={stopProjectSetupLinkPropagation}
                                         >
-                                            <Download className="h-3.5 w-3.5" />
                                             备用下载
                                         </a>
                                         。
@@ -1175,6 +1257,7 @@ function ProjectSetupDialog({
                                 </span>
                                 {addingProject ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
                             </div>
+                            {renderFailureMessage()}
                         </div>
                     ) : (
                         <div className="space-y-4 p-4">
@@ -1224,39 +1307,18 @@ function ProjectSetupDialog({
                                     className="h-8 text-[12px]"
                                 />
                             </div>
-                            {(pendingCreate || failedMessage) ? (
+                            {pendingCreate ? (
                                 <div className="rounded-md border border-border/70 bg-muted/30 p-3">
-                                    {pendingCreate ? (
-                                        <div className="flex items-start gap-2 text-[12px]">
-                                            <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
-                                            <div className="min-w-0 space-y-1">
-                                                <div className="font-medium">{MAKE_CLIENT_SETUP_PENDING_LABEL}</div>
-                                                <div className="leading-5 text-muted-foreground">{MAKE_CLIENT_SETUP_PENDING_DESCRIPTION}</div>
-                                            </div>
+                                    <div className="flex items-start gap-2 text-[12px]">
+                                        <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+                                        <div className="min-w-0 space-y-1">
+                                            <div className="font-medium">{MAKE_CLIENT_SETUP_PENDING_LABEL}</div>
+                                            <div className="leading-5 text-muted-foreground">{MAKE_CLIENT_SETUP_PENDING_DESCRIPTION}</div>
                                         </div>
-                                    ) : (
-                                        <div className="flex items-start gap-2 text-[12px]">
-                                            <span className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-destructive" />
-                                            <div className="min-w-0 space-y-2">
-                                                <div className="font-medium text-destructive">{failedTitle}</div>
-                                                <div className="break-words leading-5 text-muted-foreground">{failedMessage || MAKE_CLIENT_SETUP_FAILED_DESCRIPTION}</div>
-                                                {failedMessage ? (
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        size="sm"
-                                                        className="h-8 gap-1.5"
-                                                        onClick={() => void handleCopyFailedDiagnostic()}
-                                                    >
-                                                        <Copy className="h-3.5 w-3.5" />
-                                                        复制给 AI 处理
-                                                    </Button>
-                                                ) : null}
-                                            </div>
-                                        </div>
-                                    )}
+                                    </div>
                                 </div>
                             ) : null}
+                            {renderFailureMessage()}
                         </div>
                     )}
                     <DialogFooter className="border-t p-3 sm:justify-between sm:space-x-0">

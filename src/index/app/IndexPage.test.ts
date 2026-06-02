@@ -137,6 +137,17 @@ describe('IndexPage source', () => {
     expect(source).not.toContain('服务器已启动');
   });
 
+  it('shows a short startup warning when the Make state directory is not writable', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+
+    expect(source).toContain("fetch('/api/make-state/health')");
+    expect(source).toContain('MAKE_STATE_DIR_NOT_WRITABLE');
+    expect(source).toContain("title: '无法保存项目列表'");
+    expect(source).toContain("description: '本机数据目录不可写，新建项目可能失败。'");
+    expect(source).toContain("confirmText: '复制给 AI 处理'");
+    expect(source).toContain('buildMakeStatePermissionPrompt');
+  });
+
   it('keeps the desktop preview workspace available in narrow desktop browser panes', () => {
     const styles = readFileSync(resolve(__dirname, './styles/index-page.css'), 'utf8');
 

@@ -263,23 +263,13 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
       clientUrl: data.clientUrl,
     };
     try {
-      window.focus?.();
       const exportCore = await loadExportCore();
-      if (data.clipboardWriteTarget === 'host') {
-        const payloadText = await buildFigmaClipboardPayload(exportCore);
-        post('axhub.quickEdit.export.copyToFigmaResult', {
-          ...resultPayload,
-          success: true,
-          payloadText,
-          payloadSizeKb: Math.round(payloadText.length / 1024),
-        });
-        return;
-      }
-      const result = await exportCore.copyDocumentForFigmaNewOfficialClipboard('#root');
+      const payloadText = await buildFigmaClipboardPayload(exportCore);
       post('axhub.quickEdit.export.copyToFigmaResult', {
         ...resultPayload,
         success: true,
-        payloadSizeKb: typeof result?.payloadSizeKb === 'number' ? result.payloadSizeKb : undefined,
+        payloadText,
+        payloadSizeKb: Math.round(payloadText.length / 1024),
       });
     } catch (error) {
       post('axhub.quickEdit.export.copyToFigmaResult', {

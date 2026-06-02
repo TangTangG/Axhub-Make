@@ -28,6 +28,7 @@ import {
     Send,
     Settings2,
     SlidersHorizontal,
+    Square,
     SquarePen,
     Smartphone,
     Tablet,
@@ -485,6 +486,11 @@ export default function PresentationToolbar({
     const showHostAgentMenu = Boolean(hostToolbarState?.agentOptions.length);
     const hostLocalAgentConnected = hostToolbarState?.robotState === 'awake' || hostToolbarState?.robotState === 'working';
     const selectedAgentLabel = hostToolbarState?.agentOptions.find((agent) => agent.value === hostToolbarState.selectedAgent)?.label ?? '默认';
+    const showHostExecutionControls = Boolean(
+        hostToolbarState?.visible
+        && hostLocalAgentConnected
+        && (hostToolbarState.sendVisible || hostToolbarState.interruptVisible),
+    );
     const renderHostToolbarActionButton = (
         key: string,
         label: string,
@@ -699,6 +705,28 @@ export default function PresentationToolbar({
                 {
                     visible: hostToolbarState.copyPromptVisible,
                     disabled: !hostToolbarHasPrompt,
+                },
+            )}
+            {renderHostToolbarActionButton(
+                'host-send',
+                '执行',
+                <Send />,
+                { type: 'send-to-genie' },
+                {
+                    visible: showHostExecutionControls && hostToolbarState.sendVisible,
+                    disabled: hostToolbarState.sendDisabled,
+                    loading: hostToolbarState.sendLoading,
+                },
+            )}
+            {renderHostToolbarActionButton(
+                'host-interrupt',
+                '中断',
+                <Square />,
+                { type: 'interrupt-genie' },
+                {
+                    visible: showHostExecutionControls && hostToolbarState.interruptVisible,
+                    disabled: hostToolbarState.interruptDisabled,
+                    loading: hostToolbarState.interruptLoading,
                 },
             )}
             {renderHostToolbarActionButton(

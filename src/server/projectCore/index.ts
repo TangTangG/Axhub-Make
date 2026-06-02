@@ -9,3 +9,4 @@ export * from './project-records.ts';
 export * from './server-config.ts';
 export * from './codex-local-config.ts';
 export * from './make-client-marker.ts';
+export * from './make-state-health.ts';

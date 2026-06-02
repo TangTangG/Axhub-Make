@@ -74,6 +74,13 @@ describe('make-project client-only defaults', () => {
     expect(viteConfig).not.toContain("'**/prototypes/**/prd.md'");
   });
 
+  it('ignores generated make runtime files in the Vite watcher', () => {
+    const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
+
+    expect(viteConfig).toContain("'**/.axhub/make/**'");
+    expect(viteConfig).not.toContain("'**/.axhub/make/.dev-server-info.json'");
+  });
+
   it('allows Vite to choose the next available dev port from the official default', () => {
     const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
 

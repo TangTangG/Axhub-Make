@@ -11,12 +11,12 @@ const workspaceRoot = path.resolve(makeRoot, '../..');
 const demoRoot = path.join(appRoot, 'src/prototypes/annotation-demo');
 
 describe('annotation demo migration', () => {
-  it('uses the published annotation runtime at 1.0.3', () => {
+  it('uses the latest compatible published annotation runtime in major version 1', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
     const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
     const tsconfig = JSON.parse(fs.readFileSync(path.join(appRoot, 'tsconfig.base.json'), 'utf8'));
 
-    expect(packageJson.dependencies?.['@axhub/annotation']).toBe('^1.0.3');
+    expect(packageJson.dependencies?.['@axhub/annotation']).toBe('1.x');
     expect(packageJson.dependencies).not.toHaveProperty('@axhub/play-client');
     expect(viteConfig).not.toContain("exclude: ['@axhub/annotation']");
     expect(viteConfig).not.toContain("include: [\n        '@ant-design/icons',\n        'antd',\n        'axhub-annotation',");
@@ -39,7 +39,7 @@ describe('annotation demo migration', () => {
     }
   });
 
-  it('locks the annotation runtime to the published 1.0.3 package in workspace lockfiles', () => {
+  it('locks the annotation runtime to a published major-version-1 package in workspace lockfiles', () => {
     const lockfiles = [
       fs.readFileSync(path.join(workspaceRoot, 'pnpm-lock.yaml'), 'utf8'),
       fs.readFileSync(path.join(makeRoot, 'pnpm-lock.yaml'), 'utf8'),
@@ -47,8 +47,8 @@ describe('annotation demo migration', () => {
 
     for (const lockfile of lockfiles) {
       expect(lockfile).toContain("'@axhub/annotation':");
-      expect(lockfile).toContain('specifier: ^1.0.3');
-      expect(lockfile).toContain("'@axhub/annotation@1.0.3':");
+      expect(lockfile).toContain('specifier: 1.x');
+      expect(lockfile).toMatch(/'@axhub\/annotation@1\.\d+\.\d+':/);
       expect(lockfile).not.toContain('file:../../../packages/axhub-annotation');
       expect(lockfile).not.toContain('link:../../../packages/axhub-annotation');
       expect(lockfile).not.toContain("'@axhub/annotation@1.0.2':");

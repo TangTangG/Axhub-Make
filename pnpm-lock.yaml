@@ -286,8 +286,8 @@ importers:
   client:
     dependencies:
       '@axhub/annotation':
-        specifier: ^1.0.3
-        version: 1.0.3(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+        specifier: 1.x
+        version: 1.0.4(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       lucide-react:
         specifier: ^0.562.0
         version: 0.562.0(react@18.2.0)
@@ -485,8 +485,8 @@ packages:
       react:
         optional: true
 
-  '@axhub/annotation@1.0.3':
-    resolution: {integrity: sha512-pMmtbK0b/AGNi+IzTgznD5yNdeB6DetfvgPKCBZrMUw//Id51GrD3Vte/TGEsl70cwnXnM/a25xm8qnGbXYNyQ==}
+  '@axhub/annotation@1.0.4':
+    resolution: {integrity: sha512-3uHaD1I5uWBbXEZfS4TXmt239Z9Xyb4W3ttoZs/cN4R5POlyF9mjgCD/Qm/YmNnGDZjiBTXeSKoiMQHaneQu/w==}
     peerDependencies:
       react: 18.2.0
       react-dom: 18.2.0
@@ -6304,7 +6304,7 @@ snapshots:
       '@types/react': 18.3.27
       react: 18.2.0
 
-  '@axhub/annotation@1.0.3(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)':
+  '@axhub/annotation@1.0.4(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)':
     dependencies:
       '@ant-design/cssinjs': 2.1.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       '@ant-design/icons': 6.1.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0)

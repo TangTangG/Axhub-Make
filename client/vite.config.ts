@@ -61,6 +61,7 @@ if (hasSingleEntry) {
 
 const isIifeBuild = hasSingleEntry;
 const devServerWatchIgnored = [
+  '**/.axhub/make/**',
   '**/canvas-assets/**',
   '**/.spec/**',
   '**/*.excalidraw',

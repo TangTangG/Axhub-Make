@@ -163,6 +163,32 @@ function resolveWindowsExecutableFromRegistry(executableNames: string[]): string
   return null;
 }
 
+function resolveWindowsFileProtocolRegistration(schemes: string[]): string | null {
+  const keyRoots = [
+    'HKCU\\Software\\Classes',
+    'HKLM\\Software\\Classes',
+    'HKLM\\Software\\WOW6432Node\\Classes',
+  ];
+
+  for (const scheme of schemes) {
+    const normalizedScheme = scheme.trim();
+    if (!normalizedScheme) continue;
+
+    for (const keyRoot of keyRoots) {
+      const query = spawnSync('reg', ['query', `${keyRoot}\\${normalizedScheme}\\shell\\open\\command`, '/ve'], {
+        encoding: 'utf8',
+        windowsHide: true,
+      });
+
+      if (query.status === 0 && !query.error) {
+        return normalizedScheme;
+      }
+    }
+  }
+
+  return null;
+}
+
 function getSpawnCommandSpec(command: string, args: string[], platform = process.platform) {
   if (platform !== 'win32' || /\.(exe|com)$/i.test(command)) {
     return {
@@ -209,6 +235,54 @@ function spawnDetached(command: string, args: string[], options: {
 
     child.once('error', settleReject);
     child.once('spawn', settleResolve);
+  });
+}
+
+function spawnWindowsCommandAndWait(command: string, args: string[], commandLabel: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let stderr = '';
+    let resultTimer: NodeJS.Timeout | null = null;
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (resultTimer) {
+        clearTimeout(resultTimer);
+        resultTimer = null;
+      }
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    };
+
+    const child = spawn(command, args, {
+      detached: false,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+      shell: false,
+    });
+
+    child.stderr?.on('data', (chunk) => {
+      stderr += toText(chunk);
+    });
+
+    child.once('error', (error) => {
+      finish(new Error(error.message || `Failed to spawn ${commandLabel}`));
+    });
+    child.once('spawn', () => {
+      resultTimer = setTimeout(() => finish(), WINDOWS_START_PROCESS_RESULT_TIMEOUT_MS);
+    });
+    child.once('close', (code) => {
+      if (code && code !== 0) {
+        const details = stderr.trim();
+        finish(new Error(details || `${commandLabel} exited with code ${code}`));
+        return;
+      }
+      finish();
+    });
   });
 }
 
@@ -348,6 +422,38 @@ function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult
     command,
   }));
 
+  const openByExecutable = (resolvedExecutablePath: string) => {
+    const spawnSpec = getSpawnCommandSpec(resolvedExecutablePath, [targetPath], process.platform);
+    const launch = /\.(cmd|bat)$/i.test(resolvedExecutablePath) || spawnSpec.command === 'cmd.exe'
+      ? spawnWindowsCommandAndWait(spawnSpec.command, spawnSpec.args, resolvedExecutablePath)
+      : spawnDetached(spawnSpec.command, spawnSpec.args, {
+        platform: process.platform,
+        windowsHide: spawnSpec.windowsHide,
+        commandLabel: resolvedExecutablePath,
+      });
+
+    return launch.then(() => ({
+      success: true as const,
+      ide,
+      targetPath,
+      command: `${quoteForShell(resolvedExecutablePath)} ${quoteForShell(targetPath)}`,
+    }));
+  };
+
+  const registeredProtocol = resolveWindowsFileProtocolRegistration(getIDEFileProtocolSchemes(ide));
+  if (registeredProtocol) {
+    return openByProtocol().catch(() => (
+      executablePath
+        ? openByExecutable(executablePath)
+        : tryOpenWindowsIDEByAppPathNames(appPathNames, targetPath).then(() => ({
+          success: true as const,
+          ide,
+          targetPath,
+          command: `powershell -NoProfile -Command Start-Process -FilePath ${quoteForPowerShellSingle(appPathNames[0] || ideAppName)} -ArgumentList ${quoteForPowerShellSingle(targetPath)} -ErrorAction Stop`,
+        }))
+    ));
+  }
+
   if (!executablePath) {
     const command = `powershell -NoProfile -Command Start-Process -FilePath ${quoteForPowerShellSingle(appPathNames[0] || ideAppName)} -ArgumentList ${quoteForPowerShellSingle(targetPath)} -ErrorAction Stop`;
     return tryOpenWindowsIDEByAppPathNames(appPathNames, targetPath).then(() => ({
@@ -358,17 +464,7 @@ function openWindowsIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult
     })).catch(openByProtocol);
   }
 
-  const spawnSpec = getSpawnCommandSpec(executablePath, [targetPath], process.platform);
-  return spawnDetached(spawnSpec.command, spawnSpec.args, {
-    platform: process.platform,
-    windowsHide: spawnSpec.windowsHide,
-    commandLabel: executablePath,
-  }).then(() => ({
-    success: true as const,
-    ide,
-    targetPath,
-    command: `${quoteForShell(executablePath)} ${quoteForShell(targetPath)}`,
-  })).catch(openByProtocol);
+  return openByExecutable(executablePath).catch(openByProtocol);
 }
 
 function openUnixIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult> {

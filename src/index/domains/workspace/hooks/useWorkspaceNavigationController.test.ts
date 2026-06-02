@@ -123,6 +123,8 @@ describe('useWorkspaceNavigationController source', () => {
   it('maps make client project setup errors to user-friendly messages', () => {
     const source = readFileSync(resolve(__dirname, '../../../utils/projectSetupErrors.ts'), 'utf8');
 
+    expect(source).toContain('MAKE_STATE_DIR_NOT_WRITABLE');
+    expect(source).toContain('本机项目列表保存失败');
     expect(source).toContain('NOT_MAKE_CLIENT_PROJECT');
     expect(source).toContain('MAKE_PROJECT_ID_CONFLICT');
     expect(source).toContain('MAKE_CLIENT_SOURCE_UNAVAILABLE');

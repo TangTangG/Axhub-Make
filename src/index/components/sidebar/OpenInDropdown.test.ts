@@ -240,7 +240,7 @@ describe('OpenInDropdown source', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
 
     expect(source).toContain("'inline-flex items-center h-6 shrink-0");
-    expect(source).toContain('buttonActive ? \'min-w-[104px] w-auto\' : showExpanded ? \'w-[82px]\' : \'w-[68px]\'');
+    expect(source).toContain("buttonActive ? 'min-w-[104px] w-auto' : openLoading ? 'w-[92px]' : showExpanded ? 'w-[82px]' : 'w-[68px]'");
     expect(source).toContain('whitespace-nowrap');
     expect(source).not.toContain('h-6 w-[82px]');
   });
@@ -286,6 +286,14 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain('setHovered(false)');
     expect(source).toContain('onRefreshAvailability');
     expect(source).toContain('handleDropdownOpenChange');
+  });
+
+  it('gives the compact AI opening state enough width for the spinner and label', () => {
+    const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+
+    expect(source).toContain('const showExpanded = !openLoading && (hovered || buttonActive || dropdownOpen);');
+    expect(source).toContain("openLoading ? 'w-[92px]' :");
+    expect(source).toContain("openLoading ? 'px-3' : 'px-2'");
   });
 
   it('supports placeholder card trigger while preserving the shared open menu', () => {

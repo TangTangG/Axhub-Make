@@ -46,12 +46,18 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('return JSON.stringify(configData, null, 2);');
   });
 
-  it('focuses the preview iframe before requesting figma copy', () => {
+  it('keeps focus on the host document before requesting host-side figma clipboard writes', () => {
     const source = readPreviewActionsSource();
 
     expect(source).toContain("import { copyToClipboard, writeFigmaOfficialClipboardPayload }");
-    expect(source).toContain('targetIframe.focus();');
-    expect(source).toContain('targetIframe.contentWindow?.focus?.();');
+    const requestCopyToFigmaSegment = getSourceSegment(
+      source,
+      'const requestCopyToFigma = useCallback(() => {',
+      'const checkAxureAvailable = useCallback',
+    );
+
+    expect(requestCopyToFigmaSegment).not.toContain('targetIframe.focus();');
+    expect(requestCopyToFigmaSegment).not.toContain('targetIframe.contentWindow?.focus?.();');
     expect(source).toContain("type: 'axhub.quickEdit.export.copyToFigma'");
     expect(source).toContain("clipboardWriteTarget: 'host'");
     expect(source).toContain("event.data.type !== 'axhub.quickEdit.export.copyToFigmaResult'");

@@ -172,14 +172,14 @@ describe('PresentationToolbar Genie host controls source', () => {
     );
   });
 
-  it('omits the removed host execution buttons from the top toolbar', () => {
+  it('renders host execution buttons in the top toolbar', () => {
     const source = readToolbarSource();
 
     expect(source).toContain('showHostAgentMenu');
-    expect(source).not.toContain('showHostExecutionControls');
-    expect(source).not.toContain('hostToolbarState.sendVisible || hostToolbarState.interruptVisible');
-    expect(source).not.toContain("'host-send'");
-    expect(source).not.toContain("'host-interrupt'");
+    expect(source).toContain('showHostExecutionControls');
+    expect(source).toContain('hostToolbarState.sendVisible || hostToolbarState.interruptVisible');
+    expect(source).toContain("'host-send'");
+    expect(source).toContain("'host-interrupt'");
     expect(source).toMatch(/showHostAgentMenu[\s\S]*执行 Agent/);
   });
 

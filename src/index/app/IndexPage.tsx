@@ -69,6 +69,7 @@ type PrototypeRouteInfo = {
 };
 
 const PROTOTYPE_ROUTE_PAGE_ID_RE = /^[a-z0-9-]+$/u;
+const MAKE_STATE_DIR_NOT_WRITABLE = 'MAKE_STATE_DIR_NOT_WRITABLE';
 
 function normalizePrototypeRoutePageId(value: unknown): string {
     const id = typeof value === 'string' ? value.trim() : '';
@@ -96,6 +97,32 @@ function resolveSelectedPrototypePageAfterRouteInfo(
     }
     const fallback = normalizePrototypeRoutePageId(routeInfo.defaultPageId) || pages[0]?.id || '';
     return fallback || null;
+}
+
+function readRecord(value: unknown): Record<string, any> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, any>
+        : {};
+}
+
+function buildMakeStatePermissionPrompt(health: unknown): string {
+    const record = readRecord(health);
+    const details = readRecord(record.details);
+    const error = readRecord(record.error || details.error);
+    const stateDir = String(record.stateDir || details.stateDir || '');
+    const registryPath = String(record.registryPath || details.registryPath || '');
+    return [
+        '请帮我修复 Axhub Make 本机项目列表保存失败的问题。',
+        '',
+        `Make 数据目录：${stateDir || '(未返回)'}`,
+        `项目列表文件：${registryPath || '(未返回)'}`,
+        `错误：${String(error.code || record.code || MAKE_STATE_DIR_NOT_WRITABLE)} ${String(error.message || record.error || '')}`.trim(),
+        '',
+        '请判断当前系统是 macOS、Windows 还是 Linux，检查目录权限和残留 projects.json.tmp-* 文件。',
+        '能安全处理时再执行修复；不要直接使用 sudo，除非用户确认。',
+        '',
+        '修复后请让我刷新 Axhub Make 页面或重新新建项目。',
+    ].join('\n');
 }
 
 export default function IndexPage({
@@ -432,6 +459,37 @@ export default function IndexPage({
             messageApi.error(error?.message || '复制地址失败');
         }
     }, [currentDeepLinkUrl, messageApi]);
+
+    useEffect(() => {
+        let cancelled = false;
+        void (async () => {
+            try {
+                const response = await fetch('/api/make-state/health');
+                const health = await response.json().catch(() => null);
+                if (cancelled || !response.ok || readRecord(health).code !== MAKE_STATE_DIR_NOT_WRITABLE) {
+                    return;
+                }
+                const confirmed = await appDialog.confirm({
+                    title: '无法保存项目列表',
+                    description: '本机数据目录不可写，新建项目可能失败。',
+                    confirmText: '复制给 AI 处理',
+                    cancelText: '稍后处理',
+                    tone: 'brand',
+                    dismissible: true,
+                });
+                if (!confirmed) {
+                    return;
+                }
+                await copyToClipboard(buildMakeStatePermissionPrompt(health));
+                messageApi.success('已复制给 AI 的处理说明');
+            } catch {
+                // Health checks should not block the main Make UI.
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [appDialog, messageApi]);
 
     const preferences = useIndexPagePreferences({
         setDefaultThemeName: resources.setDefaultThemeName,

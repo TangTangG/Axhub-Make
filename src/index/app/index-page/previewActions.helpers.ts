@@ -544,6 +544,9 @@ export function buildProjectPrototypeIframeUrl(
     try {
         const hasExplicitOrigin = /^[a-z][a-z\d+.-]*:\/\//iu.test(rawUrl);
         const runtimeOrigin = String((window as any).__RUNTIME_ORIGIN__ || '').trim();
+        if (!hasExplicitOrigin && !runtimeOrigin && /^(?:\/prototypes|\/themes)\//u.test(rawUrl)) {
+            return '';
+        }
         const baseOrigin = !hasExplicitOrigin && runtimeOrigin ? runtimeOrigin : window.location.origin;
         const url = appendEditorLaunchOptionsToUrl(new URL(rawUrl, baseOrigin), options);
         const fallbackPageId = Array.isArray(selectedItem.pages) && selectedItem.pages.length > 0

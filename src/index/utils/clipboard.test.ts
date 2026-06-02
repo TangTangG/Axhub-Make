@@ -3,6 +3,7 @@ import { copyToClipboard, writeFigmaOfficialClipboardPayload } from './clipboard
 
 const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
 const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
 const clipboardItemDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'ClipboardItem');
 
 function mockClipboardEnvironment(options: {
@@ -45,7 +46,7 @@ function mockClipboardItem() {
     });
 }
 
-function restoreGlobal(name: 'navigator' | 'window' | 'ClipboardItem', descriptor: PropertyDescriptor | undefined) {
+function restoreGlobal(name: 'navigator' | 'window' | 'document' | 'ClipboardItem', descriptor: PropertyDescriptor | undefined) {
     if (descriptor) {
         Object.defineProperty(globalThis, name, descriptor);
         return;
@@ -56,6 +57,7 @@ function restoreGlobal(name: 'navigator' | 'window' | 'ClipboardItem', descripto
 afterEach(() => {
     restoreGlobal('navigator', navigatorDescriptor);
     restoreGlobal('window', windowDescriptor);
+    restoreGlobal('document', documentDescriptor);
     restoreGlobal('ClipboardItem', clipboardItemDescriptor);
 });
 
@@ -109,5 +111,58 @@ describe('copyToClipboard', () => {
 
         await expect(writeFigmaOfficialClipboardPayload('runtime payload')).rejects.toThrow(/局域网 IP/);
         await expect(writeFigmaOfficialClipboardPayload('runtime payload')).rejects.toThrow(/切回当前页面后重试/);
+    });
+
+    it('falls back to a copy event when async Figma clipboard writes are blocked by permissions policy', async () => {
+        const write = vi.fn().mockRejectedValue(
+            new DOMException(
+                "Failed to execute 'write' on 'Clipboard': The Clipboard API has been blocked because of a permissions policy applied to the current document.",
+                'NotAllowedError',
+            ),
+        );
+        let copyListener: ((event: ClipboardEvent) => void) | null = null;
+        const clipboardData = new Map<string, string>();
+        const textarea = {
+            value: '',
+            style: {},
+            setAttribute: vi.fn(),
+            focus: vi.fn(),
+            select: vi.fn(),
+            remove: vi.fn(),
+        };
+        const documentMock = {
+            body: { appendChild: vi.fn() },
+            activeElement: { focus: vi.fn() },
+            createElement: vi.fn(() => textarea),
+            addEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+                if (type === 'copy') copyListener = listener as (event: ClipboardEvent) => void;
+            }),
+            removeEventListener: vi.fn(),
+            execCommand: vi.fn((command: string) => {
+                expect(command).toBe('copy');
+                copyListener?.({
+                    preventDefault: vi.fn(),
+                    clipboardData: {
+                        setData: vi.fn((type: string, value: string) => {
+                            clipboardData.set(type, value);
+                        }),
+                    },
+                } as unknown as ClipboardEvent);
+                return true;
+            }),
+        };
+        mockClipboardItem();
+        mockClipboardEnvironment({ write });
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: documentMock,
+        });
+
+        await writeFigmaOfficialClipboardPayload('{"title":"首页"}');
+
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(documentMock.execCommand).toHaveBeenCalledWith('copy');
+        expect(clipboardData.get('text/html')).toContain('<!--(figh2d)');
+        expect(clipboardData.get('text/plain')).toBe('{"title":"首页"}');
     });
 });

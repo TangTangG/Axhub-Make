@@ -530,7 +530,7 @@ export default function OpenInDropdown({
         </>
     );
 
-    const showExpanded = hovered || buttonActive || dropdownOpen;
+    const showExpanded = !openLoading && (hovered || buttonActive || dropdownOpen);
     const menuContent = (
         <DropdownMenuContent side={variant === 'placeholder-card' ? 'right' : 'right'} align="start" className="w-64 p-1.5">
             {renderAgentGroup('在线打开', WEB_AGENT_GROUP_HELP, (
@@ -620,7 +620,7 @@ export default function OpenInDropdown({
                 <div
                     className={cn(
                         'inline-flex items-center h-6 shrink-0 rounded-md overflow-hidden transition-all duration-200',
-                        buttonActive ? 'min-w-[104px] w-auto' : showExpanded ? 'w-[82px]' : 'w-[68px]',
+                        buttonActive ? 'min-w-[104px] w-auto' : openLoading ? 'w-[92px]' : showExpanded ? 'w-[82px]' : 'w-[68px]',
                         buttonActive
                             ? 'border border-primary/45 bg-background shadow-none'
                             : 'border border-border/50 bg-background hover:border-border',
@@ -633,10 +633,11 @@ export default function OpenInDropdown({
                         variant="ghost"
                         size="sm"
                         className={cn(
-                            'gap-1.5 h-6 px-2 leading-none rounded-none border-0 shadow-none text-[12px] font-normal transition-colors duration-150 flex-1 min-w-0 data-[active=true]:text-primary data-[active=true]:hover:bg-primary/5 data-[active=true]:hover:text-primary',
-                             buttonActive
-                                 ? 'text-primary hover:bg-primary/5 hover:text-primary'
-                                 : 'text-foreground/80 hover:text-foreground',
+                            'gap-1.5 h-6 leading-none rounded-none border-0 shadow-none text-[12px] font-normal transition-colors duration-150 flex-1 min-w-0 data-[active=true]:text-primary data-[active=true]:hover:bg-primary/5 data-[active=true]:hover:text-primary',
+                            openLoading ? 'px-3' : 'px-2',
+                            buttonActive
+                                ? 'text-primary hover:bg-primary/5 hover:text-primary'
+                                : 'text-foreground/80 hover:text-foreground',
                         )}
                         data-active={buttonActive ? 'true' : undefined}
                         onClick={handleOpenDefault}
