@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import '../ai-image/AiImageGenerationComposer.css';
-import type { ThreadMessage } from '@assistant-ui/react';
 import { ChevronDown, SlidersHorizontal } from 'lucide-react';
 
 import CanvasGenerationComposer, {
+  type CanvasAiSubmitRequest,
   extractCanvasGenerationReferenceImagesFromMessage,
   type CanvasGenerationComposerPlacement,
   type CanvasGenerationSubmitResult,
@@ -26,6 +26,9 @@ import {
   resolvePrototypeGenerationInitialThemeName,
   resolvePrototypeGenerationSyncedThemeName,
 } from './prototypeGenerationThemeSelection';
+import type { CanvasLocalContextRef } from '../ai-image/canvasReferenceImages';
+import { pickCanvasAiScenePlaceholder } from '../ai-generation/canvasAiSceneRegistry';
+import { PrototypeThemeSearchSelect } from './PrototypeThemeSearchSelect';
 
 export interface PrototypeGenerationComposerSettings {
   count: number;
@@ -34,17 +37,19 @@ export interface PrototypeGenerationComposerSettings {
 
 export interface PrototypeGenerationComposerProps {
   allowAttachments?: true;
+  assistantProjectPath?: string;
   canPasteReferenceImages?: boolean;
   defaultThemeName?: string | null;
+  draftStorageKey?: string | null;
+  initialLocalContextRefs?: CanvasLocalContextRef[];
   initialReferenceImages?: string[];
   onPasteReferenceImages?: () => Promise<string[]>;
+  onOpenAISettings?: () => void;
   placement: CanvasGenerationComposerPlacement;
+  topContent?: React.ReactNode;
   themes?: ThemeResourceItem[];
   onSubmitPrompt: (
-    prompt: string,
-    message: ThreadMessage,
-    settings: PrototypeGenerationComposerSettings,
-    referenceImages: string[],
+    request: CanvasAiSubmitRequest<PrototypeGenerationComposerSettings>,
   ) => Promise<CanvasGenerationSubmitResult>;
 }
 
@@ -52,15 +57,21 @@ const COUNT_OPTIONS = [1, 2, 3, 4];
 const PROTOTYPE_SETTINGS_SELECT_CONTENT_STYLE = { zIndex: 1400 } satisfies CSSProperties;
 
 export default function PrototypeGenerationComposer({
+  assistantProjectPath,
   canPasteReferenceImages,
   defaultThemeName,
+  draftStorageKey,
+  initialLocalContextRefs,
   initialReferenceImages,
   onPasteReferenceImages,
+  onOpenAISettings,
   placement,
+  topContent,
   themes,
   onSubmitPrompt,
 }: PrototypeGenerationComposerProps) {
   const [generationCount, setGenerationCount] = useState(1);
+  const [placeholder] = useState(() => pickCanvasAiScenePlaceholder('page'));
   const [selectedThemeName, setSelectedThemeName] = useState(() => resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
   const [submitting, setSubmitting] = useState(false);
   const previousDefaultThemeNameRef = useRef(defaultThemeName);
@@ -84,14 +95,27 @@ export default function PrototypeGenerationComposer({
   const themeLabel = selectedTheme?.displayName || selectedTheme?.name || '无设计系统';
   const countLabel = `${generationCount} 个`;
 
-  const handleSubmitPrompt = useCallback(async (prompt: string, message: ThreadMessage) => {
-    const referenceImages = extractCanvasGenerationReferenceImagesFromMessage(message);
+  const handleSubmitPrompt = useCallback(async (request: CanvasAiSubmitRequest) => {
+    const message = request.message;
+    const referenceImages = request.referenceImages.length
+      ? request.referenceImages
+      : extractCanvasGenerationReferenceImagesFromMessage(message);
     setSubmitting(true);
     try {
-      return await onSubmitPrompt(prompt, message, {
+      const sceneSettings = {
         count: generationCount,
         themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : selectedTheme?.name || '',
-      }, referenceImages);
+      };
+      return await onSubmitPrompt({
+        ...request,
+        referenceImages,
+        provider: request.provider,
+        model: request.model,
+        mode: request.mode,
+        thought: request.thought,
+        contextBundle: request.contextBundle,
+        sceneSettings,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -99,26 +123,33 @@ export default function PrototypeGenerationComposer({
 
   return (
     <CanvasGenerationComposer
+      scene="page"
       dataAttribute="data-axhub-prototype-composer"
       className="aui-root ax-ai-image-composer-host pointer-events-auto absolute z-[1200]"
       placement={placement}
       placementMode="fixed-bottom-center"
-      placeholder="描述要生成的原型"
+      topContent={topContent}
+      workspacePath={assistantProjectPath}
+      placeholder={placeholder}
       ariaLabel="AI 原型生成提示词"
       sendTooltip="生成原型"
       addAttachmentTooltip="添加参考图"
       allowAttachments={true}
+      showSelectors={true}
       attachmentsClassName="ax-ai-image-composer-attachments"
       canPasteReferenceImages={canPasteReferenceImages}
+      draftStorageKey={draftStorageKey}
       rootClassName="ax-ai-image-composer-root"
       footerClassName="ax-ai-image-composer-footer"
       footerLeadingActionsClassName="ax-ai-image-composer-footer-leading-actions"
       footerActionsClassName="ax-ai-image-composer-footer-actions"
+      initialLocalContextRefs={initialLocalContextRefs}
       initialReferenceImages={initialReferenceImages}
       onPasteReferenceImages={onPasteReferenceImages}
+      onOpenAISettings={onOpenAISettings}
       submitting={submitting}
       onSubmitPrompt={handleSubmitPrompt}
-      renderLeadingActions={() => (
+      renderPostSelectorActions={() => (
         <Popover>
           <PopoverTrigger asChild>
             <button
@@ -127,14 +158,14 @@ export default function PrototypeGenerationComposer({
               className="ax-ai-image-settings-trigger"
               aria-label="原型设置"
             >
-              <SlidersHorizontal aria-hidden="true" />
+              <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
               <span
                 data-axhub-prototype-composer-settings-summary
                 className="ax-ai-image-settings-summary"
               >
                 {countLabel} · {themeLabel}
               </span>
-              <ChevronDown aria-hidden="true" />
+              <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
             </button>
           </PopoverTrigger>
           <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
@@ -163,25 +194,14 @@ export default function PrototypeGenerationComposer({
 
                 <label className="space-y-1.5">
                   <span className="text-xs font-medium text-muted-foreground">设计系统</span>
-                  <Select
+                  <PrototypeThemeSearchSelect
+                    themes={themes}
                     value={selectedThemeName}
-                    onValueChange={(nextThemeName) => {
+                    onValueChange={(themeName) => {
                       userSelectedThemeRef.current = true;
-                      setSelectedThemeName(nextThemeName);
+                      setSelectedThemeName(themeName);
                     }}
-                  >
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent style={PROTOTYPE_SETTINGS_SELECT_CONTENT_STYLE}>
-                      <SelectItem value={NO_PROTOTYPE_THEME_VALUE}>无</SelectItem>
-                      {(themes || []).map((theme) => (
-                        <SelectItem key={theme.name} value={theme.name}>
-                          {theme.displayName || theme.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  />
                 </label>
               </div>
             </div>

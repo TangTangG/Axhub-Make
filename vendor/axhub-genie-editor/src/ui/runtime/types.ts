@@ -128,6 +128,7 @@ export interface PropertyPanelViewProps extends SharedNoteActions, SharedTextAct
   currentTarget: Element | null;
   uiMode: CommentEntryMode;
   toolMinimized: boolean;
+  selectionModeActive: boolean;
   propertyPanelOpen: boolean;
   inlineTextEditing?: boolean;
   uiSettings: WebEditorUiSettings;
@@ -142,6 +143,7 @@ export interface PropertyPanelViewProps extends SharedNoteActions, SharedTextAct
   onSelectionInteractionLockChange: (locked: boolean) => void;
   onUiModeChange: (mode: CommentEntryMode) => void;
   onToolMinimizedChange: (minimized: boolean) => void;
+  onSelectionModeActiveChange: (active: boolean) => void;
   onTargetChange: (element: Element | null) => void;
   onRefreshNoteState: () => void;
   onInlineTextEditingChange?: (editing: boolean) => void;
@@ -174,6 +176,8 @@ export interface PromptCardViewProps extends SharedNoteActions, SharedTextAction
   hideExecutionControls?: boolean;
   onBubbleStyleEditorOpenChange: (open: boolean) => void;
   onSendCurrentElementPromptToGenie?: (element: Element) => void | Promise<void>;
+  onWakeGenie?: () => boolean | Promise<boolean>;
+  onGenieVisualStateChange?: (state: 'sleeping' | 'awake') => void;
   getGenieBridgeConnected?: (() => boolean) | undefined;
   getHasReusableGenieConversation?: (() => boolean) | undefined;
   getSendCurrentElementPromptToGenieBlockReason?: ((element: Element | null) => string | undefined) | undefined;
@@ -248,6 +252,8 @@ export interface GenieToolbarShellProps {
 
 export interface SelectionModeGuards {
   toolMinimizedRef: React.MutableRefObject<boolean>;
+  selectionModeActiveRef: React.MutableRefObject<boolean>;
+  selectionModeActive: boolean;
   selectionHoverOwnersRef: React.MutableRefObject<Set<'panel' | 'prompt'>>;
   selectionInteractionLockOwnersRef: React.MutableRefObject<Set<'panel' | 'prompt'>>;
   selectionRestoreTimerRef: React.MutableRefObject<number | null>;
@@ -260,6 +266,7 @@ export interface SelectionModeGuards {
   handlePanelSelectionInteractionLockChange: (locked: boolean) => void;
   handlePromptSelectionInteractionLockChange: (locked: boolean) => void;
   selectionAllowsPageInteraction: () => boolean;
+  handleSelectionModeActiveChange: (active: boolean) => void;
   handleToolMinimizedChange: (nextMinimized: boolean) => void;
 }
 

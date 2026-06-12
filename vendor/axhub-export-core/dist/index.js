@@ -5537,6 +5537,7 @@ var init_html_to_figma = __esm({
 // src/export-core/dom/html-to-figma/html-to-axure.js
 var html_to_axure_exports = {};
 __export(html_to_axure_exports, {
+  __resolveAvailableFontFamilyForTests: () => __resolveAvailableFontFamilyForTests,
   default: () => html_to_axure_default,
   htmlToAxure: () => htmlToAxure
 });
@@ -5798,7 +5799,7 @@ async function htmlToAxure(selector = "body", options = {}) {
           const explicitLineHeight = hasExplicitLineHeight ? Math.max(0, toNumber(lineHeightCss, fontSize)) : 0;
           const resolvedLineHeight = hasExplicitLineHeight ? Math.max(fontSize, explicitLineHeight) : round(fontSize * 1.4);
           const fontWeight = Math.max(100, Math.min(900, toNumber(computedStyle.fontWeight, 400)));
-          const primaryFamily = normalizePrimaryFontFamily(computedStyle.fontFamily);
+          const primaryFamily = resolveAvailableFontFamily(computedStyle.fontFamily, computedStyle);
           const textColor = parseCssColor2(computedStyle.color) || {
             r: 0,
             g: 0,
@@ -6000,7 +6001,7 @@ async function htmlToAxure(selector = "body", options = {}) {
     }
   };
 }
-var EXPORT_OVERLAY_ROOT_ID2, HIDDEN_TAGS, MEDIA_TAGS, SVG_GEOMETRY_TAGS, DEFAULT_TEXT_ALIGN, SOLID_FILL_TYPE, IMAGE_FILL_TYPE, ITEM_TYPE_GROUP, ITEM_TYPE_LAYER, ITEM_TYPE_ARTBOARD, OVERFLOW_CLIPPING_VALUES, round, toNumber, getPageSize2, isTransparentColor, parseCssColor2, splitCssCommaList, parseShadowColor, parseShadowList, getSolidFill, createStroke, getResizingConstraints, getFreeResizingConstraints, mapTextAlign, mapAxisAlignKeyword, mapAxisAlignToTextAlign, mapAxisAlignToVerticalAlign, resolveFlexTextAlignment, getBoxOffsets, resolveVerticalTextAlign, getMeasuredTextHeight, getMeasuredTextWidth, resolveTextDecorations, getWeightName, normalizePrimaryFontFamily, getDirectText, getDirectTextRectRelativeToRoot, isExportOverlayElement2, REACT_RUNTIME_COMMENT_RE, MEASUREMENT_HELPER_RE, FAR_OFFSCREEN_THRESHOLD, isReactRuntimeCommentNode, isFrameworkPlaceholderElement, hasMeasurementHelperMarker, isPotentialMeasurementHelperElement, isFarOffscreenRect, isOffscreenMeasurementElement, isElementVisible, getElementRectRelativeToRoot, getElementName, getBackgroundImageUrl, hasSpecialBorderStyle, hasNonUrlBackgroundImage, needsScreenshotFillFallback, captureElementFillImage, captureSvgAsPngDataUrl, getMediaUrl, normalizeImageMapValue, fallbackHash, sha1Hex, createBaseLayerNode, getBorderInfo, getCornerRadii, hasRoundedCorners, isOverflowClipping, isNearlySameRect, resolveClipContainer, resolveMediaClipContainer, resolveMediaCorners, createMaskWrapperNode, createHierarchyMaskContainerNode, createHierarchyGroupContainerNode, getContainerItems, shouldCreateRectangle, createBackgroundShape, isSvgGeometryVisible, normalizePathPoint, getSvgGeometryClientPoints, tokenizePathData, reflectPoint, toCubicFromQuadratic, parsePathDataToSegments, parseSvgPointsAttr, buildEllipsePathSegments, getSvgGeometryLocalSegments, transformLocalPointToClient, normalizeSegmentDataToRect, buildSvgVectorNode, buildSvgContainerNode, buildSvgImageNode, html_to_axure_default;
+var EXPORT_OVERLAY_ROOT_ID2, HIDDEN_TAGS, MEDIA_TAGS, SVG_GEOMETRY_TAGS, DEFAULT_TEXT_ALIGN, SOLID_FILL_TYPE, IMAGE_FILL_TYPE, ITEM_TYPE_GROUP, ITEM_TYPE_LAYER, ITEM_TYPE_ARTBOARD, OVERFLOW_CLIPPING_VALUES, round, toNumber, getPageSize2, isTransparentColor, parseCssColor2, splitCssCommaList, parseShadowColor, parseShadowList, getSolidFill, createStroke, getResizingConstraints, getFreeResizingConstraints, mapTextAlign, mapAxisAlignKeyword, mapAxisAlignToTextAlign, mapAxisAlignToVerticalAlign, resolveFlexTextAlignment, getBoxOffsets, resolveVerticalTextAlign, getMeasuredTextHeight, getMeasuredTextWidth, resolveTextDecorations, getWeightName, GENERIC_FONT_FAMILIES, GENERIC_FONT_FAMILY_FALLBACKS, SAFE_LOCAL_FONT_FAMILY_FALLBACKS, splitCssFontFamilyCandidates, isGenericFontFamily, appendUniqueFontCandidates, normalizeFontStretch, checkFontAvailable, resolveAvailableFontFamily, __resolveAvailableFontFamilyForTests, getDirectText, getDirectTextRectRelativeToRoot, isExportOverlayElement2, REACT_RUNTIME_COMMENT_RE, MEASUREMENT_HELPER_RE, FAR_OFFSCREEN_THRESHOLD, isReactRuntimeCommentNode, isFrameworkPlaceholderElement, hasMeasurementHelperMarker, isPotentialMeasurementHelperElement, isFarOffscreenRect, isOffscreenMeasurementElement, isElementVisible, getElementRectRelativeToRoot, getElementName, getBackgroundImageUrl, hasSpecialBorderStyle, hasNonUrlBackgroundImage, needsScreenshotFillFallback, captureElementFillImage, captureSvgAsPngDataUrl, getMediaUrl, normalizeImageMapValue, fallbackHash, sha1Hex, createBaseLayerNode, getBorderInfo, getCornerRadii, hasRoundedCorners, isOverflowClipping, isNearlySameRect, resolveClipContainer, resolveMediaClipContainer, resolveMediaCorners, createMaskWrapperNode, createHierarchyMaskContainerNode, createHierarchyGroupContainerNode, getContainerItems, shouldCreateRectangle, createBackgroundShape, isSvgGeometryVisible, normalizePathPoint, getSvgGeometryClientPoints, tokenizePathData, reflectPoint, toCubicFromQuadratic, parsePathDataToSegments, parseSvgPointsAttr, buildEllipsePathSegments, getSvgGeometryLocalSegments, transformLocalPointToClient, normalizeSegmentDataToRect, buildSvgVectorNode, buildSvgContainerNode, buildSvgImageNode, html_to_axure_default;
 var init_html_to_axure = __esm({
   "src/export-core/dom/html-to-figma/html-to-axure.js"() {
     "use strict";
@@ -6245,7 +6246,7 @@ var init_html_to_axure = __esm({
           if (!ctx) return Math.max(1, round(fallbackHeight));
           const fontStyle = computedStyle.fontStyle || "normal";
           const fontWeight = computedStyle.fontWeight || "400";
-          const fontFamily = normalizePrimaryFontFamily(computedStyle.fontFamily);
+          const fontFamily = resolveAvailableFontFamily(computedStyle.fontFamily, computedStyle);
           ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
           const metrics = ctx.measureText(text);
           const ascent = metrics.actualBoundingBoxAscent;
@@ -6272,7 +6273,7 @@ var init_html_to_axure = __esm({
           if (!ctx) return 0;
           const fontStyle = computedStyle.fontStyle || "normal";
           const fontWeight = computedStyle.fontWeight || "400";
-          const fontFamily = normalizePrimaryFontFamily(computedStyle.fontFamily);
+          const fontFamily = resolveAvailableFontFamily(computedStyle.fontFamily, computedStyle);
           ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
           const metrics = ctx.measureText(text);
           const baseWidth = Number.isFinite(metrics.width) ? metrics.width : 0;
@@ -6298,11 +6299,147 @@ var init_html_to_axure = __esm({
       if (weight <= 300) return "Light";
       return "Regular";
     };
-    normalizePrimaryFontFamily = (fontFamily) => {
-      if (!fontFamily) return "Roboto";
-      const family = fontFamily.split(",")[0]?.trim() || "Roboto";
-      return family.replace(/^["']|["']$/g, "");
+    GENERIC_FONT_FAMILIES = /* @__PURE__ */ new Set([
+      "serif",
+      "sans-serif",
+      "monospace",
+      "cursive",
+      "fantasy",
+      "system-ui",
+      "-apple-system",
+      "blinkmacsystemfont",
+      "ui-serif",
+      "ui-sans-serif",
+      "ui-monospace",
+      "ui-rounded",
+      "emoji",
+      "math",
+      "fangsong"
+    ]);
+    GENERIC_FONT_FAMILY_FALLBACKS = {
+      "serif": ["Times New Roman", "Georgia"],
+      "sans-serif": ["Arial", "Helvetica Neue", "Helvetica", "Segoe UI", "Roboto", "Tahoma", "Verdana"],
+      "system-ui": ["Arial", "Helvetica Neue", "Helvetica", "Segoe UI", "Roboto"],
+      "-apple-system": ["Arial", "Helvetica Neue", "Helvetica"],
+      "blinkmacsystemfont": ["Arial", "Helvetica Neue", "Helvetica"],
+      "ui-sans-serif": ["Arial", "Helvetica Neue", "Helvetica", "Segoe UI", "Roboto"],
+      "ui-serif": ["Times New Roman", "Georgia"],
+      "monospace": ["Menlo", "Consolas", "Courier New", "Monaco"],
+      "ui-monospace": ["Menlo", "Consolas", "Courier New", "Monaco"]
     };
+    SAFE_LOCAL_FONT_FAMILY_FALLBACKS = [
+      "Arial",
+      "Helvetica Neue",
+      "Helvetica",
+      "Segoe UI",
+      "Roboto",
+      "Tahoma",
+      "Verdana",
+      "PingFang SC",
+      "Microsoft YaHei",
+      "Noto Sans CJK SC",
+      "Noto Sans SC"
+    ];
+    splitCssFontFamilyCandidates = (fontFamily) => {
+      const result = [];
+      const regex = /(?:"([^"]+)"|'([^']+)'|([^,\s][^,]*))/g;
+      let match = null;
+      while ((match = regex.exec(String(fontFamily || ""))) !== null) {
+        const candidate = (match[1] ?? match[2] ?? match[3] ?? "").trim();
+        if (candidate) result.push(candidate);
+      }
+      return result;
+    };
+    isGenericFontFamily = (fontFamily) => {
+      const normalized = String(fontFamily || "").trim().toLowerCase();
+      return GENERIC_FONT_FAMILIES.has(normalized);
+    };
+    appendUniqueFontCandidates = (target, candidates) => {
+      const seen = new Set(target.map((candidate) => candidate.toLowerCase()));
+      for (const candidate of candidates) {
+        const normalizedCandidate = String(candidate || "").trim();
+        if (!normalizedCandidate) continue;
+        const key = normalizedCandidate.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        target.push(normalizedCandidate);
+      }
+    };
+    normalizeFontStretch = (fontStretch) => {
+      const stretch = String(fontStretch || "100%");
+      if (!stretch.endsWith("%")) return stretch.toLowerCase();
+      const numeric = parseFloat(stretch);
+      if (!Number.isFinite(numeric)) return "normal";
+      if (numeric <= 50) return "ultra-condensed";
+      if (numeric <= 62.5) return "extra-condensed";
+      if (numeric <= 75) return "condensed";
+      if (numeric <= 87.5) return "semi-condensed";
+      if (numeric <= 100) return "normal";
+      if (numeric <= 112.5) return "semi-expanded";
+      if (numeric <= 125) return "expanded";
+      if (numeric <= 150) return "extra-expanded";
+      return "ultra-expanded";
+    };
+    checkFontAvailable = /* @__PURE__ */ (() => {
+      let ctx = null;
+      const cache = /* @__PURE__ */ new Map();
+      return (fontFamily, computedStyle) => {
+        if (!fontFamily || isGenericFontFamily(fontFamily)) return false;
+        const fontStretch = computedStyle?.fontStretch || "100%";
+        const fontStyle = computedStyle?.fontStyle === "italic" ? "italic" : "normal";
+        const fontWeight = computedStyle?.fontWeight || "400";
+        const cacheKey = `${fontFamily}|${fontStretch}|${fontStyle}|${fontWeight}`;
+        if (cache.has(cacheKey)) return cache.get(cacheKey);
+        try {
+          if (!ctx) {
+            const canvas = document.createElement("canvas");
+            ctx = canvas.getContext("2d");
+          }
+          if (!ctx) {
+            cache.set(cacheKey, false);
+            return false;
+          }
+          const probeText = "mmmmmmmmmmlli";
+          const probeSize = "72px";
+          const normalizedStretch = normalizeFontStretch(fontStretch);
+          const fallbackFamilies = ["monospace", "sans-serif", "serif"];
+          for (const fallback of fallbackFamilies) {
+            ctx.font = `${normalizedStretch} ${fontStyle} ${fontWeight} ${probeSize} ${fallback}`;
+            const fallbackWidth = ctx.measureText(probeText).width;
+            ctx.font = `${normalizedStretch} ${fontStyle} ${fontWeight} ${probeSize} "${fontFamily}", ${fallback}`;
+            const candidateWidth = ctx.measureText(probeText).width;
+            if (fallbackWidth !== candidateWidth) {
+              cache.set(cacheKey, true);
+              return true;
+            }
+          }
+        } catch {
+          cache.set(cacheKey, false);
+          return false;
+        }
+        cache.set(cacheKey, false);
+        return false;
+      };
+    })();
+    resolveAvailableFontFamily = (fontFamily, computedStyle) => {
+      const candidates = splitCssFontFamilyCandidates(fontFamily);
+      for (const candidate of candidates) {
+        if (checkFontAvailable(candidate, computedStyle)) return candidate;
+      }
+      const fallbackCandidates = [];
+      for (const candidate of candidates) {
+        const genericFallbacks = GENERIC_FONT_FAMILY_FALLBACKS[candidate.toLowerCase()];
+        if (genericFallbacks) {
+          appendUniqueFontCandidates(fallbackCandidates, genericFallbacks);
+        }
+      }
+      appendUniqueFontCandidates(fallbackCandidates, SAFE_LOCAL_FONT_FAMILY_FALLBACKS);
+      for (const candidate of fallbackCandidates) {
+        if (checkFontAvailable(candidate, computedStyle)) return candidate;
+      }
+      return fallbackCandidates[0] || "Roboto";
+    };
+    __resolveAvailableFontFamilyForTests = resolveAvailableFontFamily;
     getDirectText = (element) => {
       if (isFrameworkPlaceholderElement(element) || isPotentialMeasurementHelperElement(element)) {
         return "";

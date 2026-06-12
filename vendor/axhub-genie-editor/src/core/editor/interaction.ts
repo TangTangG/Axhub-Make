@@ -85,6 +85,15 @@ export function createInteractionService(options: {
     if (genieBridge.isElementInteractionLocked(element)) {
       return;
     }
+    if (state.activeTextComment) {
+      state.activeTextComment = null;
+      state.canvasOverlay?.setTextHighlightRects(null);
+      state.textCommentManager?.clearActiveHighlight();
+      if (state.textCommentTargetElement) {
+        delete state.textCommentTargetElement.dataset.weTextCommentId;
+      }
+      state.breadcrumbs?.setAnchorRect(null);
+    }
     options.changes.rememberSelectionAnchor(element, selectionAnchor);
 
     state.selectedElement = element;

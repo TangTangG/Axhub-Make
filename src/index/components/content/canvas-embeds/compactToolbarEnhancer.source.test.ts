@@ -44,83 +44,72 @@ describe('compactToolbarEnhancer source', () => {
     expect(source).not.toContain("rectangleTool.addEventListener('pointerenter'");
   });
 
-  it('injects the AI image generator as the penultimate toolbar icon before the extra tools menu', () => {
+  it('does not inject an AI generation toolbar icon into the top canvas toolbar', () => {
     const source = readSource();
 
-    expect(source).toContain("const AI_IMAGE_TOOLBAR_LABEL = 'AI 生成图片';");
-    expect(source).toContain('onAiImageToolClick: () => void;');
-    expect(source).toContain('this.injectAiGenerationToolbarButtons()');
-    expect(source).toContain('private injectAiImageToolbarButton()');
-    expect(source).toContain("data-axhub-ai-image-toolbar-btn");
-    expect(source).toContain("data-axhub-ai-image-toolbar-wrapper");
-    expect(source).toContain('extraToolsTrigger.closest');
-    expect(source).toContain('extraToolsWrapper.parentElement');
-    expect(source).toContain('const aiImageWrapper = this.injectAiImageToolbarButton(toolbarParent);');
-    expect(source).toContain('this.syncAiGenerationToolbarButtonOrder(toolbarParent, aiImageWrapper, prototypeWrapper, extraToolsWrapper);');
-    expect(source).toContain("wrapper.className = 'ToolIcon axhub-ai-image-toolbar-tool';");
-    expect(source).toContain('this.applyToolbarVisualTooltip(wrapper, AI_IMAGE_TOOLBAR_LABEL);');
-    expect(source).toContain('this.applyToolbarAriaLabel(button, AI_IMAGE_TOOLBAR_LABEL);');
-    expect(source).not.toContain('toolbar.insertBefore(wrapper, extraToolsWrapper)');
-    expect(source).not.toContain('extraToolsWrapper.after(wrapper)');
+    expect(source).not.toContain("const AI_GENERATION_TOOLBAR_LABEL = 'AI 生成';");
+    expect(source).not.toContain('onAiGenerationToolClick: () => void;');
+    expect(source).not.toContain('this.injectAiGenerationToolbarButtons()');
+    expect(source).not.toContain('private injectAiGenerationToolbarButton');
+    expect(source).not.toContain("data-axhub-ai-generation-toolbar-btn");
+    expect(source).not.toContain("const AI_IMAGE_TOOLBAR_LABEL = 'AI 生成图片';");
+    expect(source).not.toContain("const PROTOTYPE_TOOLBAR_LABEL = 'AI 生成原型';");
+    expect(source).not.toContain("data-axhub-ai-image-toolbar-btn");
+    expect(source).not.toContain("data-axhub-prototype-toolbar-btn");
   });
 
-  it('injects the prototype generator immediately after the AI image generator before extra tools', () => {
+  it('does not render AI image, prototype, or unified generation toolbar buttons', () => {
     const source = readSource();
 
-    expect(source).toContain("const PROTOTYPE_TOOLBAR_LABEL = 'AI 生成原型';");
-    expect(source).toContain('onPrototypeToolClick: () => void;');
-    expect(source).toContain('private onPrototypeToolClick: () => void;');
-    expect(source).toContain('this.onPrototypeToolClick = opts.onPrototypeToolClick;');
-    expect(source).toContain('PROTOTYPE_ICON_SVG');
-    expect(source).toContain('private injectAiGenerationToolbarButtons()');
-    expect(source).toContain('private injectPrototypeToolbarButton(');
-    expect(source).toContain("data-axhub-prototype-toolbar-btn");
-    expect(source).toContain("data-axhub-prototype-toolbar-wrapper");
-    expect(source).toContain("wrapper.className = 'ToolIcon axhub-prototype-toolbar-tool';");
-    expect(source).toContain('this.applyToolbarVisualTooltip(wrapper, PROTOTYPE_TOOLBAR_LABEL);');
-    expect(source).toContain('this.applyToolbarAriaLabel(button, PROTOTYPE_TOOLBAR_LABEL);');
-    expect(source).toContain('this.wireToolbarButton(button, () => this.onPrototypeToolClick());');
-    expect(source).toContain('const prototypeWrapper = this.injectPrototypeToolbarButton(toolbarParent);');
-    expect(source).toContain('this.syncAiGenerationToolbarButtonOrder(toolbarParent, aiImageWrapper, prototypeWrapper, extraToolsWrapper);');
-    expect(source).not.toContain('aiImageWrapper.after(wrapper)');
+    expect(source).not.toContain('this.wireToolbarButton(button, () => this.onAiGenerationToolClick());');
+    expect(source).not.toContain('onAiImageToolClick: () => void;');
+    expect(source).not.toContain('onPrototypeToolClick: () => void;');
+    expect(source).not.toContain('private injectAiImageToolbarButton');
+    expect(source).not.toContain('private injectPrototypeToolbarButton');
+    expect(source).not.toContain('private injectAiGenerationToolbarButton');
+    expect(source).not.toContain('AI_IMAGE_ICON_SVG');
+    expect(source).not.toContain('PROTOTYPE_ICON_SVG');
   });
 
-  it('uses a document-plus prototype icon that matches the image-plus toolbar style', () => {
+  it('injects a Drawio chart item into the extra tools menu', () => {
     const source = readSource();
-    const prototypeIcon = source.match(/const PROTOTYPE_ICON_SVG = `([^`]+)`;/)?.[1] ?? '';
 
-    expect(prototypeIcon).toContain('width="18" height="18"');
-    expect(prototypeIcon).toContain('stroke-width="2"');
-    expect(prototypeIcon).toContain('<path d="M19 3v6"/>');
-    expect(prototypeIcon).toContain('<path d="M16 6h6"/>');
-    expect(prototypeIcon).toContain('<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/>');
-    expect(prototypeIcon).toContain('<path d="M8 8h5"/>');
-    expect(prototypeIcon).toContain('<path d="M8 12h6"/>');
-    expect(prototypeIcon).not.toContain('<path d="M8 21h8"/>');
-    expect(prototypeIcon).not.toContain('<path d="M12 18v3"/>');
+    expect(source).toContain("const DRAWIO_TOOL_LABEL = 'Drawio 图表';");
+    expect(source).toContain("const DRAWIO_TOOL_TOOLTIP = '插入 Drawio 图表';");
+    expect(source).toContain('onDrawioToolClick: () => void;');
+    expect(source).toContain('private onDrawioToolClick: () => void;');
+    expect(source).toContain('this.onDrawioToolClick = opts.onDrawioToolClick;');
+    expect(source).toContain('this.injectDrawioExtraToolsMenuItem();');
+    expect(source).toContain('private injectDrawioExtraToolsMenuItem()');
+    expect(source).toContain("data-axhub-drawio-extra-tools-item");
+    expect(source).toContain('this.wireDropdownMenuItem(item, () => this.onDrawioToolClick());');
   });
 
-  it('keeps the AI image and prototype toolbar buttons stable before the extra tools menu', () => {
+  it('does not define a plus icon for a unified AI generation toolbar entry', () => {
+    const source = readSource();
+    const generationIcon = source.match(/const AI_GENERATION_ICON_SVG = `([^`]+)`;/)?.[1] ?? '';
+
+    expect(generationIcon).toBe('');
+    expect(generationIcon).not.toContain('PROTOTYPE_ICON_SVG');
+  });
+
+  it('does not keep ordering logic for a removed AI generation toolbar button', () => {
     const source = readSource();
 
-    expect(source).toContain('private syncAiGenerationToolbarButtonOrder(');
-    expect(source).toContain('const expectedOrder = [aiImageWrapper, prototypeWrapper, extraToolsWrapper];');
-    expect(source).toContain('if (currentNode === expectedNode) {');
-    expect(source).toContain('toolbarParent.insertBefore(expectedNode, currentNode);');
+    expect(source).not.toContain('private syncAiGenerationToolbarButtonOrder(');
+    expect(source).not.toContain('const expectedOrder = [aiGenerationWrapper, extraToolsWrapper];');
     expect(source).not.toContain('wrapper.nextElementSibling !== extraToolsWrapper');
   });
 
-  it('rewires hot-reloaded AI toolbar buttons so existing DOM remains clickable', () => {
+  it('only removes legacy AI toolbar wrappers during cleanup', () => {
     const source = readSource();
 
     expect(source).toContain('TOOLBAR_BUTTON_HANDLER_VERSION');
-    expect(source).toContain('private ensureAiImageToolbarButton(wrapper: HTMLElement)');
-    expect(source).toContain('private ensurePrototypeToolbarButton(wrapper: HTMLElement)');
     expect(source).toContain("button.setAttribute('data-axhub-toolbar-handler-version', TOOLBAR_BUTTON_HANDLER_VERSION);");
-    expect(source).toContain('existingButton.replaceWith(button);');
-    expect(source).toContain("button.addEventListener('pointerdown', handleActivation, true);");
-    expect(source).toContain("button.addEventListener('click', handleActivation);");
     expect(source).toContain('this.removeAiGenerationToolbarButtons();');
+    expect(source).toContain('[data-axhub-ai-generation-toolbar-wrapper], [data-axhub-ai-image-toolbar-wrapper], [data-axhub-prototype-toolbar-wrapper]');
+    expect(source).not.toContain('private ensureAiGenerationToolbarButton(wrapper: HTMLElement)');
+    expect(source).not.toContain('existingButton.replaceWith(button);');
   });
 
   it('adds native tooltips while skipping grouped toolbar triggers', () => {
@@ -138,23 +127,16 @@ describe('compactToolbarEnhancer source', () => {
     expect(source).toContain('if (isGroupedTrigger && !input?.closest(\'.tool-popover-content\'))');
     expect(source).toContain('target.removeAttribute(\'title\');');
     expect(source).toContain('target.removeAttribute(\'data-axhub-toolbar-tooltip\');');
-    expect(source).toContain('this.applyToolbarAriaLabel(button, label)');
+    expect(source).not.toContain("[data-axhub-ai-generation-toolbar-btn]");
     expect(source).toContain("target.title = label;");
   });
 
-  it('adds a single visual tooltip to each injected AI toolbar wrapper without native title bubbles', () => {
+  it('does not add visual tooltip wiring for a removed AI toolbar wrapper', () => {
     const source = readSource();
 
-    expect(source).toContain('private applyToolbarVisualTooltip(target: HTMLElement, label: string)');
-    expect(source).toContain('target.removeAttribute(\'title\');');
-    expect(source).toContain("target.setAttribute('aria-label', label);");
-    expect(source).toContain("target.setAttribute('data-axhub-toolbar-tooltip', label);");
-    expect(source).toContain('this.applyToolbarVisualTooltip(wrapper, AI_IMAGE_TOOLBAR_LABEL);');
-    expect(source).toContain('this.applyToolbarAriaLabel(button, AI_IMAGE_TOOLBAR_LABEL);');
-    expect(source).toContain('this.applyToolbarVisualTooltip(wrapper, PROTOTYPE_TOOLBAR_LABEL);');
-    expect(source).toContain('this.applyToolbarAriaLabel(button, PROTOTYPE_TOOLBAR_LABEL);');
-    expect(source).not.toContain('this.applyToolbarVisualTooltip(button, AI_IMAGE_TOOLBAR_LABEL);');
-    expect(source).not.toContain('this.applyToolbarVisualTooltip(button, PROTOTYPE_TOOLBAR_LABEL);');
+    expect(source).not.toContain('this.applyToolbarVisualTooltip(wrapper, AI_GENERATION_TOOLBAR_LABEL);');
+    expect(source).not.toContain('this.applyToolbarAriaLabel(button, AI_GENERATION_TOOLBAR_LABEL);');
+    expect(source).not.toContain('this.applyToolbarVisualTooltip(button, AI_GENERATION_TOOLBAR_LABEL);');
   });
 
   it('keeps injected toolbar visual tooltips above open toolbar menus', () => {

@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
 import type { GenieProvider } from '@/common/genie/types';
+import type { SettingsDialogInitialTab } from '../../components/SettingsDialog';
 import type { ItemData, TabType, ViewMode } from '../../types';
 import type {
     NewSidebarGroupedProps,
@@ -21,6 +22,7 @@ interface UseIndexPageSidebarPropsBuilderParams {
         docsItems: any[];
         canvasItems: any[];
         themes: any[];
+        defaultThemeName?: string | null;
         searchText: string;
         selectedItem: ItemData | null;
         selectedPrototypePageId?: string | null;
@@ -34,12 +36,11 @@ interface UseIndexPageSidebarPropsBuilderParams {
         lanAccessAllowed?: boolean;
         isDarkMode: boolean;
         sidebarTrees: any;
+        webAgentPanelOpen?: boolean;
         selectedDoc: ItemData | null;
         selectedResourceFolder?: any;
         selectedCanvas: any;
         selectedTheme: any;
-        webAgentPanelOpen?: boolean;
-        defaultThemeName?: string | null;
     };
     deps: {
         preferredPromptClient: any;
@@ -48,7 +49,7 @@ interface UseIndexPageSidebarPropsBuilderParams {
         agentAvailability?: RuntimeAgentAvailability;
         setPreferredIDE: (ide: MainIDEPreference) => void;
         setIsDarkMode: (dark: boolean) => void;
-        setSettingsDialogOpen: (open: boolean) => void;
+        openSettingsDialog: (tab?: SettingsDialogInitialTab) => void;
         setActiveTab: Dispatch<SetStateAction<TabType>>;
         setSidebarTab: Dispatch<SetStateAction<SidebarTab>>;
         setViewMode: Dispatch<SetStateAction<ViewMode>>;
@@ -69,11 +70,10 @@ interface UseIndexPageSidebarPropsBuilderParams {
         handleTabChange: (tab: TabType) => void;
         handleMenuClick: (params: { key: string; pageId?: string | null }) => void | Promise<void>;
         setSelectedPrototypePageId?: Dispatch<SetStateAction<string | null>>;
-        handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
+        handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
         handleOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
         handleOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
         onCloseWebAgentPanel?: () => void;
-        refreshAvailability?: () => void;
         handleOpenSelectedDocInIDE: (itemOverride?: ItemData | null, kindOverride?: 'doc' | 'template') => Promise<void>;
         handleCopyItemPath: (item: ItemData) => Promise<void>;
         previewHandleSelectDoc: (item: ItemData) => void;
@@ -85,7 +85,15 @@ export function useIndexPageSidebarPropsBuilder({
     state,
     deps,
 }: UseIndexPageSidebarPropsBuilderParams): NewSidebarGroupedProps {
-    return useMemo(() => ({
+    return useMemo(() => {
+        const resetToPrototypeStartView = () => {
+            deps.setActiveTab('prototypes');
+            deps.setSidebarTab('prototype');
+            deps.setViewMode('demo');
+            deps.setSelectedPrototypePageId?.(null);
+        };
+
+        return ({
         state: {
             collapsed: state.collapsed,
             loading: state.loading,
@@ -95,6 +103,7 @@ export function useIndexPageSidebarPropsBuilder({
             docsItems: state.docsItems,
             canvasItems: state.canvasItems,
             themes: state.themes,
+            defaultThemeName: state.defaultThemeName,
             searchText: state.searchText,
             selectedItem: state.selectedItem,
             selectedPrototypePageId: state.selectedPrototypePageId,
@@ -113,7 +122,6 @@ export function useIndexPageSidebarPropsBuilder({
             isDarkMode: state.isDarkMode,
             sidebarTrees: state.sidebarTrees,
             webAgentPanelOpen: state.webAgentPanelOpen,
-            defaultThemeName: state.defaultThemeName,
         },
         actions: {
             handleTabChange: deps.handleTabChange,
@@ -159,7 +167,6 @@ export function useIndexPageSidebarPropsBuilder({
             handleDeleteDocItem: (item) => { void deps.resources.handleDeleteDocItem(item); },
             handleCopyDocPath: (item) => { void deps.resources.handleCopyDocPath(item); },
             handleDocVersionManagement: deps.resources.handleDocVersionManagement,
-            onCreatePrototypeFromDoc: (doc) => { void deps.resources.handleCreatePrototypeFromDoc(doc); },
             onOpenCreateDialog: (initialTab = 'ai') => {
                 if (state.sidebarTab === 'prototype') {
                     deps.setActiveTab('prototypes');
@@ -169,7 +176,7 @@ export function useIndexPageSidebarPropsBuilder({
             },
             onImportTheme: deps.resources.handleImportThemeResource,
             onCreatePlaceholderPrototype: () => { void deps.resources.handleCreatePlaceholderPrototype(); },
-            onUploadedResourceFiles: () => { void deps.resources.handleUploadedResourceFiles(); },
+            onUploadedResourceFiles: (files) => { void deps.resources.handleUploadedResourceFiles(files); },
             onCreateCanvasFile: () => { void deps.resources.handleCreateCanvasFile(); },
             handleRenameCanvasItem: deps.resources.handleRenameCanvasItem,
             handleDuplicateCanvasItem: deps.resources.handleDuplicateCanvasItem,
@@ -177,29 +184,40 @@ export function useIndexPageSidebarPropsBuilder({
             handleCopyCanvasPath: deps.resources.handleCopyCanvasPath,
             onCreateFolder: deps.resources.handleCreateFolder,
             onGenerateThemeFromPrototype: deps.resources.handleGenerateThemeFromPrototype,
-            onSettingsClick: () => deps.setSettingsDialogOpen(true),
+            onSettingsClick: () => deps.openSettingsDialog('project'),
             onToggleTheme: () => deps.setIsDarkMode(!state.isDarkMode),
             onTitleChange: deps.resources.handleProjectTitleChange,
             onProjectSwitch: deps.switchProject,
             onProjectDelete: deps.deleteProject,
             onProjectStop: deps.stopProjectDevServer,
-            onAddProject: deps.addProjectFromLocalPath,
-            onCreateBlankMakeProject: deps.createBlankMakeProject,
+            onAddProject: async (root) => {
+                const result = await Promise.resolve(deps.addProjectFromLocalPath(root));
+                if (result !== false) {
+                    resetToPrototypeStartView();
+                }
+                return result;
+            },
+            onCreateBlankMakeProject: async (params) => {
+                const result = await deps.createBlankMakeProject(params);
+                resetToPrototypeStartView();
+                return result;
+            },
             onRefreshProjects: deps.loadProjects,
+            onSidebarTreeChange: deps.resources.handleSidebarTreeChange,
+            onSidebarTreePersist: deps.resources.handleSidebarTreePersist,
+            handleVersionManagement: deps.resources.handleVersionManagement,
             handleOpenProjectInIDE: deps.handleOpenProjectInIDE,
             onOpenGenieWebAgent: deps.handleOpenGenieWebAgent,
             onOpenWebAgentInPanel: deps.handleOpenWebAgentInPanel,
             onCloseWebAgentPanel: deps.onCloseWebAgentPanel,
-            onSidebarTreeChange: deps.resources.handleSidebarTreeChange,
-            onSidebarTreePersist: deps.resources.handleSidebarTreePersist,
-            handleVersionManagement: deps.resources.handleVersionManagement,
+            onOpenAISettings: () => deps.openSettingsDialog('ai'),
         },
         preferences: {
             preferredIDE: deps.preferredIDE,
             ideAvailability: deps.ideAvailability,
             agentAvailability: deps.agentAvailability,
             onPreferredIDEChange: deps.setPreferredIDE,
-            onRefreshAvailability: deps.refreshAvailability,
         },
-    }), [deps, state]) satisfies NewSidebarGroupedProps;
+    });
+    }, [deps, state]) satisfies NewSidebarGroupedProps;
 }

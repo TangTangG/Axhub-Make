@@ -17,7 +17,7 @@ import {
 } from '../scripts/sync-project-metadata.mjs';
 import { MAKE_CONFIG_RELATIVE_PATH } from './utils/makeConstants';
 
-const DEFAULT_ADMIN_ORIGIN = 'http://localhost:5174';
+const DEFAULT_ADMIN_ORIGIN = 'http://localhost:53817';
 const STATUS_ROUTE = '/__axhub/make-server/status';
 const START_ROUTE = '/__axhub/make-server/start';
 const DEFAULT_ADMIN_HEALTH_TIMEOUT_MS = 1200;
@@ -107,7 +107,7 @@ export function resolveMakeServerStartCommand(
   const runtimeOrigin = normalizeOrigin(options.runtimeOrigin);
   const cliPath = resolveLocalMakeServerCli(projectRoot);
   if (cliPath) {
-    const args = [cliPath, projectRoot, '--dev'];
+    const args = [cliPath, projectRoot, '--dev', '--no-open'];
     if (runtimeOrigin) {
       args.push('--runtime-origin', runtimeOrigin);
     }
@@ -117,7 +117,7 @@ export function resolveMakeServerStartCommand(
       label: 'local @axhub/make dev',
     };
   }
-  const args = ['@axhub/make', projectRoot];
+  const args = ['@axhub/make', projectRoot, '--no-open'];
   if (runtimeOrigin) {
     args.push('--runtime-origin', runtimeOrigin);
   }
@@ -157,16 +157,17 @@ export async function getReusableAdminOrigin(
 }
 
 function isReusableAdminHealth(health: unknown, options: ReusableAdminOriginOptions): boolean {
-  if (!options.requireDevMode) {
-    return isReusableRuntimeOrigin(health, options);
-  }
   if (!health || typeof health !== 'object') {
     return false;
   }
   const payload = health as { role?: unknown; devMode?: unknown };
-  return payload.role === 'admin'
-    && payload.devMode === true
-    && isReusableRuntimeOrigin(health, options);
+  if (payload.role !== 'admin') {
+    return false;
+  }
+  if (options.requireDevMode && payload.devMode !== true) {
+    return false;
+  }
+  return isReusableRuntimeOrigin(health, options);
 }
 
 function isReusableRuntimeOrigin(health: unknown, options: ReusableAdminOriginOptions): boolean {

@@ -2,6 +2,7 @@ export interface PersistPrototypeScreenshotParams {
     previewUrl: string;
     dataUrl: string;
     prototypeId?: string | null;
+    pageId?: string | null;
     elementId?: string;
     fileName?: string;
     width?: number;
@@ -17,6 +18,7 @@ export interface PersistedPrototypeScreenshot {
 }
 
 const PROTOTYPE_CANVAS_ASSETS_DIR = 'canvas-assets';
+const PROTOTYPE_PAGE_ID_RE = /^[a-z0-9-]+$/u;
 
 function normalizePrototypeId(value: string): string | null {
     const decoded = decodeURIComponent(value || '').trim();
@@ -42,6 +44,11 @@ function normalizeScreenshotFileBase(value: string): string | null {
     return normalized || null;
 }
 
+function normalizePrototypePageId(value: unknown): string | null {
+    const pageId = typeof value === 'string' ? value.trim() : '';
+    return PROTOTYPE_PAGE_ID_RE.test(pageId) ? pageId : null;
+}
+
 export function getPrototypeIdFromCanvasName(canvasName: string): string | null {
     if (!canvasName) return null;
     const normalized = String(canvasName).trim();
@@ -52,6 +59,11 @@ export function getPrototypeIdFromCanvasName(canvasName: string): string | null 
 export function createElementScreenshotFileName(elementId: string): string | undefined {
     const safeElementId = normalizeScreenshotFileBase(elementId);
     return safeElementId ? `embed-${safeElementId}.png` : undefined;
+}
+
+export function getPrototypePageScreenshotFileName(pageId: unknown): string | undefined {
+    const safePageId = normalizePrototypePageId(pageId);
+    return safePageId ? `page-${safePageId}.png` : undefined;
 }
 
 export function getPrototypeIdFromPreviewUrl(previewUrl: string): string | null {
@@ -75,6 +87,20 @@ export function derivePrototypeScreenshotUrl(previewUrl: string): string | undef
     } catch {
         return undefined;
     }
+}
+
+export function derivePrototypePageScreenshotUrl(
+    previewUrl: string,
+    prototypeIdOrPageId: string | null | undefined,
+    pageId?: string | null,
+): string | undefined {
+    const resolvedPageId = pageId === undefined ? prototypeIdOrPageId : pageId;
+    const fileName = getPrototypePageScreenshotFileName(resolvedPageId);
+    if (!fileName) return undefined;
+    const prototypeId = pageId === undefined
+        ? getPrototypeIdFromPreviewUrl(previewUrl)
+        : prototypeIdOrPageId;
+    return derivePrototypeScreenshotUrlFromId(previewUrl, prototypeId, fileName);
 }
 
 export function derivePrototypeScreenshotUrlFromId(
@@ -102,13 +128,19 @@ export async function persistPrototypeScreenshot(
         return null;
     }
 
-    const fileName = params.fileName || (params.elementId ? createElementScreenshotFileName(params.elementId) : undefined);
+    const pageScreenshotFileName = getPrototypePageScreenshotFileName(params.pageId);
+    const fileName = params.fileName
+        || pageScreenshotFileName
+        || (params.elementId ? createElementScreenshotFileName(params.elementId) : undefined);
+    const elementId = pageScreenshotFileName ? undefined : params.elementId;
+    const pageId = pageScreenshotFileName ? normalizePrototypePageId(params.pageId) : undefined;
 
     const response = await fetch(`/api/canvas/prototypes/${encodeURIComponent(prototypeId)}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            elementId: params.elementId,
+            elementId,
+            pageId,
             fileName,
             dataUrl: params.dataUrl,
             width: params.width,

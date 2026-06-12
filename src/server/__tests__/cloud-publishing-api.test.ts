@@ -49,7 +49,14 @@ function writeProject(projectRoot: string) {
     repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
     project: { id: 'cloud-client', name: 'Cloud Client' },
   });
+  writeJson(path.join(projectRoot, 'package.json'), {
+    scripts: {
+      dev: 'vite',
+      'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+    },
+  });
   writeFile(path.join(projectRoot, 'src/prototypes/home/index.tsx'), 'export default function Home() { return null; }\n');
+  writeFile(path.join(projectRoot, 'src/themes/brand/index.tsx'), 'export default function BrandTheme() { return null; }\n');
   writeFile(path.join(projectRoot, 'src/media/logo.txt'), 'LOGO');
   writeJson(getProjectMetadataPath(projectRoot), {
     schemaVersion: 1,
@@ -65,7 +72,15 @@ function writeProject(projectRoot: string) {
         },
       ],
       docs: [],
-      themes: [],
+      themes: [
+        {
+          id: 'brand',
+          name: 'brand',
+          title: 'Brand',
+          path: 'src/themes/brand',
+          sourcePath: 'src/themes/brand',
+        },
+      ],
       data: [],
       templates: [],
     },
@@ -99,7 +114,7 @@ function writeCloudConfig(projectRoot: string, cloudPublishing: unknown) {
 }
 
 async function startTestServer(projectRoot: string, extraOptions: Record<string, unknown> = {}) {
-  return startMakeServer({
+  const server = await startMakeServer({
     projectRoot,
     host: 'localhost',
     port: 0,
@@ -107,6 +122,18 @@ async function startTestServer(projectRoot: string, extraOptions: Record<string,
     registryPath: getProjectRegistryPath(createTempRoot('axhub-cloud-publishing-registry-')),
     ...extraOptions,
   });
+  try {
+    const response = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root: projectRoot }),
+    });
+    expect(response.status).toBe(201);
+    return server;
+  } catch (error) {
+    await server.close();
+    throw error;
+  }
 }
 
 async function readJsonResponse(response: Response) {
@@ -220,6 +247,7 @@ function writeCloudPublishRecord(projectRoot: string, input: {
   url?: string;
   createdAt: string;
   resourceId?: string;
+  path?: string;
 }) {
   const safeCreatedAt = input.createdAt.replace(/[:.]/g, '-');
   writeJson(path.join(getProjectExportsDir(projectRoot), `cloud.publish.${input.target}-${safeCreatedAt}.json`), {
@@ -233,7 +261,7 @@ function writeCloudPublishRecord(projectRoot: string, input: {
     createdAt: input.createdAt,
     operationType: `cloud.publish.${input.target}`,
     metadata: {
-      path: 'prototypes/home',
+      path: input.path || 'prototypes/home',
       ...(input.url ? { url: input.url } : {}),
     },
   });
@@ -283,7 +311,7 @@ describe('cloud publishing API', () => {
     writeFile(path.join(projectRoot, 'src/prototypes/home/canvas.excalidraw'), '{}\n');
     writeFile(path.join(projectRoot, 'src/prototypes/home/canvas.fig'), 'FIG');
     writeFile(path.join(projectRoot, 'src/prototypes/home/canvas-assets/screenshot.png'), 'PNG');
-    writeFile(path.join(projectRoot, 'src/prototypes/home/.spec/ai-image-history.json'), '{}\n');
+    writeFile(path.join(projectRoot, 'src/prototypes/home/.spec/generation-artifacts.json'), '{}\n');
 
     const files = await buildExportHtmlStaticFiles({
       projectRoot,
@@ -305,7 +333,7 @@ describe('cloud publishing API', () => {
       'source/canvas.excalidraw',
       'source/canvas.fig',
       'source/canvas-assets/screenshot.png',
-      'source/.spec/ai-image-history.json',
+      'source/.spec/generation-artifacts.json',
     ]));
   });
 
@@ -750,7 +778,8 @@ describe('cloud publishing API', () => {
       return jsonResponse({
         success: true,
         result: {
-          url: 'https://axhub-home.pages.dev',
+          id: 'deployment-1',
+          url: 'https://deployment-1.axhub-home.pages.dev',
         },
       });
     });
@@ -796,6 +825,13 @@ describe('cloud publishing API', () => {
       const manifest = JSON.parse(String((deploymentInit?.body as FormData).get('manifest')));
       expect(manifest['/index.html']).toMatch(/^[a-f0-9]{32}$/u);
       expect(manifest['/index.js']).toBe(cloudflarePagesAssetHash('var UserComponent = function Home(){};', 'js'));
+      const records = fs.readdirSync(getProjectExportsDir(projectRoot))
+        .map((fileName) => JSON.parse(fs.readFileSync(path.join(getProjectExportsDir(projectRoot), fileName), 'utf8')));
+      expect(records[0].metadata).toMatchObject({
+        url: 'https://axhub-home.pages.dev',
+        deploymentUrl: 'https://deployment-1.axhub-home.pages.dev',
+        deploymentId: 'deployment-1',
+      });
     } finally {
       await server.close();
     }
@@ -925,6 +961,125 @@ describe('cloud publishing API', () => {
         },
       });
       expect(body.targets.cloudflarePages).toBeNull();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('filters latest successful cloud publish URLs by prototype resource path', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudPublishRecord(projectRoot, {
+      target: 'vercel',
+      status: 'success',
+      url: 'https://home.vercel.app',
+      createdAt: '2026-05-18T10:00:00.000Z',
+      path: 'src/prototypes/home',
+    });
+    writeCloudPublishRecord(projectRoot, {
+      target: 'vercel',
+      status: 'success',
+      url: 'https://other.vercel.app',
+      createdAt: '2026-05-18T11:00:00.000Z',
+      path: 'src/prototypes/other',
+    });
+    writeCloudPublishRecord(projectRoot, {
+      target: 's3',
+      status: 'success',
+      url: 'https://cdn.example.com/home/index.html',
+      createdAt: '2026-05-18T12:00:00.000Z',
+      path: 'prototypes/home/index.tsx',
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/cloud-publishing/latest?path=${encodeURIComponent('src/prototypes/home')}`);
+      const body = await readJsonResponse(response);
+
+      expect(response.status).toBe(200);
+      expect(body.targets.vercel).toMatchObject({
+        url: 'https://home.vercel.app',
+        path: 'src/prototypes/home',
+      });
+      expect(body.targets.s3).toMatchObject({
+        url: 'https://cdn.example.com/home/index.html',
+        path: 'src/prototypes/home',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('filters latest successful cloud publish URLs by theme resource path and equivalent forms', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudPublishRecord(projectRoot, {
+      target: 'vercel',
+      status: 'success',
+      url: 'https://brand-theme.vercel.app',
+      createdAt: '2026-05-18T10:00:00.000Z',
+      resourceId: 'brand',
+      path: 'src/themes/brand/index.tsx',
+    });
+    writeCloudPublishRecord(projectRoot, {
+      target: 'vercel',
+      status: 'success',
+      url: 'https://home.vercel.app',
+      createdAt: '2026-05-18T11:00:00.000Z',
+      path: 'src/prototypes/home',
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/cloud-publishing/latest?path=${encodeURIComponent('themes/brand')}`);
+      const body = await readJsonResponse(response);
+
+      expect(response.status).toBe(200);
+      expect(body.targets.vercel).toMatchObject({
+        url: 'https://brand-theme.vercel.app',
+        path: 'src/themes/brand',
+      });
+      expect(body.targets.s3).toBeNull();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('publishes a theme directory by resolving its index entry and recording the normalized resource path', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      vercel: { token: 'vercel-token', projectName: 'axhub-theme-brand' },
+    });
+    const fetchMock = mockExternalFetch(() => jsonResponse({
+      url: 'axhub-theme-brand.vercel.app',
+    }));
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'vercel', path: 'themes/brand' }),
+      });
+      const body = await readJsonResponse(response);
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        target: 'vercel',
+        url: 'https://axhub-theme-brand.vercel.app',
+      });
+      expect(vi.mocked(buildOnDemand)).toHaveBeenCalledWith(projectRoot, path.join(projectRoot, 'src/themes/brand/index.tsx'));
+      expect(fetchMock.mock.calls.some(([requestUrl]) => String(requestUrl).includes('api.vercel.com'))).toBe(true);
+      const records = fs.readdirSync(getProjectExportsDir(projectRoot))
+        .map((fileName) => JSON.parse(fs.readFileSync(path.join(getProjectExportsDir(projectRoot), fileName), 'utf8')));
+      expect(records[0]).toMatchObject({
+        resourceId: 'brand',
+        resourceType: 'theme',
+        metadata: {
+          path: 'src/themes/brand',
+        },
+      });
     } finally {
       await server.close();
     }

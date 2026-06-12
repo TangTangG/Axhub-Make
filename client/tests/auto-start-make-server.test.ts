@@ -275,8 +275,8 @@ describe('auto make-server registration', () => {
       .resolves
       .toMatchObject({
         ready: true,
-        adminOrigin: 'http://localhost:5174',
-        adminUrl: 'http://localhost:5174/?projectId=make-project',
+        adminOrigin: 'http://localhost:53817',
+        adminUrl: 'http://localhost:53817/?projectId=make-project',
       });
   });
 
@@ -285,7 +285,7 @@ describe('auto make-server registration', () => {
 
     expect(resolveMakeServerStartCommand(projectRoot)).toEqual({
       command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      args: ['@axhub/make', projectRoot],
+      args: ['@axhub/make', projectRoot, '--no-open'],
       label: 'npx @axhub/make',
     });
   });
@@ -297,7 +297,7 @@ describe('auto make-server registration', () => {
       runtimeOrigin: 'http://localhost:51720/',
     })).toEqual({
       command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      args: ['@axhub/make', projectRoot, '--runtime-origin', 'http://localhost:51720'],
+      args: ['@axhub/make', projectRoot, '--no-open', '--runtime-origin', 'http://localhost:51720'],
       label: 'npx @axhub/make',
     });
   });
@@ -313,7 +313,7 @@ describe('auto make-server registration', () => {
 
     expect(resolveMakeServerStartCommand(projectRoot)).toEqual({
       command: process.execPath,
-      args: [cliPath, projectRoot, '--dev'],
+      args: [cliPath, projectRoot, '--dev', '--no-open'],
       label: 'local @axhub/make dev',
     });
   });
@@ -335,6 +335,7 @@ describe('auto make-server registration', () => {
         cliPath,
         projectRoot,
         '--dev',
+        '--no-open',
         '--runtime-origin',
         'http://localhost:51720',
       ],
@@ -353,7 +354,7 @@ describe('auto make-server registration', () => {
 
     expect(resolveMakeServerStartCommand(projectRoot)).toEqual({
       command: process.execPath,
-      args: [cliPath, projectRoot, '--dev'],
+      args: [cliPath, projectRoot, '--dev', '--no-open'],
       label: 'local @axhub/make dev',
     });
   });
@@ -394,7 +395,7 @@ describe('auto make-server registration', () => {
     });
     await vi.advanceTimersByTimeAsync(1000);
 
-    await expect(waitPromise).resolves.toBe('http://localhost:5174');
+    await expect(waitPromise).resolves.toBe('http://localhost:53817');
     expect(attempts).toBe(3);
     vi.useRealTimers();
   });
@@ -424,6 +425,30 @@ describe('auto make-server registration', () => {
       requireDevMode: true,
       runtimeOrigin: 'http://localhost:51720',
     })).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reuse a client runtime that is listening on the default admin port', async () => {
+    const projectRoot = createTempProjectRoot();
+    const fetchMock = mockFetch((url) => {
+      expect(url.origin).toBe('http://localhost:53817');
+      expect(url.pathname).toBe('/api/health');
+      return jsonResponse({
+        ok: true,
+        role: 'runtime',
+        projectRoot,
+        server: {
+          pid: 12345,
+          port: 53817,
+          host: 'localhost',
+          origin: 'http://localhost:53817',
+          projectRoot,
+          startedAt: '2026-05-03T00:01:00.000Z',
+        },
+      });
+    });
+
+    await expect(getReusableAdminOrigin(projectRoot)).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -477,7 +502,7 @@ describe('auto make-server registration', () => {
     });
     expect(childProcessMock.spawn).toHaveBeenCalledWith(
       process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      ['@axhub/make', projectRoot],
+      ['@axhub/make', projectRoot, '--no-open'],
       expect.objectContaining({
         cwd: projectRoot,
         detached: true,
@@ -519,25 +544,25 @@ describe('auto make-server registration', () => {
       if (url.origin === 'http://localhost:5175') {
         throw new Error('connect ECONNREFUSED');
       }
-      expect(url.origin).toBe('http://localhost:5174');
+      expect(url.origin).toBe('http://localhost:53817');
       expect(url.pathname).toBe('/api/health');
       return jsonResponse({
         ok: true,
         role: 'admin',
         projectRoot,
-        origin: 'http://localhost:5174',
+        origin: 'http://localhost:53817',
         server: {
           pid: 12345,
-          port: 5174,
+          port: 53817,
           host: 'localhost',
-          origin: 'http://localhost:5174',
+          origin: 'http://localhost:53817',
           projectRoot,
           startedAt: '2026-05-03T00:01:00.000Z',
         },
       });
     });
 
-    await expect(getReusableAdminOrigin(projectRoot)).resolves.toBe('http://localhost:5174');
+    await expect(getReusableAdminOrigin(projectRoot)).resolves.toBe('http://localhost:53817');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -555,6 +580,7 @@ describe('auto make-server registration', () => {
       expect(url.pathname).toBe('/api/health');
       return jsonResponse({
         ok: true,
+        role: 'admin',
         origin: 'http://localhost:5174',
         projectRoot,
         server: {
@@ -579,7 +605,7 @@ describe('auto make-server registration', () => {
 
     await expect(getReusableAdminOrigin(projectRoot)).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('http://localhost:5174/api/health');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('http://localhost:53817/api/health');
   });
 
   it('surfaces a clear registration error when make-server project APIs are unavailable', async () => {

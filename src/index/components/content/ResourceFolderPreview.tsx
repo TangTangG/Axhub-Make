@@ -7,6 +7,8 @@ import type { SelectedResourceFolder } from '../../types/index-page.types';
 import { buildResourceDeepLinkUrl } from '../../app/index-page/resourceDeepLink';
 import { createSidebarTreeItemLookup, resolveSidebarTreeItem } from '../../utils/sidebarTree';
 import { CANVAS_DROP_MIME } from './canvasDropTypes';
+import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';
+import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';
 
 export type ResourceFolderPreviewKind = 'web' | 'doc' | 'image' | 'none';
 
@@ -71,7 +73,7 @@ export function buildResourceFolderCanvasPayload(item: ItemData) {
         name: item.name,
         displayName: item.displayName || item.name,
         previewKind,
-        embedViewMode: 'link',
+        embedViewMode: previewKind === 'image' ? 'link' : 'preview',
         previewUrl: item.previewUrl || item.specUrl || '',
         openUrl: buildResourceDeepLinkUrl({
             resourceType: 'doc',
@@ -204,10 +206,25 @@ export default function ResourceFolderPreview({
                                     onDragStart={(event) => {
                                         if (!item) return;
                                         const payload = buildResourceFolderCanvasPayload(item);
+                                        const resourceId = item.resourceId || item.name;
+                                        const assistantResourceType = payload.previewKind === 'image' ? 'image' : 'doc';
                                         event.dataTransfer.effectAllowed = 'copy';
                                         event.dataTransfer.setData('text/plain', item.name);
                                         try {
                                             event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));
+                                            event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({
+                                                source: 'resource-folder',
+                                                resourceType: assistantResourceType,
+                                                resourceId,
+                                                items: buildAssistantContextItemsFromResource({
+                                                    resourceType: assistantResourceType,
+                                                    resourceId,
+                                                    name: item.name,
+                                                    displayName: item.displayName || item.name,
+                                                    filePath: item.filePath,
+                                                    absoluteFilePath: item.absoluteFilePath,
+                                                }),
+                                            })));
                                         } catch {
                                             // Older browsers may reject custom MIME types.
                                         }

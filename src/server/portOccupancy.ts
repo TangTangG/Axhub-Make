@@ -44,8 +44,8 @@ export function findListeningPidsOnPort(port: number, options: PortProcessLookup
   }
 
   const result = run('lsof', [
-    '-tiTCP',
-    `:${port}`,
+    '-nP',
+    `-tiTCP:${port}`,
     '-sTCP:LISTEN',
   ], {
     encoding: 'utf8',
@@ -61,6 +61,45 @@ function waitForPortRelease(port: number, options: ReleasePortOptions): void {
       return;
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+}
+
+function findProcessGroupId(pid: number, options: ReleasePortOptions): number | null {
+  const run = options.spawnSync || spawnSync;
+  const result = run('ps', ['-o', 'pgid=', '-p', String(pid)], {
+    encoding: 'utf8',
+    timeout: 2000,
+  });
+  const pgid = Number(String(result.stdout || '').trim());
+  return Number.isInteger(pgid) && pgid > 0 ? pgid : null;
+}
+
+function resolvePosixKillTargets(pids: number[], options: ReleasePortOptions): number[] {
+  const currentPid = options.currentPid ?? process.pid;
+  const currentPgid = findProcessGroupId(currentPid, options);
+  const targets = new Set<number>();
+  for (const pid of pids) {
+    const pgid = findProcessGroupId(pid, options);
+    if (pgid && pgid !== currentPgid) {
+      targets.add(-pgid);
+    } else {
+      targets.add(pid);
+    }
+  }
+  return Array.from(targets);
+}
+
+function signalTargets(
+  targets: number[],
+  signal: NodeJS.Signals,
+  killPid: (pid: number, signal?: NodeJS.Signals) => void,
+): void {
+  for (const target of targets) {
+    try {
+      killPid(target, signal);
+    } catch {
+      // Process may have exited between lookup and signal.
+    }
   }
 }
 
@@ -82,21 +121,15 @@ export function releaseListeningProcessesOnPort(port: number, options: ReleasePo
     }
   } else {
     const killPid = options.killPid || process.kill.bind(process);
-    for (const pid of pids) {
-      try {
-        killPid(pid, 'SIGTERM');
-      } catch {
-        // Process may have exited between lookup and signal.
-      }
-    }
+    const targets = resolvePosixKillTargets(pids, options);
+    signalTargets(targets, 'SIGTERM', killPid);
     waitForPortRelease(port, options);
-    for (const pid of findListeningPidsOnPort(port, options).filter((pid) => pid !== currentPid)) {
-      try {
-        killPid(pid, 'SIGKILL');
-      } catch {
-        // Process may have exited after the second lookup.
-      }
-    }
+    const remainingTargets = resolvePosixKillTargets(
+      findListeningPidsOnPort(port, options).filter((pid) => pid !== currentPid),
+      options,
+    );
+    signalTargets(remainingTargets, 'SIGKILL', killPid);
+    waitForPortRelease(port, options);
   }
 
   return pids;

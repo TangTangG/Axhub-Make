@@ -31,6 +31,7 @@ describe('make-server vendor packages', () => {
     expect(packageJson.scripts?.['vendor:sync']).toBe('node scripts/sync-vendor-package.mjs');
     expect(packageJson.scripts?.dev).toBe('pnpm --filter @axhub/make-client dev');
     expect(packageJson.scripts?.['server:dev']).toContain('pnpm vendor:sync &&');
+    expect(packageJson.scripts?.['server:dev']).toContain("--ignore './vendor/**'");
     expect(packageJson.scripts?.['server:dev']).toContain('src/server/cli.ts -- ./client --dev');
     expect(packageJson.scripts?.['make-server:dev']).toBe('pnpm server:dev');
     expect(packageJson.scripts?.build).toContain('pnpm vendor:sync &&');
@@ -44,6 +45,7 @@ describe('make-server vendor packages', () => {
     expect(viteConfig).toContain('FRESH_VENDOR_ALIAS_PACKAGES.has(pkg.packageName)');
     expect(viteConfig).toContain('pkg.outputDirRelative');
     expect(viteConfig).toContain('vendor-aliases.generated.json');
+    expect(viteConfig).toContain("'**/vendor/**'");
     expect(JSON.stringify(tsconfig.compilerOptions.paths)).not.toContain('../../packages/');
     expect(tsconfig.compilerOptions.paths).toMatchObject({
       '@axhub/excalidraw': ['./vendor/axhub-excalidraw/dist/types/excalidraw/index.d.ts'],

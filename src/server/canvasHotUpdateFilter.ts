@@ -4,6 +4,7 @@ type SendFunction = (...args: any[]) => void;
 
 const CANVAS_ASSETS_SEGMENT = '/canvas-assets/';
 const AI_GENERATION_SPEC_SEGMENT = '/.spec/';
+const AXHUB_RUNTIME_STATE_SEGMENT = '/.axhub/';
 const PROJECT_RESOURCE_SEGMENTS = [
   '/src/prototypes/',
   '/src/themes/',
@@ -16,15 +17,18 @@ function normalizePath(filePath: string): string {
 
 export function isCanvasHotUpdateFile(filePath: string): boolean {
   const normalized = normalizePath(filePath);
-  if (normalized.includes(CLIENT_SOURCE_SEGMENT)) {
-    return false;
-  }
-  return (
+  const isCanvasDataFile =
     normalized.endsWith('.excalidraw')
     || normalized.includes(CANVAS_ASSETS_SEGMENT)
     || normalized.includes(AI_GENERATION_SPEC_SEGMENT)
-    || PROJECT_RESOURCE_SEGMENTS.some((segment) => normalized.includes(segment))
-  );
+    || normalized.includes(AXHUB_RUNTIME_STATE_SEGMENT);
+  if (isCanvasDataFile) {
+    return true;
+  }
+  if (normalized.includes(CLIENT_SOURCE_SEGMENT)) {
+    return false;
+  }
+  return PROJECT_RESOURCE_SEGMENTS.some((segment) => normalized.includes(segment));
 }
 
 function extractPayloadPath(payload: HMRPayload): string | null {

@@ -8,6 +8,8 @@
   - Make client 项目身份唯一来源。
   - `project.id` 是项目 id。
   - `project.name` 是项目名；空字符串表示未命名，管理端显示为「未命名项目」。
+- `axhub.config.json`
+  - Make 项目配置文件，提供协作方添加项目时需要的默认配置。
 
 ## 派生缓存
 
@@ -36,4 +38,4 @@
 
 ## 模板提交边界
 
-官方 client 模板只提交 `client.json`、本 README 和 `sidebar-tree.json`。其它运行缓存、记录和产物应保持本地忽略。
+官方 client 模板只提交 `client.json`、`axhub.config.json`、本 README 和 `sidebar-tree.json`。其它运行缓存、记录和产物应保持本地忽略。

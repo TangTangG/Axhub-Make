@@ -83,7 +83,7 @@ function createBuilderParams(overrides: Partial<Parameters<typeof useIndexPageSi
       preferredIDE: 'cursor',
       setPreferredIDE: vi.fn(),
       setIsDarkMode: vi.fn(),
-      setSettingsDialogOpen: vi.fn(),
+      openSettingsDialog: vi.fn(),
       setActiveTab: vi.fn(),
       setSidebarTab,
       setViewMode,
@@ -116,7 +116,6 @@ function createBuilderParams(overrides: Partial<Parameters<typeof useIndexPageSi
         handleDeleteDocItem: vi.fn(),
         handleCopyDocPath: vi.fn(),
         handleDocVersionManagement: vi.fn(),
-        handleCreatePrototypeFromDoc: vi.fn(),
         handleImportThemeResource: vi.fn(),
         handleCreatePlaceholderPrototype: vi.fn(),
         handleCreateResource: vi.fn(),
@@ -220,11 +219,95 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     expect(handleSetDefaultTheme).toHaveBeenCalledWith('theme-b');
   });
 
+  it('forwards uploaded document resources so the resource layer can select the new file', () => {
+    const handleUploadedResourceFiles = vi.fn();
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      deps: {
+        resources: {
+          ...createBuilderParams().deps.resources,
+          handleUploadedResourceFiles,
+        },
+      },
+    }));
+    const uploadedFiles = [{ name: 'assets/screens/pasted-image.png' }];
+
+    (props.actions.onUploadedResourceFiles as any)?.(uploadedFiles);
+
+    expect(handleUploadedResourceFiles).toHaveBeenCalledWith(uploadedFiles);
+  });
+
   it('passes project setup required state into the sidebar', () => {
     const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
       state: { projectSetupRequired: true },
     }));
 
     expect(props.state.projectSetupRequired).toBe(true);
+  });
+
+  it('resets successful project setup to the prototype start page instead of preserving canvas mode', async () => {
+    const setActiveTab = vi.fn();
+    const setSidebarTab = vi.fn();
+    const setViewMode = vi.fn();
+    const setSelectedPrototypePageId = vi.fn();
+    const createBlankMakeProject = vi.fn(async () => ({ project: { id: 'new-project' } }));
+    const addProjectFromLocalPath = vi.fn(async () => true);
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      state: {
+        sidebarTab: 'prototype',
+        viewMode: 'canvas',
+        selectedPrototypePageId: 'old-page',
+      },
+      deps: {
+        setActiveTab,
+        setSidebarTab,
+        setViewMode,
+        setSelectedPrototypePageId,
+        createBlankMakeProject,
+        addProjectFromLocalPath,
+      },
+    }));
+
+    await props.actions.onCreateBlankMakeProject({
+      parentRoot: '/tmp',
+      folderName: 'new-project',
+      projectName: '',
+    });
+    await props.actions.onAddProject('/tmp/existing-project');
+
+    expect(createBlankMakeProject).toHaveBeenCalledWith({
+      parentRoot: '/tmp',
+      folderName: 'new-project',
+      projectName: '',
+    });
+    expect(addProjectFromLocalPath).toHaveBeenCalledWith('/tmp/existing-project');
+    expect(setActiveTab).toHaveBeenCalledTimes(2);
+    expect(setActiveTab).toHaveBeenNthCalledWith(1, 'prototypes');
+    expect(setActiveTab).toHaveBeenNthCalledWith(2, 'prototypes');
+    expect(setSidebarTab).toHaveBeenCalledTimes(2);
+    expect(setSidebarTab).toHaveBeenNthCalledWith(1, 'prototype');
+    expect(setSidebarTab).toHaveBeenNthCalledWith(2, 'prototype');
+    expect(setViewMode).toHaveBeenCalledTimes(2);
+    expect(setViewMode).toHaveBeenNthCalledWith(1, 'demo');
+    expect(setViewMode).toHaveBeenNthCalledWith(2, 'demo');
+    expect(setSelectedPrototypePageId).toHaveBeenCalledTimes(2);
+    expect(setSelectedPrototypePageId).toHaveBeenNthCalledWith(1, null);
+    expect(setSelectedPrototypePageId).toHaveBeenNthCalledWith(2, null);
+  });
+
+  it('does not pass the legacy document-to-prototype drawer action into the sidebar', () => {
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams());
+
+    expect(props.actions).not.toHaveProperty('onCreatePrototypeFromDoc');
+  });
+
+  it('opens project settings with the requested tab', () => {
+    const openSettingsDialog = vi.fn();
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      deps: { openSettingsDialog },
+    }));
+
+    props.actions.onSettingsClick();
+
+    expect(openSettingsDialog).toHaveBeenCalledWith('project');
   });
 });

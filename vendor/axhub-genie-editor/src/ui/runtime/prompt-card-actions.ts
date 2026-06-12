@@ -21,7 +21,7 @@ export async function executePromptCardCurrentElementAction(options: {
 
   await onConfirmText();
   await onConfirmNote();
-  onDismissSelection?.();
   await onSendCurrentElementPromptToGenie(currentTarget);
+  onDismissSelection?.();
   return true;
 }

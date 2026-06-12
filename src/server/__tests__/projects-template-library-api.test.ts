@@ -9,6 +9,8 @@ import { getProjectMetadataPath } from '../projectCore/index.ts';
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
+  registerProject,
+  setActiveProject,
   startTestServer,
   writeProjectMetadata,
 } from './projects-api.helpers';
@@ -70,6 +72,13 @@ function writeTemplateEnabledProject(projectRoot: string, id = 'template-library
       prototypes: { path: 'content/prototypes' },
     },
   });
+}
+
+async function startTemplateLibraryTestServer(projectRoot: string, projectId = path.basename(projectRoot)) {
+  const server = await startTestServer(projectRoot);
+  await registerProject(server.origin, projectRoot, projectId);
+  await setActiveProject(server.origin, projectId);
+  return server;
 }
 
 function readMetadata(projectRoot: string): any {
@@ -148,7 +157,7 @@ describe('make-server project template library APIs', () => {
     const projectRoot = createTempRoot();
     writeTemplateEnabledProject(projectRoot);
     mockGitHubResponses();
-    const server = await startTestServer(projectRoot);
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-library-client');
 
     try {
       const listed = await fetchJson(`${server.origin}/api/template-library`);
@@ -170,6 +179,7 @@ describe('make-server project template library APIs', () => {
         sourceUrl: `https://github.com/${TEMPLATE_REPO}/tree/main/templates/ref-free`,
         canDirectImport: true,
       });
+      expect(listed.body.templates[0]).not.toHaveProperty('previewUrl');
       expect(listed.body.templates[1]).toMatchObject({
         id: 'ref-three',
         canDirectImport: false,
@@ -199,7 +209,7 @@ describe('make-server project template library APIs', () => {
         ],
       },
     });
-    const server = await startTestServer(projectRoot);
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-library-client');
 
     try {
       const listed = await fetchJson(`${server.origin}/api/template-library`);
@@ -209,6 +219,83 @@ describe('make-server project template library APIs', () => {
         code: 'TEMPLATE_LIBRARY_SCHEMA_INVALID',
       });
       expect(listed.body.error).toContain('sourcePath');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('forwards optional absolute http preview URLs from the remote template index', async () => {
+    const projectRoot = createTempRoot();
+    writeTemplateEnabledProject(projectRoot);
+    mockGitHubResponses({
+      index: {
+        schemaVersion: 1,
+        templates: [
+          {
+            id: 'ref-free',
+            title: 'Remote Free',
+            slug: 'ref-free',
+            sourcePath: 'templates/ref-free',
+            coverPath: 'covers/ref-free.svg',
+            description: 'Dependency-free remote template',
+            previewUrl: ' https://lintendo.github.io/Make-Template/previews/ref-free/ ',
+            extraDependencies: [],
+          },
+        ],
+      },
+    });
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-library-client');
+
+    try {
+      const listed = await fetchJson(`${server.origin}/api/template-library`);
+
+      expect(listed.status).toBe(200);
+      expect(listed.body.templates).toEqual([
+        expect.objectContaining({
+          id: 'ref-free',
+          previewUrl: 'https://lintendo.github.io/Make-Template/previews/ref-free/',
+          sourceUrl: `https://github.com/${TEMPLATE_REPO}/tree/main/templates/ref-free`,
+        }),
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.each([
+    ['relative path', 'previews/ref-free/'],
+    ['ftp URL', 'ftp://example.com/ref-free/'],
+    ['invalid URL', 'not a url'],
+  ])('returns a structured error when previewUrl is a %s', async (_label, previewUrl) => {
+    const projectRoot = createTempRoot();
+    writeTemplateEnabledProject(projectRoot);
+    mockGitHubResponses({
+      index: {
+        schemaVersion: 1,
+        templates: [
+          {
+            id: 'ref-free',
+            title: 'Remote Free',
+            slug: 'ref-free',
+            sourcePath: 'templates/ref-free',
+            coverPath: 'covers/ref-free.svg',
+            description: 'Dependency-free remote template',
+            previewUrl,
+            extraDependencies: [],
+          },
+        ],
+      },
+    });
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-library-client');
+
+    try {
+      const listed = await fetchJson(`${server.origin}/api/template-library`);
+
+      expect(listed.status).toBe(502);
+      expect(listed.body).toMatchObject({
+        code: 'TEMPLATE_LIBRARY_SCHEMA_INVALID',
+      });
+      expect(listed.body.error).toContain('previewUrl');
     } finally {
       await server.close();
     }
@@ -228,7 +315,7 @@ describe('make-server project template library APIs', () => {
       'templates/ref-free/style.css': '.remote-free { color: red; }\n',
     });
     mockGitHubResponses({ tarballPath });
-    const server = await startTestServer(projectRoot);
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-import-client');
 
     try {
       const imported = await fetchJson(`${server.origin}/api/template-library/import`, {
@@ -273,6 +360,61 @@ describe('make-server project template library APIs', () => {
     }
   });
 
+  it('keeps direct import clientUrl local when the remote template has previewUrl', async () => {
+    const projectRoot = createTempRoot();
+    writeTemplateEnabledProject(projectRoot, 'template-preview-import-client');
+    const tarballPath = createTemplateTarball({
+      'templates/ref-free/index.tsx': 'export default function RemoteFree() { return <div>Remote</div>; }\n',
+    });
+    mockGitHubResponses({
+      tarballPath,
+      index: {
+        schemaVersion: 1,
+        templates: [
+          {
+            id: 'ref-free',
+            title: 'Remote Free',
+            slug: 'ref-free',
+            sourcePath: 'templates/ref-free',
+            coverPath: 'covers/ref-free.svg',
+            description: 'Dependency-free remote template',
+            previewUrl: 'https://lintendo.github.io/Make-Template/previews/ref-free/',
+            extraDependencies: [],
+          },
+        ],
+      },
+    });
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-preview-import-client');
+
+    try {
+      const imported = await fetchJson(`${server.origin}/api/template-library/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId: 'ref-free' }),
+      });
+
+      expect(imported).toMatchObject({
+        status: 200,
+        body: {
+          success: true,
+          clientUrl: `${server.origin}/prototypes/ref-free`,
+        },
+      });
+      expect(imported.body.clientUrl).not.toBe('https://lintendo.github.io/Make-Template/previews/ref-free/');
+
+      const metadata = readMetadata(projectRoot);
+      expect(metadata.resources.prototypes).toEqual([
+        expect.objectContaining({
+          id: 'ref-free',
+          clientUrl: `${server.origin}/prototypes/ref-free`,
+        }),
+      ]);
+      expect(metadata.resources.prototypes[0]).not.toHaveProperty('previewUrl');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects direct import when extraDependencies is non-empty', async () => {
     const projectRoot = createTempRoot();
     writeTemplateEnabledProject(projectRoot, 'template-extra-deps-client');
@@ -280,7 +422,7 @@ describe('make-server project template library APIs', () => {
       'templates/ref-three/index.tsx': 'export default function ThreeTemplate() { return null; }\n',
     });
     mockGitHubResponses({ tarballPath });
-    const server = await startTestServer(projectRoot);
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-extra-deps-client');
 
     try {
       const imported = await fetchJson(`${server.origin}/api/template-library/import`, {
@@ -311,7 +453,7 @@ describe('make-server project template library APIs', () => {
       'templates/ref-free/index.tsx': 'export default function RemoteFree() { return null; }\n',
     });
     mockGitHubResponses({ tarballPath });
-    const server = await startTestServer(projectRoot);
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-existing-target-client');
 
     try {
       const imported = await fetchJson(`${server.origin}/api/template-library/import`, {
@@ -347,7 +489,7 @@ describe('make-server project template library APIs', () => {
       },
     });
     mockGitHubResponses();
-    const server = await startTestServer(projectRoot);
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-no-target-client');
 
     try {
       const imported = await fetchJson(`${server.origin}/api/template-library/import`, {
@@ -371,7 +513,7 @@ describe('make-server project template library APIs', () => {
     const projectRoot = createTempRoot();
     writeTemplateEnabledProject(projectRoot);
     mockGitHubResponses({ repoStatus: 500, rawStatus: 500 });
-    const server = await startTestServer(projectRoot);
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-library-client');
 
     try {
       const listed = await fetchJson(`${server.origin}/api/template-library`);
@@ -390,7 +532,7 @@ describe('make-server project template library APIs', () => {
     const projectRoot = createTempRoot();
     writeTemplateEnabledProject(projectRoot);
     mockGitHubResponses({ repoStatus: 403 });
-    const server = await startTestServer(projectRoot);
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-library-client');
 
     try {
       const listed = await fetchJson(`${server.origin}/api/template-library`);
@@ -430,7 +572,7 @@ describe('make-server project template library APIs', () => {
         ],
       },
     });
-    const server = await startTestServer(projectRoot);
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-library-client');
 
     try {
       const listed = await fetchJson(`${server.origin}/api/template-library`);

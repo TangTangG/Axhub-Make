@@ -11,6 +11,7 @@ import PromptActionButton from '../PromptActionButton';
 import CreateDialogContainer from '../dialogs/CreateDialogContainer';
 import CreateThemeDialogContainer from '../dialogs/CreateThemeDialogContainer';
 import { Button } from '@/components/ui/button';
+import type { SettingsDialogAIContext, SettingsDialogInitialTab } from '../SettingsDialog';
 import {
     Dialog,
     DialogContent,
@@ -107,6 +108,8 @@ interface IndexDialogsProps {
         onSaved?: () => void;
     };
     settingsDialogOpen: boolean;
+    settingsDialogInitialTab: SettingsDialogInitialTab;
+    settingsDialogAIContext: SettingsDialogAIContext | null;
     setSettingsDialogOpen: (open: boolean) => void;
     onSettingsSaved: () => void;
     excalidrawPropertyPanelMode: ExcalidrawPropertyPanelMode;
@@ -131,6 +134,8 @@ export default function IndexDialogs({
     figmaMakeExportDialog,
     cloudPublishSettingsDialog,
     settingsDialogOpen,
+    settingsDialogInitialTab,
+    settingsDialogAIContext,
     setSettingsDialogOpen,
     onSettingsSaved,
     excalidrawPropertyPanelMode,
@@ -329,6 +334,10 @@ export default function IndexDialogs({
                 <React.Suspense fallback={null}>
                     <SettingsDialog
                         open={settingsDialogOpen}
+                        initialTab={settingsDialogInitialTab}
+                        initialAcpRuntime={settingsDialogAIContext?.runtime}
+                        initialAcpFailureSource={settingsDialogAIContext?.failureSource}
+                        initialAcpFailureMessage={settingsDialogAIContext?.failureMessage}
                         onClose={() => setSettingsDialogOpen(false)}
                         onSaved={onSettingsSaved}
                         excalidrawPropertyPanelMode={excalidrawPropertyPanelMode}

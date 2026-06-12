@@ -6,19 +6,19 @@ describe('dev-template screenshot capture source', () => {
   it('keeps screenshot capture resilient when page images fail to load', () => {
     const source = readFileSync(resolve(__dirname, './index.tsx'), 'utf8');
 
-    expect(source).toContain('imagePlaceholder: SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL');
-    expect(source).toContain('onImageErrorHandler:');
-    expect(source).toContain('canvasWidth: width');
-    expect(source).toContain('canvasHeight: height');
+    expect(source).toContain('fallbackURL: SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL');
+    expect(source).toContain("cache: 'soft'");
   });
 
-  it('echoes screenshot request ids and prefers snapdom capture with html-to-image fallback', () => {
+  it('echoes screenshot request ids and captures with snapDOM without html-to-image fallback', () => {
     const source = readFileSync(resolve(__dirname, './index.tsx'), 'utf8');
 
     expect(source).toContain("const screenshotRequestId = typeof event.data.requestId === 'string'");
     expect(source).toContain("await import('@zumer/snapdom')");
-    expect(source).toContain('await captureRootWithSnapdom(rootElement');
-    expect(source).toContain('return captureRootWithHtmlToImage(rootElement');
+    expect(source).toContain('return captureRootWithSnapdom(rootElement');
+    expect(source).not.toContain('captureRootWithHtmlToImage');
+    expect(source).not.toContain("await import('html-to-image')");
+    expect(source).not.toContain('回退到 html-to-image');
     expect(source).toContain('requestId: screenshotRequestId');
     expect(source).toContain("type: 'SCREENSHOT_FAILED'");
     expect(source).toContain('requestId: screenshotRequestId');
@@ -27,9 +27,11 @@ describe('dev-template screenshot capture source', () => {
   it('captures the requested iframe viewport instead of the full page scroll height', () => {
     const source = readFileSync(resolve(__dirname, './index.tsx'), 'utf8');
 
+    expect(source).toContain('function normalizeScreenshotPixelRatio(');
+    expect(source).toContain('const targetPixelRatio = normalizeScreenshotPixelRatio(event.data.targetPixelRatio);');
     expect(source).toContain('const captureWidth = targetWidth ?? rootElement.scrollWidth;');
     expect(source).toContain('const captureHeight = targetHeight ?? rootElement.scrollHeight;');
-    expect(source).toContain('dataUrl = await captureRootScreenshot(rootElement, captureWidth, captureHeight);');
+    expect(source).toContain('dataUrl = await captureRootScreenshot(rootElement, captureWidth, captureHeight, targetPixelRatio);');
     expect(source).toContain('width: captureWidth');
     expect(source).toContain('height: captureHeight');
   });

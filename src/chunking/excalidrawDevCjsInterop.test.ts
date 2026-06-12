@@ -13,6 +13,7 @@ const excalidrawDevId = [
   '/repo/node_modules/.pnpm/@axhub+excalidraw@file+apps+axhub-make+vendor+axhub-excalidraw/node_modules',
   '/@axhub/excalidraw/dist/dev/chunk-S4XMSDLZ.js?v=df47ed4b',
 ].join('');
+const tiptapVendorId = '/repo/apps/axhub-make/vendor/tiptap-editor/dist/index.js?v=f47eb0b7';
 const mermaidHelperId = [
   '/repo/node_modules/.pnpm/@excalidraw+mermaid-to-excalidraw@2.2.2/node_modules',
   '/@excalidraw/mermaid-to-excalidraw/dist/converter/helpers.js?v=f0b00a1f',
@@ -78,6 +79,18 @@ describe('rewriteExcalidrawDevCjsImports', () => {
     );
 
     expect(rewritten).toBeNull();
+  });
+
+  it('points Tiptap editor vendor lodash.throttle imports at the optimized dependency wrapper', () => {
+    const rewritten = rewriteExcalidrawDevCjsImports(
+      'import throttle from "lodash.throttle";',
+      tiptapVendorId,
+      { root, cacheDir },
+    );
+
+    expect(rewritten).not.toBeNull();
+    expect(rewritten).toContain('from "/node_modules/.vite/axhub-make-dev-123/deps/lodash__throttle.js"');
+    expect(rewritten).not.toContain('from "lodash.throttle"');
   });
 
   it('rewrites mermaid helper named imports from markdown-to-text through the optimized CommonJS wrapper', () => {

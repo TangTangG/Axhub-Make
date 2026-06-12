@@ -11,6 +11,11 @@ export const DEVICE_SIZES = {
 } as const;
 
 export type PreviewPane = 'primary' | 'secondary';
+export type PrototypePanePromptAction = 'copy-prompt' | 'send-to-genie';
+export type PrototypePanePrompt = {
+    pane: PreviewPane;
+    promptText: string | null | undefined;
+};
 export type QuickEditRuntimeStatus = 'idle' | 'pending' | 'ready' | 'missing' | 'error';
 export type QuickEditMessageType =
     | 'axhub.quickEdit.runtimeReady'
@@ -83,7 +88,11 @@ export type HostToolbarEditorsApi = {
 };
 
 export type DocumentEditorApi = HostToolbarEditorsApi & {
-    enableDocumentEditor?: (options?: { toolbarMode?: 'inline' | 'host'; initialDarkMode?: boolean }) => void | Promise<void>;
+    enableDocumentEditor?: (options?: {
+        toolbarMode?: 'inline' | 'host';
+        initialDarkMode?: boolean;
+        assistantPanelOpen?: boolean;
+    }) => void | Promise<void>;
     disableDocumentEditor?: () => void | Promise<void>;
 };
 
@@ -92,17 +101,29 @@ export type PrototypeEditorContext = {
     resourceId?: string;
     resourceType: 'prototype' | 'theme';
     pane: PreviewPane;
+    pageId?: string;
+    commentPageScope?: string;
     mobileMode: boolean;
 };
 
 export type PrototypeEditorApi = HostToolbarEditorsApi & {
-    enable?: (mode: 'webEditorV2', options?: { toolbarMode?: 'inline' | 'host'; initialDarkMode?: boolean }) => void | Promise<void>;
+    enable?: (mode: 'webEditorV2', options?: {
+        toolbarMode?: 'inline' | 'host';
+        initialDarkMode?: boolean;
+        assistantPanelOpen?: boolean;
+        commentPageScope?: string;
+    }) => void | Promise<void>;
     disable?: () => void | Promise<void>;
     setContext?: (context: PrototypeEditorContext) => void;
     saveWebEditorTextChanges?: () => void | Promise<void>;
     saveWebEditorStyleChanges?: () => void | Promise<void>;
     clearWebEditorForcedStyles?: () => void | Promise<void>;
-    enablePanelOnly?: (options?: { toolbarMode?: 'inline' | 'host'; initialDarkMode?: boolean }) => void | Promise<void>;
+    enablePanelOnly?: (options?: {
+        toolbarMode?: 'inline' | 'host';
+        initialDarkMode?: boolean;
+        assistantPanelOpen?: boolean;
+        commentPageScope?: string;
+    }) => void | Promise<void>;
     disablePanelOnly?: () => void | Promise<void>;
 };
 
@@ -152,8 +173,37 @@ export function isHostToolbarWakePendingState(state: GenieEditorHostToolbarState
     return Boolean(state && (state.robotLoading || state.robotState === 'waking'));
 }
 
-export function isHostToolbarGenieAwake(state: GenieEditorHostToolbarState | null | undefined): boolean {
+export function isHostToolbarAgentAwake(state: GenieEditorHostToolbarState | null | undefined): boolean {
     return state?.robotState === 'awake' || state?.robotState === 'working';
+}
+
+function getPrototypePanePromptLabel(pane: PreviewPane): string {
+    return pane === 'secondary' ? '手机端' : 'PC 端';
+}
+
+export function buildCombinedPrototypePrompt(prompts: PrototypePanePrompt[]): string {
+    const nonEmptyPrompts = prompts
+        .map((item) => ({
+            pane: item.pane,
+            promptText: String(item.promptText ?? '').trim(),
+        }))
+        .filter((item) => item.promptText.length > 0);
+
+    if (nonEmptyPrompts.length === 0) {
+        return '';
+    }
+
+    const intro = nonEmptyPrompts.length > 1
+        ? '请同时处理以下两个端的批注修改。'
+        : `请处理以下${getPrototypePanePromptLabel(nonEmptyPrompts[0].pane)}的批注修改。`;
+    const sections = nonEmptyPrompts.flatMap((item) => [
+        `## ${getPrototypePanePromptLabel(item.pane)}`,
+        item.promptText,
+    ]);
+
+    return [intro, '', ...sections.flatMap((section, index) => (
+        index > 0 && index % 2 === 0 ? ['', section] : [section]
+    ))].join('\n');
 }
 
 export function resolveHostToolbarStateForDisplay(
@@ -181,6 +231,7 @@ export function resolveHostToolbarStateForDisplay(
             terminalTaskCount: nextState.terminalTaskCount,
             selectedAgent: nextState.selectedAgent,
             agentOptions: nextState.agentOptions,
+            selectionModeActive: true,
             fullExitAvailable: nextState.fullExitAvailable,
         };
     }
@@ -295,7 +346,7 @@ export function createDefaultHostToolbarState(): GenieEditorHostToolbarState {
         sendDisabled: true,
         sendLoading: false,
         interruptVisible: true,
-        interruptTitle: '中断',
+        interruptTitle: '中断执行',
         interruptDisabled: true,
         interruptLoading: false,
         copyPromptVisible: true,
@@ -313,6 +364,7 @@ export function createDefaultHostToolbarState(): GenieEditorHostToolbarState {
         disablePageAnimations: false,
         pageZoomEnabled: false,
         copySkillInstallPromptDisabled: false,
+        selectionModeActive: true,
         fullExitAvailable: false,
     };
 }
@@ -525,6 +577,61 @@ export function createEmbeddedIndexBundle(indexBundle: ExportIndexBundle): Expor
     };
 }
 
+function getWindowLocationOrigin(): string {
+    return typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : 'http://localhost';
+}
+
+function getMainPreviewRawUrl(resource: any): string {
+    return typeof resource?.clientUrl === 'string' && resource.clientUrl.trim()
+        ? resource.clientUrl
+        : typeof resource?.previewUrl === 'string' && resource.previewUrl.trim()
+            ? resource.previewUrl
+            : '';
+}
+
+function getRuntimeOrigin(): string {
+    return typeof window !== 'undefined'
+        ? String((window as any).__RUNTIME_ORIGIN__ || '').trim().replace(/\/+$/u, '')
+        : '';
+}
+
+function hasExplicitUrlOrigin(value: string): boolean {
+    return /^[a-z][a-z\d+.-]*:\/\//iu.test(value);
+}
+
+function isRuntimeOwnedRelativePreviewUrl(rawUrl: string): boolean {
+    return /^(?:\/prototypes|\/themes)\//u.test(rawUrl);
+}
+
+function resolveMainPreviewUrl(rawUrl: string, options?: BuildEditorUrlOptions): URL {
+    const runtimeOrigin = getRuntimeOrigin();
+    const explicitOrigin = hasExplicitUrlOrigin(rawUrl);
+    const baseOrigin = !explicitOrigin && runtimeOrigin && isRuntimeOwnedRelativePreviewUrl(rawUrl)
+        ? runtimeOrigin
+        : getWindowLocationOrigin();
+    return appendEditorLaunchOptionsToUrl(new URL(rawUrl, baseOrigin), options);
+}
+
+export function buildMainPreviewIframeUrl(
+    resource: any,
+    options?: BuildEditorUrlOptions,
+): string {
+    if (!resource || resource.previewDisabled) {
+        return '';
+    }
+    const rawUrl = getMainPreviewRawUrl(resource);
+    if (!rawUrl) {
+        return '';
+    }
+    try {
+        return resolveMainPreviewUrl(rawUrl, options).toString();
+    } catch {
+        return rawUrl;
+    }
+}
+
 export function buildProjectPrototypeIframeUrl(
     selectedItem: any,
     options?: BuildEditorUrlOptions,
@@ -533,22 +640,12 @@ export function buildProjectPrototypeIframeUrl(
     if (!selectedItem || selectedItem.previewDisabled) {
         return '';
     }
-    const rawUrl = typeof selectedItem.clientUrl === 'string' && selectedItem.clientUrl.trim()
-        ? selectedItem.clientUrl
-        : typeof selectedItem.previewUrl === 'string' && selectedItem.previewUrl.trim()
-            ? selectedItem.previewUrl
-            : '';
+    const rawUrl = getMainPreviewRawUrl(selectedItem);
     if (!rawUrl) {
         return '';
     }
     try {
-        const hasExplicitOrigin = /^[a-z][a-z\d+.-]*:\/\//iu.test(rawUrl);
-        const runtimeOrigin = String((window as any).__RUNTIME_ORIGIN__ || '').trim();
-        if (!hasExplicitOrigin && !runtimeOrigin && /^(?:\/prototypes|\/themes)\//u.test(rawUrl)) {
-            return '';
-        }
-        const baseOrigin = !hasExplicitOrigin && runtimeOrigin ? runtimeOrigin : window.location.origin;
-        const url = appendEditorLaunchOptionsToUrl(new URL(rawUrl, baseOrigin), options);
+        const url = resolveMainPreviewUrl(rawUrl, options);
         const fallbackPageId = Array.isArray(selectedItem.pages) && selectedItem.pages.length > 0
             ? String(selectedItem.defaultPageId || selectedItem.pages[0]?.id || '').trim()
             : '';
@@ -612,6 +709,54 @@ export function getSelectedResourceTargetPath(selectedItem: any): string {
     return resourceId;
 }
 
+function normalizeSlashPath(value: unknown): string {
+    return typeof value === 'string'
+        ? value.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+        : '';
+}
+
+function normalizePublishResourceDirectoryPath(rawPath: unknown): string {
+    const normalized = stripIndexFilePath(normalizeSlashPath(rawPath)).replace(/^\/+/, '');
+    if (!normalized) {
+        return '';
+    }
+    const sourceResourceMatch = normalized.match(/(?:^|\/)(src\/(?:prototypes|themes)\/.+)$/u);
+    if (sourceResourceMatch) {
+        return sourceResourceMatch[1];
+    }
+    const resourceMatch = normalized.match(/^(prototypes|themes)\/(.+)$/u);
+    if (resourceMatch) {
+        return `src/${resourceMatch[1]}/${resourceMatch[2]}`;
+    }
+    return normalized;
+}
+
+export function resolveCurrentPublishResourcePath({
+    contentMode,
+    selectedItem,
+    selectedTheme,
+}: {
+    contentMode: string;
+    selectedItem: any;
+    selectedTheme: any;
+}): string {
+    if (contentMode === 'theme') {
+        const themePath = normalizePublishResourceDirectoryPath(selectedTheme?.path)
+            || normalizePublishResourceDirectoryPath(selectedTheme?.absoluteFilePath);
+        if (themePath) {
+            return themePath;
+        }
+        const themeName = typeof selectedTheme?.name === 'string' && selectedTheme.name.trim()
+            ? selectedTheme.name.trim()
+            : '';
+        return themeName ? `src/themes/${themeName}` : '';
+    }
+    if (contentMode === 'preview') {
+        return normalizePublishResourceDirectoryPath(getSelectedResourceTargetPath(selectedItem));
+    }
+    return '';
+}
+
 export function createRuntimeExportRequestId(prefix: string): string {
     return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -662,16 +807,7 @@ export function getClientUrlOrigin(clientUrl: unknown): string {
         return '';
     }
     try {
-        const hasExplicitOrigin = /^[a-z][a-z\d+.-]*:\/\//iu.test(clientUrl);
-        const runtimeOrigin = typeof window !== 'undefined'
-            ? String((window as any).__RUNTIME_ORIGIN__ || '').trim()
-            : '';
-        const baseOrigin = !hasExplicitOrigin && runtimeOrigin
-            ? runtimeOrigin
-            : typeof window !== 'undefined'
-                ? window.location.origin
-                : 'http://localhost';
-        return new URL(clientUrl, baseOrigin).origin;
+        return resolveMainPreviewUrl(clientUrl).origin;
     } catch {
         return '';
     }

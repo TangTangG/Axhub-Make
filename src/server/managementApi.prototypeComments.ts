@@ -158,7 +158,7 @@ function normalizeCommentDocument(input: unknown, resolved: Extract<ResolveResul
   return {
     ...record,
     schemaVersion: 1,
-    kind: 'prototype-comments',
+    kind: 'prototype-edit-comments',
     resource: {
       ...resource,
       id: resolved.prototypeId,

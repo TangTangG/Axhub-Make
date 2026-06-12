@@ -4,12 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { blake3 } from '@noble/hashes/blake3';
-import { createProjectCommunicationStore, getConfigPath, getProjectExportsDir, type StoredProjectRecord } from './projectCore/index.ts';
+import { createProjectCommunicationStore, getConfigPath, getProjectExportsDir, type ProjectMetadata, type StoredProjectRecord } from './projectCore/index.ts';
 
 import { buildExportHtmlStaticFiles, type ExportHtmlStaticFile } from './exportHtmlArchive.ts';
 import { readJsonBody, sendJson } from './http.ts';
 import { runLocalCommand } from './localCommand.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
+import { normalizeProjectResourcePath } from './managementApi.resourceLookup.ts';
 
 export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages';
 export type CommandExecutor = (
@@ -23,6 +24,7 @@ interface CloudPublishingContext {
     id: string;
     root: string;
   };
+  metadata?: ProjectMetadata;
 }
 
 interface CloudPublishingHandlers {
@@ -446,7 +448,18 @@ async function publishCloudflarePages(config: CloudflarePagesConfig, files: Expo
       : payload?.errors?.[0]?.message || payload?.message || `Cloudflare Pages 发布失败（${response.status}）`;
     throw new Error(message);
   }
-  return stringValue(payload?.result?.url) || stringValue(payload?.result?.deployment_trigger?.metadata?.deploy_url);
+  const deploymentUrl = stringValue(payload?.result?.url) || stringValue(payload?.result?.deployment_trigger?.metadata?.deploy_url);
+  const deploymentId = stringValue(payload?.result?.id);
+  const deploymentShortId = stringValue(payload?.result?.short_id);
+  const projectName = stringValue(config.projectName);
+  return {
+    url: projectName ? `https://${projectName}.pages.dev` : deploymentUrl,
+    metadata: {
+      ...(deploymentUrl ? { deploymentUrl } : {}),
+      ...(deploymentId ? { deploymentId } : {}),
+      ...(deploymentShortId ? { deploymentShortId } : {}),
+    },
+  };
 }
 
 async function readCloudflarePayload(response: Response, fallbackMessage: string) {
@@ -1105,7 +1118,7 @@ async function publishTarget(
     return { url: await publishVercel(config.vercel || {}, files) };
   }
   if (target === 'cloudflare-pages') {
-    return { url: await publishCloudflarePages(config.cloudflarePages || {}, files) };
+    return publishCloudflarePages(config.cloudflarePages || {}, files);
   }
   if (target === 'github-pages') {
     const result = await publishGithubPages(config.githubPages || {}, files, projectRoot, commandExecutor);
@@ -1147,7 +1160,13 @@ function readExportRecords(projectRoot: string): StoredProjectRecord[] {
     });
 }
 
-function getLatestCloudPublishUrls(projectRoot: string) {
+function getLatestCloudPublishUrls(
+  projectRoot: string,
+  options: { metadata?: ProjectMetadata; path?: string } = {},
+) {
+  const normalizedFilterPath = options.path && options.metadata
+    ? normalizeProjectResourcePath(options.metadata, options.path)
+    : stringValue(options.path);
   const latest: Record<CloudPublishTarget, null | { url: string; target: CloudPublishTarget; deployedAt: string; path?: string }> = {
     vercel: null,
     'cloudflare-pages': null,
@@ -1161,6 +1180,13 @@ function getLatestCloudPublishUrls(projectRoot: string) {
     if (!target || record.status !== 'success' || !url) {
       continue;
     }
+    const recordPath = stringValue(record.metadata?.path);
+    const normalizedRecordPath = recordPath && options.metadata
+      ? normalizeProjectResourcePath(options.metadata, recordPath)
+      : recordPath;
+    if (normalizedFilterPath && normalizedRecordPath !== normalizedFilterPath) {
+      continue;
+    }
     const deployedAt = stringValue(record.createdAt);
     const current = latest[target];
     if (!current || deployedAt > current.deployedAt) {
@@ -1168,7 +1194,7 @@ function getLatestCloudPublishUrls(projectRoot: string) {
         url,
         target,
         deployedAt,
-        path: stringValue(record.metadata?.path) || undefined,
+        path: normalizedRecordPath || undefined,
       };
     }
   }
@@ -1182,9 +1208,10 @@ function getLatestCloudPublishUrls(projectRoot: string) {
 }
 
 function resourceIdentity(resource: any, targetPath: string) {
+  const resourceGroup = targetPath.replace(/^src\//u, '').split('/')[0] || 'prototypes';
   return {
     resourceId: stringValue(resource?.id) || stringValue(resource?.name) || targetPath,
-    resourceType: String(targetPath.split('/')[0] || 'prototype').replace(/s$/u, '') || 'prototype',
+    resourceType: resourceGroup.replace(/s$/u, '') || 'prototype',
   };
 }
 
@@ -1227,7 +1254,14 @@ export function handleCloudPublishingApi(
       sendJson(res, { error: 'Method not allowed' }, { status: 405 });
       return true;
     }
-    sendJson(res, { targets: getLatestCloudPublishUrls(context.project.root) });
+    const url = new URL(req.url || pathname, 'http://localhost');
+    const filterPath = stringValue(url.searchParams.get('path'));
+    sendJson(res, {
+      targets: getLatestCloudPublishUrls(context.project.root, {
+        metadata: context.metadata,
+        path: filterPath,
+      }),
+    });
     return true;
   }
 
@@ -1245,6 +1279,10 @@ export function handleCloudPublishingApi(
       }
       const context = handlers.resolveProjectContext(req, res, options, 'active-fallback', body);
       if (!context) return;
+      const metadata = context.metadata;
+      const normalizedTargetPath = metadata
+        ? normalizeProjectResourcePath(metadata, targetPath)
+        : targetPath;
       const config = readConfig(context.project.root, handlers.readProjectConfig);
       const missingFields = getMissingFields(target, config, context.project.root);
       if (missingFields.length > 0) {
@@ -1256,22 +1294,21 @@ export function handleCloudPublishingApi(
         }, { status: 400 });
         return;
       }
-      const sourceFile = handlers.resolveSourceFileFromMetadata(context, targetPath);
+      const sourceFile = handlers.resolveSourceFileFromMetadata(context, normalizedTargetPath);
       if (!sourceFile) {
         handlers.sendDisabledCapability(res, 424, {
           error: 'Source metadata is required to publish this page',
           code: 'SOURCE_METADATA_REQUIRED',
           projectId: context.project.id,
           projectRoot: context.project.root,
-          path: targetPath,
+          path: normalizedTargetPath,
           sourceRequired: true,
         });
         return;
       }
 
-      const metadata = (context as any).metadata;
-      const resource = handlers.findProjectResourceByPath(metadata, targetPath);
-      const identity = resourceIdentity(resource, targetPath);
+      const resource = handlers.findProjectResourceByPath(metadata, normalizedTargetPath);
+      const identity = resourceIdentity(resource, normalizedTargetPath);
       const communicationStore = createProjectCommunicationStore(context.project.root);
       communicationStore.ensureDirectories();
       try {
@@ -1280,7 +1317,7 @@ export function handleCloudPublishingApi(
           sourceFile,
           entryName: stringValue(resource?.name) || path.basename(path.dirname(sourceFile)),
           displayName: stringValue(resource?.title) || stringValue(resource?.name) || path.basename(path.dirname(sourceFile)),
-          group: targetPath.split('/')[0] || 'prototypes',
+          group: normalizedTargetPath.replace(/^src\//u, '').split('/')[0] || 'prototypes',
           includeSource: config.publishSettings?.includeSource === true,
         });
         const result = await publishTarget(target, config, files, context.project.root, handlers.commandExecutor);
@@ -1293,7 +1330,7 @@ export function handleCloudPublishingApi(
           operationType: `cloud.publish.${target}`,
           status: 'success',
           metadata: {
-            path: targetPath,
+            path: normalizedTargetPath,
             url,
             fileCount: files.length,
             ...(result.metadata || {}),
@@ -1308,7 +1345,7 @@ export function handleCloudPublishingApi(
           operationType: `cloud.publish.${target}`,
           status: 'failed',
           errorMessage: error?.message || '云服务发布失败',
-          metadata: { path: targetPath },
+          metadata: { path: normalizedTargetPath },
         });
         const statusCode = Number(error?.statusCode) || 500;
         sendJson(res, {

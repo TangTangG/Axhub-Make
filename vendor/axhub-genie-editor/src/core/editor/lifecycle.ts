@@ -23,6 +23,7 @@ import { TEXT_COMMENT_TARGET_ATTR } from './text-comment-target';
 import { getGlobalGenieEditorTweakProtocol } from '../../tweak/protocol';
 import { resolveWebEditorOptions } from './state';
 import type { PropertyPanelOptions } from '../../ui/property-panel';
+import type { GenieEditorHostToolbarAction } from '../../web-editor-types';
 
 interface EditorLifecycle {
   start(): void;
@@ -31,6 +32,59 @@ interface EditorLifecycle {
   stopPanelOnly(): void;
   flushPendingCommentContextSync(): void;
 }
+
+type SelectionModeHotkeyDebugDecision =
+  | 'received'
+  | 'ignored-repeat'
+  | 'ignored-shortcut-mismatch'
+  | 'ignored-editor-ui'
+  | 'triggered';
+
+interface SelectionModeHotkeyDebugEvent {
+  at: number;
+  key: string;
+  code: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  repeat: boolean;
+  target: string;
+  decision: SelectionModeHotkeyDebugDecision;
+}
+
+interface SelectionModeHotkeyDebugAction {
+  at: number;
+  hasPropertyPanel: boolean;
+  pending: boolean;
+  result: boolean | null;
+  error: string | null;
+}
+
+interface SelectionModeHotkeyDebugSnapshot {
+  installed: boolean;
+  installCount: number;
+  shortcut: string;
+  receivedCount: number;
+  matchedCount: number;
+  ignoredRepeatCount: number;
+  ignoredMismatchCount: number;
+  ignoredEditorUiCount: number;
+  triggerCount: number;
+  lastEvent: SelectionModeHotkeyDebugEvent | null;
+  lastAction: SelectionModeHotkeyDebugAction | null;
+}
+
+interface SelectionModeHotkeyDebugApi extends SelectionModeHotkeyDebugSnapshot {
+  reset(): void;
+  snapshot(): SelectionModeHotkeyDebugSnapshot;
+}
+
+type SelectionModeHotkeyDebugWindow = Window & {
+  __AXHUB_SELECTION_HOTKEY_DEBUG__?: SelectionModeHotkeyDebugApi;
+};
+
+const SELECTION_MODE_HOTKEY_SHORTCUT_LABEL = 'Ctrl / Cmd + S';
 
 export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecycle {
   const { state, services, onStatusChange } = deps;
@@ -46,6 +100,26 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
   }
   let inlineTextEditingElement: HTMLElement | null = null;
   let pendingCommentContextSync = false;
+  let routeChangeCleanup: (() => void) | null = null;
+
+  function shouldDelegateAiActionToHost(): boolean {
+    return options.ui.toolbarMode === 'host' && typeof options.ui.onHostToolbarAction === 'function';
+  }
+
+  async function runHostAiAction(action: GenieEditorHostToolbarAction): Promise<boolean> {
+    if (!shouldDelegateAiActionToHost()) {
+      return false;
+    }
+    try {
+      return Boolean(await options.ui.onHostToolbarAction(action));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message) {
+        services.feedback.toast('warning', message);
+      }
+      return false;
+    }
+  }
 
   function isEventWithinElement(event: Event, element: Element): boolean {
     try {
@@ -225,6 +299,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     services.integrationWs?.stop();
     services.genieBridge.stop();
 
+    routeChangeCleanup?.();
+    routeChangeCleanup = null;
+
     state.uiResizeCleanup?.();
     state.uiResizeCleanup = null;
 
@@ -269,6 +346,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     state.perfHotkeyCleanup?.();
     state.perfHotkeyCleanup = null;
 
+    state.selectionModeHotkeyCleanup?.();
+    state.selectionModeHotkeyCleanup = null;
+
     state.perfMonitor?.dispose();
     state.perfMonitor = null;
 
@@ -304,6 +384,171 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     window.addEventListener('keydown', handler, hotkeyOptions);
     state.perfHotkeyCleanup = () => {
       window.removeEventListener('keydown', handler, hotkeyOptions);
+    };
+  }
+
+  function isSelectionModeToggleShortcut(event: KeyboardEvent): boolean {
+    const isMod = event.metaKey || event.ctrlKey;
+    if (!isMod || event.altKey || event.shiftKey) return false;
+
+    const key = (event.key || '').toLowerCase();
+    return key === 's';
+  }
+
+  function describeHotkeyTarget(target: EventTarget | null): string {
+    if (typeof Element === 'undefined' || !(target instanceof Element)) {
+      return target ? Object.prototype.toString.call(target) : 'null';
+    }
+
+    const tagName = target.tagName.toLowerCase();
+    const id = target.id ? `#${target.id}` : '';
+    const className =
+      typeof target.className === 'string'
+        ? target.className.trim().split(/\s+/u).filter(Boolean).slice(0, 3).map((name) => `.${name}`).join('')
+        : '';
+    const role = target.getAttribute('role');
+    return `${tagName}${id}${className}${role ? `[role="${role}"]` : ''}`;
+  }
+
+  function cloneSelectionModeHotkeyDebug(
+    debug: SelectionModeHotkeyDebugApi,
+  ): SelectionModeHotkeyDebugSnapshot {
+    return {
+      installed: debug.installed,
+      installCount: debug.installCount,
+      shortcut: debug.shortcut,
+      receivedCount: debug.receivedCount,
+      matchedCount: debug.matchedCount,
+      ignoredRepeatCount: debug.ignoredRepeatCount,
+      ignoredMismatchCount: debug.ignoredMismatchCount,
+      ignoredEditorUiCount: debug.ignoredEditorUiCount,
+      triggerCount: debug.triggerCount,
+      lastEvent: debug.lastEvent ? { ...debug.lastEvent } : null,
+      lastAction: debug.lastAction ? { ...debug.lastAction } : null,
+    };
+  }
+
+  function getSelectionModeHotkeyDebug(): SelectionModeHotkeyDebugApi | null {
+    if (typeof window === 'undefined') return null;
+    const globalWindow = window as SelectionModeHotkeyDebugWindow;
+    const existing = globalWindow.__AXHUB_SELECTION_HOTKEY_DEBUG__;
+    if (existing) {
+      existing.installed = true;
+      existing.installCount += 1;
+      return existing;
+    }
+
+    const debug: SelectionModeHotkeyDebugApi = {
+      installed: true,
+      installCount: 1,
+      shortcut: SELECTION_MODE_HOTKEY_SHORTCUT_LABEL,
+      receivedCount: 0,
+      matchedCount: 0,
+      ignoredRepeatCount: 0,
+      ignoredMismatchCount: 0,
+      ignoredEditorUiCount: 0,
+      triggerCount: 0,
+      lastEvent: null,
+      lastAction: null,
+      reset() {
+        this.receivedCount = 0;
+        this.matchedCount = 0;
+        this.ignoredRepeatCount = 0;
+        this.ignoredMismatchCount = 0;
+        this.ignoredEditorUiCount = 0;
+        this.triggerCount = 0;
+        this.lastEvent = null;
+        this.lastAction = null;
+      },
+      snapshot() {
+        return cloneSelectionModeHotkeyDebug(this);
+      },
+    };
+    globalWindow.__AXHUB_SELECTION_HOTKEY_DEBUG__ = debug;
+    return debug;
+  }
+
+  function recordSelectionModeHotkeyEvent(
+    debug: SelectionModeHotkeyDebugApi | null,
+    event: KeyboardEvent,
+    decision: SelectionModeHotkeyDebugDecision,
+  ): void {
+    if (!debug) return;
+    debug.lastEvent = {
+      at: Date.now(),
+      key: event.key || '',
+      code: event.code || '',
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      repeat: event.repeat,
+      target: describeHotkeyTarget(event.target),
+      decision,
+    };
+  }
+
+  function installSelectionModeHotkey(): void {
+    state.selectionModeHotkeyCleanup?.();
+    state.selectionModeHotkeyCleanup = null;
+    const debug = getSelectionModeHotkeyDebug();
+
+    const handler = (event: KeyboardEvent): void => {
+      debug && (debug.receivedCount += 1);
+      recordSelectionModeHotkeyEvent(debug, event, 'received');
+      if (event.repeat) {
+        debug && (debug.ignoredRepeatCount += 1);
+        recordSelectionModeHotkeyEvent(debug, event, 'ignored-repeat');
+        return;
+      }
+      if (!isSelectionModeToggleShortcut(event)) {
+        debug && (debug.ignoredMismatchCount += 1);
+        recordSelectionModeHotkeyEvent(debug, event, 'ignored-shortcut-mismatch');
+        return;
+      }
+      debug && (debug.matchedCount += 1);
+      if (state.shadowHost?.isEventFromUi(event)) {
+        debug && (debug.ignoredEditorUiCount += 1);
+        recordSelectionModeHotkeyEvent(debug, event, 'ignored-editor-ui');
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      debug && (debug.triggerCount += 1);
+      recordSelectionModeHotkeyEvent(debug, event, 'triggered');
+      const action: SelectionModeHotkeyDebugAction = {
+        at: Date.now(),
+        hasPropertyPanel: Boolean(state.propertyPanel?.runHostToolbarAction),
+        pending: true,
+        result: null,
+        error: null,
+      };
+      if (debug) {
+        debug.lastAction = action;
+      }
+      void Promise.resolve(
+        state.propertyPanel?.runHostToolbarAction?.({ type: 'toggle-selection-mode' }) ?? false,
+      )
+        .then((result) => {
+          action.pending = false;
+          action.result = Boolean(result);
+        })
+        .catch((error) => {
+          action.pending = false;
+          action.result = false;
+          action.error = error instanceof Error ? error.message : String(error);
+        });
+    };
+
+    const hotkeyOptions: AddEventListenerOptions = { capture: true, passive: false };
+    window.addEventListener('keydown', handler, hotkeyOptions);
+    state.selectionModeHotkeyCleanup = () => {
+      window.removeEventListener('keydown', handler, hotkeyOptions);
+      if (debug) {
+        debug.installed = false;
+      }
     };
   }
 
@@ -359,6 +604,90 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     };
 
     clampFloatingUi();
+  }
+
+  function installRouteChangeRefresh(): void {
+    if (routeChangeCleanup || typeof window === 'undefined') return;
+    const routeChangeEventType = 'axhub-web-editor-route-change';
+    let routeChangeRafId: number | null = null;
+    const historyRef = window.history;
+    const originalPushState = historyRef?.pushState;
+    const originalReplaceState = historyRef?.replaceState;
+    let wrappedPushState: History['pushState'] | null = null;
+    let wrappedReplaceState: History['replaceState'] | null = null;
+
+    const scheduleRouteRefresh = (): void => {
+      if (!state.active || routeChangeRafId !== null) return;
+      routeChangeRafId = window.requestAnimationFrame(() => {
+        routeChangeRafId = null;
+        services.interaction.clearSelection();
+        state.hoveredElement = null;
+        state.selectionAnchor = null;
+        state.pendingMarkerAnchors.clear();
+        void Promise.resolve(services.persistence.restoreCachedChanges())
+          .then(() => {
+            services.changes.renderChangeMarkers();
+            state.propertyPanel?.refresh();
+            onStatusChange?.();
+          })
+          .catch((error) => {
+            console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to refresh comments after route change:`, error);
+            services.changes.renderChangeMarkers();
+          });
+      });
+    };
+
+    const dispatchRouteChange = (): void => {
+      window.dispatchEvent(new Event(routeChangeEventType));
+    };
+
+    if (historyRef && typeof originalPushState === 'function') {
+      wrappedPushState = function pushState(
+        this: History,
+        data: unknown,
+        unused: string,
+        url?: string | URL | null,
+      ) {
+        const result = originalPushState.call(this, data, unused, url);
+        dispatchRouteChange();
+        return result;
+      } as History['pushState'];
+      historyRef.pushState = wrappedPushState;
+    }
+
+    if (historyRef && typeof originalReplaceState === 'function') {
+      wrappedReplaceState = function replaceState(
+        this: History,
+        data: unknown,
+        unused: string,
+        url?: string | URL | null,
+      ) {
+        const result = originalReplaceState.call(this, data, unused, url);
+        dispatchRouteChange();
+        return result;
+      } as History['replaceState'];
+      historyRef.replaceState = wrappedReplaceState;
+    }
+
+    window.addEventListener('hashchange', scheduleRouteRefresh);
+    window.addEventListener('popstate', scheduleRouteRefresh);
+    window.addEventListener(routeChangeEventType, scheduleRouteRefresh);
+
+    routeChangeCleanup = () => {
+      window.removeEventListener('hashchange', scheduleRouteRefresh);
+      window.removeEventListener('popstate', scheduleRouteRefresh);
+      window.removeEventListener(routeChangeEventType, scheduleRouteRefresh);
+      if (routeChangeRafId !== null) {
+        window.cancelAnimationFrame(routeChangeRafId);
+        routeChangeRafId = null;
+      }
+      if (historyRef && wrappedPushState && historyRef.pushState === wrappedPushState) {
+        historyRef.pushState = originalPushState;
+      }
+      if (historyRef && wrappedReplaceState && historyRef.replaceState === wrappedReplaceState) {
+        historyRef.replaceState = originalReplaceState;
+      }
+    };
   }
 
   function start(): void {
@@ -515,16 +844,18 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
       state.eventController = createEventController({
         isOverlayElement: state.shadowHost.isOverlayElement,
         shouldAllowPageEvent: (event) =>
-          Boolean(options.host.shouldAllowPageEvent?.(event)) || shouldAllowInlineEditingPageEvent(event),
+          Boolean(options.host.shouldAllowPageEvent?.(event)) ||
+          shouldAllowInlineEditingPageEvent(event),
         allowNativeTextSelection: isTextComment,
         onHover: isTextComment ? () => {} : services.interaction.handleHover,
-        onSelect: isTextComment
-          ? () => {}
-          : (event) =>
-              services.interaction.handleSelect(event.element, event.modifiers, {
-                clientX: event.clientX,
-                clientY: event.clientY,
-              }),
+        onSelect: (event) => {
+          const target = services.genieBridge.resolveSelectableElement(event.element);
+          if (!target?.isConnected) return;
+          services.interaction.handleSelect(target, event.modifiers, {
+            clientX: event.clientX,
+            clientY: event.clientY,
+          });
+        },
         onDoubleClickSelected: isTextComment
           ? undefined
           : (event) => {
@@ -659,7 +990,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           onUndo: () => state.transactionManager?.undo(),
           onRedo: () => state.transactionManager?.redo(),
           onCopyPrompt: services.localActions.handleCopyPrompt,
-          onWakeGenie: options.genieBridge.allowWake !== false
+          onWakeGenie: shouldDelegateAiActionToHost()
+            ? () => runHostAiAction({ type: 'wake-genie' })
+            : options.genieBridge.allowWake !== false
             ? async () => {
                 try {
                   return await services.genieBridge.requestWake();
@@ -673,6 +1006,13 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
               }
             : undefined,
           onSendPromptToGenie: async (element) => {
+            if (shouldDelegateAiActionToHost()) {
+              const handled = await runHostAiAction({ type: 'send-to-genie' });
+              if (!handled) {
+                throw new Error('宿主暂未处理 AI 执行请求。');
+              }
+              return;
+            }
             const targetElements = resolvePromptTargets(element);
             if (targetElements.length === 0) {
               throw new Error('当前没有可发送给 AI 的编辑元素。');
@@ -690,6 +1030,13 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             }
           },
           onSendCurrentElementPromptToGenie: async (element) => {
+            if (shouldDelegateAiActionToHost()) {
+              const handled = await runHostAiAction({ type: 'send-to-genie' });
+              if (!handled) {
+                throw new Error('宿主暂未处理 AI 执行请求。');
+              }
+              return;
+            }
             if (!element?.isConnected) {
               throw new Error('当前元素已失效，请重新选择后再试。');
             }
@@ -706,6 +1053,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             }
           },
           onAbortSendPromptToGenie: (element) => {
+            if (shouldDelegateAiActionToHost()) {
+              return runHostAiAction({ type: 'interrupt-genie' });
+            }
             const targetElement = resolvePromptTarget(element);
             if (!targetElement) {
               throw new Error('当前没有可中断的 AI 编辑元素。');
@@ -893,6 +1243,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
                 container: elements.uiRoot,
                 dock: 'top',
                 onSelect: selectElementWithCenterAnchor,
+                getAssistantPanelOpen: options.ui.getAssistantPanelOpen,
                 getGenieBridgeAvailable: () => services.genieBridge.isAvailable(),
                 hideExecutionControls: options.ui.hideExecutionControls,
                 getCommentShortcutSettings: () => state.commentShortcutSettings,
@@ -935,7 +1286,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
       }
 
       services.changes.renderChangeMarkers();
+      installSelectionModeHotkey();
       installUiResizeClamp();
+      installRouteChangeRefresh();
 
       state.active = true;
       state.panelOnlyMode = false;
@@ -961,6 +1314,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     inlineTextEditingElement = null;
     services.integrationWs?.stop();
     services.genieBridge.stop();
+
+    routeChangeCleanup?.();
+    routeChangeCleanup = null;
 
     state.uiResizeCleanup?.();
     state.uiResizeCleanup = null;
@@ -999,6 +1355,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
 
     state.perfHotkeyCleanup?.();
     state.perfHotkeyCleanup = null;
+
+    state.selectionModeHotkeyCleanup?.();
+    state.selectionModeHotkeyCleanup = null;
 
     state.perfMonitor?.dispose();
     state.perfMonitor = null;

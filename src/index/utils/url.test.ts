@@ -27,7 +27,7 @@ describe('url helpers', () => {
 	    }, 'prototypes')).toBe('custom/screens/home');
   });
 
-  it('writes Genie bridge and editor integration launch options into editor URLs', () => {
+  it('strips Genie bridge and editor WebSocket launch options from editor URLs', () => {
     vi.stubGlobal('window', {
       location: {
         origin: 'http://admin.local:5173',
@@ -46,28 +46,29 @@ describe('url helpers', () => {
       hostToolbar: true,
       genieBridge: {
         apiBaseUrl: 'http://localhost:32124/api',
-        integrationChannel: '/Users/demo/project',
-        projectPath: '/Users/demo/project',
+        integrationChannel: '/workspace/demo/project',
+        projectPath: '/workspace/demo/project',
         targetClientId: 'frontend-1234',
       },
       integrationWs: {
         enabled: true,
         apiBaseUrl: 'http://localhost:32124/api',
-        channel: '/Users/demo/project',
+        channel: '/workspace/demo/project',
         clientId: 'make-editor-1234',
         sessionId: 'session-001',
       },
     } as any));
 
-    expect(url.searchParams.get('genieApiBaseUrl')).toBe('http://localhost:32124/api');
-    expect(url.searchParams.get('genieIntegrationChannel')).toBe('/Users/demo/project');
-    expect(url.searchParams.get('genieTargetClientId')).toBe('frontend-1234');
-    expect(url.searchParams.get('cwd')).toBe('/Users/demo/project');
-    expect(url.searchParams.get('editorIntegrationWs')).toBe('1');
-    expect(url.searchParams.get('editorApiBaseUrl')).toBe('http://localhost:32124/api');
-    expect(url.searchParams.get('editorIntegrationChannel')).toBe('/Users/demo/project');
-    expect(url.searchParams.get('editorClientId')).toBe('make-editor-1234');
-    expect(url.searchParams.get('editorSessionId')).toBe('session-001');
+    expect(url.searchParams.get('genieApiBaseUrl')).toBeNull();
+    expect(url.searchParams.get('genieIntegrationChannel')).toBeNull();
+    expect(url.searchParams.get('genieTargetClientId')).toBeNull();
+    expect(url.searchParams.get('cwd')).toBeNull();
+    expect(url.searchParams.get('provider')).toBeNull();
+    expect(url.searchParams.get('editorIntegrationWs')).toBeNull();
+    expect(url.searchParams.get('editorApiBaseUrl')).toBeNull();
+    expect(url.searchParams.get('editorIntegrationChannel')).toBeNull();
+    expect(url.searchParams.get('editorClientId')).toBeNull();
+    expect(url.searchParams.get('editorSessionId')).toBeNull();
     expect(url.searchParams.get('editorMobileMode')).toBe('true');
     expect(url.searchParams.get('genieToolbar')).toBe('host');
     expect(url.searchParams.get('width')).toBe('390');

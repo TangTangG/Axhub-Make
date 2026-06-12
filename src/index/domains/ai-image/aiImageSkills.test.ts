@@ -6,8 +6,8 @@ describe('AI image skills', () => {
   it('defines the two fixed canvas image skills', () => {
     expect(AI_IMAGE_SKILLS).toHaveLength(2);
     expect(AI_IMAGE_SKILLS.map((skill) => skill.label)).toEqual(['提取图标', '生成草图']);
-    expect(AI_IMAGE_SKILLS[0]?.prompt).toBe('提取该 UI 设计稿中的图标，按矩阵格式返回。');
-    expect(AI_IMAGE_SKILLS[1]?.prompt).toBe('把该 UI 设计稿中的图标和图片替换为同尺寸灰色占位图，保留文字、布局和其它视觉信息，不要整张图片变灰。');
+    expect(AI_IMAGE_SKILLS[0]?.prompt).toBe('提取该 UI 设计稿中的图标，按矩阵格式使用工具生成一张新图片。');
+    expect(AI_IMAGE_SKILLS[1]?.prompt).toBe('把该 UI 设计稿中的图标和图片替换为同尺寸灰色占位图，保留文字、布局和其它视觉信息，不要整张图片变灰，使用工具生成一张新图片');
   });
 
   it('uses the skill prompt as the full composer text when the input is empty', () => {

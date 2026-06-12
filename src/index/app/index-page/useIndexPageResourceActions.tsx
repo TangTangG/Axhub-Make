@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CanvasItem, ItemData, SidebarTreeNode, SidebarTreeTab } from '../../types';
-import type { SelectedResourceFolder } from '../../types/index-page.types';
+import type { SelectedResourceFolder, UploadedResourceFile } from '../../types/index-page.types';
 import PromptActionButton from '../../components/PromptActionButton';
 import { sidebarApi } from '../../services/sidebar.api';
 import { generateCreateThemePrompt } from '../../utils';
 import { hasExplicitLocalPath } from '../../utils/localPath';
-import { sanitizeSidebarTree } from '../../utils/sidebarTree';
+import { removeDocsSidebarTreeItem, sanitizeSidebarTree } from '../../utils/sidebarTree';
 import {
     getDocDisplayName,
     isProtectedDocItemName,
@@ -26,6 +26,8 @@ import {
     ensureStringArray,
     getLocalBasePathForItem,
     getLocalPathForItem,
+    withResourceProject,
+    withResourceProjectBody,
 } from './resourceActions.helpers';
 
 function buildCreatedPlaceholderPrototypeItem(result: any): ItemData | null {
@@ -86,9 +88,64 @@ function findResourceFolder(
     return null;
 }
 
+function normalizeUploadedDocIdentifier(value: unknown): string {
+    let normalized = String(value || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '')
+        .replace(/\/+/g, '/');
+
+    if (!normalized) {
+        return '';
+    }
+
+    const prefixes = [
+        'api/docs/',
+        'docs/',
+        'src/resources/',
+    ];
+    for (const prefix of prefixes) {
+        if (normalized.startsWith(prefix)) {
+            normalized = normalized.slice(prefix.length);
+            break;
+        }
+    }
+    return normalized;
+}
+
+function buildUploadedDocCandidates(uploadedFile: UploadedResourceFile): Set<string> {
+    const candidates = new Set<string>();
+    for (const value of [uploadedFile.name, uploadedFile.path, uploadedFile.itemKey, uploadedFile.id]) {
+        const normalized = normalizeUploadedDocIdentifier(value);
+        if (normalized) {
+            candidates.add(normalized);
+        }
+    }
+    return candidates;
+}
+
+function findUploadedDocItem(items: ItemData[], uploadedFiles: UploadedResourceFile[]): ItemData | null {
+    for (const uploadedFile of uploadedFiles) {
+        const candidates = buildUploadedDocCandidates(uploadedFile);
+        if (candidates.size === 0) {
+            continue;
+        }
+        const matched = items.find((item) => (
+            candidates.has(normalizeUploadedDocIdentifier(item.name))
+            || candidates.has(normalizeUploadedDocIdentifier(item.resourceId))
+            || candidates.has(normalizeUploadedDocIdentifier(item.filePath))
+        ));
+        if (matched) {
+            return matched;
+        }
+    }
+    return null;
+}
+
 export function useIndexPageResourceActions(params: any) {
     const {
         activeTab,
+        activeProjectId,
         data,
         docsItems,
         canvasItems,
@@ -114,8 +171,6 @@ export function useIndexPageResourceActions(params: any) {
         setSidebarTab,
         setViewMode,
         setResourceSection,
-        setCreateDialogVisible,
-        setCreateDialogSelectedDocs,
         loadData,
         loadProjects,
         reloadSidebarAssets,
@@ -139,6 +194,14 @@ export function useIndexPageResourceActions(params: any) {
     const [versionDialogVisible, setVersionDialogVisible] = useState(false);
     const [currentVersionItem, setCurrentVersionItem] = useState<ItemData | null>(null);
     const [docReferencePromptDialog, setDocReferencePromptDialog] = useState<any>(null);
+
+    const buildResourceUrl = useCallback((url: string) => (
+        withResourceProject(url, activeProjectId)
+    ), [activeProjectId]);
+
+    const buildResourceBody = useCallback((body: Record<string, unknown>) => (
+        withResourceProjectBody(body, activeProjectId)
+    ), [activeProjectId]);
 
     useEffect(() => {
         setSelectedDoc((previous) => {
@@ -198,16 +261,16 @@ export function useIndexPageResourceActions(params: any) {
         action: 'rename' | 'delete',
         nextBaseName?: string,
     ) => {
-        return checkDocReferencesRequest(docName, action, nextBaseName);
-    }, []);
+        return checkDocReferencesRequest(docName, action, nextBaseName, activeProjectId);
+    }, [activeProjectId]);
 
     const checkTemplateReferences = useCallback(async (
         templateName: string,
         action: 'rename' | 'delete',
         nextBaseName?: string,
     ) => {
-        return checkTemplateReferencesRequest(templateName, action, nextBaseName);
-    }, []);
+        return checkTemplateReferencesRequest(templateName, action, nextBaseName, activeProjectId);
+    }, [activeProjectId]);
 
     const openDocReferencePromptDialog = useCallback((dialogParams: {
         action: 'rename' | 'delete';
@@ -232,11 +295,25 @@ export function useIndexPageResourceActions(params: any) {
     }, [reloadSidebarAssets]);
 
     const refreshDocsResources = useCallback(async () => {
-        await reloadDocsItems();
+        const nextDocs = await reloadDocsItems();
         if (typeof loadSidebarTree === 'function') {
-            await loadSidebarTree('docs', { force: true });
+            await loadSidebarTree('docs', { force: true, items: nextDocs });
         }
     }, [loadSidebarTree, reloadDocsItems]);
+
+    const handleUploadedResourceFiles = useCallback(async (uploadedFiles: UploadedResourceFile[] = []) => {
+        const nextDocs = await reloadDocsItems();
+        if (typeof loadSidebarTree === 'function') {
+            await loadSidebarTree('docs', { force: true, items: nextDocs });
+        }
+        const uploadedDoc = findUploadedDocItem(nextDocs, uploadedFiles);
+        if (uploadedDoc) {
+            setSidebarTab('document');
+            setViewMode('demo');
+            setSelectedResourceFolder(null);
+            setSelectedDoc(uploadedDoc);
+        }
+    }, [loadSidebarTree, reloadDocsItems, setSidebarTab, setViewMode]);
 
     const handleSelectResourceFolder = useCallback((folder: SidebarTreeNode) => {
         if (folder.kind !== 'folder') {
@@ -301,7 +378,8 @@ export function useIndexPageResourceActions(params: any) {
                 body: JSON.stringify(config),
             });
             if (!response.ok) {
-                throw new Error('保存默认设计失败');
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(payload?.error || '设置默认设计失败');
             }
             const syncResponse = await fetch('/api/themes/sync-design', {
                 method: 'POST',
@@ -574,10 +652,10 @@ export function useIndexPageResourceActions(params: any) {
                 });
                 return;
             }
-            const response = await fetch(`/api/docs/templates/${encodeURIComponent(currentName)}`, {
+            const response = await fetch(buildResourceUrl(`/api/docs/templates/${encodeURIComponent(currentName)}`), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ newBaseName: trimmedName }),
+                body: JSON.stringify(buildResourceBody({ newBaseName: trimmedName })),
             });
             const payload = await response.json().catch(() => ({} as any));
             if (!response.ok) {
@@ -628,6 +706,8 @@ export function useIndexPageResourceActions(params: any) {
         }
     }, [
         appDialog,
+        buildResourceBody,
+        buildResourceUrl,
         checkTemplateReferences,
         messageApi,
         openTemplateReferencePromptDialog,
@@ -638,8 +718,10 @@ export function useIndexPageResourceActions(params: any) {
     const handleDuplicateTemplateResource = useCallback(async (item: any) => {
         const hide = messageApi.loading('正在创建模板副本...', 0);
         try {
-            const response = await fetch(`/api/docs/templates/${encodeURIComponent(item.name)}/copy`, {
+            const response = await fetch(buildResourceUrl(`/api/docs/templates/${encodeURIComponent(item.name)}/copy`), {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(buildResourceBody({})),
             });
             const payload = await response.json().catch(() => ({} as any));
             if (!response.ok) {
@@ -667,7 +749,7 @@ export function useIndexPageResourceActions(params: any) {
         } finally {
             hide();
         }
-    }, [messageApi, reloadSidebarAssets, setResourceOrders]);
+    }, [buildResourceBody, buildResourceUrl, messageApi, reloadSidebarAssets, setResourceOrders]);
 
     const handleDeleteTemplateResource = useCallback(async (item: any) => {
         const hideChecking = messageApi.loading('正在检查模板引用...', 0);
@@ -702,7 +784,7 @@ export function useIndexPageResourceActions(params: any) {
         if (!confirmed) return;
         const hide = messageApi.loading('正在删除模板...', 0);
         try {
-            const response = await fetch(`/api/docs/templates/${encodeURIComponent(item.name)}`, {
+            const response = await fetch(buildResourceUrl(`/api/docs/templates/${encodeURIComponent(item.name)}`), {
                 method: 'DELETE',
             });
             const payload = await response.json().catch(() => ({} as any));
@@ -733,6 +815,7 @@ export function useIndexPageResourceActions(params: any) {
         }
     }, [
         appDialog,
+        buildResourceUrl,
         checkTemplateReferences,
         messageApi,
         openTemplateReferencePromptDialog,
@@ -793,10 +876,10 @@ export function useIndexPageResourceActions(params: any) {
         if (!trimmedName || trimmedName === item.displayName) return;
         const hide = messageApi.loading('正在重命名...', 0);
         try {
-            const response = await fetch(`/api/prototypes/${encodeURIComponent(item.name)}`, {
+            const response = await fetch(buildResourceUrl(`/api/prototypes/${encodeURIComponent(item.name)}`), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ displayName: trimmedName }),
+                body: JSON.stringify(buildResourceBody({ displayName: trimmedName })),
             });
             if (!response.ok) {
                 const payload = await response.json().catch(() => ({}));
@@ -836,7 +919,7 @@ export function useIndexPageResourceActions(params: any) {
         } finally {
             hide();
         }
-    }, [appDialog, data.prototypes, loadData, loadSidebarTree, messageApi, setSelectedItem, setSidebarTrees, sidebarTrees.prototypes]);
+    }, [appDialog, buildResourceBody, buildResourceUrl, data.prototypes, loadData, loadSidebarTree, messageApi, setSelectedItem, setSidebarTrees, sidebarTrees.prototypes]);
 
     const handleDuplicateItem = useCallback(async (item: ItemData) => {
         const localBasePath = getLocalBasePathForItem(item);
@@ -857,13 +940,13 @@ export function useIndexPageResourceActions(params: any) {
         const hide = messageApi.loading('正在创建副本...', 0);
         try {
             const newName = generateDuplicateName(item.name);
-            const response = await fetch('/api/copy', {
+            const response = await fetch(buildResourceUrl('/api/copy'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                body: JSON.stringify(buildResourceBody({
                     sourcePath: localBasePath,
                     targetPath: buildLocalSiblingPath(localBasePath, newName),
-                }),
+                })),
             });
             if (!response.ok) {
                 const payload = await response.json().catch(() => ({}));
@@ -876,7 +959,7 @@ export function useIndexPageResourceActions(params: any) {
         } finally {
             hide();
         }
-    }, [data.prototypes, loadData, messageApi]);
+    }, [buildResourceBody, buildResourceUrl, data.prototypes, loadData, messageApi]);
 
     const handleDeleteItem = useCallback(async (
         item: ItemData,
@@ -896,10 +979,10 @@ export function useIndexPageResourceActions(params: any) {
         const performDelete = async () => {
             const hide = messageApi.loading('正在删除...', 0);
             try {
-                const response = await fetch('/api/delete', {
+                const response = await fetch(buildResourceUrl('/api/delete'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: localBasePath }),
+                    body: JSON.stringify(buildResourceBody({ path: localBasePath })),
                 });
                 if (!response.ok) {
                     const payload = await response.json().catch(() => ({}));
@@ -918,10 +1001,10 @@ export function useIndexPageResourceActions(params: any) {
 
         const hide = messageApi.loading('正在检查引用...', 0);
         try {
-            const checkResponse = await fetch('/api/items/check-references', {
+            const checkResponse = await fetch(buildResourceUrl('/api/items/check-references'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ itemType, itemName: item.name }),
+                body: JSON.stringify(buildResourceBody({ itemType, itemName: item.name })),
             });
             const checkPayload = checkResponse.ok ? await checkResponse.json().catch(() => null) : null;
             const references = ensureStringArray(checkPayload?.references);
@@ -994,7 +1077,7 @@ export function useIndexPageResourceActions(params: any) {
             cancelText: '取消',
             onOk: performDelete,
         });
-    }, [activeTab, loadData, messageApi, modal, setSelectedItem]);
+    }, [activeTab, buildResourceBody, buildResourceUrl, loadData, messageApi, modal, setSelectedItem]);
 
     const handleRenameDocItem = useCallback(async (item: ItemData, nextName: string) => {
         const currentName = item.name;
@@ -1026,10 +1109,10 @@ export function useIndexPageResourceActions(params: any) {
                 });
                 return;
             }
-            const response = await fetch(`/api/docs/${encodeURIComponent(currentName)}`, {
+            const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentName)}`), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ newBaseName: trimmedName }),
+                body: JSON.stringify(buildResourceBody({ newBaseName: trimmedName })),
             });
             const payload = await response.json().catch(() => ({} as any));
             if (!response.ok) {
@@ -1100,6 +1183,8 @@ export function useIndexPageResourceActions(params: any) {
             hide();
         }
     }, [
+        buildResourceBody,
+        buildResourceUrl,
         checkDocReferences,
         docsItems,
         messageApi,
@@ -1112,8 +1197,10 @@ export function useIndexPageResourceActions(params: any) {
     const handleDuplicateDocItem = useCallback(async (item: ItemData) => {
         const hide = messageApi.loading('正在创建副本...', 0);
         try {
-            const response = await fetch(`/api/docs/${encodeURIComponent(item.name)}/copy`, {
+            const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(item.name)}/copy`), {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(buildResourceBody({})),
             });
             const payload = await response.json().catch(() => ({} as any));
             if (!response.ok) {
@@ -1130,7 +1217,7 @@ export function useIndexPageResourceActions(params: any) {
         } finally {
             hide();
         }
-    }, [messageApi, reloadDocsItems]);
+    }, [buildResourceBody, buildResourceUrl, messageApi, reloadDocsItems]);
 
     const handleDeleteDocItem = useCallback(async (item: ItemData) => {
         const hideChecking = messageApi.loading('正在检查引用...', 0);
@@ -1163,7 +1250,7 @@ export function useIndexPageResourceActions(params: any) {
             onOk: async () => {
                 const hide = messageApi.loading('正在删除...', 0);
                 try {
-                    const response = await fetch(`/api/docs/${encodeURIComponent(item.name)}`, { method: 'DELETE' });
+                    const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(item.name)}`), { method: 'DELETE' });
                     const payload = await response.json().catch(() => ({} as any));
                     if (!response.ok) {
                         if (payload.code === 'PROTECTED_DOC') {
@@ -1180,6 +1267,20 @@ export function useIndexPageResourceActions(params: any) {
                         throw new Error(payload.error || '删除失败');
                     }
                     const nextDocs = await reloadDocsItems();
+                    setSidebarTrees((previous: Record<SidebarTreeTab, SidebarTreeNode[]>) => ({
+                        ...previous,
+                        docs: removeDocsSidebarTreeItem(
+                            sanitizeSidebarTree('docs', previous.docs || [], nextDocs),
+                            item.name,
+                        ),
+                    }));
+                    if (typeof loadSidebarTree === 'function') {
+                        await loadSidebarTree('docs', { force: true, items: nextDocs });
+                        setSidebarTrees((previous: Record<SidebarTreeTab, SidebarTreeNode[]>) => ({
+                            ...previous,
+                            docs: removeDocsSidebarTreeItem(previous.docs || [], item.name),
+                        }));
+                    }
                     setSelectedDoc((previous) => {
                         if (previous && previous.name !== item.name) {
                             return nextDocs.find((doc) => doc.name === previous.name) || nextDocs[0] || null;
@@ -1189,13 +1290,12 @@ export function useIndexPageResourceActions(params: any) {
                     messageApi.success('删除成功');
                 } catch (error: any) {
                     messageApi.error(error?.message || '删除失败');
-                    return Promise.reject(error);
                 } finally {
                     hide();
                 }
             },
         });
-    }, [checkDocReferences, messageApi, modal, openDocReferencePromptDialog, reloadDocsItems]);
+    }, [buildResourceUrl, checkDocReferences, loadSidebarTree, messageApi, modal, openDocReferencePromptDialog, reloadDocsItems, setSidebarTrees]);
 
     const handleCopyDocPath = useCallback(async (item: ItemData) => {
         try {
@@ -1215,13 +1315,6 @@ export function useIndexPageResourceActions(params: any) {
         setCurrentVersionItem(item);
         setVersionDialogVisible(true);
     }, []);
-
-    const handleCreatePrototypeFromDoc = useCallback(async (doc: ItemData) => {
-        setCreateDialogSelectedDocs([doc.name]);
-        setActiveTab('prototypes');
-        setSidebarTab('prototype');
-        setCreateDialogVisible(true);
-    }, [setActiveTab, setCreateDialogSelectedDocs, setCreateDialogVisible, setSidebarTab]);
 
     const handleImportThemeResource = useCallback(() => {
         setSidebarTab('assets');
@@ -1268,8 +1361,11 @@ export function useIndexPageResourceActions(params: any) {
             await loadData();
             // Select the newly created prototype and show its Admin-owned empty guide.
             const items = getSidebarTabItems?.('prototypes') || data?.prototypes || [];
-            const created = items.find((item: any) => item.name === result.name)
-                || buildCreatedPlaceholderPrototypeItem(result);
+            const createdFromResult = buildCreatedPlaceholderPrototypeItem(result);
+            const refreshedCreated = items.find((item: any) => item.name === result.name);
+            const created = refreshedCreated?.placeholder === true
+                ? refreshedCreated
+                : createdFromResult;
             if (created) {
                 setSelectedItem(created);
                 setSidebarTab('prototype');
@@ -1529,9 +1625,8 @@ export function useIndexPageResourceActions(params: any) {
         handleDeleteDocItem,
         handleCopyDocPath,
         handleDocVersionManagement,
-        handleCreatePrototypeFromDoc,
         handleImportThemeResource,
-        handleUploadedResourceFiles: refreshDocsResources,
+        handleUploadedResourceFiles,
         handleCreateCanvasFile,
         handleCreatePlaceholderPrototype,
         handleRenameCanvasItem,

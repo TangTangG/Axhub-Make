@@ -149,6 +149,7 @@ export function createWebEditorUiRuntime(options: WebEditorUiRuntimeOptions): We
     disablePageAnimations: false,
     pageZoomEnabled: false,
     copySkillInstallPromptDisabled: true,
+    selectionModeActive: true,
     fullExitAvailable: false,
   });
 

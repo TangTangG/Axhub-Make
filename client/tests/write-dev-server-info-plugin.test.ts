@@ -1,13 +1,17 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ViteDevServer } from 'vite';
 
 import { writeDevServerInfoPlugin } from '../vite-plugins/writeDevServerInfoPlugin';
 
 const originalCwd = process.cwd();
 const tempRoots: string[] = [];
+const httpServers: http.Server[] = [];
+const viteServers: ViteDevServer[] = [];
 
 function createTempProjectRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'make-project-health-'));
@@ -15,14 +19,47 @@ function createTempProjectRoot() {
   return root;
 }
 
-  afterEach(() => {
-    process.chdir(originalCwd);
-    vi.restoreAllMocks();
-    vi.useRealTimers();
-    for (const root of tempRoots.splice(0)) {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+function listen(server: http.Server, port = 0): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        reject(new Error('Expected TCP server address'));
+        return;
+      }
+      resolve(address.port);
+    });
   });
+}
+
+async function closeHttpServer(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+function getViteServerPort(server: ViteDevServer): number {
+  const address = server.httpServer?.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Expected Vite dev server to listen on a TCP port');
+  }
+  return address.port;
+}
+
+afterEach(async () => {
+  await Promise.all(viteServers.splice(0).map((server) => server.close()));
+  await Promise.all(httpServers.splice(0).map((server) => closeHttpServer(server)));
+  process.chdir(originalCwd);
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+  for (const root of tempRoots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe('write dev server info plugin', () => {
   it('serves runtime health from the make-project dev server', async () => {
@@ -135,6 +172,50 @@ describe('write dev server info plugin', () => {
     });
     expect(JSON.stringify(metadata)).not.toContain('51721');
     expect(logSpy.mock.calls.flat().join('\n')).not.toContain('metadata synced for http://localhost:51721');
+  });
+
+  it('injects the actual listening port into Vite client HMR fallback when the preferred port is occupied', async () => {
+    const projectRoot = createTempProjectRoot();
+    process.chdir(projectRoot);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { createServer } = await import('vite');
+    const configuredPortProbe = http.createServer((_req, res) => {
+      res.end('probe');
+    });
+    const configuredPort = await listen(configuredPortProbe);
+    await closeHttpServer(configuredPortProbe);
+    const blocker = http.createServer((_req, res) => {
+      res.end('occupied');
+    });
+    await listen(blocker, configuredPort);
+    httpServers.push(blocker);
+
+    const server = await createServer({
+      root: projectRoot,
+      publicDir: false,
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [writeDevServerInfoPlugin()],
+      server: {
+        port: configuredPort,
+        strictPort: false,
+        host: '127.0.0.1',
+        hmr: { overlay: false },
+      },
+    });
+    viteServers.push(server);
+    await server.listen();
+    const actualPort = getViteServerPort(server);
+
+    const response = await fetch(`http://127.0.0.1:${actualPort}/@vite/client`);
+    const code = await response.text();
+
+    expect(actualPort).not.toBe(configuredPort);
+    expect(response.status).toBe(200);
+    expect(code).toContain(`const serverHost = "127.0.0.1:${actualPort}/";`);
+    expect(code).toContain(`const directSocketHost = "127.0.0.1:${actualPort}/";`);
+    expect(code).not.toContain(`const directSocketHost = "127.0.0.1:${configuredPort}/";`);
+    expect(logSpy).toHaveBeenCalled();
   });
 
   it('keeps the runtime startedAt stable while heartbeat refreshes timestamp', async () => {

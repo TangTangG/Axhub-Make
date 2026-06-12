@@ -16,6 +16,7 @@ const PROTOTYPE_SCREENSHOT_FILE = 'screenshot.png';
 const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
 const MAX_CANVAS_IMAGE_BYTES = 12 * 1024 * 1024;
 const SAFE_SCREENSHOT_FILE_PATTERN = /^[a-z0-9][a-z0-9._-]*\.png$/iu;
+const SAFE_PROTOTYPE_PAGE_ID_PATTERN = /^[a-z0-9-]+$/u;
 const CANVAS_IMAGE_MIME_EXTENSIONS: Record<string, string> = {
   'image/gif': '.gif',
   'image/jpeg': '.jpg',
@@ -289,10 +290,23 @@ function getRequestedScreenshotFileName(value: unknown): string | null {
   return trimmed;
 }
 
+function getPrototypePageScreenshotFileName(pageId: unknown): string | null {
+  if (typeof pageId !== 'string') {
+    return null;
+  }
+  const trimmed = pageId.trim();
+  return SAFE_PROTOTYPE_PAGE_ID_PATTERN.test(trimmed) ? `page-${trimmed}.png` : null;
+}
+
 function getScreenshotFileName(body: any): string {
   const requestedFileName = getRequestedScreenshotFileName(body?.fileName);
   if (requestedFileName) {
     return requestedFileName;
+  }
+
+  const pageScreenshotFileName = getPrototypePageScreenshotFileName(body?.pageId);
+  if (pageScreenshotFileName) {
+    return pageScreenshotFileName;
   }
 
   const safeElementId = toSafeScreenshotFileBase(body?.elementId);
@@ -623,6 +637,10 @@ function handlePrototypeScreenshotApi(
       sendJson(res, { error: 'Expected PNG data URL' }, { status: 400 });
       return;
     }
+    if (body?.pageId !== undefined && !getPrototypePageScreenshotFileName(body.pageId)) {
+      sendJson(res, { error: 'Invalid screenshot path' }, { status: 403 });
+      return;
+    }
     const screenshotFileName = getScreenshotFileName(body);
     const screenshotPath = path.resolve(resolved.assetsDir, screenshotFileName);
     if (!isPathInside(resolved.assetsDir, screenshotPath) || !isPathInside(projectRoot, screenshotPath)) {
@@ -709,106 +727,6 @@ function handlePrototypeCanvasApi(
   return true;
 }
 
-function countCanvasAnnotations(filePath: string): { elementCount: number; annotatedCount: number } {
-  try {
-    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-      return { elementCount: 0, annotatedCount: 0 };
-    }
-    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    const elements = Array.isArray(data?.elements) ? data.elements.filter((el: any) => !el.isDeleted) : [];
-    const annotated = elements.filter((el: any) => el.customData?.annotation?.trim());
-    return { elementCount: elements.length, annotatedCount: annotated.length };
-  } catch {
-    return { elementCount: 0, annotatedCount: 0 };
-  }
-}
-
-function resolveCanvasFilePath(projectRoot: string, canvasName: string): string | null {
-  // Try prototype canvas path first: "prototypes/<id>/canvas"
-  const protoMatch = canvasName.match(/^prototypes\/(.+?)\/canvas(?:\.excalidraw)?$/u);
-  if (protoMatch) {
-    const canvasPath = path.resolve(projectRoot, 'src', 'prototypes', protoMatch[1], `canvas${CANVAS_EXT}`);
-    return isPathInside(projectRoot, canvasPath) ? canvasPath : null;
-  }
-  // Try standalone canvas path: "src/canvas/<name>.excalidraw"
-  const canvasDir = path.join(projectRoot, 'src/canvas');
-  const fileName = canvasName.endsWith(CANVAS_EXT) ? canvasName : `${canvasName}${CANVAS_EXT}`;
-  const canvasPath = path.resolve(canvasDir, fileName);
-  return isPathInside(canvasDir, canvasPath) ? canvasPath : null;
-}
-
-function handleCanvasBridgeApi(
-  req: IncomingMessage,
-  res: ServerResponse,
-  projectRoot: string,
-  pathname: string,
-): boolean {
-  if (!pathname.startsWith('/api/canvas/bridge/')) {
-    return false;
-  }
-
-  const action = pathname.slice('/api/canvas/bridge/'.length);
-  const hub = getCanvasBridgeHub();
-
-  // GET /api/canvas/bridge/status — list connected canvases
-  if (action === 'status' && req.method === 'GET') {
-    const connected = hub.getConnectedCanvases();
-    const canvases = connected.map((c) => {
-      const filePath = resolveCanvasFilePath(projectRoot, c.canvas);
-      const counts = filePath ? countCanvasAnnotations(filePath) : { elementCount: 0, annotatedCount: 0 };
-      return {
-        canvas: c.canvas,
-        filePath: filePath ? path.relative(projectRoot, filePath).split(path.sep).join('/') : null,
-        absoluteFilePath: filePath,
-        ...counts,
-      };
-    });
-    sendJson(res, { canvases });
-    return true;
-  }
-
-  // POST /api/canvas/bridge/refresh — tell browser to reload
-  if (action === 'refresh' && req.method === 'POST') {
-    readJsonBody(req).then((body) => {
-      const canvas = typeof body?.canvas === 'string' ? body.canvas : undefined;
-      const ok = hub.requestRefresh(canvas);
-      if (!ok) {
-        sendJson(res, { error: 'No canvas browser connected' }, { status: 503 });
-        return;
-      }
-      sendJson(res, { ok: true });
-    }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
-    return true;
-  }
-
-  // POST /api/canvas/bridge/screenshot — get PNG from browser
-  if (action === 'screenshot' && req.method === 'POST') {
-    readJsonBody(req).then(async (body) => {
-      const canvas = typeof body?.canvas === 'string' ? body.canvas : undefined;
-      try {
-        const dataUrl = await hub.requestScreenshot(canvas);
-        // Return the raw base64 data without the data URL prefix to save tokens
-        const base64Match = dataUrl.match(/^data:image\/png;base64,(.+)$/i);
-        if (base64Match) {
-          const buffer = Buffer.from(base64Match[1], 'base64');
-          res.statusCode = 200;
-          res.setHeader('Content-Type', 'image/png');
-          res.setHeader('Content-Length', buffer.length);
-          res.setHeader('Cache-Control', 'no-store');
-          res.end(buffer);
-        } else {
-          sendJson(res, { dataUrl });
-        }
-      } catch (error: any) {
-        sendJson(res, { error: error?.message || 'Screenshot failed' }, { status: 503 });
-      }
-    }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
-    return true;
-  }
-
-  return false;
-}
-
 export function handleCanvasApi(
   req: IncomingMessage,
   res: ServerResponse,
@@ -818,9 +736,6 @@ export function handleCanvasApi(
 ): boolean {
   if (!pathname.startsWith('/api/canvas')) {
     return false;
-  }
-  if (handleCanvasBridgeApi(req, res, projectRoot, pathname)) {
-    return true;
   }
   if (handlePrototypeScreenshotApi(req, res, projectRoot, pathname, context)) {
     return true;

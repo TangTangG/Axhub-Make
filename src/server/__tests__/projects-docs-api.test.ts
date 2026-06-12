@@ -43,6 +43,8 @@ import {
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
+  registerProject,
+  setActiveProject,
   startTestServer,
   writeProjectMetadata,
 } from './projects-api.helpers';
@@ -123,6 +125,9 @@ describe('make-server project docs APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'docs-client', 'Docs Client');
+      await setActiveProject(server.origin, 'docs-client');
+
       const docs = await fetch(`${server.origin}/api/docs`).then((response) => response.json());
       expect(docs).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -218,6 +223,59 @@ describe('make-server project docs APIs', () => {
     }
   });
 
+  it('returns 404 when deleting a document path that does not exist', async () => {
+    const projectRoot = createTempRoot();
+    const docsDir = path.join(projectRoot, 'content', 'docs');
+    fs.mkdirSync(docsDir, { recursive: true });
+    fs.writeFileSync(path.join(docsDir, 'keep.md'), '# Keep\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'docs-delete-missing-client', name: 'Docs Delete Missing Client' },
+      resources: {
+        prototypes: [],
+        docs: [
+          {
+            id: 'missing',
+            name: 'missing',
+            title: 'Missing',
+            path: path.join(docsDir, 'missing.png'),
+          },
+          {
+            id: 'keep',
+            name: 'keep',
+            title: 'Keep',
+            path: path.join(docsDir, 'keep.md'),
+          },
+        ],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: ['missing', 'keep'] },
+      resourceWriteTargets: {
+        docs: { path: 'content/docs' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'docs-delete-missing-client', 'Docs Delete Missing Client');
+      await setActiveProject(server.origin, 'docs-delete-missing-client');
+      const metadataBefore = fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8');
+
+      const deleted = await fetch(`${server.origin}/api/docs/missing.png`, { method: 'DELETE' })
+        .then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(deleted).toEqual({
+        status: 404,
+        body: { error: 'Document not found' },
+      });
+      expect(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8')).toBe(metadataBefore);
+      expect(fs.existsSync(path.join(docsDir, 'keep.md'))).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('opens docs through the shared filesystem opener without shell command strings', async () => {
     const projectRoot = createTempRoot();
     const docsDir = path.join(projectRoot, 'content', 'docs');
@@ -251,6 +309,9 @@ describe('make-server project docs APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'docs-open-client', 'Docs Open Client');
+      await setActiveProject(server.origin, 'docs-open-client');
+
       const response = await fetch(`${server.origin}/api/docs/open-system`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

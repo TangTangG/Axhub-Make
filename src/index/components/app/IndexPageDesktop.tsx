@@ -1,12 +1,12 @@
 import React from 'react';
 import NewSidebar from '../sidebar/NewSidebar';
 import PresentationArea from '../content/PresentationArea';
+import AssistantPanel from './AssistantPanel';
 import type {
     NewSidebarGroupedProps,
     PresentationAreaGroupedProps,
 } from '../../types/index-page.types';
-
-const AssistantPanel = React.lazy(() => import('./AssistantPanel'));
+import type { AcpContextItem } from '../../domains/assistant/assistantAcpContext';
 
 interface IndexPageDesktopProps {
     sidebarProps: NewSidebarGroupedProps;
@@ -21,6 +21,7 @@ interface IndexPageDesktopProps {
         iframeRef: React.MutableRefObject<HTMLIFrameElement | null>;
         onLoad: () => void;
         onResize: (width: number) => void;
+        onAddContextItems: (items: AcpContextItem[]) => boolean | Promise<boolean>;
     };
 }
 
@@ -38,19 +39,18 @@ export default function IndexPageDesktop({
                     <PresentationArea {...presentationAreaProps} />
 
                     {assistantPanel.mounted ? (
-                        <React.Suspense fallback={null}>
-                            <AssistantPanel
-                                mounted={assistantPanel.mounted}
-                                visible={assistantPanel.visible}
-                                width={assistantPanel.width}
-                                minWidth={assistantPanel.minWidth}
-                                maxWidth={assistantPanel.maxWidth}
-                                iframeSrc={assistantPanel.iframeSrc}
-                                iframeRef={assistantPanel.iframeRef}
-                                onLoad={assistantPanel.onLoad}
-                                onResize={assistantPanel.onResize}
-                            />
-                        </React.Suspense>
+                        <AssistantPanel
+                            mounted={assistantPanel.mounted}
+                            visible={assistantPanel.visible}
+                            width={assistantPanel.width}
+                            minWidth={assistantPanel.minWidth}
+                            maxWidth={assistantPanel.maxWidth}
+                            iframeSrc={assistantPanel.iframeSrc}
+                            iframeRef={assistantPanel.iframeRef}
+                            onLoad={assistantPanel.onLoad}
+                            onResize={assistantPanel.onResize}
+                            onAddContextItems={assistantPanel.onAddContextItems}
+                        />
                     ) : null}
                 </div>
             </div>

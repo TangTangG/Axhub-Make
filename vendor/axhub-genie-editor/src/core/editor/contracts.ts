@@ -23,6 +23,7 @@ import type { PromptImageAttachment } from './state';
 import type {
   GenieEditorCopyPromptContext,
   GenieEditorHostResource,
+  PrototypeEditCommentsDocument,
   PrototypeEditCommentTaskStatus,
 } from '../../web-editor-types';
 import type { TextComment } from '../../selection/text-comment-manager';
@@ -216,6 +217,7 @@ export interface EditorPersistenceService {
   persistFromTransactions(): void;
   flushPendingWrite(): void;
   restoreCachedChanges(): Promise<void>;
+  getPersistedPrototypeCommentsDocument(): PrototypeEditCommentsDocument | null;
   clearCachedChanges(kind: 'text' | 'style'): void;
   clearStorage(): void;
 }

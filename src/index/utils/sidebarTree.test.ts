@@ -4,6 +4,7 @@ import type { ItemData, SidebarTreeNode } from '../types';
 import {
     buildDefaultTree,
     createSidebarTreeItemLookup,
+    removeDocsSidebarTreeItem,
     resolveSidebarTreeItem,
     sanitizeSidebarTree,
 } from './sidebarTree';
@@ -328,6 +329,135 @@ describe('sidebarTree', () => {
         ];
 
         expect(sanitizeSidebarTree('docs', scannedTree, items)).toEqual(scannedTree);
+    });
+
+    it('resolves filesystem document tree nodes before docs metadata catches up', () => {
+        const lookup = createSidebarTreeItemLookup('docs', []);
+        const node: SidebarTreeNode = {
+            id: 'item-docs-secondhand-market-home-png',
+            kind: 'item',
+            title: 'secondhand-market-home',
+            itemKey: 'docs/secondhand-market-home.png',
+            path: 'secondhand-market-home.png',
+        };
+
+        expect(resolveSidebarTreeItem('docs', node, lookup)).toMatchObject({
+            name: 'secondhand-market-home.png',
+            displayName: 'secondhand-market-home',
+            specUrl: '/api/docs/secondhand-market-home.png',
+            previewUrl: '/api/docs/secondhand-market-home.png',
+            filePath: 'secondhand-market-home.png',
+            absoluteFilePath: 'secondhand-market-home.png',
+        });
+    });
+
+    it('removes deleted docs resource nodes from filesystem and persisted trees', () => {
+        const tree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-assets',
+                kind: 'folder',
+                title: 'assets',
+                path: 'assets',
+                folderPath: 'assets',
+                children: [
+                    {
+                        id: 'item-docs-assets-pasted-image-png',
+                        kind: 'item',
+                        title: 'pasted image',
+                        itemKey: 'docs/assets/pasted-image.png',
+                        path: 'assets/pasted-image.png',
+                    },
+                    {
+                        id: 'item-docs-assets-keep-png',
+                        kind: 'item',
+                        title: 'keep',
+                        itemKey: 'docs/assets/keep.png',
+                        path: 'assets/keep.png',
+                    },
+                ],
+            },
+            {
+                id: 'item-docs-legacy-image',
+                kind: 'item',
+                title: 'legacy image',
+                itemKey: 'docs/legacy-image',
+            },
+            {
+                id: 'item-docs-extensionless-file',
+                kind: 'item',
+                title: 'extensionless file',
+                itemKey: 'docs/extensionless-file',
+                path: 'extensionless-file',
+            },
+        ];
+
+        const withoutPastedImage = removeDocsSidebarTreeItem(tree, 'assets/pasted-image.png');
+        expect(withoutPastedImage).toEqual([
+            {
+                id: 'folder-docs-assets',
+                kind: 'folder',
+                title: 'assets',
+                path: 'assets',
+                folderPath: 'assets',
+                children: [
+                    {
+                        id: 'item-docs-assets-keep-png',
+                        kind: 'item',
+                        title: 'keep',
+                        itemKey: 'docs/assets/keep.png',
+                        path: 'assets/keep.png',
+                    },
+                ],
+            },
+            {
+                id: 'item-docs-legacy-image',
+                kind: 'item',
+                title: 'legacy image',
+                itemKey: 'docs/legacy-image',
+            },
+            {
+                id: 'item-docs-extensionless-file',
+                kind: 'item',
+                title: 'extensionless file',
+                itemKey: 'docs/extensionless-file',
+                path: 'extensionless-file',
+            },
+        ]);
+
+        expect(removeDocsSidebarTreeItem(tree, 'legacy-image.png')).toEqual([
+            {
+                id: 'folder-docs-assets',
+                kind: 'folder',
+                title: 'assets',
+                path: 'assets',
+                folderPath: 'assets',
+                children: [
+                    {
+                        id: 'item-docs-assets-pasted-image-png',
+                        kind: 'item',
+                        title: 'pasted image',
+                        itemKey: 'docs/assets/pasted-image.png',
+                        path: 'assets/pasted-image.png',
+                    },
+                    {
+                        id: 'item-docs-assets-keep-png',
+                        kind: 'item',
+                        title: 'keep',
+                        itemKey: 'docs/assets/keep.png',
+                        path: 'assets/keep.png',
+                    },
+                ],
+            },
+            {
+                id: 'item-docs-extensionless-file',
+                kind: 'item',
+                title: 'extensionless file',
+                itemKey: 'docs/extensionless-file',
+                path: 'extensionless-file',
+            },
+        ]);
+
+        expect(removeDocsSidebarTreeItem(tree, 'extensionless-file.png')).toEqual(tree);
     });
 
     it('does not re-add stale root docs after a filesystem doc moves into a folder', () => {

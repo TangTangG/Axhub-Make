@@ -1,4 +1,11 @@
 import type { AiImageGenerationConfig } from './projectCore/index.ts';
+import {
+  AcpChatRunError,
+  createAcpOneShotThreadId,
+  normalizeAcpChatProvider,
+  runAcpChatCommand,
+  type AcpToolOutputChunk,
+} from './acpChatRunner.ts';
 
 export type AiImageQuality = 'auto' | 'low' | 'medium' | 'high';
 export type AiImageOutputFormat = 'png' | 'jpeg' | 'webp';
@@ -16,9 +23,13 @@ export interface AiImageTaskParams {
 
 export interface AiImageGenerateOptions {
   config: AiImageGenerationConfig;
+  timeoutMs?: number;
+  acpApiBaseUrl: string;
+  workspacePath: string;
   prompt: string;
   params: Partial<AiImageTaskParams>;
   referenceImages?: string[];
+  provider?: unknown;
   fetchImpl?: typeof fetch;
 }
 
@@ -27,32 +38,98 @@ export interface AiImageGenerateResult {
   actualParams?: Partial<AiImageTaskParams>;
   actualParamsList?: Array<Partial<AiImageTaskParams> | undefined>;
   revisedPrompts?: Array<string | undefined>;
+  imageMetadata?: AiImageGeneratedMetadata[];
   rawImageUrls?: string[];
   rawResponsePayload?: string;
 }
 
-interface ImageApiResponse {
-  data?: Array<{
-    b64_json?: string;
-    url?: string;
-    revised_prompt?: string;
-  }>;
+export interface AcpImageRecord {
+  status?: string;
+  prompt?: string;
+  revisedPrompt?: string;
   revised_prompt?: string;
+  images?: unknown;
+  output?: unknown;
+  structuredContent?: unknown;
   [key: string]: unknown;
 }
 
-interface ResponsesApiResponse {
-  output?: Array<{
-    type?: string;
-    result?: unknown;
-    revised_prompt?: string;
-    [key: string]: unknown;
-  }>;
-  [key: string]: unknown;
+export interface NormalizedAcpImage {
+  dataUrl: string;
+  revisedPrompt?: string;
+  rawUrl?: string;
+  metadata?: AiImageGeneratedMetadata;
+}
+
+const DEFAULT_ACP_API_BASE_URL = 'http://localhost:32123/api';
+const DEFAULT_IMAGE_REQUEST_PARAMS: AiImageTaskParams = {
+  size: 'auto',
+  quality: 'auto',
+  output_format: 'png',
+  output_compression: null,
+  moderation: 'auto',
+  n: 1,
+  disable_prompt_optimization: false,
+};
+
+export interface AiImageGeneratedMetadata {
+  url?: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  savedPath?: string;
+  width?: number;
+  height?: number;
+  recordId?: string;
+  requestId?: string;
+  prompt?: string;
+  revisedPrompt?: string;
+}
+
+export function normalizeAiImageRequestParams(
+  input: Partial<AiImageTaskParams> | undefined,
+  defaults: Partial<AiImageTaskParams> = DEFAULT_IMAGE_REQUEST_PARAMS,
+): AiImageTaskParams {
+  const resolvedDefaults = {
+    ...DEFAULT_IMAGE_REQUEST_PARAMS,
+    ...defaults,
+  };
+  const quality = input?.quality === 'auto' || input?.quality === 'low' || input?.quality === 'medium' || input?.quality === 'high'
+    ? input.quality
+    : resolvedDefaults.quality;
+  const outputFormat = input?.output_format === 'png' || input?.output_format === 'jpeg' || input?.output_format === 'webp'
+    ? input.output_format
+    : resolvedDefaults.output_format;
+  const moderation = input?.moderation === 'auto' || input?.moderation === 'low'
+    ? input.moderation
+    : resolvedDefaults.moderation;
+  const n = typeof input?.n === 'number' && Number.isFinite(input.n)
+    ? Math.min(10, Math.max(1, Math.round(input.n)))
+    : resolvedDefaults.n;
+  const outputCompression = input?.output_compression == null
+    ? resolvedDefaults.output_compression
+    : typeof input.output_compression === 'number' && Number.isFinite(input.output_compression)
+      ? Math.min(100, Math.max(0, Math.round(input.output_compression)))
+      : resolvedDefaults.output_compression;
+
+  return {
+    size: typeof input?.size === 'string' && input.size.trim() ? input.size.trim() : resolvedDefaults.size,
+    quality,
+    output_format: outputFormat,
+    output_compression: outputCompression,
+    moderation,
+    n,
+    disable_prompt_optimization: input?.disable_prompt_optimization === true,
+  };
 }
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeActualParams(...sources: Array<Partial<AiImageTaskParams> | undefined>): Partial<AiImageTaskParams> | undefined {
+  const merged = Object.assign({}, ...sources.filter((source) => source && Object.keys(source).length));
+  return Object.keys(merged).length ? merged : undefined;
 }
 
 function pickActualParams(source: unknown): Partial<AiImageTaskParams> | undefined {
@@ -76,129 +153,255 @@ function pickActualParams(source: unknown): Partial<AiImageTaskParams> | undefin
   return Object.keys(actualParams).length ? actualParams : undefined;
 }
 
-function mergeActualParams(...sources: Array<Partial<AiImageTaskParams> | undefined>): Partial<AiImageTaskParams> | undefined {
-  const merged = Object.assign({}, ...sources.filter((source) => source && Object.keys(source).length));
-  return Object.keys(merged).length ? merged : undefined;
+function normalizeAcpApiBaseUrl(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim().replace(/\/+$/u, '') : '';
+  return raw || DEFAULT_ACP_API_BASE_URL;
 }
 
-const MIME_MAP: Record<AiImageOutputFormat, string> = {
-  png: 'image/png',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-};
+function normalizeImageProvider(value: unknown): string {
+  const provider = normalizeAcpChatProvider(value);
+  return provider === 'manual' ? 'codex' : provider;
+}
 
-const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:';
-
-export function normalizeAiImageRequestParams(
-  input: Partial<AiImageTaskParams> | undefined,
-  defaults: AiImageGenerationConfig,
-): AiImageTaskParams {
-  const quality = input?.quality === 'auto' || input?.quality === 'low' || input?.quality === 'medium' || input?.quality === 'high'
-    ? input.quality
-    : defaults.quality;
-  const outputFormat = input?.output_format === 'png' || input?.output_format === 'jpeg' || input?.output_format === 'webp'
-    ? input.output_format
-    : defaults.outputFormat;
-  const moderation = input?.moderation === 'auto' || input?.moderation === 'low'
-    ? input.moderation
-    : defaults.moderation;
-  const n = typeof input?.n === 'number' && Number.isFinite(input.n)
-    ? Math.min(10, Math.max(1, Math.round(input.n)))
-    : defaults.n;
-  const outputCompression = input?.output_compression == null
-    ? defaults.outputCompression
-    : typeof input.output_compression === 'number' && Number.isFinite(input.output_compression)
-      ? Math.min(100, Math.max(0, Math.round(input.output_compression)))
-      : defaults.outputCompression;
-
-  return {
-    size: typeof input?.size === 'string' && input.size.trim() ? input.size.trim() : defaults.size,
-    quality,
-    output_format: outputFormat,
-    output_compression: outputCompression,
-    moderation,
-    n,
-    disable_prompt_optimization: input?.disable_prompt_optimization === true,
+function buildImageBuiltinToolSettings(config: AiImageGenerationConfig): Record<string, unknown> | undefined {
+  const imageGeneration = {
+    ...(typeof config.baseUrl === 'string' && config.baseUrl.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
+    ...(typeof config.apiKey === 'string' && config.apiKey.trim() ? { apiKey: config.apiKey.trim() } : {}),
+    ...(typeof config.model === 'string' && config.model.trim() ? { model: config.model.trim() } : {}),
   };
+  return Object.keys(imageGeneration).length ? { imageGeneration } : undefined;
 }
 
-function buildApiUrl(baseUrl: string, endpointPath: string): string {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/u, '');
-  const normalizedPath = endpointPath.replace(/^\/+/u, '');
-  return normalizedBaseUrl.endsWith('/v1')
-    ? `${normalizedBaseUrl}/${normalizedPath}`
-    : `${normalizedBaseUrl}/v1/${normalizedPath}`;
+export function buildImageGenerationPrompt(params: {
+  prompt: string;
+  requestParams: AiImageTaskParams;
+  referenceImages: string[];
+  savePathPattern?: string;
+}): string {
+  const requestParams = params.requestParams;
+  return [
+    'Generate image assets for Axhub Make.',
+    'Use the generate_image tool and return the generated image metadata.',
+    'Do not call any direct image generation HTTP endpoint.',
+    '',
+    `Prompt: ${params.prompt}`,
+    '',
+    'Requested image parameters:',
+    `- size: ${requestParams.size}`,
+    `- quality: ${requestParams.quality}`,
+    `- output format: ${requestParams.output_format}`,
+    `- moderation: ${requestParams.moderation}`,
+    `- count: ${requestParams.n}`,
+    ...(requestParams.output_compression == null ? [] : [`- output compression: ${requestParams.output_compression}`]),
+    ...(requestParams.disable_prompt_optimization ? ['- preserve the prompt text; do not rewrite it before using the tool'] : []),
+    ...(params.savePathPattern
+      ? [
+          '',
+          'Project asset storage:',
+          `- When calling generate_image, pass savePath using this workspace-relative pattern: ${params.savePathPattern}`,
+          '- Use one generated image file per savePath, and keep files inside the requested project path.',
+        ]
+      : []),
+    ...(params.referenceImages.length
+      ? [
+          '',
+          'Reference images:',
+          ...params.referenceImages.map((image, index) => `- Reference image ${index + 1}: ${image}`),
+          'Use the reference images as visual, layout, and style context.',
+        ]
+      : []),
+  ].join('\n');
 }
 
-function normalizeBase64Image(value: string, fallbackMime: string): string {
-  return value.startsWith('data:') ? value : `data:${fallbackMime};base64,${value}`;
+function getNestedRecord(value: unknown, key: string): Record<string, unknown> | null {
+  if (!isRecordValue(value)) return null;
+  const nested = value[key];
+  return isRecordValue(nested) ? nested : null;
 }
 
-function isHttpUrl(value: unknown): value is string {
-  return typeof value === 'string' && /^https?:\/\//i.test(value);
-}
-
-function isDataUrl(value: unknown): value is string {
-  return typeof value === 'string' && value.startsWith('data:');
-}
-
-async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> {
-  const buffer = Buffer.from(await blob.arrayBuffer());
-  return `data:${blob.type || fallbackMime};base64,${buffer.toString('base64')}`;
-}
-
-async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, fetchImpl: typeof fetch, signal?: AbortSignal): Promise<string> {
-  if (isDataUrl(url)) return url;
-  const response = await fetchImpl(url, { cache: 'no-store', signal });
-  if (!response.ok) {
-    throw new Error(`图片 URL 下载失败：HTTP ${response.status}`);
+function getRecordString(value: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const raw = value[key];
+    if (typeof raw === 'string' && raw.trim()) return raw.trim();
   }
-  return blobToDataUrl(await response.blob(), fallbackMime);
+  return '';
 }
 
-async function getApiErrorMessage(response: Response): Promise<string> {
-  let errorMsg = `HTTP ${response.status}`;
-  try {
-    const errJson = await response.json();
-    if (errJson.error?.message) errorMsg = errJson.error.message;
-    else if (typeof errJson.detail === 'string') errorMsg = errJson.detail;
-    else if (Array.isArray(errJson.detail)) errorMsg = errJson.detail.map((item: unknown) => typeof item === 'string' ? item : JSON.stringify(item)).join('\n');
-    else if (typeof errJson.error === 'string') errorMsg = errJson.error;
-    else if (errJson.message) errorMsg = errJson.message;
-  } catch {
-    try {
-      errorMsg = await response.text();
-    } catch {
-      // Keep HTTP fallback.
+function getRecordNumber(value: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const raw = value[key];
+    const numberValue = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN;
+    if (Number.isFinite(numberValue)) return numberValue;
+  }
+  return undefined;
+}
+
+export function collectImageRecordsFromValue(value: unknown, output: AcpImageRecord[]): void {
+  if (!value) return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectImageRecordsFromValue(item, output));
+    return;
+  }
+  if (!isRecordValue(value)) return;
+
+  const record = value as AcpImageRecord;
+  if (Array.isArray(record.images)) {
+    output.push(record);
+  }
+
+  collectImageRecordsFromValue(record.structuredContent, output);
+  collectImageRecordsFromValue(record.output, output);
+  collectImageRecordsFromValue(record.content, output);
+  collectImageRecordsFromValue(record.result, output);
+  collectImageRecordsFromValue(record.records, output);
+}
+
+export function collectImageRecords(toolOutputs: AcpToolOutputChunk[]): AcpImageRecord[] {
+  const records: AcpImageRecord[] = [];
+  for (const toolOutput of toolOutputs) {
+    if (toolOutput.toolName && toolOutput.toolName !== 'generate_image' && toolOutput.toolName !== 'image-generation') {
+      continue;
     }
+    collectImageRecordsFromValue(toolOutput.output, records);
+    collectImageRecordsFromValue(getNestedRecord(toolOutput.chunk, 'structuredContent'), records);
   }
-  return errorMsg;
+  return records;
 }
 
-function createAbortController(timeoutSeconds: number) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
-  return { controller, timeoutId };
+function isRemoteHttpImageUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
-function getRawErrorPayload(err: unknown): Pick<Partial<AiImageGenerateResult>, 'rawImageUrls'> & { rawResponsePayload?: string } {
-  const anyErr = err as any;
+function normalizeImageMimeType(value: string | undefined, fallback = 'image/png'): string {
+  const fallbackMimeType = fallback.trim().split(';', 1)[0].toLowerCase();
+  const safeFallback = fallbackMimeType.startsWith('image/') ? fallbackMimeType : 'image/png';
+  const mimeType = (value || '').trim().split(';', 1)[0].toLowerCase();
+  return mimeType.startsWith('image/') ? mimeType : safeFallback;
+}
+
+function isImageMimeType(value: string): boolean {
+  return value.trim().split(';', 1)[0].toLowerCase().startsWith('image/');
+}
+
+async function fetchRemoteImageAsDataUrl(params: {
+  url: string;
+  fetchImpl: typeof fetch;
+  fallbackMimeType?: string;
+}): Promise<string> {
+  const response = await params.fetchImpl(params.url, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`ACP image URL 下载失败：${response.status}`);
+  }
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.trim() && !isImageMimeType(contentType)) {
+    throw new Error('ACP image URL 没有返回图片内容。');
+  }
+  const mimeType = normalizeImageMimeType(contentType, params.fallbackMimeType || 'image/png');
+  return `data:${mimeType};base64,${Buffer.from(await response.arrayBuffer()).toString('base64')}`;
+}
+
+async function getImageDataUrl(image: Record<string, unknown>, fetchImpl: typeof fetch): Promise<string> {
+  const url = getRecordString(image, ['url', 'dataUrl', 'dataURL']);
+  if (url.startsWith('data:image/')) return url;
+  const base64 = getRecordString(image, ['b64_json', 'base64', 'data']);
+  const mimeType = getRecordString(image, ['mimeType', 'mime_type']) || 'image/png';
+  if (base64) return `data:${mimeType};base64,${base64}`;
+  if (isRemoteHttpImageUrl(url)) {
+    return fetchRemoteImageAsDataUrl({ url, fetchImpl, fallbackMimeType: mimeType });
+  }
+  return '';
+}
+
+function normalizeImageMetadata(params: {
+  image: Record<string, unknown>;
+  record: AcpImageRecord;
+  dataUrl: string;
+  revisedPrompt?: string;
+}): AiImageGeneratedMetadata | undefined {
+  const recordValue = params.record as Record<string, unknown>;
+  const url = getRecordString(params.image, ['url', 'dataUrl', 'dataURL']) || params.dataUrl;
+  const metadata: AiImageGeneratedMetadata = {
+    ...(url ? { url } : {}),
+    ...(getRecordString(params.image, ['fileName', 'file_name', 'filename']) ? { fileName: getRecordString(params.image, ['fileName', 'file_name', 'filename']) } : {}),
+    ...(getRecordString(params.image, ['mimeType', 'mime_type']) ? { mimeType: getRecordString(params.image, ['mimeType', 'mime_type']) } : {}),
+    ...(getRecordNumber(params.image, ['sizeBytes', 'size_bytes']) != null ? { sizeBytes: getRecordNumber(params.image, ['sizeBytes', 'size_bytes']) } : {}),
+    ...(getRecordString(params.image, ['savedPath', 'saved_path', 'path']) ? { savedPath: getRecordString(params.image, ['savedPath', 'saved_path', 'path']) } : {}),
+    ...(getRecordNumber(params.image, ['width']) != null ? { width: getRecordNumber(params.image, ['width']) } : {}),
+    ...(getRecordNumber(params.image, ['height']) != null ? { height: getRecordNumber(params.image, ['height']) } : {}),
+    ...(getRecordString(recordValue, ['recordId', 'record_id', 'id']) ? { recordId: getRecordString(recordValue, ['recordId', 'record_id', 'id']) } : {}),
+    ...(getRecordString(recordValue, ['requestId', 'request_id']) ? { requestId: getRecordString(recordValue, ['requestId', 'request_id']) } : {}),
+    ...(getRecordString(recordValue, ['prompt']) ? { prompt: getRecordString(recordValue, ['prompt']) } : {}),
+    ...(params.revisedPrompt ? { revisedPrompt: params.revisedPrompt } : {}),
+  };
+  return Object.keys(metadata).length ? metadata : undefined;
+}
+
+export async function normalizeAcpImageRecord(record: AcpImageRecord, fallbackActualParams: Partial<AiImageTaskParams>, fetchImpl: typeof fetch): Promise<{
+  images: NormalizedAcpImage[];
+  actualParams?: Partial<AiImageTaskParams>;
+}> {
+  const status = typeof record.status === 'string' ? record.status.trim().toLowerCase() : '';
+  if (status && !['succeeded', 'completed', 'success', 'done'].includes(status)) {
+    throw new Error(`图片生成失败：${record.status}`);
+  }
+  const revisedPrompt = getRecordString(record, ['revisedPrompt', 'revised_prompt']);
+  const images: NormalizedAcpImage[] = [];
+  for (const image of Array.isArray(record.images) ? record.images.filter(isRecordValue) : []) {
+    const dataUrl = await getImageDataUrl(image, fetchImpl);
+    if (!dataUrl) continue;
+    const imageRevisedPrompt = getRecordString(image, ['revisedPrompt', 'revised_prompt']) || revisedPrompt;
+    const rawUrl = getRecordString(image, ['url', 'dataUrl', 'dataURL']);
+    const metadata = normalizeImageMetadata({ image, record, dataUrl, revisedPrompt: imageRevisedPrompt });
+    images.push({
+      dataUrl,
+      ...(imageRevisedPrompt
+        ? { revisedPrompt: imageRevisedPrompt }
+        : {}),
+      ...(rawUrl ? { rawUrl } : {}),
+      ...(metadata ? { metadata } : {}),
+    });
+  }
   return {
-    ...(Array.isArray(anyErr?.rawImageUrls) ? { rawImageUrls: anyErr.rawImageUrls } : {}),
-    ...(typeof anyErr?.rawResponsePayload === 'string' ? { rawResponsePayload: anyErr.rawResponsePayload } : {}),
+    images,
+    actualParams: mergeActualParams(fallbackActualParams, pickActualParams(record)),
   };
 }
 
-function createPersistableRawResponsePayload(payload: unknown): string {
+export async function fetchImageRecordsFallback(params: {
+  acpApiBaseUrl: string;
+  workspacePath: string;
+  threadId: string;
+  fetchImpl: typeof fetch;
+}): Promise<AcpImageRecord[]> {
+  const baseUrl = normalizeAcpApiBaseUrl(params.acpApiBaseUrl);
+  const url = new URL(`${baseUrl}/tools/image-generation/records`);
+  url.searchParams.set('workspacePath', params.workspacePath);
+  url.searchParams.set('threadId', params.threadId);
+  const response = await params.fetchImpl(url.toString(), { cache: 'no-store' });
+  if (!response.ok) return [];
+  const body = await response.json().catch(() => null);
+  const records: AcpImageRecord[] = [];
+  collectImageRecordsFromValue(body, records);
+  return records;
+}
+
+export function createPersistableRawResponsePayload(payload: unknown): string {
   return JSON.stringify(payload, (key, value) => {
+    if (typeof value !== 'string') return value;
+    if (value.startsWith('data:image/')) {
+      return '<image_data_url>';
+    }
     if (
-      typeof value === 'string'
-      && (
-        key === 'b64_json'
-        || key === 'base64'
-        || key === 'result'
-        || (value.length > 96 && /^[A-Za-z0-9+/]+={0,2}$/u.test(value))
-      )
+      key === 'b64_json'
+      || key === 'base64'
+      || key === 'data'
+      || key === 'result'
+      || (value.length > 96 && /^[A-Za-z0-9+/]+={0,2}$/u.test(value))
     ) {
       return '<base64_data>';
     }
@@ -206,283 +409,39 @@ function createPersistableRawResponsePayload(payload: unknown): string {
   }, 2);
 }
 
-function mergeRawResponsePayloads(results: AiImageGenerateResult[]): string | undefined {
-  const payloads = results
-    .map((result) => result.rawResponsePayload)
-    .filter((payload): payload is string => Boolean(payload));
-  if (!payloads.length) return undefined;
-  if (payloads.length === 1) return payloads[0];
+async function createResultFromRecords(params: {
+  records: AcpImageRecord[];
+  requestParams: AiImageTaskParams;
+  rawPayload: unknown;
+  fetchImpl: typeof fetch;
+}): Promise<AiImageGenerateResult> {
+  const normalizedRecords = (await Promise.all(params.records.map((record) => (
+    normalizeAcpImageRecord(record, params.requestParams, params.fetchImpl)
+  )))).filter((record) => record.images.length);
+  const images = normalizedRecords.flatMap((record) => record.images);
 
-  return JSON.stringify(payloads.map((payload, index) => {
-    try {
-      return {
-        requestIndex: index,
-        response: JSON.parse(payload),
-      };
-    } catch {
-      return {
-        requestIndex: index,
-        response: payload,
-      };
-    }
-  }), null, 2);
-}
-
-async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, fetchImpl: typeof fetch, signal?: AbortSignal): Promise<AiImageGenerateResult> {
-  const data = payload.data;
-  if (!Array.isArray(data) || !data.length) {
-    const err = new Error('接口没有返回图片数据，请查看原始响应内容确认服务商实际返回的数据结构。');
-    (err as any).rawResponsePayload = JSON.stringify(payload, null, 2);
-    throw err;
-  }
-
-  const images: string[] = [];
-  const revisedPrompts: Array<string | undefined> = [];
-  const rawImageUrls = data.map((item) => item.url).filter(isHttpUrl);
-  try {
-    for (const item of data) {
-      if (item.b64_json) {
-        images.push(normalizeBase64Image(item.b64_json, mime));
-        revisedPrompts.push(typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined);
-        continue;
-      }
-      if (isHttpUrl(item.url) || isDataUrl(item.url)) {
-        images.push(await fetchImageUrlAsDataUrl(item.url, mime, fetchImpl, signal));
-        revisedPrompts.push(typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined);
-      }
-    }
-  } catch (error) {
-    if (rawImageUrls.length && error instanceof Error) {
-      (error as any).rawImageUrls = rawImageUrls;
-    }
+  if (!images.length) {
+    const error = new Error('ACP image tool 没有返回可识别的图片数据。');
+    (error as any).rawResponsePayload = createPersistableRawResponsePayload(params.rawPayload);
     throw error;
   }
 
-  if (!images.length) {
-    const err = new Error('接口没有返回可识别的图片数据，请查看原始响应内容确认服务商实际返回的数据结构。');
-    (err as any).rawResponsePayload = JSON.stringify(payload, null, 2);
-    throw err;
-  }
-
-  const actualParams = mergeActualParams(pickActualParams(payload));
-  return {
-    images,
-    revisedPrompts,
-    actualParams,
-    actualParamsList: images.map(() => actualParams),
-    ...(rawImageUrls.length ? { rawImageUrls } : {}),
-    rawResponsePayload: createPersistableRawResponsePayload(payload),
-  };
-}
-
-function getResponsesImageResultBase64(result: unknown): string | undefined {
-  const b64 = typeof result === 'string'
-    ? result
-    : isRecordValue(result)
-      ? typeof result.b64_json === 'string'
-        ? result.b64_json
-        : typeof result.base64 === 'string'
-          ? result.base64
-          : typeof result.image === 'string'
-            ? result.image
-            : typeof result.data === 'string'
-              ? result.data
-              : ''
-      : '';
-
-  return b64.trim() ? b64 : undefined;
-}
-
-function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime: string): AiImageGenerateResult {
-  const output = payload.output;
-  if (!Array.isArray(output) || !output.length) {
-    const err = new Error('接口未返回图片数据');
-    (err as any).rawResponsePayload = JSON.stringify(payload, null, 2);
-    throw err;
-  }
-
-  const images: string[] = [];
-  const revisedPrompts: Array<string | undefined> = [];
-  const actualParamsList: Array<Partial<AiImageTaskParams> | undefined> = [];
-  for (const item of output) {
-    if (item?.type !== 'image_generation_call') continue;
-    const b64 = getResponsesImageResultBase64(item.result);
-    if (b64) {
-      images.push(normalizeBase64Image(b64, fallbackMime));
-      revisedPrompts.push(typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined);
-      actualParamsList.push(mergeActualParams(pickActualParams(item)));
-    }
-  }
-
-  if (!images.length) {
-    const err = new Error('接口没有返回可识别的图片数据，请查看原始响应内容确认服务商实际返回的数据结构。');
-    (err as any).rawResponsePayload = JSON.stringify(payload, null, 2);
-    throw err;
-  }
-
-  const actualParams = mergeActualParams(actualParamsList[0]);
-  return {
-    images,
-    revisedPrompts,
-    actualParams,
-    actualParamsList,
-    rawResponsePayload: createPersistableRawResponsePayload(payload),
-  };
-}
-
-async function callImagesApiSingle(options: AiImageGenerateOptions, params: AiImageTaskParams, fetchImpl: typeof fetch): Promise<AiImageGenerateResult> {
-  const { config } = options;
-  const mime = MIME_MAP[params.output_format] || 'image/png';
-  const { controller, timeoutId } = createAbortController(config.timeout);
-  try {
-    const prompt = params.disable_prompt_optimization
-      ? `${PROMPT_REWRITE_GUARD_PREFIX}\n${options.prompt}`
-      : options.prompt;
-    const body: Record<string, unknown> = {
-      model: config.model,
-      prompt,
-      size: params.size,
-      output_format: params.output_format,
-      moderation: params.moderation,
-    };
-    if (!config.codexCli) {
-      body.quality = params.quality;
-    }
-    if (params.output_format !== 'png' && params.output_compression != null) {
-      body.output_compression = params.output_compression;
-    }
-    if (params.n > 1) {
-      body.n = params.n;
-    }
-    if (config.responseFormatB64Json) {
-      body.response_format = 'b64_json';
-    }
-    if (options.referenceImages?.length) {
-      body.reference_images = options.referenceImages;
-    }
-
-    const response = await fetchImpl(buildApiUrl(config.baseUrl, 'images/generations'), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      cache: 'no-store',
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(await getApiErrorMessage(response));
-    }
-    const result = await parseImagesApiResponse(await response.json() as ImageApiResponse, mime, fetchImpl, controller.signal);
-    return {
-      ...result,
-      actualParams: mergeActualParams(result.actualParams, { n: result.images.length }),
-    };
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-async function callImagesApiConcurrent(options: AiImageGenerateOptions, params: AiImageTaskParams, fetchImpl: typeof fetch): Promise<AiImageGenerateResult> {
-  const results = await Promise.allSettled(
-    Array.from({ length: params.n }).map(() => callImagesApiSingle(options, { ...params, quality: 'auto', n: 1 }, fetchImpl)),
-  );
-  const successfulResults = results
-    .filter((result): result is PromiseFulfilledResult<AiImageGenerateResult> => result.status === 'fulfilled')
-    .map((result) => result.value);
-
-  if (!successfulResults.length) {
-    const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-    if (firstError) throw firstError.reason;
-    throw new Error('所有并发请求均失败');
-  }
-
-  const images = successfulResults.flatMap((result) => result.images);
-  const actualParamsList = successfulResults.flatMap((result) => (
-    result.actualParamsList?.length
-      ? result.actualParamsList
-      : result.images.map(() => result.actualParams)
+  const actualParamsList = normalizedRecords.flatMap((record) => (
+    record.images.map(() => record.actualParams)
   ));
-  const revisedPrompts = successfulResults.flatMap((result) => (
-    result.revisedPrompts?.length
-      ? result.revisedPrompts
-      : result.images.map(() => undefined)
-  ));
-  const rawImageUrls = successfulResults.flatMap((result) => result.rawImageUrls ?? []);
-  const rawResponsePayload = mergeRawResponsePayloads(successfulResults);
-
+  const revisedPrompts = images.map((image) => image.revisedPrompt);
+  const hasImageMetadata = images.some((image) => Boolean(image.metadata));
+  const imageMetadata = hasImageMetadata ? images.map((image) => image.metadata || {}) : [];
+  const rawImageUrls = images.map((image) => image.rawUrl).filter((url): url is string => Boolean(url));
   return {
-    images,
-    actualParams: mergeActualParams(successfulResults[0]?.actualParams, { n: images.length }),
+    images: images.map((image) => image.dataUrl),
+    actualParams: mergeActualParams(params.requestParams, { n: images.length }),
     actualParamsList,
     revisedPrompts,
+    ...(imageMetadata.length ? { imageMetadata } : {}),
     ...(rawImageUrls.length ? { rawImageUrls } : {}),
-    ...(rawResponsePayload ? { rawResponsePayload } : {}),
+    rawResponsePayload: createPersistableRawResponsePayload(params.rawPayload),
   };
-}
-
-async function callImagesApi(options: AiImageGenerateOptions, params: AiImageTaskParams, fetchImpl: typeof fetch): Promise<AiImageGenerateResult> {
-  if (options.config.codexCli && params.n > 1) {
-    return callImagesApiConcurrent(options, params, fetchImpl);
-  }
-
-  return callImagesApiSingle(options, params, fetchImpl);
-}
-
-async function callResponsesApi(options: AiImageGenerateOptions, params: AiImageTaskParams, fetchImpl: typeof fetch): Promise<AiImageGenerateResult> {
-  const { config } = options;
-  const mime = MIME_MAP[params.output_format] || 'image/png';
-  const { controller, timeoutId } = createAbortController(config.timeout);
-  try {
-    const tool: Record<string, unknown> = {
-      type: 'image_generation',
-      action: 'generate',
-      size: params.size,
-      output_format: params.output_format,
-    };
-    if (!config.codexCli) {
-      tool.quality = params.quality;
-    }
-    if (params.output_format !== 'png' && params.output_compression != null) {
-      tool.output_compression = params.output_compression;
-    }
-    const input = options.referenceImages?.length
-      ? [{
-        role: 'user',
-        content: [
-          { type: 'input_text', text: params.disable_prompt_optimization ? `${PROMPT_REWRITE_GUARD_PREFIX}\n${options.prompt}` : options.prompt },
-          ...options.referenceImages.map((imageUrl) => ({ type: 'input_image', image_url: imageUrl })),
-        ],
-      }]
-      : params.disable_prompt_optimization
-        ? `${PROMPT_REWRITE_GUARD_PREFIX}\n${options.prompt}`
-        : options.prompt;
-    const response = await fetchImpl(buildApiUrl(config.baseUrl, 'responses'), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      cache: 'no-store',
-      body: JSON.stringify({
-        model: config.model,
-        input,
-        tools: [tool],
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(await getApiErrorMessage(response));
-    }
-    const result = parseResponsesImageResults(await response.json() as ResponsesApiResponse, mime);
-    return {
-      ...result,
-      actualParams: mergeActualParams(result.actualParams, { n: result.images.length }),
-    };
-  } finally {
-    clearTimeout(timeoutId);
-  }
 }
 
 export async function generateAiImages(options: AiImageGenerateOptions): Promise<AiImageGenerateResult> {
@@ -490,21 +449,50 @@ export async function generateAiImages(options: AiImageGenerateOptions): Promise
   if (!prompt) {
     throw new Error('请输入提示词');
   }
-  if (!options.config.apiKey) {
-    throw new Error('请先在 AI 设置中配置 API Key');
-  }
 
-  const params = normalizeAiImageRequestParams(options.params, options.config);
+  const requestParams = normalizeAiImageRequestParams(options.params);
   const referenceImages = Array.isArray(options.referenceImages)
-    ? options.referenceImages.filter((image): image is string => typeof image === 'string' && image.startsWith('data:image/'))
+    ? options.referenceImages.filter((image): image is string => typeof image === 'string' && image.trim().length > 0)
     : [];
   const fetchImpl = options.fetchImpl ?? fetch;
+  const threadId = createAcpOneShotThreadId('image');
+
   try {
-    return options.config.apiMode === 'responses'
-      ? callResponsesApi({ ...options, prompt, referenceImages }, params, fetchImpl)
-      : callImagesApi({ ...options, prompt, referenceImages }, params, fetchImpl);
+    const result = await runAcpChatCommand({
+      acpApiBaseUrl: normalizeAcpApiBaseUrl(options.acpApiBaseUrl),
+      id: threadId,
+      threadId,
+      provider: normalizeImageProvider(options.provider),
+      workspacePath: options.workspacePath,
+      prompt: buildImageGenerationPrompt({ prompt, requestParams, referenceImages }),
+      builtinTools: ['image-generation'],
+      builtinToolSettings: buildImageBuiltinToolSettings(options.config),
+    }, {
+      fetchImpl,
+      timeoutMs: options.timeoutMs,
+    });
+
+    const streamRecords = collectImageRecords(result.toolOutputs);
+    const records = streamRecords.length
+      ? streamRecords
+      : await fetchImageRecordsFallback({
+          acpApiBaseUrl: options.acpApiBaseUrl,
+          workspacePath: options.workspacePath,
+          threadId: result.threadId,
+          fetchImpl,
+        });
+    return createResultFromRecords({
+      records,
+      requestParams,
+      rawPayload: streamRecords.length ? result.toolOutputs.map((toolOutput) => toolOutput.output) : records,
+      fetchImpl,
+    });
   } catch (error) {
-    Object.assign(error as object, getRawErrorPayload(error));
+    if (error instanceof AcpChatRunError) {
+      throw Object.assign(new Error(error.message || 'ACP image chat run failed'), {
+        rawResponsePayload: error.result ? createPersistableRawResponsePayload(error.result.toolOutputs) : undefined,
+      });
+    }
     throw error;
   }
 }

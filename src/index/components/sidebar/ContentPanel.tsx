@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { QRCode } from 'antd';
 import {
     ArrowLeft,
-    Code2,
+    Bot,
     HardDrive,
     Home,
     FolderPlus,
@@ -35,11 +35,11 @@ import {
     Wand2,
     Loader2,
     LayoutGrid,
+    PanelsTopLeft,
     Square,
     RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { GenieProvider } from '@/common/genie/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -66,15 +66,18 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { SidebarTab } from './IconNavigation';
 import { ItemData, SidebarTreeNode, SidebarTreeTab, ViewMode } from '../../types';
-import type { SelectedResourceFolder } from '../../types/index-page.types';
-import { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
+import type { SelectedResourceFolder, UploadedResourceFile } from '../../types/index-page.types';
+import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
+import type { GenieProvider } from '@/common/genie/types';
 import type { ThemeResourceItem } from '../../domains/resources/resource.types';
 import OpenInDropdown from './OpenInDropdown';
 import type { ProjectListItem, ResourceWriteCapabilities } from '../../services/projectResources';
 import { hasExplicitLocalPath } from '../../utils/localPath';
 import { buildResourceDeepLinkUrl } from '../../app/index-page/resourceDeepLink';
 import { CANVAS_DROP_MIME } from '../content/canvasDropTypes';
+import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';
+import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';
 import { createSidebarTreeItemLookup, resolveSidebarTreeItem } from '../../utils/sidebarTree';
 import { sidebarApi } from '../../services/sidebar.api';
 import { buildItemUrl, buildLANItemUrl } from '../../utils/url';
@@ -119,15 +122,14 @@ interface ContentPanelProps {
     onCreateFile: () => void;
     onImportPrototype: () => void;
     onImportTheme: () => void;
-    onUploadedResourceFiles?: () => void;
+    onUploadedResourceFiles?: (files: UploadedResourceFile[]) => void | Promise<void>;
     onCreateCanvasFile: () => void;
-    onCreatePrototypeFromDoc: (doc: ItemData) => void;
     onGenerateThemeFromPrototype?: (item: ItemData) => void;
     handleDownloadItemSource: (item: ItemData) => void | Promise<void>;
     handleDownloadThemeZip: (item: ThemeResourceItem) => void | Promise<void>;
     onCreateFolder: (tab: SidebarTreeTab) => Promise<{ createdFolderId: string } | null>;
     loading: boolean;
-    handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
+    handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
     preferredIDE: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
@@ -136,7 +138,7 @@ interface ContentPanelProps {
     webAgentPanelOpen?: boolean;
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
-    onRefreshAvailability?: () => void;
+    onOpenAISettings?: () => void;
     isDarkMode: boolean;
     handleRenameItem: (item: ItemData, nextName: string) => void | Promise<void>;
     handleDuplicateItem: (item: ItemData) => void;
@@ -169,6 +171,28 @@ const MAKE_CLIENT_SETUP_FAILED_DESCRIPTION = '可以复制给 AI 处理';
 const MAKE_STATE_DIR_NOT_WRITABLE = 'MAKE_STATE_DIR_NOT_WRITABLE';
 const DEFAULT_MAKE_CLIENT_PROJECT_NAME = '新建 Make 项目';
 const MAKE_CLIENT_LAST_PARENT_ROOT_STORAGE_KEY = 'axhub.make.lastProjectParentRoot';
+
+function buildMakeClientAiCreatePrompt(params: {
+    primaryTemplateDownloadUrl: string;
+    mirrorTemplateDownloadUrl: string;
+}): string {
+    return [
+        '请帮我新建一个 Axhub Make 客户端项目。',
+        '',
+        '1. 先和我确认项目目录。可以使用当前目录、我指定的目录，或你根据当前 workspace 推荐的目录；确认前不要下载、解压、安装依赖或写文件。',
+        '2. 目录确认后，下载客户端模板包；主链接不可用时再用备用链接。',
+        `   - 主链接：${params.primaryTemplateDownloadUrl}`,
+        `   - 备用链接：${params.mirrorTemplateDownloadUrl}`,
+        '3. 将压缩包解压到确认的项目目录，使用目录名作为 project.id。项目名称可以问我；如果我不指定，则 project.name 留空。',
+        '4. 在项目目录内自动创建并写入 .axhub/make/client.json，不要要求我再手动选择或导入目录。文件内容包含 schemaVersion: 1、kind: "axhub-make-client"、repository、templateUrl、project.id、project.name。',
+        '5. templateUrl 写实际下载成功的链接；repository 按实际来源填写：如果使用主链接，写 https://github.com/lintendo/Axhub-Make/tree/main/client；如果使用备用链接，写 https://gitee.com/axhub/Axhub-Make/tree/main/client。',
+        '6. 在项目目录安装依赖并同步清单：优先执行 npm install --include=dev，再执行 npm run metadata:sync。',
+        '7. 请按当前系统选择命令写法，兼容 macOS、Windows 和 Linux；遇到 Node、npm、网络、权限、路径或压缩包问题时先尝试修复再继续，无法修复时说明原因和已完成步骤。',
+        '8. 完成后告诉我项目目录、实际使用的模板下载链接、.axhub/make/client.json 已写入，以及依赖安装和 metadata:sync 是否成功。',
+        '',
+        '不要让我再回到 Axhub Make 选择“已有项目”手动导入该目录；你已经负责把客户端项目写入到可识别的项目目录中。',
+    ].join('\n');
+}
 
 function stringifyDiagnostic(value: unknown): string {
     try {
@@ -354,6 +378,93 @@ function isSidebarTreeDragEvent(event: React.DragEvent<HTMLElement>): boolean {
     return Array.from(event.dataTransfer?.types || []).includes(SIDEBAR_TREE_DRAG_MIME);
 }
 
+function getImageExtensionFromMime(mimeType: string): string {
+    const normalized = String(mimeType || '').toLowerCase();
+    if (normalized === 'image/jpeg' || normalized === 'image/jpg') return '.jpg';
+    if (normalized === 'image/webp') return '.webp';
+    if (normalized === 'image/gif') return '.gif';
+    return '.png';
+}
+
+function formatPastedImageTimestamp(date: Date): string {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return [
+        date.getFullYear(),
+        pad(date.getMonth() + 1),
+        pad(date.getDate()),
+        '-',
+        pad(date.getHours()),
+        pad(date.getMinutes()),
+        pad(date.getSeconds()),
+    ].join('');
+}
+
+function getPastedImageFileName(blob: Blob): string {
+    const extension = getImageExtensionFromMime(blob.type);
+    const originalName = blob instanceof globalThis.File ? String(blob.name || '').trim() : '';
+    const baseName = originalName.replace(/\.[^./\\]+$/u, '').trim();
+    if (baseName) {
+        return `${baseName}${extension}`;
+    }
+    const timestamp = formatPastedImageTimestamp(new Date());
+    return `${timestamp}${extension}`;
+}
+
+function createPastedImageFile(blob: Blob): File {
+    return new globalThis.File([blob], getPastedImageFileName(blob), {
+        type: blob.type || 'image/png',
+    });
+}
+
+function getClipboardImageFiles(event: ClipboardEvent): File[] {
+    const clipboardData = event.clipboardData;
+    if (!clipboardData) return [];
+
+    const itemFiles = Array.from(clipboardData.items || [])
+        .filter((item) => String(item.type || '').startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => Boolean(file))
+        .map((file) => createPastedImageFile(file));
+    if (itemFiles.length > 0) {
+        return itemFiles;
+    }
+
+    return Array.from(clipboardData.files || [])
+        .filter((file) => String(file.type || '').startsWith('image/'))
+        .map((file) => createPastedImageFile(file));
+}
+
+function isDocumentPasteBlockedTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) {
+        return false;
+    }
+    const element = target as Element;
+    if (element.closest('input, textarea, [contenteditable="true"], [role="textbox"], button, [data-document-paste-ignore]')) {
+        return true;
+    }
+    const roleButton = element.closest('[role="button"]');
+    return Boolean(roleButton && !roleButton.hasAttribute('data-document-paste-surface'));
+}
+
+function isDocumentPasteUploadActive(documentPanelRoot: HTMLElement, pasteArmed: boolean): boolean {
+    return pasteArmed || documentPanelRoot.contains(document.activeElement);
+}
+
+function shouldUseDocumentRootPasteTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) {
+        return true;
+    }
+    return !Boolean(target.closest([
+        'input',
+        'textarea',
+        '[contenteditable="true"]',
+        '[role="textbox"]',
+        'button',
+        '[data-document-paste-ignore]',
+        '[data-document-paste-surface]',
+    ].join(', ')));
+}
+
 function stopProjectSetupLinkPropagation(event: React.SyntheticEvent) {
     event.stopPropagation();
 }
@@ -385,6 +496,7 @@ interface SidebarRowProps {
     onDragOver?: (event: React.DragEvent<HTMLDivElement>) => void;
     onDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
     onDragEnd?: (event: React.DragEvent<HTMLDivElement>) => void;
+    onFocus?: (event: React.FocusEvent<HTMLDivElement>) => void;
 }
 
 function SidebarRow({
@@ -414,11 +526,13 @@ function SidebarRow({
     onDragOver,
     onDrop,
     onDragEnd,
+    onFocus,
 }: SidebarRowProps) {
     return (
         <div className="relative">
             <div
                 role="button"
+                data-document-paste-surface
                 tabIndex={0}
                 className={cn(
                     'menu-item-wrapper group relative flex min-w-0 w-full max-w-full items-center gap-1.5 overflow-hidden rounded-md py-1 pr-2 text-left text-[12px] leading-4 transition-colors',
@@ -441,6 +555,7 @@ function SidebarRow({
                 onDragOver={onDragOver}
                 onDrop={onDrop}
                 onDragEnd={onDragEnd}
+                onFocus={onFocus}
             >
                 {icon ? <div className="shrink-0 text-muted-foreground/80">{icon}</div> : null}
 
@@ -494,6 +609,27 @@ function collectFolderIds(nodes: SidebarTreeNode[]): string[] {
     };
     walk(nodes);
     return ids;
+}
+
+function findFolderIdByPath(nodes: SidebarTreeNode[], folderPath: string): string | null {
+    const normalizedPath = String(folderPath || '').trim();
+    if (!normalizedPath) {
+        return null;
+    }
+    for (const node of nodes) {
+        if (node.kind !== 'folder') {
+            continue;
+        }
+        const nodePath = String(node.folderPath || node.path || '').trim();
+        if (nodePath === normalizedPath) {
+            return node.id;
+        }
+        const childMatch = findFolderIdByPath(node.children || [], normalizedPath);
+        if (childMatch) {
+            return childMatch;
+        }
+    }
+    return null;
 }
 
 function removeNodeById(nodes: SidebarTreeNode[], nodeId: string): SidebarTreeNode | null {
@@ -747,7 +883,7 @@ function buildPrototypePageCanvasPayload(item: ItemData, page: { id: string; tit
         name: item.name,
         displayName: resolvePrototypePageEmbedDisplayName(item, page.title),
         previewKind: 'web',
-        embedViewMode: 'link',
+        embedViewMode: 'preview',
         previewUrl: buildPrototypePagePreviewUrl(item, page.id),
         openUrl: buildResourceDeepLinkUrl({
             resourceType: 'prototype',
@@ -1036,6 +1172,18 @@ function ProjectSetupDialog({
     const primaryTemplateDownloadUrl = makeClientTemplatePrimaryDownloadUrl();
     const mirrorTemplateDownloadUrl = makeClientTemplateMirrorDownloadUrl();
 
+    const handleCopyAiCreatePrompt = async () => {
+        try {
+            await copyToClipboard(buildMakeClientAiCreatePrompt({
+                primaryTemplateDownloadUrl,
+                mirrorTemplateDownloadUrl,
+            }));
+            toast.success('已复制 AI 新建提示词');
+        } catch (error: any) {
+            toast.error(error?.message || '复制失败');
+        }
+    };
+
     const handleSelectExisting = async (selectedPath: string) => {
         try {
             setFailedPhase('');
@@ -1203,6 +1351,18 @@ function ProjectSetupDialog({
                                 <span className="flex min-w-0 flex-1 flex-col gap-1">
                                     <span className="text-[13px] font-medium">快速新建项目</span>
                                     <span className="text-[12px] leading-5 text-muted-foreground">从空白一键创建项目，系统会自动准备好基础项目，新手优先使用，不需要自己下载。</span>
+                                </span>
+                            </button>
+                            <button
+                                type="button"
+                                className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 px-3 py-3 text-left transition-colors hover:bg-muted/70 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none disabled:opacity-50"
+                                onClick={() => void handleCopyAiCreatePrompt()}
+                                disabled={busy}
+                            >
+                                <Bot className="h-4 w-4 shrink-0 text-primary" />
+                                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                                    <span className="text-[13px] font-medium">AI 新建</span>
+                                    <span className="text-[12px] leading-5 text-muted-foreground">复制一段精简提示词，让 AI 先确认目录，再下载客户端、安装依赖并写入配置。</span>
                                 </span>
                             </button>
                             <div
@@ -1398,7 +1558,6 @@ export default function ContentPanel({
     onImportTheme,
     onUploadedResourceFiles,
     onCreateCanvasFile,
-    onCreatePrototypeFromDoc,
     onGenerateThemeFromPrototype,
     handleDownloadItemSource,
     handleDownloadThemeZip,
@@ -1413,7 +1572,7 @@ export default function ContentPanel({
     webAgentPanelOpen,
     onCloseWebAgentPanel,
     onPreferredIDEChange,
-    onRefreshAvailability,
+    onOpenAISettings,
     isDarkMode,
     handleRenameItem,
     handleDuplicateItem,
@@ -1461,14 +1620,58 @@ export default function ContentPanel({
     const [makeVersion, setMakeVersion] = useState<string | null>(null);
     const [isFileDropActive, setIsFileDropActive] = useState(false);
     const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+    const [documentPasteTargetFolder, setDocumentPasteTargetFolder] = useState<string | null>(null);
     const fileDropCounterRef = useRef(0);
     const docFileInputRef = useRef<HTMLInputElement>(null);
+    const documentPanelRootRef = useRef<HTMLDivElement>(null);
+    const documentPasteArmedRef = useRef(false);
 
-    const handleFileDrop = async (files: FileList | File[]) => {
+    const armDocumentPasteUpload = useCallback((targetFolder: string | null = null) => {
+        documentPasteArmedRef.current = true;
+        setDocumentPasteTargetFolder(targetFolder);
+    }, []);
+
+    const selectedDocumentFolderPath = useMemo(() => {
+        if (activeTab !== 'document' || !selectedFolder) {
+            return '';
+        }
+        return String(selectedFolder.folderPath || selectedFolder.path || '').trim();
+    }, [activeTab, selectedFolder]);
+
+    useEffect(() => {
+        if (!selectedDocumentFolderPath) {
+            return;
+        }
+        armDocumentPasteUpload(selectedDocumentFolderPath);
+    }, [activeTab, selectedDocumentFolderPath, armDocumentPasteUpload]);
+
+    const expandDocumentFolderPath = useCallback((folderPath: string | null | undefined) => {
+        const folderId = findFolderIdByPath(tree, folderPath);
+        if (!folderId) {
+            return;
+        }
+        setExpandedFolderIds((previous) => {
+            if (previous.has(folderId)) {
+                return previous;
+            }
+            const next = new Set(previous);
+            next.add(folderId);
+            return next;
+        });
+    }, [tree]);
+
+    const uploadResourceFiles = useCallback(async (files: FileList | File[], options?: { targetFolder?: string | null }) => {
         if (!files || files.length === 0) return;
         setIsUploadingFiles(true);
         try {
+            const targetFolder = String(options?.targetFolder || '').trim();
             const formData = new FormData();
+            if (activeProjectId) {
+                formData.append('projectId', activeProjectId);
+            }
+            if (targetFolder) {
+                formData.append('targetFolder', targetFolder);
+            }
             for (const file of Array.from(files)) {
                 formData.append('file', file, file.name);
             }
@@ -1481,15 +1684,27 @@ export default function ContentPanel({
                 throw new Error(payload?.error || '上传失败');
             }
             const result = await response.json();
-            const count = result?.files?.length || files.length;
+            const uploadedFiles = Array.isArray(result?.files)
+                ? result.files as UploadedResourceFile[]
+                : [];
+            const count = uploadedFiles.length || files.length;
             toast.success(`已上传 ${count} 个资源文件`);
-            onUploadedResourceFiles?.();
+            expandDocumentFolderPath(targetFolder);
+            await Promise.resolve(onUploadedResourceFiles?.(uploadedFiles));
         } catch (error: any) {
             toast.error(error?.message || '资源上传失败');
         } finally {
             setIsUploadingFiles(false);
         }
-    };
+    }, [activeProjectId, expandDocumentFolderPath, onUploadedResourceFiles]);
+
+    const setDocumentPasteTargetFromFolder = useCallback((folder: SidebarTreeNode) => {
+        armDocumentPasteUpload(String(folder.folderPath || folder.path || '').trim() || null);
+    }, [armDocumentPasteUpload]);
+
+    const handleDocumentPanelRootFocus = useCallback(() => {
+        armDocumentPasteUpload(null);
+    }, [armDocumentPasteUpload]);
 
     const resetSidebarHorizontalScroll = () => {
         requestAnimationFrame(() => {
@@ -1539,6 +1754,60 @@ export default function ContentPanel({
             setProjectSwitcherMenuOpen(false);
         }
     }, [projectSetupRequired]);
+
+    useEffect(() => {
+        if (activeTab !== 'document') {
+            documentPasteArmedRef.current = false;
+            setDocumentPasteTargetFolder(null);
+        }
+    }, [activeTab]);
+
+    useEffect(() => {
+        if (activeTab !== 'document') {
+            return;
+        }
+
+        const handleDocumentPasteBoundary = (event: PointerEvent | FocusEvent) => {
+            const documentPanelRoot = documentPanelRootRef.current;
+            if (!documentPanelRoot || !(event.target instanceof Node) || !documentPanelRoot.contains(event.target)) {
+                documentPasteArmedRef.current = false;
+            }
+        };
+
+        document.addEventListener('pointerdown', handleDocumentPasteBoundary, true);
+        document.addEventListener('focusin', handleDocumentPasteBoundary, true);
+        return () => {
+            document.removeEventListener('pointerdown', handleDocumentPasteBoundary, true);
+            document.removeEventListener('focusin', handleDocumentPasteBoundary, true);
+        };
+    }, [activeTab]);
+
+    useEffect(() => {
+        const handleDocumentPaste = (event: ClipboardEvent) => {
+            if (activeTab !== 'document') {
+                return;
+            }
+            const documentPanelRoot = documentPanelRootRef.current;
+            if (!documentPanelRoot) {
+                return;
+            }
+            if (isDocumentPasteBlockedTarget(event.target)) {
+                return;
+            }
+            if (!isDocumentPasteUploadActive(documentPanelRoot, documentPasteArmedRef.current)) {
+                return;
+            }
+            const pastedFiles = getClipboardImageFiles(event);
+            if (pastedFiles.length === 0) {
+                return;
+            }
+            event.preventDefault();
+            void uploadResourceFiles(pastedFiles, { targetFolder: documentPasteTargetFolder });
+        };
+
+        document.addEventListener('paste', handleDocumentPaste, true);
+        return () => document.removeEventListener('paste', handleDocumentPaste, true);
+    }, [activeTab, documentPasteTargetFolder, uploadResourceFiles]);
 
     useEffect(() => {
         if ((editingFolderId || editingItemId) && folderInputRef.current) {
@@ -1637,7 +1906,7 @@ export default function ContentPanel({
     };
 
     const handleProjectSwitch = async (projectId: string) => {
-        if (!projectId || projectId === activeProjectId) {
+        if (!projectId) {
             setProjectSwitcherMenuOpen(false);
             return;
         }
@@ -2004,6 +2273,8 @@ export default function ContentPanel({
 	                            resourceId: resourceId,
 	                            name: item.name,
 	                            displayName: item.displayName || item.name,
+                                previewKind: isDocItem ? 'doc' : 'web',
+                                embedViewMode: 'preview',
 	                            previewUrl: isDocItem
 	                                ? (item.previewUrl || item.specUrl || '')
 	                                : (item.previewUrl || item.clientUrl || ''),
@@ -2027,14 +2298,8 @@ export default function ContentPanel({
                         添加到画布
                     </DropdownMenuItem>
                 ) : null}
-                {isDocItem ? (
-                    <DropdownMenuItem onClick={() => onCreatePrototypeFromDoc(item)}>
-                        <Code2 className="mr-2 h-4 w-4" />
-                        创建原型
-                    </DropdownMenuItem>
-                ) : null}
                 {canRenameItem ? (
-                    <DropdownMenuItem onClick={() => startItemRename(itemNodeId, item.displayName || item.name)}>
+                    <DropdownMenuItem onClick={() => startItemRename(itemNodeId, node?.title || item.displayName || item.name)}>
                         <Pencil className="mr-2 h-4 w-4" />
                         重命名
                     </DropdownMenuItem>
@@ -2210,10 +2475,25 @@ export default function ContentPanel({
                 }}
                 onDragStart={(event) => {
                     const payload = buildPrototypePageCanvasPayload(item, page);
+                    const resourceId = item.resourceId || item.name;
                     event.dataTransfer.effectAllowed = 'copy';
                     event.dataTransfer.setData('text/plain', `${item.name}:${page.id}`);
                     try {
                         event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));
+                        event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({
+                            source: 'sidebar',
+                            resourceType: 'prototype-page',
+                            resourceId,
+                            items: buildAssistantContextItemsFromResource({
+                                resourceType: 'prototype-page',
+                                resourceId,
+                                pageId: page.id,
+                                name: item.name,
+                                displayName: payload.displayName,
+                                filePath: item.filePath,
+                                absoluteFilePath: item.absoluteFilePath,
+                            }),
+                        })));
                     } catch {
                         // Older browsers may reject custom MIME types.
                     }
@@ -2240,6 +2520,15 @@ export default function ContentPanel({
             const isEditingThisNode = isEditingThisFolder || isEditingThisItem;
             const isEditingThisRow = isEditingThisNode;
             const rowPaddingLeft = `${8 + depth * 8}px`;
+            const isDefaultDesignItem = !isFolder && dataTab === 'themes' && item?.name === defaultThemeName;
+            const suffixElement = isDefaultDesignItem ? (
+                <span
+                    data-default-design-badge
+                    className="rounded-sm border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-primary"
+                >
+                    默认
+                </span>
+            ) : null;
 
             let iconElement: React.ReactNode;
             if (isFolder) {
@@ -2257,6 +2546,8 @@ export default function ContentPanel({
                         {isExpanded ? <FolderOpen className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
                     </Button>
                 );
+            } else if (dataTab === 'prototypes') {
+                iconElement = <PanelsTopLeft className="h-3.5 w-3.5" />;
             } else {
                 iconElement = <File className="h-3.5 w-3.5" />;
             }
@@ -2273,6 +2564,7 @@ export default function ContentPanel({
                         <SidebarRow
                             title={title}
                             icon={iconElement}
+                            suffix={suffixElement}
                             actions={actionsElement}
                             selected={isFolderSelected || isSelected}
                         editable={isEditingThisRow}
@@ -2301,6 +2593,7 @@ export default function ContentPanel({
                             }
                             if (isFolder) {
                                 if (dataTab === 'docs') {
+                                    setDocumentPasteTargetFromFolder(node);
                                     const isCollapsingFolder = isExpanded;
                                     toggleFolder(node.id);
                                     if (!isCollapsingFolder) {
@@ -2353,7 +2646,7 @@ export default function ContentPanel({
                                     name: item.name,
                                     displayName: item.displayName || item.name,
                                     previewKind,
-                                    embedViewMode: 'link',
+                                    embedViewMode: 'preview',
                                     previewUrl: isDocItem
                                         ? (item.previewUrl || item.specUrl || '')
                                         : (item.previewUrl || item.clientUrl || ''),
@@ -2366,6 +2659,23 @@ export default function ContentPanel({
                                 };
                                 try {
                                     e.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));
+                                    e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({
+                                        source: 'sidebar',
+                                        resourceType: isDocItem
+                                            ? (previewKind === 'image' ? 'image' : 'doc')
+                                            : 'prototype',
+                                        resourceId,
+                                        items: buildAssistantContextItemsFromResource({
+                                            resourceType: isDocItem
+                                                ? (previewKind === 'image' ? 'image' : 'doc')
+                                                : 'prototype',
+                                            resourceId,
+                                            name: item.name,
+                                            displayName: item.displayName || item.name,
+                                            filePath: item.filePath,
+                                            absoluteFilePath: item.absoluteFilePath,
+                                        }),
+                                    })));
                                 } catch { /* older browsers may reject custom MIME */ }
                             }
                             setDraggingNodeId(node.id);
@@ -2373,6 +2683,11 @@ export default function ContentPanel({
                         onDragEnd={() => {
                             setDraggingNodeId(null);
                             setDropTarget(null);
+                        }}
+                        onFocus={() => {
+                            if (dataTab === 'docs' && isFolder) {
+                                setDocumentPasteTargetFromFolder(node);
+                            }
                         }}
                         onDragOver={(e) => {
                             if (!draggingNodeId) return;
@@ -2443,7 +2758,18 @@ export default function ContentPanel({
         if (displayTree.length === 0) {
             if (dataTab === 'docs' && !searchText.trim()) {
                 return (
-                    <div className="px-4 py-8 text-center text-[12px] leading-5 text-muted-foreground">
+                    <div
+                        data-document-paste-focus-surface
+                        className="px-4 py-8 text-center text-[12px] leading-5 text-muted-foreground"
+                        tabIndex={0}
+                        onFocus={handleDocumentPanelRootFocus}
+                        onMouseDown={(event) => {
+                            if (shouldUseDocumentRootPasteTarget(event.target)) {
+                                event.currentTarget.focus();
+                                handleDocumentPanelRootFocus();
+                            }
+                        }}
+                    >
                         <span className="mx-auto block max-w-[240px]">
                             暂无内容，拖拽或上传文件到此处，可以作为原型生成的上下文
                         </span>
@@ -2454,7 +2780,14 @@ export default function ContentPanel({
         }
         return (
             <div
+                data-document-paste-focus-surface
                 className="space-y-0.5 w-full min-w-0"
+                onMouseDown={(event) => {
+                    if (dataTab === 'docs' && shouldUseDocumentRootPasteTarget(event.target)) {
+                        documentPanelRootRef.current?.focus();
+                        handleDocumentPanelRootFocus();
+                    }
+                }}
                 onDragOver={(e) => {
                     if (!draggingNodeId) return;
                     if (e.target !== e.currentTarget) return;
@@ -2479,7 +2812,7 @@ export default function ContentPanel({
     return (
         <>
         <div className="flex flex-col h-full min-h-0 flex-1 bg-background text-[12px]">
-            <div className="border-b">
+            <div className="border-b border-border">
                 <div className="flex items-center justify-between p-2">
                     <TooltipProvider>
                         <DropdownMenu>
@@ -2492,7 +2825,7 @@ export default function ContentPanel({
                             <DropdownMenuContent align="start" className="text-sm min-w-[132px]">
                                 <DropdownMenuItem className="h-7 gap-2 text-sm" onSelect={handleSettingsMenuSelect}>
                                     <Settings className="h-3.5 w-3.5" />
-                                    项目设置
+                                    设置
                                 </DropdownMenuItem>
                                 <DropdownMenuItem className="h-7 gap-2 text-sm" onClick={onToggleTheme}>
                                     {isDarkMode ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
@@ -2526,21 +2859,21 @@ export default function ContentPanel({
                     </TooltipProvider>
 
                     <div className="flex items-center gap-1">
-                    <OpenInDropdown
-                        handleOpenProjectInIDE={handleOpenProjectInIDE}
-                        preferredIDE={preferredIDE}
-                        activeProjectId={activeProjectId}
-                        targetProjectId={openInTargetProjectId || undefined}
-                        targetPath={openInTargetPath || undefined}
-                        ideAvailability={ideAvailability}
-                        agentAvailability={agentAvailability}
-                        onOpenGenieWebAgent={onOpenGenieWebAgent}
-                        onOpenWebAgentInPanel={onOpenWebAgentInPanel}
-                        webAgentPanelOpen={webAgentPanelOpen}
-                        onCloseWebAgentPanel={onCloseWebAgentPanel}
-                        onPreferredIDEChange={onPreferredIDEChange}
-                        onRefreshAvailability={onRefreshAvailability}
-                    />
+                        <OpenInDropdown
+                            handleOpenProjectInIDE={handleOpenProjectInIDE}
+                            preferredIDE={preferredIDE}
+                            activeProjectId={activeProjectId}
+                            targetProjectId={openInTargetProjectId || undefined}
+                            targetPath={openInTargetPath || undefined}
+                            ideAvailability={ideAvailability}
+                            agentAvailability={agentAvailability}
+                            onOpenGenieWebAgent={onOpenGenieWebAgent}
+                            onOpenWebAgentInPanel={onOpenWebAgentInPanel}
+                            webAgentPanelOpen={webAgentPanelOpen}
+                            onCloseWebAgentPanel={onCloseWebAgentPanel}
+                            onPreferredIDEChange={onPreferredIDEChange}
+                            onOpenAISettings={onOpenAISettings}
+                        />
                     </div>
                 </div>
 
@@ -2815,7 +3148,7 @@ export default function ContentPanel({
                                 className="hidden"
                                 onChange={(event) => {
                                     if (event.target.files && event.target.files.length > 0) {
-                                        void handleFileDrop(event.target.files);
+                                        void uploadResourceFiles(event.target.files, { targetFolder: documentPasteTargetFolder });
                                     }
                                     event.currentTarget.value = '';
                                 }}
@@ -2901,7 +3234,23 @@ export default function ContentPanel({
             </div>
 
             <div
+                    data-document-paste-focus-surface
+                    ref={documentPanelRootRef}
                     className="relative flex-1 min-h-0"
+                    tabIndex={activeTab === 'document' ? 0 : -1}
+                    onFocus={(event) => {
+                        if (activeTab !== 'document') return;
+                        if (event.target === event.currentTarget) {
+                            handleDocumentPanelRootFocus();
+                        }
+                    }}
+                    onMouseDown={(event) => {
+                        if (activeTab !== 'document') return;
+                        if (shouldUseDocumentRootPasteTarget(event.target)) {
+                            event.currentTarget.focus();
+                            handleDocumentPanelRootFocus();
+                        }
+                    }}
                     onDragEnter={(event) => {
                         if (activeTab !== 'document') return;
                         if (isSidebarTreeDragEvent(event)) return;
@@ -2933,7 +3282,7 @@ export default function ContentPanel({
                         setIsFileDropActive(false);
                         const files = event.dataTransfer?.files;
                         if (files && files.length > 0) {
-                            void handleFileDrop(files);
+                            void uploadResourceFiles(files, { targetFolder: documentPasteTargetFolder });
                         }
                     }}
                 >

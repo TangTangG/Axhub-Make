@@ -14,8 +14,8 @@ body .excalidraw,
     --axhub-excalidraw-menu-bg: #ffffff;
     --axhub-excalidraw-surface-low: #ececf4;
     --axhub-excalidraw-surface-lowest: #ffffff;
-    --axhub-excalidraw-selection: var(--axhub-excalidraw-brand);
-    --axhub-excalidraw-selection-fill: rgba(0, 143, 93, 0.05);
+    --axhub-excalidraw-selection: #475569;
+    --axhub-excalidraw-selection-fill: rgba(71, 85, 105, 0.04);
     --axhub-excalidraw-button-size: 30px;
     --axhub-excalidraw-large-button-size: 32px;
     --axhub-excalidraw-icon-size: 17px;
@@ -44,7 +44,7 @@ body .excalidraw,
     --background-color-badge: var(--axhub-excalidraw-brand-soft);
     --color-slider-track: var(--axhub-excalidraw-brand-soft-hover);
     --color-slider-thumb: var(--color-primary);
-    --focus-highlight-color: rgba(0, 143, 93, 0.36);
+    --focus-highlight-color: rgba(71, 85, 105, 0.18);
     --button-gray-1: #f6f7f9;
     --button-gray-2: #d9dbe2;
     --button-gray-3: #b7bbc6;
@@ -84,8 +84,8 @@ body.dark .excalidraw,
     --axhub-excalidraw-menu-bg: #232329;
     --axhub-excalidraw-surface-low: hsl(240, 8%, 15%);
     --axhub-excalidraw-surface-lowest: hsl(0, 0%, 7%);
-    --axhub-excalidraw-selection: var(--axhub-excalidraw-brand);
-    --axhub-excalidraw-selection-fill: rgba(101, 219, 169, 0.12);
+    --axhub-excalidraw-selection: #94a3b8;
+    --axhub-excalidraw-selection-fill: rgba(148, 163, 184, 0.1);
     --color-primary: var(--axhub-excalidraw-brand);
     --color-primary-hover: var(--axhub-excalidraw-brand-hover);
     --color-primary-darker: var(--axhub-excalidraw-brand-hover);
@@ -110,7 +110,7 @@ body.dark .excalidraw,
     --background-color-badge: var(--axhub-excalidraw-brand-soft);
     --color-slider-track: var(--axhub-excalidraw-brand-soft);
     --color-slider-thumb: var(--color-primary);
-    --focus-highlight-color: rgba(101, 219, 169, 0.36);
+    --focus-highlight-color: rgba(148, 163, 184, 0.22);
     --button-gray-1: #36363d;
     --button-gray-2: #414149;
     --button-gray-3: #575861;
@@ -148,12 +148,18 @@ body.dark .excalidraw,
     --default-icon-size: 1rem;
     --editor-container-padding: 0.5rem;
     --color-gray-20: #ebebeb;
-    --axhub-canvas-return-button-width: 70px;
+    --axhub-canvas-top-right-capsule-width: 73px;
     --color-surface-high: #e9e9ee;
     --color-surface-mid: #f2f2f7;
     --color-surface-low: #ececf4;
     --color-surface-lowest: #ffffff;
     --color-on-surface: #1b1b1f;
+}
+
+.axhub-generation-history-popover__trigger {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
 }
 
 .dark .axhub-canvas-sidebar-toggle-scope,
@@ -217,71 +223,68 @@ body.dark .excalidraw,
     height: var(--default-icon-size, 1rem);
 }
 
-.excalidraw .axhub-canvas-return-anchor,
-.axhub-canvas-sidebar-toggle-scope .axhub-canvas-return-anchor {
+.axhub-canvas-top-right-capsule {
     position: absolute;
     top: var(--editor-container-padding, 1rem);
     right: var(--editor-container-padding, 1rem);
-    z-index: var(--zIndex-layerUI, 4);
-    pointer-events: var(--ui-pointerEvents, auto);
-    --button-border: transparent;
-    --button-bg: var(--color-surface-mid);
-    --button-width: var(--axhub-canvas-return-button-width);
-    --button-height: var(--axhub-canvas-sidebar-toggle-size);
-}
-
-.excalidraw.theme--dark .axhub-canvas-return-anchor,
-.dark .excalidraw .axhub-canvas-return-anchor,
-.axhub-canvas-sidebar-toggle-scope.theme--dark .axhub-canvas-return-anchor,
-.dark .axhub-canvas-sidebar-toggle-scope .axhub-canvas-return-anchor {
-    --button-bg: var(--color-surface-high);
-}
-
-.excalidraw button.axhub-canvas-return-button.main-menu-trigger,
-.axhub-canvas-sidebar-toggle-scope button.axhub-canvas-return-button.main-menu-trigger {
+    z-index: calc(var(--zIndex-layerUI, 4) + 1);
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    gap: 5px;
-    width: var(--axhub-canvas-return-button-width);
-    min-width: var(--axhub-canvas-return-button-width);
+    width: var(--axhub-canvas-top-right-capsule-width);
     height: var(--axhub-canvas-sidebar-toggle-size);
-    padding: 0 10px;
-    border: none;
-    border-radius: 999px;
+    overflow: hidden;
+    border-radius: 0.5rem;
     box-shadow: 0 0 0 1px var(--color-surface-lowest);
     background-color: var(--color-surface-low);
     color: var(--color-on-surface);
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 1;
-    white-space: nowrap;
+    pointer-events: var(--ui-pointerEvents, auto);
 }
 
-.excalidraw button.axhub-canvas-return-button.main-menu-trigger:hover,
-.axhub-canvas-sidebar-toggle-scope button.axhub-canvas-return-button.main-menu-trigger:hover {
+.excalidraw.theme--dark .axhub-canvas-top-right-capsule,
+.dark .excalidraw .axhub-canvas-top-right-capsule,
+.axhub-canvas-sidebar-toggle-scope.theme--dark .axhub-canvas-top-right-capsule,
+.dark .axhub-canvas-sidebar-toggle-scope .axhub-canvas-top-right-capsule {
+    background-color: var(--color-surface-high);
+}
+
+.axhub-canvas-top-right-capsule__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    min-width: 36px;
+    height: var(--axhub-canvas-sidebar-toggle-size);
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background-color: transparent;
+    color: var(--color-on-surface);
+}
+
+.axhub-canvas-top-right-capsule__button:hover {
     background-color: var(--button-hover-bg, var(--island-bg-color));
-    border-color: var(--button-hover-border, var(--button-border, var(--default-border-color)));
-    color: var(--button-hover-color, var(--button-color, var(--text-primary-color, inherit)));
+    color: var(--button-hover-color, var(--color-on-surface));
 }
 
-.excalidraw button.axhub-canvas-return-button.main-menu-trigger:active,
-.axhub-canvas-sidebar-toggle-scope button.axhub-canvas-return-button.main-menu-trigger:active {
+.axhub-canvas-top-right-capsule__button:active {
     background-color: var(--button-active-bg, var(--island-bg-color));
-    border-color: var(--button-active-border, transparent);
-    box-shadow: 0 0 0 1px var(--default-border-color);
+    color: var(--button-hover-color, var(--color-on-surface));
 }
 
-.excalidraw button.axhub-canvas-return-button.main-menu-trigger:disabled,
-.axhub-canvas-sidebar-toggle-scope button.axhub-canvas-return-button.main-menu-trigger:disabled {
-    cursor: not-allowed;
-    opacity: 0.45;
+.axhub-canvas-top-right-capsule__button[data-active="true"] {
+    color: hsl(var(--primary));
 }
 
-.excalidraw .axhub-canvas-return-button svg,
-.axhub-canvas-sidebar-toggle-scope .axhub-canvas-return-button svg {
+.axhub-canvas-top-right-capsule__button svg {
     width: var(--default-icon-size, 1rem);
     height: var(--default-icon-size, 1rem);
+}
+
+.axhub-canvas-top-right-capsule__divider {
+    width: 1px;
+    height: 18px;
+    background-color: color-mix(in srgb, var(--color-on-surface) 14%, transparent);
 }
 
 .excalidraw .welcome-screen-center__heading {
@@ -290,14 +293,20 @@ body.dark .excalidraw,
     white-space: nowrap;
 }
 
-.excalidraw .axhub-welcome-menu-icon {
-    width: var(--default-icon-size, 1rem);
-    height: var(--default-icon-size, 1rem);
-    min-width: var(--default-icon-size, 1rem);
-    min-height: var(--default-icon-size, 1rem);
-    color: currentColor;
-    stroke-width: 1.75;
-    vertical-align: middle;
+.excalidraw .axhub-canvas-welcome-title {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    color: var(--color-on-surface);
+}
+
+.excalidraw .axhub-canvas-welcome-title__icon {
+    width: 2rem;
+    height: 2rem;
+    flex: 0 0 auto;
+    color: var(--color-on-surface);
+    stroke-width: 1.9;
 }
 
 .axhub-canvas-welcome-hints {
@@ -606,7 +615,6 @@ body.dark .excalidraw,
 .axhub-excalidraw-compact .excalidraw .ToolIcon--plain .ToolIcon__icon,
 .axhub-excalidraw-compact .excalidraw .ToolIcon_type_floating .ToolIcon__icon,
 .axhub-excalidraw-compact .excalidraw .App-toolbar-container .ToolIcon__icon,
-.axhub-excalidraw-compact .excalidraw .App-toolbar-container .axhub-ai-image-toolbar-button.ToolIcon_type_button .ToolIcon__icon,
 .axhub-excalidraw-compact .excalidraw .App-toolbar-container .axhub-prototype-toolbar-button.ToolIcon_type_button .ToolIcon__icon,
 .axhub-excalidraw-compact .excalidraw .App-toolbar-container .ToolIcon__LaserPointer .ToolIcon__icon,
 .axhub-excalidraw-compact .excalidraw .App-toolbar-container .ToolIcon__MagicButton .ToolIcon__icon {
@@ -618,7 +626,6 @@ body.dark .excalidraw,
 .axhub-excalidraw-compact .excalidraw .ToolIcon__icon svg,
 .axhub-excalidraw-compact .excalidraw .ToolIcon__icon img,
 .axhub-excalidraw-compact .excalidraw .App-toolbar-container .ToolIcon__icon svg,
-.axhub-excalidraw-compact .excalidraw .App-toolbar-container .axhub-ai-image-toolbar-button.ToolIcon_type_button .ToolIcon__icon svg,
 .axhub-excalidraw-compact .excalidraw .App-toolbar-container .axhub-prototype-toolbar-button.ToolIcon_type_button .ToolIcon__icon svg,
 .axhub-excalidraw-compact .excalidraw .axhub-canvas-menu-icon,
 .axhub-excalidraw-compact .excalidraw .buttonList label svg,
@@ -634,7 +641,6 @@ body.dark .excalidraw,
     height: var(--axhub-excalidraw-icon-size) !important;
 }
 
-.axhub-excalidraw-compact .excalidraw .App-toolbar-container .axhub-ai-image-toolbar-button.ToolIcon_type_button:hover .ToolIcon__icon,
 .axhub-excalidraw-compact .excalidraw .App-toolbar-container .axhub-prototype-toolbar-button.ToolIcon_type_button:hover .ToolIcon__icon {
     background: var(--button-hover-bg, var(--axhub-excalidraw-control-hover-bg)) !important;
 }
@@ -928,8 +934,7 @@ body .excalidraw .HelpDialog__key,
     display: none !important;
 }
 
-[data-axhub-ai-image-generator-selected='true'] .excalidraw .HintViewer,
-[data-axhub-prototype-generator-selected='true'] .excalidraw .HintViewer {
+[data-axhub-ai-generation-generator-selected='true'] .excalidraw .HintViewer {
     display: none !important;
 }
 

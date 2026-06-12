@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { CaptureUpdateAction } from '@axhub/excalidraw';
-import { StickyNote, Trash2, X, MessageSquarePlus } from 'lucide-react';
+import { StickyNote, Trash2, X } from 'lucide-react';
 
 import { createMergedTextSceneUpdate } from './canvasTextMerge';
 import { resolveContextMenuViewportFit } from './contextMenuViewport';
@@ -8,6 +8,7 @@ import { getLinkEmbedSize } from './linkEmbedSizing';
 import { fitEmbedSizeToViewport, type EmbedViewportRect } from './embedViewportSizing';
 import { reorganizeContextMenu } from './contextMenuReorganizer';
 import { CANVAS_ELEMENT_OVERLAY_Z_INDEX } from './canvasOverlayLayers';
+import { resolveCanvasImageContextMenuState } from './canvasImageContextMenu';
 
 /* ── Types ───────────────────────────────────────────────────────── */
 
@@ -20,6 +21,13 @@ export interface CanvasElementContextInfo {
     link?: string;
     width: number;
     height: number;
+    resourceType?: 'prototype' | 'doc' | 'theme';
+    resourceId?: string;
+    filePath?: string;
+    absoluteFilePath?: string;
+    path?: string;
+    displayName?: string;
+    mimeType?: string;
 }
 
 interface AnnotationOverlayProps {
@@ -28,8 +36,12 @@ interface AnnotationOverlayProps {
     containerRef: React.RefObject<HTMLDivElement>;
     /** Whether the OpenCode bridge is connected (AI panel open). */
     bridgeConnected?: boolean;
-    /** Callback when user adds selected elements to the AI conversation context. */
-    onAddToContext?: (elements: CanvasElementContextInfo[]) => void;
+    /** Callback when user adds selected elements as a screenshot attachment to AI. */
+    onAddScreenshotToAI?: (elements: CanvasElementContextInfo[]) => void | Promise<void>;
+    /** Callback when user adds selected elements as node context to AI. */
+    onAddNodesToAI?: (elements: CanvasElementContextInfo[]) => void;
+    /** Callback when user adds the selected original image file to AI. */
+    onAddImageToAI?: (elements: CanvasElementContextInfo[], promptText?: string) => void | Promise<void>;
     /** Callback when the set of annotated elements changes. */
     onAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
 }
@@ -39,6 +51,39 @@ function getResourceTypeFromElement(element: any): 'prototype' | 'doc' | 'theme'
     if (resourceType === 'doc' || element?.customData?.type === 'axhub-doc') return 'doc';
     if (resourceType === 'theme' || element?.customData?.type === 'axhub-theme') return 'theme';
     return 'prototype';
+}
+
+function resolveString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveElementResourceType(element: any): 'prototype' | 'doc' | 'theme' | undefined {
+    const resourceType = element?.customData?.resourceType;
+    if (resourceType === 'prototype' || resourceType === 'doc' || resourceType === 'theme') {
+        return resourceType;
+    }
+    if (element?.customData?.type === 'axhub-doc') return 'doc';
+    if (element?.customData?.type === 'axhub-theme') return 'theme';
+    return undefined;
+}
+
+function buildCanvasElementContextInfo(element: any): CanvasElementContextInfo {
+    return {
+        elementId: element.id,
+        type: element.type || 'unknown',
+        annotation: resolveString(element?.customData?.annotation) || undefined,
+        title: resolveString(element?.customData?.title),
+        link: resolveString(element?.link),
+        width: element.width || 0,
+        height: element.height || 0,
+        resourceType: resolveElementResourceType(element),
+        resourceId: resolveString(element?.customData?.resourceId),
+        filePath: resolveString(element?.customData?.filePath),
+        absoluteFilePath: resolveString(element?.customData?.absoluteFilePath),
+        path: resolveString(element?.customData?.path),
+        displayName: resolveString(element?.customData?.displayName) || resolveString(element?.customData?.title),
+        mimeType: resolveString(element?.customData?.mimeType),
+    };
 }
 
 function getDefaultPreviewSize(element: any): { width: number; height: number } {
@@ -236,7 +281,9 @@ export default function AnnotationOverlay({
     excalidrawAPI,
     containerRef,
     bridgeConnected = false,
-    onAddToContext,
+    onAddScreenshotToAI,
+    onAddNodesToAI,
+    onAddImageToAI,
     onAnnotationsChange,
 }: AnnotationOverlayProps) {
     const [badges, setBadges] = useState<AnnotatedBadgeInfo[]>([]);
@@ -289,15 +336,7 @@ export default function AnnotationOverlay({
                         screenRight: topLeft.x + screenW,
                         screenTop: topLeft.y,
                     });
-                    annotatedElements.push({
-                        elementId: el.id,
-                        type: el.type || 'unknown',
-                        annotation,
-                        title: el.customData?.title || '',
-                        link: el.link || '',
-                        width: el.width || 0,
-                        height: el.height || 0,
-                    });
+                    annotatedElements.push(buildCanvasElementContextInfo(el));
                 }
 
                 // Track selected element (single selection only)
@@ -444,15 +483,7 @@ export default function AnnotationOverlay({
             const infos: CanvasElementContextInfo[] = [];
             for (const el of elements) {
                 if (el.isDeleted || !selectedIdSet.has(el.id)) continue;
-                infos.push({
-                    elementId: el.id,
-                    type: el.type || 'unknown',
-                    annotation: el.customData?.annotation || undefined,
-                    title: el.customData?.title || '',
-                    link: el.link || '',
-                    width: el.width || 0,
-                    height: el.height || 0,
-                });
+                infos.push(buildCanvasElementContextInfo(el));
             }
             return infos;
         };
@@ -463,7 +494,17 @@ export default function AnnotationOverlay({
 
             const appState = excalidrawAPI.getAppState();
             const selectedIds = Object.keys(appState?.selectedElementIds || {});
+            const selectedIdSet = new Set(selectedIds);
             const elements = excalidrawAPI.getSceneElements();
+            const selectedElements = elements.filter((el: any) => !el.isDeleted && selectedIdSet.has(el.id));
+            const imageContextMenuState = resolveCanvasImageContextMenuState({
+                bridgeConnected,
+                canAddScreenshotToAI: Boolean(onAddScreenshotToAI),
+                canAddNodesToAI: Boolean(onAddNodesToAI),
+                canAddImageToAI: Boolean(onAddImageToAI),
+                selectedElements,
+                files: excalidrawAPI.getFiles?.() || {},
+            });
             const mergeTextUpdate = createMergedTextSceneUpdate({
                 elements,
                 selectedElementIds: appState?.selectedElementIds || {},
@@ -574,34 +615,151 @@ export default function AnnotationOverlay({
                 }
             }
 
-            // ── "添加到对话" item (visible only when bridge is connected) ──
-            if (bridgeConnected && onAddToContext && selectedIds.length > 0) {
-                const ctxLi = document.createElement('li');
-                ctxLi.setAttribute('data-axhub-annotation-item', 'add-to-context');
-                const ctxBtn = document.createElement('button');
-                ctxBtn.className = 'context-menu-item';
-                ctxBtn.type = 'button';
-                const ctxLabel = document.createElement('span');
-                ctxLabel.className = 'context-menu-item__label';
-                ctxLabel.textContent = selectedIds.length === 1
-                    ? '💬 添加到对话'
-                    : `💬 添加 ${selectedIds.length} 个元素到对话`;
-                const ctxShortcut = document.createElement('kbd');
-                ctxShortcut.className = 'context-menu-item__shortcut';
-                ctxShortcut.textContent = '⌘⇧↵';
-                ctxBtn.appendChild(ctxLabel);
-                ctxBtn.appendChild(ctxShortcut);
-                ctxLi.appendChild(ctxBtn);
+            // ── AI context items (visible only when bridge is connected) ──
+            if (bridgeConnected && selectedIds.length > 0) {
+                if (onAddScreenshotToAI && imageContextMenuState.showScreenshotToAI) {
+                    const screenshotLi = document.createElement('li');
+                    screenshotLi.setAttribute('data-axhub-annotation-item', 'add-screenshot-to-ai');
+                    const screenshotBtn = document.createElement('button');
+                    screenshotBtn.className = 'context-menu-item';
+                    screenshotBtn.type = 'button';
+                    const screenshotLabel = document.createElement('span');
+                    screenshotLabel.className = 'context-menu-item__label';
+                    screenshotLabel.textContent = '将截图添加到 AI';
+                    screenshotBtn.appendChild(screenshotLabel);
+                    screenshotLi.appendChild(screenshotBtn);
+                    screenshotBtn.addEventListener('click', () => {
+                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                        const infos = collectSelectedElementInfos();
+                        if (infos.length > 0) {
+                            void onAddScreenshotToAI(infos);
+                        }
+                    });
+                    topItems.push(screenshotLi);
+                }
+                if (onAddNodesToAI && imageContextMenuState.showNodeContextToAI) {
+                    const nodesLi = document.createElement('li');
+                    nodesLi.setAttribute('data-axhub-annotation-item', 'add-nodes-to-ai');
+                    const nodesBtn = document.createElement('button');
+                    nodesBtn.className = 'context-menu-item';
+                    nodesBtn.type = 'button';
+                    const nodesLabel = document.createElement('span');
+                    nodesLabel.className = 'context-menu-item__label';
+                    nodesLabel.textContent = selectedIds.length === 1
+                        ? '将节点添加到 AI'
+                        : `将 ${selectedIds.length} 个节点添加到 AI`;
+                    const nodesShortcut = document.createElement('kbd');
+                    nodesShortcut.className = 'context-menu-item__shortcut';
+                    nodesShortcut.textContent = '⌘⇧↵';
+                    nodesBtn.appendChild(nodesLabel);
+                    nodesBtn.appendChild(nodesShortcut);
+                    nodesLi.appendChild(nodesBtn);
 
-                ctxBtn.addEventListener('click', () => {
-                    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-                    const infos = collectSelectedElementInfos();
-                    if (infos.length > 0) {
-                        onAddToContext(infos);
+                    nodesBtn.addEventListener('click', () => {
+                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                        const infos = collectSelectedElementInfos();
+                        if (infos.length > 0) {
+                            onAddNodesToAI(infos);
+                        }
+                    });
+
+                    topItems.push(nodesLi);
+                }
+                if (onAddImageToAI && imageContextMenuState.showOriginalImageToAI) {
+                    const imageLi = document.createElement('li');
+                    imageLi.setAttribute('data-axhub-annotation-item', 'add-image-to-ai');
+                    const imageBtn = document.createElement('button');
+                    imageBtn.className = 'context-menu-item';
+                    imageBtn.type = 'button';
+                    const imageLabel = document.createElement('span');
+                    imageLabel.className = 'context-menu-item__label';
+                    imageLabel.textContent = '添加图片到上下文';
+                    imageBtn.appendChild(imageLabel);
+                    imageLi.appendChild(imageBtn);
+                    imageBtn.addEventListener('click', () => {
+                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                        const infos = collectSelectedElementInfos();
+                        if (infos.length > 0) {
+                            void onAddImageToAI(infos);
+                        }
+                    });
+                    topItems.push(imageLi);
+                }
+                if (onAddImageToAI && imageContextMenuState.showImageQuickActions && imageContextMenuState.quickPrompts.length > 0) {
+                    const wrapperLi = document.createElement('li');
+                    wrapperLi.setAttribute('data-axhub-annotation-item', 'image-quick-actions');
+                    wrapperLi.className = 'axhub-ctx-submenu-wrapper';
+
+                    const triggerBtn = document.createElement('button');
+                    triggerBtn.type = 'button';
+                    triggerBtn.className = 'axhub-ctx-submenu-trigger';
+                    const triggerLabel = document.createElement('span');
+                    triggerLabel.className = 'context-menu-item__label';
+                    triggerLabel.textContent = 'AI快捷操作';
+                    const triggerChevron = document.createElement('span');
+                    triggerChevron.className = 'axhub-ctx-submenu-chevron';
+                    triggerChevron.textContent = '›';
+                    triggerBtn.appendChild(triggerLabel);
+                    triggerBtn.appendChild(triggerChevron);
+
+                    const flyout = document.createElement('div');
+                    flyout.className = 'axhub-ctx-submenu-flyout';
+                    for (const quickPrompt of imageContextMenuState.quickPrompts) {
+                        const quickLi = document.createElement('li');
+                        quickLi.setAttribute('data-axhub-annotation-item', `image-quick-action-${quickPrompt.id}`);
+                        const quickBtn = document.createElement('button');
+                        quickBtn.className = 'context-menu-item';
+                        quickBtn.type = 'button';
+                        const quickLabel = document.createElement('span');
+                        quickLabel.className = 'context-menu-item__label';
+                        quickLabel.textContent = quickPrompt.label;
+                        quickBtn.appendChild(quickLabel);
+                        quickLi.appendChild(quickBtn);
+                        quickBtn.addEventListener('click', (event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                            const infos = collectSelectedElementInfos();
+                            if (infos.length > 0) {
+                                void onAddImageToAI(infos, quickPrompt.prompt);
+                            }
+                        });
+                        flyout.appendChild(quickLi);
                     }
-                });
 
-                topItems.push(ctxLi);
+                    const openSubmenu = () => {
+                        flyout.classList.add('axhub-ctx-submenu-expanded');
+                        requestAnimationFrame(() => {
+                            const rect = flyout.getBoundingClientRect();
+                            if (rect.right > window.innerWidth) {
+                                flyout.classList.add('axhub-ctx-submenu-flip');
+                            } else {
+                                flyout.classList.remove('axhub-ctx-submenu-flip');
+                            }
+                        });
+                    };
+                    const closeSubmenu = () => {
+                        flyout.classList.remove('axhub-ctx-submenu-expanded');
+                        flyout.classList.remove('axhub-ctx-submenu-flip');
+                    };
+                    const toggleSubmenu = () => {
+                        if (flyout.classList.contains('axhub-ctx-submenu-expanded')) {
+                            closeSubmenu();
+                            return;
+                        }
+                        openSubmenu();
+                    };
+                    wrapperLi.addEventListener('mouseenter', openSubmenu);
+                    wrapperLi.addEventListener('mouseleave', closeSubmenu);
+                    triggerBtn.addEventListener('click', (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        toggleSubmenu();
+                    });
+                    wrapperLi.appendChild(triggerBtn);
+                    wrapperLi.appendChild(flyout);
+                    topItems.push(wrapperLi);
+                }
             }
 
             // ── "合并文本" item (visible only for mergeable text selections) ──
@@ -674,7 +832,7 @@ export default function AnnotationOverlay({
 
             const shortcuts = [
                 { label: '添加/编辑批注', keys: `${modLabel} + Shift + M` },
-                { label: '添加到对话', keys: `${modLabel} + Shift + Enter` },
+                { label: '将节点添加到 AI', keys: `${modLabel} + Shift + Enter` },
             ];
 
             for (const sc of shortcuts) {
@@ -724,7 +882,7 @@ export default function AnnotationOverlay({
             observer.disconnect();
             window.removeEventListener('resize', handleWindowResize);
         };
-    }, [excalidrawAPI, containerRef, openPopover, setAnnotation, bridgeConnected, onAddToContext]);
+    }, [excalidrawAPI, containerRef, openPopover, setAnnotation, bridgeConnected, onAddScreenshotToAI, onAddNodesToAI, onAddImageToAI]);
 
     /* ── Close popover on outside click ───────────────────────────── */
     useEffect(() => {
@@ -770,9 +928,9 @@ export default function AnnotationOverlay({
                 return;
             }
 
-            // ⌘+Shift+Enter → add selected elements to context
+            // ⌘+Shift+Enter → add selected nodes to AI context
             if (e.key === 'Enter') {
-                if (!bridgeConnected || !onAddToContext) return;
+                if (!bridgeConnected || !onAddNodesToAI) return;
                 e.preventDefault();
                 e.stopPropagation();
                 const appState = excalidrawAPI?.getAppState();
@@ -783,23 +941,15 @@ export default function AnnotationOverlay({
                 const infos: CanvasElementContextInfo[] = [];
                 for (const el of elements) {
                     if (el.isDeleted || !selectedIdSet.has(el.id)) continue;
-                    infos.push({
-                        elementId: el.id,
-                        type: el.type || 'unknown',
-                        annotation: el.customData?.annotation || undefined,
-                        title: el.customData?.title || '',
-                        link: el.link || '',
-                        width: el.width || 0,
-                        height: el.height || 0,
-                    });
+                    infos.push(buildCanvasElementContextInfo(el));
                 }
-                if (infos.length > 0) onAddToContext(infos);
+                if (infos.length > 0) onAddNodesToAI(infos);
             }
         };
 
         window.addEventListener('keydown', handler, true);
         return () => window.removeEventListener('keydown', handler, true);
-    }, [excalidrawAPI, selectedInfo, bridgeConnected, onAddToContext, openPopover]);
+    }, [excalidrawAPI, selectedInfo, bridgeConnected, onAddNodesToAI, openPopover]);
 
     /* ── Compact toolbar annotation button event ──────────────────── */
     useEffect(() => {

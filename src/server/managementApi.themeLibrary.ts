@@ -68,6 +68,7 @@ export interface ThemeLibraryIndexItem {
   stylePath: string;
   coverPath: string;
   description: string;
+  previewUrl?: string;
 }
 
 interface LoadedThemeLibrary {
@@ -152,6 +153,26 @@ function assertString(value: unknown, fieldName: string): string {
   return raw;
 }
 
+function assertOptionalHttpUrl(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) {
+    throw new Error(`Invalid ${fieldName}`);
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Invalid ${fieldName}: ${String(value || '')}`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`Invalid ${fieldName}: ${raw}`);
+  }
+  return raw;
+}
+
 function validateThemeLibraryIndex(raw: unknown): ThemeLibraryIndexItem[] {
   if (!raw || typeof raw !== 'object') {
     throw new Error('Theme library index must be an object');
@@ -193,6 +214,7 @@ function validateThemeLibraryIndex(raw: unknown): ThemeLibraryIndexItem[] {
     }
     ids.add(id);
     slugs.add(slug);
+    const previewUrl = assertOptionalHttpUrl(designSystem.previewUrl, `designSystems[${index}].previewUrl`);
     return {
       id,
       title: assertString(designSystem.title, `designSystems[${index}].title`),
@@ -203,6 +225,7 @@ function validateThemeLibraryIndex(raw: unknown): ThemeLibraryIndexItem[] {
       stylePath,
       coverPath,
       description: assertString(designSystem.description, `designSystems[${index}].description`),
+      ...(previewUrl ? { previewUrl } : {}),
     };
   });
 }

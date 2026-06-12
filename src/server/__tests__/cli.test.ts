@@ -7,6 +7,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const startMakeServerMock = vi.hoisted(() => vi.fn());
 const spawnMock = vi.hoisted(() => vi.fn());
+const startDiagnosticLogMock = vi.hoisted(() => vi.fn((filePath: string) => ({
+  filePath,
+  write: vi.fn(),
+  close: vi.fn(),
+})));
 
 vi.mock('node:child_process', async () => {
   const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
@@ -18,6 +23,11 @@ vi.mock('node:child_process', async () => {
 
 vi.mock('../index.ts', () => ({
   startMakeServer: startMakeServerMock,
+}));
+
+vi.mock('../diagnosticLog.ts', () => ({
+  resolveDefaultDiagnosticLogFile: (cwd = process.cwd()) => `${cwd}/.local/logs/axhub-make-test.log`,
+  startDiagnosticLog: startDiagnosticLogMock,
 }));
 
 import { isCliEntrypoint, parseCliArgs, runCli, shouldAutoRunCli } from '../cli.ts';
@@ -39,6 +49,7 @@ afterEach(() => {
   }
   startMakeServerMock.mockReset();
   spawnMock.mockReset();
+  startDiagnosticLogMock.mockClear();
   delete process.env.AXHUB_MAKE_HOME_DIR;
   vi.restoreAllMocks();
 });
@@ -105,6 +116,41 @@ describe('make-server CLI args', () => {
     });
   });
 
+  it('can start without opening the admin page automatically', () => {
+    const homeDir = useMakeHomeDir();
+    const cwd = createProjectRoot();
+
+    expect(parseCliArgs(['--no-open'], cwd)).toMatchObject({
+      projectRoot: getGlobalMakeStateDir(homeDir),
+      open: false,
+    });
+  });
+
+  it('accepts a diagnostic log file path', () => {
+    const homeDir = useMakeHomeDir();
+    const cwd = createProjectRoot();
+    const logFile = path.join(cwd, '.local', 'logs', 'make.log');
+
+    expect(parseCliArgs(['--log-file', logFile], cwd)).toMatchObject({
+      projectRoot: getGlobalMakeStateDir(homeDir),
+      logFile,
+    });
+  });
+
+  it('uses a local diagnostic log path when --log-file is passed without a value', () => {
+    const homeDir = useMakeHomeDir();
+    const cwd = createProjectRoot();
+
+    const parsed = parseCliArgs(['--log-file', '--no-open'], cwd);
+
+    expect(parsed).toMatchObject({
+      projectRoot: getGlobalMakeStateDir(homeDir),
+      open: false,
+    });
+    expect(parsed.logFile).toMatch(new RegExp(`^${cwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    expect(parsed.logFile).toContain(`${path.sep}.local${path.sep}logs${path.sep}`);
+  });
+
   it('ignores a pnpm script argument separator before a legacy explicit project path', () => {
     const homeDir = useMakeHomeDir();
     const cwd = createProjectRoot();
@@ -163,6 +209,67 @@ describe('make-server CLI args', () => {
       stdio: 'ignore',
     });
     expect(unref).toHaveBeenCalled();
+  });
+
+  it('does not open the browser when --no-open is passed', async () => {
+    const homeDir = useMakeHomeDir();
+    const legacyProjectRoot = createProjectRoot();
+    startMakeServerMock.mockResolvedValue({
+      close: vi.fn(),
+      host: 'localhost',
+      origin: 'http://localhost:53817',
+      port: DEFAULT_MAKE_SERVER_PORT,
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runCli([legacyProjectRoot, '--no-open']);
+
+    expect(startMakeServerMock).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: getGlobalMakeStateDir(homeDir),
+      open: false,
+    }));
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('passes the diagnostic log file to the make server', async () => {
+    const homeDir = useMakeHomeDir();
+    const legacyProjectRoot = createProjectRoot();
+    const logFile = path.join(createProjectRoot(), 'make.log');
+    startMakeServerMock.mockResolvedValue({
+      close: vi.fn(),
+      host: 'localhost',
+      origin: 'http://localhost:53817',
+      port: DEFAULT_MAKE_SERVER_PORT,
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runCli([legacyProjectRoot, '--log-file', logFile, '--no-open']);
+
+    expect(startMakeServerMock).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: getGlobalMakeStateDir(homeDir),
+      logFile,
+      open: false,
+    }));
+    expect(startDiagnosticLogMock).toHaveBeenCalledWith(logFile);
+  });
+
+  it('does not expose the removed canvas CLI subcommand', async () => {
+    const originalExitCode = process.exitCode;
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    process.exitCode = undefined;
+
+    try {
+      await runCli(['canvas']);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        'The axhub-make canvas CLI has been removed. Read and write canvas .excalidraw files directly.',
+      );
+      expect(startMakeServerMock).not.toHaveBeenCalled();
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = originalExitCode;
+    }
   });
 
   it('prints a friendly hint with the visit URL when the server port is occupied', async () => {

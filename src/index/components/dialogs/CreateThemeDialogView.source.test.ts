@@ -7,6 +7,14 @@ function readDialogSource() {
 }
 
 describe('CreateThemeDialogView theme import upload source', () => {
+    it('includes optional previewUrl in online theme library item type', () => {
+        const source = readDialogSource();
+        const typeMatch = source.match(/interface ThemeLibraryItem[\s\S]*?\n}/);
+
+        expect(typeMatch).not.toBeNull();
+        expect(typeMatch?.[0] || '').toContain('previewUrl?: string;');
+    });
+
     it('uses Make ZIP as the only upload source in the import upload panel', () => {
         const source = readDialogSource();
 
@@ -51,6 +59,21 @@ describe('CreateThemeDialogView theme import upload source', () => {
         expect(source).toContain('<TooltipProvider>');
         expect(source).not.toContain("title={disabledReason || undefined}");
         expect(source).not.toContain('需 AI 处理');
+    });
+
+    it('renders an online preview entry only when the design system includes previewUrl', () => {
+        const source = readDialogSource();
+        const themeCardMatch = source.match(/themeLibrary\.designSystems\.map\(\(designSystem\) => \{[\s\S]*?handleDirectThemeLibraryImport\(designSystem\)[\s\S]*?<\/TooltipProvider>/);
+
+        expect(themeCardMatch).not.toBeNull();
+        const themeCardSource = themeCardMatch?.[0] || '';
+        expect(themeCardSource).toContain('designSystem.previewUrl ? (');
+        expect(themeCardSource).toContain('在线预览');
+        expect(themeCardSource).toContain('href={designSystem.previewUrl}');
+        expect(themeCardSource).toContain('target="_blank"');
+        expect(themeCardSource).toContain('rel="noreferrer"');
+        expect(themeCardSource).toContain('const directDisabled = Boolean(disabledReason) || !designSystem.canDirectImport || Boolean(themeImportingId);');
+        expect(themeCardSource).not.toContain('directDisabled = Boolean(designSystem.previewUrl)');
     });
 
     it('hides entry and token file paths in online theme library cards', () => {

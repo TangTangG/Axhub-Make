@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getConfigPath,
+  getGlobalServerConfigPath,
   getMakeClientMarkerPath,
   getProjectMetadataPath,
   getProjectRegistryPath,
@@ -55,14 +56,18 @@ vi.mock('../localCommand.ts', async (importActual) => {
 });
 
 const { commandExists, runLocalCommand } = await import('../localCommand.ts');
+const { resolveAssistantMakeCorsOrigins } = await import('../assistantRuntime.ts');
 const { startMakeServer } = await import('../index');
 const { handleAssistantPromptIde } = await import('../managementApi.assistantIde.ts');
 
 const commandExistsMock = vi.mocked(commandExists);
 const runLocalCommandMock = vi.mocked(runLocalCommand);
+type SpawnMockCall = [string, string[], any];
 
 const tempRoots: string[] = [];
 const healthServers: Server[] = [];
+const originalAcpUiProjectRoot = process.env.AXHUB_ACP_UI_PROJECT_ROOT;
+const originalCwd = process.cwd();
 
 function createTempRoot(prefix = 'axhub-make-assistant-runtime-') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -79,69 +84,87 @@ function writeProjectConfig(projectRoot: string, value: unknown): void {
   writeJson(getConfigPath(projectRoot), value);
 }
 
-async function startAssistantHealthServer() {
+async function startAcpUiServer(options: {
+  failFirstProbe?: boolean;
+  cors?: boolean | string;
+  runtime?: boolean;
+} = {}) {
+  let failedFirstProbe = false;
+  let runtimeRequestCount = 0;
   const server = createServer((req, res) => {
-    if (req.url === '/health') {
-      res.writeHead(200, {
-        'content-type': 'application/json',
-        'x-app-identifier': '@axhub/genie',
-      });
-      res.end(JSON.stringify({
-        status: 'ok',
-        service: { id: '@axhub/genie', name: 'Axhub Genie' },
-      }));
-      return;
-    }
+    const origin = String(req.headers.origin || '');
+    const corsOrigin = options.cors === true ? (origin || '*') : typeof options.cors === 'string' ? options.cors : '';
+    const corsHeaders = corsOrigin ? {
+      'access-control-allow-origin': corsOrigin,
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+      'access-control-allow-headers': 'content-type',
+    } : {};
     if (req.url === '/') {
-      res.writeHead(200, { 'content-type': 'text/html' });
-      res.end('<!doctype html><title>Axhub Genie</title>');
+      if (options.failFirstProbe && !failedFirstProbe) {
+        failedFirstProbe = true;
+        res.writeHead(503, { 'content-type': 'text/plain', ...corsHeaders });
+        res.end('starting');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/html', ...corsHeaders });
+      res.end('<!doctype html><title>ACP UI</title>');
       return;
     }
-    res.writeHead(404).end();
-  });
-  healthServers.push(server);
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('Failed to start assistant health test server');
-  }
-  return { origin: `http://127.0.0.1:${address.port}` };
-}
-
-async function startRejectedHealthServer() {
-  const server = createServer((req, res) => {
-    if (req.url === '/health') {
-      res.writeHead(200, { 'content-type': 'application/json' });
+    if (req.url?.startsWith('/api/acp/runtime') && options.runtime) {
+      runtimeRequestCount += 1;
+      if (req.method === 'OPTIONS') {
+        res.writeHead(options.cors ? 204 : 404, corsHeaders);
+        res.end();
+        return;
+      }
+      const address = server.address();
+      const port = address && typeof address !== 'string' ? address.port : 0;
+      const webBaseUrl = `http://127.0.0.1:${port}`;
+      res.writeHead(200, { 'content-type': 'application/json', ...corsHeaders });
       res.end(JSON.stringify({
-        status: 'ok',
-        service: { id: 'not-axhub-genie', name: 'Other Service' },
+        service: { id: '@axhub/acp', name: 'Axhub ACP UI' },
+        status: 'ready',
+        port,
+        hostname: '127.0.0.1',
+        webBaseUrl,
+        apiBaseUrl: `${webBaseUrl}/api`,
+        corsOrigins: options.cors ? [corsOrigin || '*'] : [],
+        startedAt: new Date().toISOString(),
       }));
       return;
     }
+    if (req.url?.startsWith('/api/chat')) {
+      if (options.failFirstProbe && !failedFirstProbe) {
+        failedFirstProbe = true;
+        res.writeHead(503, { 'content-type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({ error: 'starting' }));
+        return;
+      }
+      if (req.method === 'OPTIONS') {
+        res.writeHead(options.cors ? 204 : 404, corsHeaders);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json', ...corsHeaders });
+      res.end(JSON.stringify({ sessions: [] }));
+      return;
+    }
     res.writeHead(404).end();
   });
   healthServers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   if (!address || typeof address === 'string') {
-    throw new Error('Failed to start rejected assistant health test server');
+    throw new Error('Failed to start ACP UI test server');
   }
-  return { origin: `http://127.0.0.1:${address.port}` };
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    getRuntimeRequestCount: () => runtimeRequestCount,
+  };
 }
 
 async function startRedirectingAssistantServer(redirectLocation: string) {
   const server = createServer((req, res) => {
-    if (req.url === '/health') {
-      res.writeHead(200, {
-        'content-type': 'application/json',
-        'x-app-identifier': '@axhub/genie',
-      });
-      res.end(JSON.stringify({
-        status: 'ok',
-        service: { id: '@axhub/genie', name: 'Axhub Genie' },
-      }));
-      return;
-    }
     if (req.url === '/') {
       res.writeHead(302, { location: redirectLocation });
       res.end();
@@ -195,15 +218,85 @@ function writeMakeClientPackage(projectRoot: string) {
   });
 }
 
+function writeAcpUiCheckout(root: string) {
+  writeJson(path.join(root, 'package.json'), {
+    name: '@axhub/acp',
+    scripts: {
+      dev: 'next dev',
+    },
+  });
+}
+
+function useLocalAcpUiCheckout() {
+  const root = createTempRoot('axhub-make-acp-ui-checkout-');
+  writeAcpUiCheckout(root);
+  process.env.AXHUB_ACP_UI_PROJECT_ROOT = root;
+  return root;
+}
+
+function expectAcpUiCorsArg(args: string[], makeOrigin: string) {
+  const corsIndex = args.indexOf('--cors-origin');
+  expect(corsIndex).toBeGreaterThanOrEqual(0);
+  const origins = String(args[corsIndex + 1] || '').split(',').filter(Boolean);
+  const parsed = new URL(makeOrigin);
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+  expect(origins).toEqual(expect.arrayContaining([
+    parsed.origin,
+    `${parsed.protocol}//localhost:${port}`,
+    `${parsed.protocol}//127.0.0.1:${port}`,
+  ]));
+}
+
+function normalizeTestPath(value: string): string {
+  try {
+    return fs.realpathSync(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+function expectAcpUiSpawn(params: {
+  command: 'npm' | 'npx';
+  port: string;
+  cwd: string;
+  makeOrigin: string;
+}) {
+  expect(childProcessMock.spawn).toHaveBeenCalled();
+  const call = childProcessMock.spawn.mock.calls.at(-1) as unknown as SpawnMockCall | undefined;
+  expect(call).toBeTruthy();
+  const [command, args, options] = call!;
+  expect(command).toBe(params.command);
+  expect(args).toEqual(params.command === 'npm'
+    ? expect.arrayContaining(['run', 'dev', '--', '--port', params.port, '--cors-origin'])
+    : expect.arrayContaining(['-y', '@axhub/acp@latest', '--port', params.port, '--cors-origin']));
+  expectAcpUiCorsArg(args, params.makeOrigin);
+  expect(options.detached).toBe(true);
+  expect(normalizeTestPath(options.cwd)).toBe(normalizeTestPath(params.cwd));
+}
+
 async function startTestServer(projectRoot: string) {
   const registryHome = createTempRoot('axhub-make-assistant-runtime-registry-');
-  return startMakeServer({
+  const now = new Date().toISOString();
+  writeJson(getProjectRegistryPath(registryHome), {
+    schemaVersion: 1,
+    activeProjectId: 'assistant-client',
+    projects: [{
+      id: 'assistant-client',
+      name: 'Assistant Client',
+      root: projectRoot,
+      metadataPath: getProjectMetadataPath(projectRoot),
+      createdAt: now,
+      updatedAt: now,
+    }],
+  });
+  const server = await startMakeServer({
     projectRoot,
     host: 'localhost',
     port: 0,
     adminRoot: path.join(projectRoot, 'missing-admin'),
     registryPath: getProjectRegistryPath(registryHome),
   });
+  return Object.assign(server, { registryHome });
 }
 
 function createLocalCommandResult(command: string, args: string[], stdout = '', stderr = '') {
@@ -215,15 +308,9 @@ function createLocalCommandResult(command: string, args: string[], stdout = '', 
   };
 }
 
-function mockAssistantStatus(payload: unknown) {
-  return createLocalCommandResult(
-    'npx',
-    ['@axhub/genie@latest', 'status', '--json'],
-    typeof payload === 'string' ? payload : JSON.stringify(payload),
-  );
-}
-
 beforeEach(() => {
+  process.chdir(createTempRoot('axhub-make-assistant-runtime-cwd-'));
+  delete process.env.AXHUB_ACP_UI_PROJECT_ROOT;
   commandExistsMock.mockReset();
   commandExistsMock.mockResolvedValue(true);
   runLocalCommandMock.mockReset();
@@ -234,6 +321,12 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  process.chdir(originalCwd);
+  if (originalAcpUiProjectRoot === undefined) {
+    delete process.env.AXHUB_ACP_UI_PROJECT_ROOT;
+  } else {
+    process.env.AXHUB_ACP_UI_PROJECT_ROOT = originalAcpUiProjectRoot;
+  }
   for (const server of healthServers.splice(0)) {
     server.close();
   }
@@ -247,10 +340,216 @@ describe('make-server assistant runtime API', () => {
     expect(handleAssistantPromptIde).toBeTypeOf('function');
   });
 
-  it('probes Axhub Genie health without auto-start when requested', async () => {
+  it('probes configured ACP UI through the page and chat endpoints without Genie health', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
-    const assistant = await startAssistantHealthServer();
+    const assistant = await startAcpUiServer({ cors: true });
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=false`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+        projectPath: projectRoot,
+        source: 'config',
+        health: {
+          status: 'ready',
+          commandSource: 'config',
+        },
+        runtime: {
+          available: true,
+        },
+      });
+      expect(body.health.message).toContain('ACP UI');
+      expect(runLocalCommandMock).not.toHaveBeenCalled();
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+      expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('uses ACP server runtime metadata when the configured ACP UI exposes it', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const assistant = await startAcpUiServer({ cors: true, runtime: true });
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=false`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+        source: 'config',
+        health: {
+          status: 'ready',
+        },
+        runtime: {
+          available: true,
+        },
+      });
+      expect(assistant.getRuntimeRequestCount()).toBeGreaterThan(0);
+      expect(body.health.message).toContain('server runtime');
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('probes configured ACP UI without auto-start by default', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const assistant = await startAcpUiServer({ failFirstProbe: true, cors: true });
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+        projectPath: projectRoot,
+        source: 'config',
+        health: {
+          status: 'runtime_unreachable',
+          commandSource: 'config',
+        },
+        runtime: {
+          available: false,
+          code: 'assistant-runtime-unavailable',
+        },
+      });
+      expect(body.health.message).toContain('ACP UI 未就绪');
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+      expect(runLocalCommandMock).not.toHaveBeenCalled();
+      expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('auto-starts the local ACP UI checkout when explicitly requested and re-probes configured endpoints', async () => {
+    const projectRoot = createTempRoot();
+    const localAcpUiProjectRoot = useLocalAcpUiCheckout();
+    writeProjectMetadata(projectRoot);
+    const assistant = await startAcpUiServer({ failFirstProbe: true, cors: true });
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=true`);
+      const body = await response.json();
+      const assistantPort = new URL(assistant.origin).port;
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+        projectPath: projectRoot,
+        source: 'config',
+        health: {
+          status: 'ready',
+          commandSource: 'acp-ui',
+        },
+        runtime: {
+          available: true,
+        },
+      });
+      expectAcpUiSpawn({
+        command: 'npm',
+        port: assistantPort,
+        cwd: localAcpUiProjectRoot,
+        makeOrigin: server.origin,
+      });
+      const spawnCall = childProcessMock.spawn.mock.calls.at(-1) as unknown as SpawnMockCall | undefined;
+      const spawnOptions = spawnCall?.[2] as any;
+      expect(spawnOptions.env.ACP_UI_CORS_ORIGINS).toContain(server.origin);
+      expect(spawnOptions.env.ACP_UI_CORS_ORIGINS).toContain(`http://localhost:${new URL(server.origin).port}`);
+      expect(runLocalCommandMock).not.toHaveBeenCalled();
+      expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('auto-discovers a sibling ACP UI checkout in development before falling back to npx', async () => {
+    const workspaceRoot = createTempRoot('axhub-make-dev-workspace-');
+    const makeRoot = path.join(workspaceRoot, 'Axhub Runtime', 'apps', 'axhub-make');
+    const localAcpUiProjectRoot = path.join(workspaceRoot, 'acp-ui');
+    fs.mkdirSync(makeRoot, { recursive: true });
+    writeAcpUiCheckout(localAcpUiProjectRoot);
+    process.chdir(makeRoot);
+
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const assistant = await startAcpUiServer({ failFirstProbe: true, cors: true });
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=true`);
+      const body = await response.json();
+      const assistantPort = new URL(assistant.origin).port;
+
+      expect(response.status).toBe(200);
+      expect(body.runtime.available).toBe(true);
+      expectAcpUiSpawn({
+        command: 'npm',
+        port: assistantPort,
+        cwd: localAcpUiProjectRoot,
+        makeOrigin: server.origin,
+      });
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'npx',
+        expect.any(Array),
+        expect.any(Object),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('probes configured ACP UI without auto-start when requested', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const assistant = await startAcpUiServer({ cors: true });
     writeProjectConfig(projectRoot, {
       assistant: {
         webBaseUrl: assistant.origin,
@@ -284,23 +583,16 @@ describe('make-server assistant runtime API', () => {
     }
   });
 
-  it('does not report ready when Genie health passes but the web UI redirects to an unreachable URL', async () => {
+  it('does not report ready when ACP UI does not allow the current Make origin through CORS', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
-    const assistant = await startRedirectingAssistantServer('http://127.0.0.1:1/');
+    const assistant = await startAcpUiServer();
     writeProjectConfig(projectRoot, {
       assistant: {
         webBaseUrl: assistant.origin,
         apiBaseUrl: `${assistant.origin}/api`,
       },
     });
-    runLocalCommandMock.mockResolvedValueOnce(mockAssistantStatus({
-      running: true,
-      endpoint: {
-        frontendUrl: assistant.origin,
-        apiBaseUrl: `${assistant.origin}/api`,
-      },
-    }));
     const server = await startTestServer(projectRoot);
 
     try {
@@ -310,17 +602,457 @@ describe('make-server assistant runtime API', () => {
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
         webBaseUrl: assistant.origin,
-        source: 'axhub-genie',
+        apiBaseUrl: `${assistant.origin}/api`,
+        source: 'config',
         health: {
           status: 'runtime_unreachable',
-          commandSource: 'axhub-genie',
+          commandSource: 'config',
         },
         runtime: {
           available: false,
           code: 'assistant-runtime-unavailable',
         },
       });
-      expect(body.health.message).toContain('Web UI 探测失败');
+      expect(body.health.message).toContain('跨域');
+      expect(body.health.hints.start).toContain('--cors-origin');
+      expect(body.health.hints.start).toContain(server.origin);
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+      expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('auto-start repairs a local configured ACP endpoint with missing CORS by restarting the same port', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const assistantOrigin = 'http://localhost:32124';
+    const assistantPort = Number(new URL(assistantOrigin).port);
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: assistantOrigin,
+        apiBaseUrl: `${assistantOrigin}/api`,
+      },
+    });
+    let portLookupCount = 0;
+    childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'lsof' && args.includes(`-tiTCP:${assistantPort}`)) {
+        portLookupCount += 1;
+        return { stdout: portLookupCount === 1 ? '889\n' : '', stderr: '', status: 0 };
+      }
+      return { stdout: '', stderr: '', status: 0 };
+    });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((() => true) as any);
+    const server = await startTestServer(projectRoot);
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
+      const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
+      if (!requestUrl.startsWith(assistantOrigin)) {
+        return realFetch(input, init);
+      }
+      const method = String(init?.method || 'GET').toUpperCase();
+      const headers = childProcessMock.spawn.mock.calls.length > 0
+        ? {
+          'access-control-allow-origin': server.origin,
+          'access-control-allow-methods': 'GET, POST, OPTIONS',
+          'access-control-allow-headers': 'content-type',
+        }
+        : {};
+      if (requestUrl === `${assistantOrigin}/api/acp/runtime`) {
+        return Promise.resolve(new Response('', { status: 404, headers }));
+      }
+      if (requestUrl === `${assistantOrigin}/`) {
+        return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
+      }
+      if (requestUrl === `${assistantOrigin}/api/chat` && method === 'OPTIONS') {
+        return Promise.resolve(new Response(null, {
+          status: childProcessMock.spawn.mock.calls.length > 0 ? 204 : 404,
+          headers,
+        }));
+      }
+      if (requestUrl === `${assistantOrigin}/api/chat`) {
+        return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', ...headers },
+        }));
+      }
+      return Promise.resolve(new Response('', { status: 404, headers }));
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=true`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: assistantOrigin,
+        apiBaseUrl: `${assistantOrigin}/api`,
+        source: 'config',
+        health: {
+          status: 'ready',
+          commandSource: 'acp-ui',
+        },
+        runtime: {
+          available: true,
+        },
+      });
+      expect(killSpy).toHaveBeenCalledWith(889, 'SIGTERM');
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: String(assistantPort),
+        cwd: projectRoot,
+        makeOrigin: server.origin,
+      });
+      expect(childProcessMock.spawnSync).not.toHaveBeenCalledWith(
+        'lsof',
+        expect.arrayContaining(['-tiTCP:32123']),
+        expect.any(Object),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+      killSpy.mockRestore();
+      await server.close();
+    }
+  });
+
+  it('auto-start repairs the default ACP endpoint with missing CORS by restarting 32123', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    let portLookupCount = 0;
+    childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'lsof' && args.includes('-tiTCP:32123')) {
+        portLookupCount += 1;
+        return { stdout: portLookupCount === 1 ? '890\n' : '', stderr: '', status: 0 };
+      }
+      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
+        return { stdout: '', stderr: '', status: 0 };
+      }
+      return { stdout: '', stderr: '', status: 0 };
+    });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((() => true) as any);
+    const server = await startTestServer(projectRoot);
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
+      const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
+      if (!requestUrl.startsWith('http://localhost:32123')) {
+        return realFetch(input, init);
+      }
+      const method = String(init?.method || 'GET').toUpperCase();
+      const headers = childProcessMock.spawn.mock.calls.length > 0
+        ? {
+          'access-control-allow-origin': server.origin,
+          'access-control-allow-methods': 'GET, POST, OPTIONS',
+          'access-control-allow-headers': 'content-type',
+        }
+        : {};
+
+      if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+        return Promise.resolve(new Response('', { status: 404, headers }));
+      }
+      if (requestUrl === 'http://localhost:32123/') {
+        return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
+      }
+      if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+        return Promise.resolve(new Response(
+          childProcessMock.spawn.mock.calls.length > 0 ? null : '',
+          {
+            status: childProcessMock.spawn.mock.calls.length > 0 ? 204 : 404,
+            headers,
+          },
+        ));
+      }
+      if (requestUrl === 'http://localhost:32123/api/chat') {
+        return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', ...headers },
+        }));
+      }
+      return Promise.resolve(new Response('', { status: 404, headers }));
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=true`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: 'http://localhost:32123',
+        apiBaseUrl: 'http://localhost:32123/api',
+        source: 'default',
+        health: {
+          status: 'ready',
+          commandSource: 'acp-ui',
+        },
+        runtime: {
+          available: true,
+        },
+      });
+      expect(killSpy).toHaveBeenCalledWith(890, 'SIGTERM');
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: '32123',
+        cwd: projectRoot,
+        makeOrigin: server.origin,
+      });
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['32124']),
+        expect.any(Object),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+      killSpy.mockRestore();
+      await server.close();
+    }
+  });
+
+  it('auto-start releases and restarts the default ACP port when an unreachable process is listening', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    let portLookupCount = 0;
+    childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'lsof' && args.includes('-tiTCP:32123')) {
+        portLookupCount += 1;
+        return { stdout: portLookupCount === 1 ? '891\n' : '', stderr: '', status: 0 };
+      }
+      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
+        return { stdout: '', stderr: '', status: 0 };
+      }
+      return { stdout: '', stderr: '', status: 0 };
+    });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((() => true) as any);
+    const server = await startTestServer(projectRoot);
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
+      const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
+      if (!requestUrl.startsWith('http://localhost:32123')) {
+        return realFetch(input, init);
+      }
+      if (childProcessMock.spawn.mock.calls.length === 0) {
+        return Promise.reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+      }
+      const method = String(init?.method || 'GET').toUpperCase();
+      const headers = {
+        'access-control-allow-origin': server.origin,
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+      };
+
+      if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+        return Promise.resolve(new Response('', { status: 404, headers }));
+      }
+      if (requestUrl === 'http://localhost:32123/') {
+        return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
+      }
+      if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+        return Promise.resolve(new Response(null, { status: 204, headers }));
+      }
+      if (requestUrl === 'http://localhost:32123/api/chat') {
+        return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', ...headers },
+        }));
+      }
+      return Promise.resolve(new Response('', { status: 404, headers }));
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=true`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: 'http://localhost:32123',
+        apiBaseUrl: 'http://localhost:32123/api',
+        source: 'default',
+        health: {
+          status: 'ready',
+          commandSource: 'acp-ui',
+        },
+        runtime: {
+          available: true,
+        },
+      });
+      expect(killSpy).toHaveBeenCalledWith(891, 'SIGTERM');
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: '32123',
+        cwd: projectRoot,
+        makeOrigin: server.origin,
+      });
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['32124']),
+        expect.any(Object),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+      killSpy.mockRestore();
+      await server.close();
+    }
+  });
+
+  it('falls back to the default ACP port when a persisted local fallback endpoint is unreachable', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const staleAssistantOrigin = 'http://127.0.0.1:57269';
+    const server = await startTestServer(projectRoot);
+    writeJson(getGlobalServerConfigPath(server.registryHome), {
+      assistant: {
+        webBaseUrl: staleAssistantOrigin,
+        apiBaseUrl: `${staleAssistantOrigin}/api`,
+      },
+    });
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
+      const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
+      if (requestUrl.startsWith(staleAssistantOrigin) || requestUrl.startsWith('http://localhost:32123')) {
+        return Promise.reject(new TypeError('fetch failed'));
+      }
+      return realFetch(input, init);
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=false`);
+      const body = await response.json();
+      const savedConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(server.registryHome), 'utf8'));
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: 'http://localhost:32123',
+        apiBaseUrl: 'http://localhost:32123/api',
+        source: 'default',
+        health: {
+          status: 'runtime_unreachable',
+          commandSource: 'default',
+        },
+      });
+      expect(body.webBaseUrl).not.toBe(staleAssistantOrigin);
+      expect(body.health.message).toContain('32123');
+      expect(savedConfig.assistant).toMatchObject({
+        webBaseUrl: 'http://localhost:32123',
+        apiBaseUrl: 'http://localhost:32123/api',
+      });
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      await server.close();
+    }
+  });
+
+  it('starts on the default ACP port when a persisted local fallback endpoint is stale and 32123 is free', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const staleAssistantOrigin = 'http://127.0.0.1:57269';
+    childProcessMock.spawnSync.mockImplementation(() => ({ stdout: '', stderr: '', status: 0 }));
+    const server = await startTestServer(projectRoot);
+    writeJson(getGlobalServerConfigPath(server.registryHome), {
+      assistant: {
+        webBaseUrl: staleAssistantOrigin,
+        apiBaseUrl: `${staleAssistantOrigin}/api`,
+      },
+    });
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
+      const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
+      if (requestUrl.startsWith(staleAssistantOrigin)) {
+        return Promise.reject(new TypeError('fetch failed'));
+      }
+      if (requestUrl.startsWith('http://localhost:32123')) {
+        if (childProcessMock.spawn.mock.calls.length === 0) {
+          return Promise.reject(new TypeError('fetch failed'));
+        }
+        const method = String(init?.method || 'GET').toUpperCase();
+        const headers = {
+          'access-control-allow-origin': server.origin,
+          'access-control-allow-methods': 'GET, POST, OPTIONS',
+          'access-control-allow-headers': 'content-type',
+        };
+        if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+          return Promise.resolve(new Response('', { status: 404, headers }));
+        }
+        if (requestUrl === 'http://localhost:32123/') {
+          return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
+        }
+        if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+          return Promise.resolve(new Response(null, { status: 204, headers }));
+        }
+        if (requestUrl === 'http://localhost:32123/api/chat') {
+          return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json', ...headers },
+          }));
+        }
+        return Promise.resolve(new Response('', { status: 404, headers }));
+      }
+      return realFetch(input, init);
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=true`);
+      const body = await response.json();
+      const savedConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(server.registryHome), 'utf8'));
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: 'http://localhost:32123',
+        apiBaseUrl: 'http://localhost:32123/api',
+        source: 'default',
+        health: {
+          status: 'ready',
+          commandSource: 'acp-ui',
+        },
+        runtime: {
+          available: true,
+        },
+      });
+      expect(savedConfig.assistant).toMatchObject({
+        webBaseUrl: 'http://localhost:32123',
+        apiBaseUrl: 'http://localhost:32123/api',
+      });
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: '32123',
+        cwd: projectRoot,
+        makeOrigin: server.origin,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      await server.close();
+    }
+  });
+
+  it('does not report ready when ACP UI redirects to an unreachable URL', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const assistant = await startRedirectingAssistantServer('http://127.0.0.1:1/');
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=false`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: assistant.origin,
+        source: 'config',
+        health: {
+          status: 'runtime_unreachable',
+          commandSource: 'config',
+        },
+        runtime: {
+          available: false,
+          code: 'assistant-runtime-unavailable',
+        },
+      });
+      expect(body.health.message).toContain('ACP UI 页面探测失败');
+      expect(runLocalCommandMock).not.toHaveBeenCalled();
       expect(childProcessMock.spawn).not.toHaveBeenCalled();
       expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
     } finally {
@@ -335,7 +1067,7 @@ describe('make-server assistant runtime API', () => {
     writeProjectMetadata(selectedProjectRoot, 'selected-assistant-client');
     writeMakeClientMarker(selectedProjectRoot, 'selected-assistant-client', 'Selected Assistant Client');
     writeMakeClientPackage(selectedProjectRoot);
-    const assistant = await startAssistantHealthServer();
+    const assistant = await startAcpUiServer({ cors: true });
     writeProjectConfig(activeProjectRoot, {
       assistant: {
         webBaseUrl: 'http://127.0.0.1:1',
@@ -389,72 +1121,144 @@ describe('make-server assistant runtime API', () => {
     }
   });
 
-  it('auto-starts Axhub Genie through the shared local command runner and resolves status endpoints', async () => {
+  it('auto-starts ACP UI through npx when explicitly requested and re-probes endpoints', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
-    const fallbackHealth = await startRejectedHealthServer();
-    const assistant = await startAssistantHealthServer();
+    const assistant = await startAcpUiServer({ failFirstProbe: true, cors: true });
     writeProjectConfig(projectRoot, {
       assistant: {
-        webBaseUrl: fallbackHealth.origin,
-        apiBaseUrl: `${fallbackHealth.origin}/api`,
+        webBaseUrl: assistant.origin,
+        apiBaseUrl: `${assistant.origin}/api`,
       },
     });
-    runLocalCommandMock
-      .mockResolvedValueOnce(mockAssistantStatus({
-        running: false,
-        endpoint: {
-          frontendUrl: assistant.origin,
-          apiBaseUrl: `${assistant.origin}/api`,
-        },
-      }))
-      .mockResolvedValueOnce(mockAssistantStatus({
-        running: true,
-        endpoint: {
-          frontendUrl: assistant.origin,
-          apiBaseUrl: `${assistant.origin}/api`,
-        },
-      }));
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/assistant/runtime`);
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=true`);
       const body = await response.json();
+      const assistantPort = new URL(assistant.origin).port;
 
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
         webBaseUrl: assistant.origin,
         apiBaseUrl: `${assistant.origin}/api`,
         projectPath: projectRoot,
-        source: 'axhub-genie',
+        source: 'config',
         health: {
           status: 'ready',
-          commandSource: 'axhub-genie',
+          commandSource: 'acp-ui',
         },
         runtime: {
           available: true,
         },
       });
-      expect(childProcessMock.spawn).toHaveBeenCalledWith(
-        'npx',
-        ['@axhub/genie@latest'],
-        expect.objectContaining({
-          cwd: projectRoot,
-          detached: true,
-          env: expect.objectContaining({ PATH: expect.any(String) }),
-        }),
-      );
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: assistantPort,
+        cwd: projectRoot,
+        makeOrigin: server.origin,
+      });
       expect(commandExistsMock).toHaveBeenCalledWith(
         'npx',
         expect.objectContaining({ timeoutMs: expect.any(Number) }),
       );
-      expect(runLocalCommandMock).toHaveBeenCalledWith(
-        'npx',
-        ['@axhub/genie@latest', 'status', '--json'],
-        expect.objectContaining({ timeoutMs: expect.any(Number) }),
-      );
+      expect(runLocalCommandMock).not.toHaveBeenCalled();
       expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
     } finally {
+      await server.close();
+    }
+  });
+
+  it('does not persist a fallback port when 32123 is occupied by an unreachable process', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    let portLookupCount = 0;
+    childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'lsof' && args.includes('-tiTCP:32123')) {
+        portLookupCount += 1;
+        return { stdout: portLookupCount === 1 ? '777\n' : '', stderr: '', status: 0 };
+      }
+      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
+        return { stdout: '', stderr: '', status: 0 };
+      }
+      return { stdout: '', stderr: '', status: 0 };
+    });
+    const server = await startTestServer(projectRoot);
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
+      const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
+      if (requestUrl.startsWith('http://localhost:32124')) {
+        return Promise.reject(new TypeError('fetch failed'));
+      }
+      if (requestUrl.startsWith('http://localhost:32123')) {
+        if (childProcessMock.spawn.mock.calls.length === 0) {
+          return Promise.reject(new TypeError('fetch failed'));
+        }
+        const method = String(init?.method || 'GET').toUpperCase();
+        const headers = {
+          'access-control-allow-origin': server.origin,
+          'access-control-allow-methods': 'GET, POST, OPTIONS',
+          'access-control-allow-headers': 'content-type',
+        };
+        if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+          return Promise.resolve(new Response('', { status: 404, headers }));
+        }
+        if (requestUrl === 'http://localhost:32123/') {
+          return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
+        }
+        if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+          return Promise.resolve(new Response(null, { status: 204, headers }));
+        }
+        if (requestUrl === 'http://localhost:32123/api/chat') {
+          return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json', ...headers },
+          }));
+        }
+      }
+      return realFetch(input, init);
+    });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((() => true) as any);
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/runtime?autoStart=true`);
+      const body = await response.json();
+      const savedConfigPath = getGlobalServerConfigPath(server.registryHome);
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        webBaseUrl: 'http://localhost:32123',
+        apiBaseUrl: 'http://localhost:32123/api',
+        source: 'default',
+        health: {
+          status: 'ready',
+          commandSource: 'acp-ui',
+        },
+        runtime: {
+          available: true,
+        },
+      });
+      expect(fs.existsSync(savedConfigPath)).toBe(false);
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: '32123',
+        cwd: projectRoot,
+        makeOrigin: server.origin,
+      });
+      expect(killSpy).toHaveBeenCalledWith(777, 'SIGTERM');
+      expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['32124']),
+        expect.any(Object),
+      );
+      expect(childProcessMock.spawnSync).not.toHaveBeenCalledWith(
+        'taskkill.exe',
+        expect.any(Array),
+        expect.any(Object),
+      );
+    } finally {
+      killSpy.mockRestore();
+      fetchSpy.mockRestore();
       await server.close();
     }
   });
@@ -462,21 +1266,13 @@ describe('make-server assistant runtime API', () => {
   it('rewrites localhost assistant endpoints for LAN forwarded hosts', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
-    const fallbackHealth = await startRejectedHealthServer();
-    const assistant = await startAssistantHealthServer();
+    const assistant = await startAcpUiServer({ cors: true });
     writeProjectConfig(projectRoot, {
       assistant: {
-        webBaseUrl: fallbackHealth.origin,
-        apiBaseUrl: `${fallbackHealth.origin}/api`,
+        webBaseUrl: assistant.origin.replace('127.0.0.1', 'localhost'),
+        apiBaseUrl: `${assistant.origin.replace('127.0.0.1', 'localhost')}/api`,
       },
     });
-    runLocalCommandMock.mockResolvedValueOnce(mockAssistantStatus({
-      running: true,
-      endpoint: {
-        frontendUrl: assistant.origin.replace('127.0.0.1', 'localhost'),
-        apiBaseUrl: `${assistant.origin}/api`,
-      },
-    }));
     const server = await startTestServer(projectRoot);
 
     try {
@@ -492,11 +1288,12 @@ describe('make-server assistant runtime API', () => {
         apiBaseUrl: `http://192.168.31.9:${assistantPort}/api`,
         projectId: 'assistant-client',
         projectPath: projectRoot,
-        source: 'axhub-genie',
+        source: 'config',
         runtime: {
           available: true,
         },
       });
+      expect(runLocalCommandMock).not.toHaveBeenCalled();
       expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
     } finally {
       await server.close();
@@ -506,21 +1303,13 @@ describe('make-server assistant runtime API', () => {
   it('starts assistant bootstrap explicitly and returns runtime identity', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
-    const fallbackHealth = await startRejectedHealthServer();
-    const assistant = await startAssistantHealthServer();
+    const assistant = await startAcpUiServer({ cors: true });
     writeProjectConfig(projectRoot, {
       assistant: {
-        webBaseUrl: fallbackHealth.origin,
-        apiBaseUrl: `${fallbackHealth.origin}/api`,
-      },
-    });
-    runLocalCommandMock.mockResolvedValueOnce(mockAssistantStatus({
-      running: true,
-      endpoint: {
-        frontendUrl: assistant.origin,
+        webBaseUrl: assistant.origin,
         apiBaseUrl: `${assistant.origin}/api`,
       },
-    }));
+    });
     const server = await startTestServer(projectRoot);
 
     try {
@@ -530,12 +1319,13 @@ describe('make-server assistant runtime API', () => {
         body: JSON.stringify({ mode: 'start_existing' }),
       });
       const body = await response.json();
+      const assistantPort = new URL(assistant.origin).port;
 
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
         success: true,
         mode: 'start_existing',
-        message: 'Axhub Genie 启动命令已触发',
+        message: 'ACP UI 启动命令已触发',
         runtime: {
           webBaseUrl: assistant.origin,
           apiBaseUrl: `${assistant.origin}/api`,
@@ -545,17 +1335,234 @@ describe('make-server assistant runtime API', () => {
           },
         },
       });
-      expect(childProcessMock.spawn).toHaveBeenCalledWith(
-        'npx',
-        ['@axhub/genie@latest'],
-        expect.objectContaining({
-          cwd: projectRoot,
-          detached: true,
-          env: expect.objectContaining({ PATH: expect.any(String) }),
-        }),
-      );
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: assistantPort,
+        cwd: projectRoot,
+        makeOrigin: server.origin,
+      });
+      expect(runLocalCommandMock).not.toHaveBeenCalled();
       expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
     } finally {
+      await server.close();
+    }
+  });
+
+  it('waits for restarted ACP UI to expose the current Make CORS origin before returning ready', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: 'http://localhost:32123',
+        apiBaseUrl: 'http://localhost:32123/api',
+      },
+    });
+    let portLookupCount = 0;
+    childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'lsof' && args.includes('-tiTCP:32123')) {
+        portLookupCount += 1;
+        return { stdout: portLookupCount === 1 ? '999\n' : '', stderr: '', status: 0 };
+      }
+      return { stdout: '', stderr: '', status: 0 };
+    });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((() => true) as any);
+    const server = await startTestServer(projectRoot);
+    const realFetch = globalThis.fetch.bind(globalThis);
+    let corsProbeCount = 0;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
+      const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
+      if (!requestUrl.startsWith('http://localhost:32123')) {
+        return realFetch(input, init);
+      }
+      const method = String(init?.method || 'GET').toUpperCase();
+      const readyHeaders = {
+        'access-control-allow-origin': server.origin,
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+      };
+      const staleHeaders = {
+        'access-control-allow-origin': 'http://127.0.0.1:53761',
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+      };
+      const headers = corsProbeCount >= 3 ? readyHeaders : staleHeaders;
+
+      if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+        return Promise.resolve(new Response('', { status: 404, headers }));
+      }
+      if (requestUrl === 'http://localhost:32123/') {
+        return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
+      }
+      if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+        corsProbeCount += 1;
+        return Promise.resolve(new Response(null, {
+          status: 204,
+          headers: corsProbeCount >= 3 ? readyHeaders : staleHeaders,
+        }));
+      }
+      if (requestUrl === 'http://localhost:32123/api/chat') {
+        return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', ...headers },
+        }));
+      }
+      return Promise.resolve(new Response('', { status: 404, headers }));
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/bootstrap`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'restart_existing' }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        success: true,
+        mode: 'restart_existing',
+        runtime: {
+          webBaseUrl: 'http://localhost:32123',
+          apiBaseUrl: 'http://localhost:32123/api',
+          health: {
+            status: 'ready',
+          },
+          runtime: {
+            available: true,
+          },
+        },
+      });
+      expect(corsProbeCount).toBeGreaterThanOrEqual(3);
+      expect(killSpy).toHaveBeenCalledWith(999, 'SIGTERM');
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: '32123',
+        cwd: projectRoot,
+        makeOrigin: server.origin,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      killSpy.mockRestore();
+      await server.close();
+    }
+  });
+
+  it('restarts only a local configured ACP endpoint', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const assistantOrigin = 'http://localhost:32124';
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: assistantOrigin,
+        apiBaseUrl: `${assistantOrigin}/api`,
+      },
+    });
+    let portLookupCount = 0;
+    childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
+      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
+        portLookupCount += 1;
+        return { stdout: portLookupCount === 1 ? '888\n' : '', stderr: '', status: 0 };
+      }
+      return { stdout: '', stderr: '', status: 0 };
+    });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((() => true) as any);
+    const server = await startTestServer(projectRoot);
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
+      const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
+      if (!requestUrl.startsWith(assistantOrigin)) {
+        return realFetch(input, init);
+      }
+      const method = String(init?.method || 'GET').toUpperCase();
+      const headers = {
+        'access-control-allow-origin': server.origin,
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+      };
+      if (requestUrl === `${assistantOrigin}/api/acp/runtime`) {
+        return Promise.resolve(new Response('', { status: 404, headers }));
+      }
+      if (requestUrl === `${assistantOrigin}/`) {
+        return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
+      }
+      if (requestUrl === `${assistantOrigin}/api/chat` && method === 'OPTIONS') {
+        return Promise.resolve(new Response(null, { status: 204, headers }));
+      }
+      if (requestUrl === `${assistantOrigin}/api/chat`) {
+        return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', ...headers },
+        }));
+      }
+      return Promise.resolve(new Response('', { status: 404, headers }));
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/bootstrap`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'restart_existing' }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        success: true,
+        mode: 'restart_existing',
+        runtime: {
+          webBaseUrl: assistantOrigin,
+          apiBaseUrl: `${assistantOrigin}/api`,
+          health: {
+            status: 'ready',
+          },
+          runtime: {
+            available: true,
+          },
+        },
+      });
+      expect(killSpy).toHaveBeenCalledWith(888, 'SIGTERM');
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: '32124',
+        cwd: projectRoot,
+        makeOrigin: server.origin,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      killSpy.mockRestore();
+      await server.close();
+    }
+  });
+
+  it('rejects restart for a non-local ACP endpoint before releasing a port', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    writeProjectConfig(projectRoot, {
+      assistant: {
+        webBaseUrl: 'https://assistant.example.com',
+        apiBaseUrl: 'https://assistant.example.com/api',
+      },
+    });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((() => true) as any);
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/assistant/bootstrap`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'restart_existing' }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(body).toMatchObject({
+        code: 'ASSISTANT_BOOTSTRAP_FAILED',
+      });
+      expect(body.error).toContain('本机');
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
       await server.close();
     }
   });
@@ -584,7 +1591,7 @@ describe('make-server assistant runtime API', () => {
     }
   });
 
-  it('validates prompt execute requests before running acpx', async () => {
+  it('returns 404 for the deleted prompt execute endpoint', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
     const server = await startTestServer(projectRoot);
@@ -597,10 +1604,9 @@ describe('make-server assistant runtime API', () => {
       });
       const body = await response.json();
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(404);
       expect(body).toMatchObject({
-        code: 'PROMPT_EXECUTION_CLIENT_UNSUPPORTED',
-        projectId: 'assistant-client',
+        error: 'Not found',
       });
       expect(childProcessMock.spawn).not.toHaveBeenCalled();
     } finally {

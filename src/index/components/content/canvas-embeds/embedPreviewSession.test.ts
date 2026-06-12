@@ -190,25 +190,58 @@ describe('embed preview session guards', () => {
 
         expect(resolveEmbedRenderKind({
             embedViewMode: 'preview',
+            previewUrl: '/api/markdown-file?path=src%2Fprototypes%2Ferp-home%2F.spec%2F2026-06-10-supply-chain-home.md',
+            embedType: undefined,
+        })).toBe('doc-preview');
+
+        expect(resolveEmbedRenderKind({
+            embedViewMode: 'preview',
+            previewUrl: 'src/prototypes/erp-home/.spec/2026-06-10-supply-chain-home.md',
+            embedType: undefined,
+        })).toBe('doc-preview');
+
+        expect(resolveEmbedRenderKind({
+            embedViewMode: 'preview',
             previewUrl: 'http://localhost:51720/prototypes/home',
             embedType: undefined,
         })).toBe('web-preview');
     });
 
-    it('resolves relative prototype and theme preview URLs against the runtime origin', () => {
+    it('resolves relative prototype and theme preview URLs through the admin same-origin runtime proxy', () => {
         expect(resolveCanvasEmbedPreviewUrl({
             previewUrl: '/prototypes/home',
             resourceType: 'prototype',
             runtimeOrigin: 'http://localhost:51720',
             currentOrigin: 'http://localhost:53817',
-        })).toBe('http://localhost:51720/prototypes/home');
+        })).toBe('http://localhost:53817/prototypes/home');
 
         expect(resolveCanvasEmbedPreviewUrl({
             previewUrl: '/themes/brand',
             resourceType: 'theme',
             runtimeOrigin: 'http://localhost:51720/',
             currentOrigin: 'http://localhost:53817',
-        })).toBe('http://localhost:51720/themes/brand');
+        })).toBe('http://localhost:53817/themes/brand');
+
+        expect(resolveCanvasEmbedPreviewUrl({
+            previewUrl: 'http://localhost:51720/prototypes/home?variant=dark',
+            resourceType: 'prototype',
+            runtimeOrigin: 'http://localhost:51720/',
+            currentOrigin: 'http://localhost:53817',
+        })).toBe('http://localhost:53817/prototypes/home?variant=dark');
+
+        expect(resolveCanvasEmbedPreviewUrl({
+            previewUrl: 'http://localhost:51721/prototypes/home?variant=dark',
+            resourceType: 'prototype',
+            runtimeOrigin: 'http://localhost:51722/',
+            currentOrigin: 'http://localhost:53817',
+        })).toBe('http://localhost:53817/prototypes/home?variant=dark');
+
+        expect(resolveCanvasEmbedPreviewUrl({
+            previewUrl: 'http://localhost:51721/themes/brand',
+            resourceType: 'theme',
+            runtimeOrigin: 'http://localhost:51722/',
+            currentOrigin: 'http://localhost:53817',
+        })).toBe('http://localhost:53817/themes/brand');
 
         expect(resolveCanvasEmbedPreviewUrl({
             previewUrl: '/api/markdown-file?path=README.md',
@@ -216,6 +249,22 @@ describe('embed preview session guards', () => {
             runtimeOrigin: 'http://localhost:51720',
             currentOrigin: 'http://localhost:53817',
         })).toBe('/api/markdown-file?path=README.md');
+    });
+
+    it('resolves local markdown file preview URLs through the markdown file API', () => {
+        expect(resolveCanvasEmbedPreviewUrl({
+            previewUrl: 'src/prototypes/erp-home/.spec/2026-06-10-supply-chain-home.md',
+            resourceType: 'prototype',
+            runtimeOrigin: 'http://localhost:51720',
+            currentOrigin: 'http://localhost:53817',
+        })).toBe('/api/markdown-file?path=src%2Fprototypes%2Ferp-home%2F.spec%2F2026-06-10-supply-chain-home.md');
+
+        expect(resolveCanvasEmbedPreviewUrl({
+            previewUrl: 'http://localhost:53817/src/prototypes/erp-home/.spec/2026-06-10-supply-chain-home.md',
+            resourceType: 'prototype',
+            runtimeOrigin: 'http://localhost:51720',
+            currentOrigin: 'http://localhost:53817',
+        })).toBe('/api/markdown-file?path=src%2Fprototypes%2Ferp-home%2F.spec%2F2026-06-10-supply-chain-home.md');
     });
 
     it('auto captures prototype web previews only before their first screenshot attempt', () => {

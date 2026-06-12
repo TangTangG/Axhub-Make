@@ -333,7 +333,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
   });
 
   it('builds parameterized local filesystem open commands for each platform', () => {
-    const targetPath = '/Users/demo/Project Files/notes.md';
+    const targetPath = '/workspace/demo/Project Files/notes.md';
     const windowsTargetPath = 'E:\\make11\\src\\resources\\新文件夹';
 
     expect(buildSystemOpenCommand(targetPath, 'darwin')).toEqual({

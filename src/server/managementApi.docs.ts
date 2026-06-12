@@ -91,6 +91,28 @@ function getTemplatesDirForContext(context: DocsProjectContext, handlers: DocsAp
   return handlers.getDeclaredResourceWriteDir(context, 'templates') || getTemplatesDir(context.project.root);
 }
 
+function normalizeUploadTargetFolder(targetFolder: string): string | null {
+  const rawValue = String(targetFolder || '').trim();
+  if (path.isAbsolute(rawValue) || path.win32.isAbsolute(rawValue) || path.posix.isAbsolute(rawValue)) {
+    return null;
+  }
+  const normalized = rawValue.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!normalized) {
+    return null;
+  }
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.length === 0) {
+    return null;
+  }
+  if (segments.some((segment) => segment === '.' || segment === '..')) {
+    return null;
+  }
+  if (path.isAbsolute(targetFolder) || path.posix.isAbsolute(normalized)) {
+    return null;
+  }
+  return segments.join('/');
+}
+
 function normalizeResourceIdFromFileName(fileName: string): string {
   return path.basename(fileName, path.extname(fileName));
 }
@@ -326,14 +348,14 @@ function createTemplateFile(
 export function handleProjectDocsApi(
   req: IncomingMessage,
   res: ServerResponse,
-  projectContext: DocsProjectContext,
+  projectContext: DocsProjectContext | null,
   options: ManagementApiOptions,
   pathname: string,
   handlers: DocsApiHandlers,
 ): boolean {
-  let projectRoot = projectContext.project.root;
-  let docsDir = getDocsDirForContext(projectContext, handlers);
-  let templatesDir = getTemplatesDirForContext(projectContext, handlers);
+  let projectRoot = projectContext?.project.root || options.projectRoot;
+  let docsDir = projectContext ? getDocsDirForContext(projectContext, handlers) : getDocsDir(projectRoot);
+  let templatesDir = projectContext ? getTemplatesDirForContext(projectContext, handlers) : getTemplatesDir(projectRoot);
   const updateResolvedProjectContext = (nextContext: DocsProjectContext) => {
     projectContext = nextContext;
     projectRoot = projectContext.project.root;
@@ -410,7 +432,29 @@ export function handleProjectDocsApi(
           return;
         }
 
-        fs.mkdirSync(docsDir, { recursive: true });
+        const targetFolderPart = parts.find((p) => p.name === 'targetFolder' && !p.filename);
+        const rawTargetFolder = targetFolderPart?.data.toString('utf8').trim() || '';
+        const normalizedTargetFolder = rawTargetFolder ? normalizeUploadTargetFolder(rawTargetFolder) : null;
+        if (targetFolderPart && !normalizedTargetFolder) {
+          sendJson(res, { error: 'Invalid targetFolder' }, { status: 403 });
+          return;
+        }
+        const projectIdPart = parts.find((p) => p.name === 'projectId' && !p.filename);
+        const uploadProjectContext = projectIdPart
+          ? handlers.createProjectContextFromBody(req, res, options, { projectId: projectIdPart.data.toString('utf8').trim() })
+          : projectContext || handlers.createProjectContextFromBody(req, res, options, {});
+        if (!uploadProjectContext) {
+          return;
+        }
+        updateResolvedProjectContext(uploadProjectContext);
+        const uploadDocsDir = docsDir;
+        const uploadDir = normalizedTargetFolder ? path.join(uploadDocsDir, normalizedTargetFolder) : uploadDocsDir;
+        if (!isPathInside(uploadDocsDir, uploadDir)) {
+          sendJson(res, { error: 'Invalid targetFolder' }, { status: 403 });
+          return;
+        }
+
+        fs.mkdirSync(uploadDir, { recursive: true });
         const results: any[] = [];
         for (const filePart of fileParts) {
           const sanitizedName = String(filePart.filename || 'unnamed')
@@ -419,8 +463,8 @@ export function handleProjectDocsApi(
             .replace(/-+/g, '-')
             .replace(/^-|-$/g, '')
             .trim() || `upload-${Date.now()}`;
-          let targetPath = path.join(docsDir, sanitizedName);
-          if (!isPathInside(docsDir, targetPath)) {
+          let targetPath = path.join(uploadDir, sanitizedName);
+          if (!isPathInside(uploadDocsDir, targetPath)) {
             continue;
           }
           // avoid overwrite
@@ -428,13 +472,13 @@ export function handleProjectDocsApi(
             const ext = path.extname(sanitizedName);
             const baseName = sanitizedName.slice(0, sanitizedName.length - ext.length);
             let index = 2;
-            while (fs.existsSync(path.join(docsDir, `${baseName}-${index}${ext}`))) {
+            while (fs.existsSync(path.join(uploadDir, `${baseName}-${index}${ext}`))) {
               index += 1;
             }
-            targetPath = path.join(docsDir, `${baseName}-${index}${ext}`);
+            targetPath = path.join(uploadDir, `${baseName}-${index}${ext}`);
           }
           fs.writeFileSync(targetPath, filePart.data);
-          const name = path.relative(docsDir, targetPath).split(path.sep).join('/');
+          const name = path.relative(uploadDocsDir, targetPath).split(path.sep).join('/');
           const id = normalizeResourceIdFromFileName(name);
           const ext = path.extname(name).toLowerCase();
           let displayName = name.replace(/\.[^.]+$/u, '');
@@ -446,8 +490,8 @@ export function handleProjectDocsApi(
             } catch { /* ignore */ }
           }
           // Update metadata
-          const current = projectContext.metadataStore.getMetadata();
-          handlers.saveMetadataWithResourceOrder(projectContext, {
+          const current = uploadProjectContext.metadataStore.getMetadata();
+          handlers.saveMetadataWithResourceOrder(uploadProjectContext, {
             ...current,
             resources: {
               ...current.resources,
@@ -483,6 +527,10 @@ export function handleProjectDocsApi(
     });
     req.on('error', (error) => sendJson(res, { error: error.message }, { status: 500 }));
     return true;
+  }
+
+  if (!projectContext) {
+    return false;
   }
 
   if (pathname === '/api/docs/check-references' || pathname === '/api/docs/templates/check-references') {
@@ -660,6 +708,17 @@ export function handleProjectDocsApi(
       return true;
     }
     if (req.method === 'DELETE') {
+      let docStats: fs.Stats;
+      try {
+        docStats = fs.statSync(docPath);
+      } catch {
+        sendJson(res, { error: 'Document not found' }, { status: 404 });
+        return true;
+      }
+      if (!docStats.isFile()) {
+        sendJson(res, { error: 'Document not found' }, { status: 404 });
+        return true;
+      }
       fs.rmSync(docPath, { force: true });
       removeDocMetadata(projectContext, normalizeResourceIdFromFileName(docName), handlers);
       sendJson(res, { success: true });

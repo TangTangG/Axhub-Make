@@ -11,8 +11,10 @@
   },
   "include": [
     "vite.config.ts",
+    "client/vite-plugins/utils/moduleSpecifierQuery.ts",
     "src/server/**/*",
     "src/common/makeClientTemplate.ts",
+    "src/common/aiArtifactClassification.ts",
     "src/chunking/excalidrawDevCjsInterop.ts",
     "src/chunking/manualChunks.ts",
     "src/chunking/adminAssetStamping.ts"

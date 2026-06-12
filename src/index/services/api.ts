@@ -6,11 +6,7 @@ import { IDEAvailabilityMap, MainIDEPreference } from '../../common/ide';
 import type { AgentVersionInfo, CLIAgent, LocalAppAgent, RuntimeAgentAvailability, WebAgent } from '../../common/agent';
 import { PromptClientPreference } from '../types';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../utils/excalidrawUiMode';
-import type {
-    GenieExecutePromptRequest as PromptExecuteRequest,
-    GenieExecutePromptResponse as PromptExecuteResponse,
-} from '@/common/genie/types';
-import { executeGeniePrompt } from '@/common/genie/execute';
+import type { AssistantImageGenerationConfig } from '../domains/assistant/assistantAcpContext';
 
 interface ConfigResponse {
     projectPath?: string | null;
@@ -29,6 +25,9 @@ interface ConfigResponse {
         webBaseUrl?: string | null;
         apiBaseUrl?: string | null;
     };
+    ai?: {
+        imageGeneration?: AssistantImageGenerationConfig | null;
+    };
     uiPreferences?: {
         excalidrawPropertyPanelMode?: ExcalidrawPropertyPanelMode;
         excalidrawPropertyPanelPosition?: ExcalidrawPropertyPanelPosition;
@@ -38,13 +37,57 @@ interface ConfigResponse {
     agentAvailability?: RuntimeAgentAvailability;
 }
 
-interface ConfigAvailabilityResponse {
-    ideAvailability?: IDEAvailabilityMap;
-    agentAvailability?: RuntimeAgentAvailability;
-}
-
 export interface AgentVersionsResponse {
     agents: Partial<Record<CLIAgent, AgentVersionInfo>>;
+    latestAgents?: Partial<Record<CLIAgent, AgentVersionInfo>>;
+}
+
+export interface MakeClientUpdateBlockedReason {
+    code: string;
+    message: string;
+}
+
+export interface MakeClientUpdateStatus {
+    projectId: string;
+    projectRoot: string;
+    currentVersion: string;
+    targetVersion: string;
+    updateAvailable: boolean;
+    canApply: boolean;
+    git: {
+        available: boolean;
+        isRepository: boolean;
+        hasCommits: boolean;
+        clean: boolean;
+        head?: string;
+        dirtyFiles: string[];
+        error?: string;
+    };
+    template: {
+        version: string;
+        sources: Array<{
+            id: string;
+            url: string;
+            markerRepository: string;
+            templateVersion?: string;
+        }>;
+    };
+    blockedReasons: MakeClientUpdateBlockedReason[];
+}
+
+export interface MakeClientUpdateApplyResult {
+    success: true;
+    projectId: string;
+    projectRoot: string;
+    currentVersion: string;
+    targetVersion: string;
+    preUpdateHead: string;
+    backupRoot: string;
+    plannedFiles: string[];
+    writtenFiles: string[];
+    templateUrl: string;
+    installMethod: 'npm' | 'skipped';
+    metadataSynced: boolean;
 }
 
 interface SaveServerPreferencesRequest {
@@ -73,7 +116,7 @@ export interface AssistantHealthInfo {
     status: AssistantHealthStatus;
     message: string;
     checkedAt: string;
-    commandSource: 'axhub-genie' | 'cloudcli' | 'config' | 'env' | 'default';
+    commandSource: 'acp-ui' | 'config' | 'env' | 'default';
     hints: {
         installGlobal: string;
         start: string;
@@ -87,7 +130,7 @@ export interface AssistantRuntimeResponse {
     projectPath: string;
     projectId?: string;
     projectRoot?: string;
-    source: 'axhub-genie' | 'config' | 'cloudcli' | 'env' | 'default';
+    source: 'config' | 'env' | 'default';
     health: AssistantHealthInfo;
 }
 
@@ -96,10 +139,15 @@ interface GetAssistantRuntimeOptions {
     projectId?: string;
 }
 
-export type AssistantBootstrapMode = 'install_global' | 'start_existing';
+interface GetConfigOptions {
+    projectId?: string | null;
+}
+
+export type AssistantBootstrapMode = 'install_global' | 'start_existing' | 'restart_existing';
 
 interface AssistantBootstrapRequest {
     mode: AssistantBootstrapMode;
+    projectId?: string;
 }
 
 interface AssistantBootstrapResponse {
@@ -337,7 +385,38 @@ function createCloudPublishingApiError(result: any, fallback: string): CloudPubl
     return error;
 }
 
+function isLikelyHtmlFallback(text: string): boolean {
+    const trimmed = text.trimStart().slice(0, 512).toLowerCase();
+    return trimmed.startsWith('<!doctype html')
+        || trimmed.startsWith('<html')
+        || trimmed.includes('<script type="module" src="/@vite/client"')
+        || trimmed.includes('injectintoglobalhook');
+}
+
+function buildProjectScopedUrl(path: string, options?: GetConfigOptions): string {
+    const projectId = options?.projectId?.trim();
+    if (!projectId) {
+        return path;
+    }
+
+    const query = new URLSearchParams();
+    query.set('projectId', projectId);
+    return `${path}?${query.toString()}`;
+}
+
 export const apiService = {
+    async startPlaceholderPrototypeGeneration(prototypeName: string) {
+        const encodedPrototypeName = encodeURIComponent(prototypeName);
+        const response = await fetch(`/api/prototypes/${encodedPrototypeName}/start-generation`, {
+            method: 'POST',
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '进入原型等待生成态失败');
+        }
+        return result;
+    },
+
     /**
      * 删除组件或原型
      */
@@ -407,7 +486,15 @@ export const apiService = {
         try {
             const hackResp = await fetch(hackCssUrl);
             if (hackResp.ok) {
-                return await hackResp.text();
+                const contentType = hackResp.headers.get('content-type') || '';
+                const text = await hackResp.text();
+                if (!text.trim()) {
+                    return '';
+                }
+                if (/text\/html|application\/xhtml\+xml/i.test(contentType) || isLikelyHtmlFallback(text)) {
+                    return '';
+                }
+                return text;
             }
         } catch (e) {
             console.warn('fetch hack.css failed', e);
@@ -516,8 +603,9 @@ export const apiService = {
         return result;
     },
 
-    async getCloudPublishingLatest(): Promise<CloudPublishingLatestResponse> {
-        const response = await fetch('/api/cloud-publishing/latest');
+    async getCloudPublishingLatest(path?: string): Promise<CloudPublishingLatestResponse> {
+        const latestQuery = path && path.trim();
+        const response = await fetch(`/api/cloud-publishing/latest${latestQuery ? `?path=${encodeURIComponent(latestQuery)}` : ''}`);
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             throw createCloudPublishingApiError(result, '加载最近发布地址失败');
@@ -540,35 +628,18 @@ export const apiService = {
         return result;
     },
 
-    async executePrompt(payload: PromptExecuteRequest): Promise<PromptExecuteResponse> {
-        const mappedPayload: PromptExecuteRequest = {
-            scene: payload.scene,
-            client: payload.client,
-            prompt: payload.prompt,
-        };
-        return executeGeniePrompt(mappedPayload);
-    },
-
-    async getConfig(): Promise<ConfigResponse> {
-        const response = await fetch('/api/config');
+    async getConfig(options?: GetConfigOptions): Promise<ConfigResponse> {
+        const response = await fetch(buildProjectScopedUrl('/api/config', options));
         if (!response.ok) {
             throw new Error('加载配置失败');
         }
         return response.json();
     },
 
-    async getBootstrapConfig(): Promise<ConfigResponse> {
-        const response = await fetch('/api/config/bootstrap');
+    async getBootstrapConfig(options?: GetConfigOptions): Promise<ConfigResponse> {
+        const response = await fetch(buildProjectScopedUrl('/api/config/bootstrap', options));
         if (!response.ok) {
             throw new Error('加载配置失败');
-        }
-        return response.json();
-    },
-
-    async getConfigAvailability(): Promise<ConfigAvailabilityResponse> {
-        const response = await fetch('/api/config/availability');
-        if (!response.ok) {
-            throw new Error('加载可用性失败');
         }
         return response.json();
     },
@@ -579,6 +650,30 @@ export const apiService = {
             throw new Error('检测本地 AI 版本失败');
         }
         return response.json();
+    },
+
+    async getMakeClientUpdateStatus(projectId: string): Promise<MakeClientUpdateStatus> {
+        const encodedProjectId = encodeURIComponent(projectId);
+        const response = await fetch(`/api/projects/${encodedProjectId}/make-client/update/status`, { cache: 'no-store' });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '检测项目更新失败');
+        }
+        return result;
+    },
+
+    async applyMakeClientUpdate(projectId: string): Promise<MakeClientUpdateApplyResult> {
+        const encodedProjectId = encodeURIComponent(projectId);
+        const response = await fetch(`/api/projects/${encodedProjectId}/make-client/update/apply`, {
+            method: 'POST',
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const error = new Error(result?.error || '项目更新失败') as Error & Record<string, unknown>;
+            Object.assign(error, result);
+            throw error;
+        }
+        return result;
     },
 
     async saveServerPreferences(payload: SaveServerPreferencesRequest) {
@@ -599,8 +694,8 @@ export const apiService = {
 
     async getAssistantRuntime(options?: GetAssistantRuntimeOptions): Promise<AssistantRuntimeResponse> {
         const query = new URLSearchParams();
-        if (options?.autoStart === false) {
-            query.set('autoStart', 'false');
+        if (options?.autoStart !== undefined) {
+            query.set('autoStart', options.autoStart ? 'true' : 'false');
         }
         if (options?.projectId?.trim()) {
             query.set('projectId', options.projectId.trim());

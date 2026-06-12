@@ -320,6 +320,14 @@ function normalizeScreenshotTargetSize(value: unknown): number | undefined {
   return Math.max(1, Math.round(numeric));
 }
 
+function normalizeScreenshotPixelRatio(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return 2;
+  }
+  return Math.max(1, Math.min(2, numeric));
+}
+
 type ScreenshotViewportSize = {
   rootWidth: string;
   rootHeight: string;
@@ -377,6 +385,19 @@ function restoreScreenshotViewportSize(
   window.dispatchEvent(new Event('resize'));
 }
 
+function readPrototypeEditorBridgeCommentPageScope(data: any): string | undefined {
+  const optionScope = typeof data?.options?.commentPageScope === 'string'
+    ? data.options.commentPageScope.trim()
+    : '';
+  if (optionScope) {
+    return optionScope;
+  }
+  const contextScope = typeof data?.context?.commentPageScope === 'string'
+    ? data.context.commentPageScope.trim()
+    : '';
+  return contextScope || undefined;
+}
+
 function waitForScreenshotFrame(): Promise<void> {
   return new Promise((resolve) => {
     if (typeof window.requestAnimationFrame === 'function') {
@@ -398,12 +419,13 @@ async function captureRootWithSnapdom(
   rootElement: HTMLElement,
   width: number,
   height: number,
+  pixelRatio: number,
 ): Promise<string> {
   const { snapdom } = await import('@zumer/snapdom');
   const image = await snapdom.toPng(rootElement, {
     width,
     height,
-    dpr: 2,
+    dpr: pixelRatio,
     backgroundColor: '#fff',
     embedFonts: true,
     fallbackURL: SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL,
@@ -417,41 +439,13 @@ async function captureRootWithSnapdom(
   return dataUrl;
 }
 
-async function captureRootWithHtmlToImage(
-  rootElement: HTMLElement,
-  width: number,
-  height: number,
-): Promise<string> {
-  const htmlToImage = await import('html-to-image');
-  return htmlToImage.toPng(rootElement, {
-    width,
-    height,
-    canvasWidth: width,
-    canvasHeight: height,
-    pixelRatio: 2,
-    skipAutoScale: true,
-    backgroundColor: '#fff',
-    skipFonts: false,
-    cacheBust: false,
-    includeQueryParams: true,
-    imagePlaceholder: SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL,
-    onImageErrorHandler: (...args: unknown[]) => {
-      console.warn('[Dev Template] 截图时忽略图片加载失败', args);
-    },
-  });
-}
-
 async function captureRootScreenshot(
   rootElement: HTMLElement,
   width: number,
   height: number,
+  pixelRatio = 2,
 ): Promise<string> {
-  try {
-    return await captureRootWithSnapdom(rootElement, width, height);
-  } catch (error) {
-    console.warn('[Dev Template] snapdom 截图失败，回退到 html-to-image:', error);
-    return captureRootWithHtmlToImage(rootElement, width, height);
-  }
+  return captureRootWithSnapdom(rootElement, width, height, pixelRatio);
 }
 
 // 挂载到全局，供 HTML 直接使用
@@ -533,11 +527,11 @@ if (typeof window !== 'undefined') {
           ? event.data.options
           : {};
         await Promise.resolve(editorModeManager?.api.enable('webEditorV2', {
-          genieBridge: launchOptions.genieBridge,
-          integrationWs: launchOptions.integrationWs,
           mobileMode: typeof launchOptions.mobileMode === 'boolean' ? launchOptions.mobileMode : undefined,
           toolbarMode: 'host',
           initialDarkMode: Boolean(launchOptions.initialDarkMode),
+          assistantPanelOpen: Boolean(launchOptions.assistantPanelOpen),
+          commentPageScope: readPrototypeEditorBridgeCommentPageScope(event.data),
         }));
         ensurePrototypeEditorHostToolbarBridge();
         postPrototypeEditorState({
@@ -576,11 +570,11 @@ if (typeof window !== 'undefined') {
           ? event.data.options
           : {};
         await Promise.resolve(editorModeManager?.api.enablePanelOnly({
-          genieBridge: launchOptions.genieBridge,
-          integrationWs: launchOptions.integrationWs,
           mobileMode: typeof launchOptions.mobileMode === 'boolean' ? launchOptions.mobileMode : undefined,
           toolbarMode: 'host',
           initialDarkMode: Boolean(launchOptions.initialDarkMode),
+          assistantPanelOpen: Boolean(launchOptions.assistantPanelOpen),
+          commentPageScope: readPrototypeEditorBridgeCommentPageScope(event.data),
         }));
         ensurePrototypeEditorHostToolbarBridge();
         postPrototypeEditorState({
@@ -627,16 +621,6 @@ if (typeof window !== 'undefined') {
             promptText: promptText || undefined,
           });
         } else {
-          if (action?.type === 'wake-genie' && event.data.options && typeof event.data.options === 'object') {
-            const launchOptions = event.data.options;
-            await Promise.resolve(editorModeManager?.api.enable('webEditorV2', {
-              genieBridge: launchOptions.genieBridge,
-              integrationWs: launchOptions.integrationWs,
-              mobileMode: typeof launchOptions.mobileMode === 'boolean' ? launchOptions.mobileMode : undefined,
-              toolbarMode: 'host',
-              initialDarkMode: Boolean(launchOptions.initialDarkMode),
-            }));
-          }
           const handled = await Promise.resolve(editorModeManager?.api.runHostToolbarAction(action));
           postPrototypeEditorState({
             requestId: event.data.requestId,
@@ -680,7 +664,7 @@ if (typeof window !== 'undefined') {
     }
 
     // Delayed state sync: parent sends this after enterPrototypeEditor to catch
-    // async Genie Bridge auto-connect state changes that happened after init.
+    // async host editor connection state changes that happened after init.
     if (event.data && event.data.type === 'AXHUB_PROTOTYPE_EDITOR_QUERY_STATE') {
       postPrototypeEditorState({
         requestId: event.data.requestId,
@@ -693,7 +677,7 @@ if (typeof window !== 'undefined') {
       const screenshotRequestId = typeof event.data.requestId === 'string' ? event.data.requestId : undefined;
       ensureEmbedScrollbarHidingStyle();
 
-      // 临时禁用错误捕获，避免 html-to-image 的 CORS 错误干扰
+      // 临时禁用错误捕获，避免截图引擎的跨域资源错误干扰
       const errorSystem = (window as any).__ERROR_SYSTEM__;
       const wasEnabled = errorSystem?.isErrorCaptureEnabled?.() ?? true;
       if (errorSystem?.setErrorCaptureEnabled) {
@@ -716,6 +700,7 @@ if (typeof window !== 'undefined') {
             // 如果传入目标尺寸，支持独立设置宽/高
             const targetWidth = normalizeScreenshotTargetSize(event.data.targetWidth);
             const targetHeight = normalizeScreenshotTargetSize(event.data.targetHeight);
+            const targetPixelRatio = normalizeScreenshotPixelRatio(event.data.targetPixelRatio);
             if (targetWidth) {
               originalViewportSize = setScreenshotViewportSize(rootElement, targetWidth, targetHeight);
             } else if (targetHeight) {
@@ -733,7 +718,7 @@ if (typeof window !== 'undefined') {
             let dataUrl = '';
             try {
               await new Promise(resolve => setTimeout(resolve, 80));
-              dataUrl = await captureRootScreenshot(rootElement, captureWidth, captureHeight);
+              dataUrl = await captureRootScreenshot(rootElement, captureWidth, captureHeight, targetPixelRatio);
             } finally {
               restoreImageUrls();
             }

@@ -207,7 +207,40 @@ describe('dev-template error system recovery', () => {
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       '/@vite/client',
-      proxyUrl,
+    ]);
+    expect(harness.location.reload).toHaveBeenCalledTimes(1);
+    expect(harness.windowObject.__ERROR_SYSTEM__.getErrorQueue()).toEqual([]);
+    expect(harness.hasFallbackOverlay()).toBe(false);
+  });
+
+  it('auto-recovers stale Vite html-proxy script failures without probing the old proxy URL', async () => {
+    const proxyUrl = 'http://localhost:51720/@id/__x00__/prototypes/express-home/index.html?html-proxy&index=1.js';
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/@vite/client') {
+        return { ok: true };
+      }
+      if (input === proxyUrl) {
+        return { ok: false };
+      }
+      throw new Error(`Unexpected fetch url: ${input}`);
+    });
+    const harness = createHarness(fetchMock);
+    const errorHandler = harness.getErrorHandler();
+
+    errorHandler({
+      message: '',
+      error: null,
+      filename: '',
+      lineno: 0,
+      colno: 0,
+      target: new MockHTMLElement('script', proxyUrl),
+      preventDefault: vi.fn(),
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/@vite/client',
     ]);
     expect(harness.location.reload).toHaveBeenCalledTimes(1);
     expect(harness.windowObject.__ERROR_SYSTEM__.getErrorQueue()).toEqual([]);

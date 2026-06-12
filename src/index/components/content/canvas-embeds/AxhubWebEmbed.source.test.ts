@@ -6,7 +6,8 @@ describe('AxhubWebEmbed source', () => {
     it('shows a concise capturing placeholder instead of stale screenshot copy', () => {
         const source = readFileSync(resolve(__dirname, './AxhubWebEmbed.tsx'), 'utf8');
 
-        expect(source).toContain('const isScreenshotPlaceholderCapturing = hasStaleScreenshot || isCapturing;');
+        expect(source).toContain('const effectiveScreenshot = preferredScreenshot || staleScreenshot || null;');
+        expect(source).toContain('const isScreenshotPlaceholderCapturing = Boolean(!effectiveScreenshot && isCapturing);');
         expect(source).toContain("{isScreenshotPlaceholderCapturing ? '正在截图' : '暂无预览截图'}");
         expect(source).toContain('{title && !isScreenshotPlaceholderCapturing ? (');
         expect(source).not.toContain('旧截图已隐藏');
@@ -46,6 +47,25 @@ describe('AxhubWebEmbed source', () => {
         expect(source).toContain("requestScreenshotRef.current(SCREENSHOT_HMR_DEBOUNCE_MS, pendingReason || 'iframe-load');");
     });
 
+    it('keeps the live iframe visible while exit capture hands off to the screenshot layer', () => {
+        const source = readFileSync(resolve(__dirname, './AxhubWebEmbed.tsx'), 'utf8');
+
+        expect(source).toContain('const [exitCaptureInProgress, setExitCaptureInProgress] = useState(false);');
+        expect(source).toContain('const isLiveIframeVisible = activated || exitCaptureInProgress;');
+        expect(source).toContain('setExitCaptureInProgress(true);');
+        expect(source).toContain('setExitCaptureInProgress(false);');
+        expect(source).toContain('{!isLiveIframeVisible && (');
+        expect(source).toContain('{isLiveIframeVisible && isCapturing && (');
+    });
+
+    it('waits for iframe root size sync and layout settle before requesting screenshots', () => {
+        const source = readFileSync(resolve(__dirname, './AxhubWebEmbed.tsx'), 'utf8');
+
+        expect(source).toContain("import { captureSameOriginIframeScreenshot } from './parentScreenshotCapture';");
+        expect(source).toContain('syncIframeRootSize(iframe);');
+        expect(source).toContain('await captureSameOriginIframeScreenshot({');
+    });
+
     it('auto captures prototype preview embeds once without requiring user activation', () => {
         const source = readFileSync(resolve(__dirname, './AxhubWebEmbed.tsx'), 'utf8');
         const canvasSource = readFileSync(resolve(__dirname, '../ExcalidrawCanvas.tsx'), 'utf8');
@@ -66,6 +86,27 @@ describe('AxhubWebEmbed source', () => {
 
         expect(source).toContain('const canSkipUnchangedScreenshot = !pendingIframeTeardownRef.current');
         expect(source).toContain('if (canSkipUnchangedScreenshot && !shouldForceScreenshotRequest(reason) && !shouldRequestEmbedScreenshot({');
+    });
+
+    it('captures screenshots in the parent page and never sends CAPTURE_SCREENSHOT to the iframe', () => {
+        const source = readFileSync(resolve(__dirname, './AxhubWebEmbed.tsx'), 'utf8');
+
+        expect(source).toContain("import { captureSameOriginIframeScreenshot } from './parentScreenshotCapture';");
+        expect(source).toContain('const screenshot = await captureSameOriginIframeScreenshot({');
+        expect(source).toContain("window.dispatchEvent(new CustomEvent('axhub:embedScreenshotReady'");
+        expect(source).toContain("completeCaptureRef.current('captured');");
+        expect(source).toContain("completeCaptureRef.current('failed');");
+        expect(source).not.toContain("type: 'CAPTURE_SCREENSHOT'");
+        expect(source).not.toContain("event.data.type === 'SCREENSHOT_CAPTURED'");
+        expect(source).not.toContain("event.data.type === 'SCREENSHOT_FAILED'");
+    });
+
+    it('keeps stale screenshots visible until a new capture succeeds', () => {
+        const source = readFileSync(resolve(__dirname, './AxhubWebEmbed.tsx'), 'utf8');
+
+        expect(source).toContain('const staleScreenshot = !imgError ? (screenshotUrl || screenshotDataUrl) : screenshotDataUrl;');
+        expect(source).toContain('const effectiveScreenshot = preferredScreenshot || staleScreenshot || null;');
+        expect(source).not.toContain('setScreenshotDataUrl(null);');
     });
 
     it('only activates the screenshot overlay when the click started on an already-selected embed', () => {

@@ -21,6 +21,11 @@ type DevServerInfo = {
 };
 
 const SERVER_INFO_HEARTBEAT_INTERVAL_MS = 5_000;
+const VITE_CLIENT_MARKERS = [
+  'const importMetaUrl = new URL(import.meta.url);',
+  'const directSocketHost = ',
+  '"vite-hmr"',
+];
 
 function resolveDevServerInfo(server: any, startedAt: string): DevServerInfo {
   const localIP = getLocalIP();
@@ -63,11 +68,95 @@ function writeCurrentDevServerInfo(server: any, startedAt: string): DevServerInf
   return devServerInfo;
 }
 
+function getActualListeningPort(server: any): number | null {
+  const address = server?.httpServer?.address?.();
+  return address && typeof address === 'object' && typeof address.port === 'number'
+    ? address.port
+    : null;
+}
+
+function replaceInjectedHostPort(code: string, constName: string, port: number): string {
+  return code.replace(
+    new RegExp(`(const ${constName} = ")([^"]+)(";)$`, 'mu'),
+    (_match, prefix: string, value: string, suffix: string) => {
+      const nextValue = value.replace(/:\d+(\/[^"]*)?$/u, (_portMatch, tail = '') => `:${port}${tail}`);
+      return `${prefix}${nextValue}${suffix}`;
+    },
+  );
+}
+
+function hasExplicitHmrPort(server: any): boolean {
+  const hmr = server?.config?.server?.hmr;
+  return Boolean(hmr && typeof hmr === 'object' && Number.isInteger(Number(hmr.port)));
+}
+
+function alignInjectedViteClientHmrPort(code: string, server: any): string {
+  const actualPort = getActualListeningPort(server);
+  if (!actualPort) {
+    return code;
+  }
+
+  const withServerHost = replaceInjectedHostPort(code, 'serverHost', actualPort);
+  return hasExplicitHmrPort(server)
+    ? withServerHost
+    : replaceInjectedHostPort(withServerHost, 'directSocketHost', actualPort);
+}
+
+function isViteClientRequest(requestUrl: string): boolean {
+  try {
+    return new URL(requestUrl || '/', 'http://localhost').pathname === '/@vite/client';
+  } catch {
+    return (requestUrl || '').split('?')[0] === '/@vite/client';
+  }
+}
+
+function applyServerHeaders(res: any, headers: Record<string, string> | undefined): void {
+  if (!headers) {
+    return;
+  }
+  for (const [key, value] of Object.entries(headers)) {
+    res.setHeader(key, value);
+  }
+}
+
+async function sendAlignedViteClient(req: any, res: any, next: (error?: unknown) => void, server: any): Promise<void> {
+  if (req.method !== 'GET' || !isViteClientRequest(req.url || '/')) {
+    next();
+    return;
+  }
+
+  try {
+    const result = await server.transformRequest('/@vite/client');
+    if (!result) {
+      next();
+      return;
+    }
+
+    const code = VITE_CLIENT_MARKERS.every((marker) => result.code.includes(marker))
+      ? alignInjectedViteClientHmrPort(result.code, server)
+      : result.code;
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    if (result.etag) {
+      res.setHeader('Etag', result.etag);
+    }
+    applyServerHeaders(res, server.config.server?.headers);
+    res.end(code);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export function writeDevServerInfoPlugin(): Plugin {
   return {
     name: 'write-dev-server-info',
     configureServer(server: any) {
       const startedAt = new Date().toISOString();
+      server.middlewares.use((req: any, res: any, next: (error?: unknown) => void) => {
+        void sendAlignedViteClient(req, res, next, server);
+      });
+
       server.middlewares.use('/api/health', (req: any, res: any, next: () => void) => {
         if (req.method !== 'GET') {
           next();

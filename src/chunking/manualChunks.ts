@@ -128,6 +128,7 @@ export function getManualChunkName(id: string): string | undefined {
   if (
     packageName.startsWith('@assistant-ui/')
     || packageName.startsWith('@lobehub/')
+    || packageName === '@axhub/acp'
     || packageName === 'assistant-cloud'
     || packageName === 'assistant-stream'
   ) {

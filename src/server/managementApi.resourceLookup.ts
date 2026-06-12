@@ -11,14 +11,84 @@ interface ResourceLookupContext {
   metadata: ProjectMetadata;
 }
 
-export function findProjectResourceByPath(metadata: ProjectMetadata, rawPath: string) {
-  const normalizedPath = String(rawPath || '')
+const SOURCE_RESOURCE_GROUPS = new Set(['prototypes', 'themes']);
+const SOURCE_INDEX_CANDIDATES = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+
+function normalizeSlashPath(value: unknown): string {
+  return String(value || '')
     .trim()
     .replace(/\\/g, '/')
     .replace(/^\/+/, '')
     .replace(/\/+$/, '');
+}
+
+function stripIndexEntryPath(value: string): string {
+  return value.replace(/\/index\.(t|j)sx?$/iu, '').replace(/\/+$/, '');
+}
+
+function sourceResourcePathFromGroupAndName(group: string, name: string): string {
+  const normalizedName = stripIndexEntryPath(normalizeSlashPath(name));
+  return normalizedName ? `src/${group}/${normalizedName}` : '';
+}
+
+function normalizeResourcePathCandidate(value: unknown): string {
+  const normalized = stripIndexEntryPath(normalizeSlashPath(value));
+  const [, group = '', resourceName = ''] = normalized.match(/(?:^|\/)(?:src\/)?(prototypes|themes)\/(.+)$/u) || [];
+  if (SOURCE_RESOURCE_GROUPS.has(group) && resourceName) {
+    return sourceResourcePathFromGroupAndName(group, resourceName);
+  }
+  return normalized;
+}
+
+function getResourceGroupFromCollection(metadata: ProjectMetadata, resource: any): string {
+  if (metadata.resources.prototypes.includes(resource)) {
+    return 'prototypes';
+  }
+  if (metadata.resources.themes.includes(resource)) {
+    return 'themes';
+  }
+  if (metadata.resources.docs.includes(resource)) {
+    return 'docs';
+  }
+  if (metadata.resources.data.includes(resource)) {
+    return 'data';
+  }
+  if (metadata.resources.templates.includes(resource)) {
+    return 'templates';
+  }
+  return '';
+}
+
+function getResourceSourceCandidates(resource: any): string[] {
+  return [
+    resource?.absoluteFilePath,
+    resource?.filePath,
+    resource?.sourcePath,
+    resource?.path,
+  ]
+    .map(normalizeSlashPath)
+    .filter(Boolean);
+}
+
+export function normalizeProjectResourcePath(metadata: ProjectMetadata, rawPath: string): string {
+  const resource = findProjectResourceByPath(metadata, rawPath);
+  if (resource) {
+    const group = getResourceGroupFromCollection(metadata, resource);
+    if (SOURCE_RESOURCE_GROUPS.has(group)) {
+      const sourcePath = getResourceSourceCandidates(resource)
+        .map(normalizeResourcePathCandidate)
+        .find((candidate) => candidate.startsWith(`src/${group}/`));
+      return sourcePath || sourceResourcePathFromGroupAndName(group, resource.id || resource.name || rawPath);
+    }
+  }
+  return normalizeResourcePathCandidate(rawPath);
+}
+
+export function findProjectResourceByPath(metadata: ProjectMetadata, rawPath: string) {
+  const normalizedPath = normalizeSlashPath(rawPath);
+  const normalizedCandidate = normalizeResourcePathCandidate(rawPath);
   const [, resourceName = ''] = normalizedPath.match(/^(?:src\/)?(?:prototypes|docs|themes|data|templates)\/(.+)$/u) || [];
-  const normalizedResourceName = resourceName.replace(/\/index\.(t|j)sx?$/iu, '').replace(/\/+$/, '');
+  const normalizedResourceName = stripIndexEntryPath(resourceName);
   const allResources = [
     ...metadata.resources.prototypes,
     ...metadata.resources.docs,
@@ -29,27 +99,42 @@ export function findProjectResourceByPath(metadata: ProjectMetadata, rawPath: st
   return allResources.find((resource: any) => {
     const id = String(resource.id || '').trim();
     const name = String(resource.name || '').trim();
+    const resourcePathCandidates = getResourceSourceCandidates(resource).map(normalizeResourcePathCandidate);
     return id === normalizedPath
       || name === normalizedPath
       || id === normalizedResourceName
       || name === normalizedResourceName
       || `${id}/index.tsx` === normalizedResourceName
-      || `${name}/index.tsx` === normalizedResourceName;
+      || `${name}/index.tsx` === normalizedResourceName
+      || resourcePathCandidates.includes(normalizedCandidate);
   }) as any | undefined;
+}
+
+function resolveDirectoryIndexFile(sourcePath: string): string | null {
+  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isDirectory()) {
+    return null;
+  }
+  for (const fileName of SOURCE_INDEX_CANDIDATES) {
+    const candidate = path.join(sourcePath, fileName);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 export function resolveSourceFileFromMetadata(context: ResourceLookupContext, rawPath: string): string | null {
   const resource = findProjectResourceByPath(context.metadata, rawPath);
-  const sourceCandidate = String(resource?.absoluteFilePath || resource?.filePath || resource?.path || '').trim();
+  const sourceCandidate = String(resource?.absoluteFilePath || resource?.filePath || resource?.sourcePath || resource?.path || '').trim();
   if (!sourceCandidate) {
     return null;
   }
   try {
     const sourcePath = resolveProjectPath(context.project.root, sourceCandidate);
-    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
-      return null;
+    if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isFile()) {
+      return sourcePath;
     }
-    return sourcePath;
+    return resolveDirectoryIndexFile(sourcePath);
   } catch {
     return null;
   }

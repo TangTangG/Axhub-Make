@@ -11,32 +11,51 @@ function readSharedComposerSource() {
 }
 
 describe('PrototypeGenerationComposer source', () => {
-  it('uses the shared assistant-ui canvas composer shell with image attachments', () => {
+  it('uses the shared ACP UI canvas composer shell with image attachments', () => {
     const source = readComposerSource();
     const sharedSource = readSharedComposerSource();
 
-    expect(sharedSource).toContain("import { Composer, ThreadConfigProvider } from '@assistant-ui/react-ui';");
-    expect(sharedSource).toContain('AssistantRuntimeProvider');
-    expect(sharedSource).toContain('SimpleImageAttachmentAdapter');
-    expect(sharedSource).toContain('useLocalRuntime');
-    expect(sharedSource).toContain('function CanvasGenerationRuntimeComposer');
+    expect(sharedSource).toContain("import './canvas-generation-acp-scope.css';");
+    expect(sharedSource).not.toContain("import '@axhub/acp/react/styles.css';");
+    expect(sharedSource).toContain('ax-acp-ui-scope');
+    expect(sharedSource).toContain("import { AcpUiProvider, useAcpUiRuntimeContext } from '@axhub/acp/react';");
+    expect(sharedSource).toContain("import { AcpComposerSelectors, Composer } from '@axhub/acp/ui';");
+    expect(sharedSource).toContain('useChatRuntime<UIMessage>');
+    expect(sharedSource).toContain('new CanvasGenerationMakeTransport');
+    expect(sharedSource).toContain('<AcpUiProvider');
+    expect(sharedSource).toContain('<AssistantRuntimeProvider runtime={runtime}>');
     expect(sharedSource).toContain('allowAttachments');
-    expect(sharedSource).toContain('<Composer.Input');
-    expect(sharedSource).toContain('<Composer.Send');
+    expect(sharedSource).toContain('showAttachments={allowAttachments}');
+    expect(sharedSource).toContain('showCommandMenu={false}');
+    expect(sharedSource).toContain('showSelectors={showSelectors}');
+    expect(sharedSource).not.toContain('addAttachmentLabel=');
+    expect(sharedSource).not.toContain('sendLabel=');
+    expect(sharedSource).toContain('onPaste={');
+    expect(sharedSource).not.toContain('@assistant-ui/react-ui');
+    expect(sharedSource).not.toContain('ThreadConfigProvider');
+    expect(sharedSource).not.toContain('SimpleImageAttachmentAdapter');
+    expect(sharedSource).not.toContain('useLocalRuntime');
+    expect(sharedSource).not.toContain('ChatModelAdapter');
 
     expect(source).toContain('CanvasGenerationComposer');
     expect(source).toContain("from '../shared/CanvasGenerationComposer';");
-    expect(source).toContain('placeholder="描述要生成的原型"');
+    expect(source).toContain("pickCanvasAiScenePlaceholder('page')");
+    expect(source).toContain('placeholder={placeholder}');
     expect(source).toContain('ariaLabel="AI 原型生成提示词"');
     expect(source).toContain('sendTooltip="生成原型"');
     expect(source).toContain('allowAttachments={true}');
     expect(source).toContain('initialReferenceImages?: string[]');
     expect(source).toContain('initialReferenceImages={initialReferenceImages}');
+    expect(source).toContain('initialLocalContextRefs?: CanvasLocalContextRef[]');
+    expect(source).toContain('initialLocalContextRefs={initialLocalContextRefs}');
     expect(source).toContain('canPasteReferenceImages?: boolean;');
     expect(source).toContain('onPasteReferenceImages?: () => Promise<string[]>;');
     expect(source).toContain('canPasteReferenceImages={canPasteReferenceImages}');
     expect(source).toContain('onPasteReferenceImages={onPasteReferenceImages}');
     expect(source).toContain('extractCanvasGenerationReferenceImagesFromMessage(message)');
+    expect(sharedSource).toContain('localContextRefsToAcpContextItems');
+    expect(sharedSource).toContain('replaceContextItems(contextItems);');
+    expect(sharedSource).toContain('const contextBundle = acpContext.consumeContextBundle();');
     expect(source).toContain('className="aui-root ax-ai-image-composer-host pointer-events-auto absolute z-[1200]"');
     expect(source).toContain('placementMode="fixed-bottom-center"');
     expect(source).toContain('rootClassName="ax-ai-image-composer-root"');
@@ -44,6 +63,7 @@ describe('PrototypeGenerationComposer source', () => {
     expect(source).toContain('原型设置');
     expect(source).toContain('生成数量');
     expect(source).toContain('设计系统');
+    expect(source).toContain('renderPostSelectorActions={() => (');
     expect(source).toContain('generationCount');
     expect(source).toContain('selectedThemeName');
     expect(source).toContain('COUNT_OPTIONS');
@@ -51,13 +71,77 @@ describe('PrototypeGenerationComposer source', () => {
     expect(source).toContain('NO_PROTOTYPE_THEME_VALUE');
     expect(source).toContain('resolvePrototypeGenerationInitialThemeName');
     expect(source).toContain('resolvePrototypeGenerationSyncedThemeName');
-    expect(source).toContain('previousDefaultThemeNameRef');
-    expect(source).toContain('userSelectedThemeRef');
+    expect(source).toContain('defaultThemeName?: string | null;');
+    expect(source).toContain('defaultThemeName,');
+    expect(source).toContain('resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName)');
+    expect(source).toContain('const previousDefaultThemeNameRef = useRef(defaultThemeName);');
+    expect(source).toContain('const userSelectedThemeRef = useRef(false);');
+    expect(source).toContain('defaultThemeName,');
+    expect(source).toContain('previousDefaultThemeName,');
     expect(source).toContain('userSelectedTheme: userSelectedThemeRef.current');
-    expect(source).toContain('userSelectedThemeRef.current = true;');
     expect(source).not.toContain('themes?.[0]?.name');
     expect(source).toContain('SlidersHorizontal');
     expect(source).toContain('onSubmitPrompt');
+  });
+
+  it('renders prototype settings after the shared model selector instead of before it', () => {
+    const source = readComposerSource();
+    const sharedSource = readSharedComposerSource();
+    const runtimeContentSegment = sharedSource.slice(
+      sharedSource.indexOf('function CanvasGenerationRuntimeComposerContent('),
+      sharedSource.indexOf('function useAssistantUiDialogOverlayDismiss'),
+    );
+
+    expect(source).toContain('renderPostSelectorActions={() => (');
+    expect(source).not.toContain('renderLeadingActions={() => (');
+    expect(sharedSource).toContain('renderPostSelectorActions?: (props: { submitting: boolean }) => React.ReactNode;');
+    expect(runtimeContentSegment).toContain('const postSelectorActions = renderPostSelectorActions?.({ submitting });');
+    expect(runtimeContentSegment.indexOf('{showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}')).toBeLessThan(
+      runtimeContentSegment.indexOf('{postSelectorActions}'),
+    );
+    expect(runtimeContentSegment.indexOf('<CanvasAcpModelSelectorFallback')).toBeLessThan(
+      runtimeContentSegment.indexOf('{postSelectorActions}'),
+    );
+  });
+
+  it('uses ACP selector-sized icons for the prototype settings trigger', () => {
+    const source = readComposerSource();
+
+    expect(source).toContain('data-axhub-prototype-composer-settings-trigger');
+    expect(source).toContain('<SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />');
+    expect(source).toContain('<ChevronDown className="size-3 shrink-0" aria-hidden="true" />');
+  });
+
+  it('uses the searchable design system selector inside prototype settings', () => {
+    const source = readComposerSource();
+
+    expect(source).toContain("import { PrototypeThemeSearchSelect } from './PrototypeThemeSearchSelect';");
+    expect(source).toContain('<PrototypeThemeSearchSelect');
+    expect(source).toContain('themes={themes}');
+    expect(source).toContain('value={selectedThemeName}');
+    expect(source).toContain('onValueChange={(themeName) => {');
+    expect(source).toContain('userSelectedThemeRef.current = true;');
+    expect(source).toContain('setSelectedThemeName(themeName);');
+    expect(source).not.toContain('<span className="text-xs font-medium text-muted-foreground">设计系统</span>\n                  <Select');
+  });
+
+  it('enables ACP selectors, workspace scoping, and selector payloads for prototype generation', () => {
+    const source = readComposerSource();
+    const sharedSource = readSharedComposerSource();
+
+    expect(source).toContain('assistantProjectPath?: string;');
+    expect(source).toContain('assistantProjectPath,');
+    expect(source).toContain('workspacePath={assistantProjectPath}');
+    expect(source).toContain('scene="page"');
+    expect(source).not.toContain('scene="prototype"');
+    expect(source).toContain('showSelectors={true}');
+    expect(source).toContain('provider: request.provider');
+    expect(source).toContain('model: request.model');
+    expect(source).toContain('mode: request.mode');
+    expect(source).toContain('thought: request.thought');
+    expect(source).toContain('contextBundle: request.contextBundle');
+    expect(sharedSource).toContain('showSelectors?: boolean;');
+    expect(sharedSource).toContain('<AcpUiProvider defaultProvider="codex" workspacePath={workspacePath}>');
   });
 
   it('shares the canvas-scoped bottom-center composer placement and attachment dialog z-index with prototype generation', () => {

@@ -69,6 +69,14 @@ function resolveDirectoryFromResourceMetadata(context: SourceZipProjectContext, 
   return null;
 }
 
+function normalizeLegacySourcePath(rawPath: string): string {
+  const normalizedPath = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (normalizedPath === 'src' || normalizedPath.startsWith('src/')) {
+    return normalizedPath;
+  }
+  return path.posix.join('src', normalizedPath);
+}
+
 function handleSourceAndZip(
   req: IncomingMessage,
   res: ServerResponse,
@@ -79,8 +87,9 @@ function handleSourceAndZip(
   const projectRoot = context.project.root;
   if (pathname === '/api/source' && req.method === 'GET') {
     const targetPath = url.searchParams.get('path') || '';
+    const sourcePath = path.posix.join(normalizeLegacySourcePath(targetPath), 'index.tsx');
     try {
-      const sourceFile = resolveProjectPath(projectRoot, path.join('src', targetPath, 'index.tsx'));
+      const sourceFile = resolveProjectPath(projectRoot, sourcePath);
       if (!sendFile(res, sourceFile)) {
         sendJson(res, { error: 'Source file not found' }, { status: 404 });
       }
@@ -92,13 +101,14 @@ function handleSourceAndZip(
 
   if (pathname === '/api/zip' && req.method === 'GET') {
     const targetPath = url.searchParams.get('path') || '';
+    const sourcePath = normalizeLegacySourcePath(targetPath);
     try {
-      const sourceDir = resolveProjectPath(projectRoot, path.join('src', targetPath));
+      const sourceDir = resolveProjectPath(projectRoot, sourcePath);
       if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
         sendJson(res, { error: 'Directory not found' }, { status: 404 });
         return true;
       }
-      const fileName = `${path.basename(targetPath)}.zip`;
+      const fileName = `${path.posix.basename(sourcePath)}.zip`;
       if (url.searchParams.get('probe') === '1') {
         sendJson(res, { ok: true, fileName, path: targetPath, projectId: context.project.id });
         return true;

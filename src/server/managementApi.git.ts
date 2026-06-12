@@ -66,11 +66,13 @@ function normalizeGitTargetPath(context: GitProjectContext, rawTargetPath: strin
     const targetPath = sourcePath.replace(/\/index\.(t|j)sx?$/iu, '').replace(/\/+$/u, '');
     const folderPath = path.resolve(projectRoot, targetPath);
     const gitScopePath = sourcePath === targetPath ? sourcePath : targetPath;
+    const previewResourceName = String(resource?.name || resource?.id || targetPath).trim();
     return {
       targetPath,
       folderPath,
       gitScopePath,
       versionFileBasePath: gitScopePath,
+      previewResourceName,
     };
   }
 
@@ -113,6 +115,7 @@ function normalizeGitTargetPath(context: GitProjectContext, rawTargetPath: strin
     folderPath,
     gitScopePath: `src/${targetPath}`,
     versionFileBasePath: targetPath,
+    previewResourceName: targetPath.replace(/^prototypes\//u, ''),
   };
 }
 
@@ -143,6 +146,32 @@ function parseGitPorcelainStatus(stdout: string) {
       file: line.slice(2).trim(),
     };
   });
+}
+
+function encodePreviewPathSegments(value: string): string {
+  return value
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function appendSearchParams(pathname: string, params: Record<string, string>): string {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      searchParams.set(key, value);
+    }
+  }
+  const query = searchParams.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
+
+function normalizePreviewResourcePath(value: string): string {
+  return value
+    .replace(/\\/g, '/')
+    .replace(/^\/+/u, '')
+    .replace(/\/+$/u, '');
 }
 
 async function execGit(args: string[], cwd: string): Promise<{ stdout: string; stderr: string }> {
@@ -293,8 +322,9 @@ export function handleGitApi(
     let folderPath = '';
     let gitScopePath = '';
     let versionFileBasePath = '';
+    let previewResourceName = '';
     try {
-      ({ targetPath, folderPath, gitScopePath, versionFileBasePath } = normalizeGitTargetPath(context, requestedPath, handlers));
+      ({ targetPath, folderPath, gitScopePath, versionFileBasePath, previewResourceName } = normalizeGitTargetPath(context, requestedPath, handlers));
     } catch {
       sendPathError(requestedPath);
       return;
@@ -399,11 +429,19 @@ export function handleGitApi(
         path.join(tempDir, gitScopePath),
       ]));
       const hasPrototype = versionResourceDirs.some((resourceDir) => fs.existsSync(path.join(resourceDir, 'index.tsx')));
+      const previewName = previewResourceName || targetPath;
+      const previewPath = previewName ? `/prototypes/${encodePreviewPathSegments(previewName)}` : '';
+      const defaultPreviewGitPath = normalizePreviewResourcePath(`prototypes/${previewName}`);
+      const previewGitPath = normalizePreviewResourcePath(versionFileBasePath) === defaultPreviewGitPath
+        ? ''
+        : versionFileBasePath;
       sendJson(res, {
         success: true,
         versionId,
         hasPrototype,
-        prototypeUrl: hasPrototype ? `/api/git/version-file/${versionId}/${versionFileBasePath}/index.tsx` : null,
+        prototypeUrl: hasPrototype && previewPath
+          ? appendSearchParams(previewPath, { gitVersion: versionId, gitPath: previewGitPath })
+          : null,
         projectId: context.project.id,
       });
       return;

@@ -11,17 +11,20 @@ describe('EmbedFloatingToolbar source', () => {
         expect(source).not.toContain("deactivateActivePreviewForCanvasEdit('content-scale')");
     });
 
-    it('centers preview session hints in the screen so the toolbar cannot cover them', () => {
+    it('centers preview session hints in the canvas container so transformed ancestors cannot offset them', () => {
         const source = readFileSync(resolve(__dirname, './EmbedFloatingToolbar.tsx'), 'utf8');
+        const hintStart = source.indexOf('{previewSessionHint ? (');
+        const hintEnd = source.indexOf('{previewSessionHint.message}', hintStart);
+        const hintSource = source.slice(hintStart, hintEnd);
 
-        expect(source).toContain("position: 'fixed'");
-        expect(source).toContain("left: '50%'");
-        expect(source).toContain("top: '50%'");
-        expect(source).toContain("transform: 'translate(-50%, -50%)'");
-        expect(source).toContain('previewSessionHint.message');
-        expect(source).toContain('fontSize: 14');
-        expect(source).not.toContain('PREVIEW_SESSION_HINT_TOP');
-        expect(source).not.toContain("transform: 'translateX(-50%)'");
+        expect(hintSource).toContain("position: 'absolute'");
+        expect(hintSource).toContain("left: '50%'");
+        expect(hintSource).toContain("top: '50%'");
+        expect(hintSource).toContain("transform: 'translate(-50%, -50%)'");
+        expect(hintSource).toContain('fontSize: 14');
+        expect(hintSource).not.toContain("position: 'fixed'");
+        expect(hintSource).not.toContain('PREVIEW_SESSION_HINT_TOP');
+        expect(hintSource).not.toContain("transform: 'translateX(-50%)'");
     });
 
     it('shows an entered-preview hint when an embed preview becomes active', () => {
@@ -61,5 +64,15 @@ describe('EmbedFloatingToolbar source', () => {
         expect(source).toContain("if (activationMode === 'activate') {");
         expect(source).not.toContain('pendingSelectionActivationIdRef');
         expect(source).not.toContain("const activationMode = pointerIntent?.released && !pointerIntent.moved ? 'activate' : 'select-only';");
+    });
+
+    it('clears tooltips when switching embed view modes because the hovered button unmounts', () => {
+        const source = readFileSync(resolve(__dirname, './EmbedFloatingToolbar.tsx'), 'utf8');
+        const handlerStart = source.indexOf("const handleSwitchViewMode = useCallback((targetMode: 'link' | 'preview') => {");
+        const handlerEnd = source.indexOf('/* ── Close size popover', handlerStart);
+        const handlerSource = source.slice(handlerStart, handlerEnd);
+
+        expect(handlerSource).toContain('clearTooltip();');
+        expect(handlerSource.indexOf('clearTooltip();')).toBeLessThan(handlerSource.indexOf('excalidrawAPI.updateScene'));
     });
 });

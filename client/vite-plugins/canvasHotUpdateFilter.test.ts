@@ -20,7 +20,7 @@ describe('canvasHotUpdateFilterPlugin', () => {
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas.excalidraw')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas-assets/screenshot.png')).toBe(true);
     expect(isCanvasHotUpdateFile('src/prototypes/home/canvas-assets/embed.png')).toBe(true);
-    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/ai-image-history.json')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/generation-artifacts.json')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/review.md')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/index.tsx')).toBe(false);
   });
@@ -38,7 +38,7 @@ describe('canvasHotUpdateFilterPlugin', () => {
       modules: [{ id: 'screenshot' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
-      file: '/project/src/prototypes/home/.spec/ai-image-history.json',
+      file: '/project/src/prototypes/home/.spec/generation-artifacts.json',
       modules: [{ id: 'history' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
@@ -95,7 +95,7 @@ describe('canvasHotUpdateFilterPlugin', () => {
     })).toBe(true);
     expect(shouldDropCanvasFullReloadPayload({
       type: 'full-reload',
-      triggeredBy: '/project/src/prototypes/home/.spec/ai-image-history.json',
+      triggeredBy: '/project/src/prototypes/home/.spec/generation-artifacts.json',
     })).toBe(true);
     expect(shouldDropCanvasFullReloadPayload({
       type: 'full-reload',

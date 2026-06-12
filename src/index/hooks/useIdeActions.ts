@@ -1,9 +1,8 @@
 import { useCallback } from 'react';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../common/ide';
-import { resolveVisibleIDEPreference, WS_SUPPORTED_CLIENT_TYPES } from '../../common/ide';
+import { resolveVisibleIDEPreference } from '../../common/ide';
 import type { ItemData } from '../types';
 import type { DataTableResourceItem, ThemeResourceItem } from '../types/index-page.types';
-import { apiService } from '../services/index.api';
 import { openConfiguredIDEBeforeAction } from '../utils/ideAutomation';
 import { normalizeMarkdownResourceName } from '../utils/markdownResourcePath';
 import { buildObsidianOpenUrl } from '../utils/obsidian';
@@ -68,16 +67,12 @@ function resolveExplicitResourcePath(item: unknown): string {
     return getExplicitLocalPath(item);
 }
 
-function isLegacyWsUnavailable(response: unknown): boolean {
-    if (!response || typeof response !== 'object') {
-        return false;
+function resolveResourceProjectId(item: unknown): string {
+    if (!item || typeof item !== 'object') {
+        return '';
     }
-    const payload = response as {
-        legacyWsUnavailable?: unknown;
-        warning?: unknown;
-    };
-    return payload.legacyWsUnavailable === true
-        || payload.warning === 'legacy websocket endpoint unavailable';
+    const raw = item as { projectId?: unknown };
+    return typeof raw.projectId === 'string' ? raw.projectId.trim() : '';
 }
 
 export function useIdeActions({
@@ -172,14 +167,12 @@ export function useIdeActions({
     const openFileInIDE = useCallback(async ({
         filePath,
         copyText,
-        fallbackPath,
-        fallbackPaths,
+        projectId,
         emptySelectionMessage,
     }: {
         filePath?: string;
         copyText?: string;
-        fallbackPath?: string;
-        fallbackPaths?: string[];
+        projectId?: string;
         emptySelectionMessage: string;
     }) => {
         const targetPath = (filePath || '').trim();
@@ -188,8 +181,7 @@ export function useIdeActions({
             return;
         }
 
-        const targetClientTypes = [...WS_SUPPORTED_CLIENT_TYPES];
-        const hide = messageApi.loading('正在发送到 IDE...', 0);
+        const hide = messageApi.loading('正在打开 IDE...', 0);
         let copySucceeded = false;
 
         try {
@@ -204,81 +196,11 @@ export function useIdeActions({
 
             const openedByIDECommand = await openConfiguredIDEBeforeAction({
                 preferredIDE: resolveVisibleIDEPreference(preferredIDE, ideAvailability),
-                projectId: activeProjectId?.trim() || undefined,
+                projectId: projectId?.trim() || activeProjectId?.trim() || undefined,
                 targetPath,
             });
 
-            const handshakeMaxAttempts = openedByIDECommand ? 10 : 1;
-            let handshakeSent = false;
-
-            for (let attempt = 0; attempt < handshakeMaxAttempts; attempt += 1) {
-                const handshakeRes = await apiService.sendWsMessage({
-                    type: 'handshake',
-                    payload: 'prototype-admin',
-                    targetClientTypes,
-                });
-
-                if (isLegacyWsUnavailable(handshakeRes)) {
-                    messageApi.info(openedByIDECommand
-                        ? '编辑器已打开，旧版联动插件未连接，已跳过文件聚焦'
-                        : copySucceeded
-                            ? '旧版联动插件未连接，已复制文件标题，可前往使用'
-                            : '旧版联动插件未连接，可前往编辑器使用');
-                    return;
-                }
-
-                if (handshakeRes?.sent) {
-                    handshakeSent = true;
-                    break;
-                }
-
-                if (attempt < handshakeMaxAttempts - 1) {
-                    await new Promise((resolve) => setTimeout(resolve, 500));
-                }
-            }
-
-            if (!handshakeSent) {
-                messageApi.info(copySucceeded
-                    ? '编辑器正在启动中，已复制文件标题，可稍后在编辑器中打开'
-                    : '编辑器正在启动中，可稍后在编辑器中打开');
-                return;
-            }
-
-            const openFileMaxAttempts = openedByIDECommand ? 3 : 1;
-            let openFileSent = false;
-            const candidatePaths = Array.from(
-                new Set(
-                    [targetPath, ...(fallbackPaths || []), fallbackPath || '']
-                        .map((path) => path.trim())
-                        .filter(Boolean),
-                ),
-            );
-
-            for (let attempt = 0; attempt < openFileMaxAttempts; attempt += 1) {
-                for (const path of candidatePaths) {
-                    const openRes = await apiService.sendWsMessage({
-                        type: 'open-file',
-                        payload: path,
-                        targetClientTypes,
-                    });
-                    if (openRes?.sent) {
-                        openFileSent = true;
-                        break;
-                    }
-                }
-                if (openFileSent) {
-                    break;
-                }
-
-                if (attempt < openFileMaxAttempts - 1) {
-                    await new Promise((resolve) => setTimeout(resolve, 300));
-                }
-            }
-
-            if (!openFileSent) {
-                messageApi.warning(copySucceeded
-                    ? '编辑器未连接，已复制了文件标题，可前往使用'
-                    : '编辑器未连接，可前往编辑器使用');
+            if (!openedByIDECommand) {
                 return;
             }
 
@@ -286,7 +208,7 @@ export function useIdeActions({
                 ? '已在编辑器中打开，并复制了文件标题，可前往编辑'
                 : '已在编辑器中打开，可前往编辑');
         } catch (error: any) {
-            messageApi.error(error?.message || '发送失败');
+            messageApi.error(error?.message || '打开失败');
         } finally {
             hide();
         }
@@ -320,6 +242,7 @@ export function useIdeActions({
         await openFileInIDE({
             filePath,
             copyText,
+            projectId: selectedItem.projectId,
             emptySelectionMessage: '请先选择条目',
         });
     }, [openFileInIDE, selectedItem]);
@@ -344,6 +267,7 @@ export function useIdeActions({
         await openFileInIDE({
             filePath,
             copyText,
+            projectId: resolveResourceProjectId(effectiveItem),
             emptySelectionMessage: `请先选择${effectiveLabel}`,
         });
     }, [currentMarkdownResource.item, currentMarkdownResource.kind, messageApi, openFileInIDE]);
@@ -387,18 +311,11 @@ export function useIdeActions({
         const filePath = targetTheme.hasIndexTsx === false
             ? `${themeBasePath}/designToken.json`
             : `${themeBasePath}/index.tsx`;
-        const fallbackPaths = [
-            `${themeBasePath}/designToken.json`,
-            `${themeBasePath}/globals.css`,
-            `${themeBasePath}/README.md`,
-            `${themeBasePath}/DESIGN-SPEC.md`,
-            themeBasePath,
-        ];
         const copyText = `[${targetTheme.displayName}](${themeBasePath})`;
         await openFileInIDE({
             filePath,
-            fallbackPaths,
             copyText,
+            projectId: targetTheme.projectId,
             emptySelectionMessage: '请先选择设计',
         });
     }, [messageApi, openFileInIDE, selectedTheme]);
@@ -422,12 +339,11 @@ export function useIdeActions({
             return;
         }
         const filePath = `${themeBasePath}/README.md`;
-        const fallbackPath = `${themeBasePath}/DESIGN-SPEC.md`;
         const copyText = `[${targetTheme.displayName} 规范资源](${filePath})`;
         await openFileInIDE({
             filePath,
-            fallbackPath,
             copyText,
+            projectId: targetTheme.projectId,
             emptySelectionMessage: '请先选择设计',
         });
     }, [messageApi, openFileInIDE, selectedTheme]);
@@ -450,6 +366,7 @@ export function useIdeActions({
         await openFileInIDE({
             filePath,
             copyText,
+            projectId: resolveResourceProjectId(targetTable),
             emptySelectionMessage: '请先选择数据表',
         });
     }, [messageApi, openFileInIDE, selectedDataTable]);
@@ -457,10 +374,11 @@ export function useIdeActions({
     const handleOpenProjectInIDE = useCallback(async (
         ideOverride?: MainIDEPreference,
         targetPath?: string,
+        projectIdOverride?: string,
     ): Promise<boolean> => {
         return openConfiguredIDEBeforeAction({
             preferredIDE: ideOverride || preferredIDE,
-            projectId: activeProjectId?.trim() || undefined,
+            projectId: projectIdOverride?.trim() || activeProjectId?.trim() || undefined,
             targetPath: targetPath?.trim() || undefined,
         });
     }, [activeProjectId, preferredIDE]);

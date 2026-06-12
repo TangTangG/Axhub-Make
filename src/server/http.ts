@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { networkInterfaces } from 'node:os';
-import { spawn } from 'node:child_process';
+import archiver from 'archiver';
 
 export interface JsonResponseOptions {
   status?: number;
@@ -122,12 +122,22 @@ export function sendFile(res: ServerResponse, filePath: string, options: SendFil
 export function streamDirectoryAsZip(res: ServerResponse, sourceDir: string, fileName: string): void {
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
-  const child = spawn('zip', ['-r', '-', '.'], {
-    cwd: sourceDir,
-    stdio: ['ignore', 'pipe', 'pipe'],
+
+  const archive = archiver('zip', { zlib: { level: 6 } });
+  archive.on('warning', (warning) => {
+    console.warn('[ZIP] Archive warning:', warning);
   });
-  child.stdout?.pipe(res);
-  child.on('error', (error) => {
+  archive.on('error', (error) => {
+    if (!res.headersSent) {
+      sendJson(res, { error: error.message }, { status: 500 });
+    } else {
+      res.destroy(error);
+    }
+  });
+
+  archive.pipe(res);
+  archive.directory(sourceDir, false);
+  archive.finalize().catch((error) => {
     if (!res.headersSent) {
       sendJson(res, { error: error.message }, { status: 500 });
     } else {

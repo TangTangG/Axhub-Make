@@ -4,9 +4,9 @@ const baseUrl = process.argv[2] || 'http://localhost:51720';
 const targets = process.argv.slice(3).length > 0
   ? process.argv.slice(3)
   : [
-      '/prototypes/ref-antd',
-      '/prototypes/ref-app-home',
-      '/themes/antd-new',
+      '/prototypes/annotation-demo',
+      '/prototypes/beginner-guide',
+      '/themes/apple',
     ];
 
 let hasFailure = false;
@@ -23,20 +23,21 @@ for (const target of targets) {
     });
 
     const html = await response.text();
-    const htmlProxyMatches = Array.from(
-      html.matchAll(/src="([^"]*html-proxy[^"]*)"/g),
+    const previewLoaderMatches = Array.from(
+      html.matchAll(/src="([^"]*__axhub-preview-loader\.js[^"]*)"/g),
       (match) => match[1],
     );
-    const loaderProxy = htmlProxyMatches.find((value) => value.includes('index=0.js')) || htmlProxyMatches[0] || null;
+    const previewLoader = previewLoaderMatches[0] || null;
 
     let loaderScript = '';
-    if (loaderProxy) {
-      loaderScript = await fetch(new URL(loaderProxy, baseUrl)).then((res) => res.text());
+    if (previewLoader) {
+      loaderScript = await fetch(new URL(previewLoader, baseUrl)).then((res) => res.text());
     }
 
     const ok = response.ok
       && html.includes('<div id="root"></div>')
-      && htmlProxyMatches.length >= 1
+      && previewLoaderMatches.length === 1
+      && !html.includes('html-proxy')
       && !html.includes('waitForBootstrap')
       && loaderScript.includes('import PreviewComponent from')
       && loaderScript.includes('import.meta.hot.accept(')
@@ -47,9 +48,10 @@ for (const target of targets) {
       console.error(`[preview-smoke] FAIL ${requestUrl}`);
       console.error(`  status=${response.status}`);
       console.error(`  containsRoot=${html.includes('<div id="root"></div>')}`);
-      console.error(`  htmlProxyCount=${htmlProxyMatches.length}`);
+      console.error(`  previewLoaderCount=${previewLoaderMatches.length}`);
+      console.error(`  removedHtmlProxy=${!html.includes('html-proxy')}`);
       console.error(`  removedLegacyLoader=${!html.includes('waitForBootstrap')}`);
-      console.error(`  loaderProxy=${Boolean(loaderProxy)}`);
+      console.error(`  previewLoader=${Boolean(previewLoader)}`);
       console.error(`  loaderImportsEntry=${loaderScript.includes('import PreviewComponent from')}`);
       console.error(`  loaderHasAcceptBoundary=${loaderScript.includes('import.meta.hot.accept(')}`);
       continue;

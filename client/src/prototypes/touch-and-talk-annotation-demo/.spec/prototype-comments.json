@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "kind": "prototype-edit-comments",
+  "resource": {
+    "id": "touch-and-talk-annotation-demo",
+    "targetPath": "prototypes/touch-and-talk-annotation-demo",
+    "filePath": "src/prototypes/touch-and-talk-annotation-demo/.spec/prototype-comments.json"
+  },
+  "comments": [
+    {
+      "locator": {
+        "selectors": [
+          "body > div > main > div > article > section > div:nth-of-type(1) > div:nth-of-type(2) > figure > figcaption",
+          "#root main > div > article > section > div:nth-of-type(1) > div:nth-of-type(2) > figure > figcaption"
+        ],
+        "fingerprint": "figcaption|text=批注后快速微调页面。",
+        "path": [
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          1,
+          0,
+          1,
+          0,
+          2
+        ]
+      },
+      "textChange": {
+        "before": "批注后快速微调移动端页面。",
+        "after": "批注后快速微调页面。"
+      },
+      "elementKey": "figcaption_45",
+      "label": "figcaption(\"批注后快速微调页面。\")",
+      "marker": {
+        "clientX": 1186.609375,
+        "clientY": 583.421875,
+        "documentX": 1186.609375,
+        "documentY": 748.421875,
+        "xPercent": 74.1630859375,
+        "y": 748.421875,
+        "isFixed": false,
+        "offsetX": 66.609375,
+        "offsetY": 8.9140625,
+        "dirtySince": 1780991676802
+      },
+      "pageScope": "prototypes/touch-and-talk-annotation-demo::page::cover"
+    },
+    {
+      "locator": {
+        "selectors": [
+          "body > div > main > div > article > section > div:nth-of-type(2) > article:nth-of-type(2) > p",
+          "#root main > div > article > section > div:nth-of-type(2) > article:nth-of-type(2) > p"
+        ],
+        "fingerprint": "p|text=无需转发提示词，AI 可自动读取页面的批注内容并且进行处理。",
+        "path": [
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          1,
+          1,
+          1,
+          2
+        ]
+      },
+      "textChange": {
+        "before": "无需转发提示词，AI 可以自动读取当前页面的批注内容并且进行处理。",
+        "after": "无需转发提示词，AI 可自动读取页面的批注内容并且进行处理。"
+      },
+      "elementKey": "p_1",
+      "label": "p(\"无需转发提示词，AI 可自动读取页面的批注内容并且进行处理。\")",
+      "marker": {
+        "clientX": 1121.375,
+        "clientY": 452.625,
+        "documentX": 1121.375,
+        "documentY": 452.625,
+        "xPercent": 75.76858108108108,
+        "y": 452.625,
+        "isFixed": false,
+        "offsetX": 209.125,
+        "offsetY": 18,
+        "dirtySince": 1780995243284
+      },
+      "pageScope": "prototypes/touch-and-talk-annotation-demo::page::quick-execute"
+    }
+  ],
+  "tasks": {},
+  "images": []
+}

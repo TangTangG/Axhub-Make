@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Info, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import AiImageDetailDialog from './AiImageDetailDialog';
 import AiImageGenerationComposer from './AiImageGenerationComposer';
 import {
   AI_IMAGE_PLACEHOLDER_FILE_ID,
@@ -11,7 +10,6 @@ import {
   getAiImageDisplaySize,
   isAiImageElement,
   isAiImageGeneratorElement,
-  replaceGeneratorWithImageElements,
   shouldDeleteAiImageGeneratorFromComposerKeydown,
 } from './canvasAiImage';
 import {
@@ -21,10 +19,10 @@ import {
   type CanvasReferenceSnapshot,
 } from './canvasReferenceImages';
 import { getAiImageTaskStore, type AiImageTaskRecord } from './aiImageStore';
+import { createCanvasImageArtifactEventFromAiImageTask, type CanvasImageArtifactEvent } from './canvasImageArtifacts';
 import type { PromptClientPreference } from '../../types';
 import {
   resolveCanvasGeneratorPlacement,
-  resolveCanvasGeneratorPlacementFromReferenceElement,
   type CanvasGeneratorPlacement,
 } from '../shared/canvasGeneratorPlacement';
 import {
@@ -32,6 +30,7 @@ import {
   resolveStableCanvasGeneratorOverlayBounds,
   type CanvasGeneratorOverlayBounds,
 } from '../shared/canvasGeneratorOverlayPosition';
+import { createCanvasGenerationComposerDraftStorageKey } from '../shared/canvasGenerationComposerDraft';
 import CanvasNodeTitleLabel, {
   CANVAS_NODE_TITLE_LABEL_HEIGHT,
   CANVAS_NODE_TITLE_LABEL_MAX_WIDTH,
@@ -42,7 +41,9 @@ import { shouldFitElementIntoCanvasViewport } from '../../components/content/can
 interface CanvasAiImageToolProps {
   excalidrawAPI: any;
   containerRef: React.RefObject<HTMLDivElement>;
+  assistantProjectPath?: string;
   preferredPromptClient?: PromptClientPreference;
+  onImageArtifact?: (event: CanvasImageArtifactEvent) => void;
   onSceneMutated?: () => void;
 }
 
@@ -81,9 +82,6 @@ const AI_IMAGE_COMPOSER_WIDTH = 640;
 const AI_IMAGE_COMPOSER_GAP = 10;
 const AI_IMAGE_COMPOSER_ESTIMATED_HEIGHT = 128;
 const AI_IMAGE_COMPOSER_BOTTOM_INSET = 16;
-const AI_IMAGE_DETAIL_TRIGGER_SIZE = 28;
-const AI_IMAGE_DETAIL_ICON_STYLE = { width: 16, height: 16 };
-const AI_IMAGE_DETAIL_COLOR = '#008F5D';
 const AI_IMAGE_GENERATOR_TITLE_COLOR = '#008F5D';
 
 function canvasToScreen(
@@ -113,24 +111,6 @@ function screenToCanvas(
     x: (clientX - containerLeft) / zoom - (appState.scrollX || 0),
     y: (clientY - containerTop) / zoom - (appState.scrollY || 0),
   };
-}
-
-function taskToImages(task: AiImageTaskRecord) {
-  const store = getAiImageTaskStore();
-  return task.outputImages
-    .map((imageId) => {
-      const image = store.getImage(imageId);
-      if (!image) return null;
-      const displaySize = task.actualParamsByImage?.[imageId]?.size || task.actualParams?.size || task.params.size;
-      return {
-        imageId,
-        dataUrl: image.dataUrl,
-        displaySize,
-        width: image.width,
-        height: image.height,
-      };
-    })
-    .filter((image): image is { imageId: string; dataUrl: string; displaySize?: string; width?: number; height?: number } => Boolean(image));
 }
 
 function refreshAiImagePlaceholderFile(excalidrawAPI: any) {
@@ -190,31 +170,14 @@ function clampComposerTop(anchorTop: number, containerHeight: number): number {
   );
 }
 
-function createImageDetailTriggerStyle(): React.CSSProperties {
-  return {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: AI_IMAGE_DETAIL_TRIGGER_SIZE,
-    height: AI_IMAGE_DETAIL_TRIGGER_SIZE,
-    border: 'none',
-    borderRadius: 6,
-    background: 'transparent',
-    color: '#94a3b8',
-    cursor: 'pointer',
-    padding: 0,
-    transition: 'background 0.12s, color 0.12s, transform 0.12s',
-  };
-}
-
 export default function CanvasAiImageTool({
   excalidrawAPI,
   containerRef,
+  assistantProjectPath,
   preferredPromptClient,
+  onImageArtifact,
   onSceneMutated,
 }: CanvasAiImageToolProps) {
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detailTarget, setDetailTarget] = useState<{ imageId?: string; taskId?: string } | null>(null);
   const [pendingInitialReferenceImagesState, setPendingInitialReferenceImages] = useState<string[]>([]);
   const [pendingInitialReferenceImagesGeneratorId, setPendingInitialReferenceImagesGeneratorId] = useState<string | null>(null);
   const [pendingInitialLocalContextRefsState, setPendingInitialLocalContextRefs] = useState<CanvasLocalContextRef[]>([]);
@@ -223,6 +186,7 @@ export default function CanvasAiImageTool({
   const [taskRevision, setTaskRevision] = useState(0);
   const [canvasOverlayRevision, setCanvasOverlayRevision] = useState(0);
   const copiedCanvasReferenceRef = useRef<CanvasReferenceSnapshot | null>(null);
+  const emittedImageIdsByTaskRef = useRef<Map<string, Set<string>>>(new Map());
   const tasks = useMemo(() => getAiImageTaskStore().getTasks(), [taskRevision]);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const hasRunningTask = useMemo(() => tasks.some((task) => task.status === 'running'), [tasks]);
@@ -240,7 +204,24 @@ export default function CanvasAiImageTool({
     }
   }, []);
 
-  useEffect(() => getAiImageTaskStore().subscribe(() => setTaskRevision((revision) => revision + 1)), []);
+  const emitIncrementalImageArtifacts = useCallback((task: AiImageTaskRecord) => {
+    const consumedImageIds = emittedImageIdsByTaskRef.current.get(task.id) || new Set<string>();
+    const artifactEvent = createCanvasImageArtifactEventFromAiImageTask(task, {
+      sourceScene: 'design',
+      consumedImageIds,
+    });
+    if (!artifactEvent) return;
+    emittedImageIdsByTaskRef.current.set(task.id, new Set([
+      ...consumedImageIds,
+      ...artifactEvent.images.map((image) => image.imageId),
+    ]));
+    onImageArtifact?.(artifactEvent);
+  }, [onImageArtifact]);
+
+  useEffect(() => getAiImageTaskStore().subscribe((state) => {
+    setTaskRevision((revision) => revision + 1);
+    state.tasks.forEach(emitIncrementalImageArtifacts);
+  }), [emitIncrementalImageArtifacts]);
 
   useEffect(() => {
     if (!hasRunningTask) return undefined;
@@ -614,71 +595,9 @@ export default function CanvasAiImageTool({
     return images;
   }, [pendingInitialLocalContextRefsGeneratorId, selectedInfo]);
 
-  const replaceSelectedGeneratorWithTask = useCallback((task: AiImageTaskRecord) => {
-    if (task.status !== 'done') return;
-    const generator = excalidrawAPI.getSceneElements().find((element: any) => (
-      isAiImageGeneratorElement(element) && element.customData?.generationTaskId === task.id
-    )) || (
-      selectedInfo?.kind === 'generator' && selectedInfo.element?.customData?.generationTaskId === task.id
-        ? selectedInfo.element
-        : null
-    );
-    if (!generator) return;
-    const images = taskToImages(task);
-    if (!images.length) return;
-    const result = replaceGeneratorWithImageElements({
-      elements: excalidrawAPI.getSceneElements(),
-      generatorId: generator.id,
-      images,
-      taskId: task.id,
-    });
-    excalidrawAPI.addFiles(result.files);
-    excalidrawAPI.updateScene({
-      elements: result.elements,
-      appState: {
-        selectedElementIds: result.selectedElementIds,
-        selectedGroupIds: {},
-      },
-    });
-    onSceneMutated?.();
-  }, [excalidrawAPI, onSceneMutated, selectedInfo]);
-
-  const handleOpenSelectedImageDetail = useCallback(() => {
-    if (selectedInfo?.kind !== 'image') return;
-    setDetailTarget({
-      imageId: String(selectedInfo.element.fileId || ''),
-      taskId: String(selectedInfo.element.customData?.sourceTaskId || ''),
-    });
-    setDetailOpen(true);
-  }, [selectedInfo]);
-
-  const createReferenceImageGeneratorPlacement = useCallback(() => {
-    const referenceElement = selectedInfo?.kind === 'image' ? selectedInfo.element : null;
-    if (!referenceElement) return undefined;
-    return resolveCanvasGeneratorPlacementFromReferenceElement({
-      appState: excalidrawAPI.getAppState(),
-      referenceElement,
-    });
-  }, [excalidrawAPI, selectedInfo]);
-
-  const handleCreateImageToImage = useCallback((imageDataUrl: string) => {
-    setDetailOpen(false);
-    setPendingInitialReferenceImages([imageDataUrl]);
-    setPendingInitialLocalContextRefs([]);
-    insertGenerator(createReferenceImageGeneratorPlacement(), [imageDataUrl]);
-    toast.success('已创建图生图生成器');
-  }, [createReferenceImageGeneratorPlacement, insertGenerator]);
-
-  const handleCreateImageToPrototype = useCallback((imageDataUrl: string) => {
-    setDetailOpen(false);
-    document.dispatchEvent(new CustomEvent('axhub:insertPrototypeGenerator', {
-      detail: {
-        referenceImages: [imageDataUrl],
-        referencePlacement: createReferenceImageGeneratorPlacement(),
-      },
-    }));
-    toast.success('已创建图生原型生成器');
-  }, [createReferenceImageGeneratorPlacement]);
+  const handleImageTaskFinished = useCallback((task: AiImageTaskRecord) => {
+    emitIncrementalImageArtifacts(task);
+  }, [emitIncrementalImageArtifacts]);
 
   const generatorTitleLabels = useMemo<GeneratorTitleLabel[]>(() => {
     const container = containerRef.current;
@@ -783,6 +702,15 @@ export default function CanvasAiImageTool({
       ? pendingInitialLocalContextRefsState
       : []
   ), [pendingInitialLocalContextRefsGeneratorId, pendingInitialLocalContextRefsState, selectedInfo]);
+  const selectedImageComposerDraftStorageKey = useMemo(() => (
+    selectedInfo?.kind === 'generator'
+      ? createCanvasGenerationComposerDraftStorageKey([
+        assistantProjectPath,
+        selectedInfo.element.id,
+        'ai-image',
+      ])
+      : null
+  ), [assistantProjectPath, selectedInfo]);
 
   return (
     <>
@@ -798,47 +726,14 @@ export default function CanvasAiImageTool({
         />
       ))}
 
-      {selectedInfo?.kind === 'image' ? (
-        <button
-          type="button"
-          data-axhub-ai-image-detail-trigger
-          aria-label="查看图片详情"
-          title="查看图片详情"
-          className="absolute z-30"
-          style={{
-            ...createImageDetailTriggerStyle(),
-            left: selectedInfo.left,
-            top: selectedInfo.top,
-          }}
-          onClick={handleOpenSelectedImageDetail}
-          onMouseEnter={(event) => {
-            event.currentTarget.style.background = 'rgba(15,23,42,0.06)';
-            event.currentTarget.style.color = AI_IMAGE_DETAIL_COLOR;
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.background = 'transparent';
-            event.currentTarget.style.color = '#94a3b8';
-          }}
-          onFocus={(event) => {
-            event.currentTarget.style.background = 'rgba(15,23,42,0.06)';
-            event.currentTarget.style.color = AI_IMAGE_DETAIL_COLOR;
-          }}
-          onBlur={(event) => {
-            event.currentTarget.style.background = 'transparent';
-            event.currentTarget.style.color = '#94a3b8';
-          }}
-          onMouseDown={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <Info style={AI_IMAGE_DETAIL_ICON_STYLE} />
-        </button>
-      ) : null}
-
       {selectedInfo?.kind === 'generator' ? (
         <AiImageGenerationComposer
           placement={selectedInfo.composerPlacement}
           canPasteReferenceImages={Boolean(copiedCanvasReferenceRef.current)}
           conversationId={String(selectedInfo.element.customData?.conversationId || '')}
+          assistantProjectPath={assistantProjectPath}
+          draftStorageKey={selectedImageComposerDraftStorageKey}
+          generatorElementId={selectedInfo.element.id}
           initialReferenceImages={pendingInitialReferenceImages}
           initialLocalContextRefs={pendingInitialLocalContextRefs}
           preferredPromptClient={preferredPromptClient}
@@ -865,7 +760,7 @@ export default function CanvasAiImageTool({
             excalidrawAPI.updateScene({ elements });
             onSceneMutated?.();
           }}
-          onTaskFinished={replaceSelectedGeneratorWithTask}
+          onTaskFinished={handleImageTaskFinished}
         />
       ) : null}
 
@@ -896,14 +791,6 @@ export default function CanvasAiImageTool({
         </div>
       ))}
 
-      <AiImageDetailDialog
-        open={detailOpen}
-        onOpenChange={setDetailOpen}
-        selectedImageId={detailTarget?.imageId}
-        sourceTaskId={detailTarget?.taskId}
-        onCreateImageToImage={handleCreateImageToImage}
-        onCreateImageToPrototype={handleCreateImageToPrototype}
-      />
     </>
   );
 }

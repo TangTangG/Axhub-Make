@@ -7,6 +7,13 @@ function readIconNavigationSource() {
 }
 
 describe('IconNavigation settings menu source', () => {
+  it('labels the canvas workspace tab as drafts in the navigation chrome', () => {
+    const source = readIconNavigationSource();
+
+    expect(source).toContain("{ key: 'canvas', icon: LayoutDashboard, label: '画布 (Canvas)' }");
+    expect(source).not.toContain("label: '草稿 (Draft)'");
+  });
+
   it('opens project settings from the dropdown select event after the menu closes', () => {
     const source = readIconNavigationSource();
     const menuSource = source.slice(

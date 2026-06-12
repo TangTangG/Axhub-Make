@@ -22,11 +22,16 @@ describe('excalidraw compact canvas styles', () => {
     it('maps canvas selection affordances to Axhub brand tokens', () => {
         const css = readCompactCss();
 
-        expect(css).toContain('--axhub-excalidraw-selection: var(--axhub-excalidraw-brand);');
-        expect(css).toContain('--axhub-excalidraw-selection-fill: rgba(0, 143, 93, 0.05);');
+        expect(css).toContain('--axhub-excalidraw-selection: #475569;');
+        expect(css).toContain('--axhub-excalidraw-selection-fill: rgba(71, 85, 105, 0.04);');
         expect(css).toContain('--color-selection: var(--axhub-excalidraw-selection);');
         expect(css).toContain('--color-selection-fill: var(--axhub-excalidraw-selection-fill);');
-        expect(css).toContain('--axhub-excalidraw-selection-fill: rgba(101, 219, 169, 0.12);');
+        expect(css).toContain('--focus-highlight-color: rgba(71, 85, 105, 0.18);');
+        expect(css).toContain('--axhub-excalidraw-selection: #94a3b8;');
+        expect(css).toContain('--axhub-excalidraw-selection-fill: rgba(148, 163, 184, 0.1);');
+        expect(css).toContain('--focus-highlight-color: rgba(148, 163, 184, 0.22);');
+        expect(css).not.toContain('--axhub-excalidraw-selection: var(--axhub-excalidraw-brand);');
+        expect(css).not.toContain('--axhub-excalidraw-selection-fill: rgba(0, 143, 93, 0.05);');
     });
 
     it('styles the property panel submenu like a standard dropdown menu', () => {
@@ -95,20 +100,20 @@ describe('excalidraw compact canvas styles', () => {
         expect(iconRule).toContain('height: var(--axhub-excalidraw-prominent-icon-size) !important;');
     });
 
-    it('hides native image crop hints only for generator placeholders', () => {
+    it('hides native image crop hints only for unified generator placeholders', () => {
         const css = readCompactCss();
 
-        expect(css).toContain('[data-axhub-ai-image-generator-selected=\'true\'] .excalidraw .HintViewer');
-        expect(css).toContain('[data-axhub-prototype-generator-selected=\'true\'] .excalidraw .HintViewer');
+        expect(css).toContain('[data-axhub-ai-generation-generator-selected=\'true\'] .excalidraw .HintViewer');
+        expect(css).not.toContain('[data-axhub-ai-image-generator-selected=\'true\'] .excalidraw .HintViewer');
+        expect(css).not.toContain('[data-axhub-prototype-generator-selected=\'true\'] .excalidraw .HintViewer');
         expect(css).toContain('display: none !important;');
     });
 
-    it('keeps injected AI toolbar buttons on the same hover surface as native tools', () => {
+    it('keeps the injected prototype toolbar button on the same hover surface as native tools', () => {
         const css = readCompactCss();
 
-        expect(css).toContain('.axhub-excalidraw-compact .excalidraw .App-toolbar-container .axhub-ai-image-toolbar-button.ToolIcon_type_button .ToolIcon__icon');
         expect(css).toContain('.axhub-excalidraw-compact .excalidraw .App-toolbar-container .axhub-prototype-toolbar-button.ToolIcon_type_button .ToolIcon__icon');
-        expect(css).toContain('.axhub-excalidraw-compact .excalidraw .App-toolbar-container .axhub-ai-image-toolbar-button.ToolIcon_type_button:hover .ToolIcon__icon');
+        expect(css).not.toContain('axhub-ai-image-toolbar-button');
         expect(css).toContain('background: var(--button-hover-bg, var(--axhub-excalidraw-control-hover-bg)) !important;');
     });
 
@@ -170,15 +175,29 @@ describe('excalidraw compact canvas styles', () => {
     it('ships canvas chrome styles through the shared Excalidraw stylesheet entry', () => {
         const css = readCompactCss();
         const scopeRule = readRuleBlock(css, '.axhub-canvas-sidebar-toggle-scope');
+        const capsuleRule = readRuleBlock(css, '.axhub-canvas-top-right-capsule');
+        const welcomeTitleRule = readRuleBlock(css, '.excalidraw .axhub-canvas-welcome-title');
+        const welcomeTitleIconRule = readRuleBlock(css, '.excalidraw .axhub-canvas-welcome-title__icon');
 
         expect(css).toContain('.axhub-canvas-sidebar-toggle-scope');
         expect(css).toContain('.excalidraw .axhub-canvas-sidebar-toggle-anchor');
-        expect(css).toContain('.excalidraw .axhub-canvas-return-anchor');
+        expect(css).toContain('.axhub-canvas-top-right-capsule');
+        expect(css).toContain('.axhub-canvas-top-right-capsule__button');
+        expect(css).toContain('.axhub-canvas-top-right-capsule__divider');
         expect(css).toContain('.excalidraw .welcome-screen-center__heading');
-        expect(css).toContain('.excalidraw .axhub-welcome-menu-icon');
+        expect(css).not.toContain('.excalidraw .axhub-canvas-return-anchor');
+        expect(css).not.toContain('.excalidraw .axhub-welcome-menu-icon');
+        expect(css).not.toContain('.excalidraw .axhub-canvas-welcome-subtitle');
         expect(scopeRule).toContain('width: 100%;');
         expect(scopeRule).toContain('height: 100%;');
         expect(scopeRule).toContain('min-width: 0;');
         expect(scopeRule).toContain('min-height: 0;');
+        expect(scopeRule).toContain('--axhub-canvas-top-right-capsule-width: 73px;');
+        expect(capsuleRule).toContain('width: var(--axhub-canvas-top-right-capsule-width);');
+        expect(capsuleRule).toContain('border-radius: 0.5rem;');
+        expect(capsuleRule).not.toContain('border-radius: 999px;');
+        expect(welcomeTitleRule).toContain('color: var(--color-on-surface);');
+        expect(welcomeTitleRule).toContain('display: inline-flex;');
+        expect(welcomeTitleIconRule).toContain('color: var(--color-on-surface);');
     });
 });

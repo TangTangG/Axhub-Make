@@ -155,6 +155,84 @@ export default Demo;
     ]));
   });
 
+  it('requires Axure annotation viewers to use a local static annotation source import', () => {
+    const filePath = createAxureExportFixture(`/**
+ * @name Demo
+ * @mode axure
+ * /rules/axure-export-workflow.md
+ */
+import { AnnotationViewer } from '@axhub/annotation';
+
+const Component = () => (
+  <AnnotationViewer source={{ data: null }} />
+);
+
+export default Component;
+`);
+
+    const result = reviewFile(filePath, { mode: 'axure-export' });
+
+    expect(result.passed).toBe(false);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        rule: 'axure-annotation-source-import',
+        type: 'error',
+        blocking: true,
+        category: 'export-structure',
+      }),
+    ]));
+  });
+
+  it('accepts Axure annotation viewers when the imported source document is passed to source', () => {
+    const filePath = createAxureExportFixture(`/**
+   * @name Demo
+   * @mode axure
+   * /rules/axure-export-workflow.md
+ */
+import { AnnotationViewer, type AnnotationSourceDocument } from '@axhub/annotation';
+import annotationSourceDocument from './annotation-source.json';
+
+const Component = () => (
+  <AnnotationViewer source={annotationSourceDocument as unknown as AnnotationSourceDocument} />
+);
+
+export default Component;
+`);
+
+    expect(getIssueRules(filePath, { mode: 'axure-export' })).not.toContain('axure-annotation-source-import');
+  });
+
+  it('ignores namespaced JSX attributes when reading the Axure annotation source prop', () => {
+    const filePath = createAxureExportFixture(`/**
+   * @name Demo
+   * @mode axure
+   * /rules/axure-export-workflow.md
+   */
+import { AnnotationViewer, type AnnotationSourceDocument } from '@axhub/annotation';
+import annotationSourceDocument from './annotation-source.json';
+
+const Component = () => (
+  <AnnotationViewer axhub:source="legacy" source={annotationSourceDocument as unknown as AnnotationSourceDocument} />
+);
+
+export default Component;
+`);
+
+    expect(getIssueRules(filePath, { mode: 'axure-export' })).not.toContain('axure-annotation-source-import');
+  });
+
+  it('does not run the annotation source import rule outside Axure export review mode', () => {
+    const filePath = createAxureExportFixture(`
+import { AnnotationViewer } from '@axhub/annotation';
+
+const Component = () => <AnnotationViewer source={{ data: null }} />;
+
+export default Component;
+`);
+
+    expect(getIssueRules(filePath)).not.toContain('axure-annotation-source-import');
+  });
+
   it('enforces Axure export API handle contracts and snake_case variable names', () => {
     const filePath = createAxureExportFixture(`/**
  * @name Demo

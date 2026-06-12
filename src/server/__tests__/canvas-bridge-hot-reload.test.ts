@@ -109,10 +109,6 @@ function countReloadMessages(socket: FakeSocket): number {
   return socket.sentMessages.filter((message) => message.type === 'canvas.reload').length;
 }
 
-function findLastSentMessage(socket: FakeSocket, type: string): any {
-  return [...socket.sentMessages].reverse().find((message) => message.type === type);
-}
-
 function writeCanvasFile(filePath: string, marker: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify({
@@ -361,41 +357,6 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
     hub.destroy();
   });
 
-  it('resolves and rejects screenshot requests from canvas response frames', async () => {
-    const { hub } = createHub();
-    const socket = registerClient(hub, 'prototypes/home/canvas');
-
-    const screenshot = hub.requestScreenshot('prototypes/home/canvas');
-    const request = socket.sentMessages.find((message) => message.type === 'canvas.screenshot.request');
-    expect(request?.requestId).toMatch(/^ss-/u);
-    socket.emit('data', encodeClientTextFrame({
-      type: 'canvas.screenshot.response',
-      requestId: request.requestId,
-      dataUrl: 'data:image/png;base64,abc',
-    }));
-    await expect(screenshot).resolves.toBe('data:image/png;base64,abc');
-
-    const failed = hub.requestScreenshot('prototypes/home/canvas');
-    const failedRequest = findLastSentMessage(socket, 'canvas.screenshot.request');
-    socket.emit('data', encodeClientTextFrame({
-      type: 'canvas.screenshot.response',
-      requestId: failedRequest.requestId,
-      error: 'canvas hidden',
-    }));
-    await expect(failed).rejects.toThrow('canvas hidden');
-
-    const empty = hub.requestScreenshot('prototypes/home/canvas');
-    const emptyRequest = findLastSentMessage(socket, 'canvas.screenshot.request');
-    socket.emit('data', encodeClientTextFrame({
-      type: 'canvas.screenshot.response',
-      requestId: emptyRequest.requestId,
-    }));
-    await expect(empty).rejects.toThrow('Empty screenshot response');
-
-    await expect(hub.requestScreenshot('missing')).rejects.toThrow('No canvas browser connected');
-    hub.destroy();
-  });
-
   it('responds to ping frames and ignores malformed text frames without dropping the client', () => {
     const { hub } = createHub();
     const socket = registerClient(hub, 'prototypes/home/canvas');
@@ -412,7 +373,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
     hub.destroy();
   });
 
-  it('handles websocket control frames, extended client frames, and screenshot timeouts', async () => {
+  it('handles websocket control frames and extended client frames', () => {
     const { hub } = createHub();
     const socket = registerClient(hub, 'prototypes/home/canvas');
 
@@ -436,14 +397,6 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
       payload: 'x'.repeat(66_000),
     }));
     expect(hub.getConnectedCanvases()[0].dirty).toBe(true);
-
-    const screenshot = hub.requestScreenshot();
-    expect(socket.sentMessages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'canvas.screenshot.request' }),
-    ]));
-    const screenshotExpectation = expect(screenshot).rejects.toThrow('Screenshot request timed out');
-    await vi.advanceTimersByTimeAsync(15_000);
-    await screenshotExpectation;
 
     socket.emit('data', encodeClientFrame(0x0a, Buffer.from('heartbeat')));
     socket.emit('data', encodeClientFrame(0x08));

@@ -6,7 +6,7 @@ import { Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { writeServerInfo } from '../projectCore/index.ts';
+import { getProjectMetadataPath, writeServerInfo } from '../projectCore/index.ts';
 
 import { handleAdminStatic } from '../adminStatic.ts';
 import { buildInjectScript } from '../adminStatic.ts';
@@ -23,6 +23,41 @@ function createTempRoot(prefix = 'axhub-admin-static-') {
 function writeFile(filePath: string, content: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function writeJson(filePath: string, value: unknown) {
+  writeFile(filePath, JSON.stringify(value, null, 2));
+}
+
+function writePrototype(projectRoot: string, name: string, options: { updatedAt?: Date } = {}) {
+  const prototypeDir = path.join(projectRoot, 'src/prototypes', name);
+  writeFile(path.join(prototypeDir, 'index.tsx'), 'export default function Page() { return null; }');
+  if (options.updatedAt) {
+    fs.utimesSync(prototypeDir, options.updatedAt, options.updatedAt);
+  }
+}
+
+function writeProjectMetadata(projectRoot: string, prototypes: Array<{ id: string; name?: string; updatedAt?: string }>) {
+  writeJson(getProjectMetadataPath(projectRoot), {
+    schemaVersion: 1,
+    project: { id: 'make14', name: 'Make 14' },
+    resources: {
+      prototypes: prototypes.map((prototype) => ({
+        id: prototype.id,
+        name: prototype.name || prototype.id,
+        title: prototype.name || prototype.id,
+        clientUrl: `/prototypes/${prototype.name || prototype.id}`,
+        updatedAt: prototype.updatedAt,
+      })),
+      docs: [],
+      themes: [],
+      data: [],
+      templates: [],
+    },
+    navigation: { prototypes: prototypes.map((prototype) => prototype.id), docs: [] },
+    orders: { themes: [], data: [], templates: [] },
+    capabilities: { quickEdit: true, figmaExport: false, axureExport: false, multiDevicePreview: true },
+  });
 }
 
 function createRequest(url: string, headers: Record<string, string> = {}): IncomingMessage {
@@ -111,6 +146,88 @@ afterEach(() => {
 });
 
 describe('make-server admin static assets', () => {
+  it('redirects missing untitled prototype short links to the latest prototype and preserves the source p', () => {
+    const projectRoot = createTempRoot('axhub-admin-placeholder-project-');
+    const adminRoot = createTempRoot('axhub-admin-placeholder-dist-');
+    writeFile(path.join(adminRoot, 'index.html'), '<html><head></head><body>Admin</body></html>');
+    writePrototype(projectRoot, 'older');
+    writePrototype(projectRoot, 'latest');
+    writeProjectMetadata(projectRoot, [
+      { id: 'older', updatedAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'latest', updatedAt: '2026-06-01T00:00:00.000Z' },
+    ]);
+
+    const redirect = createResponse();
+    expect(handleAdminStatic(
+      createRequest('/?projectId=make14&p=untitled-5&v=canvas'),
+      redirect.response,
+      { adminRoot, projectRoot, host: 'localhost', port: 5174 },
+    )).toBe(true);
+
+    expect(redirect.statusCode).toBe(302);
+    expect(redirect.header('location')).toBe('/?projectId=make14&p=latest&v=canvas&fromP=untitled-5');
+  });
+
+  it('does not redirect existing placeholders, regular missing prototypes, or empty prototype lists', () => {
+    const projectRoot = createTempRoot('axhub-admin-placeholder-project-');
+    const adminRoot = createTempRoot('axhub-admin-placeholder-dist-');
+    writeFile(path.join(adminRoot, 'index.html'), '<html><head></head><body>Admin</body></html>');
+    writePrototype(projectRoot, 'untitled-5');
+    writeProjectMetadata(projectRoot, [
+      { id: 'untitled-5', updatedAt: '2026-01-01T00:00:00.000Z' },
+    ]);
+
+    const existing = createResponse();
+    expect(handleAdminStatic(
+      createRequest('/?projectId=make14&p=untitled-5&v=canvas'),
+      existing.response,
+      { adminRoot, projectRoot, host: 'localhost', port: 5174 },
+    )).toBe(true);
+    expect(existing.statusCode).toBe(200);
+    expect(existing.header('location')).toBe('');
+
+    const regularMissing = createResponse();
+    expect(handleAdminStatic(
+      createRequest('/?projectId=make14&p=normal-old-name&v=canvas'),
+      regularMissing.response,
+      { adminRoot, projectRoot, host: 'localhost', port: 5174 },
+    )).toBe(true);
+    expect(regularMissing.statusCode).toBe(200);
+    expect(regularMissing.header('location')).toBe('');
+
+    const emptyProjectRoot = createTempRoot('axhub-admin-placeholder-empty-project-');
+    writeProjectMetadata(emptyProjectRoot, []);
+    const empty = createResponse();
+    expect(handleAdminStatic(
+      createRequest('/?projectId=make14&p=untitled-9&v=canvas'),
+      empty.response,
+      { adminRoot, projectRoot: emptyProjectRoot, host: 'localhost', port: 5174 },
+    )).toBe(true);
+    expect(empty.statusCode).toBe(200);
+    expect(empty.header('location')).toBe('');
+  });
+
+  it('uses prototype directory mtime before falling back to the resource list order', () => {
+    const projectRoot = createTempRoot('axhub-admin-placeholder-project-');
+    const adminRoot = createTempRoot('axhub-admin-placeholder-dist-');
+    writeFile(path.join(adminRoot, 'index.html'), '<html><head></head><body>Admin</body></html>');
+    writePrototype(projectRoot, 'mtime-old', { updatedAt: new Date('2026-01-01T00:00:00.000Z') });
+    writePrototype(projectRoot, 'mtime-new', { updatedAt: new Date('2026-02-01T00:00:00.000Z') });
+    writeProjectMetadata(projectRoot, [
+      { id: 'mtime-new', updatedAt: '2026-03-01T00:00:00.000Z' },
+      { id: 'mtime-old', updatedAt: '2026-03-01T00:00:00.000Z' },
+    ]);
+
+    const redirect = createResponse();
+    expect(handleAdminStatic(
+      createRequest('/?projectId=make14&p=untitled&v=canvas'),
+      redirect.response,
+      { adminRoot, projectRoot, host: 'localhost', port: 5174 },
+    )).toBe(true);
+    expect(redirect.statusCode).toBe(302);
+    expect(redirect.header('location')).toBe('/?projectId=make14&p=mtime-new&v=canvas&fromP=untitled');
+  });
+
   it('injects escaped runtime configuration into admin HTML', async () => {
     const projectRoot = createTempRoot("axhub-admin-static-project-'quoted-");
     const adminRoot = createTempRoot('axhub-admin-static-dist-');

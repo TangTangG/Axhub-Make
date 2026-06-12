@@ -7,6 +7,7 @@ import {
   cleanupProjectApiTestRoots,
   createTempRoot,
   initGitRepo,
+  registerProject,
   startTestServer,
   writeProjectMetadata,
 } from './projects-api.helpers';
@@ -33,6 +34,7 @@ describe('make-server project git APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'non-git', 'Non Git');
       const status = await fetch(`${server.origin}/api/git/status`);
       const statusBody = await status.json();
       expect(status.status).toBe(200);
@@ -67,6 +69,7 @@ describe('make-server project git APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'git-client', 'Git Client');
       const status = await fetch(`${server.origin}/api/git/status`).then((response) => response.json());
       expect(status).toMatchObject({
         available: true,
@@ -104,6 +107,9 @@ describe('make-server project git APIs', () => {
       });
       expect(version.body).not.toHaveProperty('hasSpec');
       expect(version.body).not.toHaveProperty('specUrl');
+      expect(version.body.prototypeUrl).toBe(`/prototypes/home?gitVersion=${version.body.versionId}`);
+      expect(version.body.prototypeUrl).not.toContain('/api/git/version-file/');
+      expect(version.body.prototypeUrl).not.toContain('/index.tsx');
 
       const missingMessage = await fetch(`${server.origin}/api/git/commit`, {
         method: 'POST',
@@ -199,6 +205,7 @@ describe('make-server project git APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'metadata-git-client', 'Metadata Git Client');
       const prototypeDiff = await fetch(`${server.origin}/api/git/diff?path=${encodeURIComponent('prototypes/home')}`)
         .then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(prototypeDiff.status).toBe(200);

@@ -206,6 +206,13 @@ export function handleFileOperationsApi(
     }
 
     if (pathname === '/api/delete') {
+      if (!fs.existsSync(targetPath)) {
+        sendJson(res, {
+          error: 'Target path not found',
+          code: 'FILE_OPERATION_TARGET_NOT_FOUND',
+        }, { status: 404 });
+        return;
+      }
       fs.rmSync(targetPath, { recursive: true, force: true });
       removeDeletedResourceFromMetadata(metadataStore ?? null, projectRoot, targetPath);
       sendJson(res, { success: true });

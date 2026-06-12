@@ -43,6 +43,11 @@ function reconcileMetadataWithFilesystem(
   const { prototypesDir, shouldReconcile: shouldReconcilePrototypes } = getPrototypeResourceRoot(projectRoot, metadata);
   const scannedPrototypes = shouldReconcilePrototypes ? scanFilesystemPrototypeResources(projectRoot, prototypesDir) : [];
   const scannedPrototypeIds = new Set(scannedPrototypes.map((prototype) => prototype.id));
+  const scannedPrototypeByKey = new Map<string, ProjectMetadata['resources']['prototypes'][number]>();
+  for (const prototype of scannedPrototypes) {
+    scannedPrototypeByKey.set(prototype.id, prototype);
+    scannedPrototypeByKey.set(prototype.name, prototype);
+  }
   const stalePrototypeIds: string[] = [];
   const reconciledPrototypes = metadata.resources.prototypes
     .filter((prototype) => {
@@ -56,6 +61,41 @@ function reconcileMetadataWithFilesystem(
       return false;
     })
     .map((prototype) => {
+      const scannedPrototype = shouldReconcilePrototypes
+        ? scannedPrototypeByKey.get(prototype.id) ?? scannedPrototypeByKey.get(prototype.name)
+        : null;
+      if (scannedPrototype) {
+        if (scannedPrototype.placeholder === true) {
+          if (prototype.placeholder === true && prototype.placeholderGuide) {
+            return prototype;
+          }
+          changed = true;
+          return {
+            ...prototype,
+            placeholder: true,
+            placeholderGuide: scannedPrototype.placeholderGuide || PROTOTYPE_PLACEHOLDER_GUIDE,
+          };
+        }
+        if (scannedPrototype.generationStatus === 'waiting' && prototype.generationStatus !== 'waiting') {
+          changed = true;
+          const { placeholder: _placeholder, placeholderGuide: _placeholderGuide, ...rest } = prototype;
+          return {
+            ...rest,
+            generationStatus: 'waiting',
+          };
+        }
+        if (prototype.placeholder === true || prototype.placeholderGuide) {
+          changed = true;
+          const { placeholder: _placeholder, placeholderGuide: _placeholderGuide, ...rest } = prototype;
+          return rest;
+        }
+        if (scannedPrototype.generationStatus !== 'waiting' && prototype.generationStatus) {
+          changed = true;
+          const { generationStatus: _generationStatus, ...rest } = prototype;
+          return rest;
+        }
+        return prototype;
+      }
       if (prototype.placeholder !== true || prototype.placeholderGuide) {
         return prototype;
       }
@@ -293,6 +333,52 @@ function readPrototypeTitle(indexFilePath: string, fallback: string): string {
   }
 }
 
+function hasGeneratedPlaceholderSource(indexFilePath: string): boolean {
+  try {
+    const source = fs.readFileSync(indexFilePath, 'utf8');
+    const hasGeneratedShell = source.includes('placeholder-empty-page')
+      && source.includes('export default function Placeholder');
+    return hasGeneratedShell && (
+      source.includes('@axhub-placeholder prototype-empty')
+      || source.includes('className="placeholder-empty-page"')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hasWaitingGenerationSource(indexFilePath: string): boolean {
+  try {
+    const source = fs.readFileSync(indexFilePath, 'utf8');
+    return source.includes('prototype-waiting-generation-page')
+      && source.includes('正在等待生成')
+      && source.includes('export default function WaitingGeneration');
+  } catch {
+    return false;
+  }
+}
+
+function hasEmptyCanvasFile(prototypeDir: string): boolean {
+  const canvasPath = path.join(prototypeDir, 'canvas.excalidraw');
+  if (!fs.existsSync(canvasPath)) {
+    return true;
+  }
+  try {
+    const canvas = JSON.parse(fs.readFileSync(canvasPath, 'utf8'));
+    const elements = Array.isArray(canvas?.elements) ? canvas.elements : [];
+    const files = canvas?.files && typeof canvas.files === 'object' && !Array.isArray(canvas.files)
+      ? canvas.files
+      : {};
+    return elements.length === 0 && Object.keys(files).length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function isGeneratedEmptyPrototypePlaceholder(prototypeDir: string, indexFilePath: string): boolean {
+  return hasGeneratedPlaceholderSource(indexFilePath) && hasEmptyCanvasFile(prototypeDir);
+}
+
 function readFileUpdatedAt(filePath: string): string {
   try {
     return fs.statSync(filePath).mtime.toISOString();
@@ -322,6 +408,12 @@ function scanFilesystemPrototypeResources(
     if (!fs.existsSync(indexFilePath)) {
       continue;
     }
+    const prototypeDir = path.join(prototypesDir, entry.name);
+    const hasGeneratedPlaceholder = hasGeneratedPlaceholderSource(indexFilePath);
+    const placeholder = hasGeneratedPlaceholder && hasEmptyCanvasFile(prototypeDir);
+    const generationStatus = !placeholder && (hasWaitingGenerationSource(indexFilePath) || hasGeneratedPlaceholder)
+      ? 'waiting' as const
+      : undefined;
     prototypes.push({
       id: entry.name,
       name: entry.name,
@@ -332,6 +424,8 @@ function scanFilesystemPrototypeResources(
       updatedAt: readFileUpdatedAt(indexFilePath),
       filePath: createProjectRelativePath(projectRoot, indexFilePath),
       absoluteFilePath: indexFilePath,
+      ...(placeholder ? { placeholder: true, placeholderGuide: PROTOTYPE_PLACEHOLDER_GUIDE } : {}),
+      ...(generationStatus ? { generationStatus } : {}),
     });
   }
   return prototypes.sort((a, b) => a.id.localeCompare(b.id));

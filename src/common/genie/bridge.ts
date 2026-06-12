@@ -1,12 +1,8 @@
 import {
-  AXHUB_WEB_EDITOR_GENIE_REQUEST,
   type GenieContextElementV1,
   type GenieContextV1,
   type GenieCurrentFileV1,
   type GenieCurrentFileValueV1,
-  type GenieProvider,
-  type WebEditorGenieRequestMessage,
-  type WebEditorGenieRequestPayload,
 } from './types';
 
 type GeniePromptContextArrayParams = {
@@ -51,20 +47,6 @@ function getFileName(path: string): string {
   const normalized = path.replace(/\\/g, '/');
   const segments = normalized.split('/').filter(Boolean);
   return segments[segments.length - 1] || path;
-}
-
-function normalizeGenieProvider(value: unknown): GenieProvider | undefined {
-  const normalized = normalizeString(value);
-  if (
-    normalized === 'claude'
-    || normalized === 'cursor'
-    || normalized === 'codex'
-    || normalized === 'gemini'
-    || normalized === 'opencode'
-  ) {
-    return normalized;
-  }
-  return undefined;
 }
 
 function normalizeGenieContextElementV1(value: unknown): GenieContextElementV1 | null {
@@ -180,24 +162,6 @@ function mergeExtensions(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-export function createWebEditorGenieRequestMessage(
-  payload: WebEditorGenieRequestPayload,
-): WebEditorGenieRequestMessage {
-  return {
-    type: AXHUB_WEB_EDITOR_GENIE_REQUEST,
-    payload,
-  };
-}
-
-export function isWebEditorGenieRequestMessage(value: unknown): value is WebEditorGenieRequestMessage {
-  if (!value || typeof value !== 'object') return false;
-  const data = value as Partial<WebEditorGenieRequestMessage>;
-  if (data.type !== AXHUB_WEB_EDITOR_GENIE_REQUEST) return false;
-  if (!data.payload || typeof data.payload !== 'object') return false;
-  const payload = data.payload as Partial<WebEditorGenieRequestPayload>;
-  return typeof payload.preferCurrentSession === 'boolean' && typeof payload.mode === 'string';
-}
-
 export function normalizeGenieCurrentFileV1(
   value: unknown,
   fallback: Partial<GenieCurrentFileV1> = {},
@@ -269,38 +233,5 @@ export function mergeGenieContextV1(
     currentFile: normalizeGenieCurrentFileV1(patch.currentFile, normalizeGenieCurrentFileV1(base.currentFile)),
     selectedElements: patch.selectedElements.length > 0 ? patch.selectedElements : base.selectedElements,
     extensions: mergeExtensions(base.extensions, patch.extensions),
-  };
-}
-
-export function normalizeWebEditorGenieRequestPayload(
-  value: unknown,
-  options: {
-    fallbackCurrentFile?: GenieCurrentFileValueV1;
-    promptContext?: GeniePromptContextArrayParams;
-  } = {},
-): WebEditorGenieRequestPayload | null {
-  if (!isRecord(value)) return null;
-
-  const mode = normalizeString(value.mode);
-  if (mode !== 'selection_context' && mode !== 'save') {
-    return null;
-  }
-
-  if (typeof value.preferCurrentSession !== 'boolean') {
-    return null;
-  }
-
-  return {
-    mode,
-    provider: normalizeGenieProvider(value.provider),
-    prompt: typeof value.prompt === 'string' ? value.prompt : undefined,
-    targetPath: normalizeString(value.targetPath) || undefined,
-    preferCurrentSession: value.preferCurrentSession,
-    context: value.context
-      ? normalizeGenieContextV1(value.context, {
-          fallbackCurrentFile: options.fallbackCurrentFile,
-          promptContext: options.promptContext,
-        }) ?? undefined
-      : undefined,
   };
 }

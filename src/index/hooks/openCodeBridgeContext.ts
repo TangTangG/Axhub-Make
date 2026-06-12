@@ -72,6 +72,8 @@ export function resolveOpenCodeCurrentFileContext(params: OpenCodeCurrentFileCon
         path,
         comment: CONTEXT_COMMENT_CURRENT_FILE,
         preview: resolveDisplayName(params) || path.split('/').pop() || '',
+        hidden: true,
+        pinned: true,
     };
 }
 

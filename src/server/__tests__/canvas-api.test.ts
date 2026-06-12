@@ -8,9 +8,12 @@ import { getCanvasBridgeHub } from '../canvasBridge.ts';
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
+  getTestProjectRegistryPath,
   startTestServer,
   writeProjectMetadata,
 } from './projects-api.helpers';
+import { createProjectRegistry } from '../projectCore/project-registry.ts';
+import { getProjectMetadataPath } from '../projectCore/index.ts';
 
 const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 const GIF_DATA_URL = `data:image/gif;base64,${Buffer.from('GIF89a').toString('base64')}`;
@@ -125,6 +128,20 @@ function writeScreenshotProjectMetadata(projectRoot: string) {
   });
 }
 
+async function startActiveCanvasTestServer(projectRoot: string) {
+  const registryHome = createTempRoot('axhub-make-canvas-api-home-');
+  const registry = createProjectRegistry({ registryPath: getTestProjectRegistryPath(registryHome) });
+  const projectId = path.basename(projectRoot);
+  registry.addProject({
+    id: projectId,
+    name: projectId,
+    root: projectRoot,
+    metadataPath: getProjectMetadataPath(projectRoot),
+  });
+  registry.setActiveProject(projectId);
+  return startTestServer(projectRoot, registryHome);
+}
+
 describe('canvas API', () => {
   afterEach(() => {
     getCanvasBridgeHub().destroy();
@@ -135,7 +152,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
@@ -192,7 +209,7 @@ describe('canvas API', () => {
   it('creates standalone canvases without starter content', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const createResponse = await fetch(`${server.origin}/api/canvas/create`, {
@@ -234,7 +251,7 @@ describe('canvas API', () => {
     const canvasDir = path.join(projectRoot, 'src/canvas');
     const standaloneCanvasPath = path.join(canvasDir, 'main.excalidraw');
     writeCanvasFile(standaloneCanvasPath);
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const prototypeCanvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
@@ -298,7 +315,7 @@ describe('canvas API', () => {
   it('keeps standalone canvas creation names unique and reports malformed writes', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const first = await fetch(`${server.origin}/api/canvas/create`, {
@@ -353,7 +370,7 @@ describe('canvas API', () => {
       appState: {},
       files: {},
     }, null, 2), 'utf8');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const list = await fetch(`${server.origin}/api/canvas`).then((response) => response.json());
@@ -418,15 +435,15 @@ describe('canvas API', () => {
     }
   });
 
-  it('returns stable bridge status and missing-client errors for bridge commands', async () => {
+  it('does not expose removed canvas bridge HTTP commands', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const status = await fetch(`${server.origin}/api/canvas/bridge/status`)
         .then(async (response) => ({ status: response.status, body: await response.json() }));
-      expect(status).toEqual({ status: 200, body: { canvases: [] } });
+      expect(status).toEqual({ status: 404, body: { error: 'Canvas not found' } });
 
       const refresh = await fetch(`${server.origin}/api/canvas/bridge/refresh`, {
         method: 'POST',
@@ -434,8 +451,8 @@ describe('canvas API', () => {
         body: JSON.stringify({ canvas: 'missing' }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(refresh).toEqual({
-        status: 503,
-        body: { error: 'No canvas browser connected' },
+        status: 404,
+        body: { error: 'Canvas not found' },
       });
 
       const screenshot = await fetch(`${server.origin}/api/canvas/bridge/screenshot`, {
@@ -444,15 +461,15 @@ describe('canvas API', () => {
         body: JSON.stringify({ canvas: 'missing' }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(screenshot).toEqual({
-        status: 503,
-        body: { error: 'No canvas browser connected' },
+        status: 404,
+        body: { error: 'Canvas not found' },
       });
     } finally {
       await server.close();
     }
   });
 
-  it('reports connected canvas status and relays refresh and screenshot bridge commands', async () => {
+  it('keeps canvas websocket bridge scoped to hot reload without HTTP bridge commands', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
@@ -486,91 +503,44 @@ describe('canvas API', () => {
       type: 'canvas.register',
       canvas: 'legacy.excalidraw',
     }));
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const status = await fetch(`${server.origin}/api/canvas/bridge/status`);
-      expect(status.status).toBe(200);
-      expect(await status.json()).toMatchObject({
-        canvases: [
-          {
-            canvas: 'prototypes/home/canvas',
-            filePath: 'src/prototypes/home/canvas.excalidraw',
-            elementCount: 2,
-            annotatedCount: 1,
-          },
-          {
-            canvas: 'legacy.excalidraw',
-            filePath: 'src/canvas/legacy.excalidraw',
-            elementCount: 1,
-            annotatedCount: 1,
-          },
-        ],
-      });
+      expect(status.status).toBe(404);
+      await expect(status.json()).resolves.toEqual({ error: 'Canvas not found' });
 
       const refresh = await fetch(`${server.origin}/api/canvas/bridge/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ canvas: 'prototypes/home/canvas.excalidraw' }),
       });
-      expect(refresh.status).toBe(200);
-      expect(await refresh.json()).toEqual({ ok: true });
-      expect(prototypeSocket.sentMessages).toEqual(expect.arrayContaining([
+      expect(refresh.status).toBe(404);
+      await expect(refresh.json()).resolves.toEqual({ error: 'Canvas not found' });
+      expect(prototypeSocket.sentMessages).not.toEqual(expect.arrayContaining([
         expect.objectContaining({ type: 'canvas.reload' }),
       ]));
       expect(legacySocket.sentMessages).not.toEqual(expect.arrayContaining([
         expect.objectContaining({ type: 'canvas.reload' }),
       ]));
 
-      const screenshotPromise = fetch(`${server.origin}/api/canvas/bridge/screenshot`, {
+      const screenshot = await fetch(`${server.origin}/api/canvas/bridge/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ canvas: 'prototypes/home/canvas.excalidraw' }),
       });
-      const screenshotRequest = await waitForSentMessage(prototypeSocket, 'canvas.screenshot.request');
-      expect(screenshotRequest.requestId).toMatch(/^ss-/u);
-      prototypeSocket.emit('data', encodeClientTextFrame({
-        type: 'canvas.screenshot.response',
-        requestId: screenshotRequest.requestId,
-        dataUrl: PNG_DATA_URL,
-      }));
-      const screenshot = await screenshotPromise;
-      expect(screenshot.status).toBe(200);
-      expect(screenshot.headers.get('content-type')).toBe('image/png');
-      expect(Buffer.from(await screenshot.arrayBuffer()).subarray(0, 8)).toEqual(
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      );
-
-      const previousScreenshotCount = prototypeSocket.sentMessages.filter(
-        (message) => message.type === 'canvas.screenshot.request',
-      ).length;
-      const rawDataUrlPromise = fetch(`${server.origin}/api/canvas/bridge/screenshot`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ canvas: 'prototypes/home/canvas.excalidraw' }),
-      });
-      const rawDataUrlRequest = await waitForSentMessageAfter(
-        prototypeSocket,
-        'canvas.screenshot.request',
-        previousScreenshotCount,
-      );
-      prototypeSocket.emit('data', encodeClientTextFrame({
-        type: 'canvas.screenshot.response',
-        requestId: rawDataUrlRequest.requestId,
-        dataUrl: 'data:text/plain;base64,aGVsbG8=',
-      }));
-      const rawDataUrl = await rawDataUrlPromise;
-      expect(rawDataUrl.status).toBe(200);
-      await expect(rawDataUrl.json()).resolves.toEqual({
-        dataUrl: 'data:text/plain;base64,aGVsbG8=',
-      });
+      expect(screenshot.status).toBe(404);
+      await expect(screenshot.json()).resolves.toEqual({ error: 'Canvas not found' });
+      expect(prototypeSocket.sentMessages).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'canvas.screenshot.request' }),
+      ]));
 
       const badRefresh = await fetch(`${server.origin}/api/canvas/bridge/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{',
       });
-      expect(badRefresh.status).toBe(400);
+      expect(badRefresh.status).toBe(404);
     } finally {
       await server.close();
     }
@@ -580,7 +550,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
@@ -617,7 +587,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
@@ -664,7 +634,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
@@ -744,7 +714,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
@@ -796,7 +766,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
@@ -884,7 +854,7 @@ describe('canvas API', () => {
       appState: {},
       files: {},
     }), 'utf8');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const canvas = {
@@ -963,7 +933,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
@@ -1019,7 +989,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeScreenshotProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const screenshotPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas-assets', 'screenshot.png');
@@ -1086,7 +1056,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeScreenshotProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'ref-tutorial');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const elementScreenshotPath = path.join(
@@ -1150,11 +1120,88 @@ describe('canvas API', () => {
     }
   });
 
+  it('persists page-level prototype screenshots with page-specific image files', async () => {
+    const projectRoot = createTempRoot('axhub-make-canvas-api-');
+    writeScreenshotProjectMetadata(projectRoot);
+    writePrototypeDir(projectRoot, 'checkout');
+    const server = await startActiveCanvasTestServer(projectRoot);
+
+    try {
+      const pageScreenshotPath = path.join(
+        projectRoot,
+        'src',
+        'prototypes',
+        'checkout',
+        'canvas-assets',
+        'page-order-detail.png',
+      );
+      const latestScreenshotPath = path.join(
+        projectRoot,
+        'src',
+        'prototypes',
+        'checkout',
+        'canvas-assets',
+        'screenshot.png',
+      );
+      expect(fs.existsSync(pageScreenshotPath)).toBe(false);
+      expect(fs.existsSync(latestScreenshotPath)).toBe(false);
+
+      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/checkout/screenshot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pageId: 'order-detail',
+          dataUrl: PNG_DATA_URL,
+          width: 393,
+          height: 852,
+        }),
+      });
+      const putBody = await putResponse.json();
+
+      expect(putResponse.status).toBe(201);
+      expect(putBody).toMatchObject({
+        success: true,
+        changed: true,
+        prototypeId: 'checkout',
+        fileName: 'page-order-detail.png',
+        path: 'src/prototypes/checkout/canvas-assets/page-order-detail.png',
+        latestPath: 'src/prototypes/checkout/canvas-assets/screenshot.png',
+        screenshotUrl: expect.stringMatching(/^\/prototypes\/checkout\/canvas-assets\/page-order-detail\.png\?v=\d+$/u),
+        apiScreenshotUrl: expect.stringMatching(/^\/api\/canvas\/prototypes\/checkout\/canvas-assets\/page-order-detail\.png\?v=\d+$/u),
+        width: 393,
+        height: 852,
+      });
+      expect(fs.existsSync(pageScreenshotPath)).toBe(true);
+      expect(fs.existsSync(latestScreenshotPath)).toBe(true);
+
+      const written = fs.readFileSync(pageScreenshotPath);
+      expect(fs.readFileSync(latestScreenshotPath)).toEqual(written);
+
+      const getResponse = await fetch(`${server.origin}/api/canvas/prototypes/checkout/canvas-assets/page-order-detail.png`);
+      expect(getResponse.status).toBe(200);
+      expect(getResponse.headers.get('content-type')).toBe('image/png');
+      expect(Buffer.from(await getResponse.arrayBuffer())).toEqual(written);
+
+      const invalidPageResponse = await fetch(`${server.origin}/api/canvas/prototypes/checkout/screenshot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pageId: '../outside',
+          dataUrl: PNG_DATA_URL,
+        }),
+      });
+      expect(invalidPageResponse.status).toBe(403);
+      expect(await invalidPageResponse.json()).toEqual({ error: 'Invalid screenshot path' });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects unsafe or non-png prototype screenshots', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeScreenshotProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const escapedResponse = await fetch(`${server.origin}/api/canvas/prototypes/${encodeURIComponent('../outside')}/screenshot`, {
@@ -1191,7 +1238,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const escapedResponse = await fetch(`${server.origin}/api/canvas/prototypes/${encodeURIComponent('../outside')}/ensure`, {
@@ -1227,7 +1274,7 @@ describe('canvas API', () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const response = await fetch(`${server.origin}/api/canvas/prototypes/home/screenshot`, {
@@ -1259,7 +1306,7 @@ describe('canvas API', () => {
       files: {},
     }), 'utf8');
     fs.writeFileSync(path.join(legacyCanvasDir, 'old.json'), '{"type":"excalidraw"}', 'utf8');
-    const server = await startTestServer(projectRoot);
+    const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
       const listResponse = await fetch(`${server.origin}/api/canvas`);

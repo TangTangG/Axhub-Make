@@ -1027,24 +1027,19 @@ function inferChangeType(hasStyle, hasText2, hasClass) {
 }
 function computeStyleNetEffect(txs) {
   const firstBeforeByProp = /* @__PURE__ */ new Map();
-  const displayBeforeByProp = /* @__PURE__ */ new Map();
   const lastAfterByProp = /* @__PURE__ */ new Map();
   for (const tx of txs) {
     if (tx.type !== "style") continue;
     const beforeRaw = tx.before.styles ?? {};
-    const computedRaw = tx.before.computedStyles ?? {};
     const afterRaw = tx.after.styles ?? {};
     const keys = /* @__PURE__ */ new Set([...Object.keys(beforeRaw), ...Object.keys(afterRaw)]);
     for (const rawProp of keys) {
       const prop = String(rawProp ?? "").trim();
       if (!prop) continue;
       const rawBefore = normalizeStyleValue(beforeRaw[prop]);
-      const computedBefore = normalizeStyleValue(computedRaw[prop]);
-      const displayBefore = rawBefore || computedBefore;
       const a = normalizeStyleValue(afterRaw[prop]);
       if (!firstBeforeByProp.has(prop)) {
         firstBeforeByProp.set(prop, rawBefore);
-        displayBeforeByProp.set(prop, displayBefore);
       }
       lastAfterByProp.set(prop, a);
     }
@@ -1059,8 +1054,7 @@ function computeStyleNetEffect(txs) {
     const rawBefore = firstBeforeByProp.get(prop) ?? "";
     const a = lastAfterByProp.get(prop) ?? "";
     if (rawBefore === a) continue;
-    const displayBefore = displayBeforeByProp.get(prop) ?? rawBefore;
-    before[prop] = displayBefore;
+    before[prop] = rawBefore;
     after[prop] = a;
   }
   const changedProps = Array.from(/* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])).sort();
@@ -1510,6 +1504,8 @@ function resolveWebEditorOptions(options = {}) {
       initialDarkMode: false,
       showCopyPromptAction: true,
       hideExecutionControls: false,
+      getAssistantPanelOpen: () => false,
+      onHostToolbarAction: async () => false,
       externalEditingStatusDescription: "",
       skillInstallSource: "",
       onRequestFullExit: async () => void 0,
@@ -1578,6 +1574,7 @@ function createEditorRuntimeState() {
     tokensService: null,
     perfMonitor: null,
     perfHotkeyCleanup: null,
+    selectionModeHotkeyCleanup: null,
     commentShortcutCleanup: null,
     hoveredElement: null,
     pendingHoverTransition: false,
@@ -1640,6 +1637,7 @@ function clearEditorRuntimeRefs(state2) {
   state2.tokensService = null;
   state2.perfMonitor = null;
   state2.perfHotkeyCleanup = null;
+  state2.selectionModeHotkeyCleanup = null;
   state2.commentShortcutCleanup = null;
   state2.uiResizeCleanup = null;
   state2.markerLayer = null;
@@ -2026,7 +2024,7 @@ function createChangesService(options) {
       }
       return buildFallbackAnchor(element);
     }
-    return fallbackAnchor;
+    return null;
   }
   function resolveSelectionAnchor(element, selectionAnchor) {
     if (selectionAnchor) {
@@ -2120,8 +2118,8 @@ function createChangesService(options) {
       return generateStableElementKey(selected, locator.shadowHostChain);
     })();
     const visibleMetas = filterVisibleChangeMarkerMetas(dirtyMetas, activeMarkerKey);
-    layer.hidden = visibleMetas.length === 0;
     if (visibleMetas.length === 0) {
+      layer.hidden = true;
       layer.replaceChildren();
       return;
     }
@@ -2170,6 +2168,7 @@ function createChangesService(options) {
       marker.append(tooltip);
       return marker;
     }).filter((node) => node !== null);
+    layer.hidden = nodes.length === 0;
     layer.replaceChildren(...nodes);
   }
   function notifyEditMetaChanged() {
@@ -6743,6 +6742,15 @@ function createInteractionService(options) {
     if (genieBridge.isElementInteractionLocked(element)) {
       return;
     }
+    if (state2.activeTextComment) {
+      state2.activeTextComment = null;
+      state2.canvasOverlay?.setTextHighlightRects(null);
+      state2.textCommentManager?.clearActiveHighlight();
+      if (state2.textCommentTargetElement) {
+        delete state2.textCommentTargetElement.dataset.weTextCommentId;
+      }
+      state2.breadcrumbs?.setAnchorRect(null);
+    }
     options.changes.rememberSelectionAnchor(element, selectionAnchor);
     state2.selectedElement = element;
     state2.hoveredElement = null;
@@ -8575,11 +8583,18 @@ var PROPERTY_PANEL_LOCAL_STYLES = `
     border: 1px solid ${EDITOR_CHROME.borderStrong};
     background: ${EDITOR_CHROME.surfaceMuted};
     box-shadow: none;
+    cursor: pointer;
   }
 
   .we-runtime-prop-panel__body .ant-color-picker-trigger:hover {
     border-color: ${EDITOR_CHROME.borderStrong};
     background: ${EDITOR_CHROME.surfaceInteractive};
+  }
+
+  .we-runtime-prop-panel__body .ant-color-picker-trigger.ant-color-picker-trigger-disabled,
+  .we-runtime-prop-panel__body .ant-color-picker-trigger[disabled],
+  .we-runtime-prop-panel__body .ant-color-picker-trigger[aria-disabled="true"] {
+    cursor: not-allowed;
   }
 
   .we-runtime-prop-panel__body .we-runtime-prop-panel__unit-input {
@@ -10145,7 +10160,9 @@ function resolveRunningConversationTitle(sessionReady) {
   return sessionReady ? "AI \u6B63\u5728\u4FEE\u6539" : "AI \u6B63\u5728\u542F\u52A8";
 }
 function isGeniePromptActionVisible(options) {
-  return options.uiMode === "bubble-card" && !options.toolMinimized && Boolean(options.currentTarget) && Boolean(options.onSendToGenie) && Boolean(options.getGenieBridgeAvailable?.() ?? false);
+  const assistantPanelOpen = options.getAssistantPanelOpen?.();
+  const contextAppendAvailable = typeof assistantPanelOpen === "boolean" ? assistantPanelOpen : Boolean(options.getGenieBridgeAvailable?.() ?? false);
+  return options.uiMode === "bubble-card" && !options.toolMinimized && Boolean(options.currentTarget) && Boolean(options.onSendToGenie) && contextAppendAvailable;
 }
 function triggerGeniePromptAction(options) {
   const { currentTarget, onSendToGenie } = options;
@@ -10164,11 +10181,13 @@ function getGeniePromptToolbarActionState(options) {
   const canAppendToRunningConversation = Boolean(options.hasReusableConversation);
   const canAppendToSession = canAppendToRunningConversation || pageTaskRunning && pageTaskSessionReady;
   const waitingForNewSession = pageTaskRunning && !canAppendToSession;
+  const canWakeGenie = Boolean(options.canWakeGenie);
   const visualState = options.visualState === "awake" && (connected || pageTaskRunning) ? "awake" : "sleeping";
   const robotState = options.waking ? "waking" : pageTaskRunning ? "working" : visualState;
   const blockReason = options.getSendPromptToGenieBlockReason?.();
-  const showPromptActions = !options.toolMinimized && (robotState === "awake" || robotState === "working");
-  const sendTitle = blockReason ?? (!connected ? "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" : canAppendToSession ? "\u7EE7\u7EED\u8FFD\u52A0\u5230\u5F53\u524D AI \u5BF9\u8BDD" : waitingForNewSession ? resolveRunningConversationTitle(false) : "\u53D1\u9001\u7ED9 AI");
+  const showSendAction = !options.toolMinimized && Boolean(options.onSendPromptToGenie);
+  const showInterruptAction = !options.toolMinimized && (robotState === "awake" || robotState === "working");
+  const sendTitle = blockReason ?? (!connected && !canWakeGenie ? "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" : canAppendToSession ? "\u7EE7\u7EED\u8FFD\u52A0\u5230\u5F53\u524D AI \u5BF9\u8BDD" : waitingForNewSession ? resolveRunningConversationTitle(false) : "\u53D1\u9001\u7ED9 AI");
   const interruptTitle = currentTaskRunning ? options.canInterrupt ? "\u505C\u6B62 AI \u4FEE\u6539" : resolveRunningConversationTitle(currentTaskSessionReady) : "\u505C\u6B62 AI \u4FEE\u6539";
   const robotTitle = robotState === "working" ? "\u6B63\u5728\u4E3A\u4F60\u4FEE\u6539" : robotState === "waking" ? "\u6B63\u5728\u6253\u5F00 AI" : robotState === "awake" ? "AI \u5DF2\u6253\u5F00" : "\u6253\u5F00 AI";
   return {
@@ -10176,12 +10195,12 @@ function getGeniePromptToolbarActionState(options) {
     robotDisabled: robotState === "waking",
     robotLoading: robotState === "waking",
     robotTitle,
-    sendVisible: showPromptActions,
-    sendDisabled: !options.onSendPromptToGenie || !connected || waitingForNewSession || Boolean(blockReason),
+    sendVisible: showSendAction,
+    sendDisabled: !options.onSendPromptToGenie || !connected && !canWakeGenie || waitingForNewSession || Boolean(blockReason),
     sendLoading: Boolean(options.sending),
     sendTitle,
     sendRequiresConfirm: false,
-    interruptVisible: showPromptActions,
+    interruptVisible: showInterruptAction,
     interruptDisabled: !currentTaskRunning || !options.canInterrupt || Boolean(options.interrupting),
     interruptLoading: Boolean(options.interrupting),
     interruptTitle
@@ -10195,12 +10214,13 @@ function getGeniePromptBubbleActionState(options) {
   const canAppendToRunningConversation = Boolean(options.hasReusableConversation);
   const canAppendToSession = canAppendToRunningConversation || pageTaskRunning && pageTaskSessionReady;
   const waitingForNewSession = pageTaskRunning && !canAppendToSession;
+  const canWakeGenie = Boolean(options.canWakeGenie);
   const visualState = options.visualState === "awake" && (connected || pageTaskRunning) ? "awake" : "sleeping";
   const blockReason = options.getSendCurrentElementPromptToGenieBlockReason?.();
-  const title = blockReason ?? (!connected ? "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" : canAppendToSession ? "\u7EE7\u7EED\u8FFD\u52A0\u5230\u5F53\u524D AI \u5BF9\u8BDD" : waitingForNewSession ? resolveRunningConversationTitle(false) : "\u53D1\u9001\u7ED9 AI");
+  const title = blockReason ?? (!connected && !canWakeGenie ? "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" : canAppendToSession ? "\u7EE7\u7EED\u8FFD\u52A0\u5230\u5F53\u524D AI \u5BF9\u8BDD" : waitingForNewSession ? resolveRunningConversationTitle(false) : "\u53D1\u9001\u7ED9 AI");
   return {
-    visible: visualState === "awake",
-    disabled: !options.onSendCurrentElementPromptToGenie || !connected || waitingForNewSession || Boolean(blockReason),
+    visible: Boolean(options.onSendCurrentElementPromptToGenie),
+    disabled: !options.onSendCurrentElementPromptToGenie || !connected && !canWakeGenie || waitingForNewSession || Boolean(blockReason),
     loading: Boolean(options.sending),
     title,
     requiresConfirm: false
@@ -10221,8 +10241,8 @@ async function executePromptCardCurrentElementAction(options) {
   }
   await onConfirmText();
   await onConfirmNote();
-  onDismissSelection?.();
   await onSendCurrentElementPromptToGenie(currentTarget);
+  onDismissSelection?.();
   return true;
 }
 
@@ -12335,18 +12355,30 @@ function ColorField(props) {
     ) : null
   ] }) });
 }
-function SquareColorTriggerButton(props) {
-  const previewBackground = resolveColorPreviewBackground(props.value);
-  return /* @__PURE__ */ jsx5("span", { "data-we-prompt-primary-focus-exempt": "true", style: squareColorTriggerStyle, children: /* @__PURE__ */ jsx5(
-    "span",
-    {
-      style: {
-        ...squareColorSwatchStyle,
-        background: previewBackground
+var SquareColorTriggerButton = React6.forwardRef(
+  function SquareColorTriggerButton2(props, ref) {
+    const { value, style, ...triggerProps } = props;
+    const previewBackground = resolveColorPreviewBackground(value);
+    return /* @__PURE__ */ jsx5(
+      "span",
+      {
+        ...triggerProps,
+        ref,
+        "data-we-prompt-primary-focus-exempt": "true",
+        style: { ...squareColorTriggerStyle, ...style },
+        children: /* @__PURE__ */ jsx5(
+          "span",
+          {
+            style: {
+              ...squareColorSwatchStyle,
+              background: previewBackground
+            }
+          }
+        )
       }
-    }
-  ) });
-}
+    );
+  }
+);
 function TokenPickerButton(props) {
   const {
     target,
@@ -13000,6 +13032,8 @@ var PromptCardView = React9.forwardRef(
       genieVisualState,
       onBubbleStyleEditorOpenChange,
       onSendCurrentElementPromptToGenie,
+      onWakeGenie,
+      onGenieVisualStateChange,
       getGenieBridgeConnected,
       getHasReusableGenieConversation,
       getSendCurrentElementPromptToGenieBlockReason,
@@ -13327,7 +13361,8 @@ var PromptCardView = React9.forwardRef(
       uiMode,
       toolMinimized,
       onSendToGenie: options.onSendToGenie,
-      getGenieBridgeAvailable: options.getGenieBridgeAvailable
+      getGenieBridgeAvailable: options.getGenieBridgeAvailable,
+      getAssistantPanelOpen: options.getAssistantPanelOpen
     });
     const designToolExportAction = getDesignToolExportActionState({
       tool: designAdjustmentTool,
@@ -13387,6 +13422,7 @@ var PromptCardView = React9.forwardRef(
       pageTaskSessionReady,
       currentTaskRunning,
       onSendCurrentElementPromptToGenie,
+      canWakeGenie: Boolean(onWakeGenie),
       getGenieBridgeConnected,
       getSendCurrentElementPromptToGenieBlockReason: () => currentElementBlockReason,
       hasReusableConversation
@@ -13410,7 +13446,27 @@ var PromptCardView = React9.forwardRef(
         window.removeEventListener("keydown", handleWindowKeyDown, true);
       };
     }, [currentTaskTerminal, dismissTerminalTaskAndSelection, promptVisible, uiMode]);
+    const wakeGenieForCurrentElementAction = React9.useCallback(async () => {
+      const connected = getGenieBridgeConnected?.();
+      if (connected !== false && genieVisualState === "awake") {
+        return true;
+      }
+      if (!onWakeGenie) {
+        return connected !== false;
+      }
+      try {
+        const wakeResult = await onWakeGenie();
+        if (wakeResult === true) {
+          onGenieVisualStateChange?.("awake");
+          return true;
+        }
+      } catch {
+      }
+      return false;
+    }, [genieVisualState, getGenieBridgeConnected, onGenieVisualStateChange, onWakeGenie]);
     const handleConfirmSendCurrentElementPrompt = React9.useCallback(async () => {
+      const ready = await wakeGenieForCurrentElementAction();
+      if (!ready) return;
       setSendingCurrentElementPrompt(true);
       try {
         const sent = await executePromptCardCurrentElementAction({
@@ -13434,7 +13490,8 @@ var PromptCardView = React9.forwardRef(
       onConfirmText,
       onDismissSelection,
       onSendCurrentElementPromptToGenie,
-      selectedSkills
+      selectedSkills,
+      wakeGenieForCurrentElementAction
     ]);
     const handlePromptKeyDown = React9.useCallback(
       (event) => {
@@ -15980,6 +16037,7 @@ var GENIE_MENU_AGENT_OPTIONS = [
 ];
 var GENIE_AGENT_DEFAULT_MENU_KEY = "genie-agent:default";
 var PROPERTY_PANEL_HELP_TOOLTIP = "\u53EF\u4EE5\u76F4\u63A5\u628A\u9700\u6C42\u53D1\u7ED9\u4F60\u6B63\u5728\u7528\u7684 IDE \u6216\u672C\u5730 agent\uFF0C\u4E5F\u53EF\u4EE5\u5148\u5728\u9875\u9762\u4E0A\u6279\u6CE8\uFF0C\u8BA9\u5B83\u5E2E\u4F60\u751F\u6210\u6216\u6574\u7406\u8BBE\u8BA1\u51B3\u7B56\u3002";
+var SELECTION_MODE_TOGGLE_SHORTCUT_LABEL = "Ctrl / Cmd + S";
 function buildSkillInstallPrompt(skillInstallSource) {
   const resolvedSkillInstallSource = typeof skillInstallSource === "string" && skillInstallSource.trim() ? skillInstallSource.trim() : "";
   return [
@@ -16054,6 +16112,7 @@ var PropertyPanelView = React14.forwardRef(
       currentTarget,
       uiMode,
       toolMinimized,
+      selectionModeActive,
       propertyPanelOpen,
       inlineTextEditing = false,
       uiSettings: propUiSettings,
@@ -16068,6 +16127,7 @@ var PropertyPanelView = React14.forwardRef(
       onSelectionInteractionLockChange,
       onUiModeChange,
       onToolMinimizedChange,
+      onSelectionModeActiveChange,
       onTargetChange,
       onRefreshNoteState,
       onInlineTextEditingChange,
@@ -16395,8 +16455,40 @@ var PropertyPanelView = React14.forwardRef(
       },
       [syncPanelMetaState]
     );
+    const genieAwake = effectiveVisualState === "awake";
+    const wakeGenieForAction = React14.useCallback(async () => {
+      if (genieWakeChecking) {
+        return false;
+      }
+      if (genieAwake && options.getGenieBridgeConnected?.() !== false) {
+        return true;
+      }
+      if (!options.onWakeGenie) {
+        return options.getGenieBridgeConnected?.() !== false;
+      }
+      setGenieWakeChecking(true);
+      const createWakeTimeout = () => new Promise((resolve) => {
+        window.setTimeout(() => resolve(false), GENIE_WAKE_TIMEOUT_MS);
+      });
+      try {
+        const wakeResult = await Promise.race([options.onWakeGenie(), createWakeTimeout()]);
+        if (wakeResult !== true) {
+          notifyRuntimeMessage("warning", GENIE_WAKE_FAILURE_MESSAGE);
+          return false;
+        }
+        onGenieVisualStateChange("awake");
+        return true;
+      } catch {
+        notifyRuntimeMessage("warning", GENIE_WAKE_FAILURE_MESSAGE);
+        return false;
+      } finally {
+        setGenieWakeChecking(false);
+      }
+    }, [genieAwake, genieWakeChecking, onGenieVisualStateChange, options]);
     const handleConfirmSendPromptToGenie = React14.useCallback(async () => {
       if (!options.onSendPromptToGenie) return;
+      const ready = await wakeGenieForAction();
+      if (!ready) return;
       setGeniePromptSending(true);
       setGeniePromptSendingElementKey(currentGenieTask?.elementKey ?? null);
       setGeniePromptInterrupting(false);
@@ -16409,7 +16501,7 @@ var PropertyPanelView = React14.forwardRef(
         setGeniePromptSendingElementKey(null);
         syncPanelMetaState();
       }
-    }, [currentGenieTask?.elementKey, currentTarget, options, syncPanelMetaState]);
+    }, [currentGenieTask?.elementKey, currentTarget, options, syncPanelMetaState, wakeGenieForAction]);
     const handleInterruptSendPromptToGenie = React14.useCallback(async () => {
       if (!options.onAbortSendPromptToGenie) return;
       setGeniePromptInterrupting(true);
@@ -16447,35 +16539,10 @@ var PropertyPanelView = React14.forwardRef(
     const pageZoomActive = showExpandedPanel && uiSettings.pageZoomEnabled;
     const previousPageZoomEnabledRef = React14.useRef(uiSettings.pageZoomEnabled);
     const previousPageZoomActiveRef = React14.useRef(pageZoomActive);
-    const genieAwake = effectiveVisualState === "awake";
     const themeMode = uiSettings.darkMode ? "dark" : "light";
     const handleGenieBrandClick = React14.useCallback(async () => {
-      if (genieWakeChecking) {
-        return;
-      }
-      if (genieAwake) {
-        return;
-      }
-      if (!options.onWakeGenie) {
-        return;
-      }
-      setGenieWakeChecking(true);
-      const createWakeTimeout = () => new Promise((resolve) => {
-        window.setTimeout(() => resolve(false), GENIE_WAKE_TIMEOUT_MS);
-      });
-      try {
-        const wakeResult = await Promise.race([options.onWakeGenie(), createWakeTimeout()]);
-        if (wakeResult !== true) {
-          notifyRuntimeMessage("warning", GENIE_WAKE_FAILURE_MESSAGE);
-          return;
-        }
-        onGenieVisualStateChange("awake");
-      } catch {
-        notifyRuntimeMessage("warning", GENIE_WAKE_FAILURE_MESSAGE);
-      } finally {
-        setGenieWakeChecking(false);
-      }
-    }, [genieAwake, genieWakeChecking, onGenieVisualStateChange, options]);
+      await wakeGenieForAction();
+    }, [wakeGenieForAction]);
     React14.useEffect(() => {
       if (!genieAwake) {
         setGenieMenuOpen(false);
@@ -16798,6 +16865,7 @@ var PropertyPanelView = React14.forwardRef(
       currentTaskRunning,
       currentTaskSessionReady,
       canInterrupt: currentTaskCanInterrupt,
+      canWakeGenie: Boolean(options.onWakeGenie),
       onSendPromptToGenie: options.onSendPromptToGenie,
       getGenieBridgeConnected: options.getGenieBridgeConnected,
       getSendPromptToGenieBlockReason: () => options.getSendPromptToGenieBlockReason?.(currentTarget)
@@ -16984,6 +17052,9 @@ var PropertyPanelView = React14.forwardRef(
         }
       }
     ) : null;
+    const copyPromptVisible = Boolean(copyToolbarButton);
+    const inlineSendVisible = !hideExecutionControls && geniePromptToolbarAction.sendVisible;
+    const hostSendVisible = geniePromptToolbarAction.sendVisible;
     const sessionActivityCardContent = /* @__PURE__ */ jsxs12(
       "div",
       {
@@ -17106,7 +17177,7 @@ var PropertyPanelView = React14.forwardRef(
         ) })
       }
     );
-    const genieSendToolbarButton = !hideExecutionControls && geniePromptToolbarAction.sendVisible ? /* @__PURE__ */ jsx13(
+    const genieSendToolbarButton = inlineSendVisible ? /* @__PURE__ */ jsx13(
       GenieToolbarIconButton,
       {
         title: geniePromptToolbarAction.sendDisabled ? geniePromptToolbarAction.sendTitle : geniePrimaryMenuLabel,
@@ -17467,7 +17538,7 @@ var PropertyPanelView = React14.forwardRef(
         robotTitle: geniePromptToolbarAction.robotTitle,
         robotDisabled: geniePromptToolbarAction.robotDisabled,
         robotLoading: geniePromptToolbarAction.robotLoading,
-        sendVisible: !hideExecutionControls && geniePromptToolbarAction.sendVisible,
+        sendVisible: hostSendVisible,
         sendTitle: geniePromptToolbarAction.sendTitle,
         sendDisabled: geniePromptToolbarAction.sendDisabled || actionBusy,
         sendLoading: geniePromptToolbarAction.sendLoading,
@@ -17475,7 +17546,7 @@ var PropertyPanelView = React14.forwardRef(
         interruptTitle: geniePromptToolbarAction.interruptTitle,
         interruptDisabled: geniePromptToolbarAction.interruptDisabled,
         interruptLoading: geniePromptToolbarAction.interruptLoading,
-        copyPromptVisible: Boolean(copyToolbarButton),
+        copyPromptVisible,
         copyPromptTitle: copyReason ?? "\u590D\u5236 Prompt",
         copyPromptDisabled: actionBusy || copyBlocked,
         clearEditsTitle: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
@@ -17490,22 +17561,25 @@ var PropertyPanelView = React14.forwardRef(
         disablePageAnimations: uiSettings.disablePageAnimations,
         pageZoomEnabled: uiSettings.pageZoomEnabled,
         copySkillInstallPromptDisabled: actionBusy || genieProviderRefreshPending,
+        selectionModeActive,
         fullExitAvailable: Boolean(options.onRequestFullExit)
       };
     }, [
       actionBusy,
       clearAllEditsDisabled,
       copyBlocked,
+      copyPromptVisible,
       copyReason,
-      copyToolbarButton,
       geniePromptToolbarAction,
       genieProviderAvailabilityMap,
       genieProviderRefreshPending,
       hideExecutionControls,
+      hostSendVisible,
       isHostToolbarMode,
       modifiedCount,
       options.onRequestFullExit,
       propertyPanelOpen,
+      selectionModeActive,
       toolbarMode,
       uiSettings.disablePageAnimations,
       uiSettings.darkMode,
@@ -17533,7 +17607,7 @@ var PropertyPanelView = React14.forwardRef(
             await handleGenieBrandClick();
             return true;
           case "send-to-genie":
-            if (!geniePromptToolbarAction.sendVisible || geniePromptToolbarAction.sendDisabled || actionBusy) {
+            if (!hostSendVisible || geniePromptToolbarAction.sendDisabled || actionBusy) {
               return false;
             }
             await handleConfirmSendPromptToGenie();
@@ -17545,7 +17619,7 @@ var PropertyPanelView = React14.forwardRef(
             await handleInterruptSendPromptToGenie();
             return true;
           case "copy-prompt":
-            if (!showCopyPromptAction || copyBlocked) return false;
+            if (!copyPromptVisible || actionBusy || copyBlocked) return false;
             await runAction(options.onCopyPrompt);
             return true;
           case "clear-edits":
@@ -17600,6 +17674,21 @@ var PropertyPanelView = React14.forwardRef(
           case "toggle-page-zoom":
             handleTogglePageZoom();
             return true;
+          case "toggle-selection-mode": {
+            const nextSelectionModeActive = action.active ?? !selectionModeActive;
+            if (!nextSelectionModeActive) {
+              onDismissSelection?.();
+              onTargetChange(null);
+              onSelectionInteractionLockChange(false);
+              onHoverSelectionSuppressedChange(false);
+            }
+            if (nextSelectionModeActive) {
+              onSelectionInteractionLockChange(false);
+              onHoverSelectionSuppressedChange(false);
+            }
+            onSelectionModeActiveChange(nextSelectionModeActive);
+            return true;
+          }
           case "open-keyboard-shortcuts":
             setKeyboardShortcutsDialogOpen(true);
             return true;
@@ -17615,6 +17704,7 @@ var PropertyPanelView = React14.forwardRef(
         actionBusy,
         clearAllEditsDisabled,
         copyBlocked,
+        copyPromptVisible,
         geniePromptToolbarAction,
         handleConfirmSendPromptToGenie,
         handleCopyGlobalPanelPrompt,
@@ -17622,14 +17712,21 @@ var PropertyPanelView = React14.forwardRef(
         handleGenieBrandClick,
         handleInterruptSendPromptToGenie,
         handleTogglePageZoom,
+        hostSendVisible,
+        onDismissSelection,
         onGenieVisualStateChange,
+        onHoverSelectionSuppressedChange,
         onPropertyPanelOpenChange,
+        onSelectionInteractionLockChange,
+        onTargetChange,
+        onToolMinimizedChange,
+        onSelectionModeActiveChange,
         onUiSettingsChange,
         options,
         propertyPanelOpen,
         restoreTool,
         runAction,
-        showCopyPromptAction,
+        selectionModeActive,
         toolMinimized,
         uiSettings
       ]
@@ -18221,6 +18318,11 @@ var PropertyPanelView = React14.forwardRef(
                     keys: [`${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + V`],
                     label: "\u7C98\u8D34\u56FE\u7247\u6216\u6587\u6848",
                     desc: "AI \u5F00\u542F\u65F6\uFF0C\u5728\u6C14\u6CE1\u5361\u7247\u6216\u5F85\u9009\u6846\u4E2D\u53EF\u76F4\u63A5\u7C98\u8D34\u56FE\u7247\u548C\u6587\u6848"
+                  },
+                  {
+                    keys: [SELECTION_MODE_TOGGLE_SHORTCUT_LABEL],
+                    label: "\u5207\u6362\u9009\u62E9\u5143\u7D20",
+                    desc: "\u5173\u95ED\u540E\u9875\u9762\u70B9\u51FB\u6062\u590D\u539F\u751F\u4EA4\u4E92\uFF0C\u518D\u6309\u4E00\u6B21\u91CD\u65B0\u5F00\u542F\u5143\u7D20\u9009\u62E9"
                   }
                 ].map((item) => /* @__PURE__ */ jsxs12(
                   "div",
@@ -18499,6 +18601,8 @@ import React17 from "react";
 function useSelectionModeGuards(params) {
   const { propertyPanelOptions, setToolMinimized } = params;
   const toolMinimizedRef = React17.useRef(false);
+  const [selectionModeActive, setSelectionModeActive] = React17.useState(true);
+  const selectionModeActiveRef = React17.useRef(true);
   const selectionHoverOwnersRef = React17.useRef(/* @__PURE__ */ new Set());
   const selectionInteractionLockOwnersRef = React17.useRef(/* @__PURE__ */ new Set());
   const selectionRestoreTimerRef = React17.useRef(null);
@@ -18507,17 +18611,17 @@ function useSelectionModeGuards(params) {
     propertyPanelOptions?.getChangeMarkersVisible?.() ?? true
   );
   const shouldAllowPageInteraction = React17.useCallback(
-    () => toolMinimizedRef.current,
+    () => toolMinimizedRef.current || !selectionModeActiveRef.current,
     []
   );
   const syncSelectionModeAvailability = React17.useCallback(() => {
-    const enabled = !toolMinimizedRef.current && !selectionNeedsExplicitReactivateRef.current && selectionHoverOwnersRef.current.size === 0 && selectionInteractionLockOwnersRef.current.size === 0;
+    const enabled = selectionModeActiveRef.current && !toolMinimizedRef.current && !selectionNeedsExplicitReactivateRef.current && selectionHoverOwnersRef.current.size === 0 && selectionInteractionLockOwnersRef.current.size === 0;
     propertyPanelOptions?.onToggleSelectionMode?.(enabled, {
       allowPageInteraction: shouldAllowPageInteraction()
     });
   }, [propertyPanelOptions, shouldAllowPageInteraction]);
   const isSelectionModeActive = React17.useCallback(
-    () => !toolMinimizedRef.current && !selectionNeedsExplicitReactivateRef.current && selectionHoverOwnersRef.current.size === 0 && selectionInteractionLockOwnersRef.current.size === 0,
+    () => selectionModeActiveRef.current && !toolMinimizedRef.current && !selectionNeedsExplicitReactivateRef.current && selectionHoverOwnersRef.current.size === 0 && selectionInteractionLockOwnersRef.current.size === 0,
     []
   );
   const handleHoverSelectionSuppressedChange = React17.useCallback(
@@ -18554,6 +18658,36 @@ function useSelectionModeGuards(params) {
     },
     [syncSelectionModeAvailability]
   );
+  const handleSelectionModeActiveChange = React17.useCallback(
+    (active) => {
+      const nextActive = Boolean(active);
+      if (selectionModeActiveRef.current === nextActive) {
+        syncSelectionModeAvailability();
+        return;
+      }
+      selectionModeActiveRef.current = nextActive;
+      setSelectionModeActive(nextActive);
+      selectionHoverOwnersRef.current.clear();
+      selectionInteractionLockOwnersRef.current.clear();
+      selectionNeedsExplicitReactivateRef.current = false;
+      if (nextActive) {
+        if (!toolMinimizedRef.current) {
+          propertyPanelOptions?.onChangeMarkersVisible?.(
+            markerVisibilityBeforeMinimizeRef.current,
+            { persist: false }
+          );
+          propertyPanelOptions?.onSelectionChromeVisibleChange?.(true);
+        }
+      } else {
+        markerVisibilityBeforeMinimizeRef.current = propertyPanelOptions?.getChangeMarkersVisible?.() ?? true;
+        propertyPanelOptions?.onChangeMarkersVisible?.(false, { persist: false });
+        propertyPanelOptions?.onSelectionChromeVisibleChange?.(false);
+        propertyPanelOptions?.dismissVisibleElementGenieTaskStates?.();
+      }
+      syncSelectionModeAvailability();
+    },
+    [propertyPanelOptions, syncSelectionModeAvailability]
+  );
   const handleToolMinimizedChange = React17.useCallback(
     (nextMinimized) => {
       if (toolMinimizedRef.current === nextMinimized) return;
@@ -18566,11 +18700,16 @@ function useSelectionModeGuards(params) {
         propertyPanelOptions?.dismissVisibleElementGenieTaskStates?.();
       } else {
         selectionNeedsExplicitReactivateRef.current = false;
-        propertyPanelOptions?.onChangeMarkersVisible?.(
-          markerVisibilityBeforeMinimizeRef.current,
-          { persist: false }
-        );
-        propertyPanelOptions?.onSelectionChromeVisibleChange?.(true);
+        if (selectionModeActiveRef.current) {
+          propertyPanelOptions?.onChangeMarkersVisible?.(
+            markerVisibilityBeforeMinimizeRef.current,
+            { persist: false }
+          );
+          propertyPanelOptions?.onSelectionChromeVisibleChange?.(true);
+        } else {
+          propertyPanelOptions?.onChangeMarkersVisible?.(false, { persist: false });
+          propertyPanelOptions?.onSelectionChromeVisibleChange?.(false);
+        }
       }
       syncSelectionModeAvailability();
       setToolMinimized(nextMinimized);
@@ -18589,6 +18728,8 @@ function useSelectionModeGuards(params) {
   }, []);
   return {
     toolMinimizedRef,
+    selectionModeActiveRef,
+    selectionModeActive,
     selectionHoverOwnersRef,
     selectionInteractionLockOwnersRef,
     selectionRestoreTimerRef,
@@ -18601,6 +18742,7 @@ function useSelectionModeGuards(params) {
     handlePanelSelectionInteractionLockChange: (locked) => handleSelectionInteractionLockChange("panel", locked),
     handlePromptSelectionInteractionLockChange: (locked) => handleSelectionInteractionLockChange("prompt", locked),
     selectionAllowsPageInteraction: shouldAllowPageInteraction,
+    handleSelectionModeActiveChange,
     handleToolMinimizedChange
   };
 }
@@ -19524,23 +19666,24 @@ function WebEditorUiApp(props) {
     (element, resetDraft) => {
       const nextSavedNote = propertyPanelOptions?.getAiNote?.(element) ?? "";
       const nextSkillIds = propertyPanelOptions?.getAiNoteSkillIds?.(element) ?? [];
-      setNoteState((prev) => {
-        const next = syncDraftAgainstSaved(
-          {
-            saved: prev.savedNote,
-            draft: prev.draftNote,
-            dirty: prev.noteDirty
-          },
-          nextSavedNote,
-          resetDraft
-        );
-        return {
-          savedNote: next.saved,
-          draftNote: next.draft,
-          noteDirty: next.dirty,
-          savedNoteMeta: { skillIds: nextSkillIds.slice() }
-        };
-      });
+      const prev = noteStateRef.current;
+      const next = syncDraftAgainstSaved(
+        {
+          saved: prev.savedNote,
+          draft: prev.draftNote,
+          dirty: prev.noteDirty
+        },
+        nextSavedNote,
+        resetDraft
+      );
+      const nextState = {
+        savedNote: next.saved,
+        draftNote: next.draft,
+        noteDirty: next.dirty,
+        savedNoteMeta: { skillIds: nextSkillIds.slice() }
+      };
+      noteStateRef.current = nextState;
+      setNoteState(nextState);
     },
     [propertyPanelOptions]
   );
@@ -19548,22 +19691,23 @@ function WebEditorUiApp(props) {
     (element, resetDraft) => {
       const canEditText2 = propertyPanelOptions?.canEditText?.(element) ?? false;
       const nextSavedText = canEditText2 ? propertyPanelOptions?.getTextValue?.(element) ?? "" : "";
-      setTextState((prev) => {
-        const next = syncDraftAgainstSaved(
-          {
-            saved: prev.savedText,
-            draft: prev.draftText,
-            dirty: prev.textDirty
-          },
-          nextSavedText,
-          resetDraft
-        );
-        return {
-          savedText: next.saved,
-          draftText: next.draft,
-          textDirty: next.dirty
-        };
-      });
+      const prev = textStateRef.current;
+      const next = syncDraftAgainstSaved(
+        {
+          saved: prev.savedText,
+          draft: prev.draftText,
+          dirty: prev.textDirty
+        },
+        nextSavedText,
+        resetDraft
+      );
+      const nextState = {
+        savedText: next.saved,
+        draftText: next.draft,
+        textDirty: next.dirty
+      };
+      textStateRef.current = nextState;
+      setTextState(nextState);
     },
     [propertyPanelOptions]
   );
@@ -19585,12 +19729,14 @@ function WebEditorUiApp(props) {
       if (!noteStateRef.current.noteDirty && !skillsDirty) return false;
       await propertyPanelOptions.onAiNoteChange(element, nextValue, { skillIds: nextSkillIds });
       if (currentTargetRef.current === element) {
-        setNoteState({
+        const nextState = {
           savedNote: nextValue,
           draftNote: nextValue,
           noteDirty: false,
           savedNoteMeta: { skillIds: nextSkillIds.slice() }
-        });
+        };
+        noteStateRef.current = nextState;
+        setNoteState(nextState);
       }
       return true;
     },
@@ -19609,11 +19755,13 @@ function WebEditorUiApp(props) {
         textStateRef.current.savedText
       );
       if (currentTargetRef.current === element) {
-        setTextState({
+        const nextState = {
           savedText: nextValue,
           draftText: nextValue,
           textDirty: false
-        });
+        };
+        textStateRef.current = nextState;
+        setTextState(nextState);
       }
       return true;
     },
@@ -19636,7 +19784,7 @@ function WebEditorUiApp(props) {
         setAnchorRect(null);
       }
       selectionGuards.selectionNeedsExplicitReactivateRef.current = Boolean(
-        element && !selectionGuards.toolMinimizedRef.current
+        element && selectionGuards.selectionModeActiveRef.current && !selectionGuards.toolMinimizedRef.current
       );
       selectionGuards.syncSelectionModeAvailability();
       syncSavedNote(element, true);
@@ -19707,35 +19855,47 @@ function WebEditorUiApp(props) {
   );
   const canEditText = canStartInlineTextEditing(currentTarget);
   const handleDraftChange = React20.useCallback((value) => {
-    setNoteState((prev) => ({
+    const prev = noteStateRef.current;
+    const nextState = {
       ...prev,
       draftNote: value,
       noteDirty: value !== prev.savedNote
-    }));
+    };
+    noteStateRef.current = nextState;
+    setNoteState(nextState);
   }, []);
   const handleCancelNote = React20.useCallback(() => {
-    setNoteState((prev) => ({
+    const prev = noteStateRef.current;
+    const nextState = {
       ...prev,
       draftNote: prev.savedNote,
       noteDirty: false
-    }));
+    };
+    noteStateRef.current = nextState;
+    setNoteState(nextState);
   }, []);
   const handleConfirmNote = React20.useCallback(async (options2 = {}) => {
     await commitDraftNote(void 0, options2);
   }, [commitDraftNote]);
   const handleTextDraftChange = React20.useCallback((value) => {
-    setTextState((prev) => ({
+    const prev = textStateRef.current;
+    const nextState = {
       ...prev,
       draftText: value,
       textDirty: value !== prev.savedText
-    }));
+    };
+    textStateRef.current = nextState;
+    setTextState(nextState);
   }, []);
   const handleCancelText = React20.useCallback(() => {
-    setTextState((prev) => ({
+    const prev = textStateRef.current;
+    const nextState = {
       ...prev,
       draftText: prev.savedText,
       textDirty: false
-    }));
+    };
+    textStateRef.current = nextState;
+    setTextState(nextState);
   }, []);
   const handleConfirmText = React20.useCallback(async () => {
     await commitDraftText();
@@ -19777,13 +19937,6 @@ function WebEditorUiApp(props) {
       if (!incomingImages.length || !propertyPanelOptions?.onAiNoteImagesChange) {
         return { acceptedCount: 0, droppedCount: 0 };
       }
-      if (propertyPanelOptions.getGenieBridgeConnected && !propertyPanelOptions.getGenieBridgeConnected()) {
-        notifyRuntimeMessage("info", "AI \u672A\u542F\u52A8\uFF0C\u6682\u4E0D\u652F\u6301\u7C98\u8D34\u6279\u6CE8\u56FE\u7247\u3002");
-        return {
-          acceptedCount: 0,
-          droppedCount: incomingImages.length
-        };
-      }
       const currentImages = (propertyPanelOptions.getAiNoteImages?.(element) ?? []).slice(0, MAX_PROMPT_IMAGE_ATTACHMENTS);
       const merged = mergePromptImageAttachments(currentImages, incomingImages, MAX_PROMPT_IMAGE_ATTACHMENTS);
       await propertyPanelOptions.onAiNoteImagesChange(element, merged.images);
@@ -19820,11 +19973,14 @@ function WebEditorUiApp(props) {
         if (!images.length) return;
         if (target && clipboardText) {
           const nextValue = replaceTextInControl(target, currentDraft, clipboardText);
-          setNoteState((prev) => ({
+          const prev = noteStateRef.current;
+          const nextState = {
             ...prev,
             draftNote: nextValue,
             noteDirty: nextValue !== prev.savedNote
-          }));
+          };
+          noteStateRef.current = nextState;
+          setNoteState(nextState);
         }
         await applyImagesToElement(element, images);
       })();
@@ -19897,11 +20053,14 @@ function WebEditorUiApp(props) {
     editableElement.style.setProperty("cursor", "text", "important");
     const syncDraftFromDom = () => {
       const nextValue = editableElement.textContent ?? "";
-      setTextState((prev) => ({
+      const prev = textStateRef.current;
+      const nextState = {
         ...prev,
         draftText: nextValue,
         textDirty: nextValue !== prev.savedText
-      }));
+      };
+      textStateRef.current = nextState;
+      setTextState(nextState);
     };
     const handleInput = () => {
       syncDraftFromDom();
@@ -20042,6 +20201,8 @@ function WebEditorUiApp(props) {
         ),
         onBubbleStyleEditorOpenChange: setBubbleStyleEditorOpen,
         onSendCurrentElementPromptToGenie: handleSendCurrentElementPromptToGenie,
+        onWakeGenie: propertyPanelOptions?.onWakeGenie,
+        onGenieVisualStateChange: handleGenieVisualStateChange,
         getGenieBridgeConnected: propertyPanelOptions?.getGenieBridgeConnected,
         getHasReusableGenieConversation: propertyPanelOptions?.getHasReusableGenieConversation,
         getSendCurrentElementPromptToGenieBlockReason: propertyPanelOptions?.getSendCurrentElementPromptToGenieBlockReason,
@@ -20087,6 +20248,7 @@ function WebEditorUiApp(props) {
         currentTarget,
         uiMode,
         toolMinimized,
+        selectionModeActive: selectionGuards.selectionModeActive,
         propertyPanelOpen,
         inlineTextEditing,
         uiSettings,
@@ -20101,6 +20263,7 @@ function WebEditorUiApp(props) {
         onSelectionInteractionLockChange: selectionGuards.handlePanelSelectionInteractionLockChange,
         onUiModeChange: handleUiModeChange,
         onToolMinimizedChange: selectionGuards.handleToolMinimizedChange,
+        onSelectionModeActiveChange: selectionGuards.handleSelectionModeActiveChange,
         onTargetChange: handleTargetChange,
         onRefreshNoteState: handleRefreshNoteState,
         onInlineTextEditingChange: handleInlineTextEditingChange,
@@ -20267,6 +20430,7 @@ function createWebEditorUiRuntime(options) {
     disablePageAnimations: false,
     pageZoomEnabled: false,
     copySkillInstallPromptDisabled: true,
+    selectionModeActive: true,
     fullExitAvailable: false
   });
   function RuntimeMount() {
@@ -22865,6 +23029,10 @@ function createEventController(options) {
   let lastClientY = 0;
   let hoverRafId = null;
   let allowPageInteraction = false;
+  let nativeTextSelectionClickTimer = null;
+  let nativeTextSelectionClickCandidate = null;
+  const TOUCH_TAP_THRESHOLD_PX = 15;
+  let touchTapCandidate = null;
   function isEventFromEditorUi(event) {
     try {
       if (typeof event.composedPath === "function") {
@@ -22909,7 +23077,7 @@ function createEventController(options) {
     };
   }
   function getEventPointerId(event) {
-    return event instanceof PointerEvent ? event.pointerId : 0;
+    return hasPointerEvents && event instanceof PointerEvent ? event.pointerId : 0;
   }
   function shouldProcessAsPrimaryPointer(event) {
     if (hasPointerEvents && !(event instanceof PointerEvent)) return false;
@@ -22933,6 +23101,52 @@ function createEventController(options) {
     dragCandidate = null;
     draggingPointerId = null;
     draggingIsPointerOrigin = false;
+  }
+  function clearNativeTextSelectionClickCandidate() {
+    nativeTextSelectionClickCandidate = null;
+    if (nativeTextSelectionClickTimer !== null) {
+      clearTimeout(nativeTextSelectionClickTimer);
+      nativeTextSelectionClickTimer = null;
+    }
+  }
+  disposer.add(clearNativeTextSelectionClickCandidate);
+  function hasNativeTextSelection() {
+    try {
+      const selection = window.getSelection?.();
+      return Boolean(
+        selection && !selection.isCollapsed && selection.rangeCount > 0 && selection.toString().trim()
+      );
+    } catch {
+      return false;
+    }
+  }
+  function queueNativeTextSelectionClickCommit(event) {
+    const candidate = nativeTextSelectionClickCandidate;
+    nativeTextSelectionClickCandidate = null;
+    if (!candidate) return;
+    const isPointerEvent = hasPointerEvents && event instanceof PointerEvent;
+    if (candidate.isPointerEventOrigin !== isPointerEvent) return;
+    if (candidate.pointerId !== getEventPointerId(event)) return;
+    const dx = event.clientX - candidate.startClientX;
+    const dy = event.clientY - candidate.startClientY;
+    if (Math.hypot(dx, dy) >= WEB_EDITOR_V2_DRAG_THRESHOLD_PX) return;
+    if (nativeTextSelectionClickTimer !== null) {
+      clearTimeout(nativeTextSelectionClickTimer);
+    }
+    nativeTextSelectionClickTimer = setTimeout(() => {
+      nativeTextSelectionClickTimer = null;
+      if (disposer.isDisposed) return;
+      if (!candidate.target.isConnected) return;
+      if (isElementInteractionLocked?.(candidate.target) ?? false) return;
+      if (hasNativeTextSelection()) return;
+      setMode("selecting");
+      onSelect({
+        element: candidate.target,
+        modifiers: candidate.modifiers,
+        clientX: candidate.startClientX,
+        clientY: candidate.startClientY
+      });
+    }, 10);
   }
   function cancelDragging(reason) {
     if (mode !== "dragging") return;
@@ -23077,7 +23291,7 @@ function createEventController(options) {
     hasPointerPosition = true;
     if (mode === "dragging" && shouldProcessAsPrimaryPointer(event)) {
       const pointerId = getEventPointerId(event);
-      const isPointerEvent = event instanceof PointerEvent;
+      const isPointerEvent = hasPointerEvents && event instanceof PointerEvent;
       if (draggingIsPointerOrigin !== isPointerEvent) return;
       if (draggingPointerId !== null && pointerId === draggingPointerId) {
         onDragMove?.({ pointerId, clientX: event.clientX, clientY: event.clientY });
@@ -23094,7 +23308,7 @@ function createEventController(options) {
     if (mode === "selecting" && dragCandidate && shouldProcessAsPrimaryPointer(event)) {
       const pointerId = getEventPointerId(event);
       if (pointerId !== dragCandidate.pointerId) return;
-      const isPointerEvent = event instanceof PointerEvent;
+      const isPointerEvent = hasPointerEvents && event instanceof PointerEvent;
       if (dragCandidate.isPointerEventOrigin !== isPointerEvent) return;
       const dx = event.clientX - dragCandidate.startClientX;
       const dy = event.clientY - dragCandidate.startClientY;
@@ -23122,10 +23336,8 @@ function createEventController(options) {
     if (mode !== "hover" && mode !== "selecting") return;
     scheduleHoverUpdate();
   }
-  const TOUCH_TAP_THRESHOLD_PX = 15;
-  let touchTapCandidate = null;
   function isTouchPointerEvent(event) {
-    return isMobileDevice() && event instanceof PointerEvent && event.pointerType === "touch";
+    return isMobileDevice() && hasPointerEvents && event instanceof PointerEvent && event.pointerType === "touch";
   }
   function handlePointerDown(event) {
     if (isEventFromEditorUi(event)) return;
@@ -23135,6 +23347,20 @@ function createEventController(options) {
     lastClientY = event.clientY;
     hasPointerPosition = true;
     if (options.allowNativeTextSelection) {
+      if (event.button !== 0) return;
+      if (!shouldProcessAsPrimaryPointer(event)) return;
+      nativeTextSelectionClickCandidate = null;
+      const modifiers2 = extractModifiers(event);
+      const target2 = getTargetElementForSelection(event, event.clientX, event.clientY, modifiers2);
+      if (!target2) return;
+      nativeTextSelectionClickCandidate = {
+        pointerId: getEventPointerId(event),
+        target: target2,
+        modifiers: modifiers2,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        isPointerEventOrigin: hasPointerEvents && event instanceof PointerEvent
+      };
       return;
     }
     if (event.button !== 0) return;
@@ -23167,7 +23393,7 @@ function createEventController(options) {
         return;
       }
       if (onStartDrag && selected && selected.isConnected && !(isElementInteractionLocked?.(selected) ?? false) && isEventWithinElement(event, selected)) {
-        const isPointerOrigin = event instanceof PointerEvent;
+        const isPointerOrigin = hasPointerEvents && event instanceof PointerEvent;
         dragCandidate = {
           pointerId: getEventPointerId(event),
           startClientX: event.clientX,
@@ -23249,8 +23475,12 @@ function createEventController(options) {
     if (!shouldProcessAsPrimaryPointer(event)) {
       return;
     }
+    if (options.allowNativeTextSelection) {
+      queueNativeTextSelectionClickCommit(event);
+      return;
+    }
     const pointerId = getEventPointerId(event);
-    const isPointerEvent = event instanceof PointerEvent;
+    const isPointerEvent = hasPointerEvents && event instanceof PointerEvent;
     if (touchTapCandidate && isTouchPointerEvent(event)) {
       const tap = touchTapCandidate;
       touchTapCandidate = null;
@@ -23284,6 +23514,9 @@ function createEventController(options) {
     if (dragCandidate && dragCandidate.pointerId === pointerId && dragCandidate.isPointerEventOrigin) {
       dragCandidate = null;
     }
+    if (nativeTextSelectionClickCandidate && nativeTextSelectionClickCandidate.pointerId === pointerId && nativeTextSelectionClickCandidate.isPointerEventOrigin) {
+      nativeTextSelectionClickCandidate = null;
+    }
     if (mode !== "dragging") return;
     if (!draggingIsPointerOrigin) return;
     if (draggingPointerId === null || draggingPointerId !== pointerId) return;
@@ -23293,7 +23526,6 @@ function createEventController(options) {
     if (mode === "interaction" && allowPageInteraction) return;
     if (isEventFromEditorUi(event)) return;
     if (shouldEventBypassPageBlock(event)) return;
-    if (options.allowNativeTextSelection) return;
     if (event.type === "pointerup" || event.type === "mouseup") {
       handlePointerUp(event);
       return;
@@ -23302,6 +23534,7 @@ function createEventController(options) {
       handlePointerCancel(event);
       return;
     }
+    if (options.allowNativeTextSelection) return;
     if (event.type === "dblclick") {
       handleDoubleClick(event);
       return;
@@ -25429,6 +25662,7 @@ async function exportSelectionToDesignTool(tool, element) {
 }
 
 // src/core/editor/lifecycle.ts
+var SELECTION_MODE_HOTKEY_SHORTCUT_LABEL = "Ctrl / Cmd + S";
 function createLifecycleService(deps) {
   const { state: state2, services, onStatusChange } = deps;
   const rawOptions = deps.options ? deps.options : {};
@@ -25438,6 +25672,24 @@ function createLifecycleService(deps) {
   }
   let inlineTextEditingElement = null;
   let pendingCommentContextSync = false;
+  let routeChangeCleanup = null;
+  function shouldDelegateAiActionToHost() {
+    return options.ui.toolbarMode === "host" && typeof options.ui.onHostToolbarAction === "function";
+  }
+  async function runHostAiAction(action) {
+    if (!shouldDelegateAiActionToHost()) {
+      return false;
+    }
+    try {
+      return Boolean(await options.ui.onHostToolbarAction(action));
+    } catch (error) {
+      const message3 = error instanceof Error ? error.message : String(error);
+      if (message3) {
+        services.feedback.toast("warning", message3);
+      }
+      return false;
+    }
+  }
   function isEventWithinElement(event, element) {
     try {
       if (typeof event.composedPath === "function") {
@@ -25576,6 +25828,8 @@ function createLifecycleService(deps) {
     inlineTextEditingElement = null;
     services.integrationWs?.stop();
     services.genieBridge.stop();
+    routeChangeCleanup?.();
+    routeChangeCleanup = null;
     state2.uiResizeCleanup?.();
     state2.uiResizeCleanup = null;
     state2.propertyPanel?.dispose();
@@ -25606,6 +25860,8 @@ function createLifecycleService(deps) {
     state2.selectionEngine = null;
     state2.perfHotkeyCleanup?.();
     state2.perfHotkeyCleanup = null;
+    state2.selectionModeHotkeyCleanup?.();
+    state2.selectionModeHotkeyCleanup = null;
     state2.perfMonitor?.dispose();
     state2.perfMonitor = null;
     state2.canvasOverlay?.dispose();
@@ -25632,6 +25888,148 @@ function createLifecycleService(deps) {
     window.addEventListener("keydown", handler, hotkeyOptions);
     state2.perfHotkeyCleanup = () => {
       window.removeEventListener("keydown", handler, hotkeyOptions);
+    };
+  }
+  function isSelectionModeToggleShortcut(event) {
+    const isMod = event.metaKey || event.ctrlKey;
+    if (!isMod || event.altKey || event.shiftKey) return false;
+    const key = (event.key || "").toLowerCase();
+    return key === "s";
+  }
+  function describeHotkeyTarget(target) {
+    if (typeof Element === "undefined" || !(target instanceof Element)) {
+      return target ? Object.prototype.toString.call(target) : "null";
+    }
+    const tagName = target.tagName.toLowerCase();
+    const id = target.id ? `#${target.id}` : "";
+    const className = typeof target.className === "string" ? target.className.trim().split(/\s+/u).filter(Boolean).slice(0, 3).map((name) => `.${name}`).join("") : "";
+    const role = target.getAttribute("role");
+    return `${tagName}${id}${className}${role ? `[role="${role}"]` : ""}`;
+  }
+  function cloneSelectionModeHotkeyDebug(debug) {
+    return {
+      installed: debug.installed,
+      installCount: debug.installCount,
+      shortcut: debug.shortcut,
+      receivedCount: debug.receivedCount,
+      matchedCount: debug.matchedCount,
+      ignoredRepeatCount: debug.ignoredRepeatCount,
+      ignoredMismatchCount: debug.ignoredMismatchCount,
+      ignoredEditorUiCount: debug.ignoredEditorUiCount,
+      triggerCount: debug.triggerCount,
+      lastEvent: debug.lastEvent ? { ...debug.lastEvent } : null,
+      lastAction: debug.lastAction ? { ...debug.lastAction } : null
+    };
+  }
+  function getSelectionModeHotkeyDebug() {
+    if (typeof window === "undefined") return null;
+    const globalWindow = window;
+    const existing = globalWindow.__AXHUB_SELECTION_HOTKEY_DEBUG__;
+    if (existing) {
+      existing.installed = true;
+      existing.installCount += 1;
+      return existing;
+    }
+    const debug = {
+      installed: true,
+      installCount: 1,
+      shortcut: SELECTION_MODE_HOTKEY_SHORTCUT_LABEL,
+      receivedCount: 0,
+      matchedCount: 0,
+      ignoredRepeatCount: 0,
+      ignoredMismatchCount: 0,
+      ignoredEditorUiCount: 0,
+      triggerCount: 0,
+      lastEvent: null,
+      lastAction: null,
+      reset() {
+        this.receivedCount = 0;
+        this.matchedCount = 0;
+        this.ignoredRepeatCount = 0;
+        this.ignoredMismatchCount = 0;
+        this.ignoredEditorUiCount = 0;
+        this.triggerCount = 0;
+        this.lastEvent = null;
+        this.lastAction = null;
+      },
+      snapshot() {
+        return cloneSelectionModeHotkeyDebug(this);
+      }
+    };
+    globalWindow.__AXHUB_SELECTION_HOTKEY_DEBUG__ = debug;
+    return debug;
+  }
+  function recordSelectionModeHotkeyEvent(debug, event, decision) {
+    if (!debug) return;
+    debug.lastEvent = {
+      at: Date.now(),
+      key: event.key || "",
+      code: event.code || "",
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      repeat: event.repeat,
+      target: describeHotkeyTarget(event.target),
+      decision
+    };
+  }
+  function installSelectionModeHotkey() {
+    state2.selectionModeHotkeyCleanup?.();
+    state2.selectionModeHotkeyCleanup = null;
+    const debug = getSelectionModeHotkeyDebug();
+    const handler = (event) => {
+      debug && (debug.receivedCount += 1);
+      recordSelectionModeHotkeyEvent(debug, event, "received");
+      if (event.repeat) {
+        debug && (debug.ignoredRepeatCount += 1);
+        recordSelectionModeHotkeyEvent(debug, event, "ignored-repeat");
+        return;
+      }
+      if (!isSelectionModeToggleShortcut(event)) {
+        debug && (debug.ignoredMismatchCount += 1);
+        recordSelectionModeHotkeyEvent(debug, event, "ignored-shortcut-mismatch");
+        return;
+      }
+      debug && (debug.matchedCount += 1);
+      if (state2.shadowHost?.isEventFromUi(event)) {
+        debug && (debug.ignoredEditorUiCount += 1);
+        recordSelectionModeHotkeyEvent(debug, event, "ignored-editor-ui");
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      debug && (debug.triggerCount += 1);
+      recordSelectionModeHotkeyEvent(debug, event, "triggered");
+      const action = {
+        at: Date.now(),
+        hasPropertyPanel: Boolean(state2.propertyPanel?.runHostToolbarAction),
+        pending: true,
+        result: null,
+        error: null
+      };
+      if (debug) {
+        debug.lastAction = action;
+      }
+      void Promise.resolve(
+        state2.propertyPanel?.runHostToolbarAction?.({ type: "toggle-selection-mode" }) ?? false
+      ).then((result) => {
+        action.pending = false;
+        action.result = Boolean(result);
+      }).catch((error) => {
+        action.pending = false;
+        action.result = false;
+        action.error = error instanceof Error ? error.message : String(error);
+      });
+    };
+    const hotkeyOptions = { capture: true, passive: false };
+    window.addEventListener("keydown", handler, hotkeyOptions);
+    state2.selectionModeHotkeyCleanup = () => {
+      window.removeEventListener("keydown", handler, hotkeyOptions);
+      if (debug) {
+        debug.installed = false;
+      }
     };
   }
   function installUiResizeClamp() {
@@ -25680,6 +26078,71 @@ function createLifecycleService(deps) {
       }
     };
     clampFloatingUi();
+  }
+  function installRouteChangeRefresh() {
+    if (routeChangeCleanup || typeof window === "undefined") return;
+    const routeChangeEventType = "axhub-web-editor-route-change";
+    let routeChangeRafId = null;
+    const historyRef = window.history;
+    const originalPushState = historyRef?.pushState;
+    const originalReplaceState = historyRef?.replaceState;
+    let wrappedPushState = null;
+    let wrappedReplaceState = null;
+    const scheduleRouteRefresh = () => {
+      if (!state2.active || routeChangeRafId !== null) return;
+      routeChangeRafId = window.requestAnimationFrame(() => {
+        routeChangeRafId = null;
+        services.interaction.clearSelection();
+        state2.hoveredElement = null;
+        state2.selectionAnchor = null;
+        state2.pendingMarkerAnchors.clear();
+        void Promise.resolve(services.persistence.restoreCachedChanges()).then(() => {
+          services.changes.renderChangeMarkers();
+          state2.propertyPanel?.refresh();
+          onStatusChange?.();
+        }).catch((error) => {
+          console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to refresh comments after route change:`, error);
+          services.changes.renderChangeMarkers();
+        });
+      });
+    };
+    const dispatchRouteChange = () => {
+      window.dispatchEvent(new Event(routeChangeEventType));
+    };
+    if (historyRef && typeof originalPushState === "function") {
+      wrappedPushState = function pushState(data, unused, url) {
+        const result = originalPushState.call(this, data, unused, url);
+        dispatchRouteChange();
+        return result;
+      };
+      historyRef.pushState = wrappedPushState;
+    }
+    if (historyRef && typeof originalReplaceState === "function") {
+      wrappedReplaceState = function replaceState(data, unused, url) {
+        const result = originalReplaceState.call(this, data, unused, url);
+        dispatchRouteChange();
+        return result;
+      };
+      historyRef.replaceState = wrappedReplaceState;
+    }
+    window.addEventListener("hashchange", scheduleRouteRefresh);
+    window.addEventListener("popstate", scheduleRouteRefresh);
+    window.addEventListener(routeChangeEventType, scheduleRouteRefresh);
+    routeChangeCleanup = () => {
+      window.removeEventListener("hashchange", scheduleRouteRefresh);
+      window.removeEventListener("popstate", scheduleRouteRefresh);
+      window.removeEventListener(routeChangeEventType, scheduleRouteRefresh);
+      if (routeChangeRafId !== null) {
+        window.cancelAnimationFrame(routeChangeRafId);
+        routeChangeRafId = null;
+      }
+      if (historyRef && wrappedPushState && historyRef.pushState === wrappedPushState) {
+        historyRef.pushState = originalPushState;
+      }
+      if (historyRef && wrappedReplaceState && historyRef.replaceState === wrappedReplaceState) {
+        historyRef.replaceState = originalReplaceState;
+      }
+    };
   }
   function start() {
     if (state2.active && !state2.panelOnlyMode) {
@@ -25814,11 +26277,14 @@ function createLifecycleService(deps) {
         allowNativeTextSelection: isTextComment,
         onHover: isTextComment ? () => {
         } : services.interaction.handleHover,
-        onSelect: isTextComment ? () => {
-        } : (event) => services.interaction.handleSelect(event.element, event.modifiers, {
-          clientX: event.clientX,
-          clientY: event.clientY
-        }),
+        onSelect: (event) => {
+          const target = services.genieBridge.resolveSelectableElement(event.element);
+          if (!target?.isConnected) return;
+          services.interaction.handleSelect(target, event.modifiers, {
+            clientX: event.clientX,
+            clientY: event.clientY
+          });
+        },
         onDoubleClickSelected: isTextComment ? void 0 : (event) => {
           if (!services.textSession.isEditable(event.element)) return;
           if (services.genieBridge.isElementInteractionLocked(event.element)) return;
@@ -25930,7 +26396,7 @@ function createLifecycleService(deps) {
           onUndo: () => state2.transactionManager?.undo(),
           onRedo: () => state2.transactionManager?.redo(),
           onCopyPrompt: services.localActions.handleCopyPrompt,
-          onWakeGenie: options.genieBridge.allowWake !== false ? async () => {
+          onWakeGenie: shouldDelegateAiActionToHost() ? () => runHostAiAction({ type: "wake-genie" }) : options.genieBridge.allowWake !== false ? async () => {
             try {
               return await services.genieBridge.requestWake();
             } catch (error) {
@@ -25942,6 +26408,13 @@ function createLifecycleService(deps) {
             }
           } : void 0,
           onSendPromptToGenie: async (element) => {
+            if (shouldDelegateAiActionToHost()) {
+              const handled = await runHostAiAction({ type: "send-to-genie" });
+              if (!handled) {
+                throw new Error("\u5BBF\u4E3B\u6682\u672A\u5904\u7406 AI \u6267\u884C\u8BF7\u6C42\u3002");
+              }
+              return;
+            }
             const targetElements = resolvePromptTargets(element);
             if (targetElements.length === 0) {
               throw new Error("\u5F53\u524D\u6CA1\u6709\u53EF\u53D1\u9001\u7ED9 AI \u7684\u7F16\u8F91\u5143\u7D20\u3002");
@@ -25957,6 +26430,13 @@ function createLifecycleService(deps) {
             }
           },
           onSendCurrentElementPromptToGenie: async (element) => {
+            if (shouldDelegateAiActionToHost()) {
+              const handled = await runHostAiAction({ type: "send-to-genie" });
+              if (!handled) {
+                throw new Error("\u5BBF\u4E3B\u6682\u672A\u5904\u7406 AI \u6267\u884C\u8BF7\u6C42\u3002");
+              }
+              return;
+            }
             if (!element?.isConnected) {
               throw new Error("\u5F53\u524D\u5143\u7D20\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u540E\u518D\u8BD5\u3002");
             }
@@ -25971,6 +26451,9 @@ function createLifecycleService(deps) {
             }
           },
           onAbortSendPromptToGenie: (element) => {
+            if (shouldDelegateAiActionToHost()) {
+              return runHostAiAction({ type: "interrupt-genie" });
+            }
             const targetElement = resolvePromptTarget(element);
             if (!targetElement) {
               throw new Error("\u5F53\u524D\u6CA1\u6709\u53EF\u4E2D\u65AD\u7684 AI \u7F16\u8F91\u5143\u7D20\u3002");
@@ -26149,6 +26632,7 @@ function createLifecycleService(deps) {
             container: elements.uiRoot,
             dock: "top",
             onSelect: selectElementWithCenterAnchor,
+            getAssistantPanelOpen: options.ui.getAssistantPanelOpen,
             getGenieBridgeAvailable: () => services.genieBridge.isAvailable(),
             hideExecutionControls: options.ui.hideExecutionControls,
             getCommentShortcutSettings: () => state2.commentShortcutSettings,
@@ -26184,7 +26668,9 @@ function createLifecycleService(deps) {
         state2.propertyPanel.refresh();
       }
       services.changes.renderChangeMarkers();
+      installSelectionModeHotkey();
       installUiResizeClamp();
+      installRouteChangeRefresh();
       state2.active = true;
       state2.panelOnlyMode = false;
       if (options.genieBridge.autoStartOnLaunch !== false) {
@@ -26204,6 +26690,8 @@ function createLifecycleService(deps) {
     inlineTextEditingElement = null;
     services.integrationWs?.stop();
     services.genieBridge.stop();
+    routeChangeCleanup?.();
+    routeChangeCleanup = null;
     state2.uiResizeCleanup?.();
     state2.uiResizeCleanup = null;
     state2.tokensService?.dispose();
@@ -26230,6 +26718,8 @@ function createLifecycleService(deps) {
     state2.selectionEngine = null;
     state2.perfHotkeyCleanup?.();
     state2.perfHotkeyCleanup = null;
+    state2.selectionModeHotkeyCleanup?.();
+    state2.selectionModeHotkeyCleanup = null;
     state2.perfMonitor?.dispose();
     state2.perfMonitor = null;
     state2.canvasOverlay?.dispose();
@@ -26623,6 +27113,7 @@ var COMMENT_SHORTCUT_SETTINGS_KEY_PREFIX = "web-editor-v2-comment-shortcuts:";
 var UI_SETTINGS_KEY = "web-editor-v2-ui-settings";
 var GENIE_CONVERSATION_KEY_PREFIX = "web-editor-v2-genie-conversation:";
 var GENIE_TASKS_KEY_PREFIX = "web-editor-v2-genie-tasks:";
+var SCOPED_COMMENT_TASK_KEY_PREFIX = "page-scope:";
 function stripLocatorDebugSource(locator) {
   if (!locator.debugSource) return locator;
   const { debugSource: _debugSource, ...rest } = locator;
@@ -26645,6 +27136,8 @@ function createPersistenceService(options) {
   let cacheWriteTimer = null;
   let cacheRestoreInProgress = false;
   let currentAdapterDocument = null;
+  let lastAdapterDocument = null;
+  let preserveMissingCurrentScopeRecordsOnNextWrite = false;
   const commentTaskStateByElementKey = /* @__PURE__ */ new Map();
   function readResourceMetaString2(key) {
     try {
@@ -26737,7 +27230,7 @@ function createPersistenceService(options) {
         path: resolveStorageScope() ?? window.location.pathname ?? "",
         updatedAt,
         showMarkers: state2.changeMarkersVisible,
-        entries
+        entries: entries.map((entry) => withCurrentPageScope(entry))
       };
       window.localStorage.setItem(key, JSON.stringify(payload));
     } catch {
@@ -26816,6 +27309,159 @@ function createPersistenceService(options) {
     const normalized = typeof value === "string" ? value.trim() : "";
     return normalized || null;
   }
+  function normalizePageScope(value) {
+    return typeof value === "string" ? value.trim() : "";
+  }
+  function readDomPageScope() {
+    if (typeof document === "undefined") return "";
+    try {
+      const explicit = document.documentElement?.getAttribute?.("data-page-id") || document.body?.getAttribute?.("data-page-id") || "";
+      return normalizePageScope(explicit);
+    } catch {
+      return "";
+    }
+  }
+  function resolvePageScopeFromLocation() {
+    if (typeof window === "undefined") return "";
+    try {
+      const url = new URL(window.location.href);
+      const params = new URLSearchParams(url.search);
+      for (const key of ["editor", "axhubPane", "axhubQuickEditContext", "genieToolbar"]) {
+        params.delete(key);
+      }
+      const sortedParams = new URLSearchParams();
+      Array.from(params.entries()).sort(
+        ([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
+      ).forEach(([key, value]) => sortedParams.append(key, value));
+      const search = sortedParams.toString();
+      return `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
+    } catch {
+      return String(window.location.pathname ?? "").trim();
+    }
+  }
+  function hasPageRouteSignal(pageScope) {
+    const scope = normalizePageScope(pageScope);
+    if (!scope) return false;
+    if (/^page[:=]/iu.test(scope)) return true;
+    if (scope.includes("::page::")) return true;
+    try {
+      const url = new URL(scope, "http://axhub.local");
+      if (url.searchParams.has("page")) return true;
+      return new URLSearchParams(url.hash.replace(/^#/, "")).has("page");
+    } catch {
+      return false;
+    }
+  }
+  function isExplicitDomPageScope(pageScope) {
+    const scope = normalizePageScope(pageScope);
+    return Boolean(scope && !scope.includes("/") && !scope.includes("\\") && !scope.includes("?") && !scope.includes("#"));
+  }
+  function shouldShowLegacyUnscopedRecords() {
+    const currentPageScope = resolveCurrentPageScope();
+    return !hasPageRouteSignal(currentPageScope) && !isExplicitDomPageScope(currentPageScope);
+  }
+  function hasPersistedStyleChanges(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return false;
+    }
+    const styleChanges = value;
+    const before = styleChanges.before && typeof styleChanges.before === "object" && !Array.isArray(styleChanges.before) ? styleChanges.before : {};
+    const after = styleChanges.after && typeof styleChanges.after === "object" && !Array.isArray(styleChanges.after) ? styleChanges.after : {};
+    const props = /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)]);
+    for (const prop of props) {
+      if (String(before[prop] ?? "").trim() !== String(after[prop] ?? "").trim()) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function hasPersistedEditPayload(record) {
+    const textChange = record?.textChange;
+    if (textChange && typeof textChange === "object" && String(textChange.before ?? "") !== String(textChange.after ?? "")) {
+      return true;
+    }
+    if (hasPersistedStyleChanges(record?.styleChanges)) {
+      return true;
+    }
+    const tweak = record?.tweak;
+    return Boolean(
+      tweak && typeof tweak === "object" && (Array.isArray(tweak.summaryLines) && tweak.summaryLines.length > 0 || tweak.baselineValues || tweak.currentValues)
+    );
+  }
+  function resolveCurrentPageScope() {
+    return readResourceMetaString2("commentPageScope") || readResourceMetaString2("pageScope") || readDomPageScope() || resolvePageScopeFromLocation() || resolveStorageScope() || resolveTargetPath() || "";
+  }
+  function isCurrentPageScopedRecord(record) {
+    const pageScope = normalizePageScope(record?.pageScope);
+    if (pageScope) return pageScope === resolveCurrentPageScope();
+    if (shouldShowLegacyUnscopedRecords()) return true;
+    return hasPersistedEditPayload(record) && hasConnectedLocator(record?.locator);
+  }
+  function hasConnectedLocator(locator) {
+    if (!locator) return false;
+    try {
+      return Boolean(locateElement(locator)?.isConnected);
+    } catch {
+      return false;
+    }
+  }
+  function withCurrentPageScope(value) {
+    const pageScope = resolveCurrentPageScope();
+    return pageScope ? { ...value, pageScope } : value;
+  }
+  function resolveCommentRecordKey(record) {
+    const elementKey = String(record.elementKey ?? "").trim();
+    if (elementKey) return elementKey;
+    if (!record.locator) return "";
+    try {
+      return locatorKey(record.locator);
+    } catch {
+      return "";
+    }
+  }
+  function stableJson(value) {
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => stableJson(item)).join(",")}]`;
+    }
+    if (value && typeof value === "object") {
+      const record = value;
+      return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(value ?? null);
+  }
+  function resolveCommentContentSignature(record) {
+    if (!record.locator) return "";
+    let locatorSignature = "";
+    try {
+      locatorSignature = locatorKey(record.locator);
+    } catch {
+      locatorSignature = stableJson(stripLocatorDebugSource(record.locator));
+    }
+    return stableJson({
+      locator: locatorSignature,
+      textChange: record.textChange ?? null,
+      styleChanges: record.styleChanges ?? null,
+      tweak: record.tweak ?? null,
+      comment: record.comment ?? record.note ?? null,
+      skillIds: Array.isArray(record.skillIds) ? record.skillIds : null
+    });
+  }
+  function buildCommentTaskDocumentKey(elementKey, pageScope) {
+    return pageScope ? `${SCOPED_COMMENT_TASK_KEY_PREFIX}${encodeURIComponent(pageScope)}:${encodeURIComponent(elementKey)}` : elementKey;
+  }
+  function resolveCommentTaskElementKey(documentKey, task) {
+    if (!normalizePageScope(task.pageScope) || !documentKey.startsWith(SCOPED_COMMENT_TASK_KEY_PREFIX)) {
+      return documentKey;
+    }
+    const encoded = documentKey.slice(SCOPED_COMMENT_TASK_KEY_PREFIX.length);
+    const separatorIndex = encoded.lastIndexOf(":");
+    if (separatorIndex < 0) return documentKey;
+    try {
+      return decodeURIComponent(encoded.slice(separatorIndex + 1)).trim() || documentKey;
+    } catch {
+      return documentKey;
+    }
+  }
   function normalizeAdapterTasks(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       return {};
@@ -26829,6 +27475,7 @@ function createPersistenceService(options) {
       const task = rawTask;
       const updatedAt = Number(task.updatedAt ?? 0);
       tasks[elementKey] = {
+        ...normalizePageScope(task.pageScope) ? { pageScope: normalizePageScope(task.pageScope) } : {},
         state: isPrototypeEditCommentTaskStatus(task.state) ? task.state : "idle",
         provider: normalizeNullableString(task.provider),
         requestId: normalizeNullableString(task.requestId),
@@ -26840,29 +27487,32 @@ function createPersistenceService(options) {
     return tasks;
   }
   function buildDocumentTasks() {
-    const tasks = Object.fromEntries(
-      Array.from(commentTaskStateByElementKey.entries()).map(([elementKey, task]) => [elementKey, { ...task }])
-    );
+    const tasks = {};
+    for (const [elementKey, task] of commentTaskStateByElementKey.entries()) {
+      const scopedTask = withCurrentPageScope({ ...task });
+      tasks[buildCommentTaskDocumentKey(elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
+    }
     const allTasks = [
       ...state2.genieTaskByElementKey.values(),
       ...state2.externalEditingTaskByElementKey.values()
     ];
     for (const task of allTasks) {
       if (!task?.elementKey) continue;
-      tasks[task.elementKey] = {
+      const scopedTask = withCurrentPageScope({
         state: normalizeDocumentTaskState(task.status),
         provider: task.provider,
         requestId: task.requestId,
         sessionId: task.sessionId,
         updatedAt: task.updatedAt,
         message: task.message
-      };
+      });
+      tasks[buildCommentTaskDocumentKey(task.elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
     }
     return tasks;
   }
   function buildDocumentImages() {
     return Array.from(state2.editMetaByKey.values()).flatMap(
-      (meta) => meta.images.map((image) => ({
+      (meta) => meta.images.map((image) => withCurrentPageScope({
         id: image.id,
         elementKey: meta.elementKey,
         name: image.name,
@@ -26888,9 +27538,66 @@ function createPersistenceService(options) {
       ...comment ? { note: comment } : {}
     };
   }
-  function buildAdapterDocument(entries) {
+  function buildAdapterDocument(entries, reason = "changes") {
     const scope = resolvePersistenceScope();
     if (!scope) return null;
+    const currentPageScope = resolveCurrentPageScope();
+    const currentComments = entries.map(
+      (entry) => withCurrentPageScope(cacheEntryToCommentEntry(entry))
+    );
+    const currentImages = buildDocumentImages();
+    const currentTasks = buildDocumentTasks();
+    const currentTaskElementKeys = new Set([
+      ...commentTaskStateByElementKey.keys(),
+      ...Array.from(state2.genieTaskByElementKey.values()).map((task) => task.elementKey),
+      ...Array.from(state2.externalEditingTaskByElementKey.values()).map((task) => task.elementKey)
+    ].map((elementKey) => String(elementKey ?? "").trim()).filter(Boolean));
+    const currentImageKeys = new Set(
+      currentImages.map((image) => String(image.elementKey ?? "").trim()).filter(Boolean)
+    );
+    const currentCommentRecordKeys = new Set(
+      currentComments.map((entry) => resolveCommentRecordKey(entry)).filter(Boolean)
+    );
+    const currentCommentContentSignatures = new Set(
+      currentComments.map((entry) => resolveCommentContentSignature(entry)).filter(Boolean)
+    );
+    const shouldDropMissingCurrentScopeRecords = reason === "clear";
+    const shouldPreserveMissingCurrentScopeRecords = preserveMissingCurrentScopeRecordsOnNextWrite && reason !== "clear";
+    const preservedComments = (lastAdapterDocument?.comments ?? []).filter((entry) => {
+      const entryScope = normalizePageScope(entry.pageScope);
+      const entryKey = resolveCommentRecordKey(entry);
+      const hasCurrentRecord = Boolean(entryKey && currentCommentRecordKeys.has(entryKey));
+      const entryContentSignature = resolveCommentContentSignature(entry);
+      const hasCurrentContent = Boolean(
+        entryContentSignature && currentCommentContentSignatures.has(entryContentSignature)
+      );
+      if (hasCurrentContent) return false;
+      if (entryScope) {
+        if (entryScope !== currentPageScope) return true;
+        if (shouldDropMissingCurrentScopeRecords) return false;
+        if (shouldPreserveMissingCurrentScopeRecords && hasPersistedEditPayload(entry)) return true;
+        if (hasCurrentRecord) return false;
+        return !hasConnectedLocator(entry.locator);
+      }
+      if (!hasPersistedEditPayload(entry)) return true;
+      if (shouldDropMissingCurrentScopeRecords) return false;
+      if (shouldPreserveMissingCurrentScopeRecords) return true;
+      if (hasCurrentRecord) return false;
+      return !hasConnectedLocator(entry.locator);
+    });
+    const preservedImages = (lastAdapterDocument?.images ?? []).filter((image) => {
+      const imageScope = normalizePageScope(image.pageScope);
+      if (imageScope) return imageScope !== currentPageScope;
+      const imageElementKey = String(image.elementKey ?? "").trim();
+      return !imageElementKey || !currentImageKeys.has(imageElementKey);
+    });
+    const preservedTasks = Object.fromEntries(
+      Object.entries(lastAdapterDocument?.tasks ?? {}).filter(([elementKey, task]) => {
+        const taskScope = normalizePageScope(task.pageScope);
+        if (taskScope) return taskScope !== currentPageScope;
+        return !currentTaskElementKeys.has(elementKey);
+      })
+    );
     return {
       schemaVersion: 1,
       kind: "prototype-edit-comments",
@@ -26899,9 +27606,12 @@ function createPersistenceService(options) {
         targetPath: scope.targetPath,
         filePath: `src/${scope.targetPath}/.spec/prototype-comments.json`
       },
-      comments: entries.map(cacheEntryToCommentEntry),
-      tasks: buildDocumentTasks(),
-      images: buildDocumentImages()
+      comments: [...preservedComments, ...currentComments],
+      tasks: {
+        ...preservedTasks,
+        ...currentTasks
+      },
+      images: [...preservedImages, ...currentImages]
     };
   }
   function normalizeAdapterDocument(value) {
@@ -26923,9 +27633,10 @@ function createPersistenceService(options) {
     };
   }
   function mergeAdapterTaskStates(document2) {
-    for (const [elementKey, task] of Object.entries(document2.tasks ?? {})) {
-      const normalizedElementKey = String(elementKey ?? "").trim();
+    for (const [documentKey, task] of Object.entries(document2.tasks ?? {})) {
+      const normalizedElementKey = String(resolveCommentTaskElementKey(documentKey, task) ?? "").trim();
       if (!normalizedElementKey) continue;
+      if (!isCurrentPageScopedRecord(task)) continue;
       commentTaskStateByElementKey.set(normalizedElementKey, { ...task });
     }
   }
@@ -26933,11 +27644,22 @@ function createPersistenceService(options) {
     if (!persistenceAdapter?.write) return;
     const scope = resolvePersistenceScope();
     if (!scope) return;
-    const document2 = buildAdapterDocument(entries);
+    const document2 = buildAdapterDocument(entries, reason);
     if (!document2) return;
+    lastAdapterDocument = document2;
+    preserveMissingCurrentScopeRecordsOnNextWrite = false;
     void Promise.resolve(persistenceAdapter.write(scope, document2, reason)).catch((error) => {
       console.warn("[GenieEditor] Failed to persist prototype comments:", error);
     });
+  }
+  function clearCurrentPageRuntimeState() {
+    state2.transactionManager?.clear?.();
+    state2.editMetaByKey.clear();
+    state2.pendingMarkerAnchors.clear();
+    state2.processedEditTimestampsByKey.clear();
+    state2.selectionAnchor = null;
+    state2.selectedElement = null;
+    commentTaskStateByElementKey.clear();
   }
   function removeStorageKey(key) {
     if (typeof window === "undefined") return;
@@ -27125,6 +27847,7 @@ function createPersistenceService(options) {
     const normalizedElementKey = String(elementKey ?? "").trim();
     if (!normalizedElementKey) return;
     commentTaskStateByElementKey.set(normalizedElementKey, {
+      ...resolveCurrentPageScope() ? { pageScope: resolveCurrentPageScope() } : {},
       state: stateValue,
       provider: typeof taskRef?.provider === "string" && taskRef.provider.trim() ? taskRef.provider.trim() : null,
       requestId: typeof taskRef?.requestId === "string" && taskRef.requestId.trim() ? taskRef.requestId.trim() : null,
@@ -27289,6 +28012,9 @@ function createPersistenceService(options) {
     if (cacheRestoreInProgress) return;
     writeAdapterDocument(buildCacheEntriesFromTransactions(), "tasks");
   }
+  function getPersistedPrototypeCommentsDocument() {
+    return buildAdapterDocument(buildCacheEntriesFromTransactions(), "changes") ?? lastAdapterDocument;
+  }
   function flushPendingWrite() {
     if (cacheWriteTimer !== null) {
       window.clearTimeout(cacheWriteTimer);
@@ -27310,6 +28036,9 @@ function createPersistenceService(options) {
     const tm = state2.transactionManager;
     if (!tm) return;
     for (const entry of entries) {
+      if (!isCurrentPageScopedRecord(entry)) {
+        continue;
+      }
       const entryElementKey = String(entry.elementKey ?? "").trim();
       const isLegacyTextCommentCacheEntry = interactionProfile === "text-comment" && !entryElementKey && Boolean(entry.note) && Boolean(entry.marker) && !entry.textChange && !entry.styleChanges;
       if (isLegacyTextCommentCacheEntry) {
@@ -27335,7 +28064,9 @@ function createPersistenceService(options) {
       if (entry.marker && Number.isFinite(Number(entry.marker.dirtySince))) {
         meta.dirtySince = Number(entry.marker.dirtySince);
       }
-      const documentImages = currentAdapterDocument?.images?.filter((image) => image.elementKey === resolvedElementKey) ?? [];
+      const documentImages = currentAdapterDocument?.images?.filter(
+        (image) => image.elementKey === resolvedElementKey && isCurrentPageScopedRecord(image)
+      ) ?? [];
       if (documentImages.length > 0) {
         const hydratedImages = documentImages.filter((image) => typeof image.data === "string" && image.data.trim()).map((image) => ({
           id: String(image.id ?? "").trim() || `image-${meta.images.length + 1}`,
@@ -27404,17 +28135,22 @@ function createPersistenceService(options) {
     if (typeof window === "undefined") return;
     const adapterDocument = await readAdapterDocument();
     if (adapterDocument) {
-      mergeAdapterTaskStates(adapterDocument);
+      lastAdapterDocument = adapterDocument;
     }
     const payload = adapterDocument ? {
       version: CACHE_VERSION,
       path: adapterDocument.resource.targetPath || resolveStorageScope() || "",
       updatedAt: Date.now(),
       showMarkers: state2.changeMarkersVisible,
-      entries: adapterDocument.comments.map(commentEntryToCacheEntry)
+      entries: adapterDocument.comments.filter((entry) => isCurrentPageScopedRecord(entry)).map(commentEntryToCacheEntry)
     } : readCache();
-    if (!payload) return;
-    if (payload.entries.length === 0) {
+    if (!payload) {
+      clearCurrentPageRuntimeState();
+      return;
+    }
+    const scopedEntries = payload.entries.filter((entry) => isCurrentPageScopedRecord(entry));
+    if (scopedEntries.length === 0) {
+      clearCurrentPageRuntimeState();
       if (adapterDocument) {
         writeLocalCache([], payload.updatedAt);
       }
@@ -27423,13 +28159,17 @@ function createPersistenceService(options) {
     cacheRestoreInProgress = true;
     currentAdapterDocument = adapterDocument;
     try {
+      clearCurrentPageRuntimeState();
       if (typeof payload.showMarkers === "boolean") {
         state2.changeMarkersVisible = payload.showMarkers;
         setMarkerVisibility(payload.showMarkers);
       } else {
         state2.changeMarkersVisible = readMarkerVisibility();
       }
-      applyCachedEntries(payload.entries);
+      if (adapterDocument) {
+        mergeAdapterTaskStates(adapterDocument);
+      }
+      applyCachedEntries(scopedEntries);
     } finally {
       cacheRestoreInProgress = false;
       currentAdapterDocument = null;
@@ -27437,6 +28177,7 @@ function createPersistenceService(options) {
     state2.propertyPanel?.refresh();
     changes.syncEditMetaWithTransactions();
     if (adapterDocument) {
+      preserveMissingCurrentScopeRecordsOnNextWrite = true;
       writeLocalCache(buildCacheEntriesFromTransactions());
       return;
     }
@@ -27498,6 +28239,7 @@ function createPersistenceService(options) {
     persistFromTransactions,
     flushPendingWrite,
     restoreCachedChanges,
+    getPersistedPrototypeCommentsDocument,
     clearCachedChanges,
     clearStorage
   };
@@ -27615,6 +28357,7 @@ function createEditorSummariesService(options) {
   const { state: state2, buildCopyPromptOverride } = options;
   const promptContext = resolvePromptContext(options.promptContext, options.projectPath);
   const getResourceContext = options.getResourceContext ?? (() => null);
+  const readPersistedPrototypeCommentsDocument = options.getPersistedPrototypeCommentsDocument ?? (() => null);
   function resolvePromptPageUrl() {
     if (typeof window === "undefined") return "";
     try {
@@ -27844,6 +28587,7 @@ ${lines.join("\n")}
     if (snapshot.tagName) lines.push(`  - \u5F53\u524D\u5143\u7D20\u6807\u7B7E: ${snapshot.tagName}`);
     if (snapshot.currentText) lines.push(`  - \u5F53\u524D\u5143\u7D20\u6587\u672C: ${snapshot.currentText}`);
     if (selectorPath) lines.push(`  - \u5143\u7D20\u5B9A\u4F4D: ${selectorPath}`);
+    if (params.pageScope) lines.push(`  - \u9875\u9762\u8303\u56F4: ${params.pageScope}`);
     if (params.debugFileHint) lines.push(`  - \u53EF\u80FD\u76F8\u5173\u6587\u4EF6: ${params.debugFileHint}`);
     const allActions = [...params.actions];
     if (params.note) allActions.push(params.note);
@@ -27910,14 +28654,68 @@ ${lines.join("\n")}
     if (!meta) return [];
     return [...meta.tweakSummaryLines ?? []];
   }
+  function resolvePersistedPrototypeCommentsDocument() {
+    try {
+      const document2 = readPersistedPrototypeCommentsDocument();
+      if (!document2 || document2.kind !== "prototype-edit-comments" || !Array.isArray(document2.comments)) {
+        return null;
+      }
+      return document2;
+    } catch {
+      return null;
+    }
+  }
+  function buildPersistedCommentActionLines(comment) {
+    const actionLines = [];
+    const tweakLines = Array.isArray(comment.tweak?.summaryLines) ? comment.tweak.summaryLines.map((line) => normalizePathValue2(line)).filter(Boolean) : [];
+    actionLines.push(...tweakLines);
+    const textChange = comment.textChange;
+    if (textChange && String(textChange.before ?? "") !== String(textChange.after ?? "")) {
+      actionLines.push(
+        `\u6587\u672C\u5185\u5BB9 "${formatTextValue(textChange.before)}" -> "${formatTextValue(textChange.after)}"`
+      );
+    }
+    const styleChanges = comment.styleChanges;
+    if (styleChanges) {
+      const keys = /* @__PURE__ */ new Set([
+        ...Object.keys(styleChanges.before ?? {}),
+        ...Object.keys(styleChanges.after ?? {})
+      ]);
+      for (const prop of Array.from(keys).sort()) {
+        const before = String((styleChanges.before ?? {})[prop] ?? "").trim();
+        const after = String((styleChanges.after ?? {})[prop] ?? "").trim();
+        if (before === after) continue;
+        actionLines.push(`\u6837\u5F0F ${prop}: "${formatStyleValue(before)}" -> "${formatStyleValue(after)}"`);
+      }
+    }
+    return actionLines;
+  }
+  function collectPersistedPrototypeCommentMetas() {
+    const document2 = resolvePersistedPrototypeCommentsDocument();
+    if (!document2) return [];
+    return document2.comments.map((comment) => ({
+      elementKey: String(comment.elementKey ?? "").trim(),
+      label: String(comment.label ?? "").trim() || String(comment.elementKey ?? "").trim() || "element",
+      locator: comment.locator,
+      pageScope: String(comment.pageScope ?? "").trim(),
+      note: buildPromptNoteWithSkills(comment.comment ?? "", comment),
+      skillIds: comment.skillIds?.slice(),
+      actions: buildPersistedCommentActionLines(comment)
+    })).filter(
+      (comment) => Boolean(comment.locator) && (Boolean(comment.note) || (comment.skillIds?.length ?? 0) > 0 || comment.actions.length > 0)
+    );
+  }
   function buildDefaultCopyPrompt() {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
     const moveSummaries = collectMoveSummaries(undoStack);
+    const persistedCommentMetas = collectPersistedPrototypeCommentMetas();
     const noteOnlyMetas = collectNoteOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     );
-    if (summaries.length === 0 && noteOnlyMetas.length === 0 && moveSummaries.length === 0) return "";
+    if (persistedCommentMetas.length === 0 && summaries.length === 0 && noteOnlyMetas.length === 0 && moveSummaries.length === 0) {
+      return "";
+    }
     const currentFilePath = resolveCurrentFilePath();
     const prototypeFilePath = resolvePrototypeFilePath();
     const includeDebugFileHint = !hasExplicitHostFilePath();
@@ -27947,39 +28745,53 @@ ${lines.join("\n")}
       lines.push("\u4FEE\u6539\u5217\u8868:");
     }
     let itemIndex = 1;
-    for (const summary of summaries) {
-      const meta = state2.editMetaByKey.get(summary.elementKey);
-      const note = buildPromptNoteWithSkills(meta?.note ?? "", meta);
-      const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
-      appendChangeItem(lines, {
-        index: itemIndex,
-        locator: summary.netEffect.locator,
-        fallbackLabel: summary.fullLabel || summary.label,
-        fallbackText: summary.netEffect.textChange?.after ?? summary.netEffect.textChange?.before ?? "",
-        debugFileHint: includeDebugFileHint ? formatDebugSource(summary.debugSource) : "",
-        actions,
-        note
-      });
-      itemIndex += 1;
-    }
-    for (const meta of noteOnlyMetas) {
-      const comment = isTextCommentKey(meta.elementKey) ? findTextComment(meta.elementKey) : null;
-      if (comment) {
-        appendTextCommentItem(lines, {
-          index: itemIndex,
-          comment,
-          note: meta.note
-        });
-      } else if (meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0) {
+    if (persistedCommentMetas.length > 0) {
+      for (const meta of persistedCommentMetas) {
         appendChangeItem(lines, {
           index: itemIndex,
           locator: meta.locator,
           fallbackLabel: meta.label,
           actions: meta.actions,
+          pageScope: meta.pageScope,
           note: meta.note
         });
+        itemIndex += 1;
       }
-      itemIndex += 1;
+    } else {
+      for (const summary of summaries) {
+        const meta = state2.editMetaByKey.get(summary.elementKey);
+        const note = buildPromptNoteWithSkills(meta?.note ?? "", meta);
+        const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
+        appendChangeItem(lines, {
+          index: itemIndex,
+          locator: summary.netEffect.locator,
+          fallbackLabel: summary.fullLabel || summary.label,
+          fallbackText: summary.netEffect.textChange?.after ?? summary.netEffect.textChange?.before ?? "",
+          debugFileHint: includeDebugFileHint ? formatDebugSource(summary.debugSource) : "",
+          actions,
+          note
+        });
+        itemIndex += 1;
+      }
+      for (const meta of noteOnlyMetas) {
+        const comment = isTextCommentKey(meta.elementKey) ? findTextComment(meta.elementKey) : null;
+        if (comment) {
+          appendTextCommentItem(lines, {
+            index: itemIndex,
+            comment,
+            note: meta.note
+          });
+        } else if (meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0) {
+          appendChangeItem(lines, {
+            index: itemIndex,
+            locator: meta.locator,
+            fallbackLabel: meta.label,
+            actions: meta.actions,
+            note: meta.note
+          });
+        }
+        itemIndex += 1;
+      }
     }
     if (moveSummaries.length > 0) {
       lines.push("");
@@ -28052,6 +28864,8 @@ ${lines.join("\n")}
     return defaultPrompt;
   }
   function getCopyPromptFilteredNotice() {
+    const persistedDocument = resolvePersistedPrototypeCommentsDocument();
+    const hasPersistedImages = (persistedDocument?.images?.length ?? 0) > 0;
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
     const summarizedKeys = new Set(summaries.map((summary) => String(summary.elementKey)));
@@ -28062,7 +28876,7 @@ ${lines.join("\n")}
     }) || Array.from(state2.editMetaByKey.values()).some(
       (meta) => !summarizedKeys.has(meta.elementKey) && (meta.images.length ?? 0) > 0
     );
-    return hasFilteredImages ? "\u4E0D\u652F\u6301\u6279\u6CE8\u56FE\u7247\uFF0C\u5DF2\u8FC7\u6EE4\u3002" : void 0;
+    return hasPersistedImages || hasFilteredImages ? "\u4E0D\u652F\u6301\u6279\u6CE8\u56FE\u7247\uFF0C\u5DF2\u8FC7\u6EE4\u3002" : void 0;
   }
   function buildSaveRunPromptFromParts(params) {
     const { summaries, commentOnlyMetas, moveSummaries } = params;
@@ -28351,6 +29165,7 @@ function createGenieEditor(options = {}) {
     promptContext: resolvedOptions.promptContext,
     projectPath: resolvedProjectPath,
     getResourceContext: resolvedOptions.host.getResourceContext,
+    getPersistedPrototypeCommentsDocument: () => persistence?.getPersistedPrototypeCommentsDocument() ?? null,
     buildCopyPromptOverride: resolvedOptions.host.buildCopyPrompt
   });
   const feedback = createFeedbackService({
@@ -28522,6 +29337,7 @@ function createGenieEditor(options = {}) {
       disablePageAnimations: false,
       pageZoomEnabled: false,
       copySkillInstallPromptDisabled: true,
+      selectionModeActive: true,
       fullExitAvailable: false
     };
   }
@@ -28538,6 +29354,12 @@ function createGenieEditor(options = {}) {
   async function runHostToolbarAction(action) {
     if (destroyed) return false;
     return state2.propertyPanel?.runHostToolbarAction?.(action) ?? false;
+  }
+  function refresh() {
+    if (destroyed) return;
+    state2.breadcrumbs?.refresh();
+    state2.propertyPanel?.refresh();
+    state2.positionTracker?.forceUpdate(true);
   }
   function normalizeExternalTaskRef(value) {
     if (!value) return null;
@@ -28728,6 +29550,7 @@ function createGenieEditor(options = {}) {
     state: state2,
     changes,
     getResourceContext: resolvedOptions.host.getResourceContext,
+    persistenceAdapter: resolvedOptions.host.persistenceAdapter,
     interactionProfile: resolvedOptions.interactionProfile
   });
   let flushPendingCommentContextSync = null;
@@ -28928,6 +29751,7 @@ function createGenieEditor(options = {}) {
     getState,
     getStatus,
     subscribeStatus,
+    refresh,
     getSelectedElement: buildSelectedElementSummary,
     getModifiedElements,
     getTextChanges,

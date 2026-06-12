@@ -1,13 +1,15 @@
-export type PreviewMode = 'single' | 'split';
+export type PreviewMode = 'single' | 'split' | 'multi-page';
 export type PreviewSinglePreset = 'desktop' | 'mobile' | 'tablet' | 'custom';
 export type PreviewScaleMode = 'fit-width' | 'fit-screen';
 export type PreviewDeviceId = 'desktop' | 'mobile' | 'tablet';
+export type MultiPageColumns = 1 | 2 | 3 | 4;
 
 export interface PreviewConfig {
   previewMode: PreviewMode;
   singlePreset: PreviewSinglePreset;
   customWidth: number | null;
   customHeight: number | null;
+  multiPageColumns: MultiPageColumns;
   splitWidths: {
     primary: number;
     secondary: number;
@@ -44,9 +46,15 @@ export interface SplitPreviewLayoutResult {
   secondary: PreviewViewportMetrics;
 }
 
+export interface MultiPageLayoutResult {
+  columns: MultiPageColumns;
+  card: PreviewViewportMetrics;
+}
+
 export type PreviewLayoutResult =
   | { mode: 'single'; single: SinglePreviewLayoutResult }
-  | { mode: 'split'; split: SplitPreviewLayoutResult };
+  | { mode: 'split'; split: SplitPreviewLayoutResult }
+  | { mode: 'multi-page'; multiPage: MultiPageLayoutResult };
 
 export interface PreviewMeasuredContentSize {
   width: number;
@@ -59,11 +67,16 @@ export const DEVICE_PRESET_SIZES: Record<PreviewDeviceId, { width: number; heigh
   tablet: { width: 820, height: 1180 },
 };
 
+export const MULTI_PAGE_MAX_VISIBLE = 16;
+export const MULTI_PAGE_ACTIVE_LIMIT = 2;
+export const DEFAULT_MULTI_PAGE_COLUMNS: MultiPageColumns = 3;
+
 export const DEFAULT_PREVIEW_CONFIG: PreviewConfig = {
   previewMode: 'single',
   singlePreset: 'desktop',
   customWidth: null,
   customHeight: null,
+  multiPageColumns: DEFAULT_MULTI_PAGE_COLUMNS,
   splitWidths: {
     primary: DEVICE_PRESET_SIZES.desktop.width,
     secondary: DEVICE_PRESET_SIZES.mobile.width,
@@ -80,6 +93,28 @@ function clampPositive(value: number | null | undefined, fallback: number): numb
     return fallback;
   }
   return Math.round(value as number);
+}
+
+export function normalizeMultiPageColumns(value: unknown, fallback: MultiPageColumns = DEFAULT_MULTI_PAGE_COLUMNS): MultiPageColumns {
+  const numericValue = typeof value === 'number'
+    ? value
+    : typeof value === 'string'
+      ? Number.parseInt(value.trim(), 10)
+      : NaN;
+  return numericValue === 1 || numericValue === 2 || numericValue === 3 || numericValue === 4
+    ? numericValue
+    : fallback;
+}
+
+export function resolveDefaultMultiPageColumns(pageCount: unknown): MultiPageColumns {
+  if (typeof pageCount !== 'number' || !Number.isFinite(pageCount)) {
+    return DEFAULT_MULTI_PAGE_COLUMNS;
+  }
+  return normalizeMultiPageColumns(Math.min(4, Math.max(1, Math.round(pageCount))), 1);
+}
+
+export function resolveMultiPageVisiblePages<T>(pages: readonly T[]): T[] {
+  return pages.slice(0, MULTI_PAGE_MAX_VISIBLE);
 }
 
 function resolveMeasuredSize(
@@ -181,12 +216,15 @@ export function getWebEditorRootWidth(config: PreviewConfig): number | null {
   if (config.previewMode === 'split') {
     return clampPositive(config.splitWidths.primary, DEVICE_PRESET_SIZES.desktop.width);
   }
+  if (config.previewMode === 'multi-page') {
+    return null;
+  }
 
   return getSinglePreviewLogicalSize(config)?.width ?? null;
 }
 
 export function getPreviewExportDeviceId(config: PreviewConfig): PreviewDeviceId {
-  if (config.previewMode === 'split') {
+  if (config.previewMode === 'split' || config.previewMode === 'multi-page') {
     return 'desktop';
   }
 
@@ -204,8 +242,26 @@ export function getPreviewSelectedDeviceId(config: PreviewConfig): string {
   if (config.previewMode === 'split') {
     return 'split';
   }
+  if (config.previewMode === 'multi-page') {
+    return 'multi-page';
+  }
 
   return config.singlePreset;
+}
+
+function resolveMultiPageLogicalSize(config: PreviewConfig): { width: number; height: number } {
+  if (config.singlePreset === 'custom') {
+    return {
+      width: clampPositive(config.customWidth, DEVICE_PRESET_SIZES.desktop.width),
+      height: clampPositive(config.customHeight, DEVICE_PRESET_SIZES.desktop.height),
+    };
+  }
+
+  if (config.singlePreset === 'mobile' || config.singlePreset === 'tablet') {
+    return DEVICE_PRESET_SIZES[config.singlePreset];
+  }
+
+  return DEVICE_PRESET_SIZES.desktop;
 }
 
 export function resolvePreviewLayout(params: {
@@ -224,6 +280,8 @@ export function resolvePreviewLayout(params: {
   splitReservedHeight?: number;
   splitReservedWidth?: number;
 }): PreviewLayoutResult {
+  const rawContainerWidth = Number.isFinite(params.containerWidth) ? Math.floor(params.containerWidth) : 0;
+  const rawContainerHeight = Number.isFinite(params.containerHeight) ? Math.floor(params.containerHeight) : 0;
   const containerWidth = Math.max(1, Math.floor(params.containerWidth));
   const containerHeight = Math.max(1, Math.floor(params.containerHeight));
   const config = params.config;
@@ -278,6 +336,34 @@ export function resolvePreviewLayout(params: {
     };
   }
 
+  if (config.previewMode === 'multi-page') {
+    const logicalSize = resolveMultiPageLogicalSize(config);
+    const columns = normalizeMultiPageColumns(config.multiPageColumns);
+    const horizontalGap = Math.max(0, columns - 1) * 16;
+    const layoutContainerWidth = rawContainerWidth > 1
+      ? containerWidth
+      : logicalSize.width * columns + horizontalGap;
+    const layoutContainerHeight = rawContainerHeight > 1
+      ? containerHeight
+      : logicalSize.height;
+    const cardContainerWidth = Math.max(1, Math.floor((layoutContainerWidth - horizontalGap) / columns));
+    const cardContainerHeight = Math.max(1, layoutContainerHeight);
+
+    return {
+      mode: 'multi-page',
+      multiPage: {
+        columns,
+        card: createViewportMetrics(
+          logicalSize.width,
+          logicalSize.height,
+          cardContainerWidth,
+          cardContainerHeight,
+          'fit-screen',
+        ),
+      },
+    };
+  }
+
   if (config.singlePreset === 'desktop') {
     return {
       mode: 'single',
@@ -320,12 +406,7 @@ export function resolvePreviewLayout(params: {
   }
 
   const deviceId = config.singlePreset;
-  const measuredSize = resolveMeasuredSize(
-    DEVICE_PRESET_SIZES[deviceId].width,
-    DEVICE_PRESET_SIZES[deviceId].height,
-    params.actualSingleContentSize,
-    config.scaleMode,
-  );
+  const deviceSize = DEVICE_PRESET_SIZES[deviceId];
   const singleContainerWidth = deviceId === 'desktop'
     ? containerWidth
     : Math.max(1, containerWidth - deviceShellInset.width);
@@ -333,8 +414,8 @@ export function resolvePreviewLayout(params: {
     ? containerHeight
     : Math.max(1, containerHeight - deviceShellInset.height);
   const metrics = createViewportMetrics(
-    measuredSize.width,
-    measuredSize.height,
+    deviceSize.width,
+    deviceSize.height,
     singleContainerWidth,
     singleContainerHeight,
     'fit-screen',

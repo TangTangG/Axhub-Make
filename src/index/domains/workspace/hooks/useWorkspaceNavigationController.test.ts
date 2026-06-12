@@ -22,12 +22,19 @@ describe('useWorkspaceNavigationController source', () => {
 
   it('loads a URL-selected project without writing server active project state', () => {
     const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
+    const loadProjectsStart = source.indexOf('const loadProjects = useCallback');
+    const probeStatusStart = source.indexOf('const probeProjectRuntimeStatus = useCallback', loadProjectsStart);
+    const loadProjectsSource = source.slice(loadProjectsStart, probeStatusStart);
     const loadProjectResourcesStart = source.indexOf('const loadProjectResources = useCallback');
     const loadDataStart = source.indexOf('const loadData = useCallback', loadProjectResourcesStart);
     const loadProjectResourcesSource = source.slice(loadProjectResourcesStart, loadDataStart);
 
     expect(source).toContain('readInitialProjectIdFromUrl');
     expect(source).toContain('initialProjectIdRef');
+    expect(loadProjectsSource).toContain('const requestedProjectId = initialProjectIdRef.current;');
+    expect(loadProjectsSource).toContain('const requestedProjectExists = Boolean(');
+    expect(loadProjectsSource).toContain('payload.projects.some((project) => project.id === requestedProjectId)');
+    expect(loadProjectsSource).toContain('setActiveProjectId(requestedProjectExists ? requestedProjectId : payload.activeProjectId);');
     expect(loadProjectResourcesSource).toContain('initialProjectIdRef.current');
     expect(loadProjectResourcesSource).toContain('loadProjectResourcesFor(requestedProjectId)');
     expect(loadProjectResourcesSource).not.toContain("fetch('/api/projects/active'");
@@ -40,9 +47,12 @@ describe('useWorkspaceNavigationController source', () => {
     const switchProjectSource = source.slice(switchProjectStart, addProjectStart);
 
     expect(switchProjectSource).toContain('const alreadyActiveProject = normalizedProjectId === activeProjectId;');
-    expect(switchProjectSource).toContain('if (!normalizedProjectId || (alreadyActiveProject && projectResourcesLoadedRef.current)) {');
-    expect(switchProjectSource).toContain('if (!alreadyActiveProject) {');
+    expect(switchProjectSource).toContain('if (!normalizedProjectId) {');
     expect(switchProjectSource).toContain("fetch('/api/projects/active'");
+    expect(switchProjectSource).toContain('if (alreadyActiveProject && projectResourcesLoadedRef.current) {');
+    expect(switchProjectSource.indexOf("fetch('/api/projects/active'"))
+      .toBeLessThan(switchProjectSource.indexOf('if (alreadyActiveProject && projectResourcesLoadedRef.current) {'));
+    expect(switchProjectSource).not.toContain('if (!alreadyActiveProject) {');
     expect(switchProjectSource).toContain('await loadProjectResourcesFor(normalizedProjectId);');
     expect(switchProjectSource).not.toContain('await ensureProjectDevServer(normalizedProjectId);');
   });
@@ -88,6 +98,22 @@ describe('useWorkspaceNavigationController source', () => {
     expect(createBlankSource).not.toContain("throw new Error('加载项目资源失败');");
   });
 
+  it('prints completed blank project setup timings to the browser console', () => {
+    const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
+    const createBlankStart = source.indexOf('const createBlankMakeProject = useCallback');
+    const reloadStart = source.indexOf('const reloadSidebarAssets = useCallback', createBlankStart);
+    const createBlankSource = source.slice(createBlankStart, reloadStart);
+
+    expect(source).toContain('function logMakeClientCreateProgress(payload: unknown): void');
+    expect(source).toContain('console.groupCollapsed(`[Axhub Make] 新建项目耗时');
+    expect(source).toContain('console.table(rows);');
+    expect(source).toContain('console.groupEnd();');
+    expect(createBlankSource).toContain('const payload = await response.json().catch(() => null);');
+    expect(createBlankSource).toContain('logMakeClientCreateProgress(payload);');
+    expect(createBlankSource.indexOf('logMakeClientCreateProgress(payload);'))
+      .toBeLessThan(createBlankSource.indexOf('if (!response.ok) {'));
+  });
+
   it('requires project setup instead of falling back to legacy entries when no projects exist', () => {
     const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
     const loadProjectsStart = source.indexOf('const loadProjects = useCallback');
@@ -120,6 +146,17 @@ describe('useWorkspaceNavigationController source', () => {
     expect(source).toContain('startActiveProjectServer,');
   });
 
+  it('preserves make client startup diagnostics for copyable AI prompts', () => {
+    const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
+    const ensureProjectDevServerStart = source.indexOf('const ensureProjectDevServer = useCallback');
+    const startActiveProjectServerStart = source.indexOf('const startActiveProjectServer = useCallback', ensureProjectDevServerStart);
+    const ensureProjectDevServerSource = source.slice(ensureProjectDevServerStart, startActiveProjectServerStart);
+
+    expect(ensureProjectDevServerSource).toContain('const error = new Error(formatMakeClientProjectError(payload, \'启动 Make 客户端失败\'));');
+    expect(ensureProjectDevServerSource).toContain('(error as Error & { diagnostic?: unknown }).diagnostic = payload;');
+    expect(ensureProjectDevServerSource).toContain('throw error;');
+  });
+
   it('maps make client project setup errors to user-friendly messages', () => {
     const source = readFileSync(resolve(__dirname, '../../../utils/projectSetupErrors.ts'), 'utf8');
 
@@ -131,7 +168,6 @@ describe('useWorkspaceNavigationController source', () => {
     expect(source).toContain('MAKE_CLIENT_TEMPLATE_UNAVAILABLE');
     expect(source).toContain('无法下载 Make 客户端模板包');
     expect(source).toContain('MAKE_CLIENT_INSTALL_FAILED');
-    expect(source).not.toContain('npm install');
     expect(source).toContain('依赖安装失败');
     expect(source).toContain('MAKE_CLIENT_METADATA_SYNC_FAILED');
     expect(source).toContain('MAKE_CLIENT_DEV_TIMEOUT');
@@ -139,6 +175,9 @@ describe('useWorkspaceNavigationController source', () => {
     expect(source).toContain('MAKE_CLIENT_DEV_FAILED');
     expect(source).toContain("template: '下载模板包'");
     expect(source).toContain('formatMakeClientProjectError');
+    expect(source).toContain('buildMakeClientStartupFailurePrompt');
+    expect(source).toContain('npm install 失败');
+    expect(source).toContain('pnpm install 失败');
   });
 
   it('shows blank make client project creation as a single pending request', () => {
@@ -230,6 +269,20 @@ describe('useWorkspaceNavigationController source', () => {
     expect(loadTreeSource).toContain('loadingSidebarTreeTabsRef.current.delete(tab)');
   });
 
+  it('lets forced sidebar tree loads use fresh items and supersede stale in-flight responses', () => {
+    const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
+    const loadTreeStart = source.indexOf('const loadSidebarTree = useCallback');
+    const effectsStart = source.indexOf('useEffect(() => {', loadTreeStart);
+    const loadTreeSource = source.slice(loadTreeStart, effectsStart);
+
+    expect(source).toContain('sidebarTreeRequestVersionRef');
+    expect(loadTreeSource).toContain('if (!options?.force && loadingSidebarTreeTabsRef.current.has(tab))');
+    expect(loadTreeSource).toContain('const requestVersion = (sidebarTreeRequestVersionRef.current[tab] || 0) + 1;');
+    expect(loadTreeSource).toContain('sidebarTreeRequestVersionRef.current[tab] = requestVersion;');
+    expect(loadTreeSource).toContain('const items = options?.items || getSidebarTabItems(tab);');
+    expect(loadTreeSource).toContain('if (sidebarTreeRequestVersionRef.current[tab] !== requestVersion) {');
+  });
+
   it('does not actively load or sanitize the legacy standalone canvas tree for the main sidebar', () => {
     const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
     const reloadStart = source.indexOf('const reloadSidebarAssets = useCallback');
@@ -262,5 +315,21 @@ describe('useWorkspaceNavigationController source', () => {
     expect(idleEffectSource).toContain('sidebarAssetsLoaded');
     expect(idleEffectSource).toContain('projectResourcesLoadedRef.current');
     expect(idleEffectSource).toContain('return;');
+  });
+
+  it('reloads docs and sidebar assets from the active project context', () => {
+    const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
+    const reloadStart = source.indexOf('const reloadSidebarAssets = useCallback');
+    const reloadDocsStart = source.indexOf('const reloadDocsItems = useCallback', reloadStart);
+    const reloadCanvasStart = source.indexOf('const reloadCanvasItems = useCallback', reloadDocsStart);
+    const reloadSidebarAssetsSource = source.slice(reloadStart, reloadDocsStart);
+    const reloadDocsItemsSource = source.slice(reloadDocsStart, reloadCanvasStart);
+
+    expect(source).toContain('function withActiveProjectParam(url: string, activeProjectId: string | null): string {');
+    expect(reloadSidebarAssetsSource).toContain("fetch(withActiveProjectParam('/api/docs', activeProjectId))");
+    expect(reloadSidebarAssetsSource).toContain("fetch(withActiveProjectParam('/api/themes', activeProjectId))");
+    expect(reloadDocsItemsSource).toContain("fetch(withActiveProjectParam('/api/docs', activeProjectId))");
+    expect(reloadSidebarAssetsSource).toContain('}, [activeProjectId, loadProjectResources])');
+    expect(reloadDocsItemsSource).toContain('}, [activeProjectId])');
   });
 });

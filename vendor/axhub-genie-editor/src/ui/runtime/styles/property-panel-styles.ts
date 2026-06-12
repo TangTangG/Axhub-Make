@@ -580,11 +580,18 @@ export const PROPERTY_PANEL_LOCAL_STYLES = `
     border: 1px solid ${EDITOR_CHROME.borderStrong};
     background: ${EDITOR_CHROME.surfaceMuted};
     box-shadow: none;
+    cursor: pointer;
   }
 
   .we-runtime-prop-panel__body .ant-color-picker-trigger:hover {
     border-color: ${EDITOR_CHROME.borderStrong};
     background: ${EDITOR_CHROME.surfaceInteractive};
+  }
+
+  .we-runtime-prop-panel__body .ant-color-picker-trigger.ant-color-picker-trigger-disabled,
+  .we-runtime-prop-panel__body .ant-color-picker-trigger[disabled],
+  .we-runtime-prop-panel__body .ant-color-picker-trigger[aria-disabled="true"] {
+    cursor: not-allowed;
   }
 
   .we-runtime-prop-panel__body .we-runtime-prop-panel__unit-input {

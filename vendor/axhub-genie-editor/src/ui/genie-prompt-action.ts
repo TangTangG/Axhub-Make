@@ -15,13 +15,19 @@ export function isGeniePromptActionVisible(options: {
   toolMinimized: boolean;
   onSendToGenie?: SendToGenieHandler | undefined;
   getGenieBridgeAvailable?: (() => boolean) | undefined;
+  getAssistantPanelOpen?: (() => boolean) | undefined;
 }): boolean {
+  const assistantPanelOpen = options.getAssistantPanelOpen?.();
+  const contextAppendAvailable = typeof assistantPanelOpen === 'boolean'
+    ? assistantPanelOpen
+    : Boolean(options.getGenieBridgeAvailable?.() ?? false);
+
   return (
     options.uiMode === 'bubble-card'
     && !options.toolMinimized
     && Boolean(options.currentTarget)
     && Boolean(options.onSendToGenie)
-    && Boolean(options.getGenieBridgeAvailable?.() ?? false)
+    && contextAppendAvailable
   );
 }
 
@@ -50,6 +56,7 @@ export function getGeniePromptToolbarActionState(options: {
   currentTaskRunning?: boolean | undefined;
   currentTaskSessionReady?: boolean | undefined;
   canInterrupt?: boolean | undefined;
+  canWakeGenie?: boolean | undefined;
   onSendPromptToGenie?: SendPromptToGenieHandler | undefined;
   getGenieBridgeConnected?: (() => boolean) | undefined;
   getSendPromptToGenieBlockReason?: (() => string | undefined) | undefined;
@@ -76,6 +83,7 @@ export function getGeniePromptToolbarActionState(options: {
   const canAppendToRunningConversation = Boolean(options.hasReusableConversation);
   const canAppendToSession = canAppendToRunningConversation || (pageTaskRunning && pageTaskSessionReady);
   const waitingForNewSession = pageTaskRunning && !canAppendToSession;
+  const canWakeGenie = Boolean(options.canWakeGenie);
   const visualState = options.visualState === 'awake' && (connected || pageTaskRunning)
     ? 'awake'
     : 'sleeping';
@@ -85,9 +93,10 @@ export function getGeniePromptToolbarActionState(options: {
       ? 'working'
       : visualState;
   const blockReason = options.getSendPromptToGenieBlockReason?.();
-  const showPromptActions = !options.toolMinimized && (robotState === 'awake' || robotState === 'working');
+  const showSendAction = !options.toolMinimized && Boolean(options.onSendPromptToGenie);
+  const showInterruptAction = !options.toolMinimized && (robotState === 'awake' || robotState === 'working');
   const sendTitle = blockReason
-    ?? (!connected
+    ?? (!connected && !canWakeGenie
       ? 'AI 连接未建立，请稍后重试。'
       : canAppendToSession
         ? '继续追加到当前 AI 对话'
@@ -110,16 +119,16 @@ export function getGeniePromptToolbarActionState(options: {
     robotDisabled: robotState === 'waking',
     robotLoading: robotState === 'waking',
     robotTitle,
-    sendVisible: showPromptActions,
+    sendVisible: showSendAction,
     sendDisabled:
       !options.onSendPromptToGenie
-      || !connected
+      || (!connected && !canWakeGenie)
       || waitingForNewSession
       || Boolean(blockReason),
     sendLoading: Boolean(options.sending),
     sendTitle,
     sendRequiresConfirm: false,
-    interruptVisible: showPromptActions,
+    interruptVisible: showInterruptAction,
     interruptDisabled:
       !currentTaskRunning
       || !options.canInterrupt
@@ -150,6 +159,7 @@ export function getGeniePromptBubbleActionState(options: {
   getGenieBridgeConnected?: (() => boolean) | undefined;
   getSendCurrentElementPromptToGenieBlockReason?: (() => string | undefined) | undefined;
   hasReusableConversation?: boolean | undefined;
+  canWakeGenie?: boolean | undefined;
 }): {
   visible: boolean;
   disabled: boolean;
@@ -164,12 +174,13 @@ export function getGeniePromptBubbleActionState(options: {
   const canAppendToRunningConversation = Boolean(options.hasReusableConversation);
   const canAppendToSession = canAppendToRunningConversation || (pageTaskRunning && pageTaskSessionReady);
   const waitingForNewSession = pageTaskRunning && !canAppendToSession;
+  const canWakeGenie = Boolean(options.canWakeGenie);
   const visualState = options.visualState === 'awake' && (connected || pageTaskRunning)
     ? 'awake'
     : 'sleeping';
   const blockReason = options.getSendCurrentElementPromptToGenieBlockReason?.();
   const title = blockReason
-    ?? (!connected
+    ?? (!connected && !canWakeGenie
       ? 'AI 连接未建立，请稍后重试。'
       : canAppendToSession
         ? '继续追加到当前 AI 对话'
@@ -178,10 +189,10 @@ export function getGeniePromptBubbleActionState(options: {
           : '发送给 AI');
 
   return {
-    visible: visualState === 'awake',
+    visible: Boolean(options.onSendCurrentElementPromptToGenie),
     disabled:
       !options.onSendCurrentElementPromptToGenie
-      || !connected
+      || (!connected && !canWakeGenie)
       || waitingForNewSession
       || Boolean(blockReason),
     loading: Boolean(options.sending),

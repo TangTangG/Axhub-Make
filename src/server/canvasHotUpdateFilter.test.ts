@@ -21,8 +21,14 @@ describe('make-server canvas hot-update filter', () => {
   it('identifies canvas data files', () => {
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas.excalidraw')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas-assets/screenshot.png')).toBe(true);
-    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/ai-image-history.json')).toBe(true);
-    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/ai-image-assets/image-1.png')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/generation-artifacts.json')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/generation-assets/images/image-1.png')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/apps/axhub-make/client/src/prototypes/home/canvas.excalidraw')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/apps/axhub-make/client/src/prototypes/home/canvas-assets/embed.png')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/apps/axhub-make/client/src/prototypes/home/.spec/generation-artifacts.json')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/.axhub/sessions/conversations.json')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/.axhub/make/artifacts/axure/home/manifest.json')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/.spec/generation-artifacts.json')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/client/src/prototypes/home/index.tsx')).toBe(false);
     expect(isCanvasHotUpdateFile('/project/client/src/themes/brand/index.tsx')).toBe(false);
     expect(isCanvasHotUpdateFile('/project/src/index/index.tsx')).toBe(false);
@@ -41,8 +47,16 @@ describe('make-server canvas hot-update filter', () => {
       modules: [{ id: 'screenshot' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
-      file: '/project/src/prototypes/home/.spec/ai-image-history.json',
+      file: '/project/src/prototypes/home/.spec/generation-artifacts.json',
       modules: [{ id: 'history' }],
+    })).toEqual([]);
+    expect(await handleHotUpdate({
+      file: '/project/apps/axhub-make/client/src/prototypes/home/canvas.excalidraw',
+      modules: [{ id: 'client-canvas' }],
+    })).toEqual([]);
+    expect(await handleHotUpdate({
+      file: '/project/.axhub/sessions/conversations.json',
+      modules: [{ id: 'assistant-conversations' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
       file: '/project/client/src/prototypes/home/index.tsx',
@@ -72,7 +86,19 @@ describe('make-server canvas hot-update filter', () => {
 
     server.hot.send({
       type: 'full-reload',
-      triggeredBy: '/project/src/prototypes/home/.spec/ai-image-history.json',
+      triggeredBy: '/project/src/prototypes/home/.spec/generation-artifacts.json',
+    });
+    expect(hotSend).not.toHaveBeenCalled();
+
+    server.hot.send({
+      type: 'full-reload',
+      triggeredBy: '/project/.axhub/sessions/conversations.json',
+    });
+    expect(hotSend).not.toHaveBeenCalled();
+
+    server.hot.send({
+      type: 'full-reload',
+      triggeredBy: '/project/apps/axhub-make/client/src/prototypes/home/canvas.excalidraw',
     });
     expect(hotSend).not.toHaveBeenCalled();
 
@@ -101,7 +127,15 @@ describe('make-server canvas hot-update filter', () => {
 
     expect(viteConfigSource).toContain("import { canvasHotUpdateFilterPlugin } from './src/server/canvasHotUpdateFilter'");
     expect(viteConfigSource).toContain('canvasHotUpdateFilterPlugin()');
+    expect(viteConfigSource).toContain("'**/automation-reports/**'");
     expect(viteConfigSource).toContain("'**/client/**'");
+    expect(viteConfigSource).toContain("'**/midscene/**'");
+    expect(viteConfigSource).toContain("'**/.axhub/**'");
+    expect(viteConfigSource).toContain("'**/.spec/**'");
+    expect(viteConfigSource).toContain("'**/*.excalidraw'");
+    expect(viteConfigSource).toContain("'**/canvas-assets/**'");
+    expect(viteConfigSource).toContain("'**/dist/**'");
+    expect(viteConfigSource).toContain("'**/src/server/**'");
   });
 
   it('keeps the standalone admin dev server on its configured port', () => {

@@ -63,6 +63,7 @@ export interface TemplateLibraryIndexItem {
   sourcePath: string;
   coverPath: string;
   description: string;
+  previewUrl?: string;
   extraDependencies: string[];
 }
 
@@ -116,6 +117,26 @@ function assertString(value: unknown, fieldName: string): string {
   return raw;
 }
 
+function assertOptionalHttpUrl(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) {
+    throw new Error(`Invalid ${fieldName}`);
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Invalid ${fieldName}: ${String(value || '')}`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`Invalid ${fieldName}: ${raw}`);
+  }
+  return raw;
+}
+
 function validateTemplateIndex(raw: unknown): TemplateLibraryIndexItem[] {
   if (!raw || typeof raw !== 'object') {
     throw new Error('Template index must be an object');
@@ -156,6 +177,7 @@ function validateTemplateIndex(raw: unknown): TemplateLibraryIndexItem[] {
     if (!Array.isArray(extraDependencies) || extraDependencies.some((dependency) => typeof dependency !== 'string' || !dependency.trim())) {
       throw new Error(`Invalid templates[${index}].extraDependencies`);
     }
+    const previewUrl = assertOptionalHttpUrl(template.previewUrl, `templates[${index}].previewUrl`);
     return {
       id,
       title: assertString(template.title, `templates[${index}].title`),
@@ -163,6 +185,7 @@ function validateTemplateIndex(raw: unknown): TemplateLibraryIndexItem[] {
       sourcePath,
       coverPath,
       description: assertString(template.description, `templates[${index}].description`),
+      ...(previewUrl ? { previewUrl } : {}),
       extraDependencies: extraDependencies.map((dependency) => dependency.trim()),
     };
   });

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Copy, Download, Loader2, X } from 'lucide-react';
+import { Copy, Download, Globe, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { PromptClientPreference } from '../../types';
 import { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
@@ -49,6 +49,7 @@ interface UploadResult {
 interface ThemeLibraryItem extends ThemeLibraryPromptItem {
     coverUrl: string;
     sourceUrl: string;
+    previewUrl?: string;
     canDirectImport: boolean;
     directImportDisabledReason?: string;
 }
@@ -459,6 +460,19 @@ export default function CreateThemeDialog({
                                                                     <Copy className="h-3.5 w-3.5" />
                                                                     复制提示词
                                                                 </Button>
+                                                                {designSystem.previewUrl ? (
+                                                                    <Button
+                                                                        asChild
+                                                                        variant="outline"
+                                                                        size="sm"
+                                                                        className="h-7 gap-1.5 px-2.5 text-xs"
+                                                                    >
+                                                                        <a href={designSystem.previewUrl} target="_blank" rel="noreferrer">
+                                                                            <Globe className="h-3.5 w-3.5" />
+                                                                            在线预览
+                                                                        </a>
+                                                                    </Button>
+                                                                ) : null}
                                                                 <TooltipProvider>
                                                                     <Tooltip>
                                                                         <TooltipTrigger asChild>

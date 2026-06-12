@@ -158,6 +158,8 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       genieVisualState,
       onBubbleStyleEditorOpenChange,
       onSendCurrentElementPromptToGenie,
+      onWakeGenie,
+      onGenieVisualStateChange,
       getGenieBridgeConnected,
       getHasReusableGenieConversation,
       getSendCurrentElementPromptToGenieBlockReason,
@@ -552,6 +554,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       toolMinimized,
       onSendToGenie: options.onSendToGenie,
       getGenieBridgeAvailable: options.getGenieBridgeAvailable,
+      getAssistantPanelOpen: options.getAssistantPanelOpen,
     });
     const designToolExportAction = getDesignToolExportActionState({
       tool: designAdjustmentTool,
@@ -612,6 +615,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       pageTaskSessionReady,
       currentTaskRunning,
       onSendCurrentElementPromptToGenie,
+      canWakeGenie: Boolean(onWakeGenie),
       getGenieBridgeConnected,
       getSendCurrentElementPromptToGenieBlockReason: () => currentElementBlockReason,
       hasReusableConversation,
@@ -640,7 +644,31 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       };
     }, [currentTaskTerminal, dismissTerminalTaskAndSelection, promptVisible, uiMode]);
 
+    const wakeGenieForCurrentElementAction = React.useCallback(async (): Promise<boolean> => {
+      const connected = getGenieBridgeConnected?.();
+      if (connected !== false && genieVisualState === 'awake') {
+        return true;
+      }
+      if (!onWakeGenie) {
+        return connected !== false;
+      }
+
+      try {
+        const wakeResult = await onWakeGenie();
+        if (wakeResult === true) {
+          onGenieVisualStateChange?.('awake');
+          return true;
+        }
+      } catch {
+        // The wake bridge reports user-facing feedback.
+      }
+      return false;
+    }, [genieVisualState, getGenieBridgeConnected, onGenieVisualStateChange, onWakeGenie]);
+
     const handleConfirmSendCurrentElementPrompt = React.useCallback(async () => {
+      const ready = await wakeGenieForCurrentElementAction();
+      if (!ready) return;
+
       setSendingCurrentElementPrompt(true);
       try {
         const sent = await executePromptCardCurrentElementAction({
@@ -666,6 +694,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       onDismissSelection,
       onSendCurrentElementPromptToGenie,
       selectedSkills,
+      wakeGenieForCurrentElementAction,
     ]);
 
     const handlePromptKeyDown = React.useCallback(

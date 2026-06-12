@@ -1,16 +1,15 @@
 # 画布读写能力参考
 
-面向使用 Skill 的 Agent：优先读写本地 `.excalidraw` 文件。用户指定画布名或画布链接时，直接定位本地画布文件；CLI 用于获取当前浏览器会话信息或截图。
+面向使用 Skill 的 Agent：优先读写本地 `.excalidraw` 文件。用户指定画布名或画布链接时，直接定位本地画布文件；不要使用 `axhub-make canvas` CLI。
 
 ## 快速判断
 
-| 目标 | 优先方式 |
+| 目标 | 做法 |
 |------|----------|
 | 读取画布元素、批注、节点信息 | 直接读 `.excalidraw` |
 | 修改画布内容 | 直接改 `.excalidraw` |
 | 从用户给的画布链接定位元素 | 从链接提取画布名和元素 ID，再读文件 |
-| 获取当前浏览器里画布的截图 | `axhub-make canvas screenshot` |
-| 查看当前浏览器连接了哪些画布 | `axhub-make canvas info` |
+| 获取画布截图 | 优先使用已有 `canvas-assets` 截图；需要当前浏览器画布时用全局截图 API |
 
 ## 文件位置
 
@@ -50,30 +49,57 @@ src/prototypes/<prototype-name>/canvas-assets/embed-<elementId>.png
 | 原型节点 | `type == "embeddable"` 且 `customData.resourceType == "prototype"`，或 `link`/`previewUrl` 指向原型 |
 | 文档节点 | `type == "embeddable"` 且 `customData.type == "axhub-doc"` 或 `customData.resourceType == "doc"` |
 | 主题节点 | `type == "embeddable"` 且 `customData.resourceType == "theme"` 或 `customData.type == "axhub-theme"` |
-| AI 图片生成节点 | `type == "image"` 且 `customData.type == "axhub-ai-image-generator"` |
-| AI 图片结果节点 | `type == "image"` 且 `customData.type == "axhub-ai-image"` |
 | AI 原型生成节点 | `type == "image"` 且 `customData.type == "axhub-prototype-generator"` |
+| Drawio 节点 | `type == "image"` 且 `customData.type == "axhub-drawio"` |
 | 图片元素 | `type == "image"` |
 | 批注元素 | `customData.annotation` 有值 |
 
+<!--
+暂时停用：AI 图片生成节点与 AI 图片结果节点。需要图片时使用普通图片元素。
+-->
+
 Axhub 节点字段见 `axhub-nodes.md`。
 
-## CLI 读取
+## CLI
 
-CLI 面向当前浏览器会话。读取元素、节点和批注时仍以 `.excalidraw` 文件为准。
+没有画布专用 CLI。读取元素、节点和批注时仍以 `.excalidraw` 文件为准；需要截图时，优先使用已有 `canvas-assets` 截图或浏览器页面能力。
 
-查看当前浏览器连接的画布：
+## 浏览器截图 API
 
-```bash
-axhub-make canvas info
+Excalidraw 官方暴露的是导出工具方法，例如 `exportToBlob`、`exportToCanvas`、`exportToSvg`，不是当前画布实例的一键截图命令。Axhub 在浏览器里的当前画布实例上封装了全局截图 API：
+
+```js
+await window.__AXHUB_EXCALIDRAW_CAPTURE__.captureCanvas()
+await window.__AXHUB_EXCALIDRAW_CAPTURE__.captureElement('<elementId>')
 ```
 
-获取当前画布截图：
+两个方法都返回：
 
-```bash
-axhub-make canvas screenshot -o ./canvas.png
-axhub-make canvas screenshot -c prototypes/my-proto/canvas -o ./canvas.png
+```ts
+{
+  blob: Blob
+  dataUrl: string
+  width?: number
+  height?: number
+  elementIds: string[]
+}
 ```
+
+可选参数：
+
+```ts
+{
+  exportBackground?: boolean
+  exportPadding?: number
+  maxWidthOrHeight?: number
+  mimeType?: string
+  quality?: number
+  width?: number
+  height?: number
+}
+```
+
+默认导出 PNG、带背景、16px padding。`captureCanvas()` 导出当前画布所有未删除元素；`captureElement(elementId)` 只导出指定未删除元素。该能力只在画布页面打开并完成初始化后可用。
 
 ## 从链接定位
 

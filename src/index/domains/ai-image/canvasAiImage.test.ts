@@ -4,7 +4,9 @@ import {
   AI_IMAGE_PLACEHOLDER_FILE_ID,
   createAiImageGeneratorElement,
   createAiImageResultElements,
+  createAiImageGenerationSlots,
   createAiImagePlaceholderDataUrl,
+  finishAiImageGenerationSlots,
   getAiImageDisplaySize,
   isAiImageElement,
   isAiImageGeneratorElement,
@@ -80,17 +82,12 @@ describe('canvas AI image helpers', () => {
     expect(result.elements).toHaveLength(2);
     expect(result.elements.every((element) => element.type === 'image')).toBe(true);
     expect(result.elements.every((element) => element.isDeleted === false)).toBe(true);
-    expect(result.elements.every((element) => element.customData?.type === 'axhub-ai-image')).toBe(true);
+    expect(result.elements.every((element) => element.customData?.type === undefined)).toBe(true);
     expect(result.elements.map((element) => element.fileId)).toEqual(['img-one', 'img-two']);
     expect(result.elements[0]).toMatchObject({
       x: 10,
       y: 20,
-      customData: {
-        type: 'axhub-ai-image',
-        generatedBy: 'axhub-ai-image',
-        sourceTaskId: 'task-history',
-        previewKind: 'image',
-      },
+      customData: {},
     });
     expect(result.elements[0].customData).not.toHaveProperty('prompt');
     expect(result.elements[1].x - (result.elements[0].x + result.elements[0].width)).toBe(24);
@@ -148,6 +145,107 @@ describe('canvas AI image helpers', () => {
     expect(result.selectedElementIds).toEqual({
       [inserted[0].id]: true,
       [inserted[1].id]: true,
+    });
+  });
+
+  it('creates image loading slots for the requested count and replaces them one at a time', () => {
+    const generator = createAiImageGeneratorElement({
+      x: 100,
+      y: 200,
+      width: 320,
+      height: 240,
+    });
+    const queued = createAiImageGenerationSlots({
+      elements: [generator],
+      generatorId: generator.id,
+      taskId: 'task-slots',
+      count: 3,
+      width: 512,
+      height: 288,
+    });
+
+    expect(queued.elements).toHaveLength(3);
+    expect(queued.elements.map((element) => element.customData?.generationSlotIndex)).toEqual([0, 1, 2]);
+    expect(queued.elements.map((element) => element.x)).toEqual([100, 100 + 512 + 24, 100 + (512 + 24) * 2]);
+    expect(queued.elements.every((element) => element.width === 512 && element.height === 288)).toBe(true);
+
+    const first = replaceGeneratorWithImageElements({
+      elements: queued.elements,
+      generatorId: queued.elements[0].id,
+      taskId: 'task-slots',
+      images: [{
+        dataUrl: 'data:image/png;base64,one',
+        width: 1024,
+        height: 1024,
+        imageId: 'img-one',
+      }],
+    });
+    expect(first.elements.filter((element) => element.fileId === 'img-one' && !element.isDeleted)).toHaveLength(1);
+    expect(first.elements.filter((element) => element.customData?.generationTaskId === 'task-slots' && !element.isDeleted)).toHaveLength(2);
+
+    const second = replaceGeneratorWithImageElements({
+      elements: first.elements,
+      generatorId: queued.elements[1].id,
+      taskId: 'task-slots',
+      images: [{
+        dataUrl: 'data:image/png;base64,two',
+        width: 1024,
+        height: 1024,
+        imageId: 'img-two',
+      }],
+    });
+    const inserted = second.elements.filter((element) => (
+      element.type === 'image'
+      && (element.fileId === 'img-one' || element.fileId === 'img-two')
+      && !element.isDeleted
+    ));
+    expect(inserted.map((element) => element.fileId)).toEqual(['img-one', 'img-two']);
+    expect(inserted[1].x).toBe(100 + 512 + 24);
+    expect(inserted.map((element) => element.customData)).toEqual([{}, {}]);
+    expect(second.elements.filter((element) => element.customData?.generationTaskId === 'task-slots' && !element.isDeleted)).toHaveLength(1);
+  });
+
+  it('cleans image loading slots on success and keeps failed slots on error', () => {
+    const generator = createAiImageGeneratorElement({ x: 100, y: 200, width: 320, height: 240 });
+    const queued = createAiImageGenerationSlots({
+      elements: [generator],
+      generatorId: generator.id,
+      taskId: 'task-cleanup',
+      count: 2,
+      width: 512,
+      height: 512,
+    });
+    const replaced = replaceGeneratorWithImageElements({
+      elements: queued.elements,
+      generatorId: queued.elements[0].id,
+      taskId: 'task-cleanup',
+      images: [{
+        dataUrl: 'data:image/png;base64,one',
+        width: 1024,
+        height: 1024,
+        imageId: 'img-one',
+      }],
+    });
+
+    const success = finishAiImageGenerationSlots({
+      elements: replaced.elements,
+      taskId: 'task-cleanup',
+      status: 'done',
+    });
+    expect(success.elements.filter((element) => element.customData?.generationTaskId === 'task-cleanup' && !element.isDeleted)).toHaveLength(0);
+
+    const failure = finishAiImageGenerationSlots({
+      elements: replaced.elements,
+      taskId: 'task-cleanup',
+      status: 'error',
+      error: '图片生成失败',
+    });
+    const failedSlot = failure.elements.find((element) => element.customData?.generationTaskId === 'task-cleanup' && !element.isDeleted);
+    expect(failedSlot).toMatchObject({
+      customData: {
+        generationSlotStatus: 'error',
+        generationError: '图片生成失败',
+      },
     });
   });
 
@@ -237,7 +335,7 @@ describe('canvas AI image helpers', () => {
     expect(getAiImageDisplaySize('auto')).toBeNull();
   });
 
-  it('only treats generated result images as history-capable images', () => {
+  it('only treats legacy generated result images as history-capable images', () => {
     const generator = createAiImageGeneratorElement({ x: 0, y: 0 });
     const ordinaryImage = {
       type: 'image',
@@ -353,12 +451,7 @@ describe('canvas AI image helpers', () => {
       x: 80,
       y: 120,
       fileId: 'history-image',
-      customData: {
-        type: 'axhub-ai-image',
-        generatedBy: 'axhub-ai-image',
-        sourceTaskId: 'task-history',
-        previewKind: 'image',
-      },
+      customData: {},
     });
     expect(result.elements[1].customData).not.toHaveProperty('prompt');
     expect(result.selectedElementIds).toEqual({

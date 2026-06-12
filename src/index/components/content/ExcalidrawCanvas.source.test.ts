@@ -75,16 +75,130 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).not.toContain('axhubCanvasElementType');
   });
 
-  it('mounts the AI image tool and wires explicit scene persistence', () => {
+  it('exposes current canvas screenshot capture helpers through a browser global', () => {
     const source = readSource();
 
-    expect(source).toContain("import CanvasAiImageTool from '../../domains/ai-image/CanvasAiImageTool';");
-    expect(source).toContain("import AiImageHistoryDialog from '../../domains/ai-image/AiImageHistoryDialog';");
-    expect(source).toMatch(/import\s+\{[^}]*History[^}]*\}\s+from 'lucide-react'/s);
-    expect(source).toContain('<CanvasAiImageTool');
+    expect(source).toMatch(/import\s+\{[^}]*exportToBlob[^}]*getDataURL[^}]*\}\s+from '@axhub\/excalidraw'/s);
+    expect(source).toContain('interface AxhubExcalidrawCaptureOptions');
+    expect(source).toContain('interface AxhubExcalidrawCaptureResult');
+    expect(source).toContain('interface AxhubExcalidrawCaptureApi');
+    expect(source).toContain('function createAxhubExcalidrawCaptureApi(excalidrawAPI: ExcalidrawAPI): AxhubExcalidrawCaptureApi');
+    expect(source).toContain('captureCanvas: (options = {}) => captureExcalidrawElements(excalidrawAPI, getCaptureSceneElements(excalidrawAPI), options)');
+    expect(source).toContain("captureElement: (elementId, options = {}) => {");
+    expect(source).toContain('const element = getCaptureSceneElements(excalidrawAPI).find((candidate) => candidate.id === elementId);');
+    expect(source).toContain("if (!element) throw new Error(`Canvas element not found: ${elementId}`);");
+    expect(source).toContain('return captureExcalidrawElements(excalidrawAPI, [element], options);');
+    expect(source).toContain('const blob = await exportToBlob({');
+    expect(source).toContain('elements: elements as any,');
+    expect(source).toContain('files: excalidrawAPI.getFiles?.() || {},');
+    expect(source).toContain('let captureDimensions: { width: number; height: number } | undefined;');
+    expect(source).toContain('const getCaptureDimensions = options.maxWidthOrHeight');
+    expect(source).toContain('captureDimensions = {');
+    expect(source).toContain('exportBackground: options.exportBackground ?? true,');
+    expect(source).toContain("mimeType: options.mimeType || 'image/png',");
+    expect(source).toContain('getDimensions: getCaptureDimensions,');
+    expect(source).toContain('const dataUrl = await getDataURL(blob);');
+    expect(source).toContain('width: captureDimensions?.width,');
+    expect(source).toContain('height: captureDimensions?.height,');
+    expect(source).toContain('elementIds: elements.map((element) => element.id),');
+    expect(source).toContain('(window as any).__AXHUB_EXCALIDRAW_API__ = excalidrawAPI || null;');
+    expect(source).toContain('(window as any).__AXHUB_EXCALIDRAW_CAPTURE__ = excalidrawAPI ? createAxhubExcalidrawCaptureApi(excalidrawAPI) : null;');
+    expect(source).toContain('(window as any).__AXHUB_EXCALIDRAW_CAPTURE__ = null;');
+  });
+
+  it('mounts the unified AI generation tool and wires explicit scene persistence', () => {
+    const source = readSource();
+
+    expect(source).toContain("import CanvasAiGenerationTool, { type CanvasAiGenerationRequest } from '../../domains/ai-generation/CanvasAiGenerationTool';");
+    expect(source).toContain('<CanvasAiGenerationTool');
+    expect(source).toContain('onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;');
+    expect(source).toContain('assistantProjectPath={assistantProjectPath}');
     expect(source).toContain('preferredPromptClient={preferredPromptClient}');
+    expect(source).toContain('onImageArtifact={handleCanvasImageArtifactEvent}');
+    expect(source).toContain('onSubmitCanvasAssistantPrompt={onSubmitCanvasAssistantPrompt}');
     expect(source).toContain('onSceneMutated={scheduleExplicitCanvasSave}');
     expect(source).toContain('handleCanvasDrop');
+    expect(source).not.toContain("import CanvasAiImageTool from '../../domains/ai-image/CanvasAiImageTool';");
+    expect(source).not.toContain("import CanvasPrototypeGenerationTool from '../../domains/prototype-generation/CanvasPrototypeGenerationTool';");
+  });
+
+  it('exports selected canvas elements as a PNG attachment for the AI composer', () => {
+    const source = readSource();
+
+    expect(source).toContain('onAddScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;');
+    expect(source).toContain('const handleAddSelectedScreenshotToAI = useCallback(async (elements: CanvasElementContextInfo[]) => {');
+    expect(source).toContain('const selectedElementIds = new Set(elements.map((element) => element.elementId));');
+    expect(source).toContain("import { collectCanvasScreenshotElementsForSelection } from './canvas-embeds/canvasSelectionCapture';");
+    expect(source).toContain('const selectedElements = collectCanvasScreenshotElementsForSelection(');
+    expect(source).toContain('getCaptureSceneElements(excalidrawAPI),');
+    expect(source).toContain('selectedElementIds,');
+    expect(source).toContain('const capture = await captureExcalidrawElements(excalidrawAPI, selectedElements, {');
+    expect(source).toContain("mimeType: 'image/png',");
+    expect(source).toContain('exportPadding: 16,');
+    expect(source).toContain('await onAddScreenshotToAI(buildAssistantImageAttachmentPayload({');
+    expect(source).toContain('dataUrl: capture.dataUrl,');
+    expect(source).toContain('onAddScreenshotToAI={handleAddSelectedScreenshotToAI}');
+    expect(source).toContain('onAddNodesToAI={onAddToContext}');
+    expect(source).toContain('onAddImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;');
+    expect(source).toContain('const handleAddSelectedImageToAI = useCallback(async (elements: CanvasElementContextInfo[], promptText?: string) => {');
+    expect(source).toContain("element.type === 'image'");
+    expect(source).toContain('const fileId = typeof selectedImage?.fileId === \'string\' ? selectedImage.fileId.trim() : \'\';');
+    expect(source).toContain('const files = excalidrawAPI.getFiles?.() || {};');
+    expect(source).toContain("const file = files[fileId] as { dataURL?: string; dataUrl?: string } | undefined;");
+    expect(source).toContain("const dataUrl = String(file?.dataURL || file?.dataUrl || '').trim();");
+    expect(source).toContain("if (!dataUrl.startsWith('data:image/')) return;");
+    expect(source).toContain('await onAddImageToAI(buildAssistantImageAttachmentPayload({');
+    expect(source).toContain('}), promptText);');
+    expect(source).toContain('onAddImageToAI={handleAddSelectedImageToAI}');
+  });
+
+  it('handles canvas image artifacts by replacing bound placeholders or inserting at the default canvas placement', () => {
+    const source = readSource();
+
+    expect(source).toContain("import { resolveCanvasImageArtifactUpdate, type CanvasImageArtifactEvent } from '../../domains/ai-image/canvasImageArtifacts';");
+    expect(source).toContain('const handleCanvasImageArtifactEvent = useCallback((event: CanvasImageArtifactEvent) => {');
+    expect(source).toContain('resolveCanvasImageArtifactUpdate({');
+    expect(source).toContain('event,');
+    expect(source).toContain('excalidrawAPI.addFiles(update.files);');
+    expect(source).toContain('elements: update.elements,');
+    expect(source).toContain('selectedElementIds: update.selectedElementIds');
+    expect(source).toContain('if (update.usedFallbackPlacement && update.needsScroll && update.scrollTargetId)');
+    expect(source).not.toContain('const handleInsertGenerationHistoryArtifact = useCallback((artifact: GenerationArtifactRecord) => {');
+  });
+
+  it('does not listen for assistant artifact postMessages or sync them into canvas history', () => {
+    const source = readSource();
+
+    expect(source).not.toContain("ASSISTANT_ARTIFACTS_CHANGED_EVENT");
+    expect(source).not.toContain("ASSISTANT_ARTIFACTS_SYNC_REQUEST_EVENT");
+    expect(source).not.toContain("mapAcpArtifactsToGenerationArtifacts");
+    expect(source).not.toContain("syncAssistantArtifactsToHistory");
+    expect(source).not.toContain("applyGenerationArtifactsToCanvasElements");
+    expect(source).not.toContain("mapGenerationArtifactToCanvasAiRunArtifact");
+    expect(source).not.toContain("getGenerationArtifactHistoryStore().upsertArtifactAndPersist");
+    expect(source).not.toContain("handleAssistantArtifactsChanged");
+    expect(source).not.toContain("handleAssistantArtifactsSyncRequest");
+  });
+
+  it('does not keep assistant artifact insertion helpers in the canvas', () => {
+    const source = readSource();
+
+    expect(source).not.toContain('const applyGenerationArtifactsToCanvas = useCallback');
+    expect(source).not.toContain('const handleInsertGenerationHistoryArtifact = useCallback');
+  });
+
+  it('queues a latest scene snapshot when a server save is already in flight', () => {
+    const source = readSource();
+    const saveToServerStart = source.indexOf('const saveToServer = useCallback');
+    const saveToServerEnd = source.indexOf('// ── Local save:', saveToServerStart);
+    const saveToServerSource = source.slice(saveToServerStart, saveToServerEnd);
+
+    expect(source).toContain('const queuedServerSaveRef = useRef<{ elements: readonly any[]; appState: any } | null>(null);');
+    expect(saveToServerSource).toContain('if (isSavingRef.current) {');
+    expect(saveToServerSource).toContain('queuedServerSaveRef.current = { elements, appState };');
+    expect(saveToServerSource).toContain('const queuedSnapshot = queuedServerSaveRef.current;');
+    expect(saveToServerSource).toContain('queuedServerSaveRef.current = null;');
+    expect(saveToServerSource).toContain('void saveToServer(queuedSnapshot.elements, queuedSnapshot.appState);');
   });
 
   it('adds original image files to copy events for selected canvas images', () => {
@@ -102,60 +216,149 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain("document.removeEventListener('copy', handleCanvasImageCopy, true)");
   });
 
-  it('moves the generation record list into the canvas main menu', () => {
+  it('keeps the top-right canvas capsule as an AI and refresh button group without the generation history popover', () => {
     const source = readSource();
 
-    expect(source).toContain('const [aiImageHistoryOpen, setAiImageHistoryOpen] = useState(false);');
-    expect(source).toContain('const handleInsertAiImageHistoryTask = useCallback');
-    expect(source).toContain('getAiImageTaskCanvasImages(task)');
-    expect(source).toContain('resolveCanvasGeneratorPlacement({');
-    expect(source).toContain('createAiImageResultElements({');
-    expect(source).toContain('setAiImageHistoryOpen(false);');
-    expect(source).toContain('scheduleExplicitCanvasSave();');
-    expect(source).toContain('onOpenAiImageHistory={() => setAiImageHistoryOpen(true)}');
-    expect(source).toContain('onOpenAiImageHistory: () => void;');
-    expect(source).toContain('icon={<History className="axhub-canvas-menu-icon" />}');
-    expect(source).toContain('生成记录');
-    expect(source).not.toContain('图片生成历史');
-    expect(source).toContain('<AiImageHistoryDialog');
-    expect(source).toContain('open={aiImageHistoryOpen}');
-    expect(source).toContain('onOpenChange={setAiImageHistoryOpen}');
-    expect(source).toContain('onInsertImages={handleInsertAiImageHistoryTask}');
+    expect(source).not.toContain("import GenerationHistoryPopover from '../../domains/ai-generation/GenerationHistoryPopover';");
+    expect(source).not.toContain('<GenerationHistoryPopover');
+    expect(source).toContain("import OpenInDropdown from '../sidebar/OpenInDropdown';");
+    expect(source).toMatch(/import\s+\{[^}]*RefreshCw[^}]*\}\s+from 'lucide-react'/s);
+    expect(source).toContain('className="axhub-canvas-top-right-capsule"');
+    expect(source).toContain('className="axhub-canvas-top-right-capsule__divider"');
+    expect(source).toContain('aria-label="刷新画布"');
+    expect(source).toContain('title="刷新画布"');
+    expect(source).toContain('onClick={() => void handleRefreshCanvasFromServer()}');
+    expect(source).toContain('const reloadCanvasFromServer = useCallback(async () => {');
+    expect(source).toContain('const handleRefreshCanvasFromServer = useCallback(async () => {');
+    expect(source).toContain('await saveToServer(excalidrawAPI.getSceneElements(), excalidrawAPI.getAppState());');
+    expect(source).toContain('if (pendingLocalContentRef.current || bridgeDirtyRef.current) return;');
+    expect(source).toContain('await reloadCanvasFromServer();');
+    expect(source).not.toContain('targetPath={generationHistoryTargetPath}');
+    expect(source).not.toContain('container={canvasContainerRef.current}');
+    expect(source).toContain('<OpenInDropdown');
+    expect(source).toContain('variant="canvas-icon"');
+    expect(source).toContain('webAgentPanelOpen={webAgentPanelOpen}');
+    expect(source).toContain('onOpenGenieWebAgent={onOpenGenieWebAgent}');
+    expect(source).not.toContain('生成记录');
+    expect(source).not.toContain('onOpenAiImageHistory');
+    expect(source).not.toContain("import AiImageHistoryDialog from '../../domains/ai-image/AiImageHistoryDialog';");
+    expect(source).not.toContain('<AiImageHistoryDialog');
+    expect(source).not.toContain('aiImageHistoryOpen');
   });
 
-  it('configures AI image history storage only for prototype canvas paths', () => {
+  it('does not accept ACP iframe artifact queries for canvas history refresh', () => {
     const source = readSource();
 
-    expect(source).toContain('export function resolveAiImageHistoryTargetPath(...values: Array<string | undefined>): string | undefined');
+    expect(source).not.toContain('type AssistantArtifactsQuery,');
+    expect(source).not.toContain('getAssistantArtifacts?: AssistantArtifactsQuery;');
+    expect(source).not.toContain('latestAssistantArtifactThreadRef');
+    expect(source).not.toContain('getAssistantArtifacts({');
+    expect(source).not.toContain("onSyncArtifacts={() => syncAssistantArtifactsForHistory('manual')}");
+  });
+
+  it('passes homepage AI open menu props through the canvas shell', () => {
+    const source = readSource();
+    const propsStart = source.indexOf('interface ExcalidrawCanvasProps {');
+    const propsEnd = source.indexOf('\n}\n\nconst LOCAL_SAVE_DEBOUNCE_MS', propsStart);
+    const propsSource = source.slice(propsStart, propsEnd);
+    const destructureStart = source.indexOf('export default function ExcalidrawCanvas({');
+    const destructureEnd = source.indexOf('}: ExcalidrawCanvasProps)', destructureStart);
+    const destructureSource = source.slice(destructureStart, destructureEnd);
+
+    expect(propsSource).toContain('preferredIDE?: MainIDEPreference;');
+    expect(propsSource).toContain('ideAvailability?: IDEAvailabilityMap;');
+    expect(propsSource).toContain('agentAvailability?: RuntimeAgentAvailability;');
+    expect(propsSource).toContain('onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;');
+    expect(propsSource).toContain('webAgentPanelOpen?: boolean;');
+    expect(propsSource).toContain('onCloseWebAgentPanel?: () => void;');
+    expect(propsSource).toContain('onPreferredIDEChange?: (ide: MainIDEPreference) => void;');
+    expect(propsSource).not.toContain('onRefreshAvailability?: () => void;');
+    expect(propsSource).toContain('onOpenAISettings?: () => void;');
+
+    for (const prop of [
+      'preferredIDE,',
+      'ideAvailability,',
+      'agentAvailability,',
+      'onOpenGenieWebAgent,',
+      'webAgentPanelOpen,',
+      'onCloseWebAgentPanel,',
+      'onPreferredIDEChange,',
+      'onOpenAISettings,',
+    ]) {
+      expect(destructureSource).toContain(prop);
+    }
+  });
+
+  it('simplifies the welcome screen copy and removes welcome menu actions', () => {
+    const source = readSource();
+    const welcomeScreenStart = source.indexOf('function AxhubCanvasWelcomeScreen({');
+    const welcomeScreenEnd = source.indexOf('\n}\n\nfunction normalizeSavedCanvasContent', welcomeScreenStart);
+    const welcomeScreenSource = source.slice(welcomeScreenStart, welcomeScreenEnd);
+    const logoStart = welcomeScreenSource.indexOf('<WelcomeScreen.Center.Logo>');
+    const logoEnd = welcomeScreenSource.indexOf('</WelcomeScreen.Center.Logo>', logoStart);
+    const headingStart = welcomeScreenSource.indexOf('<WelcomeScreen.Center.Heading>');
+    const headingEnd = welcomeScreenSource.indexOf('</WelcomeScreen.Center.Heading>', headingStart);
+    const logoSource = welcomeScreenSource.slice(logoStart, logoEnd);
+    const headingSource = welcomeScreenSource.slice(headingStart, headingEnd);
+
+    expect(welcomeScreenSource).toContain('原型草稿画布');
+    expect(welcomeScreenSource).toContain('好的原型从一份草稿开始。');
+    expect(logoStart).toBeGreaterThan(-1);
+    expect(headingStart).toBeGreaterThan(logoStart);
+    expect(logoEnd).toBeGreaterThan(logoStart);
+    expect(headingEnd).toBeGreaterThan(headingStart);
+    expect(source).toMatch(/import\s+\{[^}]*PencilRuler[^}]*\}\s+from 'lucide-react'/s);
+    expect(logoSource).toContain('className="axhub-canvas-welcome-title"');
+    expect(logoSource).toContain('<PencilRuler');
+    expect(logoSource).toContain('className="axhub-canvas-welcome-title__icon"');
+    expect(logoSource).toContain('<span>原型草稿画布</span>');
+    expect(logoSource).toContain('原型草稿画布');
+    expect(logoSource).not.toContain('好的原型从一份草稿开始。');
+    expect(headingSource).toContain('好的原型从一份草稿开始。');
+    expect(headingSource).not.toContain('原型草稿画布');
+    expect(welcomeScreenSource).not.toContain('axhub-canvas-welcome-subtitle');
+    expect(welcomeScreenSource).not.toContain('<WelcomeScreen.Center.Menu>');
+    expect(welcomeScreenSource).not.toContain('<WelcomeScreen.Center.MenuItem');
+    expect(welcomeScreenSource).not.toContain('<WelcomeScreen.Center.MenuItemHelp');
+    expect(welcomeScreenSource).not.toContain('打开 ClaudeCode / Codex WebUI');
+    expect(welcomeScreenSource).not.toContain('在编辑器中打开');
+    expect(welcomeScreenSource).not.toContain('整理灵感、构思方案、快速生成原型');
+
+    expect(source).toContain('与 AI 协作');
+    expect(source).not.toContain('预览生成的原型');
+    expect(source).not.toContain('runCanvasOpenAction');
+    expect(source).not.toContain('runCanvasProjectOpenAction');
+    expect(source).not.toContain('AxhubWelcomeMenuIcon');
+  });
+
+  it('configures legacy local task stores only for prototype canvas paths', () => {
+    const source = readSource();
+
+    expect(source).toContain('export function resolveCanvasGenerationTaskTargetPath(...values: Array<string | undefined>): string | undefined');
     expect(source).toContain("replace(/^src\\//u, '')");
     expect(source).toContain('const prototypePathMatch = normalized.match(/^prototypes\\/([^/]+)$/iu);');
     expect(source).toContain('return `prototypes/${prototypePathMatch[1]}`;');
     expect(source).toContain("return `prototypes/${match[1]}`;");
-    expect(source).toContain('const targetPath = resolveAiImageHistoryTargetPath(canvasName, canvasFilePath);');
+    expect(source).toContain('const targetPath = resolveCanvasGenerationTaskTargetPath(canvasName, canvasFilePath);');
     expect(source).toContain('void getAiImageTaskStore().configure({ targetPath });');
     expect(source).toContain('void getPrototypeGenerationTaskStore().configure({ targetPath });');
     expect(source).toContain('}, [canvasName, canvasFilePath]);');
+    expect(source).not.toContain('resolveAiImageHistoryTargetPath');
   });
 
-  it('does not pass prompts into generated AI image canvas nodes', () => {
+  it('does not keep generation history image insertion payloads in canvas nodes', () => {
     const source = readSource();
-    const historyInsertStart = source.indexOf('const handleInsertAiImageHistoryTask = useCallback');
-    const historyInsertEnd = source.indexOf('// ── Flush:', historyInsertStart);
-    const historyInsertSource = source.slice(historyInsertStart, historyInsertEnd);
 
-    expect(historyInsertSource).toContain('createAiImageResultElements({');
-    expect(historyInsertSource).toContain('taskId: task.id,');
-    expect(historyInsertSource).not.toContain('prompt: task.prompt');
+    expect(source).not.toContain('const handleInsertGenerationHistoryArtifact = useCallback');
   });
 
-  it('declares explicit canvas saving before the history insertion callback depends on it', () => {
+  it('does not declare history insertion callbacks after explicit canvas saving', () => {
     const source = readSource();
     const explicitSaveIndex = source.indexOf('const scheduleExplicitCanvasSave = useCallback');
-    const historyInsertIndex = source.indexOf('const handleInsertAiImageHistoryTask = useCallback');
+    const historyInsertIndex = source.indexOf('const handleInsertGenerationHistoryArtifact = useCallback');
 
     expect(explicitSaveIndex).toBeGreaterThan(-1);
-    expect(historyInsertIndex).toBeGreaterThan(-1);
-    expect(explicitSaveIndex).toBeLessThan(historyInsertIndex);
+    expect(historyInsertIndex).toBe(-1);
   });
 
   it('explicitly persists sidebar add-to-canvas and drag-drop scene mutations', () => {
@@ -176,25 +379,61 @@ describe('ExcalidrawCanvas source', () => {
     expect(dropHandler).toContain('}, [excalidrawAPI, scheduleExplicitCanvasSave]);');
   });
 
-  it('mounts the prototype generator tool with acpx prompt execution and resource refresh props', () => {
+  it('defaults new embeddable resources to preview mode while falling back to link mode for non-previewable payloads', () => {
+    const source = readSource();
+    const createStart = source.indexOf('export function createEmbeddableFromDrop');
+    const createEnd = source.indexOf('async function createImageElementFromDrop', createStart);
+    const createSource = source.slice(createStart, createEnd);
+    const renderStart = source.indexOf('const renderEmbeddable = useCallback');
+    const renderEnd = source.indexOf('const handleLinkOpen = useCallback', renderStart);
+    const renderSource = source.slice(renderStart, renderEnd);
+
+    expect(createSource).toContain("const requestedEmbedViewMode = payload.embedViewMode || 'preview';");
+    expect(createSource).toContain("const embedViewMode = requestedEmbedViewMode === 'preview' && !isCanvasDropPayloadPreviewable(payload)");
+    expect(createSource).toContain("? 'link'");
+    expect(createSource).toContain(': requestedEmbedViewMode;');
+    expect(createSource).not.toContain("const embedViewMode = payload.embedViewMode || 'link';");
+    expect(renderSource).toContain("const embedViewMode = customData?.embedViewMode || 'link';");
+  });
+
+  it('passes prototype generation props into the unified AI generation tool', () => {
     const source = readSource();
 
-    expect(source).toContain("import CanvasPrototypeGenerationTool from '../../domains/prototype-generation/CanvasPrototypeGenerationTool';");
     expect(source).toContain('assistantApiBaseUrl?: string;');
     expect(source).toContain('assistantProjectPath?: string;');
     expect(source).toContain('preferredPromptClient?: PromptClientPreference;');
     expect(source).toContain('prototypes?: ItemData[];');
     expect(source).toContain('onRefreshPrototypes?: () => Promise<ItemData[]>;');
     expect(source).not.toContain('onStartAssistantRuntimeForCanvas?: () => Promise<{ apiBaseUrl?: string; projectPath?: string } | null | undefined>;');
-    expect(source).toContain('<CanvasPrototypeGenerationTool');
+    expect(source).toContain('<CanvasAiGenerationTool');
     expect(source).toContain('canvasFilePath={canvasFilePath || canvasName}');
     expect(source).not.toContain('assistantApiBaseUrl={assistantApiBaseUrl}');
-    expect(source).not.toContain('assistantProjectPath={assistantProjectPath}');
+    expect(source).toContain('assistantProjectPath={assistantProjectPath}');
     expect(source).toContain('preferredPromptClient={preferredPromptClient}');
     expect(source).toContain('prototypes={prototypes}');
     expect(source).toContain('onRefreshPrototypes={onRefreshPrototypes}');
     expect(source).not.toContain('onStartAssistantRuntime={onStartAssistantRuntimeForCanvas}');
     expect(source).toContain('onSceneMutated={scheduleExplicitCanvasSave}');
+  });
+
+  it('destructures assistant project path before forwarding it into canvas tools', () => {
+    const source = readSource();
+    const propsStart = source.indexOf('export default function ExcalidrawCanvas({');
+    const propsEnd = source.indexOf('}: ExcalidrawCanvasProps)', propsStart);
+    const propsSource = source.slice(propsStart, propsEnd);
+
+    expect(propsStart).toBeGreaterThanOrEqual(0);
+    expect(propsSource).toContain('assistantProjectPath,');
+    expect(source).toContain('assistantProjectPath={assistantProjectPath}');
+  });
+
+  it('does not consume placeholder start requests by inserting generator nodes into the canvas', () => {
+    const source = readSource();
+
+    expect(source).not.toContain('pendingAiGenerationRequest?:');
+    expect(source).not.toContain('onPendingAiGenerationRequestConsumed?:');
+    expect(source).not.toContain('detail: pendingAiGenerationRequest');
+    expect(source).not.toContain('onPendingAiGenerationRequestConsumed?.();');
   });
 
   it('opens prototype preview nodes through the client preview url instead of the admin deep link', () => {
@@ -208,12 +447,28 @@ describe('ExcalidrawCanvas source', () => {
     expect(resolverSource).toContain('const storedOpenUrl = resolveString(element?.customData?.openUrl);');
   });
 
-  it('dispatches both top toolbar AI actions from the compact toolbar enhancer', () => {
+  it('does not wire a top toolbar AI generation action into the canvas enhancer', () => {
     const source = readSource();
 
-    expect(source).toContain('onAiImageToolClick: () => {');
-    expect(source).toContain("document.dispatchEvent(new CustomEvent('axhub:insertAiImageGenerator'));");
-    expect(source).toContain("onPrototypeToolClick: () => document.dispatchEvent(new CustomEvent('axhub:insertPrototypeGenerator'))");
+    expect(source).not.toContain("import { AI_GENERATION_INSERT_EVENT_NAME } from '../../domains/ai-generation/CanvasAiGenerationTool';");
+    expect(source).not.toContain('onAiGenerationToolClick: () => {');
+    expect(source).not.toContain('document.dispatchEvent(new CustomEvent(AI_GENERATION_INSERT_EVENT_NAME, {');
+    expect(source).not.toContain('onAiImageToolClick: () => {');
+    expect(source).not.toContain("axhub:insertAiImageGenerator");
+    expect(source).not.toContain("onPrototypeToolClick: () => document.dispatchEvent(new CustomEvent('axhub:insertPrototypeGenerator'))");
+  });
+
+  it('mounts the Drawio canvas tool and dispatches insertion from the compact toolbar enhancer', () => {
+    const source = readSource();
+
+    expect(source).toContain("import CanvasDrawioTool from '../../domains/drawio/CanvasDrawioTool';");
+    expect(source).toContain("import { DRAWIO_INSERT_EVENT_NAME } from '../../domains/drawio/canvasDrawio';");
+    expect(source).toContain('onDrawioToolClick: () => document.dispatchEvent(new CustomEvent(DRAWIO_INSERT_EVENT_NAME))');
+    expect(source).toContain('<CanvasDrawioTool');
+    expect(source).toContain('containerRef={canvasContainerRef as React.RefObject<HTMLDivElement>}');
+    expect(source).toContain('onSceneMutated={scheduleExplicitCanvasSave}');
+    expect(source).not.toContain('function buildDrawioChartCanvasPayload()');
+    expect(source).not.toContain("window.dispatchEvent(new CustomEvent('axhub:addToCanvas', {");
   });
 
   it('applies bridge reloads as remote scene updates without scheduling autosave bounce-back', () => {
@@ -251,7 +506,7 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain('if (remoteScenePatch.hasSceneChanges) {');
     expect(source).toContain('elements: remoteScenePatch.elements,');
     expect(source).toContain('appState: remoteScenePatch.appState,');
-    expect(source).toContain('} else {\n                                applyingRemoteCanvasReloadRef.current = false;');
+    expect(source).toContain('} else {\n            applyingRemoteCanvasReloadRef.current = false;');
     expect(source).toContain('captureUpdate: CaptureUpdateAction.NEVER');
     expect(source).not.toContain('elements: data.elements || []');
     expect(source).toContain('pendingLocalContentRef.current = null;');
@@ -262,6 +517,21 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain('const currentContent = normalizeSavedCanvasContent(buildSavePayload(elements, appState));');
     expect(source).toContain('if (currentContent === lastSavedContentRef.current) {');
     expect(source).not.toContain('if (withinRemoteReloadWindow || currentContent === lastSavedContentRef.current) {');
+  });
+
+  it('does not apply bridge reloads while the current canvas still has pending local changes', () => {
+    const source = readSource();
+    const reloadHandlerSource = source.slice(
+      source.indexOf("if (msg.type === 'canvas.reload') {"),
+      source.indexOf("if (msg.type === 'ping') {"),
+    );
+
+    expect(reloadHandlerSource).toContain('if (pendingLocalContentRef.current || bridgeDirtyRef.current) {');
+    expect(reloadHandlerSource).toContain('sendCanvasBridgeStatus(true);');
+    expect(reloadHandlerSource).toContain('return;');
+    expect(reloadHandlerSource).toContain('void reloadCanvasFromServer().catch(() => { /* ignore reload errors */ });');
+    expect(reloadHandlerSource).not.toContain('lastSavedContentRef.current = remoteContent;');
+    expect(reloadHandlerSource).not.toContain('pendingLocalContentRef.current = null;');
   });
 
   it('fits active preview embeds into view only when they are clipped', () => {

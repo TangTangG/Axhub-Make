@@ -34,16 +34,6 @@ const DEFAULT_IMAGE_CONFIG: AiImageGenerationConfig = {
   baseUrl: DEFAULT_OPENAI_BASE_URL,
   apiKey: null,
   model: CODEX_IMAGE_MODEL,
-  apiMode: 'images',
-  timeout: 600,
-  size: 'auto',
-  quality: 'auto',
-  outputFormat: 'png',
-  outputCompression: null,
-  moderation: 'auto',
-  n: 1,
-  codexCli: true,
-  responseFormatB64Json: true,
 };
 
 function dedupePaths(paths: Array<string | null | undefined>): string[] {

@@ -31,13 +31,14 @@ import {
   sendText,
   streamDirectoryAsZip,
 } from './http.ts';
-import { handleAiImageApi } from './managementApi.aiImage.ts';
+import { handleAiArtifactHistoryApi } from './managementApi.aiArtifactHistory.ts';
+import { handleAiRunsApi } from './managementApi.aiRuns.ts';
 import { handleAssistantPromptIde } from './managementApi.assistantIde.ts';
 import { handleBridgeAndImageProxy } from './managementApi.bridge.ts';
 import { handleCanvasApi } from './managementApi.canvas.ts';
 import { handleCodeReviewApi } from './managementApi.codeReview.ts';
 import { handleCloudPublishingApi, type CommandExecutor } from './managementApi.cloudPublishing.ts';
-import { handleConfigApi } from './managementApi.config.ts';
+import { handleConfigApi, readMakeServerVersion } from './managementApi.config.ts';
 import { handleProjectDataAndThemeApi } from './managementApi.dataTheme.ts';
 import { handleProjectDocsApi } from './managementApi.docs.ts';
 import { handleEntriesCompatibilityApi } from './managementApi.entries.ts';
@@ -48,18 +49,27 @@ import { handleLegacyDocsApi } from './managementApi.legacyDocs.ts';
 import { handleLegacyWebSocketApi } from './managementApi.legacyWebSocket.ts';
 import { handleProjectRegistryApi } from './managementApi.projectRegistry.ts';
 import { handlePrototypeCommentsApi } from './managementApi.prototypeComments.ts';
-import { handleCreatePlaceholderPrototype, handlePrototypeUploadApi } from './managementApi.prototypeUpload.ts';
+import {
+  handleCreatePlaceholderPrototype,
+  handlePrototypeUploadApi,
+  handleStartPlaceholderPrototypeGeneration,
+} from './managementApi.prototypeUpload.ts';
 import { handleUploadAndReferenceApis } from './managementApi.references.ts';
 import { findProjectResourceByPath, getAxureArtifactPaths, resolveSourceFileFromMetadata } from './managementApi.resourceLookup.ts';
 import { handleProjectSourceAndZipApi } from './managementApi.sourceZip.ts';
 import { handleTemplateLibraryApi } from './managementApi.templateLibrary.ts';
 import { handleThemeLibraryApi } from './managementApi.themeLibrary.ts';
-import { handleWorkspaceApi } from './managementApi.workspace.ts';
+import { handleWorkspaceApi, SIDEBAR_TREE_VERSION } from './managementApi.workspace.ts';
 import { handleMediaApi } from './mediaApi.ts';
 import { handleQuickEditRuntimeApi } from './quickEditRuntimeApi.ts';
 import { hasFigmaMakeArtifactCapability } from './exportMakeArtifacts.ts';
 import { getCanvasBridgeHub } from './canvasBridge.ts';
 import { selectLocalDirectory } from './localDirectoryPicker.ts';
+import {
+  createAssistantRuntimeResponse,
+  resolveAssistantRuntime,
+} from './assistantRuntime.ts';
+import type { DiagnosticLog } from './diagnosticLog.ts';
 
 export interface ManagementApiOptions {
   projectRoot: string;
@@ -79,6 +89,7 @@ export interface ManagementApiOptions {
   makeStateHealth?: MakeStateHealthResult;
   refreshMakeStateHealth?: () => MakeStateHealthResult;
   devMode?: boolean;
+  diagnosticLog?: DiagnosticLog;
   cloudPublishingCommandExecutor?: CommandExecutor;
 }
 
@@ -886,6 +897,235 @@ function createAdminContextPayload(options: ManagementApiOptions) {
   };
 }
 
+function createEmptyProjectResources(): ProjectMetadata['resources'] {
+  return {
+    prototypes: [],
+    docs: [],
+    themes: [],
+    data: [],
+    templates: [],
+  };
+}
+
+function createEmptyResourceOrders(): ProjectMetadata['orders'] {
+  return {
+    themes: [],
+    data: [],
+    templates: [],
+  };
+}
+
+function createUnavailableProjectCapabilities(project: RegisteredProject): EffectiveProjectCapabilities {
+  return {
+    quickEdit: false,
+    quickEditMode: 'clientRuntime',
+    figmaExport: false,
+    axureExport: false,
+    lanAccessAllowed: readProjectLANAccessAllowed(project.root),
+    localExports: {
+      html: false,
+      make: false,
+    },
+    resourceWrites: {
+      prototypeCreate: false,
+      prototypeUpload: false,
+      docCreate: false,
+      docImport: false,
+      themeCreate: false,
+      themeImport: false,
+      dataCreate: false,
+      dataImport: false,
+      templateCreate: false,
+      templateDuplicate: false,
+    },
+  };
+}
+
+function createUnavailableProjectResourcesPayload(
+  project: RegisteredProject,
+  error: ProjectMetadataAvailabilityError,
+) {
+  return {
+    unavailable: true,
+    error,
+    project: {
+      id: project.id,
+      name: project.name,
+    },
+    resources: createEmptyProjectResources(),
+    navigation: {
+      prototypes: [],
+      docs: [],
+    },
+    orders: createEmptyResourceOrders(),
+    capabilities: createUnavailableProjectCapabilities(project),
+  };
+}
+
+function resolveUnavailableStartupProject(
+  options: ManagementApiOptions,
+  projectId?: string,
+): { project: RegisteredProject; error: ProjectMetadataAvailabilityError } | null {
+  try {
+    ensureDefaultRegisteredProject(options);
+  } catch {
+    return null;
+  }
+
+  const registry = getProjectRegistryForRequest(options);
+  const project = projectId ? registry.getProject(projectId) : registry.getActiveProject();
+  if (!project) {
+    return null;
+  }
+
+  const availabilityError = getProjectMetadataAvailabilityError(project);
+  if (availabilityError?.code !== 'PROJECT_METADATA_MISSING') {
+    return null;
+  }
+
+  return { project, error: availabilityError };
+}
+
+function isStartupConfigGetRoute(pathname: string): boolean {
+  return pathname === '/api/config'
+    || pathname === '/api/config/bootstrap'
+    || pathname === '/api/config/availability'
+    || pathname === '/api/config/ai-image/codex-local';
+}
+
+function isStartupSidebarTreeTab(value: string): boolean {
+  return value === 'prototypes'
+    || value === 'components'
+    || value === 'docs'
+    || value === 'canvas'
+    || value === 'themes';
+}
+
+function isStartupResourceOrderType(value: string): boolean {
+  return value === 'themes' || value === 'data' || value === 'templates';
+}
+
+function handleUnavailableProjectStartupApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: ManagementApiOptions,
+  pathname: string,
+  url: URL,
+): boolean {
+  const projectResourcesMatch = pathname.match(/^\/api\/projects\/([^/]+)\/resources$/u);
+  if (projectResourcesMatch && req.method === 'GET') {
+    const projectId = decodeURIComponent(projectResourcesMatch[1]);
+    const startupProject = resolveUnavailableStartupProject(options, projectId);
+    if (!startupProject) {
+      return false;
+    }
+    sendJson(res, createUnavailableProjectResourcesPayload(startupProject.project, startupProject.error));
+    return true;
+  }
+
+  if (req.method !== 'GET') {
+    return false;
+  }
+
+  const startupProject = resolveUnavailableStartupProject(options, getRequestProjectId(url));
+  if (!startupProject) {
+    return false;
+  }
+  const { project } = startupProject;
+
+  if (isStartupConfigGetRoute(pathname)) {
+    return handleConfigApi(req, res, options, pathname, { project }, {
+      readProjectConfig,
+      getServerConfigStoreForRequest,
+      stringValue,
+      toProjectIdentity,
+      updateRegisteredProjectTitle,
+    });
+  }
+
+  if (pathname === '/api/assistant/runtime') {
+    const serverConfigStore = getServerConfigStoreForRequest(options);
+    const config = serverConfigStore.getConfig({ activeProjectRoot: project.root });
+    resolveAssistantRuntime({
+      projectPath: project.root,
+      assistantConfig: config.assistant,
+      autoStart: url.searchParams.get('autoStart') === 'true',
+      makeOrigin: url.origin,
+      onRuntimeConfigResolved: (assistant) => {
+        serverConfigStore.saveConfig({ assistant });
+      },
+    }).then((runtime) => {
+      sendJson(res, createAssistantRuntimeResponse({
+        runtime,
+        projectId: project.id,
+        projectRoot: project.root,
+        req,
+      }));
+    }).catch((error: any) => {
+      sendJson(res, {
+        error: error?.message || 'Failed to resolve assistant runtime',
+        code: 'ASSISTANT_RUNTIME_RESOLVE_FAILED',
+        projectId: project.id,
+        projectRoot: project.root,
+      }, { status: 500 });
+    });
+    return true;
+  }
+
+  if (pathname === '/api/cloud-publishing/latest') {
+    return handleCloudPublishingApi(req, res, options, pathname, {
+      resolveProjectContext: () => ({ project }),
+      resolveSourceFileFromMetadata,
+      findProjectResourceByPath,
+      readProjectConfig,
+      commandExecutor: options.cloudPublishingCommandExecutor,
+      sendDisabledCapability,
+    });
+  }
+
+  if (pathname === '/api/entries.json') {
+    sendJson(res, { components: [], prototypes: [] });
+    return true;
+  }
+
+  if (pathname === '/api/workspace/project') {
+    sendJson(res, { title: project.name });
+    return true;
+  }
+
+  if (pathname === '/api/workspace/navigation') {
+    const tab = String(url.searchParams.get('tab') || '').trim();
+    if (!isStartupSidebarTreeTab(tab)) {
+      sendJson(res, { error: 'Invalid tab, expected prototypes|components|docs|canvas|themes' }, { status: 400 });
+      return true;
+    }
+    sendJson(res, { tab, version: SIDEBAR_TREE_VERSION, tree: [] });
+    return true;
+  }
+
+  if (pathname === '/api/docs' || pathname === '/api/docs/') {
+    sendJson(res, []);
+    return true;
+  }
+
+  if (pathname === '/api/themes' || pathname === '/api/themes/') {
+    sendJson(res, []);
+    return true;
+  }
+
+  if (pathname === '/api/workspace/resources/order') {
+    const type = String(url.searchParams.get('type') || '').trim();
+    if (!isStartupResourceOrderType(type)) {
+      sendJson(res, { error: 'Invalid type, expected themes|data|templates' }, { status: 400 });
+      return true;
+    }
+    sendJson(res, { type, version: SIDEBAR_TREE_VERSION, order: [] });
+    return true;
+  }
+
+  return false;
+}
+
 export async function handleManagementApi(req: IncomingMessage, res: ServerResponse, options: ManagementApiOptions): Promise<boolean> {
   const url = getRequestUrl(req);
   const pathname = url.pathname;
@@ -910,7 +1150,17 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     return true;
   }
 
+  if (pathname === '/api/version') {
+    const activeProject = getProjectRegistryForRequest(options).getActiveProject();
+    sendJson(res, { version: readMakeServerVersion(), projectId: activeProject?.id ?? null });
+    return true;
+  }
+
   if (handleQuickEditRuntimeApi(req, res, pathname)) {
+    return true;
+  }
+
+  if (handleUnavailableProjectStartupApi(req, res, options, pathname, url)) {
     return true;
   }
 
@@ -938,6 +1188,13 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     resolveProjectContext,
     getServerConfigStoreForRequest,
     sendDisabledCapability,
+  })) {
+    return true;
+  }
+
+  if (handleAiRunsApi(req, res, options, pathname, {
+    resolveProjectContext,
+    getServerConfigStoreForRequest,
   })) {
     return true;
   }
@@ -999,6 +1256,18 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     return false;
   }
 
+  if (pathname === '/api/docs/upload' && handleProjectDocsApi(req, res, null, options, pathname, {
+    createProjectContextFromBody,
+    getDeclaredResourceWriteDir,
+    hasResourceWriteCapability,
+    sendResourceWriteAdapterRequired,
+    saveMetadataWithResourceOrder,
+    prependUnique,
+    createProjectRelativePath,
+    updateGenericResourceMetadata,
+    removeGenericResourceMetadata,
+  })) return true;
+
   const requestContext = getRequestProjectContext(req, res, options);
   if (!requestContext) {
     return true;
@@ -1031,9 +1300,12 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     updateRegisteredProjectTitle,
   })) return true;
 
-  if (handleAiImageApi(req, res, options, pathname, requestContext, {
+  if (handleAiRunsApi(req, res, options, pathname, {
+    resolveProjectContext,
     getServerConfigStoreForRequest,
   })) return true;
+
+  if (handleAiArtifactHistoryApi(req, res, requestContext, pathname)) return true;
 
   if (handleCloudPublishingApi(req, res, options, pathname, {
     resolveProjectContext,
@@ -1076,6 +1348,24 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
       readMultipartParts: readMultipartParts as any,
       createProjectContextFromMultipartParts: createProjectContextFromMultipartParts as any,
     });
+    return true;
+  }
+  const startPrototypeGenerationMatch = pathname.match(/^\/api\/prototypes\/([^/]+)\/start-generation$/u);
+  if (startPrototypeGenerationMatch && req.method === 'POST') {
+    void handleStartPlaceholderPrototypeGeneration(
+      req,
+      res,
+      options,
+      requestContext,
+      safeDecodeURIComponent(startPrototypeGenerationMatch[1] || ''),
+      {
+        getDeclaredResourceWriteDir: getDeclaredResourceWriteDir as any,
+        hasResourceWriteCapability: hasResourceWriteCapability as any,
+        sendDisabledCapability,
+        readMultipartParts: readMultipartParts as any,
+        createProjectContextFromMultipartParts: createProjectContextFromMultipartParts as any,
+      },
+    );
     return true;
   }
   if (handlePrototypeUploadApi(req, res, options, pathname, {

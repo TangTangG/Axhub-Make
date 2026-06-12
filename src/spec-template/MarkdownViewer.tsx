@@ -66,7 +66,11 @@ interface SpecPromptRequestResult {
 export interface MarkdownViewerHandle {
     enableQuickEdit: () => void;
     disableQuickEdit: (options?: { discardChanges?: boolean }) => void;
-    enableDocumentEditor: (options?: { toolbarMode?: GenieEditorToolbarMode; initialDarkMode?: boolean }) => void;
+    enableDocumentEditor: (options?: {
+        toolbarMode?: GenieEditorToolbarMode;
+        initialDarkMode?: boolean;
+        assistantPanelOpen?: boolean;
+    }) => void;
     disableDocumentEditor: () => void;
     getHostToolbarState: () => GenieEditorHostToolbarState | null;
     subscribeHostToolbarState: (listener: (state: GenieEditorHostToolbarState) => void) => () => void;
@@ -110,13 +114,6 @@ function buildContextCurrentFileDisplayName(meta: MarkdownQuickEditMeta, fallbac
         return `${displayName} ${meta.docType}`;
     }
     return displayName;
-}
-
-function resolveDefaultEditorApiBaseUrl(): string {
-    if (typeof window === 'undefined') {
-        return 'http://localhost:32123/api';
-    }
-    return `${window.location.protocol}//${window.location.hostname}:32123/api`;
 }
 
 function buildDocApiPath(docName: string): string {
@@ -276,7 +273,7 @@ const MarkdownImage = (props: MarkdownImageProps) => {
 
 const markdownStyles = `
   body {
-    background: #f5f5f5;
+    background: #fff;
   }
   .markdown-container {
     display: flex;
@@ -292,16 +289,21 @@ const markdownStyles = `
     min-width: 0;
   }
   .markdown-content > div {
-    background: #fff;
     padding: 24px;
-    border-radius: 8px;
-    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px 0 rgba(0, 0, 0, 0.02);
   }
   .anchor-sidebar {
     width: 240px;
     flex-shrink: 0;
     position: sticky;
     top: 40px;
+  }
+  .anchor-sidebar-scroll {
+    max-height: calc(100vh - 88px);
+    overflow-y: auto;
+    padding-right: 8px;
+  }
+  .anchor-sidebar-scroll .ant-anchor-wrapper {
+    max-height: none !important;
   }
   @media (max-width: 1200px) {
     .anchor-sidebar {
@@ -552,6 +554,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     const draftConfirmingDocKeyRef = useRef<string | null>(null);
     const commentEditorRef = useRef<GenieEditorApi | null>(null);
     const commentEditorDarkModeRef = useRef(false);
+    const commentEditorAssistantPanelOpenRef = useRef(false);
     const editorUserChangedDocKeysRef = useRef<Set<string>>(new Set());
     const currentDoc = useMemo(
         () => localDocuments.find((doc) => doc.key === activeKey) || localDocuments[0],
@@ -619,9 +622,16 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
         };
     }, []);
 
-    const ensureCommentEditor = useCallback((options?: { initialDarkMode?: boolean }) => {
+    const ensureCommentEditor = useCallback((options?: {
+        initialDarkMode?: boolean;
+        assistantPanelOpen?: boolean;
+    }) => {
         const initialDarkMode = Boolean(options?.initialDarkMode ?? commentEditorDarkModeRef.current);
+        if (typeof options?.assistantPanelOpen === 'boolean') {
+            commentEditorAssistantPanelOpenRef.current = options.assistantPanelOpen;
+        }
         if (commentEditorRef.current && commentEditorDarkModeRef.current === initialDarkMode) {
+            commentEditorRef.current.refresh?.();
             return commentEditorRef.current;
         }
 
@@ -631,23 +641,11 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
             ui: {
                 toolbarMode: 'host',
                 initialDarkMode,
+                getAssistantPanelOpen: () => commentEditorAssistantPanelOpenRef.current,
                 skillInstallSource: '.agents/skills/prototype-comments/SKILL.md',
             },
             host: {
                 getResourceContext: () => buildCommentResourceContext(currentDocRef.current),
-            },
-            genieBridge: {
-                apiBaseUrl: resolveDefaultEditorApiBaseUrl(),
-                integrationChannel: 'make',
-                targetClientId: 'make',
-                provider: 'codex',
-            },
-            integrationWs: {
-                enabled: true,
-                apiBaseUrl: resolveDefaultEditorApiBaseUrl(),
-                channel: 'make',
-                clientId: `make-doc-${Math.random().toString(36).slice(2, 10)}`,
-                source: 'make-doc',
             },
         });
         commentEditorRef.current = editor;
@@ -1304,7 +1302,10 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
         enableDocumentEditor(options) {
             draftPromptedDocKeysRef.current.clear();
             setQuickEditModeState('comment');
-            ensureCommentEditor({ initialDarkMode: options?.initialDarkMode }).start();
+            ensureCommentEditor({
+                initialDarkMode: options?.initialDarkMode,
+                assistantPanelOpen: options?.assistantPanelOpen,
+            }).start();
         },
         disableDocumentEditor() {
             stopCommentEditor();
@@ -1368,6 +1369,28 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     }, [currentDoc?.content]);
 
     const isMultiDoc = localDocuments.length > 1;
+    const anchorSidebarScrollRef = useRef<HTMLDivElement | null>(null);
+
+    const scrollActiveAnchorIntoView = useCallback((activeHref?: string) => {
+        window.requestAnimationFrame(() => {
+            const scrollContainer = anchorSidebarScrollRef.current;
+            if (!scrollContainer) return;
+            const activeLink = Array.from(scrollContainer.querySelectorAll<HTMLAnchorElement>('.ant-anchor-link-title'))
+                .find((link) => link.getAttribute('href') === activeHref)
+                ?? scrollContainer.querySelector<HTMLElement>('.ant-anchor-link-title-active');
+            if (!activeLink) return;
+
+            const containerRect = scrollContainer.getBoundingClientRect();
+            const activeRect = activeLink.getBoundingClientRect();
+            const topGap = activeRect.top - containerRect.top;
+            const bottomGap = activeRect.bottom - containerRect.bottom;
+            if (topGap < 0) {
+                scrollContainer.scrollTop += topGap - 8;
+            } else if (bottomGap > 0) {
+                scrollContainer.scrollTop += bottomGap + 8;
+            }
+        });
+    }, []);
 
     const renderViewerContent = () => (
         <div className="markdown-container">
@@ -1406,20 +1429,18 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
                     >
                         目录
                     </div>
-                    <Anchor
-                        affix={false}
-                        offsetTop={40}
-                        targetOffset={80}
-                        items={anchorItems}
-                        onClick={(event, link) => {
-                            event.preventDefault();
-                            const targetId = link.href.replace('#', '');
-                            const targetElement = document.getElementById(targetId);
-                            if (targetElement) {
-                                targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                            }
-                        }}
-                    />
+                    <div className="anchor-sidebar-scroll" ref={anchorSidebarScrollRef}>
+                        <Anchor
+                            affix={false}
+                            offsetTop={40}
+                            targetOffset={80}
+                            items={anchorItems}
+                            onChange={scrollActiveAnchorIntoView}
+                            onClick={(event) => {
+                                event.preventDefault();
+                            }}
+                        />
+                    </div>
                 </div>
             )}
         </div>

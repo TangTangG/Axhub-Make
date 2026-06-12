@@ -1,0 +1,4 @@
+interface:
+  display_name: "需求探索"
+  short_description: "显式进入后，围绕原型和项目资料完善需求、术语、范围和决策"
+  default_prompt: "使用 $requirements-exploration 对当前需求做探索和完善。"

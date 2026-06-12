@@ -10,7 +10,7 @@ import {
 
 /**
  * Parameters for the current file resolution — mirrors the pattern used by
- * `resolveAssistantCurrentFile` in the Genie integration.
+ * `resolveAssistantCurrentFile` in the ACP UI assistant integration.
  */
 interface UseOpenCodeBridgeSyncParams {
     bridge: UseAxhubBridgeReturn;
@@ -34,7 +34,7 @@ interface UseOpenCodeBridgeSyncParams {
  * Automatically synchronise the "current file" context item on the OpenCode
  * bridge whenever the user's active selection changes in the Make Admin UI.
  *
- * This mirrors how Genie receives `currentFile` updates — except here we push
+ * This mirrors how the ACP UI assistant receives `currentFile` updates — except here we push
  * a single `context:update` (or `context:add`) message through the bridge
  * relay so that OpenCode's injected hug.js can include the file reference in
  * the next prompt submission.

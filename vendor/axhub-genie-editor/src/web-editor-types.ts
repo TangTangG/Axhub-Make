@@ -487,6 +487,7 @@ export interface PrototypeEditCommentMarkerEntry {
 }
 
 export interface PrototypeEditCommentEntry {
+  pageScope?: string;
   elementKey?: WebEditorElementKey;
   label?: string;
   locator: ElementLocator;
@@ -499,6 +500,7 @@ export interface PrototypeEditCommentEntry {
 }
 
 export interface PrototypeEditCommentTaskEntry {
+  pageScope?: string;
   state: PrototypeEditCommentTaskStatus;
   provider?: string | null;
   requestId?: string | null;
@@ -509,6 +511,7 @@ export interface PrototypeEditCommentTaskEntry {
 
 export interface PrototypeEditCommentImageEntry {
   id: string;
+  pageScope?: string;
   elementKey?: WebEditorElementKey;
   name?: string;
   mimeType?: string;
@@ -621,6 +624,7 @@ export interface GenieEditorHostToolbarState {
   disablePageAnimations: boolean;
   pageZoomEnabled: boolean;
   copySkillInstallPromptDisabled: boolean;
+  selectionModeActive: boolean;
   fullExitAvailable: boolean;
 }
 
@@ -638,6 +642,7 @@ export type GenieEditorHostToolbarAction =
   | { type: 'toggle-dark-mode'; darkMode?: boolean }
   | { type: 'toggle-page-animations' }
   | { type: 'toggle-page-zoom' }
+  | { type: 'toggle-selection-mode'; active?: boolean }
   | { type: 'open-keyboard-shortcuts' }
   | { type: 'full-exit' };
 
@@ -840,6 +845,8 @@ export interface GenieEditorApi {
   getStatus: () => GenieEditorStatus;
   /** Subscribe to host-facing status changes */
   subscribeStatus: (listener: GenieEditorStatusListener) => () => void;
+  /** Refresh floating runtime UI from current host callbacks */
+  refresh: () => void;
   /** Read the currently selected element summary */
   getSelectedElement: () => SelectedElementSummary | null;
   /** Read the current modified element summaries */

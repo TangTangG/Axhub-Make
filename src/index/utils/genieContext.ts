@@ -3,10 +3,6 @@ import {
   mergeGenieContextV1,
   normalizeGenieCurrentFileV1,
 } from '../../common/genie/bridge';
-import {
-  appendRequiredGenieOpenParams,
-  buildMinimalGenieUrlContext,
-} from '../../common/genie/url';
 import type { GenieCurrentFileV1 } from '../../common/genie/types';
 import type { AssistantContextV1, CanvasItem, ItemData, TabType, ViewMode } from '../types';
 import type { CanvasElementContextInfo } from '../components/content/canvas-embeds/AnnotationOverlay';
@@ -42,6 +38,10 @@ export interface AssistantCanvasComment {
   };
   preview?: string;
   updatedAt: string;
+}
+
+interface BuildAssistantCanvasCommentOptions {
+  useElementFallbackBody?: boolean;
 }
 
 function normalizePathValue(value: unknown): string {
@@ -185,6 +185,7 @@ export function buildAssistantCanvasCommentsExtension(
   annotations: CanvasElementContextInfo[],
   currentFilePath: string,
   now: Date = new Date(),
+  options: BuildAssistantCanvasCommentOptions = {},
 ): AssistantCanvasComment[] {
   if (!Array.isArray(annotations)) {
     return [];
@@ -196,14 +197,15 @@ export function buildAssistantCanvasCommentsExtension(
 
   for (const annotation of annotations) {
     const elementId = String(annotation?.elementId || '').trim();
-    const body = String(annotation?.annotation || '').trim();
+    const elementType = String(annotation?.type || 'unknown').trim() || 'unknown';
+    const preview = String(annotation?.title || annotation?.type || elementId).trim();
+    const body = String(annotation?.annotation || '').trim()
+      || (options.useElementFallbackBody ? (preview || elementType || elementId) : '');
     if (!elementId || !body) {
       continue;
     }
 
-    const elementType = String(annotation?.type || 'unknown').trim() || 'unknown';
     const link = normalizePathValue(annotation?.link);
-    const preview = String(annotation?.title || annotation?.type || elementId).trim();
     const id = `axhub:canvas-annotation:${elementId}`;
     commentsById.set(id, {
       id,
@@ -221,6 +223,32 @@ export function buildAssistantCanvasCommentsExtension(
   }
 
   return Array.from(commentsById.values());
+}
+
+export function buildAssistantContextWithCanvasElements(
+  context: AssistantContextV1,
+  elements: CanvasElementContextInfo[],
+  currentFilePath: string,
+): AssistantContextV1 {
+  const comments = buildAssistantCanvasCommentsExtension(elements, currentFilePath, new Date(), {
+    useElementFallbackBody: true,
+  });
+  const extensions = {
+    ...(context.extensions || {}),
+  };
+
+  if (comments.length > 0) {
+    extensions.comments = comments;
+  } else {
+    delete extensions.comments;
+  }
+
+  return {
+    ...context,
+    currentFile: normalizeGenieCurrentFileV1(context.currentFile),
+    selectedElements: [],
+    extensions,
+  };
 }
 
 export function buildAssistantContextWithCanvasComments(
@@ -260,17 +288,46 @@ export function getAssistantContextCurrentFilePath(context: Pick<AssistantContex
   return getGenieCurrentFilePath(context.currentFile);
 }
 
+function removeLegacyAssistantUrlParams(url: URL): void {
+  [
+    'context',
+    'prompt',
+    'provider',
+    'model',
+    'modeId',
+    'thoughtLevel',
+    'permissionMode',
+    'integrationWs',
+    'integrationClientId',
+    'integrationChannel',
+    'genieApiBaseUrl',
+    'genieIntegrationChannel',
+    'genieTargetClientId',
+    'editorClientId',
+    'editorIntegrationWs',
+    'editorApiBaseUrl',
+    'editorIntegrationChannel',
+    'editorSessionId',
+    'editorMobileMode',
+    'slashCommands',
+  ].forEach((paramName) => {
+    url.searchParams.delete(paramName);
+  });
+}
+
 export function buildAssistantContextUrl(
   baseUrl: string,
-  context: AssistantContextV1,
+  _context: AssistantContextV1,
   baseOrigin?: string,
 ): string {
   try {
-    const url = new URL(appendRequiredGenieOpenParams(baseUrl, baseOrigin));
-    url.searchParams.set('context', JSON.stringify(buildMinimalGenieUrlContext(context)));
+    const resolvedBaseUrl = baseOrigin
+      ?? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const url = new URL(baseUrl, resolvedBaseUrl);
+    removeLegacyAssistantUrlParams(url);
     return url.toString();
   } catch (error) {
-    console.warn('Failed to serialize assistant context into URL:', error);
-    return appendRequiredGenieOpenParams(baseUrl, baseOrigin);
+    console.warn('Failed to sanitize assistant URL:', error);
+    return baseUrl;
   }
 }

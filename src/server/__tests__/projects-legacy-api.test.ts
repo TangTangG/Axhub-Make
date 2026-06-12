@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { unzipSync } from 'fflate';
 
 import {
   getProjectMetadataPath,
@@ -70,6 +71,7 @@ describe('make-server project legacy compatibility APIs', () => {
     const server = await startTestServer(firstRoot);
 
     try {
+      await registerProject(server.origin, firstRoot, 'first-client', 'First Client');
       await registerProject(server.origin, secondRoot, 'second-client', 'Second Client');
       await setActiveProject(server.origin, 'second-client');
 
@@ -119,6 +121,89 @@ describe('make-server project legacy compatibility APIs', () => {
     }
   });
 
+  it('routes legacy file operations through the requested project instead of the active project', async () => {
+    const startupRoot = createTempRoot();
+    const firstRoot = createTempRoot();
+    const secondRoot = createTempRoot();
+    writeProjectMetadata(startupRoot, {
+      project: { id: 'startup-client', name: 'Startup Client' },
+    });
+    writeProjectMetadata(firstRoot, {
+      project: { id: 'first-client', name: 'First Client' },
+      resources: {
+        prototypes: [
+          {
+            id: 'first-only',
+            name: 'first-only',
+            title: 'First Only',
+            clientUrl: '/prototypes/first-only',
+            filePath: 'src/prototypes/first-only/index.tsx',
+          },
+        ],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: ['first-only'], docs: [] },
+    });
+    writeProjectMetadata(secondRoot, {
+      project: { id: 'second-client', name: 'Second Client' },
+      resources: {
+        prototypes: [
+          {
+            id: 'second-only',
+            name: 'second-only',
+            title: 'Second Only',
+            clientUrl: '/prototypes/second-only',
+            filePath: 'src/prototypes/second-only/index.tsx',
+          },
+        ],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: ['second-only'], docs: [] },
+    });
+    fs.mkdirSync(path.join(firstRoot, 'src', 'prototypes', 'first-only'), { recursive: true });
+    fs.mkdirSync(path.join(secondRoot, 'src', 'prototypes', 'second-only'), { recursive: true });
+    fs.writeFileSync(path.join(firstRoot, 'src', 'prototypes', 'first-only', 'index.tsx'), 'export default function FirstOnly() { return null; }\n', 'utf8');
+    fs.writeFileSync(path.join(secondRoot, 'src', 'prototypes', 'second-only', 'index.tsx'), 'export default function SecondOnly() { return null; }\n', 'utf8');
+
+    const server = await startTestServer(startupRoot);
+
+    try {
+      await registerProject(server.origin, firstRoot, 'first-client', 'First Client');
+      await registerProject(server.origin, secondRoot, 'second-client', 'Second Client');
+      await setActiveProject(server.origin, 'second-client');
+      const projects = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
+      expect(projects.projects.map((project: any) => project.id)).toEqual(expect.arrayContaining(['first-client', 'second-client']));
+
+      const deleted = await fetch(`${server.origin}/api/delete?projectId=first-client`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'src/prototypes/first-only' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(deleted).toMatchObject({
+        status: 200,
+        body: { success: true },
+      });
+      expect(fs.existsSync(path.join(firstRoot, 'src', 'prototypes', 'first-only'))).toBe(false);
+      expect(fs.existsSync(path.join(secondRoot, 'src', 'prototypes', 'second-only'))).toBe(true);
+
+      const firstMetadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(firstRoot), 'utf8'));
+      const secondMetadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(secondRoot), 'utf8'));
+      expect(firstMetadata.resources.prototypes).toEqual([]);
+      expect(firstMetadata.navigation.prototypes).toEqual([]);
+      expect(secondMetadata.resources.prototypes.map((prototype: any) => prototype.id)).toEqual(['second-only']);
+      expect(secondMetadata.navigation.prototypes).toEqual(['second-only']);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('hides resource README and dot-prefixed files from the legacy docs list', async () => {
     const projectRoot = createTempRoot();
     const resourcesDir = path.join(projectRoot, 'src', 'resources');
@@ -136,6 +221,8 @@ describe('make-server project legacy compatibility APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'legacy-docs-list', 'Legacy Docs List');
+
       const docs = await fetch(`${server.origin}/api/docs`).then((response) => response.json());
       expect(docs.map((doc: any) => doc.name)).toEqual(['visible.json']);
     } finally {
@@ -159,6 +246,8 @@ describe('make-server project legacy compatibility APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'legacy-spec-doc', 'Legacy Spec Doc');
+
       const saveDoc = await fetch(`${server.origin}/api/spec-doc/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -224,6 +313,8 @@ describe('make-server project legacy compatibility APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'delete-root-client', 'Delete Root Client');
+
       const deleted = await fetch(`${server.origin}/api/delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -281,6 +372,61 @@ describe('make-server project legacy compatibility APIs', () => {
     }
   });
 
+  it('accepts src-prefixed prototype paths in legacy zip fallback probes', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'src-prefixed-zip', name: 'Src Prefixed Zip' },
+    });
+    const prototypeDir = path.join(projectRoot, 'src', 'prototypes', 'bi-marketing-dashboard');
+    fs.mkdirSync(prototypeDir, { recursive: true });
+    fs.writeFileSync(path.join(prototypeDir, 'index.tsx'), 'export default function Dashboard() { return null; }\n', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'src-prefixed-zip', 'Src Prefixed Zip');
+
+      const zipProbe = await fetch(`${server.origin}/api/zip?path=${encodeURIComponent('src/prototypes/bi-marketing-dashboard')}&probe=1`)
+        .then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(zipProbe).toMatchObject({
+        status: 200,
+        body: {
+          ok: true,
+          fileName: 'bi-marketing-dashboard.zip',
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('streams legacy zip fallback downloads as readable zip archives', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'legacy-zip-download', name: 'Legacy Zip Download' },
+    });
+    const prototypeDir = path.join(projectRoot, 'src', 'prototypes', 'zip-preview');
+    fs.mkdirSync(prototypeDir, { recursive: true });
+    fs.writeFileSync(path.join(prototypeDir, 'index.tsx'), 'export default function ZipPreview() { return null; }\n', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'legacy-zip-download', 'Legacy Zip Download');
+
+      const response = await fetch(`${server.origin}/api/zip?path=${encodeURIComponent('src/prototypes/zip-preview')}&download=1`);
+      const body = new Uint8Array(await response.arrayBuffer());
+      const entries = unzipSync(body);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/zip');
+      expect(Object.keys(entries)).toContain('index.tsx');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('exports metadata-backed design directories as ZIP archives', async () => {
     const projectRoot = createTempRoot();
     const themeDir = path.join(projectRoot, 'src', 'themes', 'brand-design');
@@ -305,6 +451,8 @@ describe('make-server project legacy compatibility APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'theme-directory-export', 'Theme Directory Export');
+
       const zipProbe = await fetch(`${server.origin}/api/zip?path=${encodeURIComponent('src/themes/brand-design')}&probe=1`)
         .then(async (response) => ({ status: response.status, body: await response.json() }));
 
@@ -345,6 +493,8 @@ describe('make-server project legacy compatibility APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'metadata-only', 'Metadata Only');
+
       const source = await fetch(`${server.origin}/api/source?path=${encodeURIComponent('prototypes/preview')}`);
       const sourceBody = await source.json();
       expect(source.status).toBe(424);
@@ -375,10 +525,9 @@ describe('make-server project legacy compatibility APIs', () => {
         body: JSON.stringify({ prompt: 'hello' }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(promptExecute).toMatchObject({
-        status: 400,
+        status: 404,
         body: {
-          code: 'PROMPT_EXECUTION_CLIENT_UNSUPPORTED',
-          projectId: 'metadata-only',
+          error: 'Not found',
         },
       });
     } finally {

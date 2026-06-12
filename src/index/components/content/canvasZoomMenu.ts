@@ -19,7 +19,7 @@ interface CanvasZoomMenuItem {
 
 interface CanvasZoomExcalidrawAPI {
     zoomCanvas?: (value: number) => void;
-    updateScene?: (sceneData: { appState?: Record<string, unknown> }) => void;
+    updateScene?: (sceneData: any) => void;
     scrollToContent: (target?: unknown, opts?: Record<string, unknown>) => void;
     getSceneElements: () => readonly any[];
     getAppState: () => {

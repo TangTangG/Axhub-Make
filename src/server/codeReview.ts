@@ -151,6 +151,123 @@ function hasTopLevelComponentBinding(content: string, filePath: string): boolean
   });
 }
 
+function collectNamedImportLocalNames(sourceFile: ts.SourceFile, moduleName: string, importedName: string): Set<string> {
+  const result = new Set<string>();
+
+  sourceFile.statements.forEach((statement) => {
+    if (!ts.isImportDeclaration(statement)) return;
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) return;
+    if (statement.moduleSpecifier.text !== moduleName) return;
+    const namedBindings = statement.importClause?.namedBindings;
+    if (!namedBindings || !ts.isNamedImports(namedBindings)) return;
+
+    namedBindings.elements.forEach((element) => {
+      const sourceName = element.propertyName?.text ?? element.name.text;
+      if (sourceName === importedName) {
+        result.add(element.name.text);
+      }
+    });
+  });
+
+  return result;
+}
+
+function collectLocalAnnotationSourceJsonImports(sourceFile: ts.SourceFile): Set<string> {
+  const result = new Set<string>();
+
+  sourceFile.statements.forEach((statement) => {
+    if (!ts.isImportDeclaration(statement)) return;
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) return;
+    const importPath = statement.moduleSpecifier.text.trim();
+    const fileName = importPath.split(/[\\/]/u).pop() || '';
+    const isLocalAnnotationSourceJson = importPath.startsWith('.')
+      && fileName.includes('annotation-source')
+      && fileName.endsWith('.json');
+    if (!isLocalAnnotationSourceJson) return;
+    const localName = statement.importClause?.name?.text;
+    if (localName) {
+      result.add(localName);
+    }
+  });
+
+  return result;
+}
+
+function unwrapExpression(expression: ts.Expression): ts.Expression {
+  if (
+    ts.isAsExpression(expression)
+    || ts.isTypeAssertionExpression(expression)
+    || ts.isNonNullExpression(expression)
+    || ts.isSatisfiesExpression(expression)
+    || ts.isParenthesizedExpression(expression)
+  ) {
+    return unwrapExpression(expression.expression);
+  }
+
+  return expression;
+}
+
+function getJsxAttributeExpression(
+  element: ts.JsxOpeningElement | ts.JsxSelfClosingElement,
+  attributeName: string,
+): ts.Expression | null {
+  const attribute = element.attributes.properties.find((property): property is ts.JsxAttribute => (
+    ts.isJsxAttribute(property) && ts.isIdentifier(property.name) && property.name.text === attributeName
+  ));
+
+  if (!attribute?.initializer || !ts.isJsxExpression(attribute.initializer)) {
+    return null;
+  }
+
+  return attribute.initializer.expression ?? null;
+}
+
+function getIdentifierJsxTagName(element: ts.JsxOpeningElement | ts.JsxSelfClosingElement): string | null {
+  return ts.isIdentifier(element.tagName) ? element.tagName.text : null;
+}
+
+function checkAxureAnnotationSourceImport(content: string, filePath: string): ReviewIssue[] {
+  const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const annotationViewerNames = collectNamedImportLocalNames(sourceFile, '@axhub/annotation', 'AnnotationViewer');
+  if (annotationViewerNames.size === 0) {
+    return [];
+  }
+
+  const annotationSourceImports = collectLocalAnnotationSourceJsonImports(sourceFile);
+  let usesAnnotationViewer = false;
+  let hasInvalidAnnotationViewerSource = false;
+
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const tagName = getIdentifierJsxTagName(node);
+      if (tagName && annotationViewerNames.has(tagName)) {
+        usesAnnotationViewer = true;
+        const sourceExpression = getJsxAttributeExpression(node, 'source');
+        const unwrapped = sourceExpression ? unwrapExpression(sourceExpression) : null;
+        if (!unwrapped || !ts.isIdentifier(unwrapped) || !annotationSourceImports.has(unwrapped.text)) {
+          hasInvalidAnnotationViewerSource = true;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  ts.forEachChild(sourceFile, visit);
+
+  if (!usesAnnotationViewer || !hasInvalidAnnotationViewerSource) {
+    return [];
+  }
+
+  return [{
+    type: 'error',
+    rule: 'axure-annotation-source-import',
+    message: 'Axure Runtime 导出中使用了 AnnotationViewer，但未把本地 annotation-source JSON 静态传入 source',
+    suggestion: '请在当前文件中 `import annotationSourceDocument from \'./annotation-source.json\'`，并使用 `<AnnotationViewer source={annotationSourceDocument as unknown as AnnotationSourceDocument} />`，确保标注随 Axure Runtime bundle 构建进去',
+    blocking: true,
+    category: 'export-structure',
+  }];
+}
+
 function checkAxureExportStructure(content: string, filePath: string): ReviewIssue[] {
   const issues: ReviewIssue[] = [];
 
@@ -203,6 +320,8 @@ function checkAxureExportStructure(content: string, filePath: string): ReviewIss
       category: 'export-structure',
     });
   }
+
+  issues.push(...checkAxureAnnotationSourceImport(content, filePath));
 
   return issues;
 }

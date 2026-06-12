@@ -35,6 +35,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         docsItems,
         canvasItems,
         themes,
+        defaultThemeName,
         searchText,
         setSearchText,
         selectedItem,
@@ -43,7 +44,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         selectedResourceFolder,
         selectedCanvas,
         selectedTheme,
-        defaultThemeName,
         onRenameTheme,
         onDeleteTheme,
         onSetDefaultTheme,
@@ -61,7 +61,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         handleDeleteDocItem,
         handleCopyDocPath,
         handleDocVersionManagement,
-        onCreatePrototypeFromDoc,
         onOpenCreateDialog,
         onImportTheme,
         onUploadedResourceFiles,
@@ -83,6 +82,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         onOpenWebAgentInPanel,
         onCloseWebAgentPanel,
         onSettingsClick,
+        onOpenAISettings,
         onToggleTheme,
         projectTitle,
         activeProjectId,
@@ -105,7 +105,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         onSidebarTreeChange,
         onSidebarTreePersist,
         webAgentPanelOpen,
-        onRefreshAvailability,
     } = resolveNewSidebarProps(rawProps);
 
     const handleSidebarTabChange = (tab: SidebarTab) => {
@@ -214,7 +213,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
     return (
         <div
             className={cn(
-                'flex flex-col h-full min-h-0 bg-background border-r transition-all duration-300',
+                'flex flex-col h-full min-h-0 bg-background border-r border-border transition-all duration-300',
                 collapsed ? 'w-0 overflow-hidden border-none' : 'w-[240px]',
             )}
         >
@@ -270,9 +269,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 onImportTheme={onImportTheme}
                 onUploadedResourceFiles={onUploadedResourceFiles}
                 onCreateCanvasFile={onCreateCanvasFile}
-                onCreatePrototypeFromDoc={(doc) => {
-                    void onCreatePrototypeFromDoc(doc);
-                }}
                 onCreateFolder={onCreateFolder}
                 onGenerateThemeFromPrototype={onGenerateThemeFromPrototype}
                 handleDownloadItemSource={handleDownloadItemSource}
@@ -290,7 +286,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 webAgentPanelOpen={webAgentPanelOpen}
                 onCloseWebAgentPanel={onCloseWebAgentPanel}
                 onPreferredIDEChange={onPreferredIDEChange}
-                onRefreshAvailability={onRefreshAvailability}
+                onOpenAISettings={onOpenAISettings}
                 isDarkMode={isDarkMode}
                 handleRenameItem={renameHandler}
                 handleDuplicateItem={duplicateHandler}

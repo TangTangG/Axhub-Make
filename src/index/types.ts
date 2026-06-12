@@ -30,6 +30,7 @@ export interface ItemData {
     previewDisabled?: boolean;
     placeholder?: boolean;
     placeholderGuide?: PrototypePlaceholderGuide;
+    generationStatus?: 'waiting';
     isReference?: boolean;
     pages?: { id: string; title: string }[];
     defaultPageId?: string;
@@ -48,6 +49,12 @@ export interface DataType {
     prototypes: ItemData[];
 }
 
+export type AcpPromptClient =
+    | 'acp:claude'
+    | 'acp:cursor'
+    | 'acp:codex'
+    | 'acp:gemini'
+    | 'acp:opencode';
 export type GeniePromptClient =
     | 'genie:claude'
     | 'genie:cursor'
@@ -55,7 +62,7 @@ export type GeniePromptClient =
     | 'genie:gemini'
     | 'genie:opencode';
 export type LocalPromptClient = 'local:cursor' | 'local:qoder';
-export type PromptClient = GeniePromptClient | LocalPromptClient;
+export type PromptClient = AcpPromptClient | GeniePromptClient | LocalPromptClient;
 export type PromptClientPreference = PromptClient | null;
 
 export interface AutomationConfig {
@@ -144,10 +151,4 @@ export interface AssistantContextV1 {
     currentFile: GenieCurrentFileValueV1;
     selectedElements: AssistantContextElementV1[];
     extensions?: Record<string, unknown>;
-}
-
-export interface AssistantUpdateContextMessage {
-    type: 'update_context';
-    mode?: 'replace' | 'append';
-    context: AssistantContextV1;
 }

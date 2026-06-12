@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 import { unzipSync, zipSync } from 'fflate';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -66,6 +67,7 @@ const disallowedNpmPackagePathPatterns = [
   /(?:^|\/)[^/]+\.test\.[^/]+$/u,
   /(?:^|\/)coverage(?:\/|$)/u,
   /(?:^|\/)node_modules(?:\/|$)/u,
+  /(?:^|\/)\.next(?:\/|$)/u,
   /(?:^|\/)\.DS_Store$/u,
   /(?:^|\/)\.env(?:\.|$)/u,
   /(?:^|\/)\.local(?:\/|$)/u,
@@ -74,6 +76,38 @@ const disallowedNpmPackagePathPatterns = [
   /^README\.md$/u,
   /^assets(?:\/|$)/u,
   /^dist\/admin\/images(?:\/|$)/u,
+];
+const textLikeArtifactExtensions = new Set([
+  '',
+  '.css',
+  '.csv',
+  '.html',
+  '.js',
+  '.json',
+  '.map',
+  '.md',
+  '.mjs',
+  '.svg',
+  '.ts',
+  '.tsx',
+  '.txt',
+  '.xml',
+  '.yaml',
+  '.yml',
+]);
+const localMachinePathPatterns = [
+  /(?:file:)?\/Users\/[^'"`\s]+/u,
+  /(?:file:)?\/Volumes\/[^'"`\s]+/u,
+  /[A-Za-z]:\\Users\\[^'"`\s]+/u,
+  /%2FUsers%2F/iu,
+  /%2FVolumes%2F/iu,
+];
+const localMachinePathSanitizePatterns = [
+  /(?:file:)?\/Users\/[^'"`\s]+/gu,
+  /(?:file:)?\/Volumes\/[^'"`\s]+/gu,
+  /[A-Za-z]:\\Users\\[^'"`\s]+/gu,
+  /%2FUsers%2F[^'"`\s]+/giu,
+  /%2FVolumes%2F[^'"`\s]+/giu,
 ];
 const templateCopyIgnoredNames = new Set([
   '.git',
@@ -108,6 +142,7 @@ const templateCopyIgnoredAxhubMakeNames = new Set([
 ]);
 const templateCopyAllowedAxhubMakeFiles = new Set([
   '.axhub/make/client.json',
+  '.axhub/make/axhub.config.json',
   '.axhub/make/README.md',
   '.axhub/make/sidebar-tree.json',
 ]);
@@ -251,12 +286,113 @@ function walkFiles(rootDir) {
   return files.sort((left, right) => left.localeCompare(right));
 }
 
+function isTextLikeArtifactPath(filePath) {
+  return textLikeArtifactExtensions.has(path.extname(filePath).toLowerCase());
+}
+
+function findLocalMachinePath(value) {
+  const source = typeof value === 'string' ? value : value.toString('utf8');
+  return localMachinePathPatterns.find((pattern) => pattern.test(source)) || null;
+}
+
+function buildSameLengthPathReplacement(match) {
+  const replacement = /^[A-Za-z]:\\/u.test(match)
+    ? 'C:\\__axhub_build_path__'
+    : match.startsWith('%2F') || match.startsWith('%2f')
+      ? '%2F__axhub_build_path__'
+      : match.startsWith('file:')
+        ? 'file:/__axhub_build_path__'
+        : '/__axhub_build_path__';
+
+  if (replacement.length >= match.length) {
+    return replacement.slice(0, match.length);
+  }
+  return replacement.padEnd(match.length, '_');
+}
+
+export function sanitizeLocalMachinePathsInFile(filePath) {
+  const source = fs.readFileSync(filePath).toString('latin1');
+  let sanitized = source;
+  for (const pattern of localMachinePathSanitizePatterns) {
+    sanitized = sanitized.replace(pattern, buildSameLengthPathReplacement);
+  }
+  if (sanitized !== source) {
+    fs.writeFileSync(filePath, Buffer.from(sanitized, 'latin1'));
+  }
+  return {
+    filePath,
+    changed: sanitized !== source,
+  };
+}
+
+function assertNoLocalMachinePathInText(label, value) {
+  const pattern = findLocalMachinePath(value);
+  if (pattern) {
+    throw new Error(`${label} must not include local machine path (${pattern})`);
+  }
+}
+
+function assertNoLocalMachinePathsInDirectory(rootDir, label) {
+  for (const filePath of walkFiles(rootDir)) {
+    if (!isTextLikeArtifactPath(filePath)) {
+      continue;
+    }
+    const relativePath = path.relative(rootDir, filePath).split(path.sep).join('/');
+    assertNoLocalMachinePathInText(`${label} file ${relativePath}`, fs.readFileSync(filePath, 'utf8'));
+  }
+}
+
+function assertNoLocalMachinePathsInBinaryFile(filePath, label) {
+  assertNoLocalMachinePathInText(label, fs.readFileSync(filePath));
+}
+
+function assertNoLocalMachinePathsInZip(zipPath, label) {
+  const entries = unzipSync(new Uint8Array(fs.readFileSync(zipPath)));
+  for (const [entryName, bytes] of Object.entries(entries)) {
+    if (!isTextLikeArtifactPath(entryName)) {
+      continue;
+    }
+    assertNoLocalMachinePathInText(`${label} entry ${entryName}`, Buffer.from(bytes).toString('utf8'));
+  }
+}
+
+function assertNoLocalMachinePathsInTarGz(tarballPath, label) {
+  const tarBytes = zlib.gunzipSync(fs.readFileSync(tarballPath));
+  for (let offset = 0; offset + 512 <= tarBytes.length;) {
+    const header = tarBytes.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      break;
+    }
+    const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/u, '');
+    const sizeText = header.subarray(124, 136).toString('utf8').replace(/\0.*$/u, '').trim();
+    const typeflag = header.subarray(156, 157).toString('utf8');
+    const prefix = header.subarray(345, 500).toString('utf8').replace(/\0.*$/u, '');
+    const entryName = [prefix, name].filter(Boolean).join('/');
+    const size = Number.parseInt(sizeText || '0', 8);
+    if (!Number.isFinite(size) || size < 0) {
+      throw new Error(`${label} entry ${entryName || '(unknown)'} has invalid tar size`);
+    }
+    const contentOffset = offset + 512;
+    if ((typeflag === '' || typeflag === '0') && isTextLikeArtifactPath(entryName)) {
+      assertNoLocalMachinePathInText(
+        `${label} entry ${entryName}`,
+        tarBytes.subarray(contentOffset, contentOffset + size).toString('utf8'),
+      );
+    }
+    offset = contentOffset + Math.ceil(size / 512) * 512;
+  }
+}
+
 function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
   const normalizedRelativePath = relativePath.split(path.sep).join('/');
-  if (
-    normalizedRelativePath.startsWith('.axhub/make/')
-  ) {
-    return !templateCopyAllowedAxhubMakeFiles.has(normalizedRelativePath);
+  if (normalizedRelativePath === '.axhub' || normalizedRelativePath === '.axhub/make') {
+    return false;
+  }
+  if (normalizedRelativePath.startsWith('.axhub/')) {
+    if (normalizedRelativePath.startsWith('.axhub/make/')) {
+      return !templateCopyAllowedAxhubMakeFiles.has(normalizedRelativePath);
+    }
+    return true;
   }
   if (templateCopyIgnoredNames.has(entryName) || templateCopyIgnoredFiles.has(entryName)) {
     return true;
@@ -371,6 +507,7 @@ export function createMakeClientTemplateZip({
   fs.rmSync(zipPath, { force: true });
   const zipped = zipSync(buildTemplateZippable(sourceClientDir), { level: 6 });
   fs.writeFileSync(zipPath, Buffer.from(zipped));
+  assertNoLocalMachinePathsInZip(zipPath, 'Make client template zip');
   return {
     path: zipPath,
     sha256: sha256File(zipPath),
@@ -406,7 +543,7 @@ function parseArgs(args) {
     skipGithub: false,
     templateOnly: false,
     templateVersion: '',
-    npmTag: 'latest',
+    npmTag: 'beta',
     githubRepo: process.env.GITHUB_REPOSITORY || '',
     otp: '',
     help: false,
@@ -460,7 +597,7 @@ function printUsage() {
 
 Options:
   --github-repo <owner/repo>  GitHub repository for the Release. Required unless --skip-github is used.
-  --npm-tag <tag>            npm dist-tag. Defaults to latest.
+  --npm-tag <tag>            npm dist-tag. Defaults to beta.
   --template-only            Prepare or publish only the Make client template zip release.
   --template-version <ver>   Template version for --template-only. A leading v is accepted.
   --otp <code>               npm one-time password for 2FA.
@@ -582,6 +719,7 @@ export function assertNpmPackageShape({ dryRunInfo, packageDir }) {
     }
     assertNpmPackageFilePath(file.path);
   }
+  assertNoLocalMachinePathsInDirectory(packageDir, 'npm package');
 }
 
 function writeNpmBin() {
@@ -615,10 +753,12 @@ export function createServerBundleArgs(outFile, entryFile) {
 
 function buildServerBundle() {
   fs.mkdirSync(npmPackageServerDir, { recursive: true });
+  const outFile = path.join(npmPackageServerDir, 'cli.mjs');
   run('bun', createServerBundleArgs(
-    path.join(npmPackageServerDir, 'cli.mjs'),
+    outFile,
     path.join(makeServerRoot, 'src/server/cli.ts'),
   ));
+  sanitizeLocalMachinePathsInFile(outFile);
 }
 
 function createBunEntrypoint() {
@@ -672,9 +812,12 @@ function createPlatformArtifact(target, executablePath, sourcePackage) {
   copyOpenCodeWebUiToPlatformArtifact({ artifactDir });
   copyFile(canvasFigSyncSource, path.join(artifactDir, 'scripts/canvas-fig-sync.mjs'), 0o755);
   fs.writeFileSync(path.join(artifactDir, 'VERSION'), `${sourcePackage.version}\n`, 'utf8');
+  assertNoLocalMachinePathsInDirectory(artifactDir, `${target.id} release artifact directory`);
+  assertNoLocalMachinePathsInBinaryFile(path.join(artifactDir, target.executableName), `${target.id} executable`);
   writeChecksums(artifactDir);
 
   run('zip', ['-qr', artifactZip, '.'], { cwd: artifactDir });
+  assertNoLocalMachinePathsInBinaryFile(artifactZip, `${target.id} release zip`);
 
   return {
     targetId: target.id,
@@ -683,6 +826,12 @@ function createPlatformArtifact(target, executablePath, sourcePackage) {
     zipPath: artifactZip,
     executablePath: path.join(artifactDir, target.executableName),
   };
+}
+
+function buildSanitizedExecutableTarget(target, entryPath) {
+  const executablePath = bundleExecutableTarget(target, entryPath);
+  sanitizeLocalMachinePathsInFile(executablePath);
+  return executablePath;
 }
 
 function createNpmPackage(sourcePackage) {
@@ -712,10 +861,15 @@ function packNpmPackage() {
   if (!fs.existsSync(tarballPath)) {
     throw new Error(`npm tarball was not created: ${tarballPath}`);
   }
+  assertNoLocalMachinePathsInTarGz(tarballPath, 'npm tarball');
   return { dryRunInfo, tarballPath };
 }
 
-function prepareRelease() {
+export function shouldBuildPlatformArtifacts(options = {}) {
+  return !options.skipGithub;
+}
+
+function prepareRelease(options = {}) {
   const sourcePackage = readJson(makePackageJsonPath);
   if (sourcePackage.name !== '@axhub/make') {
     throw new Error(`Expected root package name to be @axhub/make, got ${sourcePackage.name}`);
@@ -750,12 +904,17 @@ function prepareRelease() {
   createNpmPackage(sourcePackage);
   const { dryRunInfo, tarballPath } = packNpmPackage();
 
-  logStep('Compiling Bun executables');
-  const bunEntry = createBunEntrypoint();
-  const releaseAssets = executableTargets.map((target) => {
-    const executablePath = bundleExecutableTarget(target, bunEntry);
-    return createPlatformArtifact(target, executablePath, sourcePackage);
-  });
+  let releaseAssets = [];
+  if (shouldBuildPlatformArtifacts(options)) {
+    logStep('Compiling Bun executables');
+    const bunEntry = createBunEntrypoint();
+    releaseAssets = executableTargets.map((target) => {
+      const executablePath = buildSanitizedExecutableTarget(target, bunEntry);
+      return createPlatformArtifact(target, executablePath, sourcePackage);
+    });
+  } else {
+    logStep('Skipping platform release artifacts for npm-only release');
+  }
 
   const manifest = {
     packageName: sourcePackage.name,
@@ -1012,7 +1171,7 @@ async function testPreparedArtifacts() {
       canvasFigSyncPath: path.join(currentAsset.bundleDir, 'scripts/canvas-fig-sync.mjs'),
     });
   } else {
-    console.log(`Skipping Bun executable smoke test for unsupported current platform: ${process.platform}-${process.arch}`);
+    console.log(`Skipping Bun executable smoke test for npm-only or unsupported current platform: ${process.platform}-${process.arch}`);
   }
 
   printArtifacts(manifest);
@@ -1057,7 +1216,7 @@ function printTemplateArtifacts(manifest) {
 }
 
 export function publishCommands(manifest, options) {
-  const npmArgs = ['publish', manifest.npmPackageDir, '--access', 'public', '--tag', options.npmTag];
+  const npmArgs = ['publish', manifest.npmPackageDir, '--access', 'public', '--tag', options.npmTag || 'beta'];
   if (options.otp) {
     npmArgs.push('--otp', options.otp);
   }
@@ -1172,7 +1331,7 @@ async function main() {
     return;
   }
 
-  const manifest = prepareRelease();
+  const manifest = prepareRelease(options);
   if (options.prepareOnly) {
     return;
   }

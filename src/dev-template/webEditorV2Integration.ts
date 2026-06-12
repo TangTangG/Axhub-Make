@@ -1,25 +1,19 @@
 import type {
   GenieEditorDebugState,
-  GenieEditorGenieBridgeOptions,
   GenieEditorHostToolbarAction,
   GenieEditorHostToolbarState,
   GenieEditorHostResource,
-  GenieEditorIntegrationWsOptions,
   GenieEditorToolbarMode,
   WebEditorV2Api,
 } from '@/common/web-editor-types';
 import {
   createGenieEditor,
   getGlobalGenieEditorTweakProtocol,
-  type WebEditorGenieAgent,
   type PrototypeEditCommentsDocument,
   type PrototypeEditCommentsPersistenceAdapter,
   type PrototypeEditCommentsPersistenceScope,
   type WebEditorV2InitOptions,
 } from 'axhub-genie-editor';
-import {
-  GENIE_REQUIRED_INTEGRATION_CHANNEL,
-} from '../common/genie/url';
 import { getImperativeAppDialog } from '../index/components/dialogs/AppDialogProvider';
 import { buildHostCopyPrompt } from '../common/hostPromptBuilder';
 import { normalizeSkillPath } from '../index/utils/skillPath';
@@ -29,32 +23,6 @@ export type WebEditorV2Status = {
   undoCount: number;
   redoCount: number;
 };
-
-type GenieBridgeSearchOptions = {
-  apiBaseUrl?: string;
-  integrationChannel?: string;
-  targetClientId?: string;
-  projectPath?: string;
-  provider?: WebEditorGenieAgent;
-};
-
-type EditorIntegrationSearchOptions = {
-  enabled?: boolean;
-  apiBaseUrl?: string;
-  channel?: string;
-  clientId?: string;
-  sessionId?: string;
-  pageUrl?: string;
-  mobileMode?: boolean;
-};
-
-const SUPPORTED_GENIE_AGENTS: ReadonlySet<WebEditorGenieAgent> = new Set([
-  'claude',
-  'codex',
-  'gemini',
-  'opencode',
-]);
-const DEFAULT_EDITOR_RUNTIME_PORT = '32123';
 
 export interface WebEditorV2Controller {
   enable: (options?: WebEditorV2EnableOptions) => Promise<void> | void;
@@ -79,8 +47,8 @@ export interface WebEditorV2EnableOptions {
   toolbarMode?: GenieEditorToolbarMode;
   initialDarkMode?: boolean;
   mobileMode?: boolean;
-  genieBridge?: GenieEditorGenieBridgeOptions;
-  integrationWs?: GenieEditorIntegrationWsOptions;
+  assistantPanelOpen?: boolean;
+  commentPageScope?: string;
 }
 
 function normalizeString(value: unknown): string {
@@ -101,9 +69,9 @@ function isDebugTitleEnabled(search: string): boolean {
   return ['1', 'true', 'yes', 'on'].includes(normalized);
 }
 
-function buildGenieDebugTitle(debugState: GenieEditorDebugState | null): string {
+function buildEditorDebugTitle(debugState: GenieEditorDebugState | null): string {
   if (!debugState) {
-    return '[GenieDebug] unavailable';
+    return '[EditorDebug] unavailable';
   }
 
   const conversation = debugState.currentConversation;
@@ -113,7 +81,7 @@ function buildGenieDebugTitle(debugState: GenieEditorDebugState | null): string 
     .join(',');
 
   return [
-    '[GenieDebug]',
+    '[EditorDebug]',
     `connected=${debugState.connected ? 1 : 0}`,
     `available=${debugState.available ? 1 : 0}`,
     `reusable=${debugState.hasReusableConversation ? 1 : 0}`,
@@ -126,26 +94,6 @@ function buildGenieDebugTitle(debugState: GenieEditorDebugState | null): string 
     `current=${currentTask ? `${currentTask.elementKey}:${currentTask.status}:${currentTask.sessionId ?? '-'}` : '-'}`,
     `tasks=${taskSummary || '-'}`,
   ].join(' ');
-}
-
-function resolveDefaultEditorApiBaseUrl(locationLike?: {
-  href?: string;
-  protocol?: string;
-  hostname?: string;
-}): string {
-  try {
-    const href = normalizeString(locationLike?.href);
-    if (href) {
-      const parsed = new URL(href);
-      return `${parsed.protocol}//${parsed.hostname}:${DEFAULT_EDITOR_RUNTIME_PORT}/api`;
-    }
-  } catch {
-    // Fall through to protocol/hostname fallback below.
-  }
-
-  const protocol = normalizeString(locationLike?.protocol) || 'http:';
-  const hostname = normalizeString(locationLike?.hostname) || 'localhost';
-  return `${protocol}//${hostname}:${DEFAULT_EDITOR_RUNTIME_PORT}/api`;
 }
 
 function resolveTargetPathFromResource(resource: GenieEditorHostResource | null): string {
@@ -214,19 +162,6 @@ export function createPrototypeCommentsPersistenceAdapter(): PrototypeEditCommen
   };
 }
 
-function resolveGenieProvider(value: unknown): WebEditorGenieAgent | undefined {
-  const normalized = normalizeString(value).toLowerCase();
-  if (!SUPPORTED_GENIE_AGENTS.has(normalized as WebEditorGenieAgent)) {
-    return undefined;
-  }
-  return normalized as WebEditorGenieAgent;
-}
-
-type AssistantRuntimeFallback = {
-  apiBaseUrl?: string;
-  projectPath?: string;
-};
-
 type JsonPostResult<T> = {
   ok: boolean;
   status: number;
@@ -253,10 +188,17 @@ type PreviewDialogResponse = {
   confirmed?: boolean;
 };
 
-type PreviewNoticePayload = {
-  type: 'WEB_EDITOR_NOTICE';
-  level: 'info' | 'warning' | 'error' | 'success';
-  message: string;
+type PrototypeEditorHostToolbarActionRequest = {
+  type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_REQUEST';
+  requestId: string;
+  action: GenieEditorHostToolbarAction;
+};
+
+type PrototypeEditorHostToolbarActionResult = {
+  type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_RESULT';
+  requestId: string;
+  handled?: boolean;
+  error?: string;
 };
 
 type TextChangeGroup = {
@@ -270,33 +212,7 @@ type TextChangeConflict = {
 };
 
 let previewDialogRequestSequence = 0;
-
-async function readAssistantRuntimeFallback(): Promise<AssistantRuntimeFallback> {
-  try {
-    const response = await fetch('/api/assistant/runtime?autoStart=false');
-    if (!response.ok) {
-      return {};
-    }
-
-    const payload = await response.json().catch(() => ({}));
-    const runtime = (payload && typeof payload === 'object'
-      ? payload
-      : {}) as {
-      apiBaseUrl?: unknown;
-      projectPath?: unknown;
-    };
-
-    const apiBaseUrl = normalizeString(runtime.apiBaseUrl);
-    const projectPath = normalizeString(runtime.projectPath);
-
-    return {
-      ...(apiBaseUrl ? { apiBaseUrl } : {}),
-      ...(projectPath ? { projectPath } : {}),
-    };
-  } catch {
-    return {};
-  }
-}
+let hostToolbarActionRequestSequence = 0;
 
 async function postJson<T>(url: string, payload: Record<string, unknown>): Promise<JsonPostResult<T>> {
   const response = await fetch(url, {
@@ -327,7 +243,17 @@ function nextPreviewDialogRequestId(): string {
   return `web-editor-dialog-${previewDialogRequestSequence}`;
 }
 
+function nextHostToolbarActionRequestId(): string {
+  hostToolbarActionRequestSequence += 1;
+  return `prototype-editor-host-toolbar-action-${hostToolbarActionRequestSequence}`;
+}
+
 function canUseParentDialogBridge(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean(window.parent && window.parent !== window);
+}
+
+function canUseParentHostToolbarBridge(): boolean {
   if (typeof window === 'undefined') return false;
   return Boolean(window.parent && window.parent !== window);
 }
@@ -369,6 +295,51 @@ async function requestParentDialog(request: Omit<PreviewDialogRequest, 'type' | 
 
     const timeoutId = window.setTimeout(() => {
       finish(null);
+    }, 60_000);
+
+    window.addEventListener('message', handleMessage);
+    window.parent.postMessage(payload, '*');
+  });
+}
+
+async function requestParentHostToolbarAction(action: GenieEditorHostToolbarAction): Promise<boolean> {
+  if (!canUseParentHostToolbarBridge()) {
+    return false;
+  }
+
+  const requestId = nextHostToolbarActionRequestId();
+  const payload: PrototypeEditorHostToolbarActionRequest = {
+    type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_REQUEST',
+    requestId,
+    action,
+  };
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+
+    const cleanup = () => {
+      if (typeof window === 'undefined') return;
+      window.removeEventListener('message', handleMessage);
+      window.clearTimeout(timeoutId);
+    };
+
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      const data = event.data as PrototypeEditorHostToolbarActionResult | undefined;
+      if (!data || data.type !== 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_RESULT') return;
+      if (String(data.requestId || '') !== requestId) return;
+      if (event.source && event.source !== window.parent) return;
+      finish(Boolean(data.handled));
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      finish(false);
     }, 60_000);
 
     window.addEventListener('message', handleMessage);
@@ -446,21 +417,11 @@ async function confirmAction(message: string): Promise<boolean> {
 }
 
 function notifyPreview(
-  level: PreviewNoticePayload['level'],
+  level: 'info' | 'warning' | 'error' | 'success',
   message: string,
 ): void {
   const normalizedMessage = normalizeString(message);
   if (!normalizedMessage || typeof window === 'undefined') return;
-
-  if (window.parent && window.parent !== window) {
-    const payload: PreviewNoticePayload = {
-      type: 'WEB_EDITOR_NOTICE',
-      level,
-      message: normalizedMessage,
-    };
-    window.parent.postMessage(payload, '*');
-    return;
-  }
 
   const logger =
     level === 'error'
@@ -471,80 +432,11 @@ function notifyPreview(
   logger(`[Axhub] ${normalizedMessage}`);
 }
 
-export function readGenieBridgeOptionsFromSearch(search: string): GenieBridgeSearchOptions {
+function readEditorMobileModeFromSearch(search: string): boolean | undefined {
   const params = new URLSearchParams(search);
-  const apiBaseUrl = normalizeString(params.get('genieApiBaseUrl') ?? params.get('apiBaseUrl'));
-  const integrationChannel = normalizeString(
-    params.get('genieIntegrationChannel') ?? params.get('integrationChannel'),
-  );
-  const targetClientId = normalizeString(
-    params.get('genieTargetClientId') ?? params.get('integrationClientId'),
-  );
-  const projectPath = normalizeString(params.get('cwd')) || normalizeString(params.get('workdir'));
-  const provider = resolveGenieProvider(params.get('provider') ?? params.get('tool'));
-
-  const result: GenieBridgeSearchOptions = {};
-
-  if (apiBaseUrl) {
-    result.apiBaseUrl = apiBaseUrl;
-  }
-  if (integrationChannel) {
-    result.integrationChannel = integrationChannel;
-  }
-  if (targetClientId) {
-    result.targetClientId = targetClientId;
-  }
-  if (projectPath) {
-    result.projectPath = projectPath;
-  }
-  if (provider) {
-    result.provider = provider;
-  }
-
-  return result;
-}
-
-export function readEditorIntegrationOptionsFromSearch(search: string): EditorIntegrationSearchOptions {
-  const params = new URLSearchParams(search);
-  const enabled = normalizeBooleanFlag(
-    params.get('editorIntegrationWs') ?? params.get('editorWs'),
-  );
-  const apiBaseUrl = normalizeString(params.get('editorApiBaseUrl'));
-  const channel = normalizeString(
-    params.get('editorIntegrationChannel') ?? params.get('editorChannel'),
-  );
-  const clientId = normalizeString(params.get('editorClientId'));
-  const sessionId = normalizeString(params.get('editorSessionId'));
-  const pageUrl = normalizeString(params.get('editorPageUrl'));
-  const mobileMode = normalizeBooleanFlag(
+  return normalizeBooleanFlag(
     params.get('editorMobileMode') ?? params.get('mobileMode'),
   );
-
-  const result: EditorIntegrationSearchOptions = {};
-
-  if (typeof enabled === 'boolean') {
-    result.enabled = enabled;
-  }
-  if (apiBaseUrl) {
-    result.apiBaseUrl = apiBaseUrl;
-  }
-  if (channel) {
-    result.channel = channel;
-  }
-  if (clientId) {
-    result.clientId = clientId;
-  }
-  if (sessionId) {
-    result.sessionId = sessionId;
-  }
-  if (pageUrl) {
-    result.pageUrl = pageUrl;
-  }
-  if (typeof mobileMode === 'boolean') {
-    result.mobileMode = mobileMode;
-  }
-
-  return result;
 }
 
 export function readHostToolbarModeFromSearch(
@@ -587,6 +479,7 @@ function buildFallbackHostToolbarState(toolbarMode: GenieEditorToolbarMode = 'in
     disablePageAnimations: false,
     pageZoomEnabled: false,
     copySkillInstallPromptDisabled: true,
+    selectionModeActive: true,
     fullExitAvailable: false,
   };
 }
@@ -602,16 +495,139 @@ function countPageDecisionData(): number {
   }
 }
 
+type HostResourceRoute = {
+  group: 'components' | 'prototypes';
+  name: string;
+  path: string;
+  scopePathname: string;
+  indexDeepLink: boolean;
+};
+
+function isSafePrototypeResourceName(value: string): boolean {
+  return Boolean(
+    value
+      && !value.startsWith('.')
+      && !value.includes('..')
+      && !/[\\/]/u.test(value)
+      && !value.includes('\0'),
+  );
+}
+
+const INTERNAL_PROTOTYPE_PAGE_ID_RE = /^[a-z0-9-]+$/u;
+
+export function buildInternalPrototypeCommentPageScope(
+  resourceIdOrPath: unknown,
+  pageId: unknown,
+): string {
+  const normalizedPageId = normalizeString(pageId);
+  if (!INTERNAL_PROTOTYPE_PAGE_ID_RE.test(normalizedPageId)) {
+    return '';
+  }
+  const rawResourceId = normalizeString(resourceIdOrPath);
+  const resourcePath = rawResourceId.startsWith('prototypes/')
+    ? rawResourceId
+    : isSafePrototypeResourceName(rawResourceId)
+      ? `prototypes/${rawResourceId}`
+      : '';
+  if (!resourcePath || resourcePath.includes('..') || /[\\\0]/u.test(resourcePath)) {
+    return '';
+  }
+  return `${resourcePath}::page::${normalizedPageId}`;
+}
+
+function readInternalPrototypePageIdFromLocationUrl(url: URL | null): string {
+  if (!url) {
+    return '';
+  }
+  const hashPageId = normalizeString(new URLSearchParams(url.hash.replace(/^#/, '')).get('page'));
+  if (INTERNAL_PROTOTYPE_PAGE_ID_RE.test(hashPageId)) {
+    return hashPageId;
+  }
+  const searchPageId = normalizeString(url.searchParams.get('page'));
+  return INTERNAL_PROTOTYPE_PAGE_ID_RE.test(searchPageId) ? searchPageId : '';
+}
+
+function resolveHostResourceRoute(
+  pathname: string,
+  url: URL | null,
+): HostResourceRoute | null {
+  const match = pathname.match(/^\/(components|prototypes)\/([^/?#]+)/);
+  if (match) {
+    const group = match[1] as 'components' | 'prototypes';
+    const name = match[2];
+    const path = `${group}/${name}`;
+    return {
+      group,
+      name,
+      path,
+      scopePathname: url?.pathname || `/${path}`,
+      indexDeepLink: false,
+    };
+  }
+
+  if (pathname !== '/' || !url || url.pathname !== '/') {
+    return null;
+  }
+
+  const prototypeId = normalizeString(url.searchParams.get('p'));
+  if (!isSafePrototypeResourceName(prototypeId)) {
+    return null;
+  }
+
+  const path = `prototypes/${prototypeId}`;
+  return {
+    group: 'prototypes',
+    name: prototypeId,
+    path,
+    scopePathname: `/${path}`,
+    indexDeepLink: true,
+  };
+}
+
+function buildCommentPageScope(
+  url: URL,
+  scopePathname: string,
+  indexDeepLink: boolean,
+): string {
+  const scopeParams = new URLSearchParams(url.search);
+  for (const key of ['editor', 'axhubPane', 'axhubQuickEditContext', 'genieToolbar']) {
+    scopeParams.delete(key);
+  }
+  if (indexDeepLink) {
+    for (const key of ['projectId', 'p', 'v', 'sidebar']) {
+      scopeParams.delete(key);
+    }
+  }
+  const sortedScopeParams = new URLSearchParams();
+  Array.from(scopeParams.entries())
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+      leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue),
+    )
+    .forEach(([key, value]) => sortedScopeParams.append(key, value));
+  const scopeSearch = sortedScopeParams.toString();
+  return `${scopePathname}${scopeSearch ? `?${scopeSearch}` : ''}${url.hash}`;
+}
+
 export function resolveHostResourceContextFromLocation(
   pathname: string,
   href: string,
+  overrides: { commentPageScope?: string } = {},
 ): GenieEditorHostResource | null {
   const normalizedPathname = normalizeString(pathname);
   const normalizedHref = normalizeString(href);
+  let locationUrl: URL | null = null;
+
+  if (normalizedHref) {
+    try {
+      locationUrl = new URL(normalizedHref, 'http://localhost');
+    } catch {
+      locationUrl = null;
+    }
+  }
 
   if (normalizedPathname === '/spec-template.html') {
     try {
-      const outerUrl = new URL(normalizedHref || normalizedPathname, 'http://localhost');
+      const outerUrl = locationUrl ?? new URL(normalizedPathname, 'http://localhost');
       const markdownUrlRaw = normalizeString(outerUrl.searchParams.get('url'));
       const markdownUrl = markdownUrlRaw
         ? new URL(markdownUrlRaw, outerUrl.origin)
@@ -636,26 +652,32 @@ export function resolveHostResourceContextFromLocation(
     }
   }
 
-  const match = normalizedPathname.match(/^\/(components|prototypes)\/([^/?#]+)/);
-  if (!match) return null;
+  const resourceRoute = resolveHostResourceRoute(normalizedPathname, locationUrl);
+  if (!resourceRoute) return null;
 
-  const [, group, name] = match;
-  const path = `${group}/${name}`;
+  const { group, name, path, scopePathname, indexDeepLink } = resourceRoute;
   let storageScope: string | undefined;
+  let commentPageScope: string | undefined;
 
-  if (normalizedHref) {
+  if (locationUrl) {
     try {
-      const url = new URL(normalizedHref);
-      const isQuickEdit = url.searchParams.get('editor') === 'webEditorV2'
-        || url.searchParams.get('axhubQuickEditContext') === '1';
-      const pane = normalizeString(url.searchParams.get('axhubPane')).toLowerCase();
+      const isQuickEdit = locationUrl.searchParams.get('editor') === 'webEditorV2'
+        || locationUrl.searchParams.get('axhubQuickEditContext') === '1';
+      const pane = normalizeString(locationUrl.searchParams.get('axhubPane')).toLowerCase();
       if (isQuickEdit && (pane === 'primary' || pane === 'secondary')) {
         storageScope = `${path}::quick-edit::${pane}`;
       }
+      commentPageScope = buildInternalPrototypeCommentPageScope(
+        path,
+        group === 'prototypes' ? readInternalPrototypePageIdFromLocationUrl(locationUrl) : '',
+      ) || buildCommentPageScope(locationUrl, scopePathname, indexDeepLink);
     } catch {
       storageScope = undefined;
+      commentPageScope = undefined;
     }
   }
+
+  const explicitCommentPageScope = normalizeString(overrides.commentPageScope);
 
   return {
     kind: 'prototype-entry',
@@ -666,6 +688,7 @@ export function resolveHostResourceContextFromLocation(
       group,
       name,
       ...(storageScope ? { storageScope } : {}),
+      commentPageScope: explicitCommentPageScope || commentPageScope || `/${path}`,
     },
   };
 }
@@ -676,29 +699,34 @@ export const createWebEditorV2Controller = (
   let editor: WebEditorV2Api | null = null;
   let editorInitPromise: Promise<WebEditorV2Api> | null = null;
   let runtimeToolbarMode: GenieEditorToolbarMode | undefined;
+  let runtimeAssistantPanelOpen = false;
+  let runtimeCommentPageScope = '';
   let editorToolbarMode: GenieEditorToolbarMode | undefined;
   let debugTitleTimer: number | null = null;
   let baseDocumentTitle = '';
 
-  const createEditorInstance = (
-    runtimeFallback: AssistantRuntimeFallback = {},
-  ): WebEditorV2Api => {
+  const createEditorInstance = (): WebEditorV2Api => {
     if (!editor) {
-      const searchBridgeOptions =
-        typeof window !== 'undefined'
-          ? readGenieBridgeOptionsFromSearch(window.location.search)
-          : {};
       const searchToolbarMode =
         typeof window !== 'undefined'
           ? readHostToolbarModeFromSearch(window.location.search)
           : undefined;
+      const searchMobileMode =
+        typeof window !== 'undefined'
+          ? readEditorMobileModeFromSearch(window.location.search)
+          : undefined;
       const { skillInstallSource, ...restUiOptions } = options.ui ?? {};
       const normalizedSkillInstallSource =
         typeof skillInstallSource === 'string' ? normalizeSkillPath(skillInstallSource) : null;
+      const resolvedToolbarMode = runtimeToolbarMode ?? searchToolbarMode ?? restUiOptions.toolbarMode;
       const resolvedUi = {
         breadcrumbs: true,
         propertyPanel: true,
         showCopyPromptAction: true,
+        getAssistantPanelOpen: () => runtimeAssistantPanelOpen,
+        ...(resolvedToolbarMode === 'host'
+          ? { onHostToolbarAction: requestParentHostToolbarAction }
+          : {}),
         ...restUiOptions,
         ...(searchToolbarMode ? { toolbarMode: searchToolbarMode } : {}),
         ...(runtimeToolbarMode ? { toolbarMode: runtimeToolbarMode } : {}),
@@ -707,58 +735,23 @@ export const createWebEditorV2Controller = (
           : {}),
       };
       editorToolbarMode = resolvedUi.toolbarMode ?? 'inline';
-      const searchIntegrationWsOptions =
-        typeof window !== 'undefined'
-          ? readEditorIntegrationOptionsFromSearch(window.location.search)
-          : {};
-      const resolvedIntegrationWsApiBaseUrl = normalizeString(
-        options.integrationWs?.apiBaseUrl
-          ?? searchIntegrationWsOptions.apiBaseUrl
-          ?? (typeof window !== 'undefined' ? resolveDefaultEditorApiBaseUrl(window.location) : ''),
-      );
-      const explicitBridgeOptions = {
-        ...searchBridgeOptions,
-        ...(options.genieBridge ?? {}),
-      };
-      const resolvedBridgeOptions = {
-        ...explicitBridgeOptions,
-        apiBaseUrl:
-          normalizeString(explicitBridgeOptions.apiBaseUrl)
-          || normalizeString(runtimeFallback.apiBaseUrl)
-          || resolvedIntegrationWsApiBaseUrl,
-        integrationChannel:
-          normalizeString(explicitBridgeOptions.integrationChannel)
-          || normalizeString(runtimeFallback.projectPath)
-          || GENIE_REQUIRED_INTEGRATION_CHANNEL,
-        targetClientId: normalizeString(explicitBridgeOptions.targetClientId),
-        projectPath:
-          normalizeString(explicitBridgeOptions.projectPath)
-          || normalizeString(runtimeFallback.projectPath),
-      };
-      const bridgeEnabled = Boolean(
-        normalizeString(resolvedBridgeOptions.apiBaseUrl)
-        && normalizeString(resolvedBridgeOptions.integrationChannel)
-      );
-      const resolvedIntegrationWsOptions = {
-        ...searchIntegrationWsOptions,
-        ...(options.integrationWs ?? {}),
-        apiBaseUrl: resolvedIntegrationWsApiBaseUrl,
-      };
       const resolvedMobileMode =
         typeof options.mobileMode === 'boolean'
           ? options.mobileMode
-          : searchIntegrationWsOptions.mobileMode;
-      const integrationWsEnabled =
-        typeof resolvedIntegrationWsOptions.enabled === 'boolean'
-          ? resolvedIntegrationWsOptions.enabled
-          : Boolean(
-            resolvedIntegrationWsApiBaseUrl
-            && normalizeString(resolvedIntegrationWsOptions.channel)
-            && normalizeString(resolvedIntegrationWsOptions.clientId),
-          );
+          : searchMobileMode;
+      const {
+        ui: _ignoredUi,
+        mobileMode: _ignoredMobileMode,
+        genieBridge: _ignoredGenieBridge,
+        integrationWs: _ignoredIntegrationWs,
+        ...editorOptions
+      } = options as WebEditorV2InitOptions & {
+        genieBridge?: unknown;
+        integrationWs?: unknown;
+      };
 
       editor = createGenieEditor({
-        ...options,
+        ...editorOptions,
         ...(typeof resolvedMobileMode === 'boolean' ? { mobileMode: resolvedMobileMode } : {}),
         ui: resolvedUi,
         host: {
@@ -770,6 +763,7 @@ export const createWebEditorV2Controller = (
               return resolveHostResourceContextFromLocation(
                 window.location.pathname,
                 window.location.href,
+                { commentPageScope: runtimeCommentPageScope },
               );
             }),
           buildCopyPrompt:
@@ -778,22 +772,6 @@ export const createWebEditorV2Controller = (
           persistenceAdapter:
             options.host?.persistenceAdapter
             ?? createPrototypeCommentsPersistenceAdapter(),
-        },
-        genieBridge: {
-          ...(options.genieBridge ?? {}),
-          ...resolvedBridgeOptions,
-          enabled:
-            typeof options.genieBridge?.enabled === 'boolean'
-              ? options.genieBridge.enabled
-              : bridgeEnabled,
-          ...(options.genieBridge?.onRequestWake
-            ? { onRequestWake: options.genieBridge.onRequestWake }
-            : {}),
-        },
-        integrationWs: {
-          ...(options.integrationWs ?? {}),
-          ...resolvedIntegrationWsOptions,
-          enabled: integrationWsEnabled,
         },
       });
     }
@@ -806,25 +784,7 @@ export const createWebEditorV2Controller = (
     }
 
     if (!editorInitPromise) {
-      editorInitPromise = (async () => {
-        const searchBridgeOptions =
-          typeof window !== 'undefined'
-            ? readGenieBridgeOptionsFromSearch(window.location.search)
-            : {};
-        const explicitApiBaseUrl = normalizeString(
-          options.genieBridge?.apiBaseUrl ?? searchBridgeOptions.apiBaseUrl,
-        );
-        const explicitProjectPath = normalizeString(
-          options.genieBridge?.projectPath ?? searchBridgeOptions.projectPath,
-        );
-        const explicitIntegrationChannel = normalizeString(
-          options.genieBridge?.integrationChannel ?? searchBridgeOptions.integrationChannel,
-        );
-        const runtimeFallback = explicitApiBaseUrl && (explicitProjectPath || explicitIntegrationChannel)
-          ? {}
-          : await readAssistantRuntimeFallback();
-        return createEditorInstance(runtimeFallback);
-      })().finally(() => {
+      editorInitPromise = Promise.resolve(createEditorInstance()).finally(() => {
         editorInitPromise = null;
       });
     }
@@ -835,7 +795,11 @@ export const createWebEditorV2Controller = (
   const applyEnableOptions = (enableOptions?: WebEditorV2EnableOptions) => {
     const nextToolbarMode = enableOptions?.toolbarMode;
     const nextInitialDarkMode = enableOptions?.initialDarkMode;
+    const nextCommentPageScope = normalizeString(enableOptions?.commentPageScope);
+    const hasExplicitCommentPageScope = typeof enableOptions?.commentPageScope === 'string';
     let shouldRecreateInactiveEditor = false;
+    let shouldRefreshActiveEditor = false;
+    let shouldRefreshRouteState = false;
 
     if (nextToolbarMode && nextToolbarMode !== runtimeToolbarMode) {
       runtimeToolbarMode = nextToolbarMode;
@@ -861,25 +825,33 @@ export const createWebEditorV2Controller = (
       shouldRecreateInactiveEditor = true;
     }
 
-    if (enableOptions?.genieBridge) {
-      options.genieBridge = {
-        ...(options.genieBridge ?? {}),
-        ...enableOptions.genieBridge,
-      };
-      shouldRecreateInactiveEditor = true;
+    if (
+      typeof enableOptions?.assistantPanelOpen === 'boolean'
+      && runtimeAssistantPanelOpen !== enableOptions.assistantPanelOpen
+    ) {
+      runtimeAssistantPanelOpen = enableOptions.assistantPanelOpen;
+      shouldRefreshActiveEditor = true;
     }
 
-    if (enableOptions?.integrationWs) {
-      options.integrationWs = {
-        ...(options.integrationWs ?? {}),
-        ...enableOptions.integrationWs,
-      };
-      shouldRecreateInactiveEditor = true;
+    if (runtimeCommentPageScope !== nextCommentPageScope) {
+      runtimeCommentPageScope = nextCommentPageScope;
+      shouldRefreshActiveEditor = true;
+      shouldRefreshRouteState = true;
+    } else if (hasExplicitCommentPageScope && editor?.getState().active) {
+      shouldRefreshActiveEditor = true;
+      shouldRefreshRouteState = true;
     }
 
     if (editor && shouldRecreateInactiveEditor && !editor.getState().active) {
       editor.destroy?.();
       editor = null;
+    }
+
+    if (editor && shouldRefreshActiveEditor) {
+      editor.refresh?.();
+    }
+    if (editor && shouldRefreshRouteState && editor.getState().active && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('axhub-web-editor-route-change'));
     }
   };
 
@@ -903,7 +875,7 @@ export const createWebEditorV2Controller = (
 
     const updateTitle = () => {
       const debugState = editor?.getDebugState?.() ?? null;
-      document.title = `${buildGenieDebugTitle(debugState)} | ${baseDocumentTitle}`;
+      document.title = `${buildEditorDebugTitle(debugState)} | ${baseDocumentTitle}`;
     };
 
     updateTitle();

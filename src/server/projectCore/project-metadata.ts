@@ -32,6 +32,8 @@ export interface PrototypePlaceholderGuide {
   tips: string[];
 }
 
+export type PrototypeGenerationStatus = 'waiting';
+
 export interface PrototypeResource {
   id: string;
   name: string;
@@ -42,6 +44,7 @@ export interface PrototypeResource {
   updatedAt: string;
   placeholder?: boolean;
   placeholderGuide?: PrototypePlaceholderGuide;
+  generationStatus?: PrototypeGenerationStatus;
   filePath?: string;
   absoluteFilePath?: string;
   spec?: PrototypeResourceSpec;
@@ -376,6 +379,10 @@ function normalizePrototypeRoutePages(value: unknown): PrototypeResourcePage[] {
     .filter((item): item is PrototypeResourcePage => Boolean(item));
 }
 
+function normalizePrototypeGenerationStatus(value: unknown): PrototypeGenerationStatus | undefined {
+  return value === 'waiting' ? 'waiting' : undefined;
+}
+
 function normalizePrototypeResources(value: unknown, projectRoot: string): PrototypeResource[] {
   if (!Array.isArray(value)) {
     return [];
@@ -397,6 +404,7 @@ function normalizePrototypeResources(value: unknown, projectRoot: string): Proto
         : null;
       const spec = normalizePrototypeSpec(projectRoot, id, item.spec);
       const placeholderGuide = normalizePrototypePlaceholderGuide(item.placeholderGuide);
+      const generationStatus = normalizePrototypeGenerationStatus(item.generationStatus);
       const pages = normalizePrototypeRoutePages(item.pages);
       const requestedDefaultPageId = normalizePageId(item.defaultPageId);
       const defaultPageId = pages.some((page) => page.id === requestedDefaultPageId)
@@ -412,6 +420,7 @@ function normalizePrototypeResources(value: unknown, projectRoot: string): Proto
         updatedAt: stringValue(item.updatedAt) || nowIso(),
         ...(item.placeholder === true ? { placeholder: true } : {}),
         ...(placeholderGuide ? { placeholderGuide } : {}),
+        ...(generationStatus ? { generationStatus } : {}),
         ...(filePath ? { filePath } : {}),
         ...(absoluteFilePath ? { absoluteFilePath } : {}),
         ...(spec ? { spec } : {}),

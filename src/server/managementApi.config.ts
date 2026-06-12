@@ -9,11 +9,18 @@ import {
 } from './projectCore/index.ts';
 
 import { readJsonBody, sendJson, streamDirectoryAsZip } from './http.ts';
-import { detectAgentAvailabilityAtStartup } from './agentAvailability.ts';
-import { detectIDEAvailabilityAtStartup } from './ideAvailability.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 
 const makePackageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
+const AI_IMAGE_CONFIG_TEST_PROMPT = '生成一张用于验证图片生成配置的极简测试图片，内容为白底黑色文字 OK。';
+const AI_IMAGE_CONFIG_TEST_TIMEOUT_MS = 600_000;
+const EMPTY_AGENT_AVAILABILITY = { cli: {}, localApp: {}, web: {} };
+
+export function readMakeServerVersion(): string | null {
+  return fs.existsSync(makePackageJsonPath)
+    ? JSON.parse(fs.readFileSync(makePackageJsonPath, 'utf8')).version ?? null
+    : null;
+}
 
 interface ConfigProject {
   id: string;
@@ -56,6 +63,172 @@ function buildConfigBootstrapResponse(params: {
     projectPath: params.activeProjectRoot,
     projectId: params.activeProject.id,
   };
+}
+
+class AiImageConfigTestError extends Error {
+  readonly statusCode: number;
+
+  constructor(message: string, statusCode = 502) {
+    super(message);
+    this.name = 'AiImageConfigTestError';
+    this.statusCode = statusCode;
+  }
+}
+
+function normalizeString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeImageTestBaseUrl(value: unknown, fallback: unknown): string {
+  const raw = normalizeString(value) || normalizeString(fallback) || 'https://api.openai.com/v1';
+  const input = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(raw)
+    ? raw
+    : `https://${raw}`;
+  try {
+    const url = new URL(input);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('Unsupported protocol');
+    }
+    const pathSegments = url.pathname.split('/').filter(Boolean);
+    const v1Index = pathSegments.indexOf('v1');
+    const normalizedSegments = v1Index >= 0
+      ? pathSegments.slice(0, v1Index + 1)
+      : pathSegments.length
+        ? [...pathSegments, 'v1']
+        : ['v1'];
+    return `${url.origin}/${normalizedSegments.join('/')}`;
+  } catch {
+    throw new AiImageConfigTestError('Base URL 无效', 400);
+  }
+}
+
+function buildImageGenerationTestUrl(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/u, '')}/images/generations`;
+}
+
+function createImageConfigTestSignal(timeoutMs: number): AbortSignal {
+  if (typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
+  return controller.signal;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function hasGeneratedImagePayload(value: unknown, depth = 0): boolean {
+  if (depth > 8 || value == null) return false;
+  if (Array.isArray(value)) {
+    return value.some((item) => hasGeneratedImagePayload(item, depth + 1));
+  }
+  if (!isRecord(value)) return false;
+
+  for (const key of ['b64_json', 'base64', 'dataUrl', 'dataURL', 'url', 'image', 'image_url']) {
+    if (typeof value[key] === 'string' && value[key].trim()) {
+      return true;
+    }
+  }
+
+  for (const key of ['data', 'images', 'output', 'result', 'structuredContent', 'content']) {
+    if (hasGeneratedImagePayload(value[key], depth + 1)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function sanitizeProviderMessage(message: string, apiKey: string): string {
+  const normalized = message.replace(/\s+/gu, ' ').trim().slice(0, 500);
+  return apiKey ? normalized.split(apiKey).join('***') : normalized;
+}
+
+function readImageProviderError(body: unknown): string {
+  if (typeof body === 'string') return body;
+  if (!isRecord(body)) return '';
+  if (typeof body.error === 'string') return body.error;
+  if (isRecord(body.error) && typeof body.error.message === 'string') return body.error.message;
+  if (typeof body.message === 'string') return body.message;
+  return '';
+}
+
+async function readImageApiJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new AiImageConfigTestError('图片 API 未返回有效 JSON');
+  }
+}
+
+export async function testAiImageGenerationConfig(params: {
+  body: unknown;
+  fallbackConfig?: Record<string, unknown> | null;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}): Promise<{ message: string }> {
+  const body = isRecord(params.body) ? params.body : {};
+  const fallback = isRecord(params.fallbackConfig) ? params.fallbackConfig : {};
+  const baseUrl = normalizeImageTestBaseUrl(
+    hasOwn(body, 'baseUrl') ? body.baseUrl : undefined,
+    fallback.baseUrl,
+  );
+  const apiKey = hasOwn(body, 'apiKey')
+    ? normalizeString(body.apiKey)
+    : normalizeString(fallback.apiKey);
+  const model = hasOwn(body, 'model')
+    ? normalizeString(body.model) || 'gpt-image-2'
+    : normalizeString(fallback.model) || 'gpt-image-2';
+  const prompt = hasOwn(body, 'prompt')
+    ? normalizeString(body.prompt) || AI_IMAGE_CONFIG_TEST_PROMPT
+    : AI_IMAGE_CONFIG_TEST_PROMPT;
+  const fetchImpl = params.fetchImpl || fetch;
+
+  let response: Response;
+  try {
+    response = await fetchImpl(buildImageGenerationTestUrl(baseUrl), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        prompt,
+        n: 1,
+      }),
+      signal: createImageConfigTestSignal(params.timeoutMs || AI_IMAGE_CONFIG_TEST_TIMEOUT_MS),
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+      throw new AiImageConfigTestError('图片 API 测试超时');
+    }
+    throw new AiImageConfigTestError(`图片 API 请求失败：${sanitizeProviderMessage(error?.message || String(error), apiKey)}`);
+  }
+
+  const responseBody = await readImageApiJson(response);
+  if (!response.ok) {
+    const providerMessage = sanitizeProviderMessage(readImageProviderError(responseBody), apiKey);
+    throw new AiImageConfigTestError(
+      providerMessage
+        ? `图片 API 返回 ${response.status}：${providerMessage}`
+        : `图片 API 返回 ${response.status}`,
+    );
+  }
+  if (!hasGeneratedImagePayload(responseBody)) {
+    throw new AiImageConfigTestError('图片 API 未返回可识别的图片数据');
+  }
+
+  return { message: '已返回图片结果' };
 }
 
 export function handleConfigApi(
@@ -104,11 +277,10 @@ export function handleConfigApi(
       sendJson(res, { error: 'Method not allowed' }, { status: 405 });
       return true;
     }
-    const ideAvailability = detectIDEAvailabilityAtStartup();
-    const agentAvailability = detectAgentAvailabilityAtStartup();
     sendJson(res, {
-      ideAvailability,
-      agentAvailability,
+      ideAvailability: {},
+      agentAvailability: EMPTY_AGENT_AVAILABILITY,
+      availabilityEnabled: false,
     });
     return true;
   }
@@ -128,6 +300,34 @@ export function handleConfigApi(
       config: result.config,
       discovery: result.discovery,
       warnings: result.warnings,
+    });
+    return true;
+  }
+
+  if (pathname === '/api/config/ai-image/test') {
+    if (req.method !== 'POST') {
+      sendJson(res, { error: 'Method not allowed' }, { status: 405 });
+      return true;
+    }
+    readJsonBody(req).then(async (body) => {
+      const { serverConfig } = buildConfigContext();
+      try {
+        const result = await testAiImageGenerationConfig({
+          body,
+          fallbackConfig: serverConfig.ai?.imageGeneration,
+        });
+        sendJson(res, {
+          success: true,
+          message: result.message,
+        });
+      } catch (error: any) {
+        sendJson(res, {
+          success: false,
+          error: error?.message || '图片配置测试失败',
+        }, { status: error?.statusCode || 502 });
+      }
+    }).catch((error) => {
+      sendJson(res, { error: error?.message || 'Invalid request body' }, { status: 400 });
     });
     return true;
   }
@@ -210,8 +410,6 @@ export function handleConfigApi(
       return true;
     }
     const { config, projectInfo, serverConfig } = buildConfigContext();
-    const ideAvailability = detectIDEAvailabilityAtStartup();
-    const agentAvailability = detectAgentAvailabilityAtStartup();
     sendJson(res, {
       ...config,
       projectInfo,
@@ -220,8 +418,8 @@ export function handleConfigApi(
       ai: serverConfig.ai,
       uiPreferences: serverConfig.uiPreferences,
       toolOpenState: serverConfig.toolOpenState,
-      ideAvailability,
-      agentAvailability,
+      ideAvailability: {},
+      agentAvailability: EMPTY_AGENT_AVAILABILITY,
       projectPath: requestProjectRoot,
       projectId: activeProject.id,
     });
@@ -229,10 +427,7 @@ export function handleConfigApi(
   }
 
   if (pathname === '/api/version') {
-    const version = fs.existsSync(makePackageJsonPath)
-      ? JSON.parse(fs.readFileSync(makePackageJsonPath, 'utf8')).version ?? null
-      : null;
-    sendJson(res, { version, projectId: activeProject?.id ?? null });
+    sendJson(res, { version: readMakeServerVersion(), projectId: activeProject?.id ?? null });
     return true;
   }
 

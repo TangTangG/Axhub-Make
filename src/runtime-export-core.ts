@@ -5,16 +5,36 @@ import {
   htmlToAxure as htmlToAxureImpl,
   type CapturedDocument,
 } from 'axhub-export-core';
-import * as htmlToImage from 'html-to-image';
+import type { SnapdomOptions } from '@zumer/snapdom';
 
 const SCREENSHOT_IMAGE_PROXY_PATH = '/api/export/image-proxy';
 const SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"></svg>',
 )}`;
+const SCREENSHOT_SCROLLBAR_HIDING_STYLE_ID = 'axhub-runtime-export-hide-scrollbars';
+const SCREENSHOT_SCROLLBAR_HIDING_CSS = `
+html,
+body,
+#root,
+* {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+`;
 
 export interface CaptureDocumentScreenshotOptions {
   targetWidth?: number;
   targetHeight?: number;
+  targetPixelRatio?: number;
 }
 
 export interface CaptureDocumentScreenshotResult {
@@ -22,6 +42,11 @@ export interface CaptureDocumentScreenshotResult {
   width: number;
   height: number;
 }
+
+type SnapdomToPng = (element: Element, options?: SnapdomOptions) => Promise<HTMLImageElement>;
+type RuntimeExportCoreTestGlobal = typeof globalThis & {
+  __AXHUB_RUNTIME_EXPORT_CORE_TEST_SNAPDOM_TO_PNG__?: SnapdomToPng | null;
+};
 
 function getExportCoreOrigin(): string {
   try {
@@ -174,12 +199,84 @@ function positiveNumber(value: unknown): number | undefined {
     : undefined;
 }
 
+function positivePixelRatio(value: unknown): number | undefined {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) && numberValue > 0
+    ? Math.max(1, Math.min(2, numberValue))
+    : undefined;
+}
+
 function collectScreenshotSize(element: HTMLElement): { width: number; height: number } {
   const rect = element.getBoundingClientRect();
   return {
     width: Math.max(1, Math.round(Math.max(rect.width, element.scrollWidth, element.clientWidth, element.offsetWidth))),
     height: Math.max(1, Math.round(Math.max(rect.height, element.scrollHeight, element.clientHeight, element.offsetHeight))),
   };
+}
+
+function waitForScreenshotFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    window.setTimeout(resolve, 16);
+  });
+}
+
+async function settleScreenshotLayout(): Promise<void> {
+  window.dispatchEvent?.(new Event('resize'));
+  await waitForScreenshotFrame();
+  await waitForScreenshotFrame();
+  await new Promise(resolve => window.setTimeout(resolve, 80));
+}
+
+function installScreenshotScrollbarHidingStyle(): () => void {
+  if (typeof document === 'undefined' || !document.head || typeof document.createElement !== 'function') {
+    return () => undefined;
+  }
+  if (document.getElementById?.(SCREENSHOT_SCROLLBAR_HIDING_STYLE_ID)) {
+    return () => undefined;
+  }
+
+  const style = document.createElement('style');
+  style.id = SCREENSHOT_SCROLLBAR_HIDING_STYLE_ID;
+  style.textContent = SCREENSHOT_SCROLLBAR_HIDING_CSS;
+  document.head.appendChild(style);
+  return () => style.remove();
+}
+
+function getSnapdomPngDataUrl(image: HTMLImageElement): string {
+  const dataUrl = image.src || image.getAttribute('src') || '';
+  if (!dataUrl) {
+    throw new Error('snapdom returned an empty screenshot');
+  }
+  if (!dataUrl.startsWith('data:image/png')) {
+    throw new Error('snapdom returned a non-PNG screenshot');
+  }
+  return dataUrl;
+}
+
+async function captureElementWithSnapdom(
+  element: HTMLElement,
+  options: {
+    width: number;
+    height: number;
+    pixelRatio: number;
+  },
+): Promise<string> {
+  const testSnapdomToPng = (globalThis as RuntimeExportCoreTestGlobal).__AXHUB_RUNTIME_EXPORT_CORE_TEST_SNAPDOM_TO_PNG__;
+  const snapdomToPng = testSnapdomToPng ?? (await import('@zumer/snapdom')).snapdom.toPng;
+  const image = await snapdomToPng(element, {
+    width: options.width,
+    height: options.height,
+    dpr: options.pixelRatio,
+    backgroundColor: '#fff',
+    embedFonts: true,
+    fallbackURL: SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL,
+    cache: 'soft',
+  });
+  return getSnapdomPngDataUrl(image);
 }
 
 export function copyDocumentForFigmaNewOfficialClipboard(selector: string | Element = 'body') {
@@ -205,6 +302,7 @@ export async function captureDocumentScreenshot(
   const element = resolveScreenshotElement(selector);
   const targetWidth = positiveNumber(options.targetWidth);
   const targetHeight = positiveNumber(options.targetHeight);
+  const targetPixelRatio = positivePixelRatio(options.targetPixelRatio);
   const originalStyle = {
     marginLeft: element.style.marginLeft,
     marginRight: element.style.marginRight,
@@ -221,34 +319,25 @@ export async function captureDocumentScreenshot(
     element.style.height = `${targetHeight}px`;
   }
   if (targetWidth || targetHeight) {
-    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    await settleScreenshotLayout();
   }
 
+  const restoreScrollbarHidingStyle = installScreenshotScrollbarHidingStyle();
   const restoreImageUrls = rewriteElementImageUrlsForScreenshot(element);
   try {
-    await new Promise((resolve) => window.setTimeout(resolve, 80));
+    await settleScreenshotLayout();
     const { width, height } = collectScreenshotSize(element);
-    const pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 2));
-    const dataUrl = await htmlToImage.toPng(element, {
+    const pixelRatio = targetPixelRatio ?? Math.max(1, Math.min(2, window.devicePixelRatio || 2));
+    const dataUrl = await captureElementWithSnapdom(element, {
       width,
       height,
-      canvasWidth: width,
-      canvasHeight: height,
       pixelRatio,
-      skipAutoScale: true,
-      backgroundColor: '#fff',
-      skipFonts: false,
-      cacheBust: false,
-      includeQueryParams: true,
-      imagePlaceholder: SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL,
-      onImageErrorHandler: (...args: unknown[]) => {
-        console.warn('[Axhub Runtime Export] Screenshot ignored image loading failure', args);
-      },
     });
 
     return { dataUrl, width, height };
   } finally {
     restoreImageUrls();
+    restoreScrollbarHidingStyle();
     element.style.marginLeft = originalStyle.marginLeft;
     element.style.marginRight = originalStyle.marginRight;
     element.style.width = originalStyle.width;

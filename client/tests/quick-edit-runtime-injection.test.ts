@@ -18,6 +18,27 @@ describe('quick edit runtime injection', () => {
     expect(injectQuickEditRuntimeScript(nextHtml, 'http://localhost:5174')).toBe(nextHtml);
   });
 
+  it('injects the make-server runtime script before the preview loader when available', () => {
+    const html = [
+      '<!doctype html>',
+      '<html>',
+      '<head></head>',
+      '<body>',
+      '  <div id="root"></div>',
+      '  <script type="module">',
+      '{{PREVIEW_LOADER}}',
+      '  </script>',
+      '</body>',
+      '</html>',
+    ].join('\n');
+    const nextHtml = injectQuickEditRuntimeScript(html, 'http://localhost:5174');
+
+    expect(nextHtml).toContain('data-axhub-quick-edit-runtime');
+    expect(nextHtml.indexOf('data-axhub-quick-edit-runtime')).toBeLessThan(nextHtml.indexOf('{{PREVIEW_LOADER}}'));
+    expect(nextHtml.match(/data-axhub-quick-edit-runtime/g)).toHaveLength(1);
+    expect(injectQuickEditRuntimeScript(nextHtml, 'http://localhost:5174')).toBe(nextHtml);
+  });
+
   it('does not hardcode a fallback server port when no origin is available', () => {
     expect(createQuickEditRuntimeScriptTag(null)).toBe('');
     expect(createQuickEditRuntimeScriptTag('')).toBe('');
