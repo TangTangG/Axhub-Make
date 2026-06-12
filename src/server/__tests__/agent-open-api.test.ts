@@ -66,6 +66,7 @@ const { runLocalCommand } = await import('../localCommand.ts');
 const { startMakeServer } = await import('../index.ts');
 const {
   buildLocalAppOpenCommandForPlatform,
+  buildLocalAppOpenResultForPlatform,
   getMissingCLIAgentOpenError,
   getMissingLocalAppOpenError,
   getMissingWebAgentOpenError,
@@ -639,6 +640,34 @@ describe('make-server agent open API', () => {
     expect(command.args.join(' ')).toContain('C%3A%5CProjects%5CAxhub%20Runtime');
   });
 
+  it('returns Windows local app deeplinks for browser-side execution', async () => {
+    const opencode = await buildLocalAppOpenResultForPlatform({
+      agent: 'opencode',
+      directory: 'C:\\Projects\\Axhub Runtime',
+      platform: 'win32',
+    });
+    const codex = await buildLocalAppOpenResultForPlatform({
+      agent: 'codex',
+      directory: 'C:\\Projects\\Axhub Runtime',
+      platform: 'win32',
+      preferDeeplink: true,
+    });
+
+    expect(opencode).toMatchObject({
+      command: 'browser opencode://open-project?directory=C%3A%5CProjects%5CAxhub%20Runtime',
+      url: 'opencode://open-project?directory=C%3A%5CProjects%5CAxhub%20Runtime',
+      openInBrowser: true,
+      openMode: 'deeplink',
+    });
+    expect(codex).toMatchObject({
+      command: 'browser codex://threads/new?path=C%3A%5CProjects%5CAxhub%20Runtime',
+      url: 'codex://threads/new?path=C%3A%5CProjects%5CAxhub%20Runtime',
+      openInBrowser: true,
+      openMode: 'deeplink',
+    });
+    expect(childProcessMock.spawn).not.toHaveBeenCalled();
+  });
+
   it('builds Codex app commands and non-Windows OpenCode deeplinks without losing path encoding', () => {
     const codex = buildLocalAppOpenCommandForPlatform({
       agent: 'codex',
@@ -701,9 +730,48 @@ describe('make-server agent open API', () => {
       agent: 'codex',
       targetPath: sourcePath,
     });
-    expect(result.command).toContain('codex://new?path=');
+    expect(result.command).toContain('codex://threads/new?path=');
     expect(result.command).toContain('/src/prototypes/home');
-    expect(childProcessMock.spawn).toHaveBeenCalledTimes(2);
+    expect(childProcessMock.spawn).toHaveBeenCalledTimes(process.platform === 'win32' ? 1 : 2);
+  });
+
+  it('uses the stored local app deeplink mode before direct Codex app launch', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    mockDetectedCommands(['codex']);
+
+    const server = await startTestServer(projectRoot, {
+      serverConfig: {
+        schemaVersion: 1,
+        toolOpenState: {
+          'local-app:codex': {
+            commandPath: '/usr/local/bin/codex',
+            lastOpenMode: 'deeplink',
+          },
+        },
+      },
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/agent/local-app/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent: 'codex' }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        success: true,
+        agent: 'codex',
+        targetPath: projectRoot,
+      });
+      expect(body.command).toContain('codex://threads/new?path=');
+      expect(childProcessMock.spawn).toHaveBeenCalledTimes(process.platform === 'win32' ? 0 : 1);
+      expect(JSON.stringify(childProcessMock.spawn.mock.calls)).not.toContain('"app"');
+    } finally {
+      await server.close();
+    }
   });
 
   it('opens CLI and web agents directly and reports unsupported web/CLI agent requests', async () => {

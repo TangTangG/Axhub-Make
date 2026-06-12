@@ -17,6 +17,7 @@ import {
   type LocalAppAgent,
   type WebAgent,
 } from './agentTypes.ts';
+import type { ToolOpenMode, ToolOpenStateEntry } from './projectCore/server-config.ts';
 
 export type { CLIAgent, LocalAppAgent, WebAgent };
 export { normalizeCLIAgent, normalizeLocalAppAgent, normalizeWebAgent };
@@ -28,6 +29,8 @@ export interface OpenAgentResult {
   command: string;
   serverUrl?: string;
   url?: string;
+  openInBrowser?: boolean;
+  openMode?: ToolOpenMode;
 }
 
 interface CommandSpec {
@@ -144,7 +147,7 @@ function encodeLocalPathForDeeplink(value: string, platform: NodeJS.Platform): s
 function buildLocalAppDeeplink(agent: LocalAppAgent, directory: string, platform: NodeJS.Platform): string {
   const encodedDirectory = encodeLocalPathForDeeplink(directory, platform);
   if (agent === 'codex') {
-    return `codex://new?path=${encodedDirectory}`;
+    return `codex://threads/new?path=${encodedDirectory}`;
   }
   return `opencode://open-project?directory=${encodedDirectory}`;
 }
@@ -199,6 +202,43 @@ export function buildLocalAppOpenCommandForPlatform({
     return buildCodexAppCommand(directory);
   }
   return buildDeeplinkOpenCommand(buildLocalAppDeeplink(agent, directory, platform), platform);
+}
+
+export async function buildLocalAppOpenResultForPlatform({
+  agent,
+  directory,
+  platform = process.platform,
+  availability,
+  preferDeeplink = false,
+}: {
+  agent: LocalAppAgent;
+  directory: string;
+  platform?: NodeJS.Platform;
+  availability?: AgentAvailabilityInfo;
+  preferDeeplink?: boolean;
+}): Promise<Pick<OpenAgentResult, 'command' | 'url' | 'openInBrowser' | 'openMode'>> {
+  if (agent === 'codex' && !preferDeeplink) {
+    return {
+      command: await spawnDetachedCommand(buildCodexAppCommand(directory, availability), directory),
+      openMode: 'direct-app',
+    };
+  }
+
+  const url = buildLocalAppDeeplink(agent, directory, platform);
+  if (platform === 'win32') {
+    return {
+      command: `browser ${url}`,
+      url,
+      openInBrowser: true,
+      openMode: 'deeplink',
+    };
+  }
+
+  return {
+    command: await spawnDetachedCommand(buildDeeplinkOpenCommand(url, platform), directory),
+    url,
+    openMode: 'deeplink',
+  };
 }
 
 function buildUnixTerminalCommand(spec: CommandSpec, cwd: string): CommandSpec {
@@ -594,43 +634,45 @@ export async function openLocalAppAgent({
   agent,
   targetPath,
   availability,
+  toolOpenState,
 }: {
   agent: LocalAppAgent;
   targetPath: string;
   availability?: AgentAvailabilityInfo;
+  toolOpenState?: ToolOpenStateEntry;
 }): Promise<OpenAgentResult> {
   const openTarget = resolveOpenTarget(targetPath);
   const directory = openTarget.workingDirectory;
+  const preferDeeplink = toolOpenState?.lastOpenMode === 'deeplink';
 
-  if (agent === 'codex' && availability?.status !== 'missing') {
+  const buildResult = (forceDeeplink = false) => buildLocalAppOpenResultForPlatform({
+    agent,
+    directory,
+    availability,
+    preferDeeplink: forceDeeplink || preferDeeplink,
+  });
+
+  if (agent === 'codex' && availability?.status !== 'missing' && !preferDeeplink) {
     try {
-      const command = await spawnDetachedCommand(
-        buildCodexAppCommand(directory, availability),
-        directory,
-      );
+      const result = await buildResult();
       return {
         success: true,
         agent,
         targetPath: openTarget.targetPath,
-        command,
+        ...result,
       };
     } catch {
       // Fall through to the Codex deeplink fallback.
     }
   }
 
-  const command = await spawnDetachedCommand(
-    agent === 'codex'
-      ? buildDeeplinkOpenCommand(buildLocalAppDeeplink(agent, directory, process.platform), process.platform)
-      : buildLocalAppOpenCommandForPlatform({ agent, directory }),
-    directory,
-  );
+  const result = await buildResult(agent === 'codex');
 
   return {
     success: true,
     agent,
     targetPath: openTarget.targetPath,
-    command,
+    ...result,
   };
 }
 

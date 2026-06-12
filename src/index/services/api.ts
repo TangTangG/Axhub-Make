@@ -198,6 +198,7 @@ interface OpenAgentResponse {
     command: string;
     serverUrl?: string;
     url?: string;
+    openInBrowser?: boolean;
 }
 
 interface ReviewCodeOptions {
