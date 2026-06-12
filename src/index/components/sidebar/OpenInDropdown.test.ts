@@ -79,6 +79,8 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain('const detectedIDEOptions =');
     expect(source).not.toContain('LOCAL_APP_AGENT_OPTIONS.map(renderLocalAppOption)');
     expect(source).toContain('apiService.openLocalAppAgent({ agent, projectId, targetPath: openTargetPath });');
+    expect(source).toContain("if (result?.openInBrowser && result.url && typeof window !== 'undefined')");
+    expect(source).toContain('window.location.href = result.url;');
     expect(source).toContain("void savePreference({ type: 'local-app', value: agent })");
     expect(source).toContain("if (openMethod.type === 'local-app')");
     expect(source).toContain('<DropdownMenuSub>');

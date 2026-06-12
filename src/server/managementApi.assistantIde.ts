@@ -532,12 +532,13 @@ export function handleAssistantPromptIde(
           agent,
           targetPath: absoluteTargetPath,
           availability: agentAvailability,
+          toolOpenState: config.toolOpenState?.[toolOpenStateKey],
         });
         serverConfigStore.saveConfig({
           toolOpenState: {
             [toolOpenStateKey]: {
               commandPath: agentAvailability?.path,
-              lastOpenMode: result.url || result.command.includes('://') ? 'deeplink' : 'direct-app',
+              lastOpenMode: result.openMode || (result.url || result.command.includes('://') ? 'deeplink' : 'direct-app'),
             },
           },
         });

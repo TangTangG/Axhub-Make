@@ -251,7 +251,10 @@ export default function OpenInDropdown({
         }
 
         try {
-            await apiService.openLocalAppAgent({ agent, projectId, targetPath: openTargetPath });
+            const result = await apiService.openLocalAppAgent({ agent, projectId, targetPath: openTargetPath });
+            if (result?.openInBrowser && result.url && typeof window !== 'undefined') {
+                window.location.href = result.url;
+            }
             toast.success('已在本地应用中打开');
         } catch (error: any) {
             toast.warning(error?.message || '打开本地应用失败');
