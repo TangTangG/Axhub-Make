@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { getGlobalMakeStateDir } from './projectCore/index.ts';
 
 import { DEFAULT_MAKE_SERVER_PORT } from './defaults.ts';
+import { resolveDefaultDiagnosticLogFile, startDiagnosticLog } from './diagnosticLog.ts';
 import { startMakeServer } from './index.ts';
 
 export interface MakeServerCliOptions {
@@ -15,6 +16,8 @@ export interface MakeServerCliOptions {
   adminRoot?: string;
   help?: boolean;
   devMode?: boolean;
+  open?: boolean;
+  logFile?: string;
 }
 
 export const CLI_USAGE = `Usage: axhub-make [options]
@@ -25,6 +28,8 @@ Options:
   --runtime-origin <origin>  Runtime server origin.
   --admin-root <path>        Admin UI static asset directory.
   --dev                      Enable Vite dev middleware for frontend HMR.
+  --no-open                  Start the server without opening the admin page.
+  --log-file [path]          Tee console and diagnostic logs to a local file.
   -h, --help                 Show this help message.
 `;
 
@@ -96,6 +101,8 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCli
   let adminRoot: string | undefined;
   let help = false;
   let devMode = false;
+  let open = true;
+  let logFile: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -135,6 +142,25 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCli
       devMode = true;
       continue;
     }
+    if (arg === '--no-open') {
+      open = false;
+      continue;
+    }
+    if (arg === '--log-file') {
+      const next = args[index + 1];
+      if (next && !next.startsWith('--')) {
+        logFile = path.resolve(cwd, next);
+        index += 1;
+      } else {
+        logFile = resolveDefaultDiagnosticLogFile(cwd);
+      }
+      continue;
+    }
+    if (arg.startsWith('--log-file=')) {
+      const value = arg.slice('--log-file='.length).trim();
+      logFile = value ? path.resolve(cwd, value) : resolveDefaultDiagnosticLogFile(cwd);
+      continue;
+    }
     if (arg.startsWith('--')) {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -152,14 +178,15 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCli
     ...(adminRoot ? { adminRoot } : {}),
     ...(help ? { help } : {}),
     ...(devMode ? { devMode } : {}),
+    ...(open === false ? { open } : {}),
+    ...(logFile ? { logFile } : {}),
   };
 }
 
 export async function runCli(args = process.argv.slice(2)): Promise<void> {
-  // Handle 'canvas' subcommand: connects to running server, does not start one.
   if (args[0] === 'canvas') {
-    const { runCanvasCli } = await import('./canvasCli.ts');
-    await runCanvasCli(args.slice(1));
+    console.error('The axhub-make canvas CLI has been removed. Read and write canvas .excalidraw files directly.');
+    process.exitCode = 1;
     return;
   }
 
@@ -168,9 +195,16 @@ export async function runCli(args = process.argv.slice(2)): Promise<void> {
     console.log(CLI_USAGE.trimEnd());
     return;
   }
+  const diagnosticLog = options.logFile ? startDiagnosticLog(options.logFile) : null;
+  if (diagnosticLog) {
+    console.log(`Axhub Make diagnostic log: ${diagnosticLog.filePath}`);
+  }
   let server: Awaited<ReturnType<typeof startMakeServer>>;
   try {
-    server = await startMakeServer(options);
+    server = await startMakeServer({
+      ...options,
+      ...(diagnosticLog ? { diagnosticLog } : {}),
+    });
   } catch (error) {
     if (isPortInUseError(error)) {
       console.error(formatPortInUseMessage(error, options));
@@ -184,7 +218,9 @@ export async function runCli(args = process.argv.slice(2)): Promise<void> {
   } else {
     console.log(`Axhub Make server listening at ${server.origin}`);
   }
-  openBrowser(server.origin);
+  if (options.open !== false) {
+    openBrowser(server.origin);
+  }
 }
 
 export function isCliEntrypoint(argvPath = process.argv[1] || '', moduleUrl = import.meta.url): boolean {

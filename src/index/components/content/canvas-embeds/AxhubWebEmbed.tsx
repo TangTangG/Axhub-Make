@@ -13,6 +13,7 @@ import {
     type EmbedContentScale,
 } from './embedContentScale';
 import { shouldActivateEmbedOverlayClick } from './embedActivationIntent';
+import { captureSameOriginIframeScreenshot } from './parentScreenshotCapture';
 
 interface AxhubWebEmbedProps {
     url: string;
@@ -28,7 +29,7 @@ interface AxhubWebEmbedProps {
     captureScreenshotOnMount?: boolean;
 }
 
-type ScreenshotFinishStatus = 'captured' | 'failed' | 'timeout' | 'postmessage-error' | 'skip-no-iframe';
+type ScreenshotFinishStatus = 'captured' | 'failed' | 'timeout' | 'skip-no-iframe';
 
 const EMBED_SCROLLBAR_HIDING_STYLE_ID = 'axhub-embed-hide-scrollbars';
 const EMBED_SCROLLBAR_HIDING_MESSAGE_TYPE = 'AXHUB_HIDE_NATIVE_SCROLLBARS';
@@ -150,6 +151,7 @@ function AxhubWebEmbedInner({
     const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
     const [isCapturing, setIsCapturing] = useState(false);
     const [captureOnly, setCaptureOnly] = useState(false);
+    const [exitCaptureInProgress, setExitCaptureInProgress] = useState(false);
 
     const latestContextRef = useRef({
         url,
@@ -219,7 +221,6 @@ function AxhubWebEmbedInner({
     const completeCaptureRef = useRef<(status: ScreenshotFinishStatus, allowRecapture?: boolean) => void>(() => undefined);
     const removeIframeRef = useRef<() => void>(() => undefined);
     const deactivatePreviewRef = useRef<(reason: string) => void>(() => undefined);
-    const messageHandlerRef = useRef<(event: MessageEvent) => void>(() => undefined);
     const selectionHandlerRef = useRef<(event: Event) => void>(() => undefined);
     const resizeHandlerRef = useRef<(event: Event) => void>(() => undefined);
     const exitPreviewHandlerRef = useRef<(event: Event) => void>(() => undefined);
@@ -240,6 +241,7 @@ function AxhubWebEmbedInner({
         const ctx = latestContextRef.current;
         logEmbedDebug('web', 'click:activated', { elementId: ctx.elementId, url: ctx.url, title: ctx.title });
         pendingIframeTeardownRef.current = false;
+        setExitCaptureInProgress(false);
         setActivated(true);
     }, []);
 
@@ -332,12 +334,13 @@ function AxhubWebEmbedInner({
             screenshotHeight: lastCapturedViewportRef.current?.height,
             screenshotContentScale: lastCapturedViewportRef.current?.contentScale,
         });
-    // Prefer persisted screenshots, but never render stale images after size/scale changes.
-    const effectiveScreenshot = persistedScreenshotUsable
+    const preferredScreenshot = persistedScreenshotUsable
         ? screenshotUrl
         : inMemoryScreenshotUsable ? screenshotDataUrl : null;
-    const hasStaleScreenshot = Boolean(!effectiveScreenshot && (screenshotUrl || screenshotDataUrl));
-    const isScreenshotPlaceholderCapturing = hasStaleScreenshot || isCapturing;
+    const staleScreenshot = !imgError ? (screenshotUrl || screenshotDataUrl) : screenshotDataUrl;
+    const effectiveScreenshot = preferredScreenshot || staleScreenshot || null;
+    const isScreenshotPlaceholderCapturing = Boolean(!effectiveScreenshot && isCapturing);
+    const isLiveIframeVisible = activated || exitCaptureInProgress;
 
     useEffect(() => {
         setImgError(false);
@@ -351,9 +354,6 @@ function AxhubWebEmbedInner({
                 height: screenshotHeight,
                 contentScale: normalizedScreenshotContentScale,
             };
-        }
-        if (screenshotUrl) {
-            setScreenshotDataUrl(null);
         }
     }, [normalizedScreenshotContentScale, screenshotHeight, screenshotUrl, screenshotWidth]);
 
@@ -377,11 +377,14 @@ function AxhubWebEmbedInner({
             title: ctx.title,
             reason,
         });
-        setActivated(false);
         if (iframeRef.current?.contentWindow) {
             pendingIframeTeardownRef.current = true;
+            setExitCaptureInProgress(true);
+            setActivated(false);
             requestScreenshotRef.current(SCREENSHOT_DESELECT_DELAY_MS, reason);
         } else {
+            setExitCaptureInProgress(false);
+            setActivated(false);
             removeIframeRef.current();
         }
     };
@@ -395,6 +398,7 @@ function AxhubWebEmbedInner({
         activeScreenshotRequestIdRef.current = null;
         isCapturingRef.current = false;
         setIsCapturing(false);
+        setExitCaptureInProgress(false);
         if (status === 'captured') {
             const latest = latestContextRef.current;
             lastCapturedViewportRef.current = {
@@ -516,28 +520,6 @@ function AxhubWebEmbedInner({
                 contentScale: latest.contentScale,
             });
 
-            try {
-                requestScrollbarHiding(iframe);
-                syncIframeViewportSize(iframe);
-                syncIframeRootSize(iframe);
-                iframe.contentWindow.postMessage({
-                    type: 'CAPTURE_SCREENSHOT',
-                    requestId,
-                    targetWidth: normalizeTargetSize(latest.viewportWidth),
-                    targetHeight: normalizeTargetSize(latest.viewportHeight),
-                    reason,
-                }, '*');
-            } catch (err) {
-                logEmbedDebug('web', 'screenshot:postmessage-error', {
-                    url: latest.url,
-                    elementId: latest.elementId,
-                    requestId,
-                    error: String(err),
-                });
-                completeCaptureRef.current('postmessage-error');
-                return;
-            }
-
             screenshotTimeoutRef.current = setTimeout(() => {
                 if (!isCapturingRef.current) return;
                 const timeoutCtx = latestContextRef.current;
@@ -548,82 +530,56 @@ function AxhubWebEmbedInner({
                 });
                 completeCaptureRef.current('timeout');
             }, SCREENSHOT_TIMEOUT_MS);
+
+            void (async () => {
+                try {
+                    requestScrollbarHiding(iframe);
+                    syncIframeViewportSize(iframe);
+                    syncIframeRootSize(iframe);
+                    const screenshot = await captureSameOriginIframeScreenshot({
+                        iframe,
+                        width: normalizeTargetSize(latest.viewportWidth) || latest.viewportWidth,
+                        height: normalizeTargetSize(latest.viewportHeight) || latest.viewportHeight,
+                    });
+                    if (activeScreenshotRequestIdRef.current !== requestId || !isCapturingRef.current) {
+                        return;
+                    }
+
+                    logEmbedDebug('web', 'screenshot:captured', {
+                        elementId: latest.elementId,
+                        url: latest.url,
+                        requestId,
+                        width: screenshot.width,
+                        height: screenshot.height,
+                        dataUrlLength: screenshot.dataUrl.length,
+                    });
+
+                    setScreenshotDataUrl(screenshot.dataUrl);
+                    window.dispatchEvent(new CustomEvent('axhub:embedScreenshotReady', {
+                        detail: {
+                            elementId: latest.elementId,
+                            dataUrl: screenshot.dataUrl,
+                            width: screenshot.width,
+                            height: screenshot.height,
+                            contentScale: latest.contentScale,
+                            requestId,
+                        },
+                    }));
+                    completeCaptureRef.current('captured');
+                } catch (err) {
+                    if (activeScreenshotRequestIdRef.current !== requestId || !isCapturingRef.current) {
+                        return;
+                    }
+                    logEmbedDebug('web', 'screenshot:failed', {
+                        url: latest.url,
+                        elementId: latest.elementId,
+                        requestId,
+                        error: String(err),
+                    });
+                    completeCaptureRef.current('failed');
+                }
+            })();
         }, delayMs);
-    };
-
-    function isMessageFromCurrentIframe(event: MessageEvent): boolean {
-        const iframeWindow = iframeRef.current?.contentWindow;
-        if (event.source && iframeWindow && event.source !== iframeWindow) {
-            return false;
-        }
-        return true;
-    }
-
-    messageHandlerRef.current = (event: MessageEvent) => {
-        if (!event.data || !isMessageFromCurrentIframe(event)) return;
-
-        const ctx = latestContextRef.current;
-        if (event.data.type === 'AXHUB_PREVIEW_UPDATED') {
-            logEmbedDebug('web', 'screenshot:preview-updated', {
-                elementId: ctx.elementId,
-                url: ctx.url,
-                reason: event.data.reason,
-            });
-            requestScreenshotRef.current(SCREENSHOT_HMR_DEBOUNCE_MS, event.data.reason || 'preview-updated');
-            return;
-        }
-
-        if (event.data.type === 'SCREENSHOT_CAPTURED' && event.data.dataUrl) {
-            const responseRequestId = typeof event.data.requestId === 'string' ? event.data.requestId : null;
-            const activeRequestId = activeScreenshotRequestIdRef.current;
-            if (responseRequestId && activeRequestId && responseRequestId !== activeRequestId) {
-                logEmbedDebug('web', 'screenshot:ignore-stale-response', {
-                    elementId: ctx.elementId,
-                    requestId: responseRequestId,
-                    activeRequestId,
-                });
-                return;
-            }
-            if (!isCapturingRef.current) return;
-
-            logEmbedDebug('web', 'screenshot:captured', {
-                elementId: ctx.elementId,
-                url: ctx.url,
-                requestId: responseRequestId || activeRequestId,
-                width: event.data.width,
-                height: event.data.height,
-                dataUrlLength: event.data.dataUrl?.length,
-            });
-
-            setScreenshotDataUrl(event.data.dataUrl);
-            window.dispatchEvent(new CustomEvent('axhub:embedScreenshotReady', {
-                detail: {
-                    elementId: ctx.elementId,
-                    dataUrl: event.data.dataUrl,
-                    width: event.data.width,
-                    height: event.data.height,
-                    contentScale: ctx.contentScale,
-                    requestId: responseRequestId || activeRequestId,
-                },
-            }));
-            completeCaptureRef.current('captured');
-            return;
-        }
-
-        if (event.data.type === 'SCREENSHOT_FAILED') {
-            const responseRequestId = typeof event.data.requestId === 'string' ? event.data.requestId : null;
-            const activeRequestId = activeScreenshotRequestIdRef.current;
-            if (responseRequestId && activeRequestId && responseRequestId !== activeRequestId) {
-                return;
-            }
-            logEmbedDebug('web', 'screenshot:failed', {
-                elementId: ctx.elementId,
-                url: ctx.url,
-                requestId: responseRequestId || activeRequestId,
-                error: event.data.error,
-            });
-            completeCaptureRef.current('failed');
-        }
     };
 
     selectionHandlerRef.current = (event: Event) => {
@@ -639,6 +595,7 @@ function AxhubWebEmbedInner({
             }
             logEmbedDebug('web', 'selection:activated', { elementId: ctx.elementId, url: ctx.url, title: ctx.title });
             pendingIframeTeardownRef.current = false;
+            setExitCaptureInProgress(false);
             setActivated(true);
             return;
         }
@@ -697,13 +654,6 @@ function AxhubWebEmbedInner({
             }
         };
     }, [activated, elementId]);
-
-    /* ── Listen for screenshot response from iframe ────────────── */
-    useEffect(() => {
-        const handler = (event: MessageEvent) => messageHandlerRef.current(event);
-        window.addEventListener('message', handler);
-        return () => window.removeEventListener('message', handler);
-    }, []);
 
     /* ── Create iframe when activated ───────────────────────────── */
     useEffect(() => {
@@ -803,6 +753,7 @@ function AxhubWebEmbedInner({
                 screenshotTimeoutRef.current = null;
             }
             pendingIframeTeardownRef.current = false;
+            setExitCaptureInProgress(false);
             removeIframeRef.current();
         };
     }, []);
@@ -810,7 +761,7 @@ function AxhubWebEmbedInner({
     return (
         <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden', background: '#fff' }}>
             {/* Screenshot / placeholder layer (visible when NOT activated) */}
-            {!activated && (
+            {!isLiveIframeVisible && (
                 <div
                     style={{
                         position: 'absolute', inset: 0,
@@ -876,7 +827,7 @@ function AxhubWebEmbedInner({
             )}
 
             {/* Capturing indicator (shown over iframe during screenshot) */}
-            {activated && isCapturing && (
+            {isLiveIframeVisible && isCapturing && (
                 <div style={{
                     position: 'absolute', bottom: 8, right: 8, zIndex: 10,
                     display: 'flex', alignItems: 'center', gap: 4,

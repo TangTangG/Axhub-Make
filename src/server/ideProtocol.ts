@@ -6,7 +6,6 @@ export const MAIN_IDE_FILE_PROTOCOL_SCHEMES: Record<MainIDE, string[]> = {
   vscode: ['vscode', 'vscode-insiders'],
   trae_cn: ['trae-cn'],
   windsurf: ['windsurf'],
-  kiro: ['kiro'],
   qoder: ['qoder'],
   antigravity: ['antigravity'],
 };

@@ -26,6 +26,7 @@ Coverage scope:
 - `adminStatic.test.ts`: Admin HTML injection and static file safety.
 - `adminRoot.test.ts`: Default Admin asset root resolution for packaged and local runs.
 - `agent-open-api.test.ts`: CLI/Web agent availability and `/api/agent/*/open`.
+- `acp-chat-runner.test.ts`: ACP `/api/chat` request construction, SSE parsing, runtime headers, and stream/tool error handling.
 - `assistant-runtime-api.test.ts`: Assistant runtime probe, bootstrap, and LAN URL rewrite.
 - `cli.test.ts`: CLI argument parsing and entrypoint detection.
 - `export-make-api.test.ts`: Figma Make artifact probe, repair prompt, and `.fig` download.

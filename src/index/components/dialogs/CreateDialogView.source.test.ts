@@ -7,6 +7,14 @@ function readDialogSource() {
 }
 
 describe('CreateDialogView online template library source', () => {
+    it('includes optional previewUrl in online template library item type', () => {
+        const source = readDialogSource();
+        const typeMatch = source.match(/interface TemplateLibraryItem[\s\S]*?\n}/);
+
+        expect(typeMatch).not.toBeNull();
+        expect(typeMatch?.[0] || '').toContain('previewUrl?: string;');
+    });
+
     it('treats ok false template library payloads as failed loads', () => {
         const source = readDialogSource();
         const effectMatch = source.match(/fetch\('\/api\/template-library'\)[\s\S]*?setTemplateLibrary\(\{/);
@@ -24,5 +32,28 @@ describe('CreateDialogView online template library source', () => {
         const dependencies = effectMatch?.[1] || '';
         expect(dependencies).not.toContain('templateLibrary.loading');
         expect(effectMatch?.[0] || '').not.toContain("|| templateLibrary.loading ||");
+    });
+
+    it('renders an online preview entry only when the template includes previewUrl', () => {
+        const source = readDialogSource();
+        const templateCardMatch = source.match(/templateLibrary\.templates\.map\(\(template\) => \{[\s\S]*?handleDirectTemplateImport\(template\)[\s\S]*?<\/TooltipProvider>/);
+
+        expect(templateCardMatch).not.toBeNull();
+        const templateCardSource = templateCardMatch?.[0] || '';
+        expect(templateCardSource).toContain('template.previewUrl ? (');
+        expect(templateCardSource).toContain('在线预览');
+        expect(templateCardSource).toContain('href={template.previewUrl}');
+    });
+
+    it('opens online previews in a new window without changing direct import disabled logic', () => {
+        const source = readDialogSource();
+        const templateCardMatch = source.match(/templateLibrary\.templates\.map\(\(template\) => \{[\s\S]*?handleDirectTemplateImport\(template\)[\s\S]*?<\/TooltipProvider>/);
+
+        expect(templateCardMatch).not.toBeNull();
+        const templateCardSource = templateCardMatch?.[0] || '';
+        expect(templateCardSource).toContain('target="_blank"');
+        expect(templateCardSource).toContain('rel="noreferrer"');
+        expect(templateCardSource).toContain('const directDisabled = Boolean(disabledReason) || !template.canDirectImport || Boolean(templateImportingId);');
+        expect(templateCardSource).not.toContain('directDisabled = Boolean(template.previewUrl)');
     });
 });

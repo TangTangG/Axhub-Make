@@ -112,6 +112,7 @@ const GENIE_MENU_AGENT_OPTIONS = [
 const GENIE_AGENT_DEFAULT_MENU_KEY = 'genie-agent:default';
 const PROPERTY_PANEL_HELP_TOOLTIP =
   '可以直接把需求发给你正在用的 IDE 或本地 agent，也可以先在页面上批注，让它帮你生成或整理设计决策。';
+const SELECTION_MODE_TOGGLE_SHORTCUT_LABEL = 'Ctrl / Cmd + S';
 
 export function buildSkillInstallPrompt(skillInstallSource?: string | null): string {
   const resolvedSkillInstallSource =
@@ -209,6 +210,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       currentTarget,
       uiMode,
       toolMinimized,
+      selectionModeActive,
           propertyPanelOpen,
           inlineTextEditing = false,
           uiSettings: propUiSettings,
@@ -223,6 +225,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
           onSelectionInteractionLockChange,
           onUiModeChange,
       onToolMinimizedChange,
+      onSelectionModeActiveChange,
       onTargetChange,
       onRefreshNoteState,
       onInlineTextEditingChange,
@@ -604,8 +607,47 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       [syncPanelMetaState],
     );
 
+    const genieAwake = effectiveVisualState === 'awake';
+
+    const wakeGenieForAction = React.useCallback(async (): Promise<boolean> => {
+      if (genieWakeChecking) {
+        return false;
+      }
+
+      if (genieAwake && options.getGenieBridgeConnected?.() !== false) {
+        return true;
+      }
+
+      if (!options.onWakeGenie) {
+        return options.getGenieBridgeConnected?.() !== false;
+      }
+
+      setGenieWakeChecking(true);
+      const createWakeTimeout = () =>
+        new Promise<false>((resolve) => {
+          window.setTimeout(() => resolve(false), GENIE_WAKE_TIMEOUT_MS);
+        });
+      try {
+        const wakeResult = await Promise.race([options.onWakeGenie(), createWakeTimeout()]);
+        if (wakeResult !== true) {
+          notifyRuntimeMessage('warning', GENIE_WAKE_FAILURE_MESSAGE);
+          return false;
+        }
+        onGenieVisualStateChange('awake');
+        return true;
+      } catch {
+        notifyRuntimeMessage('warning', GENIE_WAKE_FAILURE_MESSAGE);
+        return false;
+      } finally {
+        setGenieWakeChecking(false);
+      }
+    }, [genieAwake, genieWakeChecking, onGenieVisualStateChange, options]);
+
     const handleConfirmSendPromptToGenie = React.useCallback(async () => {
       if (!options.onSendPromptToGenie) return;
+      const ready = await wakeGenieForAction();
+      if (!ready) return;
+
       setGeniePromptSending(true);
       setGeniePromptSendingElementKey(currentGenieTask?.elementKey ?? null);
       setGeniePromptInterrupting(false);
@@ -619,7 +661,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         setGeniePromptSendingElementKey(null);
         syncPanelMetaState();
       }
-    }, [currentGenieTask?.elementKey, currentTarget, options, syncPanelMetaState]);
+    }, [currentGenieTask?.elementKey, currentTarget, options, syncPanelMetaState, wakeGenieForAction]);
 
     const handleInterruptSendPromptToGenie = React.useCallback(async () => {
       if (!options.onAbortSendPromptToGenie) return;
@@ -665,40 +707,11 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     const pageZoomActive = showExpandedPanel && uiSettings.pageZoomEnabled;
     const previousPageZoomEnabledRef = React.useRef(uiSettings.pageZoomEnabled);
     const previousPageZoomActiveRef = React.useRef(pageZoomActive);
-    const genieAwake = effectiveVisualState === 'awake';
     const themeMode = uiSettings.darkMode ? 'dark' : 'light';
 
     const handleGenieBrandClick = React.useCallback(async () => {
-      if (genieWakeChecking) {
-        return;
-      }
-
-      if (genieAwake) {
-        return;
-      }
-
-      if (!options.onWakeGenie) {
-        return;
-      }
-
-      setGenieWakeChecking(true);
-      const createWakeTimeout = () =>
-        new Promise<false>((resolve) => {
-          window.setTimeout(() => resolve(false), GENIE_WAKE_TIMEOUT_MS);
-        });
-      try {
-        const wakeResult = await Promise.race([options.onWakeGenie(), createWakeTimeout()]);
-        if (wakeResult !== true) {
-          notifyRuntimeMessage('warning', GENIE_WAKE_FAILURE_MESSAGE);
-          return;
-        }
-        onGenieVisualStateChange('awake');
-      } catch {
-        notifyRuntimeMessage('warning', GENIE_WAKE_FAILURE_MESSAGE);
-      } finally {
-        setGenieWakeChecking(false);
-      }
-    }, [genieAwake, genieWakeChecking, onGenieVisualStateChange, options]);
+      await wakeGenieForAction();
+    }, [wakeGenieForAction]);
 
     React.useEffect(() => {
       if (!genieAwake) {
@@ -1079,6 +1092,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       currentTaskRunning,
       currentTaskSessionReady,
       canInterrupt: currentTaskCanInterrupt,
+      canWakeGenie: Boolean(options.onWakeGenie),
       onSendPromptToGenie: options.onSendPromptToGenie,
       getGenieBridgeConnected: options.getGenieBridgeConnected,
       getSendPromptToGenieBlockReason: () =>
@@ -1325,6 +1339,9 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
           }}
         />
       ) : null;
+    const copyPromptVisible = Boolean(copyToolbarButton);
+    const inlineSendVisible = !hideExecutionControls && geniePromptToolbarAction.sendVisible;
+    const hostSendVisible = geniePromptToolbarAction.sendVisible;
 
     const sessionActivityCardContent = (
       <div
@@ -1452,7 +1469,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       </Popconfirm>
     );
 
-    const genieSendToolbarButton = !hideExecutionControls && geniePromptToolbarAction.sendVisible ? (
+    const genieSendToolbarButton = inlineSendVisible ? (
       <GenieToolbarIconButton
         title={
           geniePromptToolbarAction.sendDisabled
@@ -1826,7 +1843,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         robotTitle: geniePromptToolbarAction.robotTitle,
         robotDisabled: geniePromptToolbarAction.robotDisabled,
         robotLoading: geniePromptToolbarAction.robotLoading,
-        sendVisible: !hideExecutionControls && geniePromptToolbarAction.sendVisible,
+        sendVisible: hostSendVisible,
         sendTitle: geniePromptToolbarAction.sendTitle,
         sendDisabled: geniePromptToolbarAction.sendDisabled || actionBusy,
         sendLoading: geniePromptToolbarAction.sendLoading,
@@ -1834,7 +1851,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         interruptTitle: geniePromptToolbarAction.interruptTitle,
         interruptDisabled: geniePromptToolbarAction.interruptDisabled,
         interruptLoading: geniePromptToolbarAction.interruptLoading,
-        copyPromptVisible: Boolean(copyToolbarButton),
+        copyPromptVisible: copyPromptVisible,
         copyPromptTitle: copyReason ?? '复制 Prompt',
         copyPromptDisabled: actionBusy || copyBlocked,
         clearEditsTitle: '清空全部编辑',
@@ -1849,22 +1866,25 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         disablePageAnimations: uiSettings.disablePageAnimations,
         pageZoomEnabled: uiSettings.pageZoomEnabled,
         copySkillInstallPromptDisabled: actionBusy || genieProviderRefreshPending,
+        selectionModeActive: selectionModeActive,
         fullExitAvailable: Boolean(options.onRequestFullExit),
       };
     }, [
       actionBusy,
       clearAllEditsDisabled,
       copyBlocked,
+      copyPromptVisible,
       copyReason,
-      copyToolbarButton,
       geniePromptToolbarAction,
       genieProviderAvailabilityMap,
       genieProviderRefreshPending,
       hideExecutionControls,
+      hostSendVisible,
       isHostToolbarMode,
       modifiedCount,
       options.onRequestFullExit,
       propertyPanelOpen,
+      selectionModeActive,
       toolbarMode,
       uiSettings.disablePageAnimations,
       uiSettings.darkMode,
@@ -1895,7 +1915,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
             await handleGenieBrandClick();
             return true;
           case 'send-to-genie':
-            if (!geniePromptToolbarAction.sendVisible || geniePromptToolbarAction.sendDisabled || actionBusy) {
+            if (!hostSendVisible || geniePromptToolbarAction.sendDisabled || actionBusy) {
               return false;
             }
             await handleConfirmSendPromptToGenie();
@@ -1907,7 +1927,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
             await handleInterruptSendPromptToGenie();
             return true;
           case 'copy-prompt':
-            if (!showCopyPromptAction || copyBlocked) return false;
+            if (!copyPromptVisible || actionBusy || copyBlocked) return false;
             await runAction(options.onCopyPrompt);
             return true;
           case 'clear-edits':
@@ -1965,6 +1985,21 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
           case 'toggle-page-zoom':
             handleTogglePageZoom();
             return true;
+          case 'toggle-selection-mode': {
+            const nextSelectionModeActive = action.active ?? !selectionModeActive;
+            if (!nextSelectionModeActive) {
+              onDismissSelection?.();
+              onTargetChange(null);
+              onSelectionInteractionLockChange(false);
+              onHoverSelectionSuppressedChange(false);
+            }
+            if (nextSelectionModeActive) {
+              onSelectionInteractionLockChange(false);
+              onHoverSelectionSuppressedChange(false);
+            }
+            onSelectionModeActiveChange(nextSelectionModeActive);
+            return true;
+          }
           case 'open-keyboard-shortcuts':
             setKeyboardShortcutsDialogOpen(true);
             return true;
@@ -1980,6 +2015,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         actionBusy,
         clearAllEditsDisabled,
         copyBlocked,
+        copyPromptVisible,
         geniePromptToolbarAction,
         handleConfirmSendPromptToGenie,
         handleCopyGlobalPanelPrompt,
@@ -1987,14 +2023,21 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         handleGenieBrandClick,
         handleInterruptSendPromptToGenie,
         handleTogglePageZoom,
+        hostSendVisible,
+        onDismissSelection,
         onGenieVisualStateChange,
+        onHoverSelectionSuppressedChange,
         onPropertyPanelOpenChange,
+        onSelectionInteractionLockChange,
+        onTargetChange,
+        onToolMinimizedChange,
+        onSelectionModeActiveChange,
         onUiSettingsChange,
         options,
         propertyPanelOpen,
         restoreTool,
         runAction,
-        showCopyPromptAction,
+        selectionModeActive,
         toolMinimized,
         uiSettings,
       ],
@@ -2551,6 +2594,11 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
                 keys: [`${navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'} + V`],
                 label: '粘贴图片或文案',
                 desc: 'AI 开启时，在气泡卡片或待选框中可直接粘贴图片和文案',
+              },
+              {
+                keys: [SELECTION_MODE_TOGGLE_SHORTCUT_LABEL],
+                label: '切换选择元素',
+                desc: '关闭后页面点击恢复原生交互，再按一次重新开启元素选择',
               },
             ].map((item) => (
               <div

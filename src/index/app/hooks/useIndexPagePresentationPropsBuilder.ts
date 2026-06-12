@@ -5,6 +5,9 @@ import type { ViewMode } from '../../types';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
 import type { CanvasElementContextInfo } from '../../components/content/canvas-embeds/AnnotationOverlay';
 import type { GenieProvider } from '@/common/genie/types';
+import type { CanvasAiGenerationRequest } from '../../domains/ai-generation/CanvasAiGenerationTool';
+import type { AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
+import type { SettingsDialogInitialTab } from '../../components/SettingsDialog';
 
 interface UseIndexPagePresentationPropsBuilderParams {
         state: {
@@ -54,6 +57,7 @@ interface UseIndexPagePresentationPropsBuilderParams {
         handleEnterSelectedPrototypePreview?: () => void;
         handleToggleAssistant: () => void;
         handleStartCurrentProjectServer?: () => void | Promise<void>;
+        handleCopyStartServerErrorPrompt?: () => void | Promise<void>;
         handleOpenIdeFile: () => void | Promise<void>;
         handleOpenSelectedDocInIDE: (itemOverride?: any, kindOverride?: 'doc' | 'template') => Promise<void>;
         handleOpenSelectedThemeInIDE: (item?: any) => Promise<void>;
@@ -66,16 +70,19 @@ interface UseIndexPagePresentationPropsBuilderParams {
         setExcalidrawPropertyPanelMode?: (mode: ExcalidrawPropertyPanelMode) => void;
         setExcalidrawPropertyPanelPosition?: (position: ExcalidrawPropertyPanelPosition) => void;
         onAddCanvasElementToContext?: (items: CanvasElementContextInfo[]) => void;
+        onAddCanvasScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;
+        onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;
         onCanvasAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
         onOpenCanvasInIDE?: (canvasFilePath: string) => void | Promise<void>;
         onOpenCanvasGenie?: () => void | Promise<void>;
-        handleOpenProjectInIDE?: (ideOverride?: any, targetPath?: string) => boolean | Promise<boolean>;
+        handleOpenProjectInIDE?: (ideOverride?: any, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
         onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
         onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
         onCloseWebAgentPanel?: () => void;
         onPreferredIDEChange?: (ide: any) => void;
-        onRefreshAvailability?: () => void;
+        openSettingsDialog?: (tab?: SettingsDialogInitialTab) => void;
         onRefreshPrototypes?: () => Promise<any[]>;
+        onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;
     };
 }
 
@@ -155,7 +162,7 @@ export function useIndexPagePresentationPropsBuilder({
             assistantProjectPath: state.assistantProjectPath,
             prototypes: state.prototypes || [],
             themes: state.themes || [],
-            defaultThemeName: state.defaultThemeName ?? null,
+            defaultThemeName: state.defaultThemeName,
         },
         actions: {
             setCollapsed: actions.setCollapsed,
@@ -165,6 +172,8 @@ export function useIndexPagePresentationPropsBuilder({
             handleSelectPreviewSinglePreset: preview.handleSelectPreviewSinglePreset,
             handleSelectCustomPreview: preview.handleSelectCustomPreview,
             handleActivateSplitPreview: preview.handleActivateSplitPreview,
+            handleActivateMultiPagePreview: preview.handleActivateMultiPagePreview,
+            handleChangeMultiPageColumns: preview.handleChangeMultiPageColumns,
             handleChangeCustomPreviewWidth: preview.handleChangeCustomPreviewWidth,
             handleChangeCustomPreviewHeight: preview.handleChangeCustomPreviewHeight,
             handleChangeSplitPreviewWidth: preview.handleChangeSplitPreviewWidth,
@@ -181,6 +190,7 @@ export function useIndexPagePresentationPropsBuilder({
             handleCopyReviewPrompt: preview.handleCopyReviewPrompt,
             handleToggleReviewPageZoom: preview.handleToggleReviewPageZoom,
             handleRunHostToolbarAction: preview.runHostToolbarAction,
+            handleRunPrototypePanePromptAction: preview.runPrototypePanePromptAction,
             handleRunQuickEditSaveAction: preview.runQuickEditSaveAction,
             handleExitWebEditor: preview.handleExitWebEditor,
             handleRefreshElement: preview.handleRefreshElement,
@@ -193,6 +203,7 @@ export function useIndexPagePresentationPropsBuilder({
             handleExportHtml: preview.handleExportHtml,
             handlePublishCloudTarget: preview.handlePublishCloudTarget,
             handleOpenCloudPublishSettings: preview.handleOpenCloudPublishSettings,
+            currentPublishResourcePath: preview.currentPublishResourcePath,
             latestCloudPublishUrl: preview.latestCloudPublishUrl,
             handleCopyLatestCloudPublishUrl: preview.handleCopyLatestCloudPublishUrl,
             setIsExportModalOpen: preview.setIsExportModalOpen,
@@ -211,11 +222,14 @@ export function useIndexPagePresentationPropsBuilder({
             onOpenResourceFolderInSystem: actions.onOpenResourceFolderInSystem,
             onToggleAssistant: actions.handleToggleAssistant,
             onStartCurrentProjectServer: actions.handleStartCurrentProjectServer,
+            onCopyStartServerErrorPrompt: actions.handleCopyStartServerErrorPrompt,
             setElementIframeSize: preview.setElementIframeSize,
             onStandalonePanelToggle: preview.handleStandalonePanelToggle,
             setExcalidrawPropertyPanelMode: actions.setExcalidrawPropertyPanelMode,
             setExcalidrawPropertyPanelPosition: actions.setExcalidrawPropertyPanelPosition,
             onAddCanvasElementToContext: actions.onAddCanvasElementToContext,
+            onAddCanvasScreenshotToAI: actions.onAddCanvasScreenshotToAI,
+            onAddCanvasImageToAI: actions.onAddCanvasImageToAI,
             onCanvasAnnotationsChange: actions.onCanvasAnnotationsChange,
             onOpenCanvasInIDE: actions.onOpenCanvasInIDE,
             onOpenCanvasGenie: actions.onOpenCanvasGenie,
@@ -224,8 +238,9 @@ export function useIndexPagePresentationPropsBuilder({
             onOpenWebAgentInPanel: actions.onOpenWebAgentInPanel,
             onCloseWebAgentPanel: actions.onCloseWebAgentPanel,
             onPreferredIDEChange: actions.onPreferredIDEChange,
-            onRefreshAvailability: actions.onRefreshAvailability,
+            onOpenAISettings: actions.openSettingsDialog ? () => actions.openSettingsDialog?.('ai') : undefined,
             onRefreshPrototypes: actions.onRefreshPrototypes,
+            onSubmitCanvasAssistantPrompt: actions.onSubmitCanvasAssistantPrompt,
         },
     }), [actions, preview, state, ui]) satisfies PresentationAreaGroupedProps;
 }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI 素材图片"
+  short_description: "生成 UI 图片、原型素材、图标、占位图或视觉参考图时，优先使用 Make 图片 API 配置"
+  default_prompt: "使用 $ui-asset-image 为当前原型生成 UI 图片或素材。"

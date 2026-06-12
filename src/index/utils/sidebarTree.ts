@@ -126,6 +126,95 @@ function getItemNameFromKey(tab: SidebarTreeTab, itemKey: string): string {
     return itemKey.startsWith(`${tab}/`) ? itemKey.slice(`${tab}/`.length) : itemKey;
 }
 
+function buildDocsFileUrl(name: string): string {
+    const normalizedName = normalizeTreeKey(name);
+    return normalizedName ? `/api/docs/${encodeURIComponent(normalizedName)}` : '';
+}
+
+function createFallbackFilesystemDocItem(node: SidebarTreeNode, itemKey: string): ItemData | null {
+    const nodePath = normalizeTreeKey(node.path || getItemNameFromKey('docs', itemKey));
+    if (!nodePath) {
+        return null;
+    }
+    const previewUrl = buildDocsFileUrl(nodePath);
+    if (!previewUrl) {
+        return null;
+    }
+    const displayName = (node.title || toGeneratedTitle(nodePath)).trim() || toGeneratedTitle(nodePath);
+    return {
+        name: nodePath,
+        displayName,
+        jsUrl: '',
+        specUrl: previewUrl,
+        previewUrl,
+        filePath: nodePath,
+        absoluteFilePath: nodePath,
+        resourceId: nodePath,
+    };
+}
+
+function buildDocsRemovalCandidates(itemName: string): { exact: Set<string>; legacyExtensionless: Set<string> } {
+    const normalizedName = normalizeTreeKey(itemName);
+    const exact = new Set<string>();
+    const legacyExtensionless = new Set<string>();
+    const addCandidate = (set: Set<string>, value: string) => {
+        const normalized = normalizeTreeKey(value);
+        if (!normalized) {
+            return;
+        }
+        set.add(normalized);
+    };
+    const addForms = (set: Set<string>, value: string) => {
+        const normalized = normalizeTreeKey(value);
+        addCandidate(set, normalized);
+        addCandidate(set, normalized.startsWith('docs/') ? normalized : `docs/${normalized}`);
+        if (normalized.startsWith('docs/')) {
+            addCandidate(set, normalized.slice('docs/'.length));
+        }
+    };
+
+    addForms(exact, normalizedName);
+    addForms(legacyExtensionless, stripFinalPathExtension(normalizedName));
+
+    return { exact, legacyExtensionless };
+}
+
+export function removeDocsSidebarTreeItem(tree: SidebarTreeNode[], itemName: string): SidebarTreeNode[] {
+    const removalCandidates = buildDocsRemovalCandidates(itemName);
+    if (removalCandidates.exact.size === 0 && removalCandidates.legacyExtensionless.size === 0) {
+        return tree;
+    }
+
+    const shouldRemoveItem = (node: SidebarTreeNode): boolean => {
+        const itemKey = normalizeTreeKey(node.itemKey || '');
+        const itemPath = normalizeTreeKey(node.path || '');
+        return Boolean(
+            itemKey && removalCandidates.exact.has(itemKey)
+            || itemPath && removalCandidates.exact.has(itemPath)
+            || !itemPath && itemKey && removalCandidates.legacyExtensionless.has(stripFinalPathExtension(itemKey)),
+        );
+    };
+
+    const walk = (nodes: SidebarTreeNode[]): SidebarTreeNode[] => {
+        const result: SidebarTreeNode[] = [];
+        for (const node of nodes) {
+            if (node.kind === 'folder') {
+                result.push({
+                    ...node,
+                    children: walk(Array.isArray(node.children) ? node.children : []),
+                });
+                continue;
+            }
+            if (!shouldRemoveItem(node)) {
+                result.push(node);
+            }
+        }
+        return result;
+    };
+
+    return walk(tree);
+}
+
 function createFilesystemDocNode(node: SidebarTreeNode, itemKey: string, title: string): SidebarTreeNode | null {
     const nodePath = normalizeTreeKey(node.path || getItemNameFromKey('docs', itemKey));
     if (!nodePath) {
@@ -194,7 +283,15 @@ export function resolveSidebarTreeItem(
     node: SidebarTreeNode,
     lookup: SidebarTreeItemLookup,
 ): ItemData | null {
-    return resolveSidebarTreeItemEntry(tab, node, lookup)?.item || null;
+    const resolved = resolveSidebarTreeItemEntry(tab, node, lookup)?.item || null;
+    if (resolved) {
+        return resolved;
+    }
+    const itemKey = getNodeItemKey(tab, node);
+    if (tab === 'docs' && itemKey && node.path) {
+        return createFallbackFilesystemDocItem(node, itemKey);
+    }
+    return null;
 }
 
 function isConsumedItem(tab: SidebarTreeTab, itemKey: string, consumedKeys: Set<string>): boolean {

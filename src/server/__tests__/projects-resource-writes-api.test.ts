@@ -413,6 +413,125 @@ describe('make-server project declared resource write APIs', () => {
     }
   });
 
+  it('uploads document files into a validated target folder and reports nested resource names', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'nested-upload-client', name: 'Nested Upload Client' },
+      capabilities: {
+        quickEdit: true,
+        quickEditMode: 'clientRuntime',
+        figmaExport: true,
+        axureExport: true,
+        multiDevicePreview: true,
+        resourceWrites: {
+          docImport: true,
+        },
+      },
+      resourceWriteTargets: {
+        docs: { path: 'content/docs' },
+      },
+    });
+    const docsDir = path.join(projectRoot, 'content/docs');
+    fs.mkdirSync(path.join(docsDir, 'assets/screens'), { recursive: true });
+    fs.writeFileSync(path.join(docsDir, 'assets/screens/pasted-image.png'), 'existing', 'utf8');
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'nested-upload-client', 'Nested Upload Client');
+
+      const formData = new FormData();
+      formData.append('projectId', 'nested-upload-client');
+      formData.append('targetFolder', 'assets/screens');
+      formData.append('file', new File(['first'], 'pasted-image.png', { type: 'image/png' }));
+      formData.append('file', new File(['second'], 'hero.webp', { type: 'image/webp' }));
+
+      const upload = await fetch(`${server.origin}/api/docs/upload`, {
+        method: 'POST',
+        body: formData,
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(upload).toMatchObject({
+        status: 201,
+        body: {
+          success: true,
+          files: [
+            expect.objectContaining({
+              name: 'assets/screens/pasted-image-2.png',
+              id: 'pasted-image-2',
+            }),
+            expect.objectContaining({
+              name: 'assets/screens/hero.webp',
+              id: 'hero',
+            }),
+          ],
+        },
+      });
+      expect(fs.readFileSync(path.join(docsDir, 'assets/screens/pasted-image-2.png'), 'utf8')).toBe('first');
+      expect(fs.readFileSync(path.join(docsDir, 'assets/screens/hero.webp'), 'utf8')).toBe('second');
+      expect(fs.existsSync(path.join(docsDir, 'pasted-image-2.png'))).toBe(false);
+
+      const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
+      expect(metadata.resources.docs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'pasted-image-2',
+          name: 'pasted-image-2',
+          path: path.join(docsDir, 'assets/screens/pasted-image-2.png'),
+        }),
+        expect.objectContaining({
+          id: 'hero',
+          name: 'hero',
+          path: path.join(docsDir, 'assets/screens/hero.webp'),
+        }),
+      ]));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects unsafe document upload target folders before writing files', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'unsafe-upload-client', name: 'Unsafe Upload Client' },
+      capabilities: {
+        quickEdit: true,
+        quickEditMode: 'clientRuntime',
+        figmaExport: true,
+        axureExport: true,
+        multiDevicePreview: true,
+        resourceWrites: {
+          docImport: true,
+        },
+      },
+      resourceWriteTargets: {
+        docs: { path: 'content/docs' },
+      },
+    });
+    const docsDir = path.join(projectRoot, 'content/docs');
+    const server = await startTestServer(projectRoot);
+
+    try {
+      for (const targetFolder of ['../bad', '/tmp/bad', 'assets\\..\\bad', '']) {
+        const formData = new FormData();
+        formData.append('targetFolder', targetFolder);
+        formData.append('file', new File(['x'], 'escape.png', { type: 'image/png' }));
+
+        const upload = await fetch(`${server.origin}/api/docs/upload`, {
+          method: 'POST',
+          body: formData,
+        }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+        expect(upload.status).toBe(403);
+        expect(upload.body).toMatchObject({
+          error: 'Invalid targetFolder',
+        });
+      }
+      expect(fs.existsSync(path.join(docsDir, 'escape.png'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'bad/escape.png'))).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('keeps metadata, navigation, and orders in sync for declared resource writes', async () => {
     const projectRoot = createTempRoot();
     const docsDir = path.join(projectRoot, 'content/docs');

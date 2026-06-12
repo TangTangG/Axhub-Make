@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createServer as createViteServer, type ViteDevServer } from 'vite';
+import { createServer as createViteServer, type Plugin, type ViteDevServer } from 'vite';
 
 import { writeServerInfo } from '../scripts/utils/serverInfo.mjs';
 
@@ -67,6 +67,17 @@ function createMockPreviewServer() {
     server,
     getMiddleware: () => middleware,
   };
+}
+
+async function loadPluginModule(plugin: Plugin, id: string): Promise<string> {
+  const load = plugin.load;
+  if (!load) {
+    return '';
+  }
+  const result = typeof load === 'function'
+    ? await load.call({} as any, id)
+    : await load.handler.call({} as any, id);
+  return typeof result === 'string' ? result : result?.code || '';
 }
 
 beforeEach(() => {
@@ -218,10 +229,106 @@ describe('client preview routes', () => {
     const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
     expect(html).toContain('data-axhub-dev-template-bootstrap');
     expect(html).toContain('src="http://localhost:5174/assets/dev-template-bootstrap.js"');
-    expect(html.indexOf('data-axhub-dev-template-bootstrap')).toBeLessThan(html.indexOf('import PreviewComponent'));
-    expect(html).toContain("type: 'AXHUB_PREVIEW_UPDATED'");
-    expect(html).toContain("notifyAxhubPreviewUpdated('hmr')");
+    expect(html).toContain('data-axhub-quick-edit-runtime');
+    expect(html).toContain('/prototypes/home/__axhub-preview-loader.js');
+    expect(html.indexOf('data-axhub-dev-template-bootstrap')).toBeLessThan(html.indexOf('__axhub-preview-loader.js'));
+    expect(html.indexOf('data-axhub-quick-edit-runtime')).toBeLessThan(html.indexOf('__axhub-preview-loader.js'));
+    expect(html.indexOf('data-axhub-quick-edit-runtime')).toBeLessThan(html.indexOf('data-axhub-dev-template-bootstrap'));
+    expect(html).not.toContain('import PreviewComponent');
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('uses a stable preview loader module script URL instead of Vite HTML proxy routing', async () => {
+    const projectRoot = createFixtureProject();
+    stubAdminHealth(['http://localhost:5174']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: 'http://localhost:5174',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+    stubAdminHealth(['http://localhost:5174', origin]);
+
+    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&genieToolbar=host`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('/prototypes/home/__axhub-preview-loader.js?projectId=make-project"></script>');
+    expect(html).not.toContain('html-proxy');
+  });
+
+  it('keeps the preview Vite client script free of project query params', async () => {
+    const projectRoot = createFixtureProject();
+    stubAdminHealth(['http://localhost:5174']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: 'http://localhost:5174',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+    stubAdminHealth(['http://localhost:5174', origin]);
+
+    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&genieToolbar=host`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('<script type="module" src="/@vite/client"></script>');
+    expect(html).not.toContain('/@vite/client?projectId=');
+  });
+
+  it('keeps projectId on prototype entry imports inside preview loader modules', async () => {
+    const projectRoot = createFixtureProject();
+    stubAdminHealth(['http://localhost:5174']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: 'http://localhost:5174',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+    stubAdminHealth(['http://localhost:5174', origin]);
+
+    const htmlResponse = await originalFetch(`${origin}/prototypes/home?projectId=make-project&genieToolbar=host`, {
+      headers: { accept: 'text/html' },
+    });
+    const html = await htmlResponse.text();
+    const loaderScriptPath = html.match(/src="([^"]*__axhub-preview-loader\.js[^"]*)"/u)?.[1];
+
+    expect(htmlResponse.status).toBe(200);
+    expect(loaderScriptPath).toBeTruthy();
+
+    const response = await originalFetch(new URL(loaderScriptPath as string, origin), {
+      headers: {
+        referer: `${origin}/prototypes/home?projectId=make-project&genieToolbar=host`,
+      },
+    });
+    const moduleCode = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(moduleCode).toMatch(/import PreviewComponent from "[^"]*\/prototypes\/home\/index\.tsx\?projectId=make-project";/u);
+    expect(moduleCode).toContain('from "/@vite/client"');
+    expect(moduleCode).not.toContain('from "/@vite/client?projectId=make-project"');
+    expect(moduleCode).not.toMatch(/import PreviewComponent from "[^"]*\/prototypes\/home\/index\.tsx";/u);
+    expect(moduleCode).toContain('class AxhubPreviewErrorBoundary extends React.Component');
+    expect(moduleCode).toContain('window.axhub?.prototypeRuntime?.reportError');
+    expect(moduleCode).toContain('componentStack: errorInfo?.componentStack');
+    expect(moduleCode).toContain('React.createElement(AxhubPreviewErrorBoundary');
+    expect(moduleCode).toContain("type: 'AXHUB_PREVIEW_UPDATED'");
+    expect(moduleCode).toContain("notifyAxhubPreviewUpdated('hmr')");
   });
 
   it('hides root preview scrollbars without disabling page scroll', async () => {
@@ -302,7 +409,112 @@ describe('client preview routes', () => {
     await getMiddleware()(req, res, next);
 
     const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
-    expect(html).toContain(`projectPath: ${JSON.stringify(process.cwd())}`);
+    const loaderScriptPath = html.match(/src="([^"]*__axhub-preview-loader\.js[^"]*)"/u)?.[1] || '';
+    const loaderCode = await loadPluginModule(plugin as Plugin, loaderScriptPath);
+
+    expect(loaderScriptPath).toBe('/prototypes/home/__axhub-preview-loader.js');
+    expect(loaderCode).toContain(`projectPath: ${JSON.stringify(process.cwd())}`);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('loads prototype previews from git version snapshots without opening source files', async () => {
+    const projectRoot = createFixtureProject();
+    const snapshotDir = path.join(projectRoot, '.git-versions', 'abc12345', 'src', 'prototypes', 'home');
+    writeFile(path.join(snapshotDir, 'index.tsx'), 'export default function OldHome() { return null; }\n');
+    writeFile(path.join(snapshotDir, 'style.css'), '.old-home { color: blue; }\n');
+    stubAdminHealth(['http://localhost:5174']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: 'http://localhost:5174',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home?gitVersion=abc12345',
+      headers: {},
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
+    const loaderScriptPath = html.match(/src="([^"]*__axhub-preview-loader\.js[^"]*)"/u)?.[1] || '';
+    const loaderCode = await loadPluginModule(plugin as Plugin, loaderScriptPath);
+
+    expect(loaderScriptPath).toBe('/prototypes/home/__axhub-preview-loader.js?gitVersion=abc12345');
+    expect(loaderCode).toContain('import PreviewComponent from "/@fs/');
+    expect(loaderCode).toContain('/.git-versions/abc12345/src/prototypes/home/index.tsx');
+    expect(loaderCode).not.toContain('import PreviewComponent from "/prototypes/home/index.tsx"');
+    expect(html).toContain('href="/prototypes/home/style.css?gitVersion=abc12345"');
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('keeps stable preview loader context for encoded git-version prototype routes', async () => {
+    const projectRoot = createFixtureProject();
+    const prototypeName = '未命名';
+    const gitPath = `src/prototypes/${prototypeName}`;
+    const snapshotDir = path.join(projectRoot, '.git-versions', 'abc12345', ...gitPath.split('/'));
+    writeFile(path.join(snapshotDir, 'index.tsx'), 'export default function SnapshotPrototype() { return null; }\n');
+    writeFile(path.join(snapshotDir, 'style.css'), '.snapshot-prototype { color: blue; }\n');
+    stubAdminHealth(['http://localhost:5174']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: 'http://localhost:5174',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: `/prototypes/${encodeURIComponent(prototypeName)}?projectId=make-project&gitVersion=abc12345&gitPath=${encodeURIComponent(gitPath)}`,
+      headers: {},
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
+    const loaderScriptPath = html.match(/src="([^"]*__axhub-preview-loader\.js[^"]*)"/u)?.[1] || '';
+    const loaderCode = await loadPluginModule(plugin as Plugin, loaderScriptPath);
+
+    expect(html).not.toContain('html-proxy');
+    expect(loaderScriptPath).toBe('/prototypes/%E6%9C%AA%E5%91%BD%E5%90%8D/__axhub-preview-loader.js?projectId=make-project&gitVersion=abc12345&gitPath=src%2Fprototypes%2F%E6%9C%AA%E5%91%BD%E5%90%8D');
+    expect(loaderCode).toContain('import PreviewComponent from "/@fs/');
+    expect(loaderCode).toContain('/.git-versions/abc12345/src/prototypes/未命名/index.tsx?projectId=make-project');
+    expect(loaderCode).not.toContain('import PreviewComponent from "/prototypes/未命名/index.tsx');
+    expect(html).toContain('href="/prototypes/%E6%9C%AA%E5%91%BD%E5%90%8D/style.css?gitVersion=abc12345&gitPath=src%2Fprototypes%2F%E6%9C%AA%E5%91%BD%E5%90%8D"');
     expect(next).not.toHaveBeenCalled();
   });
 
@@ -346,6 +558,49 @@ describe('client preview routes', () => {
     expect(html).toContain('src="http://localhost:5176/assets/dev-template-bootstrap.js"');
     expect(html).toContain('src="http://localhost:5176/runtime/quick-edit.js"');
     expect(html).not.toContain('http://localhost:5174/runtime/quick-edit.js');
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('uses the forwarded admin host instead of stale stored admin info for proxied preview runtime injection', async () => {
+    const projectRoot = createFixtureProject();
+    stubAdminHealth(['http://localhost:53817']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 59431,
+      host: 'localhost',
+      origin: 'http://localhost:59431',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home?projectId=make-project&genieToolbar=host',
+      headers: {
+        'x-forwarded-host': 'localhost:53817',
+      },
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
+    expect(html).toContain('src="http://localhost:53817/assets/dev-template-bootstrap.js"');
+    expect(html).toContain('src="http://localhost:53817/runtime/quick-edit.js"');
+    expect(html).not.toContain('http://localhost:59431/runtime/quick-edit.js');
     expect(next).not.toHaveBeenCalled();
   });
 
@@ -453,7 +708,7 @@ describe('client preview routes', () => {
     expect(server.transformIndexHtml).not.toHaveBeenCalled();
   });
 
-  it('serves generated HTML proxy module code through a real Vite middleware stack', async () => {
+  it('serves generated preview loader module code through a real Vite middleware stack', async () => {
     const projectRoot = createFixtureProject();
     writeFile(path.join(projectRoot, 'src/prototypes/未命名/index.tsx'), 'export default function Demo() { return null; }\n');
     writeFile(path.join(projectRoot, 'src/prototypes/未命名/index.html'), '<div>stale converter html</div>\n');
@@ -465,12 +720,12 @@ describe('client preview routes', () => {
       headers: { accept: 'text/html' },
     });
     const html = await htmlResponse.text();
-    const proxyScriptPath = html.match(/src="([^"]*html-proxy[^"]*)"/u)?.[1];
+    const loaderScriptPath = html.match(/src="([^"]*__axhub-preview-loader\.js[^"]*)"/u)?.[1];
 
     expect(htmlResponse.status).toBe(200);
-    expect(proxyScriptPath).toBeTruthy();
+    expect(loaderScriptPath).toBeTruthy();
 
-    const proxyResponse = await fetch(new URL(proxyScriptPath as string, origin), {
+    const proxyResponse = await fetch(new URL(loaderScriptPath as string, origin), {
       headers: { accept: '*/*' },
     });
     const proxyCode = await proxyResponse.text();
@@ -703,6 +958,46 @@ describe('client preview routes', () => {
     const req = {
       method: 'GET',
       url: '/prototypes/home/canvas-assets/embed-embed-1.png?v=123',
+      headers: {},
+    };
+    const chunks: Buffer[] = [];
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn((chunk?: Buffer | string) => {
+        if (chunk) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+      }),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/png');
+    expect(Buffer.concat(chunks)).toEqual(pngBytes);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('serves persisted page screenshots from the canvas-assets folder', async () => {
+    const projectRoot = createFixtureProject();
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const screenshotPath = path.join(projectRoot, 'src/prototypes/home/canvas-assets/page-order-detail.png');
+    fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
+    fs.writeFileSync(screenshotPath, pngBytes);
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home/canvas-assets/page-order-detail.png?v=123',
       headers: {},
     };
     const chunks: Buffer[] = [];

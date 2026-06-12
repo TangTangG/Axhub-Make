@@ -138,6 +138,13 @@ export function resolvePrototypeAutoSelectionDecision({
     }
 
     if (currentItem && selectedItem && currentItem.name === selectedItem.name) {
+        if (selectedItem.placeholder === true && currentItem.placeholder !== true) {
+            return {
+                kind: 'keep',
+                markExplicitSelection: false,
+                nextCanvasItem,
+            };
+        }
         if (currentItem === selectedItem) {
             return {
                 kind: 'keep',

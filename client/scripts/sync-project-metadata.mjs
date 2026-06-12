@@ -35,6 +35,22 @@ export const localExportCapabilities = {
   make: false,
 };
 
+export const PROTOTYPE_PLACEHOLDER_GUIDE = {
+  kind: 'prototype-empty',
+  title: '这个原型还没有开始创建',
+  description: '告诉 AI 你想做什么：目标用户、使用场景、页面内容和参考风格。',
+  steps: [
+    '在本地 AI 软件中打开本页面',
+    '打开草稿创作原型',
+  ],
+  tips: [
+    '模型不要用 auto，推荐：Claude Opus 4.7、Gemini 3.1 Pro、GPT-5.5、Kimi K2.6、GLM-5.1。',
+    '一个任务开一个新对话，避免多个需求互相干扰。',
+    '多用图片和语音描述，截图、草图和参考页面通常比长文字更清楚。',
+    '如果已有视觉规范，建议先创建设计系统。',
+  ],
+};
+
 // Snapshot from https://getdesign.md/api/cli/downloads?brands=...
 const GETDESIGN_DOWNLOAD_SNAPSHOT_DATE = '2026-05-15';
 const GETDESIGN_THEME_STATS_BY_ID = {
@@ -226,6 +242,37 @@ function readDisplayName(indexFilePath, fallback) {
   const source = fs.readFileSync(indexFilePath, 'utf8');
   const displayName = source.match(/@name\s+([^\n]+)/)?.[1]?.replace(/\*\/\s*$/u, '').trim();
   return displayName || fallback;
+}
+
+function hasGeneratedPlaceholderSource(indexFilePath) {
+  if (!fs.existsSync(indexFilePath)) return false;
+  const source = fs.readFileSync(indexFilePath, 'utf8');
+  const hasGeneratedShell = source.includes('placeholder-empty-page')
+    && source.includes('打开左侧默认引导页继续创建')
+    && source.includes('export default function Placeholder');
+  return hasGeneratedShell && (
+    source.includes('@axhub-placeholder prototype-empty')
+    || source.includes('className="placeholder-empty-page"')
+  );
+}
+
+function hasEmptyCanvasFile(prototypeDir) {
+  const canvasPath = path.join(prototypeDir, 'canvas.excalidraw');
+  if (!fs.existsSync(canvasPath)) return true;
+  try {
+    const canvas = JSON.parse(fs.readFileSync(canvasPath, 'utf8'));
+    const elements = Array.isArray(canvas?.elements) ? canvas.elements : [];
+    const files = canvas?.files && typeof canvas.files === 'object' && !Array.isArray(canvas.files)
+      ? canvas.files
+      : {};
+    return elements.length === 0 && Object.keys(files).length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function isGeneratedEmptyPrototypePlaceholder(prototypeDir, indexFilePath) {
+  return hasGeneratedPlaceholderSource(indexFilePath) && hasEmptyCanvasFile(prototypeDir);
 }
 
 function getLiteralPropertyValue(objectLiteral, propertyName) {
@@ -484,6 +531,7 @@ function collectPrototypes(projectRoot, clientOrigin, options = {}) {
       if (!fs.existsSync(indexFile)) continue;
       const filePath = toPosix(path.relative(projectRoot, indexFile));
       const route = extractHashRouteMetadata(path.join(root, entry.name));
+      const placeholder = isGeneratedEmptyPrototypePlaceholder(path.join(root, entry.name), indexFile);
       const item = {
         id: entry.name,
         name: entry.name,
@@ -495,6 +543,7 @@ function collectPrototypes(projectRoot, clientOrigin, options = {}) {
         filePath,
         ...(options.includeAbsoluteFilePaths === false ? {} : { absoluteFilePath: path.resolve(indexFile) }),
         ...(route ? { pages: route.pages, defaultPageId: route.defaultPageId } : {}),
+        ...(placeholder ? { placeholder: true, placeholderGuide: PROTOTYPE_PLACEHOLDER_GUIDE } : {}),
       };
       const artifacts = {
         ...createFigmaArtifactMetadata(projectRoot, entry.name),

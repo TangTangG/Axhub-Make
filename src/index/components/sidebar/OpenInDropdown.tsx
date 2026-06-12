@@ -1,19 +1,17 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
     Antigravity,
-    Aws,
     ClaudeCode,
     Codex,
     Cursor,
     GeminiCLI,
     Microsoft,
-    OpenAI,
     OpenCode,
     Qoder,
     Trae,
     Windsurf,
 } from '@lobehub/icons';
-import { ChevronDown, ChevronRight, CircleHelp, Loader2, MoreHorizontal, Sparkles, SquareTerminal } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, CircleHelp, Loader2, MoreHorizontal, Settings, Sparkles, SquareTerminal } from 'lucide-react';
 import {
     getVisibleIDEOptions,
     IDEAvailabilityMap,
@@ -34,6 +32,7 @@ import {
     type WebAgent,
 } from '../../../common/agent';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -49,16 +48,9 @@ import { toast } from 'sonner';
 import { apiService } from '../../services/api';
 import { cn } from '@/lib/utils';
 import type { GenieProvider } from '@/common/genie/types';
-import {
-    AGENT_VERSION_CACHE_TTL_MS,
-    formatAgentVersionMeta,
-    isAgentVersionCacheFresh,
-    type AgentVersionCache,
-    type AgentVersionMap,
-} from '../../utils/agentVersionCache';
 
 interface OpenInDropdownProps {
-    handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
+    handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
     preferredIDE: MainIDEPreference;
     activeProjectId?: string | null;
     targetProjectId?: string | null;
@@ -70,8 +62,8 @@ interface OpenInDropdownProps {
     webAgentPanelOpen?: boolean;
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
-    onRefreshAvailability?: () => void;
-    variant?: 'compact' | 'placeholder-card';
+    onOpenAISettings?: () => void;
+    variant?: 'compact' | 'placeholder-card' | 'inline-app-list' | 'toolbar' | 'canvas-icon';
     className?: string;
     cardTitle?: string;
     cardDescription?: string;
@@ -81,66 +73,27 @@ interface OpenInDropdownProps {
 const LOCAL_APP_GROUP_HELP = [
     {
         title: '本地应用',
-        items: ['Codex', 'OpenCode', 'Cursor', 'TRAE', 'Visual Studio Code', 'TRAE CN', 'Windsurf', 'Kiro', 'Qoder', 'Antigravity'],
+        items: ['Codex', 'OpenCode', 'Cursor', 'TRAE', 'vscode', 'TRAE CN', 'Windsurf', 'Qoder', 'Antigravity'],
     },
     {
         title: '本地 CLI',
         items: ['Codex', 'Gemini', 'Claude Code', 'OpenCode'],
     },
 ] as const;
-const WEB_AGENT_GROUP_HELP = '支持：Claude Code、Codex、OpenCode、Gemini CLI';
+const WEB_AGENT_GROUP_HELP = '打开浏览器内置的 Web AI 面板。';
 const MAX_INLINE_LOCAL_APP_OPEN_OPTIONS = 5;
 const LOCAL_APP_MORE_THRESHOLD = 5;
 
 type GroupHelp = string | typeof LOCAL_APP_GROUP_HELP;
 
-type OnlineWebAgentOption = {
-    value: string;
-    label: string;
-    webAgent: WebAgent;
-    availabilitySource: 'web' | 'cli';
-    availabilityKey: WebAgent | CLIAgent;
-    genieProvider?: GenieProvider;
-};
-
 type LocalAppOpenOption =
     | { kind: 'local-app'; option: (typeof LOCAL_APP_AGENT_OPTIONS)[number] }
     | { kind: 'ide'; option: (typeof MAIN_IDE_OPTIONS)[number] };
 
-const ONLINE_WEB_AGENT_OPTIONS: readonly OnlineWebAgentOption[] = [
-    {
-        value: 'claudecode',
-        label: 'Claude Code',
-        webAgent: 'genie',
-        availabilitySource: 'cli',
-        availabilityKey: 'claudecode',
-        genieProvider: 'claude',
-    },
-    {
-        value: 'codex',
-        label: 'Codex',
-        webAgent: 'genie',
-        availabilitySource: 'cli',
-        availabilityKey: 'codex',
-        genieProvider: 'codex',
-    },
-    {
-        value: 'opencode-webui',
-        label: 'OpenCode',
-        webAgent: 'genie',
-        availabilitySource: 'cli',
-        availabilityKey: 'opencode',
-        genieProvider: 'opencode',
-    },
-    {
-        value: 'gemini',
-        label: 'Gemini CLI',
-        webAgent: 'genie',
-        availabilitySource: 'cli',
-        availabilityKey: 'gemini',
-        genieProvider: 'gemini',
-    },
-];
+const WEB_AI_OPEN_OPTION = {
+    label: '打开 Web AI',
+    webAgent: 'genie' as const,
+};
 
 const resolveStoredWebOpenMethod = (method: OpenMethod) => {
     if (method.type !== 'web') {
@@ -166,7 +119,7 @@ export default function OpenInDropdown({
     webAgentPanelOpen,
     onCloseWebAgentPanel,
     onPreferredIDEChange,
-    onRefreshAvailability,
+    onOpenAISettings,
     variant = 'compact',
     className,
     cardTitle = '打开 AI',
@@ -176,39 +129,11 @@ export default function OpenInDropdown({
     const [openLoading, setOpenLoading] = useState(false);
     const [hovered, setHovered] = useState(false);
     const [dropdownOpen, setDropdownOpen] = useState(false);
-    const [agentVersions, setAgentVersions] = useState<AgentVersionMap>({});
-    const [agentVersionsLoading, setAgentVersionsLoading] = useState(false);
-    const agentVersionCacheRef = useRef<AgentVersionCache | null>(null);
-
-    const loadAgentVersions = useCallback(async (force = false) => {
-        if (!force && isAgentVersionCacheFresh(agentVersionCacheRef.current)) {
-            setAgentVersions(agentVersionCacheRef.current.versions);
-            return;
-        }
-
-        setAgentVersionsLoading(true);
-        try {
-            const result = await apiService.getAgentVersions();
-            const versions = result.agents || {};
-            agentVersionCacheRef.current = {
-                fetchedAt: Date.now(),
-                versions,
-            };
-            setAgentVersions(versions);
-        } catch (error) {
-            console.error('Error loading agent versions:', error);
-        } finally {
-            setAgentVersionsLoading(false);
-        }
-    }, []);
+    const [openHelpDialogOpen, setOpenHelpDialogOpen] = useState(false);
 
     const handleDropdownOpenChange = useCallback((open: boolean) => {
         setDropdownOpen(open);
-        if (open) {
-            onRefreshAvailability?.();
-            void loadAgentVersions();
-        }
-    }, [loadAgentVersions, onRefreshAvailability]);
+    }, []);
 
     const visibleIDEOptions = getVisibleIDEOptions(ideAvailability);
     const activeOpenIDE = resolveVisibleIDEPreference(preferredIDE, ideAvailability) || visibleIDEOptions[0].value;
@@ -223,7 +148,6 @@ export default function OpenInDropdown({
     const overflowLocalAppOpenOptions = shouldCollapseLocalAppOpenOptions
         ? localAppOpenOptions.slice(MAX_INLINE_LOCAL_APP_OPEN_OPTIONS)
         : [];
-    const visibleOnlineWebAgentOptions = ONLINE_WEB_AGENT_OPTIONS;
     const projectId = targetProjectId?.trim() || activeProjectId?.trim() || undefined;
     const openTargetPath = targetPath?.trim() || undefined;
 
@@ -242,7 +166,6 @@ export default function OpenInDropdown({
         if (ide === 'windsurf') return <Windsurf size={14} />;
         if (ide === 'vscode') return <Microsoft.Color size={14} />;
         if (ide === 'antigravity') return <Antigravity.Color size={14} />;
-        if (ide === 'kiro') return <Aws.Color size={14} />;
         if (ide === 'qoder') return <Qoder.Color size={14} />;
         return <SquareTerminal className="h-3.5 w-3.5" />;
     };
@@ -267,24 +190,11 @@ export default function OpenInDropdown({
         return <SquareTerminal className="h-3.5 w-3.5" />;
     };
 
-    const getOnlineWebAgentIcon = (option: OnlineWebAgentOption) => {
-        if (option.webAgent === 'opencode') return getWebAgentIcon('opencode');
-        if (option.genieProvider === 'claude') return <ClaudeCode.Color size={14} />;
-        if (option.genieProvider === 'codex') return <OpenAI size={14} />;
-        if (option.genieProvider === 'opencode') return <OpenCode size={14} />;
-        if (option.genieProvider === 'gemini') return <GeminiCLI.Color size={14} />;
-        return getWebAgentIcon('genie');
-    };
-
     /** Get icon for the current open method (shown on the main button). */
     const getOpenMethodIcon = (method: OpenMethod) => {
         if (method.type === 'ide') return getIDEIcon(method.value as MainIDE);
         if (method.type === 'local-app') return getLocalAppIcon(method.value as LocalAppAgent);
         if (method.type === 'cli') return getCLIAgentIcon(method.value as CLIAgent);
-        if (method.type === 'web') {
-            const onlineOption = ONLINE_WEB_AGENT_OPTIONS.find((option) => option.genieProvider === method.value);
-            if (onlineOption) return getOnlineWebAgentIcon(onlineOption);
-        }
         if (method.type === 'web') return getWebAgentIcon(method.value as WebAgent);
         return <SquareTerminal className="h-3.5 w-3.5" />;
     };
@@ -308,7 +218,7 @@ export default function OpenInDropdown({
         }
 
         try {
-            await Promise.resolve(handleOpenProjectInIDE(ide, openTargetPath));
+            await Promise.resolve(handleOpenProjectInIDE(ide, openTargetPath, projectId));
         } finally {
             setOpenLoading(false);
         }
@@ -364,23 +274,12 @@ export default function OpenInDropdown({
             return;
         }
 
-        if (agent === 'opencode' && onOpenGenieWebAgent) {
-            void savePreference({ type: 'web', value: 'opencode' }).catch(() => {});
-            setOpenLoading(true);
-            try {
-                await Promise.resolve(onOpenGenieWebAgent(openTargetPath, 'opencode'));
-            } finally {
-                setOpenLoading(false);
-            }
-            return;
-        }
-
         toast.warning('打开 Web Agent 失败');
     };
 
-    const handleOpenWithOnlineWebAgent = async (option: OnlineWebAgentOption) => {
-        await handleOpenWithWebAgent(option.webAgent, option.genieProvider);
-    };
+    const handleOpenAISettings = useCallback(() => {
+        onOpenAISettings?.();
+    }, [onOpenAISettings]);
 
     /** Main button click handler — Web Agent toggles panel, others fire-and-forget. */
     const handleOpenDefault = () => {
@@ -441,13 +340,6 @@ export default function OpenInDropdown({
         </div>
     );
 
-    const renderEmptyState = (label: string) => (
-        <DropdownMenuItem disabled className="h-8 gap-2 px-2 text-xs text-muted-foreground">
-            <SquareTerminal className="h-3.5 w-3.5" />
-            {label}
-        </DropdownMenuItem>
-    );
-
     const renderEditorOption = (option: (typeof MAIN_IDE_OPTIONS)[number]) => (
         <DropdownMenuItem
             key={option.value}
@@ -487,18 +379,6 @@ export default function OpenInDropdown({
         </DropdownMenuItem>
     );
 
-    const renderOptionMeta = (agent: CLIAgent) => {
-        const optionMeta = formatAgentVersionMeta(agentVersions[agent]);
-        if (!optionMeta && !agentVersionsLoading) return null;
-
-        return (
-            <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
-                {agentVersionsLoading && !optionMeta ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                {optionMeta || '检测中'}
-            </span>
-        );
-    };
-
     const renderCLIAgentSubmenu = () => (
         <DropdownMenuSub>
             <DropdownMenuSubTrigger className="h-8 gap-2 px-2 text-[13px]">
@@ -531,24 +411,95 @@ export default function OpenInDropdown({
     );
 
     const showExpanded = !openLoading && (hovered || buttonActive || dropdownOpen);
+    const toolbarButtonClassName = cn(
+        "h-8 rounded-md px-3 gap-1.5 text-[12px] font-medium [&_svg]:h-4 [&_svg]:w-4",
+        buttonActive
+            ? "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground"
+            : "text-foreground hover:text-foreground",
+    );
+    const renderOpenHelpDialog = () => (
+        <Dialog open={openHelpDialogOpen} onOpenChange={setOpenHelpDialogOpen}>
+            <DialogContent className="w-[min(92vw,460px)] max-w-[460px] overflow-hidden rounded-[20px] border-border bg-card p-0 text-sm shadow-md">
+                <div className="px-5 pb-5 pt-5 sm:px-6 sm:pb-6">
+                    <DialogHeader className="space-y-2 text-left">
+                        <DialogTitle className="text-[18px] font-semibold leading-6 tracking-tight">
+                            手动打开 AI 应用
+                        </DialogTitle>
+                        <DialogDescription className="text-[13px] leading-5 text-muted-foreground">
+                            如果 Web 无法直接唤起应用，请在应用内选择当前 Make 项目目录。
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="mt-5 grid gap-2">
+                        <div className="rounded-md border border-border/70 bg-muted/30 px-3 py-2.5">
+                            <div className="text-[13px] font-medium text-foreground">方法一：新建对话</div>
+                            <div className="mt-1 text-[12px] leading-5 text-muted-foreground">选择工作空间，并指向当前项目目录。</div>
+                        </div>
+                        <div className="rounded-md border border-border/70 bg-muted/30 px-3 py-2.5">
+                            <div className="text-[13px] font-medium text-foreground">方法二：新建项目</div>
+                            <div className="mt-1 text-[12px] leading-5 text-muted-foreground">选择当前 Make 项目目录作为项目根目录。</div>
+                        </div>
+                    </div>
+
+                    <p className="mt-4 text-[12px] leading-5 text-muted-foreground">
+                        适用于 WorkBuddy、TRAE SOLO 等应用。
+                    </p>
+
+                    <DialogFooter className="mt-5 flex flex-row justify-end gap-2 sm:space-x-0">
+                        <Button type="button" size="sm" className="h-8" onClick={() => setOpenHelpDialogOpen(false)}>
+                            知道了
+                        </Button>
+                    </DialogFooter>
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+
+    const webAiMenuActive = buttonActive;
+    const handleToggleWebAiMenu = useCallback(() => {
+        if (webAiMenuActive) {
+            onCloseWebAgentPanel?.();
+            return;
+        }
+
+        void handleOpenWithWebAgent(WEB_AI_OPEN_OPTION.webAgent);
+    }, [handleOpenWithWebAgent, onCloseWebAgentPanel, webAiMenuActive]);
     const menuContent = (
-        <DropdownMenuContent side={variant === 'placeholder-card' ? 'right' : 'right'} align="start" className="w-64 p-1.5">
+        <DropdownMenuContent
+            side={variant === 'toolbar' || variant === 'canvas-icon' ? 'bottom' : 'right'}
+            align={variant === 'toolbar' || variant === 'canvas-icon' ? 'end' : 'start'}
+            className="w-64 p-1.5"
+        >
             {renderAgentGroup('在线打开', WEB_AGENT_GROUP_HELP, (
-                visibleOnlineWebAgentOptions.length > 0
-                    ? visibleOnlineWebAgentOptions.map((option) => (
-                        <DropdownMenuItem
-                            key={option.value}
-                            onClick={() => void handleOpenWithOnlineWebAgent(option)}
-                            className="h-8 gap-2 px-2 text-[13px]"
+                <>
+                    <DropdownMenuItem
+                        onClick={handleToggleWebAiMenu}
+                        aria-checked={webAiMenuActive}
+                        className={cn(
+                            "h-8 gap-2 px-2 text-[13px]",
+                            webAiMenuActive && 'bg-secondary text-secondary-foreground',
+                        )}
+                    >
+                        <span
+                            className={cn(
+                                "flex h-4 w-4 items-center justify-center",
+                                webAiMenuActive ? "text-secondary-foreground" : "text-foreground",
+                            )}
                         >
-                            <span className="flex h-4 w-4 items-center justify-center text-foreground">{getOnlineWebAgentIcon(option)}</span>
-                            <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                            {option.availabilitySource === 'cli'
-                                ? renderOptionMeta(option.availabilityKey as CLIAgent)
-                                : null}
-                        </DropdownMenuItem>
-                    ))
-                    : renderEmptyState('未检测到可用的 Web Agent')
+                            {webAiMenuActive ? <Check className="h-3.5 w-3.5" /> : getWebAgentIcon(WEB_AI_OPEN_OPTION.webAgent)}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">{WEB_AI_OPEN_OPTION.label}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                        onClick={handleOpenAISettings}
+                        className="h-8 gap-2 px-2 text-[13px]"
+                    >
+                        <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">
+                            <Settings className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">设置</span>
+                    </DropdownMenuItem>
+                </>
             ), false)}
             {renderAgentGroup('在本地应用中打开', LOCAL_APP_GROUP_HELP, (
                 <>
@@ -569,8 +520,120 @@ export default function OpenInDropdown({
                     {renderCLIAgentSubmenu()}
                 </>
             ))}
+            <DropdownMenuSeparator className="-mx-1 my-1.5" />
+            <DropdownMenuItem
+                onClick={() => setOpenHelpDialogOpen(true)}
+                className="h-8 gap-2 px-2 text-[13px] text-muted-foreground"
+            >
+                <CircleHelp className="h-3.5 w-3.5" />
+                无法打开？
+            </DropdownMenuItem>
         </DropdownMenuContent>
     );
+
+    if (variant === 'canvas-icon') {
+        return (
+            <>
+                <TooltipProvider>
+                    <DropdownMenu open={dropdownOpen} onOpenChange={handleDropdownOpenChange}>
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className={cn(
+                                    'axhub-canvas-ai-menu-button h-8 w-8 rounded-none border-0 text-foreground/75 hover:bg-transparent hover:text-foreground data-[active=true]:text-primary data-[active=true]:hover:text-primary [&_svg]:h-4 [&_svg]:w-4',
+                                    className,
+                                )}
+                                aria-label={buttonActive ? 'AI 已打开' : '打开 AI'}
+                                title={buttonActive ? 'AI 已打开' : '打开 AI'}
+                                data-active={buttonActive ? 'true' : undefined}
+                                disabled={openLoading}
+                            >
+                                {openLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                            </Button>
+                        </DropdownMenuTrigger>
+                        {menuContent}
+                    </DropdownMenu>
+                </TooltipProvider>
+                {renderOpenHelpDialog()}
+            </>
+        );
+    }
+
+    if (variant === 'toolbar') {
+        return (
+            <>
+                <TooltipProvider>
+                    <DropdownMenu open={dropdownOpen} onOpenChange={handleDropdownOpenChange}>
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className={cn(toolbarButtonClassName, className)}
+                                data-active={buttonActive ? 'true' : undefined}
+                                disabled={openLoading}
+                            >
+                                {openLoading ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                                <span>{buttonActive ? '已打开' : '打开 AI'}</span>
+                                <ChevronDown className="h-3.5 w-3.5" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        {menuContent}
+                    </DropdownMenu>
+                </TooltipProvider>
+                {renderOpenHelpDialog()}
+            </>
+        );
+    }
+
+    if (variant === 'inline-app-list') {
+        return (
+            <>
+                <TooltipProvider>
+                    <div className={cn('flex w-full flex-col items-center gap-3 text-center', className)}>
+                        <div className="text-[12px] font-medium text-slate-500">在应用中新建：</div>
+                        <div className="flex max-w-full flex-wrap items-center justify-center gap-2">
+                            {localAppOpenOptions.map((item) => (
+                                <button
+                                    key={`${item.kind}-${item.option.value}`}
+                                    type="button"
+                                    className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                                    disabled={openLoading}
+                                    onClick={() => {
+                                        if (item.kind === 'ide') {
+                                            void handleOpenWithIDE(item.option.value as MainIDE);
+                                            return;
+                                        }
+                                        void handleOpenWithLocalApp(item.option.value);
+                                    }}
+                                >
+                                    <span className="flex h-3.5 w-3.5 items-center justify-center text-slate-500">
+                                        {item.kind === 'ide'
+                                            ? getIDEIcon(item.option.value as MainIDE)
+                                            : getLocalAppIcon(item.option.value)}
+                                    </span>
+                                    <span className="whitespace-nowrap">{item.option.label}</span>
+                                </button>
+                            ))}
+                            <button
+                                type="button"
+                                className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                                onClick={() => setOpenHelpDialogOpen(true)}
+                            >
+                                <span className="flex h-3.5 w-3.5 items-center justify-center text-slate-500">
+                                    <MoreHorizontal className="h-3.5 w-3.5" />
+                                </span>
+                                <span className="whitespace-nowrap">更多</span>
+                            </button>
+                        </div>
+                    </div>
+                </TooltipProvider>
+                {renderOpenHelpDialog()}
+            </>
+        );
+    }
 
     if (variant === 'placeholder-card') {
         if (buttonActive) {
@@ -578,101 +641,107 @@ export default function OpenInDropdown({
         }
 
         return (
-            <TooltipProvider>
-                <DropdownMenu open={dropdownOpen} onOpenChange={handleDropdownOpenChange}>
-                    <DropdownMenuTrigger asChild>
-                        <button
-                            type="button"
-                            className={cn(
-                                'placeholder-guide-card placeholder-guide-card-action placeholder-guide-ai-card',
-                                'flex min-h-[78px] w-full items-center justify-between gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-left transition-colors hover:border-slate-300 hover:bg-slate-50',
-                                className,
-                            )}
-                            disabled={openLoading}
-                        >
-                            <span className="min-w-0">
-                                <span className="placeholder-guide-card-title block text-[13px] font-medium text-slate-950">
-                                    <span className="inline-flex items-center gap-2">
-                                        {cardIcon ? <span className="text-slate-500">{cardIcon}</span> : null}
-                                        <span>{cardTitle}</span>
+            <>
+                <TooltipProvider>
+                    <DropdownMenu open={dropdownOpen} onOpenChange={handleDropdownOpenChange}>
+                        <DropdownMenuTrigger asChild>
+                            <button
+                                type="button"
+                                className={cn(
+                                    'placeholder-guide-card placeholder-guide-card-action placeholder-guide-ai-card',
+                                    'flex min-h-[78px] w-full items-center justify-between gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-left transition-colors hover:border-slate-300 hover:bg-slate-50',
+                                    className,
+                                )}
+                                disabled={openLoading}
+                            >
+                                <span className="min-w-0">
+                                    <span className="placeholder-guide-card-title block text-[13px] font-medium text-slate-950">
+                                        <span className="inline-flex items-center gap-2">
+                                            {cardIcon ? <span className="text-slate-500">{cardIcon}</span> : null}
+                                            <span>{cardTitle}</span>
+                                        </span>
                                     </span>
+                                    {cardDescription ? (
+                                        <span className="placeholder-guide-card-description mt-1 block text-[12px] leading-5 text-slate-600">
+                                            {cardDescription}
+                                        </span>
+                                    ) : null}
                                 </span>
-                                {cardDescription ? (
-                                    <span className="placeholder-guide-card-description mt-1 block text-[12px] leading-5 text-slate-600">
-                                        {cardDescription}
-                                    </span>
-                                ) : null}
-                            </span>
-                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600">
-                                {openLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronRight className="h-4 w-4" />}
-                            </span>
-                        </button>
-                    </DropdownMenuTrigger>
-                    {menuContent}
-                </DropdownMenu>
-            </TooltipProvider>
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                                    {openLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronRight className="h-4 w-4" />}
+                                </span>
+                            </button>
+                        </DropdownMenuTrigger>
+                        {menuContent}
+                    </DropdownMenu>
+                </TooltipProvider>
+                {renderOpenHelpDialog()}
+            </>
         );
     }
 
     return (
-        <TooltipProvider>
-            <DropdownMenu open={dropdownOpen} onOpenChange={handleDropdownOpenChange}>
-                <div
-                    className={cn(
-                        'inline-flex items-center h-6 shrink-0 rounded-md overflow-hidden transition-all duration-200',
-                        buttonActive ? 'min-w-[104px] w-auto' : openLoading ? 'w-[92px]' : showExpanded ? 'w-[82px]' : 'w-[68px]',
-                        buttonActive
-                            ? 'border border-primary/45 bg-background shadow-none'
-                            : 'border border-border/50 bg-background hover:border-border',
-                    )}
-                    onMouseEnter={() => setHovered(true)}
-                    onMouseLeave={() => setHovered(false)}
-                >
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
+        <>
+            <TooltipProvider>
+                <DropdownMenu open={dropdownOpen} onOpenChange={handleDropdownOpenChange}>
+                    <div
                         className={cn(
-                            'gap-1.5 h-6 leading-none rounded-none border-0 shadow-none text-[12px] font-normal transition-colors duration-150 flex-1 min-w-0 data-[active=true]:text-primary data-[active=true]:hover:bg-primary/5 data-[active=true]:hover:text-primary',
-                            openLoading ? 'px-3' : 'px-2',
+                            'inline-flex items-center h-6 shrink-0 rounded-md overflow-hidden transition-all duration-200',
+                            buttonActive ? 'min-w-[104px] w-auto' : openLoading ? 'w-[92px]' : showExpanded ? 'w-[82px]' : 'w-[68px]',
                             buttonActive
-                                ? 'text-primary hover:bg-primary/5 hover:text-primary'
-                                : 'text-foreground/80 hover:text-foreground',
+                                ? 'border border-primary/45 bg-background shadow-none'
+                                : 'border border-border/50 bg-background hover:border-border',
                         )}
-                        data-active={buttonActive ? 'true' : undefined}
-                        onClick={handleOpenDefault}
-                        disabled={openLoading}
+                        onMouseEnter={() => setHovered(true)}
+                        onMouseLeave={() => setHovered(false)}
                     >
-                        {openLoading
-                            ? <Loader2 className="h-3 w-3 animate-spin" />
-                            : showExpanded
-                                ? <span className="flex items-center justify-center">{getOpenMethodIcon(displayOpenMethod)}</span>
-                                : null
-                        }
-                        <span className="whitespace-nowrap">{buttonActive ? '已打开' : showExpanded ? '打开' : '打开 AI'}</span>
-                    </Button>
-                    {showExpanded ? (
-                        <DropdownMenuTrigger asChild>
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className={cn(
-                                    'h-6 w-5 rounded-none border-0 border-l transition-colors duration-150',
-                                      buttonActive
-                                          ? 'border-primary/25 text-primary/70 hover:bg-primary/5 hover:text-primary'
-                                          : 'border-border/40 text-foreground/60 hover:text-foreground/80',
-                                )}
-                                disabled={openLoading}
-                                aria-label="打开菜单"
-                            >
-                                <ChevronDown className="h-2.5 w-2.5" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                    ) : null}
-                </div>
-                {menuContent}
-            </DropdownMenu>
-        </TooltipProvider>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className={cn(
+                                'gap-1.5 h-6 leading-none rounded-none border-0 shadow-none text-[12px] font-normal transition-colors duration-150 flex-1 min-w-0 data-[active=true]:text-primary data-[active=true]:hover:bg-primary/5 data-[active=true]:hover:text-primary',
+                                openLoading ? 'px-3' : 'px-2',
+                                buttonActive
+                                    ? 'text-primary hover:bg-primary/5 hover:text-primary'
+                                    : 'text-foreground/80 hover:text-foreground',
+                            )}
+                            data-active={buttonActive ? 'true' : undefined}
+                            onClick={handleOpenDefault}
+                            disabled={openLoading}
+                        >
+                            {openLoading
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : showExpanded
+                                    ? <span className="flex items-center justify-center">{getOpenMethodIcon(displayOpenMethod)}</span>
+                                    : null
+                            }
+                            <span className="whitespace-nowrap">{buttonActive ? '已打开' : showExpanded ? '打开' : '打开 AI'}</span>
+                        </Button>
+                        {showExpanded ? (
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className={cn(
+                                        'h-6 w-5 rounded-none border-0 border-l transition-colors duration-150',
+                                          buttonActive
+                                              ? 'border-primary/25 text-primary/70 hover:bg-primary/5 hover:text-primary'
+                                              : 'border-border/40 text-foreground/60 hover:text-foreground/80',
+                                    )}
+                                    disabled={openLoading}
+                                    aria-label="打开菜单"
+                                >
+                                    <ChevronDown className="h-2.5 w-2.5" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                        ) : null}
+                    </div>
+                    {menuContent}
+                </DropdownMenu>
+            </TooltipProvider>
+            {renderOpenHelpDialog()}
+        </>
     );
 }

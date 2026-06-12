@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import {
   getProjectMetadataPath,
+  isMakeStateWritePermissionError,
   readServerInfo,
   writeServerInfo,
   type RegisteredProject,
@@ -11,8 +12,10 @@ import {
 import { readJsonBody, sendJson } from './http.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import {
+  applyMakeClientUpdate,
   createBlankMakeClientProject,
   ensureMakeClientDevServer,
+  getMakeClientUpdateStatus,
   getMakeClientDevStatus,
   makeClientErrorPayload,
   suggestMakeClientFolderName,
@@ -37,6 +40,22 @@ interface MakeClientApiHandlers {
     },
   ) => RegisteredProject;
   toProjectEntry: (project: RegisteredProject) => RegisteredProject;
+}
+
+function tryWriteAdminServerInfo(projectRoot: string, options: ManagementApiOptions): void {
+  if (!options.serverInfo) {
+    return;
+  }
+  try {
+    writeServerInfo(projectRoot, 'admin', {
+      ...options.serverInfo,
+      projectRoot,
+    }, { homeDir: options.serverInfoHomeDir });
+  } catch (error: any) {
+    if (!isMakeStateWritePermissionError(error)) {
+      throw error;
+    }
+  }
 }
 
 export function handleMakeClientProjectApi(
@@ -66,6 +85,7 @@ export function handleMakeClientProjectApi(
           ? await ensureMakeClientDevServer(root, {
             adminServerInfo: options.serverInfo,
             serverInfoHomeDir: options.serverInfoHomeDir,
+            diagnosticLog: options.diagnosticLog,
             ...(typeof body?.timeoutMs === 'number' ? { devTimeoutMs: body.timeoutMs } : {}),
             ...(typeof body?.pollIntervalMs === 'number' ? { pollIntervalMs: body.pollIntervalMs } : {}),
           })
@@ -116,6 +136,7 @@ export function handleMakeClientProjectApi(
       }, {
         adminServerInfo: options.serverInfo,
         serverInfoHomeDir: options.serverInfoHomeDir,
+        diagnosticLog: options.diagnosticLog,
       });
       const project = handlers.addOrUpdateMakeClientRegistryProject({
         id: result.marker.project.id,
@@ -130,6 +151,7 @@ export function handleMakeClientProjectApi(
         project: handlers.toProjectEntry(project),
         marker: result.marker,
         runtime: result.dev.runtime,
+        progress: result.progress,
       }, { status: 201 });
     }).catch((error: any) => {
       sendJson(res, makeClientErrorPayload(error), { status: Number(error?.status || 500) });
@@ -155,18 +177,38 @@ export function handleMakeClientProjectApi(
 
   const { projectId, rest, project } = projectRoute;
 
+  if (rest === 'make-client/update/status' && req.method === 'GET') {
+    getMakeClientUpdateStatus(projectId, project.root)
+      .then((status) => sendJson(res, status))
+      .catch((error: any) => {
+        sendJson(res, makeClientErrorPayload(error, {
+          projectId,
+          projectRoot: project.root,
+        }), { status: Number(error?.status || 500) });
+      });
+    return true;
+  }
+
+  if (rest === 'make-client/update/apply' && req.method === 'POST') {
+    applyMakeClientUpdate(projectId, project.root)
+      .then((result) => sendJson(res, result))
+      .catch((error: any) => {
+        sendJson(res, makeClientErrorPayload(error, {
+          projectId,
+          projectRoot: project.root,
+          ...(error?.updateContext && typeof error.updateContext === 'object' ? error.updateContext : {}),
+        }), { status: Number(error?.status || 500) });
+      });
+    return true;
+  }
+
   if (rest === 'dev/ensure' && req.method === 'POST') {
     readJsonBody(req).then(async (body) => {
       const existingRuntime = readServerInfo(project.root, 'runtime');
       if (existingRuntime && path.resolve(existingRuntime.projectRoot) === path.resolve(project.root)) {
         const status = await getMakeClientDevStatus(projectId, project.root);
         if (!status.makeClient || status.running) {
-          if (options.serverInfo) {
-            writeServerInfo(project.root, 'admin', {
-              ...options.serverInfo,
-              projectRoot: project.root,
-            }, { homeDir: options.serverInfoHomeDir });
-          }
+          tryWriteAdminServerInfo(project.root, options);
           return {
             success: true as const,
             reused: true,
@@ -178,6 +220,7 @@ export function handleMakeClientProjectApi(
       return ensureMakeClientDevServer(project.root, {
         adminServerInfo: options.serverInfo,
         serverInfoHomeDir: options.serverInfoHomeDir,
+        diagnosticLog: options.diagnosticLog,
         ...(typeof body?.timeoutMs === 'number' ? { devTimeoutMs: body.timeoutMs } : {}),
         ...(typeof body?.pollIntervalMs === 'number' ? { pollIntervalMs: body.pollIntervalMs } : {}),
       });

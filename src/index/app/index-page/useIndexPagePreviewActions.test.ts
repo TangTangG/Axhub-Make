@@ -161,6 +161,16 @@ describe('useIndexPagePreviewActions source', () => {
     expect(combinedSource).toContain("'AXHUB_PROTOTYPE_EDITOR_STATE'");
   });
 
+  it('handles iframe-originated host toolbar action requests through the Make host runtime', () => {
+    const source = readPreviewRootSource();
+
+    expect(source).toContain("data.type !== 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_REQUEST'");
+    expect(source).toContain("type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_RESULT'");
+    expect(source).toContain('const handled = await runHostToolbarAction(data.action);');
+    expect(source).toContain('event.source !== targetIframe.contentWindow');
+    expect(source).toContain('targetIframe.contentWindow?.postMessage(');
+  });
+
   it('wires prototype review tabs, markdown state, prompt copy, and dedicated page zoom actions', () => {
     const source = readUiReviewSupportSource();
     const previewRootSource = readPreviewRootSource();
@@ -224,6 +234,17 @@ describe('useIndexPagePreviewActions source', () => {
     expect(combinedSource).toContain('getClientUrlOrigin(selectedItem.clientUrl)');
   });
 
+  it('does not mount host-owned Space temporary interaction forwarding', () => {
+    const source = readPreviewRootSource();
+
+    expect(source).not.toContain('QUICK_EDIT_TEMPORARY_INTERACTION_MESSAGE_TYPE');
+    expect(source).not.toContain('QUICK_EDIT_TEMPORARY_INTERACTION_LONG_PRESS_MS');
+    expect(source).not.toContain('shouldHandleQuickEditSpaceTemporaryInteractionEvent');
+    expect(source).not.toContain('getQuickEditTemporaryInteractionTargets');
+    expect(source).not.toContain('postTemporaryInteraction');
+    expect(source).not.toContain('AXHUB_WEB_EDITOR_SPACE_PASS_THROUGH_KEY');
+  });
+
   it('restarts the quick-edit runtime handshake when selecting a hash-routed prototype page', () => {
     const source = readPreviewRootSource();
     const pageHandshakeSource = getSourceSegment(
@@ -268,6 +289,17 @@ describe('useIndexPagePreviewActions source', () => {
     );
   });
 
+  it('declares editor status refresh before callbacks that depend on it', () => {
+    const source = readPreviewRootSource();
+
+    const refreshDeclarationIndex = source.indexOf('const refreshEditorStatus = useCallback');
+    const reenterDeclarationIndex = source.indexOf('const reenterPrototypeEditorAfterIframeLoad = useCallback');
+
+    expect(refreshDeclarationIndex).toBeGreaterThan(-1);
+    expect(reenterDeclarationIndex).toBeGreaterThan(-1);
+    expect(refreshDeclarationIndex).toBeLessThan(reenterDeclarationIndex);
+  });
+
   it('requests screenshot preview whenever export modal opens without a captured screenshot', () => {
     const source = readPreviewActionsSource();
 
@@ -308,15 +340,15 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('serverBackedPayload');
   });
 
-  it('opens quick edit without waiting for the Genie runtime probe', () => {
+  it('opens quick edit without blocking on the AI runtime probe', () => {
     const source = readPreviewActionsSource();
 
+    expect(source).toContain('enterPrototypeEditor(primaryIframe)');
     expect(source).toContain('probeAssistantRuntimeSilently');
     expect(source).not.toContain('await probeAssistantRuntimeSilently?.()');
     expect(source).toContain('startDeferredAssistantRuntimeProbe({');
-    expect(source).toContain('enterPrototypeEditor(primaryIframe)');
-    expect(source).toContain("messageApi.success('已连接上本地 AI');");
-    expect(source).toContain('startAssistantRuntimeForWebEditor');
+    expect(source).toContain('onRuntimeReady: () => {');
+    expect(source).not.toContain('startAssistantRuntimeForWebEditor');
   });
 
   it('keeps the preview iframe launch URL stable while quick edit is active', () => {
@@ -332,7 +364,9 @@ describe('useIndexPagePreviewActions source', () => {
       'exitWebEditorRef.current = handleExitWebEditor;',
     );
 
-    expect(source).toContain('const activePrototypeEditorLaunchOptionsRef = useRef<typeof prototypeEditorLaunchOptions | null>(null);');
+    expect(source).toContain('type PrototypeEditorRestoreOptions = typeof prototypeEditorLaunchOptions & {');
+    expect(source).toContain('selectionModeActive?: boolean;');
+    expect(source).toContain('const activePrototypeEditorLaunchOptionsRef = useRef<PrototypeEditorRestoreOptions | null>(null);');
     expect(source).toContain("const iframePrototypeEditorLaunchOptions = editorStatus.mode === 'quickEdit'");
     expect(source).toContain('activePrototypeEditorLaunchOptionsRef.current = prototypeEditorLaunchOptions;');
     expect(buildPaneIframeUrlSource).toContain('iframePrototypeEditorLaunchOptions');
@@ -366,7 +400,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain("const label = activeTab === 'components' ? '组件' : '原型'");
   });
 
-  it('adds Genie launch options to client prototype iframe URLs', () => {
+  it('strips Genie and editor WebSocket launch options from client prototype iframe URLs', () => {
     vi.stubGlobal('window', {
       location: {
         origin: 'http://admin.local:5173',
@@ -379,26 +413,26 @@ describe('useIndexPagePreviewActions source', () => {
     }, {
       genieBridge: {
         apiBaseUrl: 'http://localhost:32124/api',
-        integrationChannel: '/Users/demo/project',
-        projectPath: '/Users/demo/project',
+        integrationChannel: '/workspace/demo/project',
+        projectPath: '/workspace/demo/project',
         targetClientId: 'frontend-1234',
       },
       integrationWs: {
         enabled: true,
         apiBaseUrl: 'http://localhost:32124/api',
-        channel: '/Users/demo/project',
+        channel: '/workspace/demo/project',
         clientId: 'make-editor-1234',
       },
     } as any));
 
-    expect(url.searchParams.get('genieApiBaseUrl')).toBe('http://localhost:32124/api');
-    expect(url.searchParams.get('genieIntegrationChannel')).toBe('/Users/demo/project');
-    expect(url.searchParams.get('genieTargetClientId')).toBe('frontend-1234');
-    expect(url.searchParams.get('cwd')).toBe('/Users/demo/project');
-    expect(url.searchParams.get('editorIntegrationWs')).toBe('1');
-    expect(url.searchParams.get('editorApiBaseUrl')).toBe('http://localhost:32124/api');
-    expect(url.searchParams.get('editorIntegrationChannel')).toBe('/Users/demo/project');
-    expect(url.searchParams.get('editorClientId')).toBe('make-editor-1234');
+    expect(url.searchParams.get('genieApiBaseUrl')).toBeNull();
+    expect(url.searchParams.get('genieIntegrationChannel')).toBeNull();
+    expect(url.searchParams.get('genieTargetClientId')).toBeNull();
+    expect(url.searchParams.get('cwd')).toBeNull();
+    expect(url.searchParams.get('editorIntegrationWs')).toBeNull();
+    expect(url.searchParams.get('editorApiBaseUrl')).toBeNull();
+    expect(url.searchParams.get('editorIntegrationChannel')).toBeNull();
+    expect(url.searchParams.get('editorClientId')).toBeNull();
   });
 
   it('resolves relative prototype client URLs against the make client runtime origin', () => {
@@ -479,17 +513,47 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('exitQuickEditRuntime');
     expect(source).toContain("url.searchParams.set('axhubQuickEditContext', '1');");
     expect(source).not.toContain('desiredEditorModeRef');
-    expect(source).toContain("editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context, options.runtime))");
+    expect(source).toContain("editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context))");
     expect(source).not.toContain('if (!isSinglePaneHostToolbarPreview) {\n                setHostToolbarState(null);\n            }');
   });
 
-  it('keeps Genie frontend target auto-resolved while using the editor client id only for source registration', () => {
+  it('keeps prototype editor launch options free of assistant runtime bridge config', () => {
     const source = readPreviewRootSource();
 
-    expect(source).toContain("const editorClientId = String(assistantWebEditorClientId || '').trim();");
-    expect(source).toContain("targetClientId: '',");
-    expect(source).toContain('clientId: editorClientId,');
-    expect(source).not.toContain('targetClientId: editorClientId,');
+    expect(source).toContain('const prototypeEditorLaunchOptions = useMemo(() => ({');
+    expect(source).toContain('hostToolbar: true,');
+    expect(source).not.toContain('assistantWebEditorClientId');
+    expect(source).not.toContain('genieBridge:');
+    expect(source).not.toContain('integrationWs:');
+    expect(source).not.toContain('editorClientId');
+  });
+
+  it('restores prototype quick edit and selection mode across iframe URL changes', () => {
+    const source = readPreviewRootSource();
+    const resetEffectSource = getSourceSegment(
+      source,
+      'useEffect(() => {\n        const shouldRestoreQuickEdit = quickEditRuntimeActiveRef.current;',
+      'const quickEditAvailable = Boolean(selectedEditablePreviewResource)',
+    );
+    const reenterSource = getSourceSegment(
+      source,
+      'const reenterPrototypeEditorAfterIframeLoad = useCallback(async (',
+      'const maybeAutoOpenStandaloneDecisionPanel = useCallback',
+    );
+    const refreshSource = getSourceSegment(
+      source,
+      'const handleRefreshElement = useCallback(() => {',
+      'const notifyPreviewMessage = useCallback',
+    );
+
+    expect(resetEffectSource).toContain('pendingPrototypeEditorRestoreRef.current = {');
+    expect(resetEffectSource).toContain('selectionModeActive: hostToolbarStateRef.current?.selectionModeActive ?? true');
+    expect(resetEffectSource).toContain('setEditorStatus({ mode: \'quickEdit\' });');
+    expect(resetEffectSource).toMatch(/if \(shouldRestoreQuickEdit\) \{[\s\S]*return;/);
+    expect(reenterSource).toContain("type: 'toggle-selection-mode'");
+    expect(reenterSource).toContain('active: restoreOptions.selectionModeActive');
+    expect(reenterSource).toContain('selectionModeActive: restoreOptions.selectionModeActive');
+    expect(refreshSource).toContain('selectionModeActive: hostToolbarStateRef.current?.selectionModeActive ?? true');
   });
 
   it('does not let cross-origin preview frame API reads block editor exit cleanup', () => {
@@ -527,7 +591,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("type: 'axhub.quickEdit.patch'");
     expect(source).toContain("type: 'axhub.quickEdit.error'");
     expect(source).toContain('getPrototypeEditorApi');
-    expect(source).toContain("editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context, options.runtime))");
+    expect(source).toContain("editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context))");
     expect(source).toContain("messageApi.warning('当前客户端页面尚未接入真正的快速编辑器，请确认预览页已加载 DevTemplateBootstrap')");
     expect(source).toContain('projectId: selectedEditablePreviewResource?.projectId');
     expect(source).toContain('resourceId: selectedEditablePreviewResource?.resourceId || selectedEditablePreviewResource?.name');
@@ -576,14 +640,16 @@ describe('useIndexPagePreviewActions source', () => {
     expect(rootSource).toContain('selectedTheme');
     expect(rootSource).toContain('const selectedEditablePreviewResource =');
     expect(rootSource).toContain("contentMode === 'theme'");
-    expect(rootSource).toContain('selectedTheme?.clientUrl || selectedTheme?.previewUrl');
+    expect(rootSource).toContain('buildMainPreviewIframeUrl');
     expect(buildPaneIframeUrlSource).toContain("if (contentMode === 'theme')");
-    expect(buildPaneIframeUrlSource).toContain("return selectedTheme?.clientUrl || selectedTheme?.previewUrl || '';");
+    expect(buildPaneIframeUrlSource).toContain('return buildMainPreviewIframeUrl(selectedTheme);');
     expect(quickEditAvailableSource).toContain('selectedEditablePreviewResource');
     expect(quickEditAvailableSource).toContain("resourceType === 'theme'");
     expect(combinedSource).toContain("const resourceType: 'prototype' | 'theme' = contentMode === 'theme' ? 'theme' : 'prototype';");
     expect(combinedSource).toContain('resourceId: selectedEditablePreviewResource?.resourceId || selectedEditablePreviewResource?.name');
-    expect(combinedSource).toContain('context: buildPrototypeEditorContext(iframe)');
+    expect(combinedSource).toContain('const context = buildPrototypeEditorContext(iframe);');
+    expect(combinedSource).toContain('context: buildPrototypeEditorScopedContext(context)');
+    expect(combinedSource).toContain('options: buildPrototypeEditorEnableOptions(context)');
     expect(rootSource).not.toContain('selectedDeviceId = selectedTheme');
   });
 
@@ -604,7 +670,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('navigator.clipboard.writeText(result.prompt)');
   });
 
-  it('shows progress and failure feedback for host toolbar Genie connect actions', () => {
+  it('shows progress and failure feedback for editor-owned AI connect actions', () => {
     const source = readPreviewActionsSource();
 
     expect(source).toContain('resolveHostToolbarStateForDisplay');
@@ -615,18 +681,17 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('visible: true,');
     expect(source).toContain('setHostToolbarState((previousState) => resolveHostToolbarStateForDisplay(previousState, nextState, isDarkMode));');
     expect(source).toContain('previousState?: GenieEditorHostToolbarState | null');
-    expect(source).toContain("const hideLoading = nextAction.type === 'wake-genie'");
-    expect(source).toContain("messageApi.loading('正在连接本地 AI...', 0)");
+    expect(source).toContain('connectAnnotationAcpRuntime');
+    expect(source).toContain('runAnnotationAcpChatPrompt');
     expect(source).toContain('waitForHostToolbarActionState');
     expect(source).toContain("nextAction.type === 'wake-genie'");
     expect(source).toContain('!isHostToolbarWakePendingState(state)');
-    expect(source).toContain('const runtime = await startAssistantRuntimeForWebEditor?.();');
-    expect(source).toContain("runtime.health?.status !== 'ready'");
+    expect(source).not.toContain('const runtime = await startAssistantRuntimeForWebEditor?.();');
+    expect(source).not.toContain("runtime.health?.status !== 'ready'");
     expect(source).toContain("nextState.robotState === 'awake' || nextState.robotState === 'working'");
     expect(source).toContain('finish(previousState ?? null);');
     expect(source).toContain('const previousState = editors?.getHostToolbarState?.() ?? hostToolbarStateRef.current;');
     expect(source).toContain("messageApi.success('本地 AI 已连接');");
-    expect(source).toContain("messageApi.warning('本地 AI 暂未连接，请确认本地服务已启动');");
     expect(source).toContain('hideLoading?.();');
     expect(source).not.toContain("nextAction.type === 'copy-global-panel-prompt'");
     expect(source).toContain("nextAction.type === 'toggle-dark-mode'");
@@ -647,15 +712,83 @@ describe('useIndexPagePreviewActions source', () => {
     expect(fallbackActionSource).not.toContain('getHostToolbarState: () => hostToolbarState ?? createDefaultHostToolbarState()');
   });
 
-  it('auto-connects local AI before executing from the host toolbar', () => {
+  it('auto-connects local AI before executing host toolbar send actions', () => {
     const source = readPreviewActionsSource();
 
-    expect(source).toContain('isHostToolbarGenieAwake');
-    expect(source).toContain("requestedAction.type === 'send-to-genie'");
+    expect(source).toContain('isHostToolbarAgentAwake');
+    expect(source).not.toContain('isHostToolbarGenieAwake');
+    expect(source).toContain("requestedAction.type === 'send-to-genie' && !isHostToolbarAgentAwake(hostToolbarStateRef.current)");
     expect(source).toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });");
-    expect(source).toContain('if (!wakeHandled || !isHostToolbarGenieAwake(hostToolbarStateRef.current)) {');
-    expect(source).toContain('return false;');
+    expect(source).toContain('if (!wakeHandled || !isHostToolbarAgentAwake(hostToolbarStateRef.current)) {');
     expect(source).toContain('return runResolvedHostToolbarAction(requestedAction);');
+  });
+
+  it('maps annotation host toolbar AI actions to ACP runtime and ACP chat runs', () => {
+    const source = readPreviewRootSource();
+    const runHostToolbarActionSource = getSourceSegment(
+      source,
+      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runQuickEditSaveAction = useCallback',
+    );
+    const fallbackActionSource = getSourceSegment(
+      source,
+      'const runQuickEditHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+    );
+
+    expect(source).toContain('openAnnotationAssistantWithContext');
+    expect(source).toContain('onOpenAnnotationAssistant?.(assistantContextV1)');
+    expect(source).toContain('connectAnnotationAcpRuntime');
+    expect(runHostToolbarActionSource).toContain("if (nextAction.type === 'wake-genie') {");
+    expect(runHostToolbarActionSource).toContain('return connectAnnotationAcpRuntime({ showFeedback: true });');
+    expect(runHostToolbarActionSource).not.toContain('return openAnnotationAssistantWithContext();');
+    expect(source).toContain("robotState: 'awake' as const");
+    expect(source).toContain("messageApi.success('本地 AI 已连接');");
+
+    expect(source).toContain('runAnnotationAcpChatPrompt');
+    expect(source).toContain('onSubmitAnnotationAssistantPrompt');
+    expect(source).toContain('await onSubmitAnnotationAssistantPrompt(assistantContextV1, prompt)');
+    expect(source).not.toContain("from '../../domains/ai-generation/aiRunClient'");
+    expect(source).not.toContain('runAiText({');
+    expect(source).not.toContain("scene: 'annotation-quick-edit'");
+    expect(source).toContain("if (nextAction.type === 'send-to-genie') {");
+    expect(fallbackActionSource).toContain("nextAction.type === 'copy-prompt'");
+    expect(fallbackActionSource).not.toContain("nextAction.type === 'send-to-genie'");
+    expect(fallbackActionSource).not.toContain("nextAction.type === 'interrupt-genie'");
+
+    expect(source).toContain("if (nextAction.type === 'interrupt-genie') {");
+    expect(source).toContain("messageApi.warning('当前 ACP 执行暂不支持中断');");
+    expect(source).not.toContain('acp.chat.submit');
+    expect(source).not.toContain('acp.chat.interrupt');
+    expect(source).not.toContain('/api/prompt/execute');
+  });
+
+  it('keeps explicit selection mode actions reflected in host toolbar state', () => {
+    const source = readPreviewRootSource();
+    const runHostToolbarActionSource = getSourceSegment(
+      source,
+      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runQuickEditSaveAction = useCallback',
+    );
+    const fallbackActionSource = getSourceSegment(
+      source,
+      'const runQuickEditHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+    );
+
+    expect(fallbackActionSource).toContain("if (nextAction.type === 'toggle-selection-mode') {");
+    expect(fallbackActionSource).toContain('selectionModeActive: nextAction.active ?? !(hostToolbarStateRef.current?.selectionModeActive ?? true)');
+    expect(runHostToolbarActionSource).toContain("if (nextAction.type === 'toggle-selection-mode' && typeof nextAction.active === 'boolean') {");
+    expect(runHostToolbarActionSource).toContain('selectionModeActive: nextAction.active');
+    expect(runHostToolbarActionSource).toContain('resolveHostToolbarStateForDisplay(hostToolbarStateRef.current, explicitSelectionState, isDarkMode)');
+  });
+
+  it('does not keep Web Editor Genie request handling in the preview host', () => {
+    const source = readPreviewActionsSource();
+
+    expect(source).not.toContain('AXHUB_WEB_EDITOR_GENIE_REQUEST');
+    expect(source).not.toContain('isWebEditorGenieRequestMessage');
+    expect(source).not.toContain('handleWebEditorGenieRequest');
   });
 
   it('copies host toolbar prompt text through Make even when the editor action API exists', () => {
@@ -669,9 +802,43 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('getCopyPromptText?: () => string;');
     expect(runHostToolbarActionSource).toContain("nextAction.type === 'copy-prompt'");
     expect(runHostToolbarActionSource).toContain('const promptText = editors?.getCopyPromptText?.();');
-    expect(runHostToolbarActionSource).toContain('await navigator.clipboard.writeText(promptText);');
+    expect(runHostToolbarActionSource).toContain('return copyHostToolbarPromptText(promptText);');
     expect(runHostToolbarActionSource).toContain('clipboard: \'host\'');
     expect(runHostToolbarActionSource).not.toContain("nextAction.type === 'copy-prompt' && !editors?.runHostToolbarAction");
+  });
+
+  it('aggregates split prototype prompts for top host toolbar copy and send actions', () => {
+    const source = readPreviewActionsSource();
+    const runHostToolbarActionSource = getSourceSegment(
+      readPreviewRootSource(),
+      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runQuickEditSaveAction = useCallback',
+    );
+
+    expect(source).toContain('buildCombinedPrototypePrompt');
+    expect(source).toContain('const collectPrototypePrompt = useCallback(async (pane: PreviewPane)');
+    expect(source).toContain('const collectSplitPrototypePrompts = useCallback(async ()');
+    expect(runHostToolbarActionSource).toContain("previewConfig.previewMode === 'split'");
+    expect(runHostToolbarActionSource).toContain('const combinedPrompt = buildCombinedPrototypePrompt(await collectSplitPrototypePrompts());');
+    expect(runHostToolbarActionSource).toContain('return copyHostToolbarPromptText(combinedPrompt);');
+    expect(runHostToolbarActionSource).toContain('return runAnnotationAcpChatPrompt(combinedPrompt);');
+    expect(runHostToolbarActionSource).toMatch(
+      /if \(previewConfig\.previewMode === 'split'\) \{[\s\S]*?return runAnnotationAcpChatPrompt\(combinedPrompt\);[\s\S]*?\}\s*const promptText = editors\?\.getCopyPromptText\?\.\(\);/,
+    );
+    expect(runHostToolbarActionSource).toMatch(
+      /if \(previewConfig\.previewMode === 'split'\) \{[\s\S]*?return copyHostToolbarPromptText\(combinedPrompt\);[\s\S]*?\}\s*const promptText = editors\?\.getCopyPromptText\?\.\(\);/,
+    );
+  });
+
+  it('exposes pane-scoped prototype prompt actions for split preview title buttons', () => {
+    const source = readPreviewActionsSource();
+    const presentationBuilderSource = readFileSync(resolve(__dirname, '../hooks/useIndexPagePresentationPropsBuilder.ts'), 'utf8');
+
+    expect(source).toContain('const runPrototypePanePromptAction = useCallback(async (');
+    expect(source).toContain('pane: PreviewPane,');
+    expect(source).toContain('action: PrototypePanePromptAction,');
+    expect(source).toContain('runPrototypePanePromptAction,');
+    expect(presentationBuilderSource).toContain('handleRunPrototypePanePromptAction: preview.runPrototypePanePromptAction');
   });
 
   it('clears stale host toolbar prompt state after clear-edits actions', () => {
@@ -692,6 +859,11 @@ describe('useIndexPagePreviewActions source', () => {
 
   it('tracks quick-edit runtime handshake from the active preview iframe before enabling runtime operations', () => {
     const source = readPreviewActionsSource();
+    const runtimeMessageSource = getSourceSegment(
+      readPreviewRootSource(),
+      'useEffect(() => {\n        const handleQuickEditRuntimeMessage = (event: MessageEvent) => {',
+      'window.addEventListener(\'message\', handleQuickEditRuntimeMessage);',
+    );
 
     expect(source).toContain("type QuickEditRuntimeStatus = 'idle' | 'pending' | 'ready' | 'missing' | 'error';");
     expect(source).toContain("isQuickEditRuntimeMessage(event.data)");
@@ -699,8 +871,10 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("event.data?.type === 'axhub.quickEdit.patch'");
     expect(source).toContain("event.data?.type === 'axhub.quickEdit.save'");
     expect(source).toContain("event.data?.type === 'axhub.quickEdit.error'");
-    expect(source).toContain('event.source !== previewIframe.contentWindow');
-    expect(source).toContain('getClientUrlOrigin(selectedItem.clientUrl)');
+    expect(runtimeMessageSource).toContain('event.source !== previewIframe.contentWindow');
+    expect(runtimeMessageSource).toContain('const expectedOrigin = getClientUrlOrigin(selectedItem.clientUrl);');
+    expect(runtimeMessageSource).toContain('if (event.origin !== expectedOrigin) {');
+    expect(runtimeMessageSource).toContain("errorMessage: 'runtimeReady origin mismatch'");
     expect(source).toContain("setQuickEditRuntimeStatus('pending');");
     expect(source).toContain("setQuickEditRuntimeStatus('ready');");
     expect(source).toContain("setQuickEditRuntimeStatus('missing');");
@@ -709,14 +883,15 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("messageApi.warning('当前客户端页面尚未接入 /runtime/quick-edit.js，请通过 script、Vite 插件或 Webpack 插件加载后再使用快速编辑')");
   });
 
-  it('resets the standalone design decision panel when the preview iframe target changes', () => {
+  it('resets the standalone design decision panel when the preview iframe target changes outside quick edit', () => {
     const source = readPreviewRootSource();
     const resetSegment = getSourceSegment(
       source,
-      'useEffect(() => {\n        decisionPanelAutoOpenSeqRef.current += 1;',
+      'useEffect(() => {\n        const shouldRestoreQuickEdit = quickEditRuntimeActiveRef.current;',
       'const quickEditAvailable = Boolean(selectedEditablePreviewResource)',
     );
 
+    expect(resetSegment).toMatch(/if \(shouldRestoreQuickEdit\) \{[\s\S]*return;/);
     expect(resetSegment).toContain('setStandalonePanelOpen(false);');
     expect(resetSegment).toContain('decisionPanelAutoOpenSeqRef.current += 1;');
     expect(resetSegment).toContain('resourceType');
@@ -743,6 +918,43 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('queryPrototypeEditorState(iframe)');
     expect(source).toContain('await enterPrototypeEditorPanelOnly(iframe)');
     expect(source).toContain('setStandalonePanelOpen(opened);');
+  });
+
+  it('runs quick edit save text and style through direct editor APIs before bridge fallback', () => {
+    const source = readPreviewRootSource();
+    const saveActionSource = getSourceSegment(
+      source,
+      'const runQuickEditSaveAction = useCallback(async (action: QuickEditSaveAction) => {',
+      'useEffect(() => {',
+    );
+
+    expect(saveActionSource).toMatch(/if \(action === 'save-text'\) \{[\s\S]*editors\.saveWebEditorTextChanges[\s\S]*return true;/);
+    expect(saveActionSource).toMatch(/else if \(action === 'save-style'\) \{[\s\S]*editors\.saveWebEditorStyleChanges[\s\S]*return true;/);
+    expect(saveActionSource).toContain('const bridgeResult = await postPrototypeEditorSaveAction(iframe, action);');
+    expect(saveActionSource).toContain('return Boolean(bridgeResult?.handled ?? bridgeResult?.success);');
+  });
+
+  it('keeps quick edit active and re-enters host toolbar annotation mode after iframe refresh', () => {
+    const source = readPreviewRootSource();
+    const refreshSegment = getSourceSegment(
+      source,
+      'const handleRefreshElement = useCallback(() => {',
+      'const notifyPreviewMessage = useCallback',
+    );
+    const iframeLoadSegment = getSourceSegment(
+      source,
+      'const handlePreviewIframeLoad = useCallback(() => {',
+      'const notifyPreviewMessage = useCallback',
+    );
+
+    expect(refreshSegment).toContain('const shouldRestoreQuickEdit = quickEditRuntimeActiveRef.current;');
+    expect(refreshSegment).toContain('pendingPrototypeEditorRestoreRef.current = shouldRestoreQuickEdit');
+    expect(refreshSegment).toContain('activePrototypeEditorLaunchOptionsRef.current ?? prototypeEditorLaunchOptions');
+    expect(refreshSegment).toContain("setEditorStatus({ mode: 'quickEdit' });");
+    expect(iframeLoadSegment).toContain('pendingPrototypeEditorRestoreRef.current');
+    expect(iframeLoadSegment).toContain('const restoreOptions = pendingPrototypeEditorRestoreRef.current;');
+    expect(iframeLoadSegment).toContain('activePrototypeEditorLaunchOptionsRef.current = restoreOptions;');
+    expect(iframeLoadSegment).toContain('void reenterPrototypeEditorAfterIframeLoad(restoreOptions);');
   });
 
   it('resets the standalone design decision panel before refreshing the preview iframe', () => {
@@ -773,6 +985,17 @@ describe('useIndexPagePreviewActions source', () => {
     expect(previewRuntimeActionsIndex).toBeLessThan(effectIndex);
     expect(forwardPatchIndex).toBeLessThan(effectIndex);
     expect(reportErrorIndex).toBeLessThan(effectIndex);
+  });
+
+  it('keeps Space temporary interaction local to the iframe runtime', () => {
+    const source = readPreviewRootSource();
+
+    expect(source).not.toContain('QUICK_EDIT_TEMPORARY_INTERACTION_MESSAGE_TYPE');
+    expect(source).not.toContain('QUICK_EDIT_TEMPORARY_INTERACTION_LONG_PRESS_MS');
+    expect(source).not.toContain('shouldHandleQuickEditSpaceTemporaryInteractionEvent(event)');
+    expect(source).not.toContain('getQuickEditTemporaryInteractionTargets({');
+    expect(source).not.toContain('postTemporaryInteraction(true)');
+    expect(source).not.toContain('postTemporaryInteraction(false)');
   });
 
   it('derives export availability from project capabilities runtime state and explicit source context', () => {
@@ -840,13 +1063,16 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("return selectedTemplate?.previewUrl || selectedTemplate?.specUrl || '';");
   });
 
-  it('routes document editing through the spec-template Genie text comment editor', () => {
+  it('routes document editing through the spec-template text comment editor', () => {
     const source = readPreviewActionsSource();
 
     expect(source).toContain("contentMode === 'doc' || contentMode === 'template'");
     expect(source).not.toContain("contentMode === 'doc' || contentMode === 'template' || viewMode === 'spec'");
     expect(source).toContain('enterDocumentEditor');
-    expect(source).toContain("enableDocumentEditor({ toolbarMode: 'host', initialDarkMode: isDarkMode })");
+    expect(source).toContain('enableDocumentEditor({');
+    expect(source).toContain("toolbarMode: 'host'");
+    expect(source).toContain('initialDarkMode: isDarkMode');
+    expect(source).toContain('assistantPanelOpen: assistantContextAppendAvailable');
     expect(source).toContain('documentHostToolbarUnsubscribeRef.current = editorApi.subscribeHostToolbarState?.((nextState) => {');
     expect(source).toContain('setHostToolbarState(resolveHostToolbarStateForDisplay(null, editorApi.getHostToolbarState?.() ?? createDefaultHostToolbarState(), isDarkMode));');
     expect(source).toContain('void enterDocumentEditor();');
@@ -861,9 +1087,9 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('setIsDarkMode');
     expect(source).toContain('const isDarkModeRef = useRef(isDarkMode);');
     expect(source).toContain('isDarkModeRef.current = isDarkMode;');
-    expect(source).toContain('options: buildPrototypeEditorEnableOptions(context, runtimeOverride)');
-    expect(source).toContain("editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context, options.runtime))");
-    expect(source).toContain("enableDocumentEditor({ toolbarMode: 'host', initialDarkMode: isDarkMode })");
+    expect(source).toContain('options: buildPrototypeEditorEnableOptions(context)');
+    expect(source).toContain("editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context))");
+    expect(source).toContain('assistantPanelOpen: assistantContextAppendAvailable');
     expect(source).toContain("requestedAction = action.type === 'toggle-dark-mode'");
     expect(source).toContain("setIsDarkMode?.(nextAction.darkMode)");
     expect(source).toContain("void editorApi?.runHostToolbarAction?.({ type: 'toggle-dark-mode', darkMode: isDarkMode });");
@@ -963,7 +1189,12 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('const [cloudPublishSettingsOpen, setCloudPublishSettingsOpen] = useState(false);');
     expect(source).toContain("const [cloudPublishSettingsInitialTarget, setCloudPublishSettingsInitialTarget] = useState<CloudPublishTarget>('s3');");
     expect(source).toContain('const [latestCloudPublishItems, setLatestCloudPublishItems] = useState');
-    expect(source).toContain('apiService.getCloudPublishingLatest()');
+    expect(source).toContain('const currentPublishResourcePath = useMemo');
+    expect(source).toContain('resolveCurrentPublishResourcePath({');
+    expect(source).toContain('contentMode,');
+    expect(source).toContain('selectedItem,');
+    expect(source).toContain('selectedTheme,');
+    expect(source).toContain('apiService.getCloudPublishingLatest(currentPublishResourcePath)');
     expect(source).toContain("...(latest.targets.githubPages ? { 'github-pages': latest.targets.githubPages } : {})");
     expect(source).toContain("const handleOpenCloudPublishSettings = useCallback((target: CloudPublishTarget = 's3')");
     expect(source).toContain('const handlePublishCloudTarget = useCallback');
@@ -973,7 +1204,8 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('apiService.getCloudPublishingConfig()');
     expect(source).toContain("'github-pages': 'GitHub Pages'");
     expect(source).toContain('apiService.publishCloudTarget({');
-    expect(source).toContain('setCloudPublishSettingsInitialTarget(target);');
+    expect(source).toContain('path: currentPublishResourcePath');
+    expect(source).not.toContain('path: targetPath');
     expect(source).toContain('setCloudPublishSettingsOpen(true);');
     expect(source).toContain("error?.code === 'CONFIG_REQUIRED'");
     expect(source).toContain("toast.success(`已发布到 ${targetLabel}`");
@@ -982,6 +1214,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('rel="noreferrer"');
     expect(source).toContain('setLatestCloudPublishItems((current) => ({');
     expect(source).toContain('copyToClipboard(latestUrl)');
+    expect(source).toContain('currentPublishResourcePath,');
   });
 
   it('does not keep the legacy standalone TEXT_EDIT parent-window protocol', () => {

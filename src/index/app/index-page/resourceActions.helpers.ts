@@ -33,21 +33,48 @@ export function buildLocalSiblingPath(localPath: string, siblingName: string): s
     return `${normalizedPath.slice(0, slashIndex + 1)}${normalizedName}`;
 }
 
+export function withResourceProject(url: string, projectId?: string | null): string {
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) {
+        return url;
+    }
+    const [path, query = ''] = url.split('?');
+    const params = new URLSearchParams(query);
+    params.set('projectId', normalizedProjectId);
+    const nextQuery = params.toString();
+    return nextQuery ? `${path}?${nextQuery}` : path;
+}
+
+export function withResourceProjectBody<T extends Record<string, unknown>>(
+    body: T,
+    projectId?: string | null,
+): T & { projectId?: string } {
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) {
+        return body;
+    }
+    return {
+        ...body,
+        projectId: normalizedProjectId,
+    };
+}
+
 export async function checkDocReferencesRequest(
     docName: string,
     action: 'rename' | 'delete',
     nextBaseName?: string,
+    projectId?: string | null,
 ): Promise<DocReferenceCheckResult> {
-    const response = await fetch('/api/docs/check-references', {
+    const response = await fetch(withResourceProject('/api/docs/check-references', projectId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify(withResourceProjectBody({
             docName,
             action,
             ...(typeof nextBaseName === 'string' && nextBaseName.trim()
                 ? { nextBaseName: nextBaseName.trim() }
                 : {}),
-        }),
+        }, projectId)),
     });
     const payload = await response.json().catch(() => ({} as any));
     if (!response.ok) {
@@ -67,17 +94,18 @@ export async function checkTemplateReferencesRequest(
     templateName: string,
     action: 'rename' | 'delete',
     nextBaseName?: string,
+    projectId?: string | null,
 ): Promise<DocReferenceCheckResult> {
-    const response = await fetch('/api/docs/templates/check-references', {
+    const response = await fetch(withResourceProject('/api/docs/templates/check-references', projectId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify(withResourceProjectBody({
             templateName,
             action,
             ...(typeof nextBaseName === 'string' && nextBaseName.trim()
                 ? { nextBaseName: nextBaseName.trim() }
                 : {}),
-        }),
+        }, projectId)),
     });
     const payload = await response.json().catch(() => ({} as any));
     if (!response.ok) {

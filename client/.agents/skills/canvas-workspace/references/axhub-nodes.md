@@ -9,7 +9,7 @@ Axhub 画布节点本质上是标准 Excalidraw 元素，Axhub 扩展信息存�
 | `customData.title` | 面向用户的节点标题 |
 | `customData.previewUrl` | 预览模式中渲染的 URL |
 | `customData.openUrl` | 节点操作中打开的 URL |
-| `customData.previewKind` | 渲染类型，例如 `web`、`doc`、`image`、`none`、`ai-image-generator`、`prototype-generator` |
+| `customData.previewKind` | 渲染类型，例如 `web`、`doc`、`image`、`none`、`prototype-generator` |
 | `customData.resourceType` | 资源类型：`prototype`、`doc` 或 `theme` |
 | `customData.resourceId` | 项目 metadata 中的资源 id 或名称 |
 | `customData.embedViewMode` | `link` 表示紧凑链接卡片，`preview` 表示渲染嵌入预览 |
@@ -84,7 +84,10 @@ Axhub 画布节点本质上是标准 Excalidraw 元素，Axhub 扩展信息存�
 
 ## AI 生成节点
 
-AI 生成节点是图片元素。占位图或生成图片数据保存在 `files[fileId]`。
+当前画布不暴露 AI 图片节点；需要图片时使用普通 Excalidraw 图片元素（`type: "image"`），图片数据保存在 `files[fileId]`。AI 原型生成节点仍是图片占位元素。
+
+<!--
+已暂时停用：AI 图片节点。
 
 ### AI 图片生成节点
 
@@ -117,6 +120,7 @@ AI 生成节点是图片元素。占位图或生成图片数据保存在 `files[
 ```
 
 多张生成图片可能共享同一个 `groupIds` 值。
+-->
 
 ### AI 原型生成节点
 
@@ -141,6 +145,32 @@ AI 生成原型替换节点的推荐尺寸：
 - 为了避免画布被完整桌面尺寸占满，推荐生成节点可视尺寸为 `720 x 450`。
 - 同时设置 `customData.embedSizePreset: "desktop"`、`customData.embedContentScale: 0.5`、`customData.storedPreviewSize: { "width": 720, "height": 450 }`。这样画布显示为 720x450，iframe 与截图按 1440x900 视口渲染。
 - 新生成的 prototype embeddable 可设置 `customData.captureScreenshotOnMount: true`，让宿主首次渲染后自动捕获预览截图。截图成功后宿主会清除此字段并写入 `screenshotUrl`，不要手写 `screenshotUrl`。
+
+## Drawio 节点
+
+Drawio 节点是图片元素。`files[fileId].dataURL` 保存带 Drawio XML 的 SVG 预览，`customData.type` 固定为 `axhub-drawio`。
+
+用户要求在原型草稿、画布、流程图或关系图中生成 Drawio 内容时，优先在当前原型的 `canvas.excalidraw` 中创建或更新这种节点。
+识别 Drawio 节点以 `customData.type: "axhub-drawio"` 为准；`previewKind` 只是预览展示元信息。
+
+```json
+{
+  "type": "image",
+  "fileId": "drawio-file-<id>",
+  "customData": {
+    "type": "axhub-drawio",
+    "title": "Drawio 图表",
+    "previewKind": "drawio"
+  }
+}
+```
+
+创建或更新 Drawio 节点时：
+
+- 推荐持久化资源文件后缀为 `.drawio.svg`，例如 `src/prototypes/<prototype-name>/canvas-assets/diagrams/<diagram-id>.drawio.svg`。
+- `files[fileId].dataURL` 应是 `data:image/svg+xml;base64,...`。
+- SVG 根节点应使用 `data-drawio="<base64-encoded mxfile>"` 保存 Drawio XML，便于后续在 diagrams.net 编辑器里继续编辑。
+- 如果只是初始化一个空 Drawio 节点，可以使用默认空图 XML；如果用户要求流程图或关系图，应把图结构写入 Drawio XML，而不是只写普通 Excalidraw 文本框。
 
 ## 图片文件
 

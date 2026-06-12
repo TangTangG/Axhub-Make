@@ -225,6 +225,46 @@ describe('useIndexPageSelectionSync source', () => {
     });
   });
 
+  it('keeps a selected placeholder guide when refreshed metadata temporarily misses placeholder fields', () => {
+    const firstPrototype = createPrototype('first-prototype');
+    const selectedPlaceholder = {
+      ...createPrototype('untitled-7', '未命名'),
+      placeholder: true,
+      placeholderGuide: {
+        kind: 'prototype-empty',
+        title: '这个原型还没有开始创建',
+        description: '告诉 AI 你想做什么：目标用户、使用场景、页面内容和参考风格。',
+        steps: [],
+        tips: [],
+      },
+    };
+    const refreshedWithoutPlaceholder = {
+      ...createPrototype('untitled-7', '未命名'),
+      clientUrl: '/prototypes/untitled-7',
+      previewUrl: '/prototypes/untitled-7',
+    };
+    const sidebarTrees = {
+      prototypes: [createItemNode(firstPrototype.name)],
+      docs: [],
+      canvas: [],
+    };
+
+    expect(resolvePrototypeAutoSelectionDecision({
+      activeTab: 'prototypes',
+      hasExplicitSelection: false,
+      items: [firstPrototype, refreshedWithoutPlaceholder],
+      lastCanvasItem: null,
+      selectedItem: selectedPlaceholder,
+      sidebarTab: 'prototype',
+      sidebarTrees,
+      viewMode: 'demo',
+    })).toMatchObject({
+      kind: 'keep',
+      markExplicitSelection: false,
+      nextCanvasItem: null,
+    });
+  });
+
   it('refreshes an explicit selected prototype object when resource metadata changes', () => {
     const staleSelectedPrototype = {
       ...createPrototype('beginner-guide', '新手指导'),

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +20,13 @@ import {
 } from './projects-api.helpers';
 import { handleConfigApi } from '../managementApi.config.ts';
 
+interface ImageApiRequestRecord {
+  method: string;
+  url: string;
+  headers: IncomingMessage['headers'];
+  body: any;
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   cleanupProjectApiTestRoots();
@@ -38,6 +46,46 @@ async function startRegisteredConfigTestServer(
     await server.close();
     throw error;
   }
+}
+
+async function startImageApiProbeServer(responseBody: unknown = {
+  data: [{ b64_json: 'aW1hZ2UtYnl0ZXM=' }],
+}) {
+  const requests: ImageApiRequestRecord[] = [];
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    req.on('end', () => {
+      const rawBody = Buffer.concat(chunks).toString('utf8');
+      requests.push({
+        method: req.method || '',
+        url: req.url || '',
+        headers: req.headers,
+        body: rawBody ? JSON.parse(rawBody) : null,
+      });
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(responseBody));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Image API probe test server did not bind to a TCP port');
+  }
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise<void>((resolve, reject) => {
+      (server as Server).close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    }),
+  };
 }
 
 describe('make-server project config APIs', () => {
@@ -68,9 +116,9 @@ describe('make-server project config APIs', () => {
     try {
       const legacyConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
       expect(legacyConfig.automation).toEqual({
-        defaultPromptClient: 'genie:claude',
+        defaultPromptClient: 'acp:claude',
         defaultIDE: 'cursor',
-        acpx: {
+        acp: {
           mode: 'prompt',
           permission: 'approve-all',
           timeout: 1800,
@@ -122,7 +170,7 @@ describe('make-server project config APIs', () => {
         automation: {
           defaultPromptClient: 'manual',
           defaultIDE: 'qoder',
-          acpx: {
+          acp: {
             mode: 'prompt',
             permission: 'approve-all',
             timeout: 1800,
@@ -137,16 +185,6 @@ describe('make-server project config APIs', () => {
             baseUrl: 'https://api.openai.com/v1',
             apiKey: null,
             model: 'gpt-image-2',
-            apiMode: 'images',
-            timeout: 600,
-            size: 'auto',
-            quality: 'auto',
-            outputFormat: 'png',
-            outputCompression: null,
-            moderation: 'auto',
-            n: 1,
-            codexCli: false,
-            responseFormatB64Json: true,
           },
         },
         uiPreferences: {
@@ -165,7 +203,7 @@ describe('make-server project config APIs', () => {
         automation: {
           defaultPromptClient: 'manual',
           defaultIDE: 'qoder',
-          acpx: {
+          acp: {
             mode: 'prompt',
             permission: 'approve-all',
             timeout: 1800,
@@ -179,7 +217,6 @@ describe('make-server project config APIs', () => {
           imageGeneration: {
             baseUrl: 'https://api.openai.com/v1',
             model: 'gpt-image-2',
-            apiMode: 'images',
           },
         },
       });
@@ -250,7 +287,7 @@ describe('make-server project config APIs', () => {
     }
   });
 
-  it('serves lightweight bootstrap config separately from IDE and agent availability checks', async () => {
+  it('serves config without probing local IDE or agent availability', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
       project: { id: 'bootstrap-client', name: 'Bootstrap Client' },
@@ -270,7 +307,7 @@ describe('make-server project config APIs', () => {
         projectPath: projectRoot,
         projectInfo: { name: 'Bootstrap Client' },
         automation: {
-          defaultPromptClient: 'genie:codex',
+          defaultPromptClient: 'acp:codex',
         },
         uiPreferences: {
           excalidrawPropertyPanelMode: 'collapsed',
@@ -283,11 +320,23 @@ describe('make-server project config APIs', () => {
       expect(bootstrap.ideAvailability).toBeUndefined();
       expect(bootstrap.agentAvailability).toBeUndefined();
 
+      const config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(config.ideAvailability).toEqual({});
+      expect(config.agentAvailability).toEqual({
+        cli: {},
+        localApp: {},
+        web: {},
+      });
+
       const availability = await fetch(`${server.origin}/api/config/availability`).then((response) => response.json());
-      expect(availability.ideAvailability).toBeTypeOf('object');
-      expect(availability.agentAvailability).toMatchObject({
-        cli: expect.any(Object),
-        web: expect.any(Object),
+      expect(availability).toMatchObject({
+        ideAvailability: {},
+        agentAvailability: {
+          cli: {},
+          localApp: {},
+          web: {},
+        },
+        availabilityEnabled: false,
       });
       expect(availability.projectInfo).toBeUndefined();
       expect(availability.projectDefaults).toBeUndefined();
@@ -329,14 +378,57 @@ describe('make-server project config APIs', () => {
       });
       const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
       expect(serverConfig.automation).toEqual({
-        defaultPromptClient: 'genie:codex',
+        defaultPromptClient: 'acp:codex',
         defaultIDE: 'windsurf',
-        acpx: {
+        acp: {
           mode: 'prompt',
           permission: 'approve-all',
           timeout: 1800,
         },
       });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('saves, reads, and bootstraps OpenCode as the default prompt client', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'opencode-prompt-client', name: 'OpenCode Prompt Client' },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+      projectInfo: { name: 'OpenCode Prompt Client' },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'opencode-prompt-client', 'OpenCode Prompt Client');
+
+    async function saveAndExpectDefaultPromptClient(input: string) {
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          automation: {
+            defaultPromptClient: input,
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
+      expect(serverConfig.automation.defaultPromptClient).toBe('acp:opencode');
+
+      const config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(config.automation.defaultPromptClient).toBe('acp:opencode');
+
+      const bootstrap = await fetch(`${server.origin}/api/config/bootstrap`).then((response) => response.json());
+      expect(bootstrap.automation.defaultPromptClient).toBe('acp:opencode');
+    }
+
+    try {
+      await saveAndExpectDefaultPromptClient('acp:opencode');
+      await saveAndExpectDefaultPromptClient('opencode');
+      await saveAndExpectDefaultPromptClient('genie:opencode');
     } finally {
       await server.close();
     }
@@ -442,27 +534,167 @@ describe('make-server project config APIs', () => {
         baseUrl: 'https://api.images.example.com/v1',
         apiKey: 'sk-ai',
         model: 'gpt-image-2',
-        apiMode: 'responses',
-        timeout: 90,
-        size: '1536x1024',
-        quality: 'medium',
-        outputFormat: 'webp',
-        outputCompression: 75,
-        moderation: 'low',
-        n: 3,
-        codexCli: true,
-        responseFormatB64Json: false,
       });
 
       const config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
-      expect(config.ai.imageGeneration).toMatchObject({
+      expect(config.ai.imageGeneration).toEqual({
         baseUrl: 'https://api.images.example.com/v1',
         apiKey: 'sk-ai',
         model: 'gpt-image-2',
-        apiMode: 'responses',
       });
     } finally {
       await server.close();
+    }
+  });
+
+  it('saves the last AI image generation test result with status, message, and time', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-image-test-client', name: 'AI Image Test Client' },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+      projectInfo: { name: 'AI Image Test Client' },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'ai-image-test-client', 'AI Image Test Client');
+
+    try {
+      const savedPassed = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ai: {
+            imageGeneration: {
+              baseUrl: 'https://api.images.example.com/v1',
+              apiKey: 'sk-ai',
+              model: 'gpt-image-2',
+              lastTest: {
+                status: 'passed',
+                message: '已返回图片结果',
+                testedAt: 1780713600000,
+              },
+            },
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(savedPassed).toMatchObject({ status: 200, body: { success: true } });
+      let config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(config.ai.imageGeneration.lastTest).toEqual({
+        status: 'passed',
+        message: '已返回图片结果',
+        testedAt: 1780713600000,
+      });
+
+      const savedFailed = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ai: {
+            imageGeneration: {
+              lastTest: {
+                status: 'failed',
+                message: '测试超时',
+                testedAt: 1780713900000,
+              },
+            },
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(savedFailed).toMatchObject({ status: 200, body: { success: true } });
+      const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
+      expect(serverConfig.ai.imageGeneration).toEqual({
+        baseUrl: 'https://api.images.example.com/v1',
+        apiKey: 'sk-ai',
+        model: 'gpt-image-2',
+        lastTest: {
+          status: 'failed',
+          message: '测试超时',
+          testedAt: 1780713900000,
+        },
+      });
+
+      config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(config.ai.imageGeneration.lastTest).toEqual({
+        status: 'failed',
+        message: '测试超时',
+        testedAt: 1780713900000,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('tests AI image generation settings directly against the configured image API', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-image-probe-client', name: 'AI Image Probe Client' },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const imageApi = await startImageApiProbeServer();
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'ai-image-probe-client', 'AI Image Probe Client');
+
+    try {
+      const result = await fetch(`${server.origin}/api/config/ai-image/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseUrl: `${imageApi.origin}/v1`,
+          apiKey: 'sk-current-image',
+          model: 'gpt-image-2',
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(result).toMatchObject({
+        status: 200,
+        body: {
+          success: true,
+          message: '已返回图片结果',
+        },
+      });
+      expect(imageApi.requests).toHaveLength(1);
+      expect(imageApi.requests[0]).toMatchObject({
+        method: 'POST',
+        url: '/v1/images/generations',
+        body: {
+          model: 'gpt-image-2',
+          prompt: expect.stringContaining('OK'),
+          n: 1,
+        },
+      });
+      expect(imageApi.requests[0].headers.authorization).toBe('Bearer sk-current-image');
+
+      await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ai: {
+            imageGeneration: {
+              baseUrl: `${imageApi.origin}/v1`,
+              apiKey: 'sk-saved-image',
+              model: 'saved-image-model',
+            },
+          },
+        }),
+      });
+      const resultWithoutKey = await fetch(`${server.origin}/api/config/ai-image/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseUrl: `${imageApi.origin}/v1`,
+          apiKey: '',
+          model: 'gpt-image-2',
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(resultWithoutKey).toMatchObject({ status: 200, body: { success: true } });
+      expect(imageApi.requests).toHaveLength(2);
+      expect(imageApi.requests[1].headers.authorization).toBeUndefined();
+    } finally {
+      await server.close();
+      await imageApi.close();
     }
   });
 
@@ -499,9 +731,6 @@ describe('make-server project config APIs', () => {
           baseUrl: 'https://codex.example.com/v1',
           apiKey: 'sk-codex-local',
           model: 'gpt-image-2',
-          apiMode: 'images',
-          codexCli: true,
-          responseFormatB64Json: true,
         },
       });
       expect(result.body.discovery.configFiles).toEqual([path.join(codexHome, 'config.toml')]);

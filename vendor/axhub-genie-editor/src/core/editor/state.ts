@@ -4,6 +4,7 @@ import type {
   WebEditorElementKey,
   GenieEditorApi,
   GenieEditorHostOptions,
+  GenieEditorHostToolbarAction,
   WebEditorRevertElementResponse,
   GenieEditorState,
   GenieEditorToolbarMode,
@@ -44,6 +45,8 @@ export interface WebEditorV2UiOptions {
   initialDarkMode?: boolean;
   showCopyPromptAction?: boolean;
   hideExecutionControls?: boolean;
+  getAssistantPanelOpen?: () => boolean;
+  onHostToolbarAction?: (action: GenieEditorHostToolbarAction) => boolean | Promise<boolean>;
   externalEditingStatusDescription?: string;
   skillInstallSource?: string;
   onRequestFullExit?: () => void | Promise<void>;
@@ -239,6 +242,7 @@ export interface EditorRuntimeState {
   tokensService: DesignTokensService | null;
   perfMonitor: PerfMonitor | null;
   perfHotkeyCleanup: (() => void) | null;
+  selectionModeHotkeyCleanup: (() => void) | null;
   commentShortcutCleanup: (() => void) | null;
   hoveredElement: Element | null;
   pendingHoverTransition: boolean;
@@ -297,6 +301,8 @@ export function resolveWebEditorOptions(
       initialDarkMode: false,
       showCopyPromptAction: true,
       hideExecutionControls: false,
+      getAssistantPanelOpen: () => false,
+      onHostToolbarAction: async () => false,
       externalEditingStatusDescription: '',
       skillInstallSource: '',
       onRequestFullExit: async () => undefined,
@@ -366,6 +372,7 @@ export function createEditorRuntimeState(): EditorRuntimeState {
     tokensService: null,
     perfMonitor: null,
     perfHotkeyCleanup: null,
+    selectionModeHotkeyCleanup: null,
     commentShortcutCleanup: null,
     hoveredElement: null,
     pendingHoverTransition: false,
@@ -430,6 +437,7 @@ export function clearEditorRuntimeRefs(state: EditorRuntimeState): void {
   state.tokensService = null;
   state.perfMonitor = null;
   state.perfHotkeyCleanup = null;
+  state.selectionModeHotkeyCleanup = null;
   state.commentShortcutCleanup = null;
   state.uiResizeCleanup = null;
   state.markerLayer = null;

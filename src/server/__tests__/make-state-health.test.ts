@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   checkMakeStateHealth,
   createMakeStateNotWritableError,
+  getAdminServerInfoPath,
+  getGlobalServerConfigPath,
   getProjectRegistryPath,
   MAKE_STATE_DIR_NOT_WRITABLE,
 } from '../projectCore/index.ts';
@@ -63,12 +65,93 @@ describe('make state health', () => {
     });
   });
 
+  it('returns a directory create result when the global Make state directory cannot be created', () => {
+    const homeDir = createTempRoot();
+    const stateDir = path.dirname(getProjectRegistryPath(homeDir));
+    const permissionError = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(((dirPath: fs.PathLike, options?: fs.MakeDirectoryOptions) => {
+      if (path.resolve(String(dirPath)) === stateDir) {
+        throw permissionError;
+      }
+      return undefined as any;
+    }) as typeof fs.mkdirSync);
+
+    const result = checkMakeStateHealth({ homeDir });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: MAKE_STATE_DIR_NOT_WRITABLE,
+      stage: 'state-dir-create',
+      stateDir,
+      registryPath: getProjectRegistryPath(homeDir),
+      targetPath: stateDir,
+      error: {
+        code: 'EPERM',
+        message: 'operation not permitted',
+      },
+    });
+  });
+
+  it('checks that existing global Make state files can be overwritten and restored', () => {
+    const homeDir = createTempRoot();
+    const adminInfoPath = getAdminServerInfoPath(undefined, { homeDir });
+    const registryPath = getProjectRegistryPath(homeDir);
+    const serverConfigPath = getGlobalServerConfigPath(homeDir);
+    fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+    fs.writeFileSync(adminInfoPath, '{"kind":"admin"}\n', 'utf8');
+    fs.writeFileSync(registryPath, '{"kind":"projects"}\n', 'utf8');
+    fs.writeFileSync(serverConfigPath, '{"kind":"config"}\n', 'utf8');
+
+    const result = checkMakeStateHealth({ homeDir });
+
+    expect(result).toMatchObject({
+      ok: true,
+      stateDir: path.dirname(registryPath),
+      registryPath,
+    });
+    expect(fs.readFileSync(adminInfoPath, 'utf8')).toBe('{"kind":"admin"}\n');
+    expect(fs.readFileSync(registryPath, 'utf8')).toBe('{"kind":"projects"}\n');
+    expect(fs.readFileSync(serverConfigPath, 'utf8')).toBe('{"kind":"config"}\n');
+  });
+
+  it('returns a file overwrite result when admin server info cannot be replaced', () => {
+    const homeDir = createTempRoot();
+    const adminInfoPath = getAdminServerInfoPath(undefined, { homeDir });
+    const permissionError = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    fs.mkdirSync(path.dirname(adminInfoPath), { recursive: true });
+    fs.writeFileSync(adminInfoPath, '{"kind":"admin"}\n', 'utf8');
+    const originalWriteFileSync = fs.writeFileSync;
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(((filePath: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, options?: any) => {
+      if (path.resolve(String(filePath)) === adminInfoPath) {
+        throw permissionError;
+      }
+      return originalWriteFileSync(filePath, data as any, options);
+    }) as typeof fs.writeFileSync);
+
+    const result = checkMakeStateHealth({ homeDir });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: MAKE_STATE_DIR_NOT_WRITABLE,
+      stage: 'state-file-overwrite',
+      stateDir: path.dirname(adminInfoPath),
+      registryPath: getProjectRegistryPath(homeDir),
+      targetPath: adminInfoPath,
+      fileName: '.admin-server-info.json',
+      error: {
+        code: 'EPERM',
+        message: 'operation not permitted',
+      },
+    });
+    expect(fs.readFileSync(adminInfoPath, 'utf8')).toBe('{"kind":"admin"}\n');
+  });
+
   it('creates a structured registry write error for Make client APIs', () => {
     const homeDir = createTempRoot();
     const registryPath = getProjectRegistryPath(homeDir);
     const originalError = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
 
-    const error = createMakeStateNotWritableError(registryPath, originalError);
+    const error = createMakeStateNotWritableError(registryPath, originalError, { stage: 'state-file-overwrite' });
 
     expect(error).toMatchObject({
       message: 'Axhub Make 无法保存本机项目列表',
@@ -77,6 +160,9 @@ describe('make state health', () => {
       details: {
         stateDir: path.dirname(registryPath),
         registryPath,
+        stage: 'state-file-overwrite',
+        targetPath: registryPath,
+        fileName: 'projects.json',
         error: {
           code: 'EPERM',
           message: 'operation not permitted',

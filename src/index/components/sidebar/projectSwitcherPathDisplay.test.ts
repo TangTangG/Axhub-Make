@@ -4,7 +4,7 @@ import { formatProjectRootDisplayPath } from './projectSwitcherPathDisplay';
 
 describe('formatProjectRootDisplayPath', () => {
   it('keeps short project root paths unchanged', () => {
-    const rootPath = '/Users/me/project';
+    const rootPath = '/workspace/me/project';
 
     expect(formatProjectRootDisplayPath(rootPath)).toBe(rootPath);
   });

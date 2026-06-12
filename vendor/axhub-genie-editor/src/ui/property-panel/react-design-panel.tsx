@@ -2255,22 +2255,32 @@ function ColorField(props: {
   );
 }
 
-function SquareColorTriggerButton(props: {
+type SquareColorTriggerButtonProps = React.HTMLAttributes<HTMLSpanElement> & {
   value: string;
-}): React.ReactElement {
-  const previewBackground = resolveColorPreviewBackground(props.value);
+};
 
-  return (
-    <span data-we-prompt-primary-focus-exempt="true" style={squareColorTriggerStyle}>
+const SquareColorTriggerButton = React.forwardRef<HTMLSpanElement, SquareColorTriggerButtonProps>(
+  function SquareColorTriggerButton(props, ref): React.ReactElement {
+    const { value, style, ...triggerProps } = props;
+    const previewBackground = resolveColorPreviewBackground(value);
+
+    return (
       <span
-        style={{
-          ...squareColorSwatchStyle,
-          background: previewBackground,
-        }}
-      />
-    </span>
-  );
-}
+        {...triggerProps}
+        ref={ref}
+        data-we-prompt-primary-focus-exempt="true"
+        style={{ ...squareColorTriggerStyle, ...style }}
+      >
+        <span
+          style={{
+            ...squareColorSwatchStyle,
+            background: previewBackground,
+          }}
+        />
+      </span>
+    );
+  },
+);
 
 function TokenPickerButton(props: {
   target: Element;

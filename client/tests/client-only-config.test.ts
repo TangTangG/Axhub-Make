@@ -48,6 +48,12 @@ describe('make-project client-only defaults', () => {
     expect(fs.existsSync(path.join(appRoot, 'src/public'))).toBe(false);
   });
 
+  it('does not use Vite SPA fallback for unknown resource-like paths', () => {
+    const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
+
+    expect(viteConfig).toContain("appType: 'mpa'");
+  });
+
   it('does not declare Ant Design as a client dependency or Vite prebundle', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
     const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');

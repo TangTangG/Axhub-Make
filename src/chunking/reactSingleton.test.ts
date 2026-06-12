@@ -10,4 +10,19 @@ describe('React singleton configuration', () => {
     expect(viteConfigSource).toContain("'react'");
     expect(viteConfigSource).toContain("'react-dom'");
   });
+
+  it('dedupes assistant-ui runtime packages used by the ACP composer', () => {
+    const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
+
+    expect(viteConfigSource).toContain('ASSISTANT_UI_SINGLETON_PACKAGES');
+    expect(viteConfigSource).toContain('...ASSISTANT_UI_SINGLETON_PACKAGES');
+    expect(viteConfigSource).toContain('createPackageSingletonAliases(ASSISTANT_UI_SINGLETON_PACKAGES)');
+    expect(viteConfigSource).toContain("path.resolve(__dirname, 'node_modules', packageName)");
+    for (const packageName of [
+      '@assistant-ui/react',
+      '@assistant-ui/react-ai-sdk',
+    ]) {
+      expect(viteConfigSource).toContain(`'${packageName}'`);
+    }
+  });
 });

@@ -7,6 +7,7 @@ export {
 export const AI_IMAGE_GENERATOR_CUSTOM_TYPE = 'axhub-ai-image-generator';
 export const AI_IMAGE_RESULT_CUSTOM_TYPE = 'axhub-ai-image';
 export const AI_IMAGE_PLACEHOLDER_FILE_ID = 'axhub-ai-image-placeholder-v6';
+const CANVAS_AI_GENERATION_CUSTOM_TYPE = 'axhub-ai-generation';
 
 export interface CreateAiImageGeneratorOptions {
   x: number;
@@ -30,6 +31,22 @@ export interface ReplaceGeneratorOptions {
   taskId?: string;
 }
 
+export interface CreateAiImageGenerationSlotsOptions {
+  elements: readonly any[];
+  generatorId: string;
+  taskId: string;
+  count: number;
+  width: number;
+  height: number;
+}
+
+export interface FinishAiImageGenerationSlotsOptions {
+  elements: readonly any[];
+  taskId: string;
+  status: 'done' | 'error';
+  error?: string | null;
+}
+
 export interface ReplaceImageOptions {
   elements: readonly any[];
   imageElementId: string;
@@ -49,6 +66,11 @@ export interface CreateAiImageResultElementsOptions {
 export interface ReplaceGeneratorResult {
   elements: any[];
   files: any[];
+  selectedElementIds: Record<string, true>;
+}
+
+export interface SlotQueueResult {
+  elements: any[];
   selectedElementIds: Record<string, true>;
 }
 
@@ -147,11 +169,102 @@ export function createAiImagePlaceholderFile() {
 }
 
 export function isAiImageGeneratorElement(element: any): boolean {
-  return element?.type === 'image' && element?.customData?.type === AI_IMAGE_GENERATOR_CUSTOM_TYPE;
+  return element?.type === 'image' && (
+    element?.customData?.type === AI_IMAGE_GENERATOR_CUSTOM_TYPE
+    || element?.customData?.type === CANVAS_AI_GENERATION_CUSTOM_TYPE
+  );
 }
 
 export function isAiImageElement(element: any): boolean {
   return element?.type === 'image' && element?.customData?.type === AI_IMAGE_RESULT_CUSTOM_TYPE;
+}
+
+function touchElement(element: any): any {
+  return {
+    ...element,
+    version: (element.version || 0) + 1,
+    versionNonce: Math.floor(Math.random() * 2147483647),
+    updated: Date.now(),
+  };
+}
+
+function isImageGenerationSlot(element: any, taskId: string): boolean {
+  return (
+    isAiImageGeneratorElement(element)
+    && !element?.isDeleted
+    && element.customData?.generationTaskId === taskId
+    && element.customData?.generationSlotStatus !== 'error'
+  );
+}
+
+function createImageGenerationSlot(
+  base: any,
+  options: {
+    id: string;
+    taskId: string;
+    index: number;
+    count: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  },
+) {
+  return {
+    ...base,
+    id: options.id,
+    x: options.x,
+    y: options.y,
+    width: options.width,
+    height: options.height,
+    isDeleted: false,
+    version: base.id === options.id ? (base.version || 0) + 1 : 1,
+    versionNonce: Math.floor(Math.random() * 2147483647),
+    updated: Date.now(),
+    customData: {
+      ...base.customData,
+      generationTaskId: options.taskId,
+      generationSlotIndex: options.index,
+      generationSlotCount: options.count,
+      generationSlotStatus: 'running',
+      generationError: undefined,
+    },
+  };
+}
+
+export function createAiImageGenerationSlots(options: CreateAiImageGenerationSlotsOptions): SlotQueueResult {
+  const generator = options.elements.find((element) => element?.id === options.generatorId && !element.isDeleted);
+  if (!generator) {
+    return {
+      elements: [...options.elements],
+      selectedElementIds: {},
+    };
+  }
+  const count = Math.max(1, Math.min(10, Math.round(Number(options.count) || 1)));
+  const width = Math.max(1, Math.round(Number(options.width) || generator.width || DEFAULT_GENERATOR_WIDTH));
+  const height = Math.max(1, Math.round(Number(options.height) || generator.height || DEFAULT_GENERATOR_HEIGHT));
+  const selectedElementIds: Record<string, true> = {};
+  const slots = Array.from({ length: count }, (_, index) => {
+    const id = index === 0 ? generator.id : randomId('ai-image-slot');
+    selectedElementIds[id] = true;
+    return createImageGenerationSlot(generator, {
+      id,
+      taskId: options.taskId,
+      index,
+      count,
+      x: generator.x + index * (width + GENERATED_IMAGE_GAP),
+      y: generator.y,
+      width,
+      height,
+    });
+  });
+  return {
+    elements: [
+      ...options.elements.filter((element) => element?.id !== options.generatorId),
+      ...slots,
+    ],
+    selectedElementIds,
+  };
 }
 
 function getMimeFromDataUrl(dataUrl: string): string {
@@ -210,6 +323,56 @@ export function replaceGeneratorWithImageElements(options: ReplaceGeneratorOptio
     };
   }
 
+  const taskId = options.taskId || '';
+  const queuedSlots = taskId
+    ? options.elements
+      .filter((element) => isImageGenerationSlot(element, taskId))
+      .sort((left, right) => Number(left.customData?.generationSlotIndex ?? 0) - Number(right.customData?.generationSlotIndex ?? 0))
+    : [];
+  if (queuedSlots.length && isImageGenerationSlot(generator, taskId)) {
+    const selectedElementIds: Record<string, true> = {};
+    const files = options.images.map((image) => ({
+      id: image.imageId as any,
+      mimeType: getMimeFromDataUrl(image.dataUrl) as any,
+      dataURL: image.dataUrl,
+      created: Date.now(),
+      lastRetrieved: Date.now(),
+    }));
+    const replacementSlots = queuedSlots.slice(0, options.images.length);
+    const inserted = options.images.map((image, index) => {
+      const slot = replacementSlots[index] || queuedSlots[queuedSlots.length - 1] || generator;
+      const size = fitImageSize(image.width, image.height, slot.width, slot.height, image.displaySize);
+      const id = randomId('ai-image');
+      selectedElementIds[id] = true;
+      return createBaseElement({
+        id,
+        type: 'image',
+        x: slot.x,
+        y: slot.y,
+        width: size.width,
+        height: size.height,
+        fileId: image.imageId,
+        customData: {},
+      });
+    });
+    const replacedSlotIds = new Set(replacementSlots.map((slot) => slot.id));
+    return {
+      elements: [
+        ...options.elements.map((element) => (
+          replacedSlotIds.has(element?.id)
+            ? {
+              ...touchElement(element),
+              isDeleted: true,
+            }
+            : element
+        )),
+        ...inserted,
+      ],
+      files,
+      selectedElementIds,
+    };
+  }
+
   const groupId = options.images.length > 1 ? randomId('ai-image-group') : '';
   const selectedElementIds: Record<string, true> = {};
   const files = options.images.map((image) => ({
@@ -234,12 +397,7 @@ export function replaceGeneratorWithImageElements(options: ReplaceGeneratorOptio
       height: size.height,
       fileId: image.imageId,
       groupIds: groupId ? [groupId] : [],
-      customData: {
-        type: AI_IMAGE_RESULT_CUSTOM_TYPE,
-        generatedBy: 'axhub-ai-image',
-        sourceTaskId: options.taskId || '',
-        previewKind: 'image',
-      },
+      customData: {},
     });
     cursorX += size.width + GENERATED_IMAGE_GAP;
     return element;
@@ -260,6 +418,28 @@ export function replaceGeneratorWithImageElements(options: ReplaceGeneratorOptio
     elements: [...elements, ...inserted],
     files,
     selectedElementIds,
+  };
+}
+
+export function finishAiImageGenerationSlots(options: FinishAiImageGenerationSlotsOptions): { elements: any[] } {
+  return {
+    elements: options.elements.map((element) => {
+      if (!isImageGenerationSlot(element, options.taskId)) return element;
+      if (options.status === 'done') {
+        return {
+          ...touchElement(element),
+          isDeleted: true,
+        };
+      }
+      return {
+        ...touchElement(element),
+        customData: {
+          ...element.customData,
+          generationSlotStatus: 'error',
+          generationError: options.error || '图片生成失败',
+        },
+      };
+    }),
   };
 }
 
@@ -296,12 +476,7 @@ export function createAiImageResultElements(options: CreateAiImageResultElements
       height: size.height,
       fileId: image.imageId,
       groupIds: groupId ? [groupId] : [],
-      customData: {
-        type: AI_IMAGE_RESULT_CUSTOM_TYPE,
-        generatedBy: 'axhub-ai-image',
-        sourceTaskId: options.taskId || '',
-        previewKind: 'image',
-      },
+      customData: {},
     });
     cursorX += size.width + GENERATED_IMAGE_GAP;
     return element;

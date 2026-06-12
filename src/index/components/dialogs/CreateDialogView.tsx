@@ -79,6 +79,7 @@ interface UploadResult {
 interface TemplateLibraryItem extends TemplateLibraryPromptItem {
     coverUrl: string;
     sourceUrl: string;
+    previewUrl?: string;
     canDirectImport: boolean;
     directImportDisabledReason?: string;
 }
@@ -625,6 +626,19 @@ export default function CreateDialog({
                                                                     <Copy className="h-3.5 w-3.5" />
                                                                     复制提示词
                                                                 </Button>
+                                                                {template.previewUrl ? (
+                                                                    <Button
+                                                                        asChild
+                                                                        variant="outline"
+                                                                        size="sm"
+                                                                        className="h-7 gap-1.5 px-2.5 text-xs"
+                                                                    >
+                                                                        <a href={template.previewUrl} target="_blank" rel="noreferrer">
+                                                                            <Globe className="h-3.5 w-3.5" />
+                                                                            在线预览
+                                                                        </a>
+                                                                    </Button>
+                                                                ) : null}
                                                                 <TooltipProvider>
                                                                     <Tooltip>
                                                                         <TooltipTrigger asChild>

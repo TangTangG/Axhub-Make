@@ -14,8 +14,16 @@ function readSharedComposerSource() {
   return readFileSync(resolve(__dirname, '../shared/CanvasGenerationComposer.tsx'), 'utf8');
 }
 
+function readSharedComposerStyles() {
+  return readFileSync(resolve(__dirname, '../shared/canvas-generation-acp-scope.css'), 'utf8');
+}
+
 function readSkillsSource() {
   return readFileSync(resolve(__dirname, './aiImageSkills.ts'), 'utf8');
+}
+
+function readSceneRegistrySource() {
+  return readFileSync(resolve(__dirname, '../ai-generation/canvasAiSceneRegistry.ts'), 'utf8');
 }
 
 function readTriggerPopoverSource() {
@@ -31,14 +39,20 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('interface AiImageGenerationComposerProps');
     expect(source).toContain('placement: AiImageComposerPlacement');
     expect(source).toContain('data-axhub-ai-image-composer');
-    expect(source).toContain('今天我们要创作什么');
-    expect(sharedSource).toContain("import '@assistant-ui/react-ui/styles/index.css';");
+    expect(source).toContain("pickCanvasAiScenePlaceholder('design')");
+    expect(sharedSource).toContain("import './canvas-generation-acp-scope.css';");
+    expect(sharedSource).not.toContain("import '@axhub/acp/react/styles.css';");
+    expect(sharedSource).toContain('ax-acp-ui-scope');
     expect(source).toContain('ax-ai-image-composer-root');
-    expect(sharedSource).toContain('<Composer.Root');
-    expect(sharedSource).toContain('<Composer.Attachments');
-    expect(sharedSource).toContain('<Composer.AddAttachment');
-    expect(sharedSource).toContain('<Composer.Input');
-    expect(sharedSource).toContain('<Composer.Send');
+    expect(sharedSource).toContain("import { AcpComposerSelectors, Composer } from '@axhub/acp/ui';");
+    expect(sharedSource).toContain('<Composer');
+    expect(sharedSource).toContain('showAttachments={allowAttachments}');
+    expect(sharedSource).toContain('showCommandMenu={false}');
+    expect(sharedSource).toContain('showSelectors={showSelectors}');
+    expect(sharedSource).not.toContain('addAttachmentLabel=');
+    expect(sharedSource).not.toContain('sendLabel=');
+    expect(sharedSource).toContain('leadingActions={');
+    expect(sharedSource).toContain('trailingActions={');
     expect(source).toContain('ax-ai-image-composer-root');
     expect(source).toContain('ax-ai-image-composer-footer');
     expect(source).toContain('data-axhub-ai-image-composer-settings-summary');
@@ -57,26 +71,37 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).not.toContain('DialogContent');
   });
 
-  it('uses assistant-ui composer runtime primitives instead of a local clone', () => {
+  it('uses ACP UI composer exports with a narrow Make orchestration adapter', () => {
     const source = readSource();
     const sharedSource = readSharedComposerSource();
 
     expect(source).toContain('<CanvasGenerationComposer');
     expect(source).toContain('onSubmitPrompt={handleSubmitPrompt}');
     expect(source).toContain('allowAttachments={true}');
-    expect(sharedSource).toContain('function CanvasGenerationRuntimeComposer');
-    expect(sharedSource).toContain('useLocalRuntime(chatModelAdapter');
-    expect(sharedSource).toContain('const attachmentsAdapter = useMemo(() => new SimpleImageAttachmentAdapter(), []);');
+    expect(sharedSource).toContain("import { AcpUiProvider, useAcpUiRuntimeContext } from '@axhub/acp/react';");
+    expect(sharedSource).toContain('useChatRuntime<UIMessage>');
+    expect(sharedSource).toContain('new CanvasGenerationMakeTransport');
+    expect(sharedSource).toContain('<AcpUiProvider');
     expect(sharedSource).toContain('<AssistantRuntimeProvider runtime={runtime}>');
-    expect(sharedSource).toContain('<ThreadConfigProvider');
-    expect(sharedSource).toContain('attachments: attachmentsAdapter');
-    expect(sharedSource).toContain('<Composer.Input');
-    expect(sharedSource).toContain('<Composer.Send');
-    expect(sharedSource).toContain('ComposerPrimitive.Unstable_TriggerPopoverRoot');
+    expect(sharedSource).toContain('triggerPopovers={');
+    expect(sharedSource).toContain('onPaste={');
+    expect(sharedSource).not.toContain('@assistant-ui/react-ui');
+    expect(sharedSource).not.toContain('ThreadConfigProvider');
+    expect(sharedSource).not.toContain('useLocalRuntime');
+    expect(sharedSource).not.toContain('SimpleImageAttachmentAdapter');
+    expect(sharedSource).not.toContain('ChatModelAdapter');
     expect(source).not.toContain('ComposerPrimitive');
     expect(source).not.toContain('value={prompt}');
     expect(source).not.toContain('onChange={(event) => setPrompt(event.target.value)}');
     expect(source).not.toContain('<textarea');
+  });
+
+  it('passes an optional draft storage key into the shared canvas composer', () => {
+    const source = readSource();
+
+    expect(source).toContain('draftStorageKey?: string | null;');
+    expect(source).toContain('draftStorageKey,');
+    expect(source).toContain('draftStorageKey={draftStorageKey}');
   });
 
   it('can preload generated images as composer attachments', () => {
@@ -121,15 +146,16 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).not.toContain('setModel');
   });
 
-  it('disables quality selection when Codex CLI compatibility mode is enabled', () => {
+  it('keeps image quality selection independent from the deleted Codex CLI compatibility flag', () => {
     const source = readSource();
 
-    expect(source).toContain('codexCli?: boolean');
-    expect(source).toContain('codexCli: aiConfig?.codexCli === true');
-    expect(source).toContain("quality: aiConfig?.codexCli === true ? 'auto' :");
-    expect(source).toContain('codexCli={config.codexCli}');
-    expect(source).toContain('disabled={config.codexCli}');
-    expect(source).toContain('Codex CLI 不支持质量参数');
+    expect(source).not.toContain('codexCli?: boolean');
+    expect(source).not.toContain('codexCli: aiConfig?.codexCli === true');
+    expect(source).not.toContain("quality: aiConfig?.codexCli === true ? 'auto' :");
+    expect(source).not.toContain('codexCli={config.codexCli}');
+    expect(source).not.toContain('disabled={config.codexCli}');
+    expect(source).not.toContain('Codex CLI 不支持质量参数');
+    expect(source).toContain('quality: aiConfig?.quality || DEFAULT_PARAMS.quality');
   });
 
   it('shows a compact disabled-by-default prompt optimization guard in image settings and sends it with requests', () => {
@@ -142,6 +168,14 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('title="开启后会要求 AI 完整使用输入内容，不主动改写提示词。"');
     expect(source).not.toContain('rounded-md border bg-background px-3 py-2.5');
     expect(source).not.toContain('min-w-0 space-y-0.5');
+  });
+
+  it('keeps image settings as canvas submit metadata instead of pre-appending duplicate prompt text', () => {
+    const source = readSource();
+
+    expect(source).toContain('sceneSettings: params');
+    expect(source).not.toContain('appendCanvasGenerationPromptSettings');
+    expect(source).not.toContain('promptWithSettings');
   });
 
   it('supports custom image size dimensions from editable width and height fields', () => {
@@ -161,9 +195,10 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('aria-label="自定义图片高度"');
   });
 
-  it('adds AI image skills through assistant-ui trigger popovers', () => {
+  it('adds AI image prompts through assistant-ui trigger popovers', () => {
     const source = readSource();
     const skillsSource = readSkillsSource();
+    const registrySource = readSceneRegistrySource();
     const sharedSource = readSharedComposerSource();
     const triggerPopoverSource = readTriggerPopoverSource();
 
@@ -171,12 +206,17 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('appendAiImageSkillPrompt');
     expect(source).toContain('ComposerTriggerPopover');
     expect(source).toContain('unstable_useSlashCommandAdapter');
-    expect(skillsSource).toContain('提取图标');
-    expect(skillsSource).toContain('生成草图');
-    expect(skillsSource).toContain('提取该 UI 设计稿中的图标，按矩阵格式返回。');
-    expect(skillsSource).toContain('不要整张图片变灰');
+    expect(skillsSource).toContain('AI_IMAGE_SKILLS: readonly AiImageSkill[] = [');
+    expect(registrySource).toContain('extract-icons');
+    expect(registrySource).toContain('generate-wireframe');
+    expect(registrySource).toContain('提取该 UI 设计稿中的图标，按矩阵格式使用工具生成一张新图片。');
+    expect(skillsSource).toContain('提取该 UI 设计稿中的图标，按矩阵格式使用工具生成一张新图片。');
+    expect(skillsSource).toContain('不要整张图片变灰，使用工具生成一张新图片');
     expect(source).toContain('Sparkles');
-    expect(source).toContain('技能');
+    expect(source).toContain('提示词');
+    expect(source).toContain('打开 AI 生图提示词');
+    expect(source).toContain('没有匹配的提示词');
+    expect(source).not.toContain('打开 AI 生图技能');
     expect(source).toContain('renderLeadingActions');
     expect(source).toContain('renderTriggerPopovers');
     expect(sharedSource).toContain('renderLeadingActions');
@@ -192,12 +232,12 @@ describe('AiImageGenerationComposer source', () => {
     expect(triggerPopoverSource).not.toContain('tracking-wide');
   });
 
-  it('opens the skill button popover without inserting a slash into the composer', () => {
+  it('opens the prompt button popover without inserting a slash into the composer', () => {
     const source = readSource();
     const sharedSource = readSharedComposerSource();
 
-    expect(source).toContain('data-axhub-ai-image-composer-skills-trigger');
-    expect(source).toContain('data-axhub-ai-image-composer-skills-menu');
+    expect(source).toContain('data-axhub-ai-image-composer-prompts-trigger');
+    expect(source).toContain('data-axhub-ai-image-composer-prompts-menu');
     expect(source).toContain('handleSkillSelected(skill.prompt)');
     expect(source).toContain('composer.setText(appendAiImageSkillPrompt(composer.getState().text, skillPrompt));');
     expect(source).not.toContain('onClick={() => openTrigger');
@@ -212,17 +252,15 @@ describe('AiImageGenerationComposer source', () => {
     const styles = readStyles();
     const sharedSource = readSharedComposerSource();
 
-    expect(sharedSource.indexOf('<div className={footerLeadingActionsClassName}>'))
-      .toBeLessThan(sharedSource.indexOf('<div className={footerActionsClassName}>'));
-    const footerStart = sharedSource.indexOf('<div className={footerLeadingActionsClassName}>');
-    const footerEnd = sharedSource.indexOf('<div className={footerActionsClassName}>', footerStart);
-    const footerLeadingSource = sharedSource.slice(footerStart, footerEnd);
-    expect(footerLeadingSource).toContain('<Composer.AddAttachment tooltip={addAttachmentTooltip} />');
-    expect(footerLeadingSource.indexOf('<Composer.AddAttachment tooltip={addAttachmentTooltip} />'))
-      .toBeLessThan(footerLeadingSource.indexOf('{renderLeadingActions?.({ submitting })}'));
-    expect(sharedSource).toContain('<Composer.Attachments />');
-    expect(sharedSource.indexOf('<Composer.Attachments />'))
-      .toBeLessThan(sharedSource.indexOf('<Composer.Input'));
+    expect(sharedSource).toContain('showAttachments={allowAttachments}');
+    expect(sharedSource).toContain('showCommandMenu={false}');
+    expect(sharedSource).toContain('showSelectors={showSelectors}');
+    expect(sharedSource).toContain('leadingActions={');
+    expect(sharedSource).toContain('trailingActions={');
+    expect(sharedSource).toContain('className={footerLeadingActionsClassName}');
+    expect(sharedSource).toContain('className={footerActionsClassName}');
+    expect(sharedSource).toContain('renderLeadingActions?.({ submitting })');
+    expect(sharedSource).toContain('renderActions?.({ submitting })');
     expect(sharedSource).not.toContain('CanvasGenerationReferenceBar');
     expect(sharedSource).not.toContain('data-axhub-canvas-generation-reference-bar');
     expect(sharedSource).not.toContain('data-axhub-canvas-generation-reference-entry');
@@ -261,31 +299,74 @@ describe('AiImageGenerationComposer source', () => {
 
   it('passes local canvas file context and preferred prompt client into image task submission', () => {
     const source = readSource();
+    const sharedSource = readSharedComposerSource();
 
     expect(source).toContain('initialLocalContextRefs?: CanvasLocalContextRef[];');
     expect(source).toContain('preferredPromptClient?: PromptClientPreference;');
+    expect(source).toContain('initialLocalContextRefs={initialLocalContextRefs}');
     expect(source).toContain('localContextRefs: initialLocalContextRefs');
     expect(source).toContain('preferredPromptClient');
     expect(source).toContain('sourcePrompt: prompt');
+    expect(sharedSource).toContain("import { AcpUiProvider, useAcpUiRuntimeContext } from '@axhub/acp/react';");
+    expect(sharedSource).toContain("import type { ContextBundleV2, ContextItem } from '@axhub/acp/runtime';");
+    expect(sharedSource).toContain('localContextRefsToAcpContextItems');
+    expect(sharedSource).toContain('replaceContextItems(contextItems);');
+    expect(sharedSource).toContain('const contextBundle = acpContext.consumeContextBundle();');
+    expect(sharedSource).toContain('custom: {');
+    expect(sharedSource).toContain('acpContextBundle: contextBundle');
   });
 
   it('uses assistant-ui attachment state instead of local reference attachment state', () => {
     const source = readSource();
     const sharedSource = readSharedComposerSource();
 
-    expect(sharedSource).toContain('<Composer.Attachments />');
-    expect(sharedSource).toContain('<Composer.AddAttachment');
-    expect(sharedSource).toContain('composer: { allowAttachments }');
-    expect(sharedSource).toContain('attachments: attachmentsAdapter');
+    expect(sharedSource).toContain('showAttachments={allowAttachments}');
+    expect(sharedSource).toContain("import { AcpComposerSelectors, Composer } from '@axhub/acp/ui';");
+    expect(sharedSource).toContain('CanvasGenerationMakeTransport');
     expect(sharedSource).toContain('onPasteReferenceImages');
     expect(sharedSource).toContain('canPasteReferenceImages');
     expect(sharedSource).toContain('aui.composer().addAttachment(file)');
-    expect(sharedSource).toContain('onPaste={(event: React.ClipboardEvent<HTMLFormElement>)');
+    expect(sharedSource).toContain('handleComposerPaste');
     expect(sharedSource).toContain('dataUrlToImageFile');
     expect(source).toContain('extractCanvasGenerationReferenceImagesFromMessage(message)');
     expect(source).not.toContain('interface ReferenceAttachment');
     expect(source).not.toContain('referenceAttachment');
     expect(source).not.toContain('fileInputRef');
+  });
+
+  it('enables ACP selectors, workspace scoping, and selector payloads for canvas image generation', () => {
+    const source = readSource();
+    const sharedSource = readSharedComposerSource();
+
+    expect(sharedSource).toContain("export type CanvasAiScene = 'page' | 'design' | 'document';");
+    expect(sharedSource).toContain('export interface CanvasAiSubmitRequest');
+    expect(sharedSource).toContain('provider: string;');
+    expect(sharedSource).toContain('model: string | null;');
+    expect(sharedSource).toContain('mode: string | null;');
+    expect(sharedSource).toContain('thought: string | null;');
+    expect(sharedSource).toContain('contextBundle: ContextBundleV2 | null;');
+    expect(sharedSource).toContain('referenceImages: string[];');
+    expect(sharedSource).toContain('showSelectors?: boolean;');
+    expect(sharedSource).toContain('workspacePath?: string | null;');
+    expect(sharedSource).toContain('showSelectors={showSelectors}');
+    expect(sharedSource).toContain('<AcpUiProvider defaultProvider="codex" workspacePath={workspacePath}>');
+    expect(sharedSource).toContain('provider: runtimeContext.provider');
+    expect(sharedSource).toContain('model: runtimeContext.model');
+    expect(sharedSource).toContain('mode: runtimeContext.modeId');
+    expect(sharedSource).toContain('thought: runtimeContext.thoughtLevel');
+
+    expect(source).toContain('assistantProjectPath?: string;');
+    expect(source).toContain('assistantProjectPath,');
+    expect(source).toContain('workspacePath={assistantProjectPath}');
+    expect(source).toContain('scene="page"');
+    expect(source).not.toContain('scene="design"');
+    expect(source).not.toContain('scene="image"');
+    expect(source).toContain('showSelectors={true}');
+    expect(source).toContain('provider: request.provider');
+    expect(source).toContain('model: request.model');
+    expect(source).toContain('mode: request.mode');
+    expect(source).toContain('thought: request.thought');
+    expect(source).toContain('contextBundle: request.contextBundle');
   });
 
   it('does not render a custom top reference image entrance', () => {
@@ -304,6 +385,7 @@ describe('AiImageGenerationComposer source', () => {
 
   it('overrides assistant-ui flex defaults so the top and footer rows stay aligned', () => {
     const styles = readStyles();
+    const sharedStyles = readSharedComposerStyles();
 
     expect(styles).toContain('.ax-ai-image-composer-root');
     expect(styles).toContain('flex-direction: column;');
@@ -311,17 +393,57 @@ describe('AiImageGenerationComposer source', () => {
     expect(styles).toContain('align-items: stretch;');
     expect(styles).toContain('.ax-ai-image-composer-footer');
     expect(styles).toContain('justify-content: space-between;');
-    expect(styles).toContain('.ax-ai-image-settings-trigger');
+    expect(sharedStyles).toContain('.ax-ai-image-settings-trigger');
+    expect(sharedStyles).toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger\s*\{[^}]*border-radius: var\(--radius-md, 6px\);/s);
   });
 
-  it('keeps the floating composer visually opaque over the canvas', () => {
+  it('matches ACP selector trigger typography and icon sizing for custom settings buttons', () => {
+    const source = readSource();
+    const sharedStyles = readSharedComposerStyles();
+
+    expect(sharedStyles).toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger\s*\{[^}]*height: 32px;/s);
+    expect(sharedStyles).toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger\s*\{[^}]*max-width: 224px;/s);
+    expect(sharedStyles).toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger\s*\{[^}]*gap: 4px;/s);
+    expect(sharedStyles).toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger\s*\{[^}]*padding: 0 8px;/s);
+    expect(sharedStyles).toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger\s*\{[^}]*font-size: 12px;/s);
+    expect(sharedStyles).toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger\s*\{[^}]*line-height: 16px;/s);
+    expect(sharedStyles).toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger svg\s*\{[^}]*flex: 0 0 auto;/s);
+    expect(sharedStyles).not.toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger svg\s*\{[^}]*width: 16px;/s);
+    expect(sharedStyles).not.toMatch(/\.ax-acp-ui-scope \.ax-ai-image-settings-trigger svg\s*\{[^}]*height: 16px;/s);
+    expect(source).toContain('<SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />');
+    expect(source).toContain('<ChevronDown className="size-3 shrink-0" aria-hidden="true" />');
+  });
+
+  it('keeps the floating composer visually opaque without extra drop shadow', () => {
     const styles = readStyles();
 
     expect(styles).toContain('.ax-ai-image-composer-host');
-    expect(styles).toMatch(/\.ax-ai-image-composer-host\s*\{[^}]*background(?:-color)?: hsl\(var\(--aui-background\)\);/s);
-    expect(styles).toMatch(/\.ax-ai-image-composer-root\s*\{[^}]*background(?:-color)?: hsl\(var\(--aui-background\)\);/s);
-    expect(styles).toMatch(/\.ax-ai-image-composer-root \.aui-composer-input\s*\{[^}]*background(?:-color)?: hsl\(var\(--aui-background\)\);/s);
-    expect(styles).toMatch(/\.ax-ai-image-composer-root\s*\{[^}]*overflow: hidden;/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-host\s*\{[^}]*background(?:-color)?: hsl\(var\(--background\)\);/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-root\s*\{[^}]*background(?:-color)?: hsl\(var\(--background\)\);/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-root\s*\{[^}]*border: 1px solid hsl\(var\(--border\)\);/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-root\s*\{[^}]*box-shadow:\s*none;/s);
+    expect(styles).not.toContain('box-shadow: 0 18px 44px rgb(15 23 42 / 0.14), 0 4px 12px rgb(15 23 42 / 0.08);');
+    expect(styles).toMatch(/\.ax-ai-image-composer-root \[data-slot='aui_composer-shell'\]\s*\{[^}]*border: 0;/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-root \[data-slot='aui_composer-shell'\]\s*\{[^}]*background: transparent;/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-root \.aui-composer-input\s*\{[^}]*background(?:-color)?: transparent;/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-root\s*\{[^}]*overflow: visible;/s);
+    expect(styles).toContain(".ax-ai-image-composer-root .aui-composer-input:focus-visible");
+    expect(styles).toContain(".ax-ai-image-composer-root [data-slot='aui_composer-shell']:focus-within");
+    expect(styles).not.toContain('var(--aui-background)');
+    expect(styles).not.toContain('var(--aui-border)');
+    expect(styles).not.toContain('var(--aui-muted)');
+    expect(styles).not.toContain("background: hsl(var(--muted) / 0.28);");
+    expect(styles).toContain("box-shadow: none !important;");
+    expect(styles).not.toContain("border-color: hsl(var(--aui-ring) / 0.22);");
+  });
+
+  it('keeps ACP selector popovers outside the rounded composer from being clipped', () => {
+    const styles = readStyles();
+
+    expect(styles).toMatch(/\.ax-ai-image-composer-host\s*\{[^}]*overflow: visible;/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-root\s*\{[^}]*overflow: visible;/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-root \[data-acp-config-root-menu\]\s*\{[^}]*z-index: 1250;/s);
+    expect(styles).toMatch(/\.ax-ai-image-composer-root \[data-acp-config-submenu='desktop'\]\s*\{[^}]*z-index: 1260;/s);
   });
 
   it('keeps attachment image previews above the floating composer', () => {

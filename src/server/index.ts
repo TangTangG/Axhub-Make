@@ -16,20 +16,33 @@ import {
   normalizeHealthServerInfo,
   readServerInfo,
   resolveComparableProjectRoot,
+  isPathInside,
   writeServerInfo,
 } from './projectCore/index.ts';
 
-import { buildInjectScript, handleAdminStatic } from './adminStatic.ts';
+import {
+  buildInjectScript,
+  handleAdminStatic,
+  redirectMissingPlaceholderPrototypeShortLink,
+  resolveAdminHtmlTitle,
+} from './adminStatic.ts';
 import type { AdminStaticOptions } from './adminStatic.ts';
 import { DEFAULT_MAKE_SERVER_PORT } from './defaults.ts';
 import { closeManagedOpenCodeServers, readManagedOpenCodeServerUrl } from './agentOpen.ts';
-import { getLocalIP, sendJson } from './http.ts';
+import { getLocalIP, getRequestUrl, sendJson } from './http.ts';
 import { getMakeClientDevStatus } from './makeClientProject.ts';
 import { handleManagementApi } from './managementApi.ts';
 import type { CommandExecutor } from './managementApi.cloudPublishing.ts';
 import { releaseListeningProcessesOnPort } from './portOccupancy.ts';
-import { isRuntimeHtmlProxyRequest, isRuntimeOnlyRoute, proxyToRuntime } from './runtimeProxy.ts';
+import {
+  isRuntimeDevModuleRequest,
+  isRuntimeOnlyRoute,
+  proxyRuntimeWebSocketUpgrade,
+  proxyToRuntime,
+  sendRuntimeUnavailableResponse,
+} from './runtimeProxy.ts';
 import type { ViteDevMiddleware } from './viteDevServer.ts';
+import type { DiagnosticLog } from './diagnosticLog.ts';
 
 export interface StartMakeServerOptions {
   projectRoot: string;
@@ -41,6 +54,8 @@ export interface StartMakeServerOptions {
   registryPath?: string;
   serverInfoHomeDir?: string;
   devMode?: boolean;
+  logFile?: string;
+  diagnosticLog?: DiagnosticLog;
   cloudPublishingCommandExecutor?: CommandExecutor;
 }
 
@@ -52,6 +67,13 @@ export interface RunningMakeServer {
 }
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
+const adminViteClientEnvPath = (() => {
+  try {
+    return fileURLToPath(import.meta.resolve('vite/dist/client/env.mjs'));
+  } catch {
+    return '';
+  }
+})();
 
 export interface ResolveDefaultAdminRootOptions {
   serverDir?: string;
@@ -143,14 +165,49 @@ function resolveRuntimeOrigin(projectRoot?: string | null, explicitRuntimeOrigin
   return readServerInfo(projectRoot, 'runtime')?.origin;
 }
 
+function getProjectIdFromRequestUrl(requestUrl: string): string {
+  try {
+    return new URL(requestUrl || '/', 'http://localhost').searchParams.get('projectId')?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function getHeaderValue(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] || '' : value || '';
+}
+
+function getProjectIdFromRequest(req: http.IncomingMessage, requestUrl: string): string {
+  const directProjectId = getProjectIdFromRequestUrl(requestUrl);
+  if (directProjectId) {
+    return directProjectId;
+  }
+  const referer = getHeaderValue(req.headers.referer || req.headers.referrer).trim();
+  return referer ? getProjectIdFromRequestUrl(referer) : '';
+}
+
+function getProjectRegistry(registryPath?: string) {
+  return createProjectRegistry(
+    registryPath ? { registryPath } : undefined,
+  );
+}
+
+function resolveRequestProject(registryPath?: string, projectId = '') {
+  const registry = getProjectRegistry(registryPath);
+  return projectId ? registry.getProject(projectId) : registry.getActiveProject();
+}
+
+function resolveActiveProjectRoot(registryPath?: string, projectId = ''): string | undefined {
+  return resolveRequestProject(registryPath, projectId)?.root;
+}
+
 async function resolveActiveProjectRuntimeOrigin(options: {
   registryPath?: string;
+  projectId?: string;
   fallbackRuntimeOrigin?: string;
   healthTimeoutMs?: number;
 }): Promise<string | undefined> {
-  const activeProject = createProjectRegistry(
-    options.registryPath ? { registryPath: options.registryPath } : undefined,
-  ).getActiveProject();
+  const activeProject = resolveRequestProject(options.registryPath, options.projectId);
   if (!activeProject) {
     return options.fallbackRuntimeOrigin;
   }
@@ -201,10 +258,12 @@ async function resolveActiveProjectRuntimeOrigin(options: {
 
 async function resolveRuntimeOriginForProxy(options: {
   registryPath?: string;
+  projectId?: string;
   currentRuntimeOrigin?: string;
 }): Promise<string | undefined> {
   return resolveActiveProjectRuntimeOrigin({
     registryPath: options.registryPath,
+    projectId: options.projectId,
     fallbackRuntimeOrigin: resolveRuntimeOrigin(null, options.currentRuntimeOrigin),
   });
 }
@@ -260,6 +319,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   // Vite middleware is only created in dev mode – the import is dynamic so
   // production never loads vite or its dependencies.
   let viteMiddleware: ViteDevMiddleware | null = null;
+  let viteMiddlewarePromise: Promise<ViteDevMiddleware> | null = null;
 
   // The make-server project root (where vite.config.ts lives).
   const makeServerRoot = path.resolve(serverDir, '../..');
@@ -267,12 +327,88 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   // HTML path for the main admin UI entry.
   const adminIndexHtml = path.resolve(makeServerRoot, 'src/index/index.html');
 
+  function resolveAdminRootHtmlPath(pathname: string): string {
+    if (pathname === '/index.html') {
+      return '';
+    }
+    if (!pathname.match(/^\/[^/]+\.html$/u)) {
+      return '';
+    }
+    const htmlPath = path.resolve(adminRoot, pathname.slice(1));
+    return isPathInside(adminRoot, htmlPath) ? htmlPath : '';
+  }
+
+  async function sendDevAdminHtml(pathname: string, htmlPath: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const currentViteMiddleware = await ensureViteMiddleware();
+    const injectScript = buildInjectScript({
+      adminRoot,
+      projectRoot,
+      host,
+      lanHost,
+      port: Number(new URL(origin).port),
+      runtimeOrigin,
+    });
+    const requestUrl = getRequestUrl(req);
+    const htmlUrl = pathname || '/';
+    const html = (await currentViteMiddleware.transformHtml(
+      htmlUrl,
+      htmlPath,
+      injectScript,
+    )).replace(/\{\{TITLE\}\}/gu, resolveAdminHtmlTitle(path.basename(htmlPath), requestUrl));
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(html);
+  }
+
+  async function ensureViteMiddleware(): Promise<ViteDevMiddleware> {
+    if (viteMiddleware) {
+      return viteMiddleware;
+    }
+    if (!viteMiddlewarePromise) {
+      viteMiddlewarePromise = (async () => {
+        const { createViteDevMiddleware } = await import('./viteDevServer.ts');
+        const middleware = await createViteDevMiddleware(server, makeServerRoot);
+        viteMiddleware = middleware;
+        console.log('Vite HMR middleware attached (frontend hot reload enabled)');
+        return middleware;
+      })().catch((error) => {
+        viteMiddlewarePromise = null;
+        throw error;
+      });
+    }
+    return viteMiddlewarePromise;
+  }
+
   const server = http.createServer((req, res) => {
     (async () => {
       const requestUrl = req.url || '/';
       const pathname = requestUrl.split('?')[0] || '/';
+      const requestProjectId = getProjectIdFromRequest(req, requestUrl);
+      const activeProjectRoot = resolveActiveProjectRoot(options.registryPath, requestProjectId);
+      const runtimeProjectRoot = activeProjectRoot;
+      const adminStaticOptions: AdminStaticOptions = {
+        adminRoot,
+        opencodeWebUiRoot,
+        projectRoot,
+        activeProjectRoot,
+        host,
+        lanHost,
+        port: Number(new URL(origin).port),
+        opencodeServerOrigin: resolveOpenCodeServerOrigin(pathname),
+        runtimeOrigin,
+      };
 
       // ── 1. Management API ──
+      runtimeOrigin = await resolveRuntimeOriginForProxy({
+        registryPath: options.registryPath,
+        projectId: requestProjectId,
+        currentRuntimeOrigin: runtimeOrigin,
+      });
+      adminStaticOptions.runtimeOrigin = runtimeOrigin;
+      if (redirectMissingPlaceholderPrototypeShortLink(req, res, adminStaticOptions)) {
+        return;
+      }
       if (await handleManagementApi(req, res, {
         projectRoot,
         adminRoot,
@@ -289,20 +425,22 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
           return makeStateHealth;
         },
         devMode,
+        diagnosticLog: options.diagnosticLog,
         cloudPublishingCommandExecutor: options.cloudPublishingCommandExecutor,
       })) {
         return;
       }
 
       // ── 2. Dev mode: Vite middleware for frontend HMR ──
-      if (devMode && viteMiddleware) {
-        if (isRuntimeHtmlProxyRequest(requestUrl)) {
+      if (devMode) {
+        if (isRuntimeDevModuleRequest(requestUrl, req.headers, { runtimeProjectRoot, adminViteClientEnvPath })) {
           runtimeOrigin = await resolveRuntimeOriginForProxy({
             registryPath: options.registryPath,
+            projectId: requestProjectId,
             currentRuntimeOrigin: runtimeOrigin,
           });
           if (!runtimeOrigin) {
-            sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
+            sendRuntimeUnavailableResponse(res, requestUrl, 503);
             return;
           }
           proxyToRuntime(req, res, runtimeOrigin);
@@ -315,23 +453,25 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
           || pathname.startsWith('/canvas/');
 
         if (isServerSideRoute) {
-          const adminStaticOptions: AdminStaticOptions = {
-            adminRoot,
-            opencodeWebUiRoot,
-            projectRoot,
-            host,
-            lanHost,
-            port: Number(new URL(origin).port),
-            opencodeServerOrigin: resolveOpenCodeServerOrigin(pathname),
-            runtimeOrigin,
-          };
           if (handleAdminStatic(req, res, adminStaticOptions)) {
             return;
           }
         }
 
+        if (pathname.startsWith('/api/')) {
+          sendJson(res, { error: 'Not found' }, { status: 404 });
+          return;
+        }
+
+        const devAdminHtmlPath = resolveAdminRootHtmlPath(pathname);
+        if (devAdminHtmlPath && fs.existsSync(devAdminHtmlPath) && fs.statSync(devAdminHtmlPath).isFile()) {
+          await sendDevAdminHtml(pathname, devAdminHtmlPath, req, res);
+          return;
+        }
+
         // Serve the main admin index HTML with Vite transforms + server vars.
         if (pathname === '/' || pathname === '/index.html') {
+          const currentViteMiddleware = await ensureViteMiddleware();
           const injectScript = buildInjectScript({
             adminRoot,
             projectRoot,
@@ -340,7 +480,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
             port: Number(new URL(origin).port),
             runtimeOrigin,
           });
-          const html = await viteMiddleware.transformHtml(
+          const html = await currentViteMiddleware.transformHtml(
             '/src/index/index.html',
             adminIndexHtml,
             injectScript,
@@ -354,21 +494,12 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
 
         // Everything else (JS modules, CSS, assets, /@vite/client, etc.)
         // is handled by Vite's connect middleware stack.
-        viteMiddleware.handle(req, res, () => {
+        const currentViteMiddleware = await ensureViteMiddleware();
+        currentViteMiddleware.handle(req, res, () => {
           // If Vite didn't handle it, try serving from dist/admin (pre-built
           // template assets like dev-template-bootstrap.js, spec-template, etc.)
           (async () => {
-            const adminStaticFallback: AdminStaticOptions = {
-              adminRoot,
-              opencodeWebUiRoot,
-              projectRoot,
-              host,
-              lanHost,
-              port: Number(new URL(origin).port),
-              opencodeServerOrigin: resolveOpenCodeServerOrigin(pathname),
-              runtimeOrigin,
-            };
-            if (handleAdminStatic(req, res, adminStaticFallback)) {
+            if (handleAdminStatic(req, res, adminStaticOptions)) {
               return;
             }
 
@@ -376,10 +507,11 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
             if (isRuntimeOnlyRoute(pathname)) {
               runtimeOrigin = await resolveRuntimeOriginForProxy({
                 registryPath: options.registryPath,
+                projectId: requestProjectId,
                 currentRuntimeOrigin: runtimeOrigin,
               });
               if (!runtimeOrigin) {
-                sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
+                sendRuntimeUnavailableResponse(res, requestUrl, 503);
                 return;
               }
               proxyToRuntime(req, res, runtimeOrigin);
@@ -396,16 +528,21 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       }
 
       // ── 3. Production: static admin files ──
-      if (handleAdminStatic(req, res, {
-        adminRoot,
-        opencodeWebUiRoot,
-        projectRoot,
-        host,
-        lanHost,
-        port: Number(new URL(origin).port),
-        opencodeServerOrigin: resolveOpenCodeServerOrigin(pathname),
-        runtimeOrigin,
-      })) {
+      if (isRuntimeDevModuleRequest(requestUrl, req.headers, { runtimeProjectRoot, adminViteClientEnvPath })) {
+        runtimeOrigin = await resolveRuntimeOriginForProxy({
+          registryPath: options.registryPath,
+          projectId: requestProjectId,
+          currentRuntimeOrigin: runtimeOrigin,
+        });
+        if (!runtimeOrigin) {
+          sendRuntimeUnavailableResponse(res, requestUrl, 503);
+          return;
+        }
+        proxyToRuntime(req, res, runtimeOrigin);
+        return;
+      }
+
+      if (handleAdminStatic(req, res, adminStaticOptions)) {
         return;
       }
 
@@ -413,10 +550,11 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       if (isRuntimeOnlyRoute(pathname)) {
         runtimeOrigin = await resolveRuntimeOriginForProxy({
           registryPath: options.registryPath,
+          projectId: requestProjectId,
           currentRuntimeOrigin: runtimeOrigin,
         });
         if (!runtimeOrigin) {
-          sendJson(res, { error: 'Runtime unavailable', runtime: { available: false } }, { status: 503 });
+          sendRuntimeUnavailableResponse(res, requestUrl, 503);
           return;
         }
         proxyToRuntime(req, res, runtimeOrigin);
@@ -442,22 +580,28 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
     } else if (isCanvasBridgeUpgrade(req)) {
       canvasBridgeHub.handleUpgrade(req, socket, head);
     } else if (!devMode) {
-      socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
+      (async () => {
+        const requestUrl = req.url || '/';
+        const requestProjectId = getProjectIdFromRequest(req, requestUrl);
+        const runtimeWebSocketOrigin = await resolveRuntimeOriginForProxy({
+          registryPath: options.registryPath,
+          projectId: requestProjectId,
+          currentRuntimeOrigin: runtimeOrigin,
+        });
+        if (!runtimeWebSocketOrigin) {
+          socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n');
+          return;
+        }
+        proxyRuntimeWebSocketUpgrade(req, socket, head, runtimeWebSocketOrigin);
+      })().catch(() => {
+        socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      });
     }
     // In dev mode, unhandled upgrades fall through to Vite's HMR WebSocket.
   });
 
   if (devMode && requestedPort !== 0) {
     releaseListeningProcessesOnPort(requestedPort);
-  }
-
-  // Prepare Vite middleware before accepting connections. Otherwise a browser
-  // reload during a tsx restart can hit the dev server before Vite is attached
-  // and get the JSON API fallback for the admin root page.
-  if (devMode) {
-    const { createViteDevMiddleware } = await import('./viteDevServer.ts');
-    viteMiddleware = await createViteDevMiddleware(server, makeServerRoot);
-    console.log('Vite HMR middleware attached (frontend hot reload enabled)');
   }
 
   const actualPort = await listen(server, requestedPort, host);
@@ -488,8 +632,10 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
     origin,
     close: async () => {
       closeManagedOpenCodeServers();
-      if (viteMiddleware) {
-        await viteMiddleware.close();
+      const middlewareToClose = viteMiddleware
+        || (viteMiddlewarePromise ? await viteMiddlewarePromise.catch(() => null) : null);
+      if (middlewareToClose) {
+        await middlewareToClose.close();
       }
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {

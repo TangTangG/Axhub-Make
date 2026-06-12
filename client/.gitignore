@@ -22,6 +22,9 @@ vite.config.*.timestamp-*
 
 # Environment variables
 .env
+.env.*
+!.env.example
+!.env.*.example
 .env.local
 .env.*.local
 .env.production
@@ -30,8 +33,10 @@ vite.config.*.timestamp-*
 # Local configuration (runtime-generated)
 .axhub/make/*
 !.axhub/make/client.json
+!.axhub/make/axhub.config.json
 !.axhub/make/README.md
 !.axhub/make/sidebar-tree.json
+.axhub/sessions/
 components.json
 .dev-server-info.json
 entries.json

@@ -84,6 +84,41 @@ describe('ResourceFolderPreview helpers', () => {
     });
   });
 
+  it('builds markdown document canvas payloads in preview mode by default', () => {
+    const item: ItemData = {
+      name: 'docs/spec.md',
+      displayName: 'Spec',
+      jsUrl: '',
+      specUrl: '/api/docs/docs%2Fspec.md',
+      previewUrl: '/api/docs/docs%2Fspec.md',
+      resourceId: 'docs/spec.md',
+    };
+
+    expect(buildResourceFolderCanvasPayload(item)).toMatchObject({
+      type: 'doc',
+      resourceType: 'doc',
+      resourceId: 'docs/spec.md',
+      previewKind: 'doc',
+      embedViewMode: 'preview',
+      previewUrl: '/api/docs/docs%2Fspec.md',
+    });
+  });
+
+  it('adds assistant-context drag payloads while preserving canvas drop payloads', () => {
+    const source = readResourceFolderPreviewSource();
+    const dragSource = source.slice(
+      source.indexOf('onDragStart={(event) => {'),
+      source.indexOf('</button>', source.indexOf('onDragStart={(event) => {')),
+    );
+
+    expect(source).toContain("import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';");
+    expect(source).toContain("import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';");
+    expect(dragSource).toContain('event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
+    expect(dragSource).toContain('event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
+    expect(dragSource).toContain("source: 'resource-folder'");
+    expect(dragSource).toContain('items: buildAssistantContextItemsFromResource({');
+  });
+
   it('uses the final path segment as the visible item name', () => {
     expect(getResourceFolderDisplayName('assets/dumbbell-circle.svg')).toBe('dumbbell-circle.svg');
     expect(getResourceFolderDisplayName('assets/icons')).toBe('icons');

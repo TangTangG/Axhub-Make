@@ -187,6 +187,7 @@ describe('make-server IDE open API', () => {
   it('normalizes supported IDE ids and rejects unknown values', () => {
     expect(normalizeMainIDE(' Cursor ')).toBe('cursor');
     expect(normalizeMainIDE('TRAE_CN')).toBe('trae_cn');
+    expect(normalizeMainIDE('kiro')).toBeNull();
     expect(normalizeMainIDE('definitely-not-supported')).toBeNull();
     expect(normalizeMainIDE(null)).toBeNull();
   });
@@ -194,16 +195,16 @@ describe('make-server IDE open API', () => {
   it('opens Unix IDEs with the platform open command and reports stderr on failure', async () => {
     await expect(openIDEPath({
       ide: 'vscode',
-      targetPath: '/Users/demo/Axhub Runtime',
+      targetPath: '/workspace/demo/Axhub Runtime',
     })).resolves.toMatchObject({
       success: true,
       ide: 'vscode',
-      targetPath: '/Users/demo/Axhub Runtime',
-      command: 'open -a "Visual Studio Code" "/Users/demo/Axhub Runtime"',
+      targetPath: '/workspace/demo/Axhub Runtime',
+      command: 'open -a "Visual Studio Code" "/workspace/demo/Axhub Runtime"',
     });
     expect(childProcessMock.spawn).toHaveBeenCalledWith(
       'open',
-      ['-a', 'Visual Studio Code', '/Users/demo/Axhub Runtime'],
+      ['-a', 'Visual Studio Code', '/workspace/demo/Axhub Runtime'],
       expect.objectContaining({
         detached: true,
         shell: false,
@@ -225,7 +226,7 @@ describe('make-server IDE open API', () => {
 
     await expect(openIDEPath({
       ide: 'cursor',
-      targetPath: '/Users/demo/Missing',
+      targetPath: '/workspace/demo/Missing',
     })).rejects.toThrow('打开 Cursor 失败: application not found');
   });
 
@@ -317,7 +318,6 @@ describe('make-server IDE open API', () => {
     ['trae', 'trae://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
     ['trae_cn', 'trae-cn://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
     ['windsurf', 'windsurf://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
-    ['kiro', 'kiro://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
     ['qoder', 'qoder://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
     ['antigravity', 'antigravity://file/C:/Projects/Axhub%20Runtime/src/App%20%231.tsx'],
   ] as const)('returns the %s Windows file protocol for browser execution when executable launches fail', async (ide, expectedUrl) => {
@@ -388,7 +388,7 @@ describe('make-server IDE open API', () => {
     const server = await startTestServer(projectRoot, {
       serverConfig: {
         automation: {
-          defaultPromptClient: 'genie:codex',
+          defaultPromptClient: 'acp:codex',
           defaultIDE: 'cursor',
         },
         toolOpenState: {
@@ -449,7 +449,7 @@ describe('make-server IDE open API', () => {
     const server = await startTestServer(projectRoot, {
       serverConfig: {
         automation: {
-          defaultPromptClient: 'genie:codex',
+          defaultPromptClient: 'acp:codex',
           defaultIDE: 'cursor',
         },
         toolOpenState: {
@@ -618,7 +618,7 @@ describe('make-server IDE open API', () => {
     }
   });
 
-  it('returns IDE availability in config so unavailable editors can be hidden', async () => {
+  it('keeps config IDE availability empty so editors are always shown by product policy', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
 
@@ -629,15 +629,13 @@ describe('make-server IDE open API', () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
-      expect(body.ideAvailability).toHaveProperty('cursor');
-      expect(body.ideAvailability.cursor).toHaveProperty('status');
-      expect(body.ideAvailability.cursor).toHaveProperty('checkedAt');
+      expect(body.ideAvailability).toEqual({});
     } finally {
       await server.close();
     }
   });
 
-  it('rejects a confirmed missing IDE before attempting to open it', async () => {
+  it('does not pre-scan and reject a selected IDE before attempting to open it', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
     writeJson(getConfigPath(projectRoot), {
@@ -672,13 +670,13 @@ describe('make-server IDE open API', () => {
       });
       const body = await response.json();
 
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(200);
       expect(body).toMatchObject({
-        code: 'MAIN_IDE_MISSING',
+        success: true,
         ide: 'cursor',
         projectId: 'ide-client',
       });
-      expect(childProcessMock.spawn).not.toHaveBeenCalled();
+      expect(childProcessMock.spawn).toHaveBeenCalled();
     } finally {
       existsSyncSpy.mockRestore();
       await server.close();

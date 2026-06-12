@@ -9,6 +9,8 @@ export function useSelectionModeGuards(params: {
 }): SelectionModeGuards {
   const { propertyPanelOptions, setToolMinimized } = params;
   const toolMinimizedRef = React.useRef(false);
+  const [selectionModeActive, setSelectionModeActive] = React.useState(true);
+  const selectionModeActiveRef = React.useRef(true);
   const selectionHoverOwnersRef = React.useRef<Set<'panel' | 'prompt'>>(new Set());
   const selectionInteractionLockOwnersRef = React.useRef<Set<'panel' | 'prompt'>>(new Set());
   const selectionRestoreTimerRef = React.useRef<number | null>(null);
@@ -17,12 +19,13 @@ export function useSelectionModeGuards(params: {
     propertyPanelOptions?.getChangeMarkersVisible?.() ?? true,
   );
   const shouldAllowPageInteraction = React.useCallback(
-    () => toolMinimizedRef.current,
+    () => toolMinimizedRef.current || !selectionModeActiveRef.current,
     [],
   );
 
   const syncSelectionModeAvailability = React.useCallback(() => {
     const enabled =
+      selectionModeActiveRef.current &&
       !toolMinimizedRef.current &&
       !selectionNeedsExplicitReactivateRef.current &&
       selectionHoverOwnersRef.current.size === 0 &&
@@ -34,6 +37,7 @@ export function useSelectionModeGuards(params: {
 
   const isSelectionModeActive = React.useCallback(
     () =>
+      selectionModeActiveRef.current &&
       !toolMinimizedRef.current &&
       !selectionNeedsExplicitReactivateRef.current &&
       selectionHoverOwnersRef.current.size === 0 &&
@@ -80,6 +84,41 @@ export function useSelectionModeGuards(params: {
     [syncSelectionModeAvailability],
   );
 
+  const handleSelectionModeActiveChange = React.useCallback(
+    (active: boolean) => {
+      const nextActive = Boolean(active);
+      if (selectionModeActiveRef.current === nextActive) {
+        syncSelectionModeAvailability();
+        return;
+      }
+
+      selectionModeActiveRef.current = nextActive;
+      setSelectionModeActive(nextActive);
+      selectionHoverOwnersRef.current.clear();
+      selectionInteractionLockOwnersRef.current.clear();
+      selectionNeedsExplicitReactivateRef.current = false;
+
+      if (nextActive) {
+        if (!toolMinimizedRef.current) {
+          propertyPanelOptions?.onChangeMarkersVisible?.(
+            markerVisibilityBeforeMinimizeRef.current,
+            { persist: false },
+          );
+          propertyPanelOptions?.onSelectionChromeVisibleChange?.(true);
+        }
+      } else {
+        markerVisibilityBeforeMinimizeRef.current =
+          propertyPanelOptions?.getChangeMarkersVisible?.() ?? true;
+        propertyPanelOptions?.onChangeMarkersVisible?.(false, { persist: false });
+        propertyPanelOptions?.onSelectionChromeVisibleChange?.(false);
+        propertyPanelOptions?.dismissVisibleElementGenieTaskStates?.();
+      }
+
+      syncSelectionModeAvailability();
+    },
+    [propertyPanelOptions, syncSelectionModeAvailability],
+  );
+
   const handleToolMinimizedChange = React.useCallback(
     (nextMinimized: boolean) => {
       if (toolMinimizedRef.current === nextMinimized) return;
@@ -94,11 +133,16 @@ export function useSelectionModeGuards(params: {
         propertyPanelOptions?.dismissVisibleElementGenieTaskStates?.();
       } else {
         selectionNeedsExplicitReactivateRef.current = false;
-        propertyPanelOptions?.onChangeMarkersVisible?.(
-          markerVisibilityBeforeMinimizeRef.current,
-          { persist: false },
-        );
-        propertyPanelOptions?.onSelectionChromeVisibleChange?.(true);
+        if (selectionModeActiveRef.current) {
+          propertyPanelOptions?.onChangeMarkersVisible?.(
+            markerVisibilityBeforeMinimizeRef.current,
+            { persist: false },
+          );
+          propertyPanelOptions?.onSelectionChromeVisibleChange?.(true);
+        } else {
+          propertyPanelOptions?.onChangeMarkersVisible?.(false, { persist: false });
+          propertyPanelOptions?.onSelectionChromeVisibleChange?.(false);
+        }
       }
 
       syncSelectionModeAvailability();
@@ -125,6 +169,8 @@ export function useSelectionModeGuards(params: {
 
   return {
     toolMinimizedRef,
+    selectionModeActiveRef,
+    selectionModeActive,
     selectionHoverOwnersRef,
     selectionInteractionLockOwnersRef,
     selectionRestoreTimerRef,
@@ -141,6 +187,7 @@ export function useSelectionModeGuards(params: {
     handlePromptSelectionInteractionLockChange: (locked) =>
       handleSelectionInteractionLockChange('prompt', locked),
     selectionAllowsPageInteraction: shouldAllowPageInteraction,
+    handleSelectionModeActiveChange,
     handleToolMinimizedChange,
   };
 }

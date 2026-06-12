@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { isPathInside } from './projectCore/index.ts';
+import { createProjectMetadataStore, isPathInside, type PrototypeResource } from './projectCore/index.ts';
 
 import { getRequestUrl, sendFile, sendText } from './http.ts';
 import { AXHUB_HUG_SCRIPT, AXHUB_HUG_SCRIPT_PATH, OPENCODE_BASE_PATH } from './opencodeHug.ts';
@@ -14,6 +14,7 @@ export interface AdminStaticOptions {
   adminRoot: string;
   opencodeWebUiRoot?: string;
   projectRoot: string;
+  activeProjectRoot?: string;
   host: string;
   lanHost?: string;
   port: number;
@@ -91,12 +92,176 @@ function sendAdminHtml(req: IncomingMessage, res: ServerResponse, filePath: stri
   return true;
 }
 
+function isAdminIndexPathname(pathname: string): boolean {
+  return pathname === '/' || pathname === '/index.html';
+}
+
 function decodeURIComponentSafe(value: string): string {
   try {
     return decodeURIComponent(value);
   } catch {
     return value;
   }
+}
+
+function isUntitledPrototypeName(value: string): boolean {
+  return /^untitled(?:-[a-z0-9-]+)?$/u.test(value.trim());
+}
+
+function getPrototypeName(prototype: PrototypeResource): string {
+  return String(prototype.name || prototype.id || '').trim();
+}
+
+function resolvePrototypeDirectory(projectRoot: string, prototype: PrototypeResource): string {
+  const explicitPath = String(prototype.absoluteFilePath || prototype.filePath || '').trim();
+  if (explicitPath) {
+    const resolvedPath = path.resolve(path.isAbsolute(explicitPath) ? explicitPath : path.join(projectRoot, explicitPath));
+    if (isPathInside(projectRoot, resolvedPath)) {
+      try {
+        const stats = fs.statSync(resolvedPath);
+        return stats.isDirectory() ? resolvedPath : path.dirname(resolvedPath);
+      } catch {
+        return path.extname(resolvedPath) ? path.dirname(resolvedPath) : resolvedPath;
+      }
+    }
+  }
+
+  const prototypeName = getPrototypeName(prototype);
+  if (!prototypeName) {
+    return '';
+  }
+  const resolvedPath = path.resolve(projectRoot, 'src/prototypes', prototypeName);
+  return isPathInside(projectRoot, resolvedPath) ? resolvedPath : '';
+}
+
+function readPrototypeDirectoryMtime(projectRoot: string, prototype: PrototypeResource): number {
+  const prototypeDir = resolvePrototypeDirectory(projectRoot, prototype);
+  if (!prototypeDir) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  try {
+    const stats = fs.statSync(prototypeDir);
+    return stats.isDirectory() ? stats.mtimeMs : Number.NEGATIVE_INFINITY;
+  } catch {
+    return Number.NEGATIVE_INFINITY;
+  }
+}
+
+function readPrototypeUpdatedAt(prototype: PrototypeResource): number {
+  const timestamp = Date.parse(String(prototype.updatedAt || '').trim());
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function prototypeMatchesName(prototype: PrototypeResource, name: string): boolean {
+  const normalizedName = name.trim();
+  return Boolean(normalizedName) && (
+    String(prototype.id || '').trim() === normalizedName
+    || String(prototype.name || '').trim() === normalizedName
+  );
+}
+
+function hasPrototypeResource(projectRoot: string, prototypes: PrototypeResource[], name: string): boolean {
+  const normalizedName = name.trim();
+  if (!normalizedName) {
+    return false;
+  }
+  if (prototypes.some((prototype) => prototypeMatchesName(prototype, normalizedName))) {
+    return true;
+  }
+
+  const prototypeDir = path.resolve(projectRoot, 'src/prototypes', normalizedName);
+  if (!isPathInside(projectRoot, prototypeDir)) {
+    return false;
+  }
+  try {
+    return fs.statSync(prototypeDir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function resolveLatestPrototypeName(projectRoot: string, prototypes: PrototypeResource[]): string {
+  let best: {
+    index: number;
+    name: string;
+    updatedAt: number;
+    directoryMtime: number;
+  } | null = null;
+
+  prototypes.forEach((prototype, index) => {
+    const name = getPrototypeName(prototype);
+    if (!name) {
+      return;
+    }
+    const candidate = {
+      index,
+      name,
+      updatedAt: readPrototypeUpdatedAt(prototype),
+      directoryMtime: readPrototypeDirectoryMtime(projectRoot, prototype),
+    };
+    if (!best
+      || candidate.updatedAt > best.updatedAt
+      || (candidate.updatedAt === best.updatedAt && candidate.directoryMtime > best.directoryMtime)
+      || (
+        candidate.updatedAt === best.updatedAt
+        && candidate.directoryMtime === best.directoryMtime
+        && candidate.index > best.index
+      )
+    ) {
+      best = candidate;
+    }
+  });
+
+  return best?.name || '';
+}
+
+function sendPrototypeShortLinkRedirect(res: ServerResponse, url: URL, latestPrototypeName: string, fromPrototypeName: string): void {
+  url.searchParams.set('p', latestPrototypeName);
+  url.searchParams.set('fromP', fromPrototypeName);
+  res.statusCode = 302;
+  res.setHeader('Location', `${url.pathname}${url.search}`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.end();
+}
+
+export function redirectMissingPlaceholderPrototypeShortLink(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: AdminStaticOptions,
+): boolean {
+  const url = getRequestUrl(req);
+  const pathname = decodeURIComponentSafe(url.pathname);
+  if (!isAdminIndexPathname(pathname)) {
+    return false;
+  }
+
+  const requestedPrototypeName = String(url.searchParams.get('p') || '').trim();
+  if (!requestedPrototypeName || !isUntitledPrototypeName(requestedPrototypeName)) {
+    return false;
+  }
+
+  const projectRoot = path.resolve(options.activeProjectRoot || options.projectRoot || '');
+  if (!projectRoot) {
+    return false;
+  }
+
+  let prototypes: PrototypeResource[];
+  try {
+    prototypes = createProjectMetadataStore(projectRoot).getMetadata().resources.prototypes;
+  } catch {
+    return false;
+  }
+  if (!prototypes.length || hasPrototypeResource(projectRoot, prototypes, requestedPrototypeName)) {
+    return false;
+  }
+
+  const latestPrototypeName = resolveLatestPrototypeName(projectRoot, prototypes);
+  if (!latestPrototypeName || latestPrototypeName === requestedPrototypeName) {
+    return false;
+  }
+
+  sendPrototypeShortLinkRedirect(res, url, latestPrototypeName, requestedPrototypeName);
+  return true;
 }
 
 function getMarkdownPreviewTitleFromUrl(url: URL): string {
@@ -122,7 +287,7 @@ function getMarkdownPreviewTitleFromUrl(url: URL): string {
   }
 }
 
-function resolveAdminHtmlTitle(fileName: string, url: URL): string {
+export function resolveAdminHtmlTitle(fileName: string, url: URL): string {
   if (fileName === 'spec-template.html') {
     return getMarkdownPreviewTitleFromUrl(url);
   }
@@ -313,7 +478,11 @@ export function handleAdminStatic(req: IncomingMessage, res: ServerResponse, opt
     return true;
   }
 
-  if (pathname === '/' || pathname === '/index.html') {
+  if (redirectMissingPlaceholderPrototypeShortLink(req, res, options)) {
+    return true;
+  }
+
+  if (isAdminIndexPathname(pathname)) {
     return sendAdminHtml(req, res, path.join(adminRoot, 'index.html'), options);
   }
 

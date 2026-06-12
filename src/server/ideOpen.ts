@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { buildIDEFileProtocolUrl, getIDEFileProtocolSchemes } from './ideProtocol.ts';
 import type { ToolOpenMode, ToolOpenStateEntry } from './projectCore/server-config.ts';
 
-export const MAIN_IDE_VALUES = ['cursor', 'trae', 'vscode', 'trae_cn', 'windsurf', 'kiro', 'qoder', 'antigravity'] as const;
+export const MAIN_IDE_VALUES = ['cursor', 'trae', 'vscode', 'trae_cn', 'windsurf', 'qoder', 'antigravity'] as const;
 export type MainIDE = typeof MAIN_IDE_VALUES[number];
 
 const MAIN_IDE_APP_NAMES: Record<MainIDE, string> = {
@@ -13,7 +13,16 @@ const MAIN_IDE_APP_NAMES: Record<MainIDE, string> = {
   vscode: 'Visual Studio Code',
   trae_cn: 'TRAE CN',
   windsurf: 'Windsurf',
-  kiro: 'Kiro',
+  qoder: 'Qoder',
+  antigravity: 'Antigravity',
+};
+
+const MAIN_IDE_DISPLAY_NAMES: Record<MainIDE, string> = {
+  cursor: 'Cursor',
+  trae: 'TRAE',
+  vscode: 'vscode',
+  trae_cn: 'TRAE CN',
+  windsurf: 'Windsurf',
   qoder: 'Qoder',
   antigravity: 'Antigravity',
 };
@@ -24,7 +33,6 @@ const MAIN_IDE_WINDOWS_APP_PATH_NAMES: Record<MainIDE, string[]> = {
   vscode: ['Visual Studio Code', 'Visual Studio Code Insiders'],
   trae_cn: ['Trae CN', 'TRAE CN', 'Trae', 'TRAE'],
   windsurf: ['Windsurf'],
-  kiro: ['Kiro'],
   qoder: ['Qoder'],
   antigravity: ['Antigravity'],
 };
@@ -35,7 +43,6 @@ const MAIN_IDE_WINDOWS_COMMAND_CANDIDATES: Record<MainIDE, string[]> = {
   vscode: ['code', 'code-insiders'],
   trae_cn: ['trae-cn', 'trae_cn', 'trae'],
   windsurf: ['windsurf'],
-  kiro: ['kiro'],
   qoder: ['qoder'],
   antigravity: ['antigravity'],
 };
@@ -46,7 +53,6 @@ const MAIN_IDE_WINDOWS_EXECUTABLE_NAMES: Record<MainIDE, string[]> = {
   vscode: ['Code.exe', 'Code - Insiders.exe'],
   trae_cn: ['Trae CN.exe', 'TRAE CN.exe', 'TRAE.exe', 'Trae.exe'],
   windsurf: ['Windsurf.exe'],
-  kiro: ['Kiro.exe'],
   qoder: ['Qoder.exe'],
   antigravity: ['Antigravity.exe'],
 };
@@ -493,13 +499,14 @@ function openWindowsIDE(ide: MainIDE, targetPath: string, toolOpenState?: ToolOp
 
 function openUnixIDE(ide: MainIDE, targetPath: string): Promise<OpenIDEResult> {
   const ideAppName = MAIN_IDE_APP_NAMES[ide];
+  const ideDisplayName = MAIN_IDE_DISPLAY_NAMES[ide];
   const command = `open -a ${quoteForShell(ideAppName)} ${quoteForShell(targetPath)}`;
 
   return spawnDetached('open', ['-a', ideAppName, targetPath], {
     platform: process.platform,
     windowsHide: false,
     commandLabel: command,
-    errorMessage: (error) => `打开 ${ideAppName} 失败: ${toText(error.message).trim() || 'unknown error'}`,
+    errorMessage: (error) => `打开 ${ideDisplayName} 失败: ${toText(error.message).trim() || 'unknown error'}`,
   }).then(() => ({
     success: true,
     ide,

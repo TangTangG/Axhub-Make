@@ -106,11 +106,19 @@
       }
 
       function redirectWhenReady(payload) {
+        if (!shouldRedirectToAdmin()) {
+          return false;
+        }
         if (payload && payload.ready && payload.adminUrl) {
           location.replace(payload.adminUrl);
           return true;
         }
         return false;
+      }
+
+      function shouldRedirectToAdmin() {
+        var pathname = window.location.pathname;
+        return pathname === '/' || pathname === '/index.html';
       }
 
       function showStartButton() {
@@ -169,6 +177,10 @@
 
       if (startButton) {
         startButton.addEventListener('click', startServer);
+      }
+      if (!shouldRedirectToAdmin()) {
+        setStatus('当前路径不是管理入口。');
+        return;
       }
       checkStatus();
     }());

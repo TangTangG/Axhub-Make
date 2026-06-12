@@ -17,12 +17,14 @@ import {
     HelpCircle,
     Keyboard,
     LayoutDashboard,
+    LayoutGrid,
     List,
     ListChecks,
     Monitor,
     PanelLeftClose,
     PanelLeftOpen,
     PencilRuler,
+    ScanSearch,
     RotateCw,
     Save,
     Send,
@@ -45,6 +47,8 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from '@/lib/utils';
+import { MAIN_IDE_APP_NAMES, resolveVisibleIDEPreference } from '../../../common/ide';
+import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type {
     GenieEditorHostToolbarAction,
     GenieEditorHostToolbarState,
@@ -53,6 +57,7 @@ import { isMarkdownEditableResource } from '../../app/index-page.helpers';
 import { hasExplicitLocalPath } from '../../utils/localPath';
 import { SPEC_QUICK_EDIT_SEGMENT_OPTIONS, type SpecQuickEditMode } from '../../utils/specQuickEdit';
 import type {
+    MultiPageColumns,
     PreviewConfig,
     PreviewScaleMode,
     PreviewSinglePreset,
@@ -128,6 +133,8 @@ interface PresentationToolbarProps {
     handleSelectPreviewSinglePreset: (preset: PreviewSinglePreset) => void;
     handleSelectCustomPreview: () => void;
     handleActivateSplitPreview: () => void;
+    handleActivateMultiPagePreview: (pageCount?: number) => void;
+    handleChangeMultiPageColumns: (columns: MultiPageColumns) => void;
     handleChangeCustomPreviewWidth: (width: number) => void;
     handleChangeCustomPreviewHeight: (height: number) => void;
     handleChangeSplitPreviewWidth: (pane: 'primary' | 'secondary', width: number) => void;
@@ -146,6 +153,7 @@ interface PresentationToolbarProps {
     handleExportHtml: (options?: { includeSource?: boolean }) => void;
     handlePublishCloudTarget: (target: CloudPublishTarget) => void | Promise<void>;
     handleOpenCloudPublishSettings: (target?: CloudPublishTarget) => void;
+    currentPublishResourcePath?: string;
     latestCloudPublishUrl: string;
     handleCopyLatestCloudPublishUrl: () => void | Promise<void>;
     setIsExportModalOpen: (open: boolean) => void;
@@ -156,6 +164,8 @@ interface PresentationToolbarProps {
     handleOpenDocInIDE: () => void | Promise<void>;
     handleOpenThemeInIDE: () => void | Promise<void>;
     handleOpenDataTableInIDE: () => void | Promise<void>;
+    preferredIDE?: MainIDEPreference;
+    ideAvailability?: IDEAvailabilityMap;
     quickEditAvailable: boolean;
     quickEditActive?: boolean;
     docEditState?: {
@@ -196,6 +206,8 @@ export default function PresentationToolbar({
     handleSelectPreviewSinglePreset,
     handleSelectCustomPreview,
     handleActivateSplitPreview,
+    handleActivateMultiPagePreview,
+    handleChangeMultiPageColumns: _handleChangeMultiPageColumns,
     handleChangeCustomPreviewWidth,
     handleChangeCustomPreviewHeight,
     handleChangeSplitPreviewWidth: _handleChangeSplitPreviewWidth,
@@ -214,6 +226,7 @@ export default function PresentationToolbar({
     handleExportHtml,
     handlePublishCloudTarget,
     handleOpenCloudPublishSettings,
+    currentPublishResourcePath = '',
     latestCloudPublishUrl,
     handleCopyLatestCloudPublishUrl,
     setIsExportModalOpen,
@@ -224,6 +237,8 @@ export default function PresentationToolbar({
     handleOpenDocInIDE,
     handleOpenThemeInIDE,
     handleOpenDataTableInIDE,
+    preferredIDE = null,
+    ideAvailability,
     quickEditAvailable,
     quickEditActive = false,
     docEditState = { enabled: false, dirty: false, saving: false, quickEditMode: 'comment' },
@@ -254,6 +269,7 @@ export default function PresentationToolbar({
     const axureSourceDisabledReason = exportAvailability?.axureSourceDisabledReason || '';
     const htmlExportDisabledReason = exportAvailability?.htmlExportDisabledReason || '';
     const makeExportDisabledReason = exportAvailability?.makeExportDisabledReason || '';
+    const hasCurrentPublishResource = Boolean(currentPublishResourcePath);
     const currentMarkdownItem = contentMode === 'template' ? selectedTemplate : selectedDoc;
     const currentMarkdownLabel = contentMode === 'template' ? '模板' : '文档';
     const showMakeExportEntry = activeTab === 'prototypes'
@@ -326,7 +342,10 @@ export default function PresentationToolbar({
     ) : null;
 
     const quickEditDisabled = isDocumentEditingContent ? false : (viewMode === 'demo' ? !quickEditAvailable : contentMode === 'theme' ? !quickEditAvailable : true);
-    const openInIdeTooltip = '在编辑器中打开';
+    const resolvedOpenIDE = resolveVisibleIDEPreference(preferredIDE, ideAvailability);
+    const openInIdeName = resolvedOpenIDE ? MAIN_IDE_APP_NAMES[resolvedOpenIDE] : '';
+    const openInIdeTooltip = openInIdeName ? `在 ${openInIdeName} 中打开` : '在编辑器中打开';
+    const getOpenInIdeTooltip = (targetLabel: string) => openInIdeName ? `在 ${openInIdeName} 中打开${targetLabel}` : `在编辑器中打开${targetLabel}`;
     const quickEditTooltip = isDocumentEditingContent
         ? (isDocumentEditActive ? '退出文档编辑' : '编辑文档')
         : contentMode === 'theme'
@@ -363,15 +382,15 @@ export default function PresentationToolbar({
         && !docEditState.enabled;
     const showHostPropertyPanelAction = contentMode !== 'theme';
 
-    const [hostGenieMenuOpen, setHostGenieMenuOpen] = React.useState(false);
+    const [hostActionMenuOpen, setHostActionMenuOpen] = React.useState(false);
     const [hostAgentMenuOpen, setHostAgentMenuOpen] = React.useState(false);
-    const hostGenieTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+    const hostActionMenuTriggerRef = React.useRef<HTMLButtonElement | null>(null);
     const hostAgentMenuTriggerRef = React.useRef<HTMLButtonElement | null>(null);
     const hostMenuPortalRef = React.useRef<HTMLDivElement | null>(null);
     const hostAgentMenuPortalRef = React.useRef<HTMLDivElement | null>(null);
 
     const closeHostMenus = React.useCallback(() => {
-        setHostGenieMenuOpen(false);
+        setHostActionMenuOpen(false);
         setHostAgentMenuOpen(false);
     }, []);
 
@@ -382,7 +401,7 @@ export default function PresentationToolbar({
     }, [closeHostMenus, hostToolbarState?.visible]);
 
     React.useEffect(() => {
-        if (!hostGenieMenuOpen && !hostAgentMenuOpen) {
+        if (!hostActionMenuOpen && !hostAgentMenuOpen) {
             return;
         }
 
@@ -397,7 +416,7 @@ export default function PresentationToolbar({
             if (hostAgentMenuPortalRef.current?.contains(target)) {
                 return;
             }
-            if (hostGenieTriggerRef.current?.contains(target)) {
+            if (hostActionMenuTriggerRef.current?.contains(target)) {
                 return;
             }
             if (hostAgentMenuTriggerRef.current?.contains(target)) {
@@ -421,7 +440,7 @@ export default function PresentationToolbar({
             window.removeEventListener('resize', closeHostMenus);
             window.removeEventListener('scroll', closeHostMenus, true);
         };
-    }, [closeHostMenus, hostAgentMenuOpen, hostGenieMenuOpen]);
+    }, [closeHostMenus, hostActionMenuOpen, hostAgentMenuOpen]);
 
     const handleQuickEditClick = () => {
         if (isQuickEditActive) {
@@ -488,18 +507,25 @@ export default function PresentationToolbar({
     const selectedAgentLabel = hostToolbarState?.agentOptions.find((agent) => agent.value === hostToolbarState.selectedAgent)?.label ?? '默认';
     const showHostExecutionControls = Boolean(
         hostToolbarState?.visible
-        && hostLocalAgentConnected
         && (hostToolbarState.sendVisible || hostToolbarState.interruptVisible),
     );
+    const selectionModeShortcutLabel = 'Ctrl / Cmd + S';
+    const selectionModeTooltip = `切换（${selectionModeShortcutLabel}）`;
     const renderHostToolbarActionButton = (
         key: string,
         label: string,
         icon: React.ReactNode,
         action: GenieEditorHostToolbarAction,
-        options?: { disabled?: boolean; active?: boolean; visible?: boolean; loading?: boolean },
+        options?: {
+            disabled?: boolean;
+            active?: boolean;
+            visible?: boolean;
+            loading?: boolean;
+            tooltip?: string;
+        },
     ) => {
         if (options?.visible === false) return null;
-        return (
+        const button = (
             <Button
                 key={key}
                 variant="ghost"
@@ -513,6 +539,17 @@ export default function PresentationToolbar({
             >
                 {icon} {label}
             </Button>
+        );
+        if (!options?.tooltip) return button;
+        return (
+            <TooltipProvider key={key}>
+                <Tooltip>
+                    <TooltipTrigger asChild>{button}</TooltipTrigger>
+                    <TooltipContent>
+                        <span>{options.tooltip}</span>
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
         );
     };
     const hostMenuItemClass = "flex h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-50";
@@ -569,23 +606,23 @@ export default function PresentationToolbar({
     const hostMoreMenu = hostToolbarState?.visible ? (
         <>
             <Button
-                ref={hostGenieTriggerRef}
+                ref={hostActionMenuTriggerRef}
                 variant="ghost"
                 size="xs"
                 className="gap-1.5 [&_svg]:h-3.5 [&_svg]:w-3.5"
-                aria-label="更多 Genie 操作"
+                aria-label="更多 ACP UI 操作"
                 aria-haspopup="menu"
-                aria-expanded={hostGenieMenuOpen}
+                aria-expanded={hostActionMenuOpen}
                 onClick={(event) => {
                     event.stopPropagation();
-                    setHostGenieMenuOpen((open) => !open);
+                    setHostActionMenuOpen((open) => !open);
                 }}
             >
                 <List /> 更多
             </Button>
             {renderHostMenuPortal({
-                open: hostGenieMenuOpen,
-                triggerRef: hostGenieTriggerRef,
+                open: hostActionMenuOpen,
+                triggerRef: hostActionMenuTriggerRef,
                 align: 'start',
                 children: (
                     <>
@@ -648,21 +685,50 @@ export default function PresentationToolbar({
                         >
                             <Settings2 className={hostMenuIconClass} /> {hostToolbarState.disablePageAnimations ? '开启页面动画' : '关闭页面动画'}
                         </button>
-                        {isQuickEditActive ? (
+                        {showHostExecutionControls && hostToolbarState.interruptVisible ? (
                             <button
                                 type="button"
                                 role="menuitem"
-                                {...getQuickEditSaveMenuActionHandlers('clear-style')}
+                                disabled={hostToolbarState.interruptDisabled || hostToolbarState.interruptLoading}
+                                {...getHostMenuActionHandlers({ type: 'interrupt-genie' })}
                                 className={hostMenuItemClass}
                             >
-                                <Trash2 className={hostMenuIconClass} /> 清空强制样式
+                                <Square className={hostMenuIconClass} /> 中断执行
                             </button>
+                        ) : null}
+                        {isQuickEditActive ? (
+                            <>
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    {...getQuickEditSaveMenuActionHandlers('save-text')}
+                                    className={hostMenuItemClass}
+                                >
+                                    <FileText className={hostMenuIconClass} /> 保存文本
+                                </button>
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    {...getQuickEditSaveMenuActionHandlers('save-style')}
+                                    className={hostMenuItemClass}
+                                >
+                                    <PencilRuler className={hostMenuIconClass} /> 保存样式
+                                </button>
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    {...getQuickEditSaveMenuActionHandlers('clear-style')}
+                                    className={hostMenuItemClass}
+                                >
+                                    <Trash2 className={hostMenuIconClass} /> 清空强制样式
+                                </button>
+                            </>
                         ) : null}
                     </>
                 ),
             })}
             {renderHostMenuPortal({
-                open: showHostAgentMenu && hostGenieMenuOpen && hostAgentMenuOpen,
+                open: showHostAgentMenu && hostActionMenuOpen && hostAgentMenuOpen,
                 triggerRef: hostAgentMenuTriggerRef,
                 align: 'end',
                 variant: 'agent',
@@ -691,10 +757,6 @@ export default function PresentationToolbar({
             })}
         </>
     ) : null;
-    const hostToolbarHasPrompt = Boolean(
-        hostToolbarState?.modifiedCount
-        || hostToolbarState?.terminalTaskCount
-    );
     const hostToolbarControls = hostToolbarState?.visible ? (
         <div className="inline-flex items-center gap-1">
             {renderHostToolbarActionButton(
@@ -704,12 +766,12 @@ export default function PresentationToolbar({
                 { type: 'copy-prompt' },
                 {
                     visible: hostToolbarState.copyPromptVisible,
-                    disabled: !hostToolbarHasPrompt,
+                    disabled: hostToolbarState.copyPromptDisabled,
                 },
             )}
             {renderHostToolbarActionButton(
                 'host-send',
-                '执行',
+                'AI 执行',
                 <Send />,
                 { type: 'send-to-genie' },
                 {
@@ -719,22 +781,22 @@ export default function PresentationToolbar({
                 },
             )}
             {renderHostToolbarActionButton(
-                'host-interrupt',
-                '中断',
-                <Square />,
-                { type: 'interrupt-genie' },
-                {
-                    visible: showHostExecutionControls && hostToolbarState.interruptVisible,
-                    disabled: hostToolbarState.interruptDisabled,
-                    loading: hostToolbarState.interruptLoading,
-                },
-            )}
-            {renderHostToolbarActionButton(
                 'host-clear',
-                '清空编辑',
+                '清空',
                 <Trash2 />,
                 { type: 'clear-edits' },
-                { disabled: hostToolbarState.clearEditsDisabled },
+                { visible: !isQuickEditActive, disabled: hostToolbarState.clearEditsDisabled },
+            )}
+            {renderHostToolbarActionButton(
+                'host-selection-mode',
+                '选择元素',
+                <ScanSearch />,
+                { type: 'toggle-selection-mode', active: !hostToolbarState.selectionModeActive },
+                {
+                    disabled: false,
+                    active: hostToolbarState.selectionModeActive,
+                    tooltip: selectionModeTooltip,
+                },
             )}
             {showHostPropertyPanelAction ? renderHostToolbarActionButton(
                 'host-panel',
@@ -745,30 +807,20 @@ export default function PresentationToolbar({
             ) : null}
         </div>
     ) : null;
-    const quickEditSaveActions = isQuickEditActive ? (
-        <div className="inline-flex items-center gap-1">
-            <Button
-                variant="ghost"
-                size="xs"
-                className="gap-1.5 [&_svg]:h-3.5 [&_svg]:w-3.5"
-                onClick={() => runQuickEditSaveAction('save-text')}
-            >
-                <FileText /> 保存文本
-            </Button>
-            <Button
-                variant="ghost"
-                size="xs"
-                className="gap-1.5 [&_svg]:h-3.5 [&_svg]:w-3.5"
-                onClick={() => runQuickEditSaveAction('save-style')}
-            >
-                <PencilRuler /> 保存样式
-            </Button>
-        </div>
-    ) : null;
     const activeQuickEditToolbarButtons = (
         <>
             {hostToolbarControls}
-            {quickEditSaveActions}
+            {hostToolbarState?.visible ? (
+                <Button
+                    variant="ghost"
+                    size="xs"
+                    className="gap-1.5 [&_svg]:h-3.5 [&_svg]:w-3.5"
+                    disabled={hostToolbarState.clearEditsDisabled}
+                    onClick={() => runHostAction({ type: 'clear-edits' })}
+                >
+                    <Trash2 /> 清空
+                </Button>
+            ) : null}
             <Button variant="ghost" size="xs" className="gap-1.5 [&_svg]:h-3.5 [&_svg]:w-3.5" onClick={handleRefreshElement}>
                 <RotateCw /> 刷新
             </Button>
@@ -797,7 +849,7 @@ export default function PresentationToolbar({
                                         <Code2 /> 打开
                                     </Button>
                                 </TooltipTrigger>
-                                <TooltipContent>{`在编辑器中打开${currentMarkdownLabel}`}</TooltipContent>
+                                <TooltipContent>{getOpenInIdeTooltip(currentMarkdownLabel)}</TooltipContent>
                             </Tooltip>
                         </TooltipProvider>
                     ) : null}
@@ -832,7 +884,7 @@ export default function PresentationToolbar({
                                         <Code2 /> 打开
                                     </Button>
                                 </TooltipTrigger>
-                                <TooltipContent>在编辑器中打开主题</TooltipContent>
+                                <TooltipContent>{getOpenInIdeTooltip('主题')}</TooltipContent>
                             </Tooltip>
                         </TooltipProvider>
                     ) : null}
@@ -879,7 +931,7 @@ export default function PresentationToolbar({
                                     <Code2 /> 打开
                                 </Button>
                             </TooltipTrigger>
-                            <TooltipContent>在编辑器中打开数据表</TooltipContent>
+                            <TooltipContent>{getOpenInIdeTooltip('数据表')}</TooltipContent>
                         </Tooltip>
                     </TooltipProvider>
                 ) : null
@@ -1018,14 +1070,16 @@ export default function PresentationToolbar({
     const [customHeightDraft, setCustomHeightDraft] = React.useState('');
     const isCustomPreview = previewConfig.previewMode === 'single' && previewConfig.singlePreset === 'custom';
     const isSplitPreview = previewConfig.previewMode === 'split';
+    const isMultiPagePreview = previewConfig.previewMode === 'multi-page';
     const shouldShowScaleMode = isCustomPreview || isSplitPreview;
     const selectedDeviceIcon = isSplitPreview
         ? <PreviewSplitIcon />
-        : selectedDeviceId === 'mobile'
-            ? <Smartphone className="h-3.5 w-3.5" />
-            : selectedDeviceId === 'tablet'
-                ? <Tablet className="h-3.5 w-3.5" />
-                : <Monitor className="h-3.5 w-3.5" />;
+        : isMultiPagePreview ? <LayoutGrid className="h-3.5 w-3.5" />
+            : selectedDeviceId === 'mobile'
+                ? <Smartphone className="h-3.5 w-3.5" />
+                : selectedDeviceId === 'tablet'
+                    ? <Tablet className="h-3.5 w-3.5" />
+                    : <Monitor className="h-3.5 w-3.5" />;
 
     React.useEffect(() => {
         setCustomWidthDraft(previewConfig.customWidth ? String(previewConfig.customWidth) : '');
@@ -1050,6 +1104,7 @@ export default function PresentationToolbar({
             className={cn(
                 edgeIconButtonClass,
                 isSplitPreview && "bg-muted text-foreground",
+                isMultiPagePreview && "bg-muted text-foreground",
                 isDeviceSwitcherDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
             )}
             disabled={isDeviceSwitcherDisabled}
@@ -1147,13 +1202,20 @@ export default function PresentationToolbar({
                             active={isSplitPreview}
                             onClick={handleActivateSplitPreview}
                         />
+                        <PreviewDeviceActionButton
+                            icon={<LayoutGrid />}
+                            title="多页面"
+                            subtitle="平铺当前原型页面"
+                            active={isMultiPagePreview}
+                            onClick={() => handleActivateMultiPagePreview(selectedItem?.pages?.length)}
+                        />
                     </div>
                     {shouldShowScaleMode ? (
                         <div className="flex items-center justify-between gap-3 px-3 py-2">
                             <div className="text-[11px] font-medium text-foreground/80">缩放模式</div>
-                <Segmented
-                    aria-label={quickEditSegmentLabelText}
-                    size="small"
+                            <Segmented
+                                aria-label={quickEditSegmentLabelText}
+                                size="small"
                                 value={previewConfig.scaleMode}
                                 className="[&_.ant-segmented-item-label]:px-2 [&_.ant-segmented-item-label]:py-0.5"
                                 style={{ fontSize: 11 }}
@@ -1204,7 +1266,7 @@ export default function PresentationToolbar({
             </Tooltip>
         </TooltipProvider>
     );
-    const showExportMenuButton = isPreviewContent && viewMode === 'demo' && Boolean(selectedItem);
+    const showExportMenuButton = ((isPreviewContent && viewMode === 'demo') || contentMode === 'theme') && (Boolean(selectedItem) || Boolean(selectedTheme));
     const exportMenuButton = (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1212,7 +1274,7 @@ export default function PresentationToolbar({
                     variant="ghost"
                     size="sm"
                     className={toolbarPillButtonClass}
-                    disabled={!canOpenGenericFigmaExport && !canOpenGenericAxureExport && !showHtmlExportEntry && !handleOpenAxureUsageGuide && !selectedItem}
+                    disabled={!canOpenGenericFigmaExport && !canOpenGenericAxureExport && !showHtmlExportEntry && !handleOpenAxureUsageGuide && !hasCurrentPublishResource}
                 >
                     <Cloud />
                     <span>发布</span>
@@ -1302,35 +1364,35 @@ export default function PresentationToolbar({
                 </DropdownMenuLabel>
                 <DropdownMenuItem
                     onClick={() => handlePublishCloudTarget('s3')}
-                    disabled={!selectedItem}
+                    disabled={!hasCurrentPublishResource}
                     className="gap-2 h-7 text-sm"
                 >
                     <Send className="h-3.5 w-3.5" /> 发布到 S3 对象存储
                 </DropdownMenuItem>
                 <DropdownMenuItem
                     onClick={() => handlePublishCloudTarget('vercel')}
-                    disabled={!selectedItem}
+                    disabled={!hasCurrentPublishResource}
                     className="gap-2 h-7 text-sm"
                 >
                     <Send className="h-3.5 w-3.5" /> 发布到 Vercel
                 </DropdownMenuItem>
                 <DropdownMenuItem
                     onClick={() => handlePublishCloudTarget('cloudflare-pages')}
-                    disabled={!selectedItem}
+                    disabled={!hasCurrentPublishResource}
                     className="gap-2 h-7 text-sm"
                 >
                     <Send className="h-3.5 w-3.5" /> 发布到 Cloudflare Pages
                 </DropdownMenuItem>
                 <DropdownMenuItem
                     onClick={() => handlePublishCloudTarget('github-pages')}
-                    disabled={!selectedItem}
+                    disabled={!hasCurrentPublishResource}
                     className="gap-2 h-7 text-sm"
                 >
                     <Send className="h-3.5 w-3.5" /> 发布到 GitHub Pages
                 </DropdownMenuItem>
                 <DropdownMenuItem
                     onClick={() => handleCopyLatestCloudPublishUrl()}
-                    disabled={!latestCloudPublishUrl}
+                    disabled={!latestCloudPublishUrl || !hasCurrentPublishResource}
                     className="gap-2 h-7 text-sm"
                 >
                     <Copy className="h-3.5 w-3.5" /> 最近发布地址

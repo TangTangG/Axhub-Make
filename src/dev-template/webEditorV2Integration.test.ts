@@ -15,11 +15,10 @@ vi.mock('../index/components/dialogs/AppDialogProvider', () => ({
 }));
 
 import {
+  buildInternalPrototypeCommentPageScope,
   createWebEditorV2Controller,
   createPrototypeCommentsPersistenceAdapter,
   readHostToolbarModeFromSearch,
-  readEditorIntegrationOptionsFromSearch,
-  readGenieBridgeOptionsFromSearch,
   resolveHostResourceContextFromLocation,
 } from './webEditorV2Integration';
 
@@ -29,110 +28,8 @@ beforeEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('readGenieBridgeOptionsFromSearch', () => {
-  it('reads the Genie bridge runtime parameters from url search', () => {
-    expect(
-      readGenieBridgeOptionsFromSearch(
-        '?genieApiBaseUrl=http://localhost:32123/api&genieIntegrationChannel=make&genieTargetClientId=make&cwd=%2FUsers%2Fdemo%2Fproject&provider=codex',
-      ),
-    ).toEqual({
-      apiBaseUrl: 'http://localhost:32123/api',
-      integrationChannel: 'make',
-      targetClientId: 'make',
-      projectPath: '/Users/demo/project',
-      provider: 'codex',
-    });
-  });
-
-  it('supports workdir and tool aliases for execution parameters', () => {
-    expect(
-      readGenieBridgeOptionsFromSearch(
-        '?genieApiBaseUrl=http://localhost:32123/api&genieIntegrationChannel=make&genieTargetClientId=make&workdir=%2Ftmp%2Fdemo&tool=gemini',
-      ),
-    ).toEqual({
-      apiBaseUrl: 'http://localhost:32123/api',
-      integrationChannel: 'make',
-      targetClientId: 'make',
-      projectPath: '/tmp/demo',
-      provider: 'gemini',
-    });
-  });
-
-  it('supports runtime-managed integration params without requiring apiBaseUrl', () => {
-    expect(
-      readGenieBridgeOptionsFromSearch(
-        '?integrationWs=1&integrationClientId=make&integrationChannel=make&cwd=%2Ftmp%2Fdemo&provider=codex',
-      ),
-    ).toEqual({
-      integrationChannel: 'make',
-      targetClientId: 'make',
-      projectPath: '/tmp/demo',
-      provider: 'codex',
-    });
-  });
-
-  it('ignores invalid provider values and incomplete bridge configuration', () => {
-    expect(
-      readGenieBridgeOptionsFromSearch(
-        '?genieApiBaseUrl=http://localhost:32123/api&genieIntegrationChannel=make&genieTargetClientId=make&cwd=%2Ftmp%2Fdemo&provider=unknown',
-      ),
-    ).toEqual({
-      apiBaseUrl: 'http://localhost:32123/api',
-      integrationChannel: 'make',
-      targetClientId: 'make',
-      projectPath: '/tmp/demo',
-    });
-
-    expect(
-      readGenieBridgeOptionsFromSearch('?cwd=%2Ftmp%2Fdemo&provider=codex'),
-    ).toEqual({
-      projectPath: '/tmp/demo',
-      provider: 'codex',
-    });
-  });
-});
-
-describe('readEditorIntegrationOptionsFromSearch', () => {
-  it('reads the dedicated frontend-page integration parameters from url search', () => {
-    expect(
-      readEditorIntegrationOptionsFromSearch(
-        '?editorIntegrationWs=1&editorApiBaseUrl=http://localhost:32123/api&editorIntegrationChannel=make&editorClientId=make-editor-abcd&editorSessionId=session-001',
-      ),
-    ).toEqual({
-      enabled: true,
-      apiBaseUrl: 'http://localhost:32123/api',
-      channel: 'make',
-      clientId: 'make-editor-abcd',
-      sessionId: 'session-001',
-    });
-  });
-
-  it('supports editor-specific aliases and ignores empty values', () => {
-    expect(
-      readEditorIntegrationOptionsFromSearch(
-        '?editorWs=true&editorChannel=make&editorClientId=client-1',
-      ),
-    ).toEqual({
-      enabled: true,
-      channel: 'make',
-      clientId: 'client-1',
-    });
-  });
-
-  it('reads explicit mobileMode overrides for the editor runtime', () => {
-    expect(
-      readEditorIntegrationOptionsFromSearch(
-        '?editorIntegrationWs=1&editorMobileMode=true',
-      ),
-    ).toEqual({
-      enabled: true,
-      mobileMode: true,
-    });
-  });
-});
-
 describe('createWebEditorV2Controller launch options', () => {
-  it('applies enable-time Genie bridge and editor integration options before creating the editor', async () => {
+  it('ignores enable-time Genie bridge and editor integration options before creating the editor', async () => {
     const start = vi.fn();
     const stop = vi.fn();
 
@@ -168,13 +65,13 @@ describe('createWebEditorV2Controller launch options', () => {
       mobileMode: true,
       genieBridge: {
         apiBaseUrl: 'http://localhost:32124/api',
-        integrationChannel: '/Users/demo/project',
-        projectPath: '/Users/demo/project',
+        integrationChannel: '/workspace/demo/project',
+        projectPath: '/workspace/demo/project',
       },
       integrationWs: {
         enabled: true,
         apiBaseUrl: 'http://localhost:32124/api',
-        channel: '/Users/demo/project',
+        channel: '/workspace/demo/project',
         clientId: 'make-editor-1234',
       },
     } as any);
@@ -182,24 +79,14 @@ describe('createWebEditorV2Controller launch options', () => {
     expect(mocked.createGenieEditor).toHaveBeenCalledWith(
       expect.objectContaining({
         mobileMode: true,
-        genieBridge: expect.objectContaining({
-          enabled: true,
-          apiBaseUrl: 'http://localhost:32124/api',
-          integrationChannel: '/Users/demo/project',
-          projectPath: '/Users/demo/project',
-        }),
-        integrationWs: expect.objectContaining({
-          enabled: true,
-          apiBaseUrl: 'http://localhost:32124/api',
-          channel: '/Users/demo/project',
-          clientId: 'make-editor-1234',
-        }),
       }),
     );
+    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
+    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
   });
 
-  it('does not fetch runtime fallback when enable-time options already provide an api base URL and integration channel', async () => {
+  it('does not fetch runtime fallback for ignored AI bridge options', async () => {
     const start = vi.fn();
     const stop = vi.fn();
     const fetchRuntime = vi.fn(async () => {
@@ -249,16 +136,8 @@ describe('createWebEditorV2Controller launch options', () => {
     } as any);
 
     expect(fetchRuntime).not.toHaveBeenCalled();
-    expect(mocked.createGenieEditor).toHaveBeenCalledWith(
-      expect.objectContaining({
-        genieBridge: expect.objectContaining({
-          enabled: true,
-          apiBaseUrl: 'http://localhost:32123/api',
-          integrationChannel: 'axhub',
-          projectPath: '',
-        }),
-      }),
-    );
+    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
+    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
   });
 });
@@ -272,6 +151,18 @@ describe('readHostToolbarModeFromSearch', () => {
 });
 
 describe('resolveHostResourceContextFromLocation', () => {
+  it('builds stable internal prototype page scopes from Make route page ids', () => {
+    expect(
+      buildInternalPrototypeCommentPageScope('touch-and-talk-annotation-demo', 'common-tips'),
+    ).toBe('prototypes/touch-and-talk-annotation-demo::page::common-tips');
+
+    expect(
+      buildInternalPrototypeCommentPageScope('prototypes/touch-and-talk-annotation-demo', 'voice-annotation'),
+    ).toBe('prototypes/touch-and-talk-annotation-demo::page::voice-annotation');
+
+    expect(buildInternalPrototypeCommentPageScope('demo', '../bad')).toBe('');
+  });
+
   it('extracts reusable host resource context from prototype urls', () => {
     expect(
       resolveHostResourceContextFromLocation(
@@ -286,6 +177,7 @@ describe('resolveHostResourceContextFromLocation', () => {
       meta: {
         group: 'prototypes',
         name: 'ref-dashboard',
+        commentPageScope: '/prototypes/ref-dashboard',
       },
     });
   });
@@ -305,6 +197,7 @@ describe('resolveHostResourceContextFromLocation', () => {
         group: 'prototypes',
         name: 'ref-dashboard',
         storageScope: 'prototypes/ref-dashboard::quick-edit::secondary',
+        commentPageScope: '/prototypes/ref-dashboard',
       },
     });
   });
@@ -324,7 +217,87 @@ describe('resolveHostResourceContextFromLocation', () => {
         group: 'prototypes',
         name: 'ref-dashboard',
         storageScope: 'prototypes/ref-dashboard::quick-edit::secondary',
+        commentPageScope: '/prototypes/ref-dashboard',
       },
+    });
+  });
+
+  it('derives stable comment page scope from business query and hash while filtering editor controls', () => {
+    expect(
+      resolveHostResourceContextFromLocation(
+        '/prototypes/ref-dashboard',
+        'http://localhost:51720/prototypes/ref-dashboard?editor=webEditorV2&tab=sales&axhubPane=secondary&filter=active&axhubQuickEditContext=1#details',
+      ),
+    ).toEqual({
+      kind: 'prototype-entry',
+      id: 'prototypes/ref-dashboard',
+      path: 'prototypes/ref-dashboard',
+      url: 'http://localhost:51720/prototypes/ref-dashboard?editor=webEditorV2&tab=sales&axhubPane=secondary&filter=active&axhubQuickEditContext=1#details',
+      meta: {
+        group: 'prototypes',
+        name: 'ref-dashboard',
+        storageScope: 'prototypes/ref-dashboard::quick-edit::secondary',
+        commentPageScope: '/prototypes/ref-dashboard?filter=active&tab=sales#details',
+      },
+    });
+  });
+
+  it('resolves prototype context from index deep links with p and page query params', () => {
+    expect(
+      resolveHostResourceContextFromLocation(
+        '/',
+        'http://localhost:53817/?projectId=make-project&p=touch-and-talk-annotation-demo&page=common-tips',
+      ),
+    ).toEqual({
+      kind: 'prototype-entry',
+      id: 'prototypes/touch-and-talk-annotation-demo',
+      path: 'prototypes/touch-and-talk-annotation-demo',
+      url: 'http://localhost:53817/?projectId=make-project&p=touch-and-talk-annotation-demo&page=common-tips',
+      meta: {
+        group: 'prototypes',
+        name: 'touch-and-talk-annotation-demo',
+        commentPageScope: 'prototypes/touch-and-talk-annotation-demo::page::common-tips',
+      },
+    });
+  });
+
+  it('uses the internal prototype page scope for hash-routed prototype pages', () => {
+    expect(
+      resolveHostResourceContextFromLocation(
+        '/prototypes/touch-and-talk-annotation-demo',
+        'http://localhost:53817/prototypes/touch-and-talk-annotation-demo?genieToolbar=host#page=common-tips',
+      )?.meta,
+    ).toEqual({
+      group: 'prototypes',
+      name: 'touch-and-talk-annotation-demo',
+      commentPageScope: 'prototypes/touch-and-talk-annotation-demo::page::common-tips',
+    });
+  });
+
+  it('keeps numeric prototype ids valid when resolving index deep link scopes', () => {
+    expect(
+      resolveHostResourceContextFromLocation(
+        '/',
+        'http://localhost:53817/?p=demo-2026&page=step-01&projectId=make-project',
+      )?.meta,
+    ).toEqual({
+      group: 'prototypes',
+      name: 'demo-2026',
+      commentPageScope: 'prototypes/demo-2026::page::step-01',
+    });
+  });
+
+  it('prefers explicit comment page scope over the URL-derived scope', () => {
+    expect(
+      resolveHostResourceContextFromLocation(
+        '/prototypes/ref-dashboard',
+        'http://localhost:51720/prototypes/ref-dashboard?tab=sales#details',
+        { commentPageScope: 'page:dashboard-sales' },
+      )?.meta,
+    ).toEqual({
+      group: 'prototypes',
+      name: 'ref-dashboard',
+      commentPageScope: 'page:dashboard-sales',
     });
   });
 
@@ -332,15 +305,15 @@ describe('resolveHostResourceContextFromLocation', () => {
     expect(
       resolveHostResourceContextFromLocation(
         '/spec-template.html',
-        'http://localhost:51720/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252FUsers%252Fdemo%252Fproject%252Fsrc%252Fresources%252Fintro.md',
+        'http://localhost:51720/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fdemo%252Fproject%252Fsrc%252Fresources%252Fintro.md',
       ),
     ).toEqual({
       kind: 'document',
-      id: '/Users/demo/project/src/resources/intro.md',
-      path: '/Users/demo/project/src/resources/intro.md',
-      url: 'http://localhost:51720/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252FUsers%252Fdemo%252Fproject%252Fsrc%252Fresources%252Fintro.md',
+      id: '/workspace/demo/project/src/resources/intro.md',
+      path: '/workspace/demo/project/src/resources/intro.md',
+      url: 'http://localhost:51720/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fdemo%252Fproject%252Fsrc%252Fresources%252Fintro.md',
       meta: {
-        filePath: '/Users/demo/project/src/resources/intro.md',
+        filePath: '/workspace/demo/project/src/resources/intro.md',
         route: '/spec-template.html',
       },
     });
@@ -354,7 +327,55 @@ describe('resolveHostResourceContextFromLocation', () => {
 });
 
 describe('createWebEditorV2Controller', () => {
-  it('creates the editor from the shared package and forwards runtime bridge options', async () => {
+  it('uses neutral editor debug title wording instead of the old Genie runtime label', async () => {
+    const start = vi.fn();
+    const stop = vi.fn();
+    const setIntervalMock = vi.fn(() => 1);
+    const clearIntervalMock = vi.fn();
+    const documentMock = { title: 'Prototype Preview', body: {} };
+
+    mocked.createGenieEditor.mockReturnValue({
+      start,
+      stop,
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      getDebugState: vi.fn(() => ({
+        connected: false,
+        available: true,
+        hasReusableConversation: false,
+        currentConversation: null,
+        currentElementTask: null,
+        visibleTasks: [],
+        selectedElementKey: null,
+        bridgeConfig: null,
+      })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+      destroy: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?genieDebugTitle=1',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+      },
+      setInterval: setIntervalMock,
+      clearInterval: clearIntervalMock,
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('document', documentMock);
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+
+    expect(documentMock.title).toContain('[EditorDebug]');
+    expect(documentMock.title).not.toContain('[GenieDebug]');
+    expect(setIntervalMock).toHaveBeenCalledWith(expect.any(Function), 250);
+  });
+
+  it('creates the editor from the shared package without forwarding runtime bridge options', async () => {
     const start = vi.fn();
     const stop = vi.fn();
     const getState = vi.fn(() => ({ active: false, version: 2 }));
@@ -392,7 +413,7 @@ describe('createWebEditorV2Controller', () => {
     vi.stubGlobal('window', {
       location: {
         search:
-          '?genieApiBaseUrl=http://localhost:32123/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1&cwd=%2FUsers%2Fdemo%2Fproject&provider=codex&editorIntegrationWs=1&editorApiBaseUrl=http://localhost:32123/api&editorIntegrationChannel=make&editorClientId=make-editor-abcd&editorSessionId=session-001&editorMobileMode=true',
+          '?genieApiBaseUrl=http://localhost:32123/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1&cwd=%2Fworkspace%2Fdemo%2Fproject&provider=codex&editorIntegrationWs=1&editorApiBaseUrl=http://localhost:32123/api&editorIntegrationChannel=make&editorClientId=make-editor-abcd&editorSessionId=session-001&editorMobileMode=true',
         pathname: '/prototypes/home',
         href: 'http://localhost:51720/prototypes/home?editor=webEditorV2',
       },
@@ -413,24 +434,10 @@ describe('createWebEditorV2Controller', () => {
         mobileMode: true,
         ui: {
           breadcrumbs: true,
+          getAssistantPanelOpen: expect.any(Function),
           propertyPanel: true,
           showCopyPromptAction: true,
         },
-        genieBridge: expect.objectContaining({
-          enabled: true,
-          apiBaseUrl: 'http://localhost:32123/api',
-          integrationChannel: 'make',
-          targetClientId: 'frontend-1',
-          projectPath: '/Users/demo/project',
-          provider: 'codex',
-        }),
-        integrationWs: expect.objectContaining({
-          enabled: true,
-          apiBaseUrl: 'http://localhost:32123/api',
-          channel: 'make',
-          clientId: 'make-editor-abcd',
-          sessionId: 'session-001',
-        }),
         host: expect.objectContaining({
           buildCopyPrompt: expect.any(Function),
           getResourceContext: expect.any(Function),
@@ -438,6 +445,8 @@ describe('createWebEditorV2Controller', () => {
         }),
       }),
     );
+    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
+    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
 
     const host = mocked.createGenieEditor.mock.calls[0]?.[0]?.host;
     expect(host?.getResourceContext?.()).toEqual({
@@ -448,6 +457,7 @@ describe('createWebEditorV2Controller', () => {
       meta: {
         group: 'prototypes',
         name: 'home',
+        commentPageScope: '/prototypes/home',
       },
     });
     expect(start).toHaveBeenCalledTimes(1);
@@ -462,7 +472,7 @@ describe('createWebEditorV2Controller', () => {
             exists: true,
             document: {
               schemaVersion: 1,
-              kind: 'prototype-comments',
+              kind: 'prototype-edit-comments',
               resource: {
                 id: 'home',
                 targetPath: 'prototypes/home',
@@ -492,14 +502,14 @@ describe('createWebEditorV2Controller', () => {
     };
 
     await expect(adapter.read(scope)).resolves.toMatchObject({
-      kind: 'prototype-comments',
+      kind: 'prototype-edit-comments',
       resource: {
         targetPath: 'prototypes/home',
       },
     });
     await expect(adapter.write(scope, {
       schemaVersion: 1,
-      kind: 'prototype-comments',
+      kind: 'prototype-edit-comments',
       resource: {
         id: 'home',
         targetPath: 'prototypes/home',
@@ -524,7 +534,7 @@ describe('createWebEditorV2Controller', () => {
     );
   });
 
-  it('falls back to runtime defaults when the direct page url omits Genie bridge params', async () => {
+  it('does not fetch assistant runtime defaults for editor bridge setup', async () => {
     const start = vi.fn();
     const stop = vi.fn();
     const acknowledgeSavedTextChanges = vi.fn();
@@ -550,40 +560,27 @@ describe('createWebEditorV2Controller', () => {
       confirm: vi.fn(() => true),
       alert: vi.fn(),
     });
-    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const fetchMock = vi.fn(async (input: string) => {
       if (input === '/api/assistant/runtime?autoStart=false') {
         return {
           ok: true,
           json: async () => ({
             apiBaseUrl: 'http://127.0.0.1:32123/api',
-            projectPath: '/Users/demo/project',
+            projectPath: '/workspace/demo/project',
             health: { status: 'ready' },
           }),
         };
       }
       throw new Error(`Unexpected fetch: ${input}`);
-    }) as typeof fetch);
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
 
     const controller = createWebEditorV2Controller();
     await controller.enable();
 
-    expect(mocked.createGenieEditor).toHaveBeenCalledWith(
-      expect.objectContaining({
-        genieBridge: expect.objectContaining({
-          enabled: true,
-          apiBaseUrl: 'http://127.0.0.1:32123/api',
-          integrationChannel: '/Users/demo/project',
-          targetClientId: '',
-          projectPath: '/Users/demo/project',
-        }),
-        integrationWs: expect.objectContaining({
-          enabled: true,
-          apiBaseUrl: 'http://127.0.0.1:32123/api',
-          channel: 'make',
-          clientId: 'make-editor-abcd',
-        }),
-      }),
-    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
+    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
   });
 
@@ -628,6 +625,7 @@ describe('createWebEditorV2Controller', () => {
       expect.objectContaining({
         ui: {
           breadcrumbs: true,
+          getAssistantPanelOpen: expect.any(Function),
           propertyPanel: true,
           showCopyPromptAction: true,
           skillInstallSource: '.agents/skills/prototype-comments/SKILL.md',
@@ -729,6 +727,78 @@ describe('createWebEditorV2Controller', () => {
     expect(start).toHaveBeenCalledTimes(1);
   });
 
+  it('exposes a parent host toolbar action bridge for prompt card AI execution', async () => {
+    const start = vi.fn();
+    const listeners = new Map<string, Set<EventListener>>();
+    const parentWindow = { postMessage: vi.fn() };
+    const addEventListener = vi.fn((type: string, listener: EventListener) => {
+      const current = listeners.get(type) ?? new Set<EventListener>();
+      current.add(listener);
+      listeners.set(type, current);
+    });
+    const removeEventListener = vi.fn((type: string, listener: EventListener) => {
+      listeners.get(type)?.delete(listener);
+    });
+
+    mocked.createGenieEditor.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      getHostToolbarState: vi.fn(() => ({ toolbarMode: 'host', visible: true })),
+      subscribeHostToolbarState: vi.fn(() => () => undefined),
+      runHostToolbarAction: vi.fn(async () => true),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      parent: parentWindow,
+      addEventListener,
+      removeEventListener,
+      setTimeout: vi.fn(() => 1),
+      clearTimeout: vi.fn(),
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+
+    const editorOptions = mocked.createGenieEditor.mock.calls[0]?.[0];
+    const actionPromise = editorOptions.ui.onHostToolbarAction({ type: 'wake-genie' });
+    const request = parentWindow.postMessage.mock.calls[0]?.[0] as {
+      requestId: string;
+      type: string;
+      action: unknown;
+    };
+
+    expect(request).toEqual(expect.objectContaining({
+      type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_REQUEST',
+      action: { type: 'wake-genie' },
+    }));
+
+    const [messageListener] = Array.from(listeners.get('message') ?? []);
+    messageListener?.({
+      data: {
+        type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_RESULT',
+        requestId: request.requestId,
+        handled: true,
+      },
+      source: parentWindow,
+    } as MessageEvent);
+
+    await expect(actionPromise).resolves.toBe(true);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
   it('forwards host dark mode from direct dev-template enable options', async () => {
     const start = vi.fn();
 
@@ -772,6 +842,151 @@ describe('createWebEditorV2Controller', () => {
       }),
     );
     expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates assistant panel visibility for an existing editor and refreshes runtime UI', async () => {
+    const start = vi.fn();
+    const refresh = vi.fn();
+
+    mocked.createGenieEditor.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      refresh,
+      getState: vi.fn(() => ({ active: true, version: 2 })),
+      getStatus: vi.fn(() => ({ active: true, undoCount: 0, redoCount: 0 })),
+      getHostToolbarState: vi.fn(() => ({ toolbarMode: 'host', visible: true })),
+      subscribeHostToolbarState: vi.fn(() => () => undefined),
+      runHostToolbarAction: vi.fn(async () => true),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const ui = mocked.createGenieEditor.mock.calls[0]?.[0]?.ui;
+
+    expect(ui?.getAssistantPanelOpen?.()).toBe(false);
+
+    await controller.enable({ assistantPanelOpen: true });
+
+    expect(mocked.createGenieEditor).toHaveBeenCalledTimes(1);
+    expect(ui?.getAssistantPanelOpen?.()).toBe(true);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses enable-time internal comment page scope for resource context and refreshes route state when it changes', async () => {
+    const start = vi.fn();
+    const refresh = vi.fn();
+    const dispatchEvent = vi.fn();
+
+    mocked.createGenieEditor.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      refresh,
+      getState: vi.fn(() => ({ active: true, version: 2 })),
+      getStatus: vi.fn(() => ({ active: true, undoCount: 0, redoCount: 0 })),
+      getHostToolbarState: vi.fn(() => ({ toolbarMode: 'host', visible: true })),
+      subscribeHostToolbarState: vi.fn(() => () => undefined),
+      runHostToolbarAction: vi.fn(async () => true),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?genieToolbar=host#page=voice-annotation',
+        pathname: '/prototypes/touch-and-talk-annotation-demo',
+        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?genieToolbar=host#page=voice-annotation',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      dispatchEvent,
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({
+      toolbarMode: 'host',
+      commentPageScope: 'prototypes/touch-and-talk-annotation-demo::page::common-tips',
+    });
+
+    const host = mocked.createGenieEditor.mock.calls[0]?.[0]?.host;
+    expect(host?.getResourceContext?.()?.meta?.commentPageScope)
+      .toBe('prototypes/touch-and-talk-annotation-demo::page::common-tips');
+
+    await controller.enable({
+      toolbarMode: 'host',
+      commentPageScope: 'prototypes/touch-and-talk-annotation-demo::page::voice-annotation',
+    });
+
+    expect(host?.getResourceContext?.()?.meta?.commentPageScope)
+      .toBe('prototypes/touch-and-talk-annotation-demo::page::voice-annotation');
+    expect(refresh).toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'axhub-web-editor-route-change',
+    }));
+  });
+
+  it('refreshes scoped comments when an active editor is enabled again for the same page scope', async () => {
+    const start = vi.fn();
+    const refresh = vi.fn();
+    const dispatchEvent = vi.fn();
+
+    mocked.createGenieEditor.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      refresh,
+      getState: vi.fn(() => ({ active: true, version: 2 })),
+      getStatus: vi.fn(() => ({ active: true, undoCount: 0, redoCount: 0 })),
+      getHostToolbarState: vi.fn(() => ({ toolbarMode: 'host', visible: true })),
+      subscribeHostToolbarState: vi.fn(() => () => undefined),
+      runHostToolbarAction: vi.fn(async () => true),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?genieToolbar=host#page=common-tips',
+        pathname: '/prototypes/touch-and-talk-annotation-demo',
+        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?genieToolbar=host#page=common-tips',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      dispatchEvent,
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+
+    const controller = createWebEditorV2Controller();
+    const enableOptions = {
+      toolbarMode: 'host' as const,
+      commentPageScope: 'prototypes/touch-and-talk-annotation-demo::page::common-tips',
+    };
+
+    await controller.enable(enableOptions);
+    dispatchEvent.mockClear();
+    refresh.mockClear();
+
+    await controller.enable(enableOptions);
+
+    expect(refresh).toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'axhub-web-editor-route-change',
+    }));
   });
 
   it('reports page tweak entries as decision data for parent preview auto-open checks', () => {
@@ -938,7 +1153,7 @@ describe('createWebEditorV2Controller', () => {
     const controller = createWebEditorV2Controller();
     await controller.saveTextChanges();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(acknowledgeSavedTextChanges).not.toHaveBeenCalled();
   });
 
@@ -999,7 +1214,7 @@ describe('createWebEditorV2Controller', () => {
     const controller = createWebEditorV2Controller();
     await expect(controller.saveTextChanges()).rejects.toThrow('保存文本失败');
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(acknowledgeSavedTextChanges).not.toHaveBeenCalled();
   });
 
@@ -1059,12 +1274,10 @@ describe('createWebEditorV2Controller', () => {
     const controller = createWebEditorV2Controller();
     await controller.saveTextChanges();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(alertMock).not.toHaveBeenCalled();
-    expect(postMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(postMessageMock).not.toHaveBeenCalledWith(expect.objectContaining({
       type: 'WEB_EDITOR_NOTICE',
-      level: 'warning',
-      message: expect.stringContaining('相同原文被修改成不同内容'),
     }), '*');
     expect(acknowledgeSavedTextChanges).not.toHaveBeenCalled();
   });

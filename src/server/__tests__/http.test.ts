@@ -144,6 +144,13 @@ describe('make-server HTTP server', () => {
     expect(handleWorkspaceApi).toBeTypeOf('function');
   });
 
+  it('does not depend on the host zip command for server ZIP downloads', () => {
+    const httpSource = fs.readFileSync(new URL('../http.ts', import.meta.url), 'utf8');
+
+    expect(httpSource).not.toContain("spawn('zip'");
+    expect(httpSource).not.toContain('node:child_process');
+  });
+
   it('serves project registry APIs, active project resources, docs content, and entries compatibility', async () => {
     const projectRoot = createProjectRoot();
     const secondProjectRoot = createProjectRoot();
@@ -541,6 +548,97 @@ describe('make-server HTTP server', () => {
         }),
       ]);
       expect(body.capabilities).toEqual({});
+
+      const version = await fetch(`${server.origin}/api/version`);
+      const versionBody = await version.json();
+      expect(version.status).toBe(200);
+      expect(versionBody).toMatchObject({
+        projectId: 'missing-metadata',
+      });
+      expect(versionBody.version).toBeTruthy();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('serves startup GET APIs with fallback payloads when active project metadata is missing', async () => {
+    const projectRoot = createProjectRoot();
+    fs.rmSync(getMakeClientMarkerPath(projectRoot), { force: true });
+    fs.rmSync(path.join(projectRoot, 'package.json'), { force: true });
+    const registryPath = createRegistryPath();
+    writeJson(registryPath, {
+      schemaVersion: 1,
+      activeProjectId: 'missing-metadata',
+      projects: [
+        {
+          id: 'missing-metadata',
+          name: 'Missing Metadata',
+          root: projectRoot,
+          metadataPath: getProjectMetadataPath(projectRoot),
+          createdAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:00.000Z',
+        },
+      ],
+    });
+    fs.rmSync(getProjectMetadataPath(projectRoot), { force: true });
+
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath,
+    });
+
+    try {
+      const requests = [
+        '/api/version',
+        '/api/config/bootstrap',
+        '/api/assistant/runtime?autoStart=false',
+        '/api/cloud-publishing/latest',
+        '/api/projects/missing-metadata/resources',
+        '/api/entries.json',
+        '/api/workspace/project',
+        '/api/workspace/navigation?tab=prototypes',
+        '/api/docs',
+        '/api/themes',
+        '/api/workspace/resources/order?type=themes',
+      ];
+      const responses = await Promise.all(requests.map(async (requestPath) => {
+        const response = await fetch(`${server.origin}${requestPath}`);
+        return {
+          requestPath,
+          status: response.status,
+          body: await response.json().catch(() => null),
+        };
+      }));
+
+      expect(responses.map(({ requestPath, status }) => ({ requestPath, status }))).toEqual(
+        requests.map((requestPath) => ({ requestPath, status: 200 })),
+      );
+      expect(responses.find((item) => item.requestPath === '/api/projects/missing-metadata/resources')?.body)
+        .toMatchObject({
+          unavailable: true,
+          error: { code: 'PROJECT_METADATA_MISSING' },
+          project: { id: 'missing-metadata' },
+          resources: {
+            prototypes: [],
+            docs: [],
+            themes: [],
+          },
+        });
+      expect(responses.find((item) => item.requestPath === '/api/entries.json')?.body)
+        .toEqual({ components: [], prototypes: [] });
+      expect(responses.find((item) => item.requestPath === '/api/workspace/project')?.body)
+        .toEqual({ title: 'Missing Metadata' });
+      expect(responses.find((item) => item.requestPath === '/api/workspace/navigation?tab=prototypes')?.body)
+        .toMatchObject({ tab: 'prototypes', tree: [] });
+      expect(responses.find((item) => item.requestPath === '/api/docs')?.body)
+        .toEqual([]);
+      expect(responses.find((item) => item.requestPath === '/api/themes')?.body)
+        .toEqual([]);
+      expect(responses.find((item) => item.requestPath === '/api/workspace/resources/order?type=themes')?.body)
+        .toMatchObject({ type: 'themes', order: [] });
     } finally {
       await server.close();
     }
@@ -710,6 +808,58 @@ describe('make-server HTTP server', () => {
 
       const markdown = await fetch(`${server.origin}/docs/spec.md`).then((response) => response.text());
       expect(markdown).toBe('# Project Spec\n\n## Intro\n');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('serves spec template HTML through Vite transforms in dev mode', async () => {
+    const projectRoot = createProjectRoot();
+    const adminRoot = path.join(projectRoot, 'admin-dist');
+    fs.mkdirSync(adminRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(adminRoot, 'spec-template.html'),
+      '<html><head><title>{{TITLE}}</title></head><body><script type="module" src="/assets/spec-template-bootstrap.js"></script></body></html>',
+      'utf8',
+    );
+    const transformHtml = vi.fn(async (url: string, htmlPath: string) => {
+      const html = fs.readFileSync(htmlPath, 'utf8');
+      return html
+        .replace('{{TITLE}}', `transformed:${url}`)
+        .replace('</head>', '<script type="module">import "@vitejs/plugin-react/preamble";</script></head>');
+    });
+    const createViteDevMiddleware = vi.fn(async () => ({
+      handle: vi.fn((_req, res) => {
+        res.statusCode = 404;
+        res.end();
+      }),
+      transformHtml,
+      close: vi.fn(),
+    }));
+    vi.doMock('../viteDevServer.ts', () => ({ createViteDevMiddleware }));
+
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot,
+      registryPath: createRegistryPath(),
+      devMode: true,
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/spec-template.html?url=%2Fapi%2Fprojects%2Fmake-project%2Fdocs%2Fspec%2Fcontent`);
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(createViteDevMiddleware).toHaveBeenCalledTimes(1);
+      expect(transformHtml).toHaveBeenCalledWith(
+        '/spec-template.html',
+        path.join(adminRoot, 'spec-template.html'),
+        expect.stringContaining('window.__PROJECT_ROOT__'),
+      );
+      expect(html).toContain('<title>transformed:/spec-template.html</title>');
+      expect(html).toContain('@vitejs/plugin-react/preamble');
     } finally {
       await server.close();
     }
@@ -941,10 +1091,50 @@ describe('make-server HTTP server', () => {
     }
   });
 
-  it('does not accept root page requests before Vite dev middleware is ready', async () => {
+  it('keeps dev-mode API startup lightweight by creating embedded Vite only for frontend requests', async () => {
     const projectRoot = createProjectRoot();
     const registryPath = createRegistryPath();
-    const port = await getFreePort();
+    const createViteDevMiddleware = vi.fn(async () => ({
+      handle: vi.fn(),
+      transformHtml: vi.fn(async () => '<!doctype html><title>Admin</title>'),
+      close: vi.fn(),
+    }));
+
+    vi.resetModules();
+    vi.doMock('../viteDevServer.ts', () => ({ createViteDevMiddleware }));
+    const { startMakeServer: startMakeServerWithMockedVite } = await import('../index.ts');
+
+    const server = await startMakeServerWithMockedVite({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath,
+      devMode: true,
+    });
+
+    try {
+      const health = await fetch(`${server.origin}/api/health`).then((response) => response.json());
+      expect(health).toMatchObject({
+        ok: true,
+        devMode: true,
+      });
+      expect(createViteDevMiddleware).not.toHaveBeenCalled();
+
+      const rootResponse = await fetch(`${server.origin}/?projectId=make-project`);
+      expect(rootResponse.status).toBe(200);
+      expect(await rootResponse.text()).toContain('Admin');
+      expect(createViteDevMiddleware).toHaveBeenCalledTimes(1);
+    } finally {
+      await server.close();
+      vi.doUnmock('../viteDevServer.ts');
+      vi.resetModules();
+    }
+  });
+
+  it('serves dev-mode APIs while the first admin frontend request waits for Vite', async () => {
+    const projectRoot = createProjectRoot();
+    const registryPath = createRegistryPath();
     let resolveMiddleware: ((middleware: {
       handle: any;
       transformHtml: any;
@@ -958,42 +1148,48 @@ describe('make-server HTTP server', () => {
     vi.doMock('../viteDevServer.ts', () => ({ createViteDevMiddleware }));
     const { startMakeServer: startMakeServerWithMockedVite } = await import('../index.ts');
 
-    const startPromise = startMakeServerWithMockedVite({
+    const server = await startMakeServerWithMockedVite({
       projectRoot,
       host: 'localhost',
-      port,
+      port: 0,
       adminRoot: path.join(projectRoot, 'missing-admin'),
       registryPath,
       devMode: true,
     });
 
-    await vi.waitFor(() => {
-      expect(createViteDevMiddleware).toHaveBeenCalledTimes(1);
-    });
-
-    const prematureRootResponse = await fetch(`http://localhost:${port}/?projectId=make-project`)
+    const rootResponsePromise = fetch(`${server.origin}/?projectId=make-project`)
       .then(async (response) => ({
         status: response.status,
         contentType: response.headers.get('content-type') || '',
         body: await response.text(),
-      }))
-      .catch((error) => ({ error }));
+      }));
 
-    expect('error' in prematureRootResponse).toBe(true);
-
-    resolveMiddleware?.({
-      handle: vi.fn(),
-      transformHtml: vi.fn(async (_url: string, htmlPath: string) => fs.readFileSync(htmlPath, 'utf8')),
-      close: vi.fn(),
-    });
-
-    const server = await startPromise;
     try {
+      await vi.waitFor(() => {
+        expect(createViteDevMiddleware).toHaveBeenCalledTimes(1);
+      });
+
       const health = await fetch(`${server.origin}/api/health`).then((response) => response.json());
       expect(health).toMatchObject({
         ok: true,
         devMode: true,
       });
+
+      const rootRace = await Promise.race([
+        rootResponsePromise.then(() => 'resolved' as const),
+        new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 25)),
+      ]);
+      expect(rootRace).toBe('pending');
+
+      resolveMiddleware?.({
+        handle: vi.fn(),
+        transformHtml: vi.fn(async (_url: string, htmlPath: string) => fs.readFileSync(htmlPath, 'utf8')),
+        close: vi.fn(),
+      });
+
+      const rootResponse = await rootResponsePromise;
+      expect(rootResponse.status).toBe(200);
+      expect(rootResponse.contentType).toContain('text/html');
     } finally {
       await server.close();
       vi.doUnmock('../viteDevServer.ts');
@@ -1031,6 +1227,268 @@ describe('make-server HTTP server', () => {
     } finally {
       await server.close();
       await new Promise<void>((resolve) => runtimeServer.close(() => resolve()));
+    }
+  });
+
+  it('proxies dev-mode runtime module requests with prototype referers before admin Vite can restrict them', async () => {
+    const projectRoot = createProjectRoot();
+    const runtimeServer = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.end(`export const runtimeUrl = ${JSON.stringify(req.url)};`);
+    });
+    await new Promise<void>((resolve) => runtimeServer.listen(0, 'localhost', resolve));
+    const runtimeAddress = runtimeServer.address() as AddressInfo;
+    const runtimeOrigin = `http://localhost:${runtimeAddress.port}`;
+    const viteHandle = vi.fn((_req: any, res: any) => {
+      res.statusCode = 403;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end('<h1>403 Restricted</h1>');
+    });
+    const createViteDevMiddleware = vi.fn(async () => ({
+      handle: viteHandle,
+      transformHtml: vi.fn(async () => '<!doctype html><title>Admin</title>'),
+      close: vi.fn(),
+    }));
+
+    vi.resetModules();
+    vi.doMock('../viteDevServer.ts', () => ({ createViteDevMiddleware }));
+    const { startMakeServer: startMakeServerWithMockedVite } = await import('../index.ts');
+
+    const server = await startMakeServerWithMockedVite({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath: createRegistryPath(),
+      runtimeOrigin,
+      devMode: true,
+    });
+
+    try {
+      const requestPath = '/@fs/workspace/make14/node_modules/.vite/deps/@axhub_annotation.js?v=a8419558';
+      const response = await fetch(`${server.origin}${requestPath}`, {
+        headers: {
+          referer: `${server.origin}/prototypes/annotation-demo?genieToolbar=host`,
+        },
+      });
+      const body = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('javascript');
+      expect(body).toContain(`runtimeUrl = ${JSON.stringify(requestPath)}`);
+      expect(viteHandle).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => runtimeServer.close(() => resolve()));
+      vi.doUnmock('../viteDevServer.ts');
+      vi.resetModules();
+    }
+  });
+
+  it('proxies nested active-project @fs imports before admin Vite can restrict them', async () => {
+    const projectRoot = createProjectRoot();
+    const projectId = 'make14';
+    writeMakeClientProjectMarker(projectRoot, projectId, 'Make 14');
+    const runtimeServer = http.createServer((req, res) => {
+      if (req.url === '/api/health') {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({
+          ok: true,
+          role: 'runtime',
+          projectRoot,
+          server: {
+            pid: process.pid,
+            port: (runtimeServer.address() as AddressInfo).port,
+            host: 'localhost',
+            origin: `http://localhost:${(runtimeServer.address() as AddressInfo).port}`,
+            projectRoot,
+            startedAt: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+          },
+        }));
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.end(`export const nestedRuntimeUrl = ${JSON.stringify(req.url)};`);
+    });
+    await new Promise<void>((resolve) => runtimeServer.listen(0, 'localhost', resolve));
+    const runtimeAddress = runtimeServer.address() as AddressInfo;
+    const runtimeOrigin = `http://localhost:${runtimeAddress.port}`;
+    writeJson(getRuntimeServerInfoPath(projectRoot), {
+      pid: process.pid,
+      port: runtimeAddress.port,
+      host: 'localhost',
+      origin: runtimeOrigin,
+      projectRoot,
+      startedAt: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+    });
+    const registryPath = createRegistryPath();
+    writeJson(registryPath, {
+      schemaVersion: 1,
+      activeProjectId: projectId,
+      projects: [
+        {
+          id: projectId,
+          name: 'Make 14',
+          root: projectRoot,
+          metadataPath: getProjectMetadataPath(projectRoot),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    const viteHandle = vi.fn((_req: any, res: any) => {
+      res.statusCode = 403;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end('<h1>403 Restricted</h1>');
+    });
+    const createViteDevMiddleware = vi.fn(async () => ({
+      handle: viteHandle,
+      transformHtml: vi.fn(async () => '<!doctype html><title>Admin</title>'),
+      close: vi.fn(),
+    }));
+
+    vi.resetModules();
+    vi.doMock('../viteDevServer.ts', () => ({ createViteDevMiddleware }));
+    const { startMakeServer: startMakeServerWithMockedVite } = await import('../index.ts');
+
+    const server = await startMakeServerWithMockedVite({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath,
+      runtimeOrigin: 'http://localhost:1',
+      devMode: true,
+    });
+
+    try {
+      const fsPath = `${projectRoot}/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs`;
+      const requestPath = `/@fs${fsPath.split('/').map(encodeURIComponent).join('/')}`;
+      const response = await fetch(`${server.origin}${requestPath}`, {
+        headers: {
+          referer: `${server.origin}/@vite/client`,
+        },
+      });
+      const body = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('javascript');
+      expect(body).toContain(`nestedRuntimeUrl = ${JSON.stringify(requestPath)}`);
+      expect(viteHandle).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => runtimeServer.close(() => resolve()));
+      vi.doUnmock('../viteDevServer.ts');
+      vi.resetModules();
+    }
+  });
+
+  it('proxies runtime Vite client env imports from workspace parent dependencies', async () => {
+    const workspaceRoot = createProjectRoot();
+    const projectRoot = path.join(workspaceRoot, 'client');
+    fs.mkdirSync(projectRoot, { recursive: true });
+    const projectId = 'make-project';
+    writeMakeClientProjectMarker(projectRoot, projectId, 'Make Project');
+    const runtimeServer = http.createServer((req, res) => {
+      if (req.url === '/api/health') {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({
+          ok: true,
+          role: 'runtime',
+          projectRoot,
+          server: {
+            pid: process.pid,
+            port: (runtimeServer.address() as AddressInfo).port,
+            host: 'localhost',
+            origin: `http://localhost:${(runtimeServer.address() as AddressInfo).port}`,
+            projectRoot,
+            startedAt: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+          },
+        }));
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.end('const defines = {};');
+    });
+    await new Promise<void>((resolve) => runtimeServer.listen(0, 'localhost', resolve));
+    const runtimeAddress = runtimeServer.address() as AddressInfo;
+    const runtimeOrigin = `http://localhost:${runtimeAddress.port}`;
+    writeJson(getRuntimeServerInfoPath(projectRoot), {
+      pid: process.pid,
+      port: runtimeAddress.port,
+      host: 'localhost',
+      origin: runtimeOrigin,
+      projectRoot,
+      startedAt: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+    });
+    const registryPath = createRegistryPath();
+    writeJson(registryPath, {
+      schemaVersion: 1,
+      activeProjectId: projectId,
+      projects: [
+        {
+          id: projectId,
+          name: 'Make Project',
+          root: projectRoot,
+          metadataPath: getProjectMetadataPath(projectRoot),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    const viteHandle = vi.fn((_req: any, res: any) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.end('const defines = __DEFINES__;');
+    });
+    const createViteDevMiddleware = vi.fn(async () => ({
+      handle: viteHandle,
+      transformHtml: vi.fn(async () => '<!doctype html><title>Admin</title>'),
+      close: vi.fn(),
+    }));
+
+    vi.resetModules();
+    vi.doMock('../viteDevServer.ts', () => ({ createViteDevMiddleware }));
+    const { startMakeServer: startMakeServerWithMockedVite } = await import('../index.ts');
+
+    const server = await startMakeServerWithMockedVite({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath,
+      runtimeOrigin: 'http://localhost:1',
+      devMode: true,
+    });
+
+    try {
+      const fsPath = `${workspaceRoot}/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs`;
+      const requestPath = `/@fs${fsPath.split('/').map(encodeURIComponent).join('/')}`;
+      const response = await fetch(`${server.origin}${requestPath}`, {
+        headers: {
+          referer: `${server.origin}/@vite/client`,
+        },
+      });
+      const body = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(body).toContain('const defines = {};');
+      expect(body).not.toContain('__DEFINES__');
+      expect(viteHandle).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => runtimeServer.close(() => resolve()));
+      vi.doUnmock('../viteDevServer.ts');
+      vi.resetModules();
     }
   });
 

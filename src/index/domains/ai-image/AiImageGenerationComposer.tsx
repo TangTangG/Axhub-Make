@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import './AiImageGenerationComposer.css';
 import {
   unstable_useSlashCommandAdapter,
   useAui,
-  type ThreadMessage,
   type Unstable_SlashCommand,
 } from '@assistant-ui/react';
 import { ChevronDown, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { ComposerTriggerPopover } from '@/components/assistant-ui/composer-trigger-popover';
 import CanvasGenerationComposer, {
+  type CanvasAiSubmitRequest,
   extractCanvasGenerationReferenceImagesFromMessage,
   type CanvasGenerationSubmitResult,
 } from '../shared/CanvasGenerationComposer';
@@ -32,6 +32,7 @@ import { getAiImageTaskStore, type AiImageTaskParams, type AiImageTaskRecord } f
 import { AI_IMAGE_SKILLS, appendAiImageSkillPrompt } from './aiImageSkills';
 import type { CanvasLocalContextRef } from './canvasReferenceImages';
 import type { PromptClientPreference } from '../../types';
+import { pickCanvasAiScenePlaceholder } from '../ai-generation/canvasAiSceneRegistry';
 
 export interface AiImageComposerPlacement {
   left: number;
@@ -42,11 +43,17 @@ export interface AiImageComposerPlacement {
 interface AiImageGenerationComposerProps {
   canPasteReferenceImages?: boolean;
   conversationId?: string;
+  assistantProjectPath?: string;
+  draftStorageKey?: string | null;
+  generatorElementId?: string;
   initialReferenceImages?: string[];
   initialLocalContextRefs?: CanvasLocalContextRef[];
   preferredPromptClient?: PromptClientPreference;
   onPasteReferenceImages?: () => Promise<string[]>;
+  onOpenAISettings?: () => void;
+  onSubmitPrompt?: (request: CanvasAiSubmitRequest) => Promise<CanvasGenerationSubmitResult>;
   placement: AiImageComposerPlacement;
+  topContent?: ReactNode;
   onParamsChanged?: (params: AiImageTaskParams) => void;
   onTaskStarted?: (task: AiImageTaskRecord) => void;
   onTaskFinished?: (task: AiImageTaskRecord) => void;
@@ -61,7 +68,6 @@ interface AiImageConfigResponse {
       outputCompression?: number | null;
       moderation?: 'auto' | 'low';
       n?: number;
-      codexCli?: boolean;
     };
   };
 }
@@ -70,7 +76,6 @@ type UpdateAiImageParam = <K extends keyof AiImageTaskParams>(key: K, value: AiI
 type ImageDimensions = { width: string; height: string };
 type NormalizedAiImageConfig = {
   params: AiImageTaskParams;
-  codexCli: boolean;
 };
 
 const CUSTOM_SIZE_VALUE = 'custom';
@@ -118,21 +123,32 @@ const DEFAULT_PARAMS: AiImageTaskParams = {
 };
 const DEFAULT_CONFIG: NormalizedAiImageConfig = {
   params: DEFAULT_PARAMS,
-  codexCli: false,
 };
+
+function providerToPromptClientPreference(provider: string | null | undefined): PromptClientPreference {
+  const normalized = String(provider || '').trim().toLowerCase();
+  if (
+    normalized === 'claude'
+    || normalized === 'codex'
+    || normalized === 'gemini'
+    || normalized === 'opencode'
+  ) {
+    return `acp:${normalized}` as PromptClientPreference;
+  }
+  return null;
+}
 
 function normalizeParams(config: AiImageConfigResponse | null): NormalizedAiImageConfig {
   const aiConfig = config?.ai?.imageGeneration;
   return {
     params: {
       size: aiConfig?.size || DEFAULT_PARAMS.size,
-      quality: aiConfig?.codexCli === true ? 'auto' : aiConfig?.quality || DEFAULT_PARAMS.quality,
+      quality: aiConfig?.quality || DEFAULT_PARAMS.quality,
       output_format: aiConfig?.outputFormat || DEFAULT_PARAMS.output_format,
       output_compression: aiConfig?.outputCompression ?? DEFAULT_PARAMS.output_compression,
       moderation: aiConfig?.moderation || DEFAULT_PARAMS.moderation,
       n: typeof aiConfig?.n === 'number' ? Math.max(1, Math.min(10, Math.round(aiConfig.n))) : DEFAULT_PARAMS.n,
     },
-    codexCli: aiConfig?.codexCli === true,
   };
 }
 
@@ -164,7 +180,6 @@ function sizeToDimensions(size: string): ImageDimensions {
 }
 
 interface ImageSettingsProps {
-  codexCli: boolean;
   params: AiImageTaskParams;
   activeSizeLabel: string;
   activeQualityLabel: string;
@@ -176,7 +191,6 @@ interface ImageSettingsProps {
 }
 
 function ImageSettingsPopover({
-  codexCli,
   params,
   activeSizeLabel,
   activeQualityLabel,
@@ -186,7 +200,6 @@ function ImageSettingsPopover({
   onCustomDimensionsChanged,
   updateParam,
 }: ImageSettingsProps) {
-  const config = { codexCli };
   const isCustomSize = activeSizeLabel === '自定义';
   const updateCustomDimension = (dimension: 'width' | 'height', value: string) => {
     const nextValue = normalizeDimensionInput(value);
@@ -205,14 +218,14 @@ function ImageSettingsPopover({
           className="ax-ai-image-settings-trigger"
           aria-label="图片设置"
         >
-          <SlidersHorizontal aria-hidden="true" />
+          <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
           <span
             data-axhub-ai-image-composer-settings-summary
             className="ax-ai-image-settings-summary"
           >
             {activeSizeLabel} · {activeQualityLabel} · {activeCountLabel} · {activeFormatLabel}
           </span>
-          <ChevronDown aria-hidden="true" />
+          <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
@@ -251,10 +264,8 @@ function ImageSettingsPopover({
 
             <label className="space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">质量</span>
-              <Select value={config.codexCli ? 'auto' : params.quality} onValueChange={(value) => {
-                if (!config.codexCli) updateParam('quality', value as AiImageTaskParams['quality']);
-              }}>
-                <SelectTrigger className="h-8 text-xs" disabled={config.codexCli}>
+              <Select value={params.quality} onValueChange={(value) => updateParam('quality', value as AiImageTaskParams['quality'])}>
+                <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent style={IMAGE_SETTINGS_SELECT_CONTENT_STYLE}>
@@ -265,9 +276,6 @@ function ImageSettingsPopover({
                   ))}
                 </SelectContent>
               </Select>
-              {config.codexCli ? (
-                <span className="block text-[11px] leading-tight text-muted-foreground">Codex CLI 不支持质量参数</span>
-              ) : null}
             </label>
           </div>
 
@@ -350,7 +358,6 @@ function ImageSettingsPopover({
 }
 
 function AiImageComposerAction({
-  codexCli,
   params,
   activeSizeLabel,
   activeQualityLabel,
@@ -362,7 +369,6 @@ function AiImageComposerAction({
 }: ImageSettingsProps) {
   return (
     <ImageSettingsPopover
-      codexCli={codexCli}
       params={params}
       activeSizeLabel={activeSizeLabel}
       activeQualityLabel={activeQualityLabel}
@@ -399,7 +405,7 @@ function AiImageSkillTriggers() {
   return (
     <ComposerTriggerPopover
       char="/"
-      emptyItemsLabel="没有匹配的技能"
+      emptyItemsLabel="没有匹配的提示词"
       action={slash.action}
       adapter={slash.adapter}
       iconMap={slash.iconMap}
@@ -428,13 +434,13 @@ function AiImageSkillsButton({
       <PopoverTrigger asChild>
         <button
           type="button"
-          data-axhub-ai-image-composer-skills-trigger
+          data-axhub-ai-image-composer-prompts-trigger
           className="ax-ai-image-skills-trigger"
           disabled={submitting}
-          aria-label="打开 AI 生图技能"
+          aria-label="打开 AI 生图提示词"
         >
           <Sparkles aria-hidden="true" />
-          <span>技能</span>
+          <span>提示词</span>
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -443,7 +449,7 @@ function AiImageSkillsButton({
         className="z-[1300] w-64 overflow-hidden p-0"
       >
         <div
-          data-axhub-ai-image-composer-skills-menu
+          data-axhub-ai-image-composer-prompts-menu
           className="flex flex-col py-1"
         >
           {AI_IMAGE_SKILLS.map((skill) => (
@@ -471,17 +477,24 @@ function AiImageSkillsButton({
 export default function AiImageGenerationComposer({
   canPasteReferenceImages,
   conversationId,
+  assistantProjectPath,
+  draftStorageKey,
+  generatorElementId,
   initialReferenceImages,
   initialLocalContextRefs,
   preferredPromptClient,
   onPasteReferenceImages,
+  onOpenAISettings,
+  onSubmitPrompt,
   placement,
+  topContent,
   onParamsChanged,
   onTaskStarted,
   onTaskFinished,
 }: AiImageGenerationComposerProps) {
   const [config, setConfig] = useState<NormalizedAiImageConfig>(DEFAULT_CONFIG);
   const params = config.params;
+  const [placeholder] = useState(() => pickCanvasAiScenePlaceholder('design'));
   const [customDimensions, setCustomDimensions] = useState<ImageDimensions>({ width: '', height: '' });
   const [submitting, setSubmitting] = useState(false);
 
@@ -534,21 +547,40 @@ export default function AiImageGenerationComposer({
   };
 
   const handleSubmitPrompt = useCallback(async (
-    prompt: string,
-    message: ThreadMessage,
+    request: CanvasAiSubmitRequest,
   ): Promise<CanvasGenerationSubmitResult> => {
-    const referenceImages = extractCanvasGenerationReferenceImagesFromMessage(message);
+    const message = request.message;
+    const referenceImages = request.referenceImages.length
+      ? request.referenceImages
+      : extractCanvasGenerationReferenceImagesFromMessage(message);
+    const prompt = request.prompt;
+    const selectedPromptClient = providerToPromptClientPreference(request.provider) || preferredPromptClient;
     setSubmitting(true);
     try {
+      if (onSubmitPrompt) {
+        return await onSubmitPrompt({
+          ...request,
+          prompt,
+          referenceImages,
+          sceneSettings: params,
+        });
+      }
       const task = await getAiImageTaskStore().submit({
         prompt,
         params,
+        ...(generatorElementId ? { generatorElementId } : {}),
+        provider: request.provider,
+        model: request.model,
+        mode: request.mode,
+        thought: request.thought,
+        contextBundle: request.contextBundle,
+        preferredPromptClient: selectedPromptClient,
         ...(conversationId ? { conversationId } : {}),
         ...(referenceImages.length ? { referenceImages } : {}),
         ...(initialLocalContextRefs?.length ? {
           sourcePrompt: prompt,
           localContextRefs: initialLocalContextRefs,
-          preferredPromptClient,
+          preferredPromptClient: selectedPromptClient,
         } : {}),
       }, {
         onCreated: (createdTask) => onTaskStarted?.(createdTask),
@@ -559,6 +591,7 @@ export default function AiImageGenerationComposer({
         return {
           ok: true,
           text: `生成完成，共 ${task.outputImages.length} 张`,
+          artifactRefs: task.outputImages,
         };
       }
       toast.error(task.error || '图片生成失败');
@@ -570,27 +603,34 @@ export default function AiImageGenerationComposer({
     } finally {
       setSubmitting(false);
     }
-  }, [conversationId, initialLocalContextRefs, onTaskFinished, onTaskStarted, params, preferredPromptClient]);
+  }, [conversationId, generatorElementId, initialLocalContextRefs, onSubmitPrompt, onTaskFinished, onTaskStarted, params, preferredPromptClient]);
 
   return (
     <CanvasGenerationComposer
+      scene="page"
       dataAttribute="data-axhub-ai-image-composer"
       className="aui-root ax-ai-image-composer-host pointer-events-auto absolute z-[1200]"
       placement={placement}
       placementMode="fixed-bottom-center"
-      placeholder="今天我们要创作什么"
+      topContent={topContent}
+      workspacePath={assistantProjectPath}
+      placeholder={placeholder}
       ariaLabel="AI 图片生成提示词"
       sendTooltip="生成图片"
       addAttachmentTooltip="添加参考图"
       allowAttachments={true}
+      showSelectors={true}
       attachmentsClassName="ax-ai-image-composer-attachments"
       canPasteReferenceImages={canPasteReferenceImages}
+      draftStorageKey={draftStorageKey}
       rootClassName="ax-ai-image-composer-root"
       footerClassName="ax-ai-image-composer-footer"
       footerLeadingActionsClassName="ax-ai-image-composer-footer-leading-actions"
       footerActionsClassName="ax-ai-image-composer-footer-actions"
+      initialLocalContextRefs={initialLocalContextRefs}
       initialReferenceImages={initialReferenceImages}
       onPasteReferenceImages={onPasteReferenceImages}
+      onOpenAISettings={onOpenAISettings}
       submitting={submitting}
       onSubmitPrompt={handleSubmitPrompt}
       renderLeadingActions={({ submitting: isSubmitting }) => (
@@ -599,7 +639,6 @@ export default function AiImageGenerationComposer({
             submitting={isSubmitting}
           />
           <AiImageComposerAction
-            codexCli={config.codexCli}
             params={params}
             activeSizeLabel={activeSizeLabel}
             activeQualityLabel={activeQualityLabel}

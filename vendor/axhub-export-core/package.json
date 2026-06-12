@@ -52,7 +52,7 @@
     }
   },
   "dependencies": {
-    "@zumer/snapdom": "^2.0.1",
+    "@zumer/snapdom": "^2.12.8",
     "kiwi-schema": "^0.5.0",
     "pako": "^2.1.0"
   }

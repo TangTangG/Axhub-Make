@@ -12,11 +12,15 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain('const currentConfig = await configRes.json();');
   });
 
-  it('renders online Genie agents and nests CLI agents under the local app group', () => {
+  it('renders one Web AI action plus AI settings and nests CLI agents under the local app group', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
     const onlineOptionsSource = source.slice(
-      source.indexOf('const ONLINE_WEB_AGENT_OPTIONS'),
+      source.indexOf('const WEB_AI_OPEN_OPTION'),
       source.indexOf('export default function OpenInDropdown'),
+    );
+    const onlineGroupSource = source.slice(
+      source.indexOf("renderAgentGroup('在线打开'"),
+      source.indexOf("renderAgentGroup('在本地应用中打开'"),
     );
 
     expect(source).toContain('在本地应用中打开');
@@ -24,26 +28,40 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain("renderAgentGroup('在 CLI 中打开'");
     expect(source).toContain('本地 CLI');
     expect(source).toContain('在线打开');
+    expect(source).toContain('打开 Web AI');
+    expect(source).toContain('onOpenAISettings?: () => void;');
+    expect(source).toContain('const handleOpenAISettings = useCallback(() => {');
+    expect(source).toContain('onOpenAISettings?.();');
+    expect(onlineGroupSource).toContain('onClick={handleToggleWebAiMenu}');
+    expect(onlineGroupSource).toContain('handleOpenAISettings');
+    expect(onlineGroupSource).toContain('设置');
+    expect(onlineGroupSource).not.toContain('visibleOnlineWebAgentOptions.map');
+    expect(onlineGroupSource).not.toContain('renderOptionMeta');
     expect(source).toContain("title: '本地应用'");
     expect(source).toContain("title: '本地 CLI'");
+    expect(source).toContain("'vscode'");
+    expect(source).not.toContain('Visual Studio Code');
+    expect(source).not.toContain('Kiro');
+    expect(source).not.toContain("'kiro'");
     expect(source).toContain('GeminiCLI');
     expect(source).not.toContain('GeminiCli');
-    expect(source).toContain('支持：Claude Code、Codex、OpenCode、Gemini CLI');
-    expect(source).toContain('ONLINE_WEB_AGENT_OPTIONS');
-    expect(source).toContain('genieProvider?: GenieProvider;');
+    expect(source).toContain('打开浏览器内置的 Web AI 面板。');
+    expect(source).toContain('WEB_AI_OPEN_OPTION');
+    expect(source).not.toContain('ONLINE_WEB_AGENT_OPTIONS');
+    expect(source).not.toContain('genieProvider?: GenieProvider;');
     expect(onlineOptionsSource).not.toContain("webAgent: 'opencode'");
-    expect(onlineOptionsSource).toContain("label: 'OpenCode'");
-    expect(onlineOptionsSource).not.toContain("label: 'OpenCode Web UI'");
+    expect(onlineOptionsSource).not.toContain("label: 'OpenCode'");
+    expect(onlineOptionsSource).toContain("label: '打开 Web AI'");
     expect(onlineOptionsSource).toContain("webAgent: 'genie'");
-    expect(source).toContain("availabilitySource: 'cli'");
-    expect(source).toContain("availabilityKey: 'claudecode'");
-    expect(source).toContain("availabilityKey: 'codex'");
-    expect(source).toContain("availabilityKey: 'opencode'");
-    expect(source).toContain("availabilityKey: 'gemini'");
-    expect(source).toContain("genieProvider: 'opencode'");
+    expect(source).not.toContain("availabilitySource: 'cli'");
+    expect(source).not.toContain("availabilityKey: 'claudecode'");
+    expect(source).not.toContain("availabilityKey: 'codex'");
+    expect(source).not.toContain("availabilityKey: 'opencode'");
+    expect(source).not.toContain("availabilityKey: 'gemini'");
+    expect(source).not.toContain("genieProvider: 'opencode'");
     expect(source).not.toContain('未检测到可用的本地应用或编辑器');
     expect(source).not.toContain('未检测到可用的 CLI Agent');
-    expect(source).toContain('未检测到可用的 Web Agent');
+    expect(source).not.toContain('未检测到可用的 Web Agent');
     expect(source).not.toContain('hasLocalAppMenuItems');
     expect(source).toContain('const renderAgentGroup =');
     expect(source).toContain('const MAX_INLINE_LOCAL_APP_OPEN_OPTIONS = 5;');
@@ -81,9 +99,9 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain("if (agent === 'genie' && onOpenGenieWebAgent)");
     expect(source).toContain('onOpenGenieWebAgent(openTargetPath, provider)');
     expect(source).toContain("void savePreference({ type: 'web', value: provider || agent })");
-    expect(source).toContain("if (agent === 'opencode' && onOpenGenieWebAgent)");
-    expect(source).toContain("void savePreference({ type: 'web', value: 'opencode' })");
-    expect(source).toContain("onOpenGenieWebAgent(openTargetPath, 'opencode')");
+    expect(source).not.toContain("if (agent === 'opencode' && onOpenGenieWebAgent)");
+    expect(source).not.toContain("void savePreference({ type: 'web', value: 'opencode' })");
+    expect(source).not.toContain("onOpenGenieWebAgent(openTargetPath, 'opencode')");
     expect(source).not.toContain('const WEB_AGENT_READY_ATTEMPTS = 20;');
     expect(source).not.toContain('async function waitForWebAgentUrlReady(url: string): Promise<boolean>');
     expect(source).not.toContain('const ready = await waitForWebAgentUrlReady(readinessUrl);');
@@ -92,7 +110,7 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain('targetPath?: string | null;');
     expect(source).toContain('const projectId = targetProjectId?.trim() || activeProjectId?.trim() || undefined;');
     expect(source).toContain('const openTargetPath = targetPath?.trim() || undefined;');
-    expect(source).toContain('handleOpenProjectInIDE(ide, openTargetPath)');
+    expect(source).toContain('handleOpenProjectInIDE(ide, openTargetPath, projectId)');
     expect(source).toContain('apiService.openCLIAgent({ agent, projectId, targetPath: openTargetPath });');
     expect(source).toContain('projectId,');
     expect(source).toContain('targetPath: openTargetPath');
@@ -100,7 +118,7 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain("let panelUrl = result.url?.startsWith('/')");
     expect(source).not.toContain('await Promise.resolve(onOpenWebAgentInPanel(panelUrl));');
     expect(source).not.toContain("toast.warning('OpenCode 正在启动，已在侧边栏打开');");
-    expect(source).toContain('void handleOpenWithOnlineWebAgent(option)');
+    expect(source).not.toContain('void handleOpenWithOnlineWebAgent(option)');
     expect(source).toContain('void handleOpenWithWebAgent(storedWebOpenMethod.agent, storedWebOpenMethod.provider);');
     expect(source).toContain('void handleOpenWithLocalApp(openMethod.value as LocalAppAgent);');
     expect(source).not.toContain('<DropdownMenuLabel>{renderGroupLabel');
@@ -108,56 +126,41 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain('visibleIDEOptions.length > 0');
   });
 
-  it('loads cached agent versions when the open menu opens and renders menu extra text', () => {
+  it('does not check or render agent versions in the open menu', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
-    const agentVersionCacheSource = readFileSync(resolve(__dirname, '../../utils/agentVersionCache.ts'), 'utf8');
 
-    expect(source).toContain('AGENT_VERSION_CACHE_TTL_MS');
-    expect(source).toContain('apiService.getAgentVersions');
-    expect(source).toContain('agentVersionCacheRef');
-    expect(source).toContain('formatAgentVersionMeta');
     expect(source).toContain('handleDropdownOpenChange');
-    expect(source).toContain('loadAgentVersions');
-    expect(agentVersionCacheSource).toContain('未安装');
-    expect(source).toContain('optionMeta');
-    expect(source).toContain('ml-auto');
+    expect(source).not.toContain('AGENT_VERSION_CACHE_TTL_MS');
+    expect(source).not.toContain('apiService.getAgentVersions');
+    expect(source).not.toContain('agentVersionCacheRef');
+    expect(source).not.toContain('formatAgentVersionMeta');
+    expect(source).not.toContain('loadAgentVersions');
+    expect(source).not.toContain('optionMeta');
+    expect(source).not.toContain('ml-auto');
   });
 
-  it('keeps online Genie agents visible even when the local agent is missing', () => {
+  it('keeps the single Web AI action visible regardless of local agent availability', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
-    const visibleOnlineSource = source.slice(
-      source.indexOf('const visibleOnlineWebAgentOptions'),
-      source.indexOf('const projectId'),
-    );
     const propsSource = source.slice(
       source.indexOf('export default function OpenInDropdown({'),
       source.indexOf('}: OpenInDropdownProps)'),
     );
 
     expect(source).toContain('agentAvailability?: RuntimeAgentAvailability;');
-    expect(visibleOnlineSource).toContain('const visibleOnlineWebAgentOptions = ONLINE_WEB_AGENT_OPTIONS;');
-    expect(visibleOnlineSource).not.toContain('.filter');
-    expect(visibleOnlineSource).not.toContain('agentAvailability');
-    expect(visibleOnlineSource).not.toContain("status !== 'missing'");
+    expect(source).toContain('const WEB_AI_OPEN_OPTION');
+    expect(source).not.toContain('const visibleOnlineWebAgentOptions');
+    expect(source).not.toContain("status !== 'missing'");
     expect(propsSource).not.toContain('agentAvailability,');
   });
 
-  it('places OpenCode third in the online Genie list and local apps before existing IDE options', () => {
+  it('places the online group before local apps and keeps local apps before existing IDE options', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
     const agentTypesSource = readFileSync(resolve(__dirname, '../../../server/agentTypes.ts'), 'utf8');
-    const onlineOptionsSource = source.slice(
-      source.indexOf('const ONLINE_WEB_AGENT_OPTIONS'),
-      source.indexOf('export default function OpenInDropdown'),
-    );
 
     const onlineIndex = source.indexOf("renderAgentGroup('在线打开'");
     const localAppGroupIndex = source.indexOf("renderAgentGroup('在本地应用中打开'");
     const localAppOptionIndex = source.indexOf('...LOCAL_APP_AGENT_OPTIONS.map');
     const editorIndex = source.indexOf('...MAIN_IDE_OPTIONS.map');
-    const claudeIndex = onlineOptionsSource.indexOf("value: 'claudecode'");
-    const codexIndex = onlineOptionsSource.indexOf("value: 'codex'");
-    const opencodeIndex = onlineOptionsSource.indexOf("value: 'opencode-webui'");
-    const geminiIndex = onlineOptionsSource.indexOf("value: 'gemini'");
 
     expect(onlineIndex).toBeGreaterThan(-1);
     expect(localAppGroupIndex).toBeGreaterThan(-1);
@@ -165,31 +168,19 @@ describe('OpenInDropdown source', () => {
     expect(editorIndex).toBeGreaterThan(-1);
     expect(onlineIndex).toBeLessThan(localAppGroupIndex);
     expect(localAppOptionIndex).toBeLessThan(editorIndex);
-    expect(claudeIndex).toBeGreaterThan(-1);
-    expect(codexIndex).toBeGreaterThan(-1);
-    expect(opencodeIndex).toBeGreaterThan(-1);
-    expect(geminiIndex).toBeGreaterThan(-1);
-    expect(claudeIndex).toBeLessThan(codexIndex);
-    expect(codexIndex).toBeLessThan(opencodeIndex);
-    expect(opencodeIndex).toBeLessThan(geminiIndex);
     expect(agentTypesSource).toContain("{ value: 'codex', label: 'Codex' }");
     expect(agentTypesSource).toContain("{ value: 'opencode', label: 'OpenCode' }");
   });
 
-  it('uses OpenAI only for the online Codex option and keeps local Codex app branding', () => {
+  it('keeps local Codex app branding without online provider icons', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
-    const onlineIconSource = source.slice(
-      source.indexOf('const getOnlineWebAgentIcon'),
-      source.indexOf('/** Get icon for the current open method'),
-    );
     const localAppIconSource = source.slice(
       source.indexOf('const getLocalAppIcon'),
       source.indexOf('const getWebAgentIcon'),
     );
 
-    expect(source).toContain('OpenAI,');
-    expect(onlineIconSource).toContain("if (option.genieProvider === 'codex') return <OpenAI size={14} />;");
-    expect(onlineIconSource).not.toContain("if (option.genieProvider === 'codex') return <Codex.Color size={14} />;");
+    expect(source).not.toContain('OpenAI,');
+    expect(source).not.toContain('const getOnlineWebAgentIcon');
     expect(localAppIconSource).toContain("if (agent === 'codex') return <Codex.Color size={14} />;");
   });
 
@@ -236,6 +227,36 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain('shadow-[0_0_0_2px');
   });
 
+  it('adds a polished bottom help action for manual AI workspace setup', () => {
+    const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+    const menuSource = source.slice(
+      source.indexOf('const menuContent = ('),
+      source.indexOf("if (variant === 'inline-app-list')"),
+    );
+    const helpDialogSource = source.slice(
+      source.indexOf('<Dialog open={openHelpDialogOpen}'),
+      source.indexOf('</Dialog>', source.indexOf('<Dialog open={openHelpDialogOpen}')),
+    );
+
+    expect(source).toContain("import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';");
+    expect(source).toContain('const [openHelpDialogOpen, setOpenHelpDialogOpen] = useState(false);');
+    expect(menuSource).toContain('无法打开？');
+    expect(menuSource).toContain('setOpenHelpDialogOpen(true)');
+    expect(helpDialogSource).toContain('手动打开 AI 应用');
+    expect(helpDialogSource).toContain('如果 Web 无法直接唤起应用，请在应用内选择当前 Make 项目目录。');
+    expect(helpDialogSource).toContain('方法一：新建对话');
+    expect(helpDialogSource).toContain('选择工作空间');
+    expect(helpDialogSource).toContain('方法二：新建项目');
+    expect(helpDialogSource).toContain('选择当前 Make 项目目录');
+    expect(helpDialogSource).toContain('适用于 WorkBuddy、TRAE SOLO 等应用。');
+    expect(helpDialogSource).toContain('知道了');
+    expect(helpDialogSource).toContain('DialogFooter');
+    expect(helpDialogSource).toContain('rounded-[20px]');
+    expect(helpDialogSource).not.toContain('如果 Web AI 无法直接打开对应应用，或者下方列表里没有你正在使用的应用，可以在应用里手动选择当前项目。');
+    expect(helpDialogSource).not.toContain('选择工作空间或项目目录后，再回到 Axhub Make 继续创建和编辑原型。');
+    expect(helpDialogSource).not.toContain('DialogHeader className="border-b px-5 py-4"');
+  });
+
   it('sizes the open button to fit the active label instead of clipping it', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
 
@@ -256,7 +277,7 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain('return;');
   });
 
-  it('reopens stored Genie provider preferences through the Genie panel handler', () => {
+  it('reopens stored ACP UI provider preferences through the web panel handler', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
 
     expect(source).toContain('const resolveStoredWebOpenMethod = (method: OpenMethod)');
@@ -284,7 +305,7 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain('showExpanded');
     expect(source).toContain('setHovered(true)');
     expect(source).toContain('setHovered(false)');
-    expect(source).toContain('onRefreshAvailability');
+    expect(source).not.toContain('onRefreshAvailability');
     expect(source).toContain('handleDropdownOpenChange');
   });
 
@@ -317,25 +338,156 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain('placeholder-guide-card-description');
     expect(source).not.toContain("buttonActive ? 'AI 已打开' : cardTitle");
     expect(source).toContain('openTargetPath');
-    expect(source).toContain('handleOpenProjectInIDE(ide, openTargetPath)');
+    expect(source).toContain('handleOpenProjectInIDE(ide, openTargetPath, projectId)');
     expect(source).toContain('onOpenGenieWebAgent(openTargetPath, provider)');
     expect(source).toContain('apiService.openCLIAgent({ agent, projectId, targetPath: openTargetPath })');
     expect(source).not.toContain('apiService.openWebAgent({');
   });
 
-  it('keeps Genie Web Agent provider selection typed through every open menu boundary', () => {
+  it('wires the dropdown settings action through sidebar and canvas AI settings openers', () => {
     const dropdownSource = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
     const contentPanelSource = readFileSync(resolve(__dirname, './ContentPanel.tsx'), 'utf8');
-    const contentAreaSource = readFileSync(resolve(__dirname, '../content/ContentAreaView.tsx'), 'utf8');
+    const newSidebarSource = readFileSync(resolve(__dirname, './NewSidebar.tsx'), 'utf8');
     const sidebarBuilderSource = readFileSync(resolve(__dirname, '../../app/hooks/useIndexPageSidebarPropsBuilder.ts'), 'utf8');
+    const contentAreaSource = readFileSync(resolve(__dirname, '../content/ContentAreaView.tsx'), 'utf8');
+    const presentationAreaSource = readFileSync(resolve(__dirname, '../content/PresentationArea.tsx'), 'utf8');
+    const indexPageTypesSource = readFileSync(resolve(__dirname, '../../types/index-page.types.ts'), 'utf8');
+    const presentationBuilderSource = readFileSync(resolve(__dirname, '../../app/hooks/useIndexPagePresentationPropsBuilder.ts'), 'utf8');
+    const indexPageSource = readFileSync(resolve(__dirname, '../../app/IndexPage.tsx'), 'utf8');
+
+    expect(dropdownSource).toContain('onOpenAISettings?: () => void;');
+    expect(dropdownSource).toContain('onOpenAISettings,');
+    expect(dropdownSource).toContain('const handleOpenAISettings = useCallback(() => {');
+    expect(dropdownSource).toContain('onOpenAISettings?.();');
+    expect(contentPanelSource).toContain('onOpenAISettings={onOpenAISettings}');
+    expect(newSidebarSource).toContain('onOpenAISettings={onOpenAISettings}');
+    expect(sidebarBuilderSource).toContain("onOpenAISettings: () => deps.openSettingsDialog('ai')");
+    expect(contentAreaSource).toContain('onOpenAISettings={onOpenAISettings}');
+    expect(presentationAreaSource).toContain('onOpenAISettings={props.onOpenAISettings}');
+    expect(indexPageTypesSource).toContain('onOpenAISettings?: () => void;');
+    expect(presentationBuilderSource).toContain('openSettingsDialog?: (tab?: SettingsDialogInitialTab) => void;');
+    expect(presentationBuilderSource).toContain("onOpenAISettings: actions.openSettingsDialog ? () => actions.openSettingsDialog?.('ai') : undefined");
+    expect(indexPageSource).toContain('openSettingsDialog,');
+  });
+
+  it('supports inline app list variant through shared local app and IDE open handlers', () => {
+    const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+    const inlineVariantSegment = source.slice(
+      source.indexOf("if (variant === 'inline-app-list')"),
+      source.indexOf("if (variant === 'placeholder-card')"),
+    );
+
+    expect(source).toContain("variant?: 'compact' | 'placeholder-card' | 'inline-app-list' | 'toolbar' | 'canvas-icon';");
+    expect(source).toContain("variant === 'inline-app-list'");
+    expect(inlineVariantSegment).toContain('在应用中新建：');
+    expect(inlineVariantSegment).toContain('localAppOpenOptions.map');
+    expect(inlineVariantSegment).toContain('setOpenHelpDialogOpen(true)');
+    expect(inlineVariantSegment).toContain('更多');
+    expect(inlineVariantSegment).toContain('<MoreHorizontal className="h-3.5 w-3.5" />');
+    expect(inlineVariantSegment).toContain('{renderOpenHelpDialog()}');
+    expect(inlineVariantSegment).toContain('flex w-full flex-col items-center gap-3 text-center');
+    expect(inlineVariantSegment).toContain('gap-2');
+    expect(inlineVariantSegment).toContain('h-7 items-center gap-1.5 rounded-md px-2');
+    expect(inlineVariantSegment).not.toContain('h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5');
+    expect(inlineVariantSegment).not.toContain('shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50');
+    expect(inlineVariantSegment).toContain('void handleOpenWithIDE(item.option.value as MainIDE)');
+    expect(inlineVariantSegment).toContain('void handleOpenWithLocalApp(item.option.value)');
+    expect(inlineVariantSegment).not.toContain('renderAgentGroup');
+    expect(inlineVariantSegment).not.toContain('ONLINE_WEB_AGENT_OPTIONS');
+    expect(inlineVariantSegment).not.toContain('CLI_AGENT_OPTIONS');
+    expect(inlineVariantSegment).not.toContain('apiService.openIDE');
+    expect(inlineVariantSegment).not.toContain('deeplink');
+    expect(source).toContain('handleOpenProjectInIDE(ide, openTargetPath, projectId)');
+    expect(source).toContain('apiService.openLocalAppAgent({ agent, projectId, targetPath: openTargetPath });');
+  });
+
+  it('supports a toolbar trigger style while preserving the shared open menu', () => {
+    const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+    const toolbarVariantSegment = source.slice(
+      source.indexOf("if (variant === 'toolbar')"),
+      source.indexOf("if (variant === 'inline-app-list')"),
+    );
+
+    expect(source).toContain("variant?: 'compact' | 'placeholder-card' | 'inline-app-list' | 'toolbar' | 'canvas-icon';");
+    expect(toolbarVariantSegment).toContain('<DropdownMenu open={dropdownOpen} onOpenChange={handleDropdownOpenChange}>');
+    expect(toolbarVariantSegment).toContain('<DropdownMenuTrigger asChild>');
+    expect(toolbarVariantSegment).toContain('className={cn(toolbarButtonClassName, className)}');
+    expect(toolbarVariantSegment).toContain('data-active={buttonActive ? \'true\' : undefined}');
+    expect(toolbarVariantSegment).toContain('<Sparkles />');
+    expect(toolbarVariantSegment).toContain("{buttonActive ? '已打开' : '打开 AI'}");
+    expect(toolbarVariantSegment).toContain('<ChevronDown className="h-3.5 w-3.5" />');
+    expect(toolbarVariantSegment).toContain('{menuContent}');
+    expect(toolbarVariantSegment).not.toContain('toolbarButtonGroupClassName');
+    expect(toolbarVariantSegment).not.toContain('toolbarMainButtonClassName');
+    expect(toolbarVariantSegment).not.toContain('toolbarMenuButtonClassName');
+    expect(toolbarVariantSegment).not.toContain('onClick={handleOpenDefault}');
+    expect(toolbarVariantSegment).not.toContain('placeholder-guide-card');
+    expect(toolbarVariantSegment).not.toContain('inline-app-list');
+  });
+
+  it('supports a canvas icon trigger that only opens the shared AI menu', () => {
+    const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+    const canvasIconSegment = source.slice(
+      source.indexOf("if (variant === 'canvas-icon')"),
+      source.indexOf("if (variant === 'toolbar')"),
+    );
+
+    expect(source).toContain("variant?: 'compact' | 'placeholder-card' | 'inline-app-list' | 'toolbar' | 'canvas-icon';");
+    expect(canvasIconSegment).toContain('<DropdownMenu open={dropdownOpen} onOpenChange={handleDropdownOpenChange}>');
+    expect(canvasIconSegment).toContain('<DropdownMenuTrigger asChild>');
+    expect(canvasIconSegment).toContain('aria-label={buttonActive ? \'AI 已打开\' : \'打开 AI\'}');
+    expect(canvasIconSegment).toContain('title={buttonActive ? \'AI 已打开\' : \'打开 AI\'}');
+    expect(canvasIconSegment).toContain('data-active={buttonActive ? \'true\' : undefined}');
+    expect(canvasIconSegment).toContain('{openLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}');
+    expect(canvasIconSegment).toContain('{menuContent}');
+    expect(canvasIconSegment).not.toContain('onClick={handleOpenDefault}');
+    expect(canvasIconSegment).not.toContain('<ChevronDown');
+    expect(canvasIconSegment).not.toContain('打开 AI</span>');
+  });
+
+  it('marks the toolbar Web AI action as active when the Web UI panel is open', () => {
+    const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+    const menuSource = source.slice(
+      source.indexOf('const webAiMenuActive = buttonActive;'),
+      source.indexOf("if (variant === 'toolbar')"),
+    );
+
+    expect(menuSource).toContain('const webAiMenuActive = buttonActive;');
+    expect(menuSource).toContain("webAiMenuActive && 'bg-secondary text-secondary-foreground'");
+    expect(menuSource).toContain('aria-checked={webAiMenuActive}');
+    expect(menuSource).toContain('{webAiMenuActive ? <Check className="h-3.5 w-3.5" /> : getWebAgentIcon(WEB_AI_OPEN_OPTION.webAgent)}');
+  });
+
+  it('toggles the active Web AI menu item off and closes the side panel', () => {
+    const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+    const menuSource = source.slice(
+      source.indexOf('const handleToggleWebAiMenu = useCallback(() => {'),
+      source.indexOf("if (variant === 'toolbar')"),
+    );
+
+    expect(menuSource).toContain('const handleToggleWebAiMenu = useCallback(() => {');
+    expect(menuSource).toContain('if (webAiMenuActive) {');
+    expect(menuSource).toContain('onCloseWebAgentPanel?.();');
+    expect(menuSource).toContain('return;');
+    expect(menuSource).toContain('void handleOpenWithWebAgent(WEB_AI_OPEN_OPTION.webAgent);');
+    expect(menuSource).toContain('}, [handleOpenWithWebAgent, onCloseWebAgentPanel, webAiMenuActive]);');
+    expect(menuSource).toContain('onClick={handleToggleWebAiMenu}');
+  });
+
+  it('keeps ACP UI Web Agent provider selection typed through every open menu boundary', () => {
+    const dropdownSource = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+    const contentPanelSource = readFileSync(resolve(__dirname, './ContentPanel.tsx'), 'utf8');
+    const sidebarBuilderSource = readFileSync(resolve(__dirname, '../../app/hooks/useIndexPageSidebarPropsBuilder.ts'), 'utf8');
+    const contentAreaSource = readFileSync(resolve(__dirname, '../content/ContentAreaView.tsx'), 'utf8');
+    const presentationAreaSource = readFileSync(resolve(__dirname, '../content/PresentationArea.tsx'), 'utf8');
     const presentationBuilderSource = readFileSync(resolve(__dirname, '../../app/hooks/useIndexPagePresentationPropsBuilder.ts'), 'utf8');
     const indexPageTypesSource = readFileSync(resolve(__dirname, '../../types/index-page.types.ts'), 'utf8');
 
     for (const source of [
       dropdownSource,
       contentPanelSource,
-      contentAreaSource,
       sidebarBuilderSource,
+      contentAreaSource,
       presentationBuilderSource,
       indexPageTypesSource,
     ]) {
@@ -343,8 +495,10 @@ describe('OpenInDropdown source', () => {
       expect(source).toMatch(/(?:on|handle)OpenGenieWebAgent\?: \(targetPath\?: string, provider\?: GenieProvider\) => void \| Promise<void>;/);
     }
 
-    expect(dropdownSource).toContain('genieProvider?: GenieProvider;');
+    expect(presentationAreaSource).toContain('onOpenGenieWebAgent={props.onOpenGenieWebAgent}');
+
     expect(dropdownSource).toContain('const handleOpenWithWebAgent = async (agent: WebAgent, provider?: GenieProvider) => {');
     expect(dropdownSource).toContain('onOpenGenieWebAgent(openTargetPath, provider)');
+    expect(dropdownSource).not.toContain('genieProvider?: GenieProvider;');
   });
 });

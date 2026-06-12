@@ -133,7 +133,11 @@ describe('make-server Vite dev middleware', () => {
       expect(firstConfig.server?.headers?.['Cache-Control']).toBe('no-store');
       expect(secondConfig.server?.headers?.['Cache-Control']).toBe('no-store');
       expect(firstConfig.server?.watch?.ignored).toEqual(expect.arrayContaining([
+        '**/.axhub/**',
+        '**/.spec/**',
         '**/client/**',
+        '**/dist/**',
+        '**/src/server/**',
         '**/*.excalidraw',
         '**/canvas-assets/**',
       ]));

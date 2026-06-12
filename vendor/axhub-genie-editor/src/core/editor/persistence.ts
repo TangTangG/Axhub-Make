@@ -50,6 +50,7 @@ type CachedMarkerEntry = MarkerAnchor & {
 };
 
 type CachedChangeEntry = {
+  pageScope?: string;
   elementKey?: WebEditorElementKey;
   label?: string;
   locator: ElementLocator;
@@ -80,6 +81,7 @@ const COMMENT_SHORTCUT_SETTINGS_KEY_PREFIX = 'web-editor-v2-comment-shortcuts:';
 const UI_SETTINGS_KEY = 'web-editor-v2-ui-settings';
 const GENIE_CONVERSATION_KEY_PREFIX = 'web-editor-v2-genie-conversation:';
 const GENIE_TASKS_KEY_PREFIX = 'web-editor-v2-genie-tasks:';
+const SCOPED_COMMENT_TASK_KEY_PREFIX = 'page-scope:';
 
 function stripLocatorDebugSource(locator: ElementLocator): ElementLocator {
   if (!locator.debugSource) return locator;
@@ -113,6 +115,8 @@ export function createPersistenceService(options: {
   let cacheWriteTimer: number | null = null;
   let cacheRestoreInProgress = false;
   let currentAdapterDocument: PrototypeEditCommentsDocument | null = null;
+  let lastAdapterDocument: PrototypeEditCommentsDocument | null = null;
+  let preserveMissingCurrentScopeRecordsOnNextWrite = false;
   const commentTaskStateByElementKey = new Map<WebEditorElementKey, PrototypeEditCommentTaskEntry>();
 
   function readResourceMetaString(key: string): string {
@@ -230,7 +234,7 @@ export function createPersistenceService(options: {
         path: resolveStorageScope() ?? window.location.pathname ?? '',
         updatedAt,
         showMarkers: state.changeMarkersVisible,
-        entries,
+        entries: entries.map((entry) => withCurrentPageScope(entry)),
       };
       window.localStorage.setItem(key, JSON.stringify(payload));
     } catch {
@@ -323,6 +327,231 @@ export function createPersistenceService(options: {
     return normalized || null;
   }
 
+  function normalizePageScope(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  function readDomPageScope(): string {
+    if (typeof document === 'undefined') return '';
+    try {
+      const explicit =
+        document.documentElement?.getAttribute?.('data-page-id') ||
+        document.body?.getAttribute?.('data-page-id') ||
+        '';
+      return normalizePageScope(explicit);
+    } catch {
+      return '';
+    }
+  }
+
+  function resolvePageScopeFromLocation(): string {
+    if (typeof window === 'undefined') return '';
+    try {
+      const url = new URL(window.location.href);
+      const params = new URLSearchParams(url.search);
+      for (const key of ['editor', 'axhubPane', 'axhubQuickEditContext', 'genieToolbar']) {
+        params.delete(key);
+      }
+      const sortedParams = new URLSearchParams();
+      Array.from(params.entries())
+        .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+          leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue),
+        )
+        .forEach(([key, value]) => sortedParams.append(key, value));
+      const search = sortedParams.toString();
+      return `${url.pathname}${search ? `?${search}` : ''}${url.hash}`;
+    } catch {
+      return String(window.location.pathname ?? '').trim();
+    }
+  }
+
+  function hasPageRouteSignal(pageScope: string): boolean {
+    const scope = normalizePageScope(pageScope);
+    if (!scope) return false;
+    if (/^page[:=]/iu.test(scope)) return true;
+    if (scope.includes('::page::')) return true;
+    try {
+      const url = new URL(scope, 'http://axhub.local');
+      if (url.searchParams.has('page')) return true;
+      return new URLSearchParams(url.hash.replace(/^#/, '')).has('page');
+    } catch {
+      return false;
+    }
+  }
+
+  function isExplicitDomPageScope(pageScope: string): boolean {
+    const scope = normalizePageScope(pageScope);
+    return Boolean(scope && !scope.includes('/') && !scope.includes('\\') && !scope.includes('?') && !scope.includes('#'));
+  }
+
+  function shouldShowLegacyUnscopedRecords(): boolean {
+    const currentPageScope = resolveCurrentPageScope();
+    return !hasPageRouteSignal(currentPageScope) && !isExplicitDomPageScope(currentPageScope);
+  }
+
+  function hasPersistedStyleChanges(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return false;
+    }
+    const styleChanges = value as { before?: unknown; after?: unknown };
+    const before = styleChanges.before && typeof styleChanges.before === 'object' && !Array.isArray(styleChanges.before)
+      ? styleChanges.before as Record<string, unknown>
+      : {};
+    const after = styleChanges.after && typeof styleChanges.after === 'object' && !Array.isArray(styleChanges.after)
+      ? styleChanges.after as Record<string, unknown>
+      : {};
+    const props = new Set([...Object.keys(before), ...Object.keys(after)]);
+    for (const prop of props) {
+      if (String(before[prop] ?? '').trim() !== String(after[prop] ?? '').trim()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function hasPersistedEditPayload(record: {
+    textChange?: unknown;
+    styleChanges?: unknown;
+    tweak?: unknown;
+  } | null | undefined): boolean {
+    const textChange = record?.textChange as { before?: unknown; after?: unknown } | null | undefined;
+    if (
+      textChange &&
+      typeof textChange === 'object' &&
+      String(textChange.before ?? '') !== String(textChange.after ?? '')
+    ) {
+      return true;
+    }
+    if (hasPersistedStyleChanges(record?.styleChanges)) {
+      return true;
+    }
+    const tweak = record?.tweak as { summaryLines?: unknown; baselineValues?: unknown; currentValues?: unknown } | null | undefined;
+    return Boolean(
+      tweak &&
+      typeof tweak === 'object' &&
+      (
+        (Array.isArray(tweak.summaryLines) && tweak.summaryLines.length > 0) ||
+        tweak.baselineValues ||
+        tweak.currentValues
+      ),
+    );
+  }
+
+  function resolveCurrentPageScope(): string {
+    return (
+      readResourceMetaString('commentPageScope') ||
+      readResourceMetaString('pageScope') ||
+      readDomPageScope() ||
+      resolvePageScopeFromLocation() ||
+      resolveStorageScope() ||
+      resolveTargetPath() ||
+      ''
+    );
+  }
+
+  function isCurrentPageScopedRecord(record: ({ pageScope?: unknown } & {
+    locator?: ElementLocator;
+    textChange?: unknown;
+    styleChanges?: unknown;
+    tweak?: unknown;
+  }) | null | undefined): boolean {
+    const pageScope = normalizePageScope(record?.pageScope);
+    if (pageScope) return pageScope === resolveCurrentPageScope();
+    if (shouldShowLegacyUnscopedRecords()) return true;
+    return hasPersistedEditPayload(record) && hasConnectedLocator((record as { locator?: ElementLocator })?.locator);
+  }
+
+  function hasConnectedLocator(locator: ElementLocator | null | undefined): boolean {
+    if (!locator) return false;
+    try {
+      return Boolean(locateElement(locator)?.isConnected);
+    } catch {
+      return false;
+    }
+  }
+
+  function withCurrentPageScope<T extends Record<string, unknown>>(value: T): T {
+    const pageScope = resolveCurrentPageScope();
+    return pageScope ? ({ ...value, pageScope } as T) : value;
+  }
+
+  function resolveCommentRecordKey(record: {
+    elementKey?: unknown;
+    locator?: ElementLocator;
+  }): string {
+    const elementKey = String(record.elementKey ?? '').trim();
+    if (elementKey) return elementKey;
+    if (!record.locator) return '';
+    try {
+      return locatorKey(record.locator);
+    } catch {
+      return '';
+    }
+  }
+
+  function stableJson(value: unknown): string {
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => stableJson(item)).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+        .join(',')}}`;
+    }
+    return JSON.stringify(value ?? null);
+  }
+
+  function resolveCommentContentSignature(record: {
+    locator?: ElementLocator;
+    textChange?: unknown;
+    styleChanges?: unknown;
+    tweak?: unknown;
+    comment?: unknown;
+    note?: unknown;
+    skillIds?: unknown;
+  }): string {
+    if (!record.locator) return '';
+    let locatorSignature = '';
+    try {
+      locatorSignature = locatorKey(record.locator);
+    } catch {
+      locatorSignature = stableJson(stripLocatorDebugSource(record.locator));
+    }
+    return stableJson({
+      locator: locatorSignature,
+      textChange: record.textChange ?? null,
+      styleChanges: record.styleChanges ?? null,
+      tweak: record.tweak ?? null,
+      comment: record.comment ?? record.note ?? null,
+      skillIds: Array.isArray(record.skillIds) ? record.skillIds : null,
+    });
+  }
+
+  function buildCommentTaskDocumentKey(elementKey: WebEditorElementKey, pageScope: string): string {
+    return pageScope
+      ? `${SCOPED_COMMENT_TASK_KEY_PREFIX}${encodeURIComponent(pageScope)}:${encodeURIComponent(elementKey)}`
+      : elementKey;
+  }
+
+  function resolveCommentTaskElementKey(
+    documentKey: string,
+    task: PrototypeEditCommentTaskEntry,
+  ): WebEditorElementKey {
+    if (!normalizePageScope(task.pageScope) || !documentKey.startsWith(SCOPED_COMMENT_TASK_KEY_PREFIX)) {
+      return documentKey;
+    }
+    const encoded = documentKey.slice(SCOPED_COMMENT_TASK_KEY_PREFIX.length);
+    const separatorIndex = encoded.lastIndexOf(':');
+    if (separatorIndex < 0) return documentKey;
+    try {
+      return decodeURIComponent(encoded.slice(separatorIndex + 1)).trim() || documentKey;
+    } catch {
+      return documentKey;
+    }
+  }
+
   function normalizeAdapterTasks(value: unknown): Record<WebEditorElementKey, PrototypeEditCommentTaskEntry> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return {};
@@ -336,6 +565,7 @@ export function createPersistenceService(options: {
       const task = rawTask as Partial<PrototypeEditCommentTaskEntry>;
       const updatedAt = Number(task.updatedAt ?? 0);
       tasks[elementKey] = {
+        ...(normalizePageScope(task.pageScope) ? { pageScope: normalizePageScope(task.pageScope) } : {}),
         state: isPrototypeEditCommentTaskStatus(task.state) ? task.state : 'idle',
         provider: normalizeNullableString(task.provider),
         requestId: normalizeNullableString(task.requestId),
@@ -348,30 +578,33 @@ export function createPersistenceService(options: {
   }
 
   function buildDocumentTasks(): Record<WebEditorElementKey, PrototypeEditCommentTaskEntry> {
-    const tasks: Record<WebEditorElementKey, PrototypeEditCommentTaskEntry> = Object.fromEntries(
-      Array.from(commentTaskStateByElementKey.entries()).map(([elementKey, task]) => [elementKey, { ...task }]),
-    );
+    const tasks: Record<WebEditorElementKey, PrototypeEditCommentTaskEntry> = {};
+    for (const [elementKey, task] of commentTaskStateByElementKey.entries()) {
+      const scopedTask = withCurrentPageScope({ ...task });
+      tasks[buildCommentTaskDocumentKey(elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
+    }
     const allTasks = [
       ...state.genieTaskByElementKey.values(),
       ...state.externalEditingTaskByElementKey.values(),
     ];
     for (const task of allTasks) {
       if (!task?.elementKey) continue;
-      tasks[task.elementKey] = {
+      const scopedTask: PrototypeEditCommentTaskEntry = withCurrentPageScope({
         state: normalizeDocumentTaskState(task.status),
         provider: task.provider,
         requestId: task.requestId,
         sessionId: task.sessionId,
         updatedAt: task.updatedAt,
         message: task.message,
-      };
+      });
+      tasks[buildCommentTaskDocumentKey(task.elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
     }
     return tasks;
   }
 
   function buildDocumentImages(): PrototypeEditCommentImageEntry[] {
     return Array.from(state.editMetaByKey.values()).flatMap((meta) =>
-      meta.images.map((image) => ({
+      meta.images.map((image) => withCurrentPageScope({
         id: image.id,
         elementKey: meta.elementKey,
         name: image.name,
@@ -404,9 +637,74 @@ export function createPersistenceService(options: {
 
   function buildAdapterDocument(
     entries: CachedChangeEntry[],
+    reason: PrototypeEditCommentsWriteReason = 'changes',
   ): PrototypeEditCommentsDocument | null {
     const scope = resolvePersistenceScope();
     if (!scope) return null;
+    const currentPageScope = resolveCurrentPageScope();
+    const currentComments = entries.map((entry) =>
+      withCurrentPageScope(cacheEntryToCommentEntry(entry)),
+    );
+    const currentImages = buildDocumentImages();
+    const currentTasks = buildDocumentTasks();
+    const currentTaskElementKeys = new Set([
+      ...commentTaskStateByElementKey.keys(),
+      ...Array.from(state.genieTaskByElementKey.values()).map((task) => task.elementKey),
+      ...Array.from(state.externalEditingTaskByElementKey.values()).map((task) => task.elementKey),
+    ].map((elementKey) => String(elementKey ?? '').trim()).filter(Boolean));
+    const currentImageKeys = new Set(
+      currentImages
+        .map((image) => String(image.elementKey ?? '').trim())
+        .filter(Boolean),
+    );
+    const currentCommentRecordKeys = new Set(
+      currentComments
+        .map((entry) => resolveCommentRecordKey(entry))
+        .filter(Boolean),
+    );
+    const currentCommentContentSignatures = new Set(
+      currentComments
+        .map((entry) => resolveCommentContentSignature(entry))
+        .filter(Boolean),
+    );
+    const shouldDropMissingCurrentScopeRecords = reason === 'clear';
+    const shouldPreserveMissingCurrentScopeRecords =
+      preserveMissingCurrentScopeRecordsOnNextWrite && reason !== 'clear';
+    const preservedComments = (lastAdapterDocument?.comments ?? []).filter((entry) => {
+      const entryScope = normalizePageScope(entry.pageScope);
+      const entryKey = resolveCommentRecordKey(entry);
+      const hasCurrentRecord = Boolean(entryKey && currentCommentRecordKeys.has(entryKey));
+      const entryContentSignature = resolveCommentContentSignature(entry);
+      const hasCurrentContent = Boolean(
+        entryContentSignature && currentCommentContentSignatures.has(entryContentSignature),
+      );
+      if (hasCurrentContent) return false;
+      if (entryScope) {
+        if (entryScope !== currentPageScope) return true;
+        if (shouldDropMissingCurrentScopeRecords) return false;
+        if (shouldPreserveMissingCurrentScopeRecords && hasPersistedEditPayload(entry)) return true;
+        if (hasCurrentRecord) return false;
+        return !hasConnectedLocator(entry.locator);
+      }
+      if (!hasPersistedEditPayload(entry)) return true;
+      if (shouldDropMissingCurrentScopeRecords) return false;
+      if (shouldPreserveMissingCurrentScopeRecords) return true;
+      if (hasCurrentRecord) return false;
+      return !hasConnectedLocator(entry.locator);
+    });
+    const preservedImages = (lastAdapterDocument?.images ?? []).filter((image) => {
+      const imageScope = normalizePageScope(image.pageScope);
+      if (imageScope) return imageScope !== currentPageScope;
+      const imageElementKey = String(image.elementKey ?? '').trim();
+      return !imageElementKey || !currentImageKeys.has(imageElementKey);
+    });
+    const preservedTasks = Object.fromEntries(
+      Object.entries(lastAdapterDocument?.tasks ?? {}).filter(([elementKey, task]) => {
+        const taskScope = normalizePageScope(task.pageScope);
+        if (taskScope) return taskScope !== currentPageScope;
+        return !currentTaskElementKeys.has(elementKey);
+      }),
+    ) as Record<WebEditorElementKey, PrototypeEditCommentTaskEntry>;
     return {
       schemaVersion: 1,
       kind: 'prototype-edit-comments',
@@ -415,9 +713,12 @@ export function createPersistenceService(options: {
         targetPath: scope.targetPath,
         filePath: `src/${scope.targetPath}/.spec/prototype-comments.json`,
       },
-      comments: entries.map(cacheEntryToCommentEntry),
-      tasks: buildDocumentTasks(),
-      images: buildDocumentImages(),
+      comments: [...preservedComments, ...currentComments],
+      tasks: {
+        ...preservedTasks,
+        ...currentTasks,
+      },
+      images: [...preservedImages, ...currentImages],
     };
   }
 
@@ -441,9 +742,10 @@ export function createPersistenceService(options: {
   }
 
   function mergeAdapterTaskStates(document: PrototypeEditCommentsDocument): void {
-    for (const [elementKey, task] of Object.entries(document.tasks ?? {})) {
-      const normalizedElementKey = String(elementKey ?? '').trim();
+    for (const [documentKey, task] of Object.entries(document.tasks ?? {})) {
+      const normalizedElementKey = String(resolveCommentTaskElementKey(documentKey, task) ?? '').trim();
       if (!normalizedElementKey) continue;
+      if (!isCurrentPageScopedRecord(task)) continue;
       commentTaskStateByElementKey.set(normalizedElementKey, { ...task });
     }
   }
@@ -455,11 +757,23 @@ export function createPersistenceService(options: {
     if (!persistenceAdapter?.write) return;
     const scope = resolvePersistenceScope();
     if (!scope) return;
-    const document = buildAdapterDocument(entries);
+    const document = buildAdapterDocument(entries, reason);
     if (!document) return;
+    lastAdapterDocument = document;
+    preserveMissingCurrentScopeRecordsOnNextWrite = false;
     void Promise.resolve(persistenceAdapter.write(scope, document, reason)).catch((error) => {
       console.warn('[GenieEditor] Failed to persist prototype comments:', error);
     });
+  }
+
+  function clearCurrentPageRuntimeState(): void {
+    state.transactionManager?.clear?.();
+    state.editMetaByKey.clear();
+    state.pendingMarkerAnchors.clear();
+    state.processedEditTimestampsByKey.clear();
+    state.selectionAnchor = null;
+    state.selectedElement = null;
+    commentTaskStateByElementKey.clear();
   }
 
   function removeStorageKey(key: string): void {
@@ -733,6 +1047,7 @@ export function createPersistenceService(options: {
     const normalizedElementKey = String(elementKey ?? '').trim();
     if (!normalizedElementKey) return;
     commentTaskStateByElementKey.set(normalizedElementKey, {
+      ...(resolveCurrentPageScope() ? { pageScope: resolveCurrentPageScope() } : {}),
       state: stateValue,
       provider: typeof taskRef?.provider === 'string' && taskRef.provider.trim()
         ? taskRef.provider.trim()
@@ -951,6 +1266,10 @@ export function createPersistenceService(options: {
     writeAdapterDocument(buildCacheEntriesFromTransactions(), 'tasks');
   }
 
+  function getPersistedPrototypeCommentsDocument(): PrototypeEditCommentsDocument | null {
+    return buildAdapterDocument(buildCacheEntriesFromTransactions(), 'changes') ?? lastAdapterDocument;
+  }
+
   function flushPendingWrite(): void {
     if (cacheWriteTimer !== null) {
       window.clearTimeout(cacheWriteTimer);
@@ -975,6 +1294,9 @@ export function createPersistenceService(options: {
     if (!tm) return;
 
     for (const entry of entries) {
+      if (!isCurrentPageScopedRecord(entry)) {
+        continue;
+      }
       const entryElementKey = String(entry.elementKey ?? '').trim();
       const isLegacyTextCommentCacheEntry = (
         interactionProfile === 'text-comment' &&
@@ -1009,7 +1331,9 @@ export function createPersistenceService(options: {
       if (entry.marker && Number.isFinite(Number(entry.marker.dirtySince))) {
         meta.dirtySince = Number(entry.marker.dirtySince);
       }
-      const documentImages = currentAdapterDocument?.images?.filter((image) => image.elementKey === resolvedElementKey) ?? [];
+      const documentImages = currentAdapterDocument?.images?.filter((image) =>
+        image.elementKey === resolvedElementKey && isCurrentPageScopedRecord(image),
+      ) ?? [];
       if (documentImages.length > 0) {
         const hydratedImages = documentImages
           .filter((image) => typeof image.data === 'string' && image.data.trim())
@@ -1084,7 +1408,7 @@ export function createPersistenceService(options: {
     if (typeof window === 'undefined') return;
     const adapterDocument = await readAdapterDocument();
     if (adapterDocument) {
-      mergeAdapterTaskStates(adapterDocument);
+      lastAdapterDocument = adapterDocument;
     }
     const payload: CachedChangePayload | null = adapterDocument
       ? {
@@ -1092,11 +1416,18 @@ export function createPersistenceService(options: {
           path: adapterDocument.resource.targetPath || resolveStorageScope() || '',
           updatedAt: Date.now(),
           showMarkers: state.changeMarkersVisible,
-          entries: adapterDocument.comments.map(commentEntryToCacheEntry),
+          entries: adapterDocument.comments
+            .filter((entry) => isCurrentPageScopedRecord(entry))
+            .map(commentEntryToCacheEntry),
         }
       : readCache();
-    if (!payload) return;
-    if (payload.entries.length === 0) {
+    if (!payload) {
+      clearCurrentPageRuntimeState();
+      return;
+    }
+    const scopedEntries = payload.entries.filter((entry) => isCurrentPageScopedRecord(entry));
+    if (scopedEntries.length === 0) {
+      clearCurrentPageRuntimeState();
       if (adapterDocument) {
         writeLocalCache([], payload.updatedAt);
       }
@@ -1105,13 +1436,17 @@ export function createPersistenceService(options: {
     cacheRestoreInProgress = true;
     currentAdapterDocument = adapterDocument;
     try {
+      clearCurrentPageRuntimeState();
       if (typeof payload.showMarkers === 'boolean') {
         state.changeMarkersVisible = payload.showMarkers;
         setMarkerVisibility(payload.showMarkers);
       } else {
         state.changeMarkersVisible = readMarkerVisibility();
       }
-      applyCachedEntries(payload.entries);
+      if (adapterDocument) {
+        mergeAdapterTaskStates(adapterDocument);
+      }
+      applyCachedEntries(scopedEntries);
     } finally {
       cacheRestoreInProgress = false;
       currentAdapterDocument = null;
@@ -1119,6 +1454,7 @@ export function createPersistenceService(options: {
     state.propertyPanel?.refresh();
     changes.syncEditMetaWithTransactions();
     if (adapterDocument) {
+      preserveMissingCurrentScopeRecordsOnNextWrite = true;
       writeLocalCache(buildCacheEntriesFromTransactions());
       return;
     }
@@ -1185,6 +1521,7 @@ export function createPersistenceService(options: {
     persistFromTransactions,
     flushPendingWrite,
     restoreCachedChanges,
+    getPersistedPrototypeCommentsDocument,
     clearCachedChanges,
     clearStorage,
   };

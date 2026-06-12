@@ -104,6 +104,8 @@ describe('OpenCode bridge current file context resolution', () => {
       path: 'src/themes/june/index.tsx',
       comment: CONTEXT_COMMENT_CURRENT_FILE,
       preview: 'June 数据分析主题',
+      hidden: true,
+      pinned: true,
     });
   });
 
@@ -120,6 +122,8 @@ describe('OpenCode bridge current file context resolution', () => {
       path: 'src/pages/Login/index.tsx',
       comment: CONTEXT_COMMENT_CURRENT_FILE,
       preview: 'Login',
+      hidden: true,
+      pinned: true,
     });
   });
 

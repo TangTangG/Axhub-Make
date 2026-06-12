@@ -191,14 +191,12 @@ interface StyleNetEffect {
 function computeStyleNetEffect(txs: readonly Transaction[]): StyleNetEffect | null {
   // Track first "before" and last "after" for each property
   const firstBeforeByProp = new Map<string, string>();
-  const displayBeforeByProp = new Map<string, string>();
   const lastAfterByProp = new Map<string, string>();
 
   for (const tx of txs) {
     if (tx.type !== 'style') continue;
 
     const beforeRaw = tx.before.styles ?? {};
-    const computedRaw = tx.before.computedStyles ?? {};
     const afterRaw = tx.after.styles ?? {};
 
     const keys = new Set([...Object.keys(beforeRaw), ...Object.keys(afterRaw)]);
@@ -207,14 +205,11 @@ function computeStyleNetEffect(txs: readonly Transaction[]): StyleNetEffect | nu
       if (!prop) continue;
 
       const rawBefore = normalizeStyleValue(beforeRaw[prop]);
-      const computedBefore = normalizeStyleValue(computedRaw[prop]);
-      const displayBefore = rawBefore || computedBefore;
       const a = normalizeStyleValue(afterRaw[prop]);
 
       // Record first seen "before" value
       if (!firstBeforeByProp.has(prop)) {
         firstBeforeByProp.set(prop, rawBefore);
-        displayBeforeByProp.set(prop, displayBefore);
       }
       // Always update to latest "after" value
       lastAfterByProp.set(prop, a);
@@ -235,8 +230,7 @@ function computeStyleNetEffect(txs: readonly Transaction[]): StyleNetEffect | nu
     const rawBefore = firstBeforeByProp.get(prop) ?? '';
     const a = lastAfterByProp.get(prop) ?? '';
     if (rawBefore === a) continue; // No net change
-    const displayBefore = displayBeforeByProp.get(prop) ?? rawBefore;
-    before[prop] = displayBefore;
+    before[prop] = rawBefore;
     after[prop] = a;
   }
 

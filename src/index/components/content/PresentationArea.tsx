@@ -40,6 +40,8 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     handleSelectPreviewSinglePreset={props.handleSelectPreviewSinglePreset}
                     handleSelectCustomPreview={props.handleSelectCustomPreview}
                     handleActivateSplitPreview={props.handleActivateSplitPreview}
+                    handleActivateMultiPagePreview={props.handleActivateMultiPagePreview}
+                    handleChangeMultiPageColumns={props.handleChangeMultiPageColumns}
                     handleChangeCustomPreviewWidth={props.handleChangeCustomPreviewWidth}
                     handleChangeCustomPreviewHeight={props.handleChangeCustomPreviewHeight}
                     handleChangeSplitPreviewWidth={props.handleChangeSplitPreviewWidth}
@@ -58,6 +60,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     handleExportHtml={props.handleExportHtml}
                     handlePublishCloudTarget={props.handlePublishCloudTarget}
                     handleOpenCloudPublishSettings={props.handleOpenCloudPublishSettings}
+                    currentPublishResourcePath={props.currentPublishResourcePath}
                     latestCloudPublishUrl={props.latestCloudPublishUrl}
                     handleCopyLatestCloudPublishUrl={props.handleCopyLatestCloudPublishUrl}
                     setIsExportModalOpen={props.setIsExportModalOpen}
@@ -68,6 +71,8 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     handleOpenDocInIDE={props.handleOpenDocInIDE}
                     handleOpenThemeInIDE={props.handleOpenThemeInIDE}
                     handleOpenDataTableInIDE={props.handleOpenDataTableInIDE}
+                    preferredIDE={props.preferredIDE}
+                    ideAvailability={props.ideAvailability}
                     quickEditAvailable={props.quickEditAvailable}
                     quickEditActive={props.quickEditActive}
                     docEditState={props.docEditState}
@@ -99,8 +104,17 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         activeTab={props.activeTab}
                         previewConfig={props.previewConfig}
                         reviewPageZoomEnabled={props.reviewPageZoomEnabled}
+                        handleChangeMultiPageColumns={props.handleChangeMultiPageColumns}
+                        handleSelectPreviewSinglePreset={props.handleSelectPreviewSinglePreset}
+                        handleSelectCustomPreview={props.handleSelectCustomPreview}
+                        handleActivateMultiPagePreview={props.handleActivateMultiPagePreview}
+                        handleChangeCustomPreviewWidth={props.handleChangeCustomPreviewWidth}
+                        handleChangeCustomPreviewHeight={props.handleChangeCustomPreviewHeight}
+                        handleChangePreviewScaleMode={props.handleChangePreviewScaleMode}
                         handleChangeSplitPreviewWidth={props.handleChangeSplitPreviewWidth}
                         handleChangeSplitPreviewHeight={props.handleChangeSplitPreviewHeight}
+                        quickEditActive={props.quickEditActive}
+                        onRunPrototypePanePromptAction={props.handleRunPrototypePanePromptAction}
                         currentDevice={props.currentDevice}
                         displaySize={props.displaySize}
                         scale={props.scale}
@@ -127,6 +141,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         hasPrototypeItems={props.hasPrototypeItems}
                         hasDocItems={props.hasDocItems}
                         onStartMakeProject={props.onStartCurrentProjectServer}
+                        onCopyStartServerErrorPrompt={props.onCopyStartServerErrorPrompt}
                         startServerLoading={props.startServerLoading}
                         startServerError={props.startServerError}
                         collapsed={props.collapsed}
@@ -140,6 +155,8 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         assistantVisible={props.assistantVisible}
                         onToggleAssistant={props.onToggleAssistant}
                         onAddToContext={props.onAddCanvasElementToContext}
+                        onAddCanvasScreenshotToAI={props.onAddCanvasScreenshotToAI}
+                        onAddCanvasImageToAI={props.onAddCanvasImageToAI}
                         onAnnotationsChange={props.onCanvasAnnotationsChange}
                         onOpenCanvasInIDE={props.onOpenCanvasInIDE}
                         onOpenCanvasGenie={props.onOpenCanvasGenie}
@@ -156,14 +173,15 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         onOpenWebAgentInPanel={props.onOpenWebAgentInPanel}
                         onCloseWebAgentPanel={props.onCloseWebAgentPanel}
                         onPreferredIDEChange={props.onPreferredIDEChange}
-                        onRefreshAvailability={props.onRefreshAvailability}
                         assistantApiBaseUrl={props.assistantApiBaseUrl}
                         assistantProjectPath={props.assistantProjectPath}
                         preferredPromptClient={props.preferredPromptClient}
                         prototypes={props.prototypes}
                         themes={props.themes}
                         defaultThemeName={props.defaultThemeName}
+                        onOpenAISettings={props.onOpenAISettings}
                         onRefreshPrototypes={props.onRefreshPrototypes}
+                        onSubmitCanvasAssistantPrompt={props.onSubmitCanvasAssistantPrompt}
                     />
                 </div>
                 {props.reviewPanelOpen && props.viewMode !== 'canvas' ? (

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "kind": "prototype-edit-comments",
+  "resource": {
+    "id": "beginner-guide",
+    "targetPath": "prototypes/beginner-guide",
+    "filePath": "src/prototypes/beginner-guide/.spec/prototype-comments.json"
+  },
+  "comments": [],
+  "tasks": {},
+  "images": []
+}

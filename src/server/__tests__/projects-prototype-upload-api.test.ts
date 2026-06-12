@@ -387,6 +387,9 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'prototype-create-client', 'Prototype Create Client');
+      await setActiveProject(server.origin, 'prototype-create-client');
+
       const create = await fetch(`${server.origin}/api/prototypes/create-placeholder`, {
         method: 'POST',
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
@@ -411,9 +414,22 @@ describe('make-server project prototype upload APIs', () => {
       const canvas = JSON.parse(fs.readFileSync(path.join(projectRoot, 'content/prototypes/untitled/canvas.excalidraw'), 'utf8'));
       expect(indexSource).toContain('export default function Placeholder()');
       expect(indexSource).toContain('className="placeholder-empty-page"');
+      expect(indexSource).toContain('<main className="placeholder-empty-page" aria-label={displayName}>');
+      expect(indexSource).toContain('<span>正在等待生成</span>');
+      expect(indexSource).not.toContain('打开左侧默认引导页继续创建');
+      expect(indexSource).not.toContain('未命名原型占位页');
+      expect(indexSource).not.toContain('<p>');
+      expect(indexSource).not.toContain('<section');
+      expect(indexSource).not.toContain('<h1>');
+      expect(indexSource).not.toContain('placeholder-empty-page__badge');
       expect(indexSource).not.toContain('对话技巧');
       expect(indexSource).not.toContain('当前原型尚未生成');
       expect(styleSource).toContain('.placeholder-empty-page');
+      expect(styleSource).not.toContain('.placeholder-empty-page p');
+      expect(styleSource).not.toContain('border: 1px solid');
+      expect(styleSource).not.toContain('.placeholder-empty-page__card');
+      expect(styleSource).not.toContain('.placeholder-empty-page__badge');
+      expect(styleSource).not.toContain('box-shadow');
       expect(styleSource).not.toContain('对话技巧');
       expect(canvas).toMatchObject({
         type: 'excalidraw',
@@ -437,6 +453,89 @@ describe('make-server project prototype upload APIs', () => {
         },
       });
       expect(prototype).not.toHaveProperty('spec');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('moves placeholder prototypes into a client waiting state before generation starts', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'prototype-start-generation-client', name: 'Prototype Start Generation Client' },
+      capabilities: {
+        quickEdit: true,
+        quickEditMode: 'clientRuntime',
+        figmaExport: true,
+        axureExport: true,
+        multiDevicePreview: true,
+        resourceWrites: {
+          prototypeCreate: true,
+        },
+      },
+      resourceWriteTargets: {
+        prototypes: { path: 'content/prototypes' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'prototype-start-generation-client', 'Prototype Start Generation Client');
+      await setActiveProject(server.origin, 'prototype-start-generation-client');
+
+      await fetch(`${server.origin}/api/prototypes/create-placeholder`, { method: 'POST' })
+        .then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      const start = await fetch(`${server.origin}/api/prototypes/untitled/start-generation`, {
+        method: 'POST',
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(start).toMatchObject({
+        status: 200,
+        body: {
+          success: true,
+          name: 'untitled',
+          placeholder: false,
+          generationStatus: 'waiting',
+          clientUrl: `${server.origin}/prototypes/untitled`,
+        },
+      });
+
+      const indexPath = path.join(projectRoot, 'content/prototypes/untitled/index.tsx');
+      const stylePath = path.join(projectRoot, 'content/prototypes/untitled/style.css');
+      const indexSource = fs.readFileSync(indexPath, 'utf8');
+      const styleSource = fs.readFileSync(stylePath, 'utf8');
+      expect(indexSource).toContain('正在等待生成');
+      expect(indexSource).not.toContain('@axhub-placeholder prototype-empty');
+      expect(styleSource).toContain('place-items: center');
+
+      let metadata = readMetadata(projectRoot);
+      let prototype = metadata.resources.prototypes.find((item: any) => item.id === 'untitled');
+      expect(prototype).toMatchObject({
+        id: 'untitled',
+        name: 'untitled',
+        clientUrl: `${server.origin}/prototypes/untitled`,
+        generationStatus: 'waiting',
+      });
+      expect(prototype).not.toHaveProperty('placeholder');
+      expect(prototype).not.toHaveProperty('placeholderGuide');
+
+      const resources = await fetch(`${server.origin}/api/projects/prototype-start-generation-client/resources`)
+        .then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(resources.status).toBe(200);
+      expect(resources.body.resources.prototypes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'untitled',
+          generationStatus: 'waiting',
+        }),
+      ]));
+      metadata = readMetadata(projectRoot);
+      prototype = metadata.resources.prototypes.find((item: any) => item.id === 'untitled');
+      expect(prototype).toMatchObject({
+        generationStatus: 'waiting',
+      });
+      expect(prototype).not.toHaveProperty('placeholder');
+      expect(prototype).not.toHaveProperty('placeholderGuide');
     } finally {
       await server.close();
     }

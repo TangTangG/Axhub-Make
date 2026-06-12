@@ -142,6 +142,57 @@ function updatePrototypeMetadataAfterUpload(
   });
 }
 
+function updatePrototypeMetadataForGenerationStart(
+  context: PrototypeUploadProjectContext,
+  params: {
+    id: string;
+    title: string;
+    indexPath: string;
+    clientUrl: string;
+  },
+): ProjectMetadata['resources']['prototypes'][number] {
+  const current = context.metadataStore.getMetadata();
+  const filePath = createProjectRelativePath(context.project.root, params.indexPath);
+  const existing = current.resources.prototypes.find((prototype) => (
+    prototype.id === params.id || prototype.name === params.id
+  ));
+  const nextPrototype: ProjectMetadata['resources']['prototypes'][number] = {
+    ...(existing || {}),
+    id: existing?.id || params.id,
+    name: existing?.name || params.id,
+    title: existing?.title || params.title,
+    clientUrl: existing?.clientUrl || params.clientUrl,
+    previewMode: 'clientRuntime',
+    description: existing?.description || '',
+    updatedAt: new Date().toISOString(),
+    generationStatus: 'waiting',
+    filePath,
+    absoluteFilePath: params.indexPath,
+  };
+  const {
+    placeholder: _placeholder,
+    placeholderGuide: _placeholderGuide,
+    ...prototypeWithoutPlaceholder
+  } = nextPrototype;
+
+  saveMetadataWithResourceOrder(context, {
+    ...current,
+    resources: {
+      ...current.resources,
+      prototypes: [
+        prototypeWithoutPlaceholder,
+        ...current.resources.prototypes.filter((prototype) => prototype.id !== params.id && prototype.name !== params.id),
+      ],
+    },
+    navigation: {
+      ...current.navigation,
+      prototypes: prependUnique(current.navigation.prototypes, params.id),
+    },
+  });
+
+  return prototypeWithoutPlaceholder;
+}
+
 function resolveThemeClientUrl(
   options: ManagementApiOptions,
   context: PrototypeUploadProjectContext,
@@ -895,13 +946,18 @@ async function handlePrototypeConverterUpload(
 function createPlaceholderIndexTsx(displayName: string): string {
   return `/**
  * @name ${displayName}
+ * @axhub-placeholder prototype-empty
  */
 import React from 'react';
 import './style.css';
 
+const displayName = ${JSON.stringify(displayName)};
+
 export default function Placeholder() {
     return (
-        <main className="placeholder-empty-page" aria-label="${displayName}" />
+        <main className="placeholder-empty-page" aria-label={displayName}>
+            <span>正在等待生成</span>
+        </main>
     );
 }
 `;
@@ -910,7 +966,42 @@ export default function Placeholder() {
 function createPlaceholderStyleCss(): string {
   return `.placeholder-empty-page {
   min-height: 100vh;
+  display: grid;
+  place-items: center;
   background: #ffffff;
+  color: #475569;
+  font-size: 14px;
+}
+`;
+}
+
+function createWaitingGenerationIndexTsx(displayName: string): string {
+  return `/**
+ * @name ${displayName}
+ */
+import React from 'react';
+import './style.css';
+
+const displayName = ${JSON.stringify(displayName)};
+
+export default function WaitingGeneration() {
+    return (
+        <main className="prototype-waiting-generation-page" aria-label={displayName}>
+            <span>正在等待生成</span>
+        </main>
+    );
+}
+`;
+}
+
+function createWaitingGenerationStyleCss(): string {
+  return `.prototype-waiting-generation-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  color: #475569;
+  font-size: 14px;
 }
 `;
 }
@@ -979,6 +1070,68 @@ export async function handleCreatePlaceholderPrototype(
     }, { status: 201 });
   } catch (error: any) {
     sendJson(res, { error: error?.message || '创建占位原型失败' }, { status: 400 });
+  }
+}
+
+export async function handleStartPlaceholderPrototypeGeneration(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: ManagementApiOptions,
+  context: PrototypeUploadProjectContext,
+  prototypeName: string,
+  handlers: PrototypeUploadApiHandlers,
+): Promise<void> {
+  const targetBaseDir = handlers.getDeclaredResourceWriteDir(context, 'prototypes');
+  if (!targetBaseDir) {
+    sendUploadAdapterRequired(res, context, handlers);
+    return;
+  }
+
+  try {
+    const normalizedName = String(prototypeName || '').trim();
+    if (!normalizedName || normalizedName.includes('/') || normalizedName.includes('\\') || normalizedName.includes('\0')) {
+      throw new Error('原型名称不合法');
+    }
+    const targetDir = path.resolve(targetBaseDir, normalizedName);
+    if (targetDir === path.resolve(targetBaseDir) || !isPathInside(targetBaseDir, targetDir)) {
+      throw new Error('目标目录不安全');
+    }
+    if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+      throw new Error('原型不存在');
+    }
+
+    const indexPath = path.join(targetDir, 'index.tsx');
+    const stylePath = path.join(targetDir, 'style.css');
+    const existing = context.metadata.resources.prototypes.find((prototype) => (
+      prototype.id === normalizedName || prototype.name === normalizedName
+    ));
+    const displayName = existing?.title || getDisplayName(indexPath, normalizedName);
+
+    fs.writeFileSync(indexPath, createWaitingGenerationIndexTsx(displayName), 'utf8');
+    fs.writeFileSync(stylePath, createWaitingGenerationStyleCss(), 'utf8');
+
+    const clientUrl = resolvePrototypeClientUrl(options, context, normalizedName);
+    const prototype = updatePrototypeMetadataForGenerationStart(context, {
+      id: normalizedName,
+      title: displayName,
+      indexPath,
+      clientUrl,
+    });
+
+    sendJson(res, {
+      success: true,
+      projectId: context.project.id,
+      name: prototype.name || normalizedName,
+      displayName: prototype.title || displayName,
+      path: `prototypes/${normalizedName}`,
+      filePath: prototype.filePath,
+      absoluteFilePath: prototype.absoluteFilePath,
+      clientUrl: prototype.clientUrl,
+      placeholder: false,
+      generationStatus: prototype.generationStatus,
+    });
+  } catch (error: any) {
+    sendJson(res, { error: error?.message || '进入原型等待生成态失败' }, { status: 400 });
   }
 }
 

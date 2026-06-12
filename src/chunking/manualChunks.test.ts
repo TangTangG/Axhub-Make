@@ -62,6 +62,9 @@ describe('getManualChunkName', () => {
     expect(
       getManualChunkName('/repo/node_modules/.pnpm/dayjs@1.11.18/node_modules/dayjs/dayjs.min.js'),
     ).toBe('vendor-common');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/nanoid@5.1.6/node_modules/nanoid/index.browser.js'),
+    ).toBe('vendor-common');
   });
 
   it('keeps Ant Design reset css on the spec-template styles entry instead of shared homepage chunks', () => {
@@ -112,6 +115,9 @@ describe('getManualChunkName', () => {
   it('keeps assistant UI packages together', () => {
     expect(
       getManualChunkName('/repo/node_modules/.pnpm/@lobehub+icons@4.2.0/node_modules/@lobehub/icons/es/index.js'),
+    ).toBe('vendor-assistant');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/@axhub+acp@file+..+acp-ui_@assistant-ui+react-ai-sdk@1.3.26/node_modules/@axhub/acp/dist/public-api/ui.mjs'),
     ).toBe('vendor-assistant');
   });
 

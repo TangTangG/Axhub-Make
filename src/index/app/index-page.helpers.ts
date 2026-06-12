@@ -128,7 +128,7 @@ export function getAssistantAutoOpenDismissed(
     try {
         const storedValue = storage.getItem(storageKey);
         if (storedValue === null) {
-            return true;
+            return false;
         }
         return parseDismissedStorageValue(storedValue);
     } catch {
@@ -247,17 +247,41 @@ export function isProtectedTemplateName(templateName: string): boolean {
     return getDocDisplayName(templateName) === 'spec-template';
 }
 
-export function normalizeDocItem(doc: { name?: string; displayName?: string; path?: string; absoluteFilePath?: string }): ItemData {
+function withProjectIdQuery(url: string, projectId: string | null): string {
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId || !url) {
+        return url;
+    }
+    const [path, query = ''] = url.split('?');
+    const params = new URLSearchParams(query);
+    params.set('projectId', normalizedProjectId);
+    const nextQuery = params.toString();
+    return nextQuery ? `${path}?${nextQuery}` : path;
+}
+
+function buildDocsFileUrl(name: string, projectId: string | null): string {
+    const normalizedName = String(name || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!normalizedName || !String(projectId || '').trim()) {
+        return '';
+    }
+    return withProjectIdQuery(`/api/docs/${encodeURIComponent(normalizedName)}`, projectId);
+}
+
+export function normalizeDocItem(
+    doc: { name?: string; displayName?: string; path?: string; absoluteFilePath?: string },
+    projectId: string | null = null,
+): ItemData {
     const normalizedName = normalizeMarkdownResourceName('doc', String(doc?.name || '').trim());
     const displayName = getDocDisplayName(normalizedName);
     const sourcePath = String(doc?.path || '').trim();
     const absoluteFilePath = String(doc?.absoluteFilePath || '').trim();
-    const markdownUrl = buildMarkdownFileUrl(absoluteFilePath || sourcePath);
     const isMarkdown = [
         normalizedName,
         sourcePath,
         absoluteFilePath,
     ].some(hasMarkdownExtension);
+    const directDocsFileUrl = !isMarkdown ? buildDocsFileUrl(normalizedName, projectId) : '';
+    const markdownUrl = directDocsFileUrl || buildMarkdownFileUrl(absoluteFilePath || sourcePath);
     return {
         name: normalizedName,
         displayName: displayName || normalizedName,
@@ -269,12 +293,15 @@ export function normalizeDocItem(doc: { name?: string; displayName?: string; pat
     };
 }
 
-export function normalizeDocsItems(docs: unknown): ItemData[] {
+export function normalizeDocsItems(docs: unknown, projectId: string | null = null): ItemData[] {
     if (!Array.isArray(docs)) {
         return [];
     }
     return docs
-        .map((doc) => normalizeDocItem(doc as { name?: string; displayName?: string; path?: string; absoluteFilePath?: string }))
+        .map((doc) => normalizeDocItem(
+            doc as { name?: string; displayName?: string; path?: string; absoluteFilePath?: string },
+            projectId,
+        ))
         .filter((doc) => Boolean(doc.name));
 }
 

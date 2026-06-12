@@ -7,10 +7,8 @@ import {
     type SetStateAction,
 } from 'react';
 import type {
-    GenieEditorGenieBridgeOptions,
     GenieEditorHostToolbarAction,
     GenieEditorHostToolbarState,
-    GenieEditorIntegrationWsOptions,
 } from '@/common/web-editor-types';
 import {
     createDefaultHostToolbarState,
@@ -33,11 +31,10 @@ type UsePrototypeEditorBridgeActionsParams = {
     getIframeOrigin: (iframe?: HTMLIFrameElement | null) => string;
     selectedEditablePreviewResource: any;
     resourceType: 'prototype' | 'theme';
-    assistantApiBaseUrl?: string;
-    assistantProjectPath?: string;
-    assistantWebEditorClientId?: string;
+    selectedPageId?: string | null;
     isDarkMode: boolean;
     isDarkModeRef: MutableRefObject<boolean>;
+    assistantPanelOpen: boolean;
     messageApi: {
         warning: (content: string) => void;
     };
@@ -49,18 +46,11 @@ type PrototypeEditorEnableOptions = {
     toolbarMode: 'host';
     initialDarkMode: boolean;
     mobileMode?: boolean;
-    genieBridge: GenieEditorGenieBridgeOptions;
-    integrationWs: GenieEditorIntegrationWsOptions;
+    assistantPanelOpen?: boolean;
+    commentPageScope?: string;
 };
-
-type PrototypeEditorRuntimeOverride = {
-    apiBaseUrl?: string;
-    projectPath?: string;
-} | null | undefined;
-
 type PrototypeEditorEnterOptions = {
     showMissingWarning?: boolean;
-    runtime?: PrototypeEditorRuntimeOverride;
 };
 
 type PrototypeEditorBridgeActions = {
@@ -94,17 +84,46 @@ export function usePrototypeEditorBridgeActions({
     getIframeOrigin,
     selectedEditablePreviewResource,
     resourceType,
-    assistantApiBaseUrl,
-    assistantProjectPath,
-    assistantWebEditorClientId,
+    selectedPageId,
     isDarkMode,
     isDarkModeRef,
+    assistantPanelOpen,
     messageApi,
     prototypeHostToolbarUnsubscribeRef,
     setHostToolbarState,
 }: UsePrototypeEditorBridgeActionsParams): PrototypeEditorBridgeActions {
     const prototypeEditorBridgeRequestSeqRef = useRef(0);
     const prototypeEditorBridgePendingRequestsRef = useRef<Map<string, PrototypeEditorBridgePendingRequest>>(new Map());
+
+    const normalizePrototypeEditorPageId = useCallback((value: unknown): string => {
+        const pageId = typeof value === 'string' ? value.trim() : '';
+        return /^[a-z0-9-]+$/u.test(pageId) ? pageId : '';
+    }, []);
+
+    const readPrototypeEditorPageIdFromIframe = useCallback((iframe: HTMLIFrameElement): string => {
+        try {
+            const href = iframe.contentWindow?.location?.href || iframe.src || '';
+            const url = new URL(href, window.location.origin);
+            const hashPageId = normalizePrototypeEditorPageId(new URLSearchParams(url.hash.replace(/^#/, '')).get('page'));
+            return hashPageId || normalizePrototypeEditorPageId(url.searchParams.get('page'));
+        } catch {
+            return '';
+        }
+    }, [normalizePrototypeEditorPageId]);
+
+    const buildPrototypeEditorCommentPageScope = useCallback((context: PrototypeEditorContext): string => {
+        if (context.resourceType !== 'prototype' || !context.pageId) {
+            return '';
+        }
+        const rawResourceId = typeof context.resourceId === 'string' ? context.resourceId.trim() : '';
+        if (!rawResourceId) {
+            return '';
+        }
+        const resourcePath = rawResourceId.startsWith('prototypes/')
+            ? rawResourceId
+            : `prototypes/${rawResourceId}`;
+        return `${resourcePath}::page::${context.pageId}`;
+    }, []);
 
     const getPrototypeEditorApi = useCallback((iframe: HTMLIFrameElement | null = getPrimaryPreviewIframe()): PrototypeEditorApi | null => {
         const editors = readPreviewFrameEditorApi<PrototypeEditorApi>(iframe, 'DevTemplateBootstrap');
@@ -118,43 +137,35 @@ export function usePrototypeEditorBridgeActions({
             resourceId: selectedEditablePreviewResource?.resourceId || selectedEditablePreviewResource?.name,
             resourceType,
             pane,
+            pageId: normalizePrototypeEditorPageId(selectedPageId) || readPrototypeEditorPageIdFromIframe(iframe),
             mobileMode: resourceType === 'prototype' ? pane === 'secondary' : false,
         };
-    }, [getSecondaryPreviewIframe, resourceType, selectedEditablePreviewResource]);
+    }, [
+        getSecondaryPreviewIframe,
+        normalizePrototypeEditorPageId,
+        readPrototypeEditorPageIdFromIframe,
+        resourceType,
+        selectedEditablePreviewResource,
+        selectedPageId,
+    ]);
 
-    const buildPrototypeEditorEnableOptions = useCallback((
-        context: PrototypeEditorContext,
-        runtimeOverride?: PrototypeEditorRuntimeOverride,
-    ): PrototypeEditorEnableOptions => {
-        const apiBaseUrl = runtimeOverride?.apiBaseUrl?.trim() || assistantApiBaseUrl?.trim() || '';
-        const projectPath = runtimeOverride?.projectPath?.trim() || assistantProjectPath?.trim() || '';
-        const integrationChannel = projectPath || 'axhub';
-        const editorClientId = assistantWebEditorClientId?.trim() || '';
-
+    const buildPrototypeEditorEnableOptions = useCallback((context: PrototypeEditorContext): PrototypeEditorEnableOptions => {
+        const commentPageScope = buildPrototypeEditorCommentPageScope(context);
         return {
             toolbarMode: 'host',
             initialDarkMode: isDarkMode,
             mobileMode: context.mobileMode,
-            genieBridge: {
-                enabled: Boolean(apiBaseUrl && integrationChannel),
-                apiBaseUrl,
-                integrationChannel,
-                projectPath,
-                targetClientId: '',
-            },
-            integrationWs: {
-                enabled: Boolean(apiBaseUrl && integrationChannel && editorClientId),
-                apiBaseUrl,
-                channel: integrationChannel,
-                clientId: editorClientId,
-            },
+            assistantPanelOpen,
+            ...(commentPageScope ? { commentPageScope } : {}),
         };
-    }, [
-        assistantApiBaseUrl,
-        assistantProjectPath,
-        assistantWebEditorClientId,
-        isDarkMode,
-    ]);
+    }, [assistantPanelOpen, buildPrototypeEditorCommentPageScope, isDarkMode]);
+
+    const buildPrototypeEditorScopedContext = useCallback((context: PrototypeEditorContext): PrototypeEditorContext => {
+        const commentPageScope = buildPrototypeEditorCommentPageScope(context);
+        return commentPageScope
+            ? { ...context, commentPageScope }
+            : context;
+    }, [buildPrototypeEditorCommentPageScope]);
 
     const postPrototypeEditorBridgeMessage = useCallback((
         iframe: HTMLIFrameElement,
@@ -185,12 +196,15 @@ export function usePrototypeEditorBridgeActions({
     const postPrototypeEditorEnable = useCallback((
         iframe: HTMLIFrameElement,
         context: PrototypeEditorContext,
-        runtimeOverride?: PrototypeEditorRuntimeOverride,
     ) => postPrototypeEditorBridgeMessage(iframe, {
         type: 'AXHUB_PROTOTYPE_EDITOR_ENABLE',
-        context,
-        options: buildPrototypeEditorEnableOptions(context, runtimeOverride),
-    }), [buildPrototypeEditorEnableOptions, postPrototypeEditorBridgeMessage]);
+        context: buildPrototypeEditorScopedContext(context),
+        options: buildPrototypeEditorEnableOptions(context),
+    }), [
+        buildPrototypeEditorEnableOptions,
+        buildPrototypeEditorScopedContext,
+        postPrototypeEditorBridgeMessage,
+    ]);
 
     const postPrototypeEditorDisable = useCallback((iframe: HTMLIFrameElement) => (
         postPrototypeEditorBridgeMessage(iframe, {
@@ -238,8 +252,8 @@ export function usePrototypeEditorBridgeActions({
         const context = buildPrototypeEditorContext(iframe);
         const editors = getPrototypeEditorApi(iframe);
         if (editors?.enable) {
-            editors.setContext?.(context);
-            await Promise.resolve(editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context, options.runtime)));
+            editors.setContext?.(buildPrototypeEditorScopedContext(context));
+            await Promise.resolve(editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context)));
 
             if (context.pane === 'primary') {
                 prototypeHostToolbarUnsubscribeRef.current?.();
@@ -257,14 +271,14 @@ export function usePrototypeEditorBridgeActions({
             return true;
         }
 
-        const bridgeResult = await postPrototypeEditorEnable(iframe, context, options.runtime);
+        const bridgeResult = await postPrototypeEditorEnable(iframe, context);
         if (bridgeResult?.hostToolbarState && context.pane === 'primary') {
             setHostToolbarState((previousState) => resolveHostToolbarStateForDisplay(previousState, bridgeResult.hostToolbarState ?? null, isDarkMode));
         } else if (bridgeResult?.success && context.pane === 'primary') {
             setHostToolbarState((previousState) => resolveHostToolbarStateForDisplay(previousState, createDefaultHostToolbarState(), isDarkMode));
         }
         if (bridgeResult?.success) {
-            // Schedule a delayed state sync to catch async Genie Bridge auto-connect.
+            // Schedule a delayed state sync to catch async host editor connection.
             // The initial enable response may have robotState:'sleeping' because the
             // bridge hasn't connected yet. This re-query catches the state update.
             const DELAYED_STATE_SYNC_MS = 2500;
@@ -286,6 +300,7 @@ export function usePrototypeEditorBridgeActions({
     }, [
         buildPrototypeEditorContext,
         buildPrototypeEditorEnableOptions,
+        buildPrototypeEditorScopedContext,
         getPrimaryPreviewIframe,
         getPrototypeEditorApi,
         isDarkModeRef,
@@ -356,7 +371,7 @@ export function usePrototypeEditorBridgeActions({
         const editors = getPrototypeEditorApi(iframe);
         if (editors?.enablePanelOnly) {
             const context = buildPrototypeEditorContext(iframe);
-            editors.setContext?.(context);
+            editors.setContext?.(buildPrototypeEditorScopedContext(context));
             await Promise.resolve(editors.enablePanelOnly(buildPrototypeEditorEnableOptions(context)));
 
             prototypeHostToolbarUnsubscribeRef.current?.();
@@ -373,10 +388,11 @@ export function usePrototypeEditorBridgeActions({
             return true;
         }
         // Fallback: bridge message for panel-only mode
+        const context = buildPrototypeEditorContext(iframe);
         const bridgeResult = await postPrototypeEditorBridgeMessage(iframe, {
             type: 'AXHUB_PROTOTYPE_EDITOR_ENABLE_PANEL_ONLY',
-            context: buildPrototypeEditorContext(iframe),
-            options: buildPrototypeEditorEnableOptions(buildPrototypeEditorContext(iframe)),
+            context: buildPrototypeEditorScopedContext(context),
+            options: buildPrototypeEditorEnableOptions(context),
         });
         if (bridgeResult?.success) {
             if (bridgeResult.hostToolbarState) {
@@ -390,6 +406,7 @@ export function usePrototypeEditorBridgeActions({
         getPrimaryPreviewIframe,
         buildPrototypeEditorContext,
         buildPrototypeEditorEnableOptions,
+        buildPrototypeEditorScopedContext,
         isDarkMode,
         isDarkModeRef,
         postPrototypeEditorBridgeMessage,

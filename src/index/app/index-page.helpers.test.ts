@@ -5,6 +5,7 @@ import {
     getAssistantAutoOpenDismissed,
     isMarkdownEditableResource,
     normalizeDocItem,
+    normalizeDocsItems,
     normalizeTemplateItem,
     replaceSidebarItemTitle,
     resolveMobileItemOpenUrl,
@@ -12,7 +13,7 @@ import {
 } from './index-page.helpers';
 
 describe('index page helpers', () => {
-    it('keeps assistant auto-open dismissed by default and project-wide across prototype switches', () => {
+    it('keeps assistant auto-open enabled by default and stores real closes project-wide', () => {
         const storage = new Map<string, string>();
         const fakeStorage = {
             getItem: (key: string) => storage.get(key) ?? null,
@@ -24,14 +25,14 @@ describe('index page helpers', () => {
         const otherPrototypeKey = buildAssistantAutoOpenDismissedStorageKey('make-project', 'src/prototypes/other/index.tsx');
         const otherProjectKey = buildAssistantAutoOpenDismissedStorageKey('other-project', 'src/prototypes/beginner-guide/index.tsx');
 
-        expect(getAssistantAutoOpenDismissed(guideKey, fakeStorage)).toBe(true);
-        expect(getAssistantAutoOpenDismissed(otherProjectKey, fakeStorage)).toBe(true);
+        expect(getAssistantAutoOpenDismissed(guideKey, fakeStorage)).toBe(false);
+        expect(getAssistantAutoOpenDismissed(otherProjectKey, fakeStorage)).toBe(false);
 
         setAssistantAutoOpenDismissed(guideKey, false, fakeStorage);
 
         expect(getAssistantAutoOpenDismissed(guideKey, fakeStorage)).toBe(false);
         expect(getAssistantAutoOpenDismissed(otherPrototypeKey, fakeStorage)).toBe(false);
-        expect(getAssistantAutoOpenDismissed(otherProjectKey, fakeStorage)).toBe(true);
+        expect(getAssistantAutoOpenDismissed(otherProjectKey, fakeStorage)).toBe(false);
 
         setAssistantAutoOpenDismissed(guideKey, true, fakeStorage);
 
@@ -108,6 +109,20 @@ describe('index page helpers', () => {
         expect(image.displayName).toBe('assets/logo');
         expect(image.specUrl).toBe('/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fassets%2Flogo.png');
         expect(image.previewUrl).toBe('/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fassets%2Flogo.png');
+    });
+
+    it('uses project-scoped docs file URLs for pasted image resources from the docs list', () => {
+        const [image] = normalizeDocsItems([
+            {
+                name: '素材/image-2.png',
+                displayName: '素材/image-2',
+                absoluteFilePath: '/workspace/content/docs/素材/image-2.png',
+            },
+        ], 'make-project');
+
+        expect(image.specUrl).toBe('/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project');
+        expect(image.previewUrl).toBe('/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project');
+        expect(image.absoluteFilePath).toBe('/workspace/content/docs/素材/image-2.png');
     });
 
     it('recognizes editable Markdown resources even when the display name has no .md extension', () => {

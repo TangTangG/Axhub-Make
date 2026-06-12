@@ -18,6 +18,9 @@ vite.config.*.timestamp-*
 
 # Environment
 .env
+.env.*
+!.env.example
+!.env.*.example
 .env.local
 .env.*.local
 
@@ -26,8 +29,10 @@ vite.config.*.timestamp-*
 **/.axhub/make/.admin-server-info.json
 **/.axhub/make/.dev-server-info.json
 **/.axhub/make/axhub.config.json
+!client/.axhub/make/axhub.config.json
 **/.axhub/make/entries.json
 **/.axhub/make/sidebar-tree.json
+!client/.axhub/make/sidebar-tree.json
 **/.axhub/make/sessions/
 **/.axhub/make/exports/
 **/.axhub/make/artifacts/
@@ -45,10 +50,13 @@ vite.config.*.timestamp-*
 **/.workbuddy/
 .cache/
 **/.cache/
+automation-reports/
+**/automation-reports/
 temp/
 **/temp/
 tmp/
 **/tmp/
+tmp-midscene/
 .release/
 
 # OS and editor files

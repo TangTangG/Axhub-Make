@@ -1,6 +1,7 @@
 import { createElement, useCallback, useMemo, useState, type ReactNode } from 'react';
 import {
     Columns2,
+    LayoutGrid,
     Monitor,
     Smartphone,
     Tablet,
@@ -9,7 +10,10 @@ import {
     createDefaultPreviewConfig,
     DEVICE_PRESET_SIZES,
     getPreviewSelectedDeviceId,
+    normalizeMultiPageColumns,
+    resolveDefaultMultiPageColumns,
     type PreviewConfig,
+    type MultiPageColumns,
     type PreviewScaleMode,
     type PreviewSinglePreset,
 } from '../../domains/device/preview-layout';
@@ -18,6 +22,11 @@ import {
     normalizePreviewHeight,
     normalizePreviewWidth,
 } from './previewActions.helpers';
+import {
+    loadStoredCustomPreviewSize,
+    saveStoredCustomPreviewSize,
+    getPreviewCustomSizeStorage,
+} from './previewCustomSizeStorage';
 
 type PreviewDeviceActions = {
     previewConfig: PreviewConfig;
@@ -27,6 +36,8 @@ type PreviewDeviceActions = {
     handleSelectPreviewSinglePreset: (preset: PreviewSinglePreset) => void;
     handleSelectCustomPreview: () => void;
     handleActivateSplitPreview: () => void;
+    handleActivateMultiPagePreview: (pageCount?: number) => void;
+    handleChangeMultiPageColumns: (columns: MultiPageColumns) => void;
     handleChangeCustomPreviewWidth: (width: number) => void;
     handleChangeCustomPreviewHeight: (height: number) => void;
     handleChangeSplitPreviewWidth: (pane: 'primary' | 'secondary', width: number) => void;
@@ -37,7 +48,14 @@ type PreviewDeviceActions = {
 };
 
 export function usePreviewDeviceActions(): PreviewDeviceActions {
-    const [previewConfig, setPreviewConfig] = useState<PreviewConfig>(() => createDefaultPreviewConfig());
+    const [previewConfig, setPreviewConfig] = useState<PreviewConfig>(() => {
+        const storedCustomSize = loadStoredCustomPreviewSize();
+        return {
+            ...createDefaultPreviewConfig(),
+            customWidth: storedCustomSize?.customWidth ?? null,
+            customHeight: storedCustomSize?.customHeight ?? null,
+        };
+    });
 
     const selectedDeviceId = getPreviewSelectedDeviceId(previewConfig);
     const currentPreviewDeviceId = previewConfig.previewMode === 'single' && previewConfig.singlePreset !== 'custom'
@@ -52,6 +70,7 @@ export function usePreviewDeviceActions(): PreviewDeviceActions {
         { value: 'tablet', icon: createElement(Tablet, { className: 'h-4 w-4' }) },
         { value: 'custom', icon: createElement(Monitor, { className: 'h-4 w-4' }) },
         { value: 'split', icon: createElement(Columns2, { className: 'h-4 w-4' }) },
+        { value: 'multi-page', icon: createElement(LayoutGrid, { className: 'h-4 w-4' }) },
     ]), []);
 
     const setSelectedDeviceId = useCallback((id: string) => {
@@ -99,23 +118,48 @@ export function usePreviewDeviceActions(): PreviewDeviceActions {
         }));
     }, []);
 
-    const handleChangeCustomPreviewWidth = useCallback((width: number) => {
+    const handleActivateMultiPagePreview = useCallback((pageCount?: number) => {
         setPreviewConfig((previous) => ({
             ...previous,
-            previewMode: 'single',
-            singlePreset: 'custom',
-            customWidth: normalizePreviewWidth(width, previous.customWidth ?? DEVICE_PRESET_SIZES.desktop.width),
+            previewMode: 'multi-page',
+            multiPageColumns: pageCount === undefined
+                ? normalizeMultiPageColumns(previous.multiPageColumns)
+                : resolveDefaultMultiPageColumns(pageCount),
+            scaleMode: 'fit-screen',
         }));
     }, []);
 
-    const handleChangeCustomPreviewHeight = useCallback((height: number) => {
+    const handleChangeMultiPageColumns = useCallback((columns: MultiPageColumns) => {
         setPreviewConfig((previous) => ({
             ...previous,
-            previewMode: 'single',
-            singlePreset: 'custom',
-            customHeight: normalizePreviewHeight(height, previous.customHeight ?? DEVICE_PRESET_SIZES.desktop.height),
+            previewMode: 'multi-page',
+            multiPageColumns: normalizeMultiPageColumns(columns),
         }));
     }, []);
+
+    const handleChangeCustomPreviewWidth = useCallback((width: number) => {
+        const customWidth = normalizePreviewWidth(width, previewConfig.customWidth ?? DEVICE_PRESET_SIZES.desktop.width);
+        const customHeight = normalizePreviewHeight(previewConfig.customHeight ?? DEVICE_PRESET_SIZES.desktop.height, DEVICE_PRESET_SIZES.desktop.height);
+        saveStoredCustomPreviewSize(getPreviewCustomSizeStorage(), { customWidth, customHeight });
+        setPreviewConfig((previous) => ({
+            ...previous,
+            previewMode: previous.previewMode === 'multi-page' ? 'multi-page' : 'single',
+            singlePreset: 'custom',
+            customWidth,
+        }));
+    }, [previewConfig.customHeight, previewConfig.customWidth]);
+
+    const handleChangeCustomPreviewHeight = useCallback((height: number) => {
+        const customWidth = normalizePreviewWidth(previewConfig.customWidth ?? DEVICE_PRESET_SIZES.desktop.width, DEVICE_PRESET_SIZES.desktop.width);
+        const customHeight = normalizePreviewHeight(height, previewConfig.customHeight ?? DEVICE_PRESET_SIZES.desktop.height);
+        saveStoredCustomPreviewSize(getPreviewCustomSizeStorage(), { customWidth, customHeight });
+        setPreviewConfig((previous) => ({
+            ...previous,
+            previewMode: previous.previewMode === 'multi-page' ? 'multi-page' : 'single',
+            singlePreset: 'custom',
+            customHeight,
+        }));
+    }, [previewConfig.customHeight, previewConfig.customWidth]);
 
     const handleChangeSplitPreviewWidth = useCallback((pane: 'primary' | 'secondary', width: number) => {
         setPreviewConfig((previous) => ({
@@ -154,6 +198,8 @@ export function usePreviewDeviceActions(): PreviewDeviceActions {
         handleSelectPreviewSinglePreset,
         handleSelectCustomPreview,
         handleActivateSplitPreview,
+        handleActivateMultiPagePreview,
+        handleChangeMultiPageColumns,
         handleChangeCustomPreviewWidth,
         handleChangeCustomPreviewHeight,
         handleChangeSplitPreviewWidth,

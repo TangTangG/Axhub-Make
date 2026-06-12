@@ -2,7 +2,7 @@ import type { AssistantContextElementV1 } from '../types';
 
 const DEFAULT_SKILL_LABELS = {
     workflow: '原型批注处理',
-    reference: '页面同步与截图参考',
+    reference: '本地批注与图片素材参考',
 } as const;
 
 export interface QuickEditSkillPaths {
@@ -22,7 +22,7 @@ function getFileDisplayName(currentFilePath: string, fallback?: string | null): 
 
 function renderSelectedElements(selectedElements: AssistantContextElementV1[]): string {
     if (selectedElements.length === 0) {
-        return '- 当前没有明确的页面选中元素，请结合原型批注、本地记录、自身截图与当前文件内容判断修改位置。';
+        return '- 当前没有明确的页面选中元素，请结合原型批注、本地记录、本地图片素材与当前文件内容判断修改位置。';
     }
 
     return selectedElements
@@ -34,7 +34,7 @@ function renderSelectedElements(selectedElements: AssistantContextElementV1[]): 
         .join('\n');
 }
 
-export function buildQuickEditGeniePrompt(params: {
+export function buildQuickEditAcpPrompt(params: {
     currentFilePath: string;
     currentFileDisplayName?: string | null;
     projectPath?: string | null;
@@ -65,14 +65,15 @@ export function buildQuickEditGeniePrompt(params: {
 ${renderSelectedElements(selectedElements)}
 
 【执行要求】
-1. 本地文件优先：优先读取目标原型的 .spec/prototype-comments.json；只有需要截图、导出图片或页面状态同步时才使用页面同步能力。
-2. 小范围精准修改：涵盖结构、样式或文案的调整。请以目标文件为主进行修改，避免扩大影响范围。无法准确定位时请先利用截图辅助确认，严禁盲改。
-3. 状态记录：修改前后都要更新本地批注 JSON 的 entries/tasks，页面状态同步为 best-effort，失败不影响核心修改流程。
-4. 如实反馈进度：结束后说明哪些批注已完成，若页面状态同步异常，只做简短说明即可。
+1. 本地协议优先：读取 .spec/prototype-comments.json，按 comments/tasks/images 理解批注、任务和图片素材；图片只通过 images[].assetPath 读取本地 prototype-comment-assets 素材。
+2. 执行阶段保持轻量：不调用 CLI/API，不做 live sync，不通知打开中的前端页面；只修改本地文件。
+3. 小范围精准修改：涵盖结构、样式或文案的调整。请以目标文件为主进行修改，避免扩大影响范围。无法准确定位时请结合批注、选中元素、本地图片素材和当前文件内容确认，严禁盲改。
+4. 完成后删除已处理记录：用 comments[].elementKey 删除对应批注，删除同 key 的 tasks[elementKey]，并删除不再被剩余批注引用的 images 记录和本地素材；没有 elementKey 且无法确认匹配时保留，避免误删。
+5. 如实反馈进度：结束后说明哪些批注已完成，以及是否还有无法确认或未处理的批注。
 
 【最终回复要求（重要）】
 与你对话的用户通常是产品经理或设计师，他们不关心底层代码。请在任务完成后，使用通俗、业务导向的语言简要回复用户：
 1. 说明完成了哪些具体界面/业务修改（例如：修改了某处文案、调整了按钮颜色等）。
 2. 若有未处理完或存在异常的节点，只需做简单的业务提示即可。
-**切勿**在回复中罗列修改了哪些具体代码文件、展示哪些技术排查排错过程，也无需向用户汇报底层节点的脏状态（如 dirty/error 等技术词汇），保持沟通自然、简短。`;
+**切勿**在回复中罗列修改了哪些具体代码文件、展示哪些技术排查排错过程，也无需向用户汇报底层节点的内部状态，保持沟通自然、简短。`;
 }

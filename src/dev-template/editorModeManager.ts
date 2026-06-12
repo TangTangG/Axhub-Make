@@ -1,10 +1,8 @@
 import { createWebEditorV2Controller } from './webEditorV2Integration';
 import type {
   GenieEditorDebugState,
-  GenieEditorGenieBridgeOptions,
   GenieEditorHostToolbarAction,
   GenieEditorHostToolbarState,
-  GenieEditorIntegrationWsOptions,
   GenieEditorToolbarMode,
 } from '@/common/web-editor-types';
 
@@ -13,8 +11,8 @@ export interface DevEditorEnableOptions {
   toolbarMode?: GenieEditorToolbarMode;
   initialDarkMode?: boolean;
   mobileMode?: boolean;
-  genieBridge?: GenieEditorGenieBridgeOptions;
-  integrationWs?: GenieEditorIntegrationWsOptions;
+  assistantPanelOpen?: boolean;
+  commentPageScope?: string;
 }
 
 const MAKE_GENIE_EDITOR_SKILL_INSTALL_SOURCE = '.agents/skills/prototype-comments/SKILL.md';

@@ -10,6 +10,7 @@ import {
   DEFAULT_MAKE_CLIENT_REPOSITORY,
   fetchHealth,
   getRuntimeServerInfoPath,
+  isMakeStateWritePermissionError,
   isProcessAlive,
   isLiveLocalServerInfo,
   normalizeHealthServerInfo,
@@ -24,6 +25,7 @@ import {
 } from './projectCore/index.ts';
 
 import { buildLocalCommandEnv, runLocalCommand } from './localCommand.ts';
+import type { DiagnosticLog } from './diagnosticLog.ts';
 import {
   DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION,
   makeClientTemplateMirrorDownloadUrl,
@@ -32,14 +34,39 @@ import {
 
 export type MakeClientPhase =
   | 'template'
+  | 'git-check'
+  | 'download-template'
+  | 'backup'
+  | 'overwrite'
   | 'install'
   | 'metadata'
+  | 'version'
   | 'dev'
   | 'ready';
 
 export interface MakeClientCommandRunner {
   runCommand?: typeof runLocalCommand;
   spawn: typeof spawn;
+}
+
+export interface MakeClientProgressStep {
+  id: string;
+  label: string;
+  durationMs: number;
+  status: 'done' | 'failed';
+}
+
+export interface MakeClientProgressSnapshot {
+  status: 'running' | 'success' | 'failed';
+  totalMs: number;
+  steps: MakeClientProgressStep[];
+}
+
+export interface MakeClientProgressLogger {
+  run<T>(id: string, label: string, action: () => Promise<T>): Promise<T>;
+  runSync<T>(id: string, label: string, action: () => T): T;
+  finish(status: 'success' | 'failed', error?: unknown): void;
+  snapshot(): MakeClientProgressSnapshot;
 }
 
 export interface MakeClientOrchestrationOptions {
@@ -49,6 +76,8 @@ export interface MakeClientOrchestrationOptions {
   devTimeoutMs?: number;
   healthTimeoutMs?: number;
   pollIntervalMs?: number;
+  progressLogger?: MakeClientProgressLogger;
+  diagnosticLog?: DiagnosticLog;
 }
 
 export interface MakeClientDevResult {
@@ -74,6 +103,57 @@ export interface MakeClientStopResult {
   status: MakeClientDevStatus;
 }
 
+export interface MakeClientUpdateBlockedReason {
+  code:
+    | 'GIT_UNAVAILABLE'
+    | 'GIT_REPOSITORY_REQUIRED'
+    | 'GIT_COMMIT_REQUIRED'
+    | 'GIT_WORKTREE_DIRTY'
+    | 'NO_UPDATE_AVAILABLE'
+    | 'TEMPLATE_SOURCE_UNAVAILABLE';
+  message: string;
+}
+
+export interface MakeClientUpdateGitStatus {
+  available: boolean;
+  isRepository: boolean;
+  hasCommits: boolean;
+  clean: boolean;
+  head?: string;
+  dirtyFiles: string[];
+  error?: string;
+}
+
+export interface MakeClientUpdateStatus {
+  projectId: string;
+  projectRoot: string;
+  currentVersion: string;
+  targetVersion: string;
+  updateAvailable: boolean;
+  canApply: boolean;
+  git: MakeClientUpdateGitStatus;
+  template: {
+    version: string;
+    sources: MakeClientTemplateSource[];
+  };
+  blockedReasons: MakeClientUpdateBlockedReason[];
+}
+
+export interface MakeClientUpdateApplyResult {
+  success: true;
+  projectId: string;
+  projectRoot: string;
+  currentVersion: string;
+  targetVersion: string;
+  preUpdateHead: string;
+  backupRoot: string;
+  plannedFiles: string[];
+  writtenFiles: string[];
+  templateUrl: string;
+  installMethod: 'npm' | 'skipped';
+  metadataSynced: boolean;
+}
+
 export const MAKE_CLIENT_ERROR_STATUS: Record<string, number> = {
   NOT_MAKE_CLIENT_PROJECT: 400,
   MAKE_PROJECT_ID_CONFLICT: 409,
@@ -81,6 +161,11 @@ export const MAKE_CLIENT_ERROR_STATUS: Record<string, number> = {
   MAKE_CLIENT_TEMPLATE_UNAVAILABLE: 500,
   MAKE_CLIENT_INSTALL_FAILED: 500,
   MAKE_CLIENT_METADATA_SYNC_FAILED: 500,
+  MAKE_CLIENT_UPDATE_GIT_UNAVAILABLE: 409,
+  MAKE_CLIENT_UPDATE_NOT_GIT_REPOSITORY: 409,
+  MAKE_CLIENT_UPDATE_NO_COMMITS: 409,
+  MAKE_CLIENT_UPDATE_GIT_DIRTY: 409,
+  MAKE_CLIENT_UPDATE_NOT_AVAILABLE: 409,
   MAKE_CLIENT_DEV_TIMEOUT: 504,
   PNPM_NOT_FOUND: 500,
   INVALID_MAKE_PROJECT_FOLDER_NAME: 400,
@@ -108,6 +193,7 @@ function defaultCommandRunner(): MakeClientCommandRunner {
 
 export const MAKE_CLIENT_TEMPLATE_PATH = 'client';
 export const MAKE_CLIENT_TEMPLATE_URL_ENV = 'AXHUB_MAKE_CLIENT_TEMPLATE_URL';
+const MAKE_CLIENT_PROGRESS_LOG_ENV = 'AXHUB_MAKE_PROGRESS_LOG';
 const SKIP_AUTO_START_SERVER_ENV = 'AXHUB_MAKE_SKIP_AUTO_START_SERVER';
 const MAKE_CLIENT_RUNTIME_HEARTBEAT_MAX_AGE_MS = 15_000;
 const DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS = 3 * 60_000;
@@ -140,7 +226,6 @@ const TEMPLATE_COPY_IGNORED_FILES = new Set([
   '.env.development',
   '.admin-server-info.json',
   '.dev-server-info.json',
-  'axhub.config.json',
   'entries.json',
 ]);
 const TEMPLATE_COPY_IGNORED_AXHUB_MAKE_NAMES = new Set([
@@ -150,6 +235,7 @@ const TEMPLATE_COPY_IGNORED_AXHUB_MAKE_NAMES = new Set([
 ]);
 const TEMPLATE_COPY_ALLOWED_AXHUB_MAKE_FILES = new Set([
   '.axhub/make/client.json',
+  '.axhub/make/axhub.config.json',
   '.axhub/make/README.md',
   '.axhub/make/sidebar-tree.json',
 ]);
@@ -568,6 +654,101 @@ function commandErrorMessage(error: unknown): string {
   return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Command failed').trim();
 }
 
+function shouldLogMakeClientProgress(): boolean {
+  return process.env.NODE_ENV !== 'test' || process.env[MAKE_CLIENT_PROGRESS_LOG_ENV] === '1';
+}
+
+function formatMakeClientProgressValue(value: string): string {
+  return JSON.stringify(value);
+}
+
+function formatMakeClientProgressError(error: unknown): string {
+  const message = commandErrorMessage(error).replace(/\s+/gu, ' ').trim();
+  return formatMakeClientProgressValue(message.length > 160 ? `${message.slice(0, 160)}...` : message);
+}
+
+function createMakeClientProgressLogger(scope: 'create' | 'dev', params: {
+  projectRoot: string;
+  projectId?: string;
+}): MakeClientProgressLogger {
+  const enabled = shouldLogMakeClientProgress();
+  const startedAt = Date.now();
+  const steps: MakeClientProgressStep[] = [];
+  let finished = false;
+  let status: MakeClientProgressSnapshot['status'] = 'running';
+  let totalMs: number | null = null;
+  const prefix = `[make-client:${scope}]`;
+  const context = [
+    params.projectId ? `project=${formatMakeClientProgressValue(params.projectId)}` : '',
+    `root=${formatMakeClientProgressValue(params.projectRoot)}`,
+  ].filter(Boolean).join(' ');
+
+  const log = (message: string) => {
+    if (enabled) {
+      console.info(`${prefix} ${message}${context ? ` ${context}` : ''}`);
+    }
+  };
+
+  const recordStep = <T>(id: string, label: string, action: () => T): T => {
+    const stepStartedAt = Date.now();
+    log(`step=start id=${id} label=${label}`);
+    try {
+      const result = action();
+      const durationMs = Date.now() - stepStartedAt;
+      steps.push({ id, label, durationMs, status: 'done' });
+      log(`step=done id=${id} label=${label} durationMs=${durationMs}`);
+      return result;
+    } catch (error) {
+      const durationMs = Date.now() - stepStartedAt;
+      steps.push({ id, label, durationMs, status: 'failed' });
+      log(`step=failed id=${id} label=${label} durationMs=${durationMs} error=${formatMakeClientProgressError(error)}`);
+      throw error;
+    }
+  };
+
+  log('start');
+
+  return {
+    async run<T>(id: string, label: string, action: () => Promise<T>): Promise<T> {
+      const stepStartedAt = Date.now();
+      log(`step=start id=${id} label=${label}`);
+      try {
+        const result = await action();
+        const durationMs = Date.now() - stepStartedAt;
+        steps.push({ id, label, durationMs, status: 'done' });
+        log(`step=done id=${id} label=${label} durationMs=${durationMs}`);
+        return result;
+      } catch (error) {
+        const durationMs = Date.now() - stepStartedAt;
+        steps.push({ id, label, durationMs, status: 'failed' });
+        log(`step=failed id=${id} label=${label} durationMs=${durationMs} error=${formatMakeClientProgressError(error)}`);
+        throw error;
+      }
+    },
+    runSync: recordStep,
+    snapshot() {
+      return {
+        status,
+        totalMs: totalMs ?? Date.now() - startedAt,
+        steps: steps.map((step) => ({ ...step })),
+      };
+    },
+    finish(nextStatus: 'success' | 'failed', error?: unknown) {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      totalMs = Date.now() - startedAt;
+      status = nextStatus;
+      const summary = steps
+        .map((step) => `${step.id}=${step.durationMs}${step.status === 'failed' ? ':failed' : ''}`)
+        .join(' ');
+      const errorText = nextStatus === 'failed' && error ? ` error=${formatMakeClientProgressError(error)}` : '';
+      log(`summary status=${nextStatus} totalMs=${totalMs}${summary ? ` ${summary}` : ''}${errorText}`);
+    },
+  };
+}
+
 function makeClientDevSpawnError(error: unknown, command: string, args: string[]): MakeClientProjectError {
   return new MakeClientProjectError(
     'MAKE_CLIENT_DEV_FAILED',
@@ -582,6 +763,48 @@ function makeClientDevSpawnError(error: unknown, command: string, args: string[]
       },
     },
   );
+}
+
+function writeDiagnosticLogLines(log: DiagnosticLog | undefined, prefix: string, chunk: unknown): void {
+  if (!log) {
+    return;
+  }
+  const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+  const normalized = text.replace(/\r\n?/gu, '\n');
+  const lines = normalized.split('\n');
+  const effectiveLines = lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
+  for (const line of effectiveLines) {
+    log.write(`${prefix} ${line}`);
+  }
+}
+
+function attachMakeClientDevDiagnostics(
+  child: ReturnType<typeof spawn>,
+  options: {
+    command: string;
+    args: string[];
+    projectRoot: string;
+    diagnosticLog?: DiagnosticLog;
+  },
+): void {
+  const log = options.diagnosticLog;
+  if (!log) {
+    return;
+  }
+  const context = `root=${JSON.stringify(options.projectRoot)} command=${JSON.stringify([options.command, ...options.args].join(' '))}`;
+  log.write(`[make-client:dev] spawned ${context}`);
+  child.stdout?.on('data', (chunk) => {
+    writeDiagnosticLogLines(log, `[make-client:dev:stdout] ${context}`, chunk);
+  });
+  child.stderr?.on('data', (chunk) => {
+    writeDiagnosticLogLines(log, `[make-client:dev:stderr] ${context}`, chunk);
+  });
+  child.once?.('error', (error) => {
+    log.write(`[make-client:dev:error] ${context} error=${commandErrorMessage(error)}`);
+  });
+  child.once?.('exit', (code, signal) => {
+    log.write(`[make-client:dev:exit] ${context} code=${code ?? 'null'} signal=${signal ?? 'null'}`);
+  });
 }
 
 function npmCommand(): string {
@@ -723,6 +946,559 @@ async function fetchMakeClientTemplateFromRemote(
   );
 }
 
+function normalizeRelativePath(value: string): string {
+  return value.split(path.sep).join('/');
+}
+
+function isInsideRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function readJsonRecord(filePath: string): Record<string, unknown> {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? raw as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function readMakeClientPackageVersion(projectRoot: string): string {
+  const pkg = readJsonRecord(path.join(projectRoot, 'package.json'));
+  return stringValue(pkg.version);
+}
+
+function readMakeClientCurrentTemplateVersion(projectRoot: string, marker?: MakeClientMarker | null): string {
+  return stringValue(marker?.templateVersion) || readMakeClientPackageVersion(projectRoot);
+}
+
+function parseVersionParts(value: string): { parts: number[]; prerelease: string } | null {
+  const match = value.trim().match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([^+]+))?(?:\+.*)?$/u);
+  if (!match) {
+    return null;
+  }
+  return {
+    parts: [match[1], match[2] || '0', match[3] || '0'].map((part) => Number(part)),
+    prerelease: match[4] || '',
+  };
+}
+
+function compareTemplateVersions(currentVersion: string, targetVersion: string): number {
+  const current = parseVersionParts(currentVersion);
+  const target = parseVersionParts(targetVersion);
+  if (current && target) {
+    for (let index = 0; index < Math.max(current.parts.length, target.parts.length); index += 1) {
+      const diff = (current.parts[index] || 0) - (target.parts[index] || 0);
+      if (diff !== 0) {
+        return diff;
+      }
+    }
+    if (current.prerelease && !target.prerelease) {
+      return -1;
+    }
+    if (!current.prerelease && target.prerelease) {
+      return 1;
+    }
+    if (current.prerelease || target.prerelease) {
+      return current.prerelease.localeCompare(target.prerelease);
+    }
+    return 0;
+  }
+  return currentVersion.localeCompare(targetVersion);
+}
+
+function isTemplateUpdateAvailable(currentVersion: string, targetVersion: string): boolean {
+  if (!currentVersion) {
+    return true;
+  }
+  return compareTemplateVersions(currentVersion, targetVersion) < 0;
+}
+
+async function runGit(
+  runner: MakeClientCommandRunner,
+  projectRoot: string,
+  args: string[],
+): Promise<string> {
+  const runCommand = runner.runCommand || runLocalCommand;
+  const result = await runCommand('git', args, {
+    cwd: projectRoot,
+    maxBuffer: 1024 * 1024 * 10,
+  });
+  return String(result.stdout || '').trim();
+}
+
+async function getMakeClientUpdateGitStatus(
+  runner: MakeClientCommandRunner,
+  projectRoot: string,
+): Promise<MakeClientUpdateGitStatus> {
+  try {
+    await runGit(runner, projectRoot, ['--version']);
+  } catch (error: any) {
+    return {
+      available: false,
+      isRepository: false,
+      hasCommits: false,
+      clean: false,
+      dirtyFiles: [],
+      error: commandErrorMessage(error),
+    };
+  }
+
+  try {
+    const insideWorkTree = await runGit(runner, projectRoot, ['rev-parse', '--is-inside-work-tree']);
+    if (insideWorkTree !== 'true') {
+      return {
+        available: true,
+        isRepository: false,
+        hasCommits: false,
+        clean: false,
+        dirtyFiles: [],
+      };
+    }
+  } catch {
+    return {
+      available: true,
+      isRepository: false,
+      hasCommits: false,
+      clean: false,
+      dirtyFiles: [],
+    };
+  }
+
+  let head = '';
+  try {
+    head = await runGit(runner, projectRoot, ['rev-parse', '--verify', 'HEAD']);
+  } catch {
+    return {
+      available: true,
+      isRepository: true,
+      hasCommits: false,
+      clean: false,
+      dirtyFiles: [],
+    };
+  }
+
+  const status = await runGit(runner, projectRoot, ['status', '--porcelain']);
+  const dirtyFiles = status.split('\n').map((line) => line.trim()).filter(Boolean);
+  return {
+    available: true,
+    isRepository: true,
+    hasCommits: true,
+    clean: dirtyFiles.length === 0,
+    head,
+    dirtyFiles,
+  };
+}
+
+function buildMakeClientUpdateBlockedReasons(params: {
+  updateAvailable: boolean;
+  git: MakeClientUpdateGitStatus;
+  templateSources: MakeClientTemplateSource[];
+}): MakeClientUpdateBlockedReason[] {
+  const reasons: MakeClientUpdateBlockedReason[] = [];
+  if (!params.updateAvailable) {
+    reasons.push({ code: 'NO_UPDATE_AVAILABLE', message: '当前客户端模板已是最新版本' });
+  }
+  if (params.templateSources.length === 0) {
+    reasons.push({ code: 'TEMPLATE_SOURCE_UNAVAILABLE', message: '没有可用的 Make 客户端模板源' });
+  }
+  if (!params.git.available) {
+    reasons.push({ code: 'GIT_UNAVAILABLE', message: '已完成版本检测；更新前需要先安装或修复 Git' });
+  } else if (!params.git.isRepository) {
+    reasons.push({ code: 'GIT_REPOSITORY_REQUIRED', message: '更新前需要先初始化 Git 仓库' });
+  } else if (!params.git.hasCommits) {
+    reasons.push({ code: 'GIT_COMMIT_REQUIRED', message: '更新前需要至少有一个本地 Git commit' });
+  } else if (!params.git.clean) {
+    reasons.push({ code: 'GIT_WORKTREE_DIRTY', message: '更新前需要提交或暂存当前未保存的文件改动' });
+  }
+  return reasons;
+}
+
+export async function getMakeClientUpdateStatus(
+  projectId: string,
+  projectRoot: string,
+  options: { commandRunner?: MakeClientCommandRunner } = {},
+): Promise<MakeClientUpdateStatus> {
+  const root = path.resolve(projectRoot);
+  const marker = validateExistingMakeClientProject(root);
+  const currentVersion = readMakeClientCurrentTemplateVersion(root, marker);
+  const targetVersion = DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION;
+  const templateSources = makeClientTemplateSources({ version: targetVersion });
+  const updateAvailable = isTemplateUpdateAvailable(currentVersion, targetVersion);
+  const runner = options.commandRunner || defaultCommandRunner();
+  const git = await getMakeClientUpdateGitStatus(runner, root);
+  const blockedReasons = buildMakeClientUpdateBlockedReasons({
+    updateAvailable,
+    git,
+    templateSources,
+  });
+  return {
+    projectId,
+    projectRoot: root,
+    currentVersion,
+    targetVersion,
+    updateAvailable,
+    canApply: blockedReasons.length === 0,
+    git,
+    template: {
+      version: targetVersion,
+      sources: templateSources,
+    },
+    blockedReasons,
+  };
+}
+
+function makeClientUpdateGitError(reason: MakeClientUpdateBlockedReason): MakeClientProjectError {
+  if (reason.code === 'GIT_UNAVAILABLE') {
+    return new MakeClientProjectError('MAKE_CLIENT_UPDATE_GIT_UNAVAILABLE', reason.message, { status: 409, phase: 'git-check' });
+  }
+  if (reason.code === 'GIT_REPOSITORY_REQUIRED') {
+    return new MakeClientProjectError('MAKE_CLIENT_UPDATE_NOT_GIT_REPOSITORY', reason.message, { status: 409, phase: 'git-check' });
+  }
+  if (reason.code === 'GIT_COMMIT_REQUIRED') {
+    return new MakeClientProjectError('MAKE_CLIENT_UPDATE_NO_COMMITS', reason.message, { status: 409, phase: 'git-check' });
+  }
+  if (reason.code === 'GIT_WORKTREE_DIRTY') {
+    return new MakeClientProjectError('MAKE_CLIENT_UPDATE_GIT_DIRTY', reason.message, { status: 409, phase: 'git-check' });
+  }
+  return new MakeClientProjectError('MAKE_CLIENT_UPDATE_NOT_AVAILABLE', reason.message, { status: 409, phase: 'git-check' });
+}
+
+function assertMakeClientUpdateCanApply(status: MakeClientUpdateStatus): void {
+  const blockingReason = status.blockedReasons[0];
+  if (blockingReason) {
+    throw makeClientUpdateGitError(blockingReason);
+  }
+}
+
+async function extractMakeClientUpdateTemplate(
+  targetVersion: string,
+): Promise<{
+  tempParent: string;
+  templateRoot: string;
+  source: MakeClientTemplateSource;
+}> {
+  const tempParent = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-make-client-update-template-'));
+  const failures: Array<{ url: string; cache: { status: MakeClientTemplateCacheStatus; path: string } | null; error: string }> = [];
+
+  for (const source of makeClientTemplateSources({ version: targetVersion })) {
+    const checkoutRoot = path.join(tempParent, failures.length === 0 ? 'primary' : `fallback-${failures.length}`);
+    let cache: { status: MakeClientTemplateCacheStatus; path: string } | null = null;
+    try {
+      const cached = await readTemplateZipWithCache(source);
+      cache = cached.cache;
+      extractTemplateZip(cached.zipBuffer, checkoutRoot);
+      return {
+        tempParent,
+        templateRoot: checkoutRoot,
+        source,
+      };
+    } catch (error) {
+      failures.push({
+        url: source.url,
+        cache,
+        error: templateErrorMessage(error),
+      });
+      fs.rmSync(checkoutRoot, { recursive: true, force: true });
+    }
+  }
+
+  fs.rmSync(tempParent, { recursive: true, force: true });
+  throw new MakeClientProjectError(
+    'MAKE_CLIENT_TEMPLATE_UNAVAILABLE',
+    'Failed to download Make client template from all remote sources',
+    {
+      status: 500,
+      phase: 'download-template',
+      details: { sources: failures },
+    },
+  );
+}
+
+function shouldSkipMakeClientUpdateEntry(relativePath: string, entryName: string): boolean {
+  const normalized = relativePath.split(path.sep).join('/');
+  if (
+    entryName === '.git'
+    || entryName === 'node_modules'
+    || entryName === 'dist'
+    || entryName === '.local'
+    || entryName === '.vite'
+    || entryName === '.cache'
+    || entryName === 'tmp'
+    || entryName === 'temp'
+  ) {
+    return true;
+  }
+  if (normalized === '.axhub/make/client.json') {
+    return true;
+  }
+  if (normalized === '.axhub/make/sidebar-tree.json') {
+    return true;
+  }
+  if (
+    normalized.startsWith('.axhub/make/sessions/')
+    || normalized.startsWith('.axhub/make/exports/')
+    || normalized.startsWith('.axhub/make/edit-history/')
+    || normalized.startsWith('.axhub/make/backups/')
+  ) {
+    return true;
+  }
+  if (normalized === 'src/resources' || normalized.startsWith('src/resources/')) {
+    return true;
+  }
+  if (entryName.endsWith('.tsbuildinfo')) {
+    return true;
+  }
+  return false;
+}
+
+function collectMakeClientUpdateTemplateFiles(templateRoot: string): string[] {
+  const files: string[] = [];
+  const walk = (sourceDir: string, relativeDir = '') => {
+    for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+      const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+      if (shouldSkipMakeClientUpdateEntry(relativePath, entry.name)) {
+        continue;
+      }
+      const sourcePath = path.join(sourceDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(sourcePath, relativePath);
+        continue;
+      }
+      if (entry.isFile()) {
+        files.push(normalizeRelativePath(relativePath));
+      }
+    }
+  };
+  walk(templateRoot);
+  files.push('.axhub/make/client.json');
+  return Array.from(new Set(files)).sort();
+}
+
+function createMakeClientUpdateBackupRoot(projectRoot: string): string {
+  const stamp = new Date().toISOString()
+    .replace(/[-:]/gu, '')
+    .replace(/\..*$/u, '')
+    .replace('T', '-');
+  return path.join(projectRoot, '.axhub', 'make', 'backups', `client-update-${stamp}-${process.pid}`);
+}
+
+function backupExistingMakeClientUpdateFiles(projectRoot: string, backupRoot: string, plannedFiles: string[]): void {
+  const originalRoot = path.join(backupRoot, 'original');
+  fs.mkdirSync(originalRoot, { recursive: true });
+  for (const relativePath of plannedFiles) {
+    const sourcePath = path.resolve(projectRoot, ...relativePath.split('/'));
+    if (!isInsideRoot(projectRoot, sourcePath) || !fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      continue;
+    }
+    const backupPath = path.resolve(originalRoot, ...relativePath.split('/'));
+    fs.mkdirSync(path.dirname(backupPath), { recursive: true });
+    fs.copyFileSync(sourcePath, backupPath);
+  }
+}
+
+function writeMakeClientUpdateManifest(
+  backupRoot: string,
+  manifest: Record<string, unknown>,
+): void {
+  fs.mkdirSync(backupRoot, { recursive: true });
+  fs.writeFileSync(path.join(backupRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+}
+
+function writeMakeClientUpdateTemplateFiles(params: {
+  projectRoot: string;
+  templateRoot: string;
+  plannedFiles: string[];
+  marker: MakeClientMarker;
+  source: MakeClientTemplateSource;
+  targetVersion: string;
+}): string[] {
+  const writtenFiles: string[] = [];
+  for (const relativePath of params.plannedFiles) {
+    if (relativePath === '.axhub/make/client.json') {
+      writeMakeClientMarker(params.projectRoot, {
+        schemaVersion: 1,
+        kind: 'axhub-make-client',
+        repository: params.source.markerRepository,
+        templateUrl: params.source.url,
+        templateVersion: params.source.templateVersion || params.targetVersion,
+        project: {
+          id: params.marker.project.id,
+          name: params.marker.project.name,
+        },
+      });
+      writtenFiles.push(relativePath);
+      continue;
+    }
+
+    const sourcePath = path.resolve(params.templateRoot, ...relativePath.split('/'));
+    const targetPath = path.resolve(params.projectRoot, ...relativePath.split('/'));
+    if (!isInsideRoot(params.templateRoot, sourcePath) || !isInsideRoot(params.projectRoot, targetPath)) {
+      throw new MakeClientProjectError(
+        'MAKE_CLIENT_TEMPLATE_UNAVAILABLE',
+        `Unsafe Make client update path: ${relativePath}`,
+        { status: 500, phase: 'overwrite' },
+      );
+    }
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      continue;
+    }
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.copyFileSync(sourcePath, targetPath);
+    writtenFiles.push(relativePath);
+  }
+  return writtenFiles;
+}
+
+async function installMakeClientDependenciesWithNpm(
+  runner: MakeClientCommandRunner,
+  projectRoot: string,
+): Promise<'npm'> {
+  await runMakeClientCommand(runner, npmCommand(), ['install', '--include=dev'], projectRoot, 'install', {
+    timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
+  });
+  return 'npm';
+}
+
+async function syncMakeClientMetadataWithNpm(
+  runner: MakeClientCommandRunner,
+  projectRoot: string,
+): Promise<void> {
+  await runMakeClientCommand(runner, npmCommand(), ['run', 'metadata:sync'], projectRoot, 'metadata');
+}
+
+function attachMakeClientUpdateContext(
+  error: unknown,
+  context: Partial<Omit<MakeClientUpdateApplyResult, 'success' | 'metadataSynced' | 'installMethod'>> & {
+    installMethod?: 'npm' | 'skipped';
+    metadataSynced?: boolean;
+  },
+): never {
+  if (error instanceof MakeClientProjectError) {
+    Object.assign(error, { updateContext: context });
+    throw error;
+  }
+  const wrapped = new MakeClientProjectError(
+    'MAKE_CLIENT_TEMPLATE_UNAVAILABLE',
+    error instanceof Error ? error.message : 'Make client update failed',
+    { status: 500, phase: 'overwrite' },
+  );
+  Object.assign(wrapped, { updateContext: context });
+  throw wrapped;
+}
+
+export async function applyMakeClientUpdate(
+  projectId: string,
+  projectRoot: string,
+  options: { commandRunner?: MakeClientCommandRunner } = {},
+): Promise<MakeClientUpdateApplyResult> {
+  const root = path.resolve(projectRoot);
+  const runner = options.commandRunner || defaultCommandRunner();
+  const marker = validateExistingMakeClientProject(root);
+  const status = await getMakeClientUpdateStatus(projectId, root, { commandRunner: runner });
+  assertMakeClientUpdateCanApply(status);
+
+  const preUpdateHead = status.git.head || await runGit(runner, root, ['rev-parse', 'HEAD']);
+  let extractedTemplate: Awaited<ReturnType<typeof extractMakeClientUpdateTemplate>> | null = null;
+  let backupRoot = '';
+  let plannedFiles: string[] = [];
+  let writtenFiles: string[] = [];
+  let templateUrl = '';
+  let installMethod: 'npm' | 'skipped' = 'skipped';
+  const updateContext = () => ({
+    projectId,
+    projectRoot: root,
+    currentVersion: status.currentVersion,
+    targetVersion: status.targetVersion,
+    preUpdateHead,
+    backupRoot,
+    plannedFiles,
+    writtenFiles,
+    templateUrl,
+    installMethod,
+    metadataSynced: false,
+  });
+
+  try {
+    extractedTemplate = await extractMakeClientUpdateTemplate(status.targetVersion);
+    templateUrl = extractedTemplate.source.url;
+    plannedFiles = collectMakeClientUpdateTemplateFiles(extractedTemplate.templateRoot);
+    const packageRelativePath = 'package.json';
+    const templatePackagePath = path.join(extractedTemplate.templateRoot, packageRelativePath);
+    const projectPackagePath = path.join(root, packageRelativePath);
+    const packageChanged = fs.existsSync(templatePackagePath)
+      && fs.readFileSync(templatePackagePath, 'utf8') !== (fs.existsSync(projectPackagePath) ? fs.readFileSync(projectPackagePath, 'utf8') : '');
+
+    backupRoot = createMakeClientUpdateBackupRoot(root);
+    backupExistingMakeClientUpdateFiles(root, backupRoot, plannedFiles);
+    writeMakeClientUpdateManifest(backupRoot, {
+      projectId,
+      projectRoot: root,
+      currentVersion: status.currentVersion,
+      targetVersion: status.targetVersion,
+      preUpdateHead,
+      plannedFiles,
+      templateUrl,
+      createdAt: new Date().toISOString(),
+    });
+
+    writtenFiles = writeMakeClientUpdateTemplateFiles({
+      projectRoot: root,
+      templateRoot: extractedTemplate.templateRoot,
+      plannedFiles,
+      marker,
+      source: extractedTemplate.source,
+      targetVersion: status.targetVersion,
+    });
+
+    if (packageChanged || !hasInstalledMakeClientDependencies(root)) {
+      installMethod = await installMakeClientDependenciesWithNpm(runner, root);
+    }
+    await syncMakeClientMetadataWithNpm(runner, root);
+
+    writeMakeClientUpdateManifest(backupRoot, {
+      projectId,
+      projectRoot: root,
+      currentVersion: status.currentVersion,
+      targetVersion: status.targetVersion,
+      preUpdateHead,
+      plannedFiles,
+      writtenFiles,
+      templateUrl,
+      installMethod,
+      metadataSynced: true,
+      completedAt: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      projectId,
+      projectRoot: root,
+      currentVersion: status.currentVersion,
+      targetVersion: status.targetVersion,
+      preUpdateHead,
+      backupRoot,
+      plannedFiles,
+      writtenFiles,
+      templateUrl,
+      installMethod,
+      metadataSynced: true,
+    };
+  } catch (error) {
+    attachMakeClientUpdateContext(error, updateContext());
+  } finally {
+    if (extractedTemplate) {
+      fs.rmSync(extractedTemplate.tempParent, { recursive: true, force: true });
+    }
+  }
+}
+
 function isSameProjectRuntime(info: AxhubServerInfo | null, projectRoot: string): info is AxhubServerInfo {
   return isLiveLocalServerInfo(info, projectRoot);
 }
@@ -737,6 +1513,21 @@ function isLiveMakeClientRuntime(info: AxhubServerInfo | null, projectRoot: stri
 
 function isSameProjectHealthRuntime(info: AxhubServerInfo | null, projectRoot: string): info is AxhubServerInfo {
   return Boolean(info && resolveComparableProjectRoot(info.projectRoot) === resolveComparableProjectRoot(projectRoot));
+}
+
+function isWrongRuntimeHealth(health: unknown, projectRoot: string): boolean {
+  if (!health || typeof health !== 'object') {
+    return false;
+  }
+  const role = (health as { role?: unknown }).role;
+  if (typeof role === 'string' && role !== 'runtime') {
+    return true;
+  }
+  const runtime = normalizeHealthServerInfo(health);
+  if (!runtime) {
+    return false;
+  }
+  return resolveComparableProjectRoot(runtime.projectRoot) !== resolveComparableProjectRoot(projectRoot);
 }
 
 async function discoverMakeClientRuntime(projectRoot: string, options: { healthTimeoutMs?: number } = {}): Promise<AxhubServerInfo | null> {
@@ -795,6 +1586,20 @@ function ensureAdminServerInfo(
     ...adminServerInfo,
     projectRoot,
   }, options);
+}
+
+function tryEnsureAdminServerInfo(
+  projectRoot: string,
+  adminServerInfo?: AxhubServerInfo,
+  options: { homeDir?: string } = {},
+): void {
+  try {
+    ensureAdminServerInfo(projectRoot, adminServerInfo, options);
+  } catch (error: any) {
+    if (!isMakeStateWritePermissionError(error)) {
+      throw error;
+    }
+  }
 }
 
 function ensureMakeClientScripts(projectRoot: string): void {
@@ -932,6 +1737,23 @@ export async function stopMakeClientDevServer(
     };
   }
 
+  const health = await fetchHealth(runtime.origin, MAKE_CLIENT_RUNTIME_DISCOVERY_HEALTH_TIMEOUT_MS);
+  if (isWrongRuntimeHealth(health, root)) {
+    clearRuntimeServerInfo(root);
+    return {
+      success: true,
+      projectId,
+      stopped: false,
+      runtime,
+      status: {
+        projectId,
+        makeClient: true,
+        running: false,
+        reason: 'stale-runtime',
+      },
+    };
+  }
+
   try {
     process.kill(runtime.pid, 'SIGTERM');
   } catch (error: any) {
@@ -959,73 +1781,96 @@ export async function ensureMakeClientDevServer(
   options: MakeClientOrchestrationOptions = {},
 ): Promise<MakeClientDevResult> {
   const root = path.resolve(projectRoot);
-  validateExistingMakeClientProject(root);
-  ensureAdminServerInfo(root, options.adminServerInfo, { homeDir: options.serverInfoHomeDir });
-
-  const existingRuntime = readServerInfo(root, 'runtime');
-  if (isLiveMakeClientRuntime(existingRuntime, root)) {
-    return {
-      success: true,
-      reused: true,
-      phase: 'ready',
-      runtime: existingRuntime,
-    };
-  }
-
-  const discoveredRuntime = await discoverMakeClientRuntime(root, options);
-  if (discoveredRuntime) {
-    return {
-      success: true,
-      reused: true,
-      phase: 'ready',
-      runtime: discoveredRuntime,
-    };
-  }
-
-  const runner = options.commandRunner || defaultCommandRunner();
-  const installMethod = await ensureMakeClientDependencies(runner, root);
-  const devCommand = await resolveMakeClientDevCommandForProject(runner, installMethod, root);
-
-  let child: ReturnType<typeof spawn>;
+  const progressLogger = options.progressLogger || createMakeClientProgressLogger('dev', { projectRoot: root });
+  const shouldFinishProgress = !options.progressLogger;
   try {
-    child = runner.spawn(devCommand.command, devCommand.args, {
-      cwd: root,
-      detached: true,
-      env: {
-        ...buildLocalCommandEnv(),
-        [SKIP_AUTO_START_SERVER_ENV]: '1',
-      },
-      stdio: 'ignore',
+    validateExistingMakeClientProject(root);
+    tryEnsureAdminServerInfo(root, options.adminServerInfo, { homeDir: options.serverInfoHomeDir });
+
+    const existingRuntime = readServerInfo(root, 'runtime');
+    if (isLiveMakeClientRuntime(existingRuntime, root)) {
+      progressLogger.runSync('reuse-runtime', '复用已启动客户端', () => undefined);
+      const result = {
+        success: true as const,
+        reused: true,
+        phase: 'ready' as const,
+        runtime: existingRuntime,
+      };
+      if (shouldFinishProgress) progressLogger.finish('success');
+      return result;
+    }
+
+    const discoveredRuntime = await discoverMakeClientRuntime(root, options);
+    if (discoveredRuntime) {
+      progressLogger.runSync('reuse-runtime', '复用已发现客户端', () => undefined);
+      const result = {
+        success: true as const,
+        reused: true,
+        phase: 'ready' as const,
+        runtime: discoveredRuntime,
+      };
+      if (shouldFinishProgress) progressLogger.finish('success');
+      return result;
+    }
+
+    const runner = options.commandRunner || defaultCommandRunner();
+    const installMethod = await progressLogger.run('install', '安装依赖', () => ensureMakeClientDependencies(runner, root));
+    const devCommand = await progressLogger.run('resolve-dev', '解析启动命令', () => resolveMakeClientDevCommandForProject(runner, installMethod, root));
+    const runtime = await progressLogger.run('dev', '启动客户端', async () => {
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = runner.spawn(devCommand.command, devCommand.args, {
+          cwd: root,
+          detached: true,
+          env: {
+            ...buildLocalCommandEnv(),
+            [SKIP_AUTO_START_SERVER_ENV]: '1',
+          },
+          stdio: options.diagnosticLog ? ['ignore', 'pipe', 'pipe'] : 'ignore',
+        });
+        attachMakeClientDevDiagnostics(child, {
+          command: devCommand.command,
+          args: devCommand.args,
+          projectRoot: root,
+          diagnosticLog: options.diagnosticLog,
+        });
+      } catch (error) {
+        throw makeClientDevSpawnError(error, devCommand.command, devCommand.args);
+      }
+      const spawnError = new Promise<never>((_resolve, reject) => {
+        child.once?.('error', (error) => {
+          reject(makeClientDevSpawnError(error, devCommand.command, devCommand.args));
+        });
+      });
+      child.unref?.();
+      const nextRuntime = await Promise.race([
+        waitForRuntimeInfo(root, options.devTimeoutMs ?? DEFAULT_MAKE_CLIENT_DEV_TIMEOUT_MS, options.pollIntervalMs ?? DEFAULT_MAKE_CLIENT_DEV_POLL_INTERVAL_MS, {
+          healthTimeoutMs: options.healthTimeoutMs,
+          ignoredRuntime: existingRuntime,
+        }),
+        spawnError,
+      ]);
+      if (!nextRuntime) {
+        throw new MakeClientProjectError(
+          'MAKE_CLIENT_DEV_TIMEOUT',
+          'Make client dev server did not become ready in time',
+          { status: 504, phase: 'dev' },
+        );
+      }
+      return nextRuntime;
     });
+    const result = {
+      success: true as const,
+      reused: false,
+      phase: 'ready' as const,
+      runtime,
+    };
+    if (shouldFinishProgress) progressLogger.finish('success');
+    return result;
   } catch (error) {
-    throw makeClientDevSpawnError(error, devCommand.command, devCommand.args);
+    if (shouldFinishProgress) progressLogger.finish('failed', error);
+    throw error;
   }
-  const spawnError = new Promise<never>((_resolve, reject) => {
-    child.once?.('error', (error) => {
-      reject(makeClientDevSpawnError(error, devCommand.command, devCommand.args));
-    });
-  });
-  child.unref?.();
-  const runtime = await Promise.race([
-    waitForRuntimeInfo(root, options.devTimeoutMs ?? DEFAULT_MAKE_CLIENT_DEV_TIMEOUT_MS, options.pollIntervalMs ?? DEFAULT_MAKE_CLIENT_DEV_POLL_INTERVAL_MS, {
-      healthTimeoutMs: options.healthTimeoutMs,
-      ignoredRuntime: existingRuntime,
-    }),
-    spawnError,
-  ]);
-  if (!runtime) {
-    throw new MakeClientProjectError(
-      'MAKE_CLIENT_DEV_TIMEOUT',
-      'Make client dev server did not become ready in time',
-      { status: 504, phase: 'dev' },
-    );
-  }
-  return {
-    success: true,
-    reused: false,
-    phase: 'ready',
-    runtime,
-  };
 }
 
 export async function createBlankMakeClientProject(
@@ -1035,7 +1880,7 @@ export async function createBlankMakeClientProject(
     projectName?: string;
   },
   options: MakeClientOrchestrationOptions = {},
-): Promise<{ projectRoot: string; marker: MakeClientMarker; dev: MakeClientDevResult }> {
+): Promise<{ projectRoot: string; marker: MakeClientMarker; dev: MakeClientDevResult; progress: MakeClientProgressSnapshot }> {
   const parentRoot = path.resolve(params.parentRoot);
   if (!fs.existsSync(parentRoot) || !fs.statSync(parentRoot).isDirectory()) {
     throw new MakeClientProjectError('INVALID_MAKE_PROJECT_FOLDER_NAME', 'Parent folder does not exist', { status: 400 });
@@ -1047,38 +1892,58 @@ export async function createBlankMakeClientProject(
   }
 
   const runner = options.commandRunner || defaultCommandRunner();
-  const templateSource = await fetchMakeClientTemplateFromRemote(runner, projectRoot);
-  const existingMarker = readMakeClientMarker(projectRoot);
-  const marker = writeMakeClientMarker(projectRoot, {
-    schemaVersion: 1,
-    kind: 'axhub-make-client',
-    repository: templateSource.markerRepository,
-    templateUrl: templateSource.templateUrl,
-    ...(templateSource.templateVersion ? { templateVersion: templateSource.templateVersion } : {}),
-    project: {
-      id: folderName,
-      name: typeof params.projectName === 'string'
-        ? params.projectName.trim()
-        : typeof existingMarker?.project.name === 'string'
-          ? existingMarker.project.name.trim()
-          : '',
-    },
+  const progressLogger = options.progressLogger || createMakeClientProgressLogger('create', {
+    projectRoot,
+    projectId: folderName,
   });
-  ensureMakeClientScripts(projectRoot);
-  const dev = await ensureMakeClientDevServer(projectRoot, {
-    ...options,
-    commandRunner: runner,
-  });
-  return { projectRoot, marker, dev };
+  const shouldFinishProgress = !options.progressLogger;
+  try {
+    const templateSource = await progressLogger.run('download-template', '下载模板', () => fetchMakeClientTemplateFromRemote(runner, projectRoot));
+    const marker = progressLogger.runSync('write-project', '写入项目', () => {
+      const existingMarker = readMakeClientMarker(projectRoot);
+      const nextMarker = writeMakeClientMarker(projectRoot, {
+        schemaVersion: 1,
+        kind: 'axhub-make-client',
+        repository: templateSource.markerRepository,
+        templateUrl: templateSource.templateUrl,
+        ...(templateSource.templateVersion ? { templateVersion: templateSource.templateVersion } : {}),
+        project: {
+          id: folderName,
+          name: typeof params.projectName === 'string'
+            ? params.projectName.trim()
+            : typeof existingMarker?.project.name === 'string'
+              ? existingMarker.project.name.trim()
+              : '',
+        },
+      });
+      ensureMakeClientScripts(projectRoot);
+      return nextMarker;
+    });
+    const dev = await ensureMakeClientDevServer(projectRoot, {
+      ...options,
+      commandRunner: runner,
+      progressLogger,
+    });
+    if (shouldFinishProgress) progressLogger.finish('success');
+    return { projectRoot, marker, dev, progress: progressLogger.snapshot() };
+  } catch (error) {
+    if (shouldFinishProgress) progressLogger.finish('failed', error);
+    if (error && typeof error === 'object') {
+      Object.assign(error, { progress: progressLogger.snapshot() });
+    }
+    throw error;
+  }
 }
 
 export function makeClientErrorPayload(error: unknown, extra: Record<string, unknown> = {}) {
   if (error instanceof MakeClientProjectError) {
+    const progress = (error as MakeClientProjectError & { progress?: unknown }).progress;
     return {
       error: error.message,
       code: error.code,
       ...(error.phase ? { phase: error.phase } : {}),
       ...(error.details ? { details: error.details } : {}),
+      ...(progress ? { progress } : {}),
       ...extra,
     };
   }

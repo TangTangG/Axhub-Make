@@ -1,0 +1,249 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  buildAcpImageGenerationPostMessage,
+  buildAcpContextPostMessage,
+  getAcpImageGenerationConfigSignature,
+  mapAssistantContextToAcpContextBundle,
+} from './assistantAcpContext';
+
+describe('assistant ACP context mapping', () => {
+  it('maps assistant file and selected elements to an ACP context bundle', () => {
+    const bundle = mapAssistantContextToAcpContextBundle({
+      version: '1',
+      systemContext: '',
+      currentFile: {
+        path: 'src/prototypes/home/index.tsx',
+        displayName: 'Home',
+      },
+      selectedElements: [
+        {
+          tag: 'button',
+          selector: '#save',
+          label: '保存按钮',
+        },
+      ],
+      extensions: {
+        source: 'axhub-runtime',
+      },
+    }, new Date('2026-06-02T10:00:00.000Z'));
+
+    expect(bundle).toEqual({
+      version: '2',
+      updatedAt: '2026-06-02T10:00:00.000Z',
+      items: [
+        {
+          kind: 'file',
+          id: 'axhub:file:src/prototypes/home/index.tsx',
+          hidden: true,
+          pinned: true,
+          path: 'src/prototypes/home/index.tsx',
+          name: 'Home',
+          metadata: {
+            source: 'axhub-runtime',
+          },
+        },
+        {
+          kind: 'annotation',
+          id: 'axhub:selected-element:src/prototypes/home/index.tsx:%23save',
+          body: '保存按钮',
+          target: {
+            type: 'web-element',
+            selector: '#save',
+            label: '保存按钮',
+          },
+          title: 'button',
+          source: 'axhub-runtime',
+          metadata: {
+            filePath: 'src/prototypes/home/index.tsx',
+            selector: '#save',
+            tag: 'button',
+          },
+        },
+      ],
+    });
+  });
+
+  it('builds ACP replace/add postMessage envelopes instead of legacy update_context messages', () => {
+    const message = buildAcpContextPostMessage({
+      version: '1',
+      systemContext: '',
+      currentFile: 'src/prototypes/home/index.tsx',
+      selectedElements: [],
+    }, 'replace', 'request-1', new Date('2026-06-02T10:00:00.000Z'));
+
+    expect(message).toEqual({
+      type: 'acp.context.replace',
+      requestId: 'request-1',
+      payload: {
+        items: [
+          {
+            kind: 'file',
+            id: 'axhub:file:src/prototypes/home/index.tsx',
+            hidden: true,
+            pinned: true,
+            path: 'src/prototypes/home/index.tsx',
+            name: 'home',
+            metadata: {
+              source: 'axhub-runtime',
+            },
+          },
+        ],
+        messageFilter: 'snapshot',
+      },
+    });
+    expect(JSON.stringify(message)).not.toContain('update_context');
+  });
+
+  it('maps selected canvas elements without annotations to stable ACP annotation items', () => {
+    const bundle = mapAssistantContextToAcpContextBundle({
+      version: '1',
+      systemContext: '',
+      currentFile: {
+        path: 'src/prototypes/home/canvas.excalidraw',
+        displayName: 'Home Canvas',
+      },
+      selectedElements: [],
+      extensions: {
+        source: 'axhub-runtime',
+        comments: [
+          {
+            id: 'axhub:canvas-annotation:rect-1',
+            body: '',
+            origin: 'canvas',
+            target: {
+              filePath: 'src/prototypes/home/canvas.excalidraw',
+              elementId: 'rect-1',
+              elementType: 'rectangle',
+            },
+            preview: '主按钮',
+          },
+        ],
+      },
+    }, new Date('2026-06-02T10:00:00.000Z'));
+
+    expect(bundle.items).toContainEqual({
+      kind: 'annotation',
+      id: 'axhub:canvas-annotation:rect-1',
+      body: '主按钮',
+      target: {
+        type: 'canvas-element',
+        filePath: 'src/prototypes/home/canvas.excalidraw',
+        elementId: 'rect-1',
+        elementType: 'rectangle',
+        label: '主按钮',
+      },
+      title: '主按钮',
+      source: 'axhub-runtime',
+      metadata: {
+        filePath: 'src/prototypes/home/canvas.excalidraw',
+        elementId: 'rect-1',
+        elementType: 'rectangle',
+      },
+    });
+  });
+
+  it('keeps canvas annotation ids stable while replacing body with the latest annotation text', () => {
+    const buildContext = (body: string) => ({
+      version: '1' as const,
+      systemContext: '',
+      currentFile: 'src/prototypes/home/canvas.excalidraw',
+      selectedElements: [],
+      extensions: {
+        comments: [
+          {
+            id: 'axhub:canvas-annotation:rect-1',
+            body,
+            origin: 'canvas',
+            target: {
+              filePath: 'src/prototypes/home/canvas.excalidraw',
+              elementId: 'rect-1',
+              elementType: 'rectangle',
+            },
+            preview: '主按钮',
+          },
+        ],
+      },
+    });
+
+    const before = mapAssistantContextToAcpContextBundle(buildContext('改成主 CTA'));
+    const after = mapAssistantContextToAcpContextBundle(buildContext('改成品牌色主 CTA'));
+    const beforeAnnotation = before.items.find((item) => item.kind === 'annotation' && item.id === 'axhub:canvas-annotation:rect-1');
+    const afterAnnotation = after.items.find((item) => item.kind === 'annotation' && item.id === 'axhub:canvas-annotation:rect-1');
+
+    expect(beforeAnnotation?.id).toBe(afterAnnotation?.id);
+    expect(beforeAnnotation).toMatchObject({
+      body: '改成主 CTA',
+    });
+    expect(afterAnnotation).toMatchObject({
+      body: '改成品牌色主 CTA',
+    });
+  });
+
+  it('builds ACP image generation configure messages from complete Make AI settings', () => {
+    const message = buildAcpImageGenerationPostMessage({
+      baseUrl: ' https://api.images.example.com/v1/ ',
+      apiKey: ' sk-image ',
+      model: ' gpt-image-2 ',
+    }, 'image-config-1');
+
+    expect(message).toEqual({
+      type: 'acp.runtime.configure',
+      requestId: 'image-config-1',
+      payload: {
+        merge: true,
+        builtinTools: ['image-generation'],
+        builtinToolSettings: {
+          'image-generation': {
+            baseUrl: 'https://api.images.example.com/v1',
+            apiKey: 'sk-image',
+            model: 'gpt-image-2',
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(message)).not.toContain('acp.tool.imageGeneration');
+    expect(JSON.stringify(message)).not.toContain('"imageGeneration"');
+  });
+
+  it('builds ACP image generation clear messages when Make AI settings are incomplete', () => {
+    expect(buildAcpImageGenerationPostMessage({
+      baseUrl: 'https://api.images.example.com/v1',
+      apiKey: '',
+      model: 'gpt-image-2',
+    }, 'image-config-clear')).toEqual({
+      type: 'acp.runtime.clear',
+      requestId: 'image-config-clear',
+      payload: {
+        fields: ['builtinTools', 'builtinToolSettings'],
+      },
+    });
+    expect(buildAcpImageGenerationPostMessage(null)).toEqual({
+      type: 'acp.runtime.clear',
+      payload: {
+        fields: ['builtinTools', 'builtinToolSettings'],
+      },
+    });
+  });
+
+  it('does not retain plain image generation API keys in config sync signatures', () => {
+    const firstSignature = getAcpImageGenerationConfigSignature({
+      baseUrl: 'https://api.images.example.com/v1',
+      apiKey: 'sk-image-secret-one',
+      model: 'gpt-image-2',
+    });
+    const secondSignature = getAcpImageGenerationConfigSignature({
+      baseUrl: 'https://api.images.example.com/v1',
+      apiKey: 'sk-image-secret-two',
+      model: 'gpt-image-2',
+    });
+
+    expect(firstSignature).not.toContain('sk-image-secret-one');
+    expect(secondSignature).not.toContain('sk-image-secret-two');
+    expect(firstSignature).toContain('acp.runtime.configure');
+    expect(firstSignature).toContain('image-generation');
+    expect(firstSignature).not.toContain('acp.tool.imageGeneration');
+    expect(firstSignature).not.toContain('"imageGeneration"');
+    expect(firstSignature).not.toEqual(secondSignature);
+  });
+});

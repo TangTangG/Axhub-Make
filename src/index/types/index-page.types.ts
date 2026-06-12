@@ -5,6 +5,7 @@ import type { GenieProvider } from '@/common/genie/types';
 import type { CloudPublishTarget, ReviewResult } from '../services/api';
 import type {
     PreviewConfig,
+    MultiPageColumns,
     PreviewScaleMode,
     PreviewSinglePreset,
 } from '../domains/device/preview-layout';
@@ -35,6 +36,8 @@ import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } fro
 import type { SpecQuickEditMode } from '../utils/specQuickEdit';
 import type { ReviewKind } from '../utils/uiReviewPrompt';
 import type { CanvasElementContextInfo } from '../components/content/canvas-embeds/AnnotationOverlay';
+import type { CanvasAiGenerationRequest } from '../domains/ai-generation/CanvasAiGenerationTool';
+import type { AssistantImageAttachmentPayload } from '../domains/assistant/assistantContextPayload';
 
 export type {
     DataTableResourceItem,
@@ -45,6 +48,8 @@ export type {
 
 export type SidebarTab = 'prototype' | 'document' | 'canvas' | 'assets';
 export type ResourceSection = 'themes' | 'data' | 'templates';
+export type PreviewPane = 'primary' | 'secondary';
+export type PrototypePanePromptAction = 'copy-prompt' | 'send-to-genie';
 export type QuickEditRuntimeStatus = 'idle' | 'pending' | 'ready' | 'missing' | 'error';
 export type QuickEditSaveAction = 'save-text' | 'save-style' | 'clear-style';
 
@@ -54,6 +59,15 @@ export interface SelectedResourceFolder {
     path: string;
     folderPath?: string;
     children?: SidebarTreeNode[];
+}
+
+export interface UploadedResourceFile {
+    name?: string;
+    id?: string;
+    itemKey?: string;
+    path?: string;
+    displayName?: string;
+    absoluteFilePath?: string;
 }
 
 export interface ExportAvailability {
@@ -139,6 +153,7 @@ export interface NewSidebarState {
     docsItems: ItemData[];
     canvasItems: CanvasItem[];
     themes: ThemeResourceItem[];
+    defaultThemeName?: string | null;
     searchText: string;
     selectedItem: ItemData | null;
     selectedPrototypePageId?: string | null;
@@ -157,7 +172,6 @@ export interface NewSidebarState {
     isDarkMode: boolean;
     sidebarTrees: Record<SidebarTreeTab, SidebarTreeNode[]>;
     webAgentPanelOpen?: boolean;
-    defaultThemeName?: string | null;
 }
 
 export interface NewSidebarActions {
@@ -186,10 +200,9 @@ export interface NewSidebarActions {
     handleDeleteDocItem: (item: ItemData) => void | Promise<void>;
     handleCopyDocPath: (item: ItemData) => void | Promise<void>;
     handleDocVersionManagement: (item: ItemData) => void | Promise<void>;
-    onCreatePrototypeFromDoc: (doc: ItemData) => void | Promise<void>;
     onOpenCreateDialog: (initialTab?: CreateDialogTab) => void;
     onImportTheme: () => void;
-    onUploadedResourceFiles?: () => void;
+    onUploadedResourceFiles?: (files: UploadedResourceFile[]) => void | Promise<void>;
     onCreateCanvasFile: () => void;
     onCreatePlaceholderPrototype: () => void;
     handleRenameCanvasItem: (item: ItemData, nextName: string) => void | Promise<void>;
@@ -211,13 +224,14 @@ export interface NewSidebarActions {
         projectName?: string;
     }) => Promise<unknown>;
     onRefreshProjects: () => void | Promise<void>;
-    handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
-    onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
-    onCloseWebAgentPanel?: () => void;
     onSidebarTreeChange: (tab: SidebarTreeTab, tree: SidebarTreeNode[]) => void;
     onSidebarTreePersist: (tab: SidebarTreeTab, tree: SidebarTreeNode[]) => void | Promise<void>;
     handleVersionManagement: (item: ItemData) => void;
+    handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
+    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
+    onCloseWebAgentPanel?: () => void;
+    onOpenAISettings?: () => void;
 }
 
 export interface NewSidebarPreferences {
@@ -225,7 +239,6 @@ export interface NewSidebarPreferences {
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
-    onRefreshAvailability?: () => void;
 }
 
 export interface NewSidebarGroupedProps {
@@ -323,6 +336,8 @@ export interface PresentationAreaActions {
     handleSelectPreviewSinglePreset: (preset: PreviewSinglePreset) => void;
     handleSelectCustomPreview: () => void;
     handleActivateSplitPreview: () => void;
+    handleActivateMultiPagePreview: (pageCount?: number) => void;
+    handleChangeMultiPageColumns: (columns: MultiPageColumns) => void;
     handleChangeCustomPreviewWidth: (width: number) => void;
     handleChangeCustomPreviewHeight: (height: number) => void;
     handleChangeSplitPreviewWidth: (pane: 'primary' | 'secondary', width: number) => void;
@@ -339,6 +354,10 @@ export interface PresentationAreaActions {
     handleCopyReviewPrompt?: () => void | Promise<void>;
     handleToggleReviewPageZoom?: () => void;
     handleRunHostToolbarAction?: (action: GenieEditorHostToolbarAction) => void | Promise<boolean>;
+    handleRunPrototypePanePromptAction?: (
+        pane: PreviewPane,
+        action: PrototypePanePromptAction,
+    ) => void | Promise<boolean>;
     handleRunQuickEditSaveAction?: (action: QuickEditSaveAction) => void | Promise<boolean>;
     handleExitWebEditor: () => void;
     handleRefreshElement: () => void;
@@ -351,6 +370,7 @@ export interface PresentationAreaActions {
     handleExportHtml: (options?: { includeSource?: boolean }) => void;
     handlePublishCloudTarget: (target: CloudPublishTarget) => void | Promise<void>;
     handleOpenCloudPublishSettings: (target?: CloudPublishTarget) => void;
+    currentPublishResourcePath: string;
     latestCloudPublishUrl: string;
     handleCopyLatestCloudPublishUrl: () => void | Promise<void>;
     setIsExportModalOpen: (open: boolean) => void;
@@ -369,6 +389,7 @@ export interface PresentationAreaActions {
     onOpenResourceFolderInSystem?: (folderPath: string) => void | Promise<void>;
     onToggleAssistant?: () => void;
     onStartCurrentProjectServer?: () => void | Promise<void>;
+    onCopyStartServerErrorPrompt?: () => void | Promise<void>;
     setElementIframeSize: (size: { width: number; height: number }) => void;
     onStandalonePanelToggle?: () => void;
     setExcalidrawPropertyPanelMode?: (mode: ExcalidrawPropertyPanelMode) => void;
@@ -377,13 +398,16 @@ export interface PresentationAreaActions {
     onCanvasAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
     onOpenCanvasInIDE?: (canvasFilePath: string) => void | Promise<void>;
     onOpenCanvasGenie?: () => void | Promise<void>;
-    handleOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
+    handleOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
     onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
-    onRefreshAvailability?: () => void;
+    onOpenAISettings?: () => void;
     onRefreshPrototypes?: () => Promise<ItemData[]>;
+    onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;
+    onAddCanvasScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;
+    onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;
 }
 
 export interface PresentationAreaGroupedProps {

@@ -47,6 +47,39 @@ function writeMakeClientPackageForProject(projectRoot: string) {
   });
 }
 
+function writeGeneratedPlaceholderPrototype(
+  prototypesDir: string,
+  name: string,
+  options: { elements?: unknown[]; files?: Record<string, unknown> } = {},
+) {
+  const targetDir = path.join(prototypesDir, name);
+  fs.mkdirSync(targetDir, { recursive: true });
+  fs.writeFileSync(path.join(targetDir, 'index.tsx'), `/**
+ * @name 未命名
+ */
+import React from 'react';
+import './style.css';
+
+const displayName = "未命名";
+
+export default function Placeholder() {
+    return (
+        <main className="placeholder-empty-page" aria-label={displayName}>
+            <p>{displayName}，打开左侧默认引导页继续创建。</p>
+        </main>
+    );
+}
+`, 'utf8');
+  fs.writeFileSync(path.join(targetDir, 'canvas.excalidraw'), JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'axhub-make',
+    elements: options.elements || [],
+    appState: { viewBackgroundColor: '#ffffff' },
+    files: options.files || {},
+  }, null, 2), 'utf8');
+}
+
 function writeProjectMetadata(projectRoot: string, overrides: Record<string, unknown> = {}) {
   const docPath = path.join(projectRoot, 'docs', 'spec.md');
   fs.mkdirSync(path.dirname(docPath), { recursive: true });
@@ -342,10 +375,33 @@ describe('make-server project APIs', () => {
     const docsDir = path.join(projectRoot, 'content', 'docs');
     const themesDir = path.join(projectRoot, 'content', 'themes');
     const staleDocPath = path.join(docsDir, 'stale.md');
-    fs.mkdirSync(path.join(prototypesDir, 'draft'), { recursive: true });
-    fs.writeFileSync(path.join(prototypesDir, 'draft', 'index.tsx'), 'export default null;\n', 'utf8');
+    writeGeneratedPlaceholderPrototype(prototypesDir, 'draft');
+    writeGeneratedPlaceholderPrototype(prototypesDir, 'placeholder-started', {
+      elements: [{ id: 'pending-image', type: 'image', status: 'pending' }],
+      files: {
+        'pending-file': {
+          mimeType: 'image/png',
+          path: 'canvas-assets/images/pending-file.png',
+        },
+      },
+    });
     fs.mkdirSync(path.join(prototypesDir, 'fresh'), { recursive: true });
     fs.writeFileSync(path.join(prototypesDir, 'fresh', 'index.tsx'), '/**\n * @name Fresh Prototype\n */\nexport default null;\n', 'utf8');
+    writeGeneratedPlaceholderPrototype(prototypesDir, 'untitled-2');
+    fs.mkdirSync(path.join(prototypesDir, 'edited'), { recursive: true });
+    fs.writeFileSync(path.join(prototypesDir, 'edited', 'index.tsx'), '/**\n * @name Edited Prototype\n */\nexport default null;\n', 'utf8');
+    fs.writeFileSync(path.join(prototypesDir, 'edited', 'canvas.excalidraw'), JSON.stringify({
+      type: 'excalidraw',
+      version: 2,
+      source: 'axhub-make',
+      elements: [{ id: 'rect', type: 'rectangle' }],
+      appState: { viewBackgroundColor: '#ffffff' },
+      files: {},
+    }), 'utf8');
+    fs.mkdirSync(path.join(prototypesDir, 'waiting'), { recursive: true });
+    fs.writeFileSync(path.join(prototypesDir, 'waiting', 'index.tsx'), '/**\n * @name Waiting Prototype\n */\nexport default function WaitingGeneration() { return <main className="prototype-waiting-generation-page"><span>正在等待生成</span></main>; }\n', 'utf8');
+    fs.mkdirSync(path.join(prototypesDir, 'ready'), { recursive: true });
+    fs.writeFileSync(path.join(prototypesDir, 'ready', 'index.tsx'), '/**\n * @name Ready Prototype\n */\nexport default function Ready() { return <main>Ready</main>; }\n', 'utf8');
     fs.mkdirSync(path.join(prototypesDir, 'ignored-no-entry'), { recursive: true });
     fs.writeFileSync(path.join(prototypesDir, 'ignored-no-entry', 'style.css'), '.ignored {}\n', 'utf8');
     fs.mkdirSync(path.join(docsDir, 'nested'), { recursive: true });
@@ -365,11 +421,49 @@ describe('make-server project APIs', () => {
             placeholder: true,
           },
           {
+            id: 'untitled-2',
+            name: 'untitled-2',
+            title: '未命名',
+            clientUrl: 'http://localhost:3000/untitled-2',
+            filePath: 'content/prototypes/untitled-2/index.tsx',
+          },
+          {
+            id: 'placeholder-started',
+            name: 'placeholder-started',
+            title: 'Placeholder Started',
+            clientUrl: 'http://localhost:3000/placeholder-started',
+            filePath: 'content/prototypes/placeholder-started/index.tsx',
+            placeholder: true,
+          },
+          {
+            id: 'edited',
+            name: 'edited',
+            title: 'Edited',
+            clientUrl: 'http://localhost:3000/edited',
+            filePath: 'content/prototypes/edited/index.tsx',
+            placeholder: true,
+          },
+          {
             id: 'ghost',
             name: 'ghost',
             title: 'Ghost',
             clientUrl: 'http://localhost:3000/ghost',
             filePath: 'content/prototypes/ghost/index.tsx',
+          },
+          {
+            id: 'waiting',
+            name: 'waiting',
+            title: 'Waiting Prototype',
+            clientUrl: 'http://localhost:3000/waiting',
+            filePath: 'content/prototypes/waiting/index.tsx',
+          },
+          {
+            id: 'ready',
+            name: 'ready',
+            title: 'Ready Prototype',
+            clientUrl: 'http://localhost:3000/ready',
+            filePath: 'content/prototypes/ready/index.tsx',
+            generationStatus: 'waiting',
           },
         ],
         docs: [
@@ -412,6 +506,28 @@ describe('make-server project APIs', () => {
           kind: 'prototype-empty',
         }),
       });
+      expect(body.resources.prototypes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'untitled-2',
+          placeholder: true,
+          placeholderGuide: expect.objectContaining({
+            kind: 'prototype-empty',
+          }),
+        }),
+      ]));
+      expect(body.resources.prototypes).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'edited',
+          placeholder: true,
+        }),
+      ]));
+      const placeholderStartedPrototype = body.resources.prototypes.find((prototype: any) => prototype.id === 'placeholder-started');
+      expect(placeholderStartedPrototype).toMatchObject({
+        id: 'placeholder-started',
+        generationStatus: 'waiting',
+      });
+      expect(placeholderStartedPrototype).not.toHaveProperty('placeholder');
+      expect(placeholderStartedPrototype).not.toHaveProperty('placeholderGuide');
       expect(body.resources.prototypes).not.toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'ghost' }),
         expect.objectContaining({ id: 'ignored-no-entry' }),
@@ -427,6 +543,18 @@ describe('make-server project APIs', () => {
           previewMode: 'clientRuntime',
         }),
       ]));
+      expect(body.resources.prototypes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'waiting',
+          generationStatus: 'waiting',
+        }),
+      ]));
+      const readyPrototype = body.resources.prototypes.find((prototype: any) => prototype.id === 'ready');
+      expect(readyPrototype).toMatchObject({
+        id: 'ready',
+        title: 'Ready Prototype',
+      });
+      expect(readyPrototype).not.toHaveProperty('generationStatus');
       expect(body.navigation.prototypes).toEqual(['draft', 'fresh']);
       expect(body.resources.docs).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -447,6 +575,28 @@ describe('make-server project APIs', () => {
 
       const stored = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
       expect(stored.resources.prototypes[0].placeholderGuide).toMatchObject({ kind: 'prototype-empty' });
+      expect(stored.resources.prototypes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'untitled-2',
+          placeholder: true,
+          placeholderGuide: expect.objectContaining({
+            kind: 'prototype-empty',
+          }),
+        }),
+      ]));
+      expect(stored.resources.prototypes).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'edited',
+          placeholder: true,
+        }),
+      ]));
+      const storedPlaceholderStartedPrototype = stored.resources.prototypes.find((prototype: any) => prototype.id === 'placeholder-started');
+      expect(storedPlaceholderStartedPrototype).toMatchObject({
+        id: 'placeholder-started',
+        generationStatus: 'waiting',
+      });
+      expect(storedPlaceholderStartedPrototype).not.toHaveProperty('placeholder');
+      expect(storedPlaceholderStartedPrototype).not.toHaveProperty('placeholderGuide');
       expect(stored.resources.prototypes).not.toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'ghost' }),
         expect.objectContaining({ id: 'ignored-no-entry' }),
@@ -458,6 +608,18 @@ describe('make-server project APIs', () => {
           filePath: 'content/prototypes/fresh/index.tsx',
         }),
       ]));
+      expect(stored.resources.prototypes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'waiting',
+          generationStatus: 'waiting',
+        }),
+      ]));
+      const storedReadyPrototype = stored.resources.prototypes.find((prototype: any) => prototype.id === 'ready');
+      expect(storedReadyPrototype).toMatchObject({
+        id: 'ready',
+        title: 'Ready Prototype',
+      });
+      expect(storedReadyPrototype).not.toHaveProperty('generationStatus');
       expect(stored.navigation.prototypes).toEqual(['draft', 'fresh']);
       expect(stored.navigation.docs).toEqual(['nested/guide']);
     } finally {

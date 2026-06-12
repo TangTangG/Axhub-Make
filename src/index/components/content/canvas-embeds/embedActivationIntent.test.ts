@@ -77,4 +77,5 @@ describe('embed activation intent', () => {
             cancelled: false,
         })).toBe(false);
     });
+
 });

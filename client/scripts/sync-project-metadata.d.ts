@@ -4,6 +4,13 @@ export const PRODUCT_NAME: string;
 export const DEFAULT_CLIENT_ORIGIN: string;
 export const DETERMINISTIC_UPDATED_AT: string;
 export const resourceLayout: Record<string, string[]>;
+export const PROTOTYPE_PLACEHOLDER_GUIDE: {
+  kind: string;
+  title: string;
+  description: string;
+  steps: string[];
+  tips: string[];
+};
 
 export function normalizeMakeClientProjectIdentity(project: unknown): {
   id: string;

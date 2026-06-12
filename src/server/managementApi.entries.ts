@@ -35,6 +35,9 @@ function prototypeResourceToEntry(projectId: string, resource: ProjectMetadata['
     projectId,
     resourceId: resource.id,
     previewDisabled: !clientUrl,
+    ...(resource.placeholder === true ? { placeholder: true } : {}),
+    ...(resource.placeholderGuide ? { placeholderGuide: resource.placeholderGuide } : {}),
+    ...(resource.generationStatus ? { generationStatus: resource.generationStatus } : {}),
   };
 }
 

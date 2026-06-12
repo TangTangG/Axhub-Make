@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildAssistantCanvasCommentsExtension,
+  buildAssistantContextWithCanvasElements,
   buildAssistantContextUrl,
   buildAssistantCurrentFileSyncContext,
   getAssistantCanvasCommentsSignature,
@@ -11,7 +12,36 @@ import {
 } from './genieContext';
 
 describe('genieContext helpers', () => {
-  it('replaces stale URL context with the active current file context', () => {
+  it('keeps ACP UI assistant URLs free of serialized context and Genie integration params', () => {
+    const result = new URL(buildAssistantContextUrl(
+      'https://acp.example.com/acp-ui?workspacePath=%2Fworkspace%2Fdemo%2Fproject&prompt=old&integrationWs=1&genieIntegrationChannel=make&genieTargetClientId=make',
+      {
+        version: '1',
+        systemContext: '',
+        currentFile: {
+          path: 'src/prototypes/new/index.tsx',
+          displayName: 'New',
+        },
+        selectedElements: [],
+        extensions: {
+          source: 'axhub-runtime',
+        },
+      },
+      'https://admin.example.com',
+    ));
+
+    expect(result.origin).toBe('https://acp.example.com');
+    expect(result.pathname).toBe('/acp-ui');
+    expect(result.searchParams.get('workspacePath')).toBe('/workspace/demo/project');
+    expect(result.searchParams.get('context')).toBeNull();
+    expect(result.searchParams.get('prompt')).toBeNull();
+    expect(result.searchParams.get('integrationWs')).toBeNull();
+    expect(result.searchParams.get('genieIntegrationChannel')).toBeNull();
+    expect(result.searchParams.get('genieTargetClientId')).toBeNull();
+    expect(result.searchParams.get('slashCommands')).toBeNull();
+  });
+
+  it('strips stale serialized context from legacy assistant URLs', () => {
     const staleContext = encodeURIComponent(JSON.stringify({
       version: '1',
       currentFile: {
@@ -38,15 +68,9 @@ describe('genieContext helpers', () => {
     ));
 
     expect(result.searchParams.get('foo')).toBe('bar');
-    expect(JSON.parse(result.searchParams.get('context') || '{}')).toEqual({
-      version: '1',
-      systemContext: '',
-      currentFile: {
-        path: 'src/prototypes/new/index.tsx',
-        displayName: 'New',
-      },
-      selectedElements: [],
-    });
+    expect(result.searchParams.get('context')).toBeNull();
+    expect(result.searchParams.get('integrationWs')).toBeNull();
+    expect(result.searchParams.get('slashCommands')).toBeNull();
   });
 
   it('reads the current file path from the context payload', () => {
@@ -379,7 +403,7 @@ describe('genieContext helpers', () => {
     ]);
   });
 
-  it('builds stable Genie comments from canvas annotations and filters empty notes', () => {
+  it('builds stable assistant comments from canvas annotations and filters empty notes', () => {
     const comments = buildAssistantCanvasCommentsExtension([
       {
         elementId: 'el-1',
@@ -413,6 +437,65 @@ describe('genieContext helpers', () => {
         updatedAt: expect.any(String),
       },
     ]);
+  });
+
+  it('builds append context for canvas elements even when they have no annotation yet', () => {
+    const context = buildAssistantContextWithCanvasElements({
+      version: '1',
+      systemContext: '',
+      currentFile: {
+        path: 'src/prototypes/home/canvas.excalidraw',
+        displayName: 'Home Canvas',
+      },
+      selectedElements: [
+        {
+          tag: 'button',
+          selector: '#legacy',
+          label: 'Legacy selection',
+        },
+      ],
+      extensions: {
+        source: 'axhub-runtime',
+      },
+    }, [
+      {
+        elementId: 'rect-1',
+        type: 'rectangle',
+        title: '主按钮',
+        annotation: '',
+        link: 'https://example.com/spec',
+        width: 120,
+        height: 48,
+      },
+    ], 'src/prototypes/home/canvas.excalidraw');
+
+    expect(context).toEqual({
+      version: '1',
+      systemContext: '',
+      currentFile: {
+        path: 'src/prototypes/home/canvas.excalidraw',
+        displayName: 'Home Canvas',
+      },
+      selectedElements: [],
+      extensions: {
+        source: 'axhub-runtime',
+        comments: [
+          {
+            id: 'axhub:canvas-annotation:rect-1',
+            body: '主按钮',
+            origin: 'canvas',
+            target: {
+              filePath: 'src/prototypes/home/canvas.excalidraw',
+              elementId: 'rect-1',
+              elementType: 'rectangle',
+              link: 'https://example.com/spec',
+            },
+            preview: '主按钮',
+            updatedAt: expect.any(String),
+          },
+        ],
+      },
+    });
   });
 
   it('uses stable comment signatures that ignore timestamp-only changes', () => {

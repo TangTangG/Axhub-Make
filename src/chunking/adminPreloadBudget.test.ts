@@ -84,6 +84,7 @@ describe('admin homepage preload budget', () => {
     const includeDeps = extractOptimizeDepsArray(viteConfigSource, 'include');
 
     expect(includeDeps).toContain("'use-sync-external-store/shim'");
+    expect(includeDeps).toContain("'use-sync-external-store/shim/index.js'");
     expect(includeDeps).toContain("'use-sync-external-store/shim/with-selector'");
     expect(includeDeps).toContain("'use-sync-external-store/shim/with-selector.js'");
   });

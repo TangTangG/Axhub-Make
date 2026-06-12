@@ -296,6 +296,23 @@ describe('legacy file operations API', () => {
     expect(metadata.navigation.prototypes).toEqual(['settings']);
   });
 
+  it('rejects delete requests whose resolved target does not exist', async () => {
+    const projectRoot = createTempRoot();
+
+    const deleted = await callFileOperation({
+      pathname: '/api/delete',
+      projectRoot,
+      body: { path: 'src/prototypes/missing' },
+    });
+
+    expect(deleted).toMatchObject({
+      status: 404,
+      body: {
+        code: 'FILE_OPERATION_TARGET_NOT_FOUND',
+      },
+    });
+  });
+
   it('updates prototype display names without renaming their source directory', async () => {
     const projectRoot = createTempRoot();
     const prototypeDir = path.join(projectRoot, 'src/prototypes/home');

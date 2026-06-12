@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ItemData, TabType, ViewMode } from '../types';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AssistantContextV1, ItemData, TabType, ViewMode } from '../types';
 import { useCreateDialog } from '../hooks';
 import { useAssistantPanelController } from '../domains/assistant/hooks/useAssistantPanelController';
 import { useWorkspaceNavigationController } from '../domains/workspace/hooks/useWorkspaceNavigationController';
@@ -10,6 +9,7 @@ import { useOpenCodeBridgeSync } from '../hooks/useOpenCodeBridgeSync';
 import { resolveOpenCodeCanvasAnnotationContext, resolveOpenCodeCurrentFilePath } from '../hooks/openCodeBridgeContext';
 import type { CanvasElementContextInfo } from '../components/content/canvas-embeds/AnnotationOverlay';
 import IndexPageLayout from '../components/app/IndexPageLayout';
+import type { SettingsDialogAIContext, SettingsDialogInitialTab } from '../components/SettingsDialog';
 import type {
     ResourceSection,
     SidebarTab,
@@ -31,13 +31,16 @@ import {
 } from './index-page.helpers';
 import { getSelectedResourceTargetPath } from './index-page/previewActions.helpers';
 import { apiService } from '../services/index.api';
-import { parseOpenMethod, type OpenMethod } from '../../common/ide';
+import type { GenieProvider } from '@/common/genie/types';
 import { DEFAULT_LOCAL_EXPORT_CAPABILITIES, DEFAULT_RESOURCE_WRITE_CAPABILITIES, normalizeProjectResourcesPayload } from '../services/projectResources';
 import type { PendingReturnTarget } from './hooks/useIndexPageSelectionSync';
 import { getExplicitLocalPath, stripIndexFilePath } from '../utils/localPath';
 import { copyToClipboard } from '../utils/clipboard';
-import { getAssistantContextCurrentFilePath } from '../utils/genieContext';
+import { getAssistantContextCurrentFilePath, resolveAssistantCurrentFile } from '../utils/genieContext';
+import { buildMakeClientStartupFailurePrompt } from '../utils/projectSetupErrors';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../utils/excalidrawUiMode';
+import type { CanvasAiGenerationRequest } from '../domains/ai-generation/CanvasAiGenerationTool';
+import type { AssistantImageAttachmentPayload } from '../domains/assistant/assistantContextPayload';
 import './styles/index-page.css';
 
 interface AppInnerProps {
@@ -48,19 +51,6 @@ interface AppInnerProps {
     excalidrawPropertyPanelPosition: ExcalidrawPropertyPanelPosition;
     setExcalidrawPropertyPanelPosition: (position: ExcalidrawPropertyPanelPosition) => void;
 }
-
-const resolveCachedOnlineOpenProvider = (method: OpenMethod): GenieProvider | undefined | null => {
-    if (method.type !== 'web') {
-        return null;
-    }
-    if (method.value === 'genie') {
-        return undefined;
-    }
-    if (method.value === 'claude' || method.value === 'codex' || method.value === 'gemini' || method.value === 'opencode') {
-        return method.value;
-    }
-    return null;
-};
 
 type PrototypeRouteInfo = {
     pages: { id: string; title: string }[];
@@ -139,6 +129,8 @@ export default function IndexPage({
 
     const [collapsed, setCollapsed] = useState(false);
     const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+    const [settingsDialogInitialTab, setSettingsDialogInitialTab] = useState<SettingsDialogInitialTab>('project');
+    const [settingsDialogAIContext, setSettingsDialogAIContext] = useState<SettingsDialogAIContext | null>(null);
     const [viewMode, setViewMode] = useState<ViewMode>('demo');
     const [activeTab, setActiveTab] = useState<TabType>('prototypes');
     const [selectedItem, setSelectedItem] = useState<ItemData | null>(null);
@@ -147,12 +139,22 @@ export default function IndexPage({
     const [resourceSection, setResourceSection] = useState<ResourceSection>('themes');
     const [startServerLoading, setStartServerLoading] = useState(false);
     const [startServerError, setStartServerError] = useState('');
+    const [startServerErrorPrompt, setStartServerErrorPrompt] = useState('');
     const [pendingReturnTarget, setPendingReturnTarget] = useState<PendingReturnTarget | null>(null);
-    const onlineOpenAutoTriggeredRef = useRef(false);
+    const onlineOpenAutoTriggeredRef = useRef('');
+    const previousAssistantAutoOpenProjectScopeRef = useRef('');
+    const assistantAutoOpenSuppressedProjectScopeRef = useRef('');
+    const closedPrototypePlaceholderAutoCloseKeyRef = useRef('');
+    const openedPrototypeWaitingGenerationKeyRef = useRef('');
     const initialResourceDeepLink = useMemo(() => parseResourceDeepLink(), []);
     const [initialResourceDeepLinkHandled, setInitialResourceDeepLinkHandled] = useState(() => !initialResourceDeepLink);
     const handleInitialResourceDeepLinkHandled = useCallback(() => {
         setInitialResourceDeepLinkHandled(true);
+    }, []);
+    const openSettingsDialog = useCallback((tab: SettingsDialogInitialTab = 'project', aiContext?: SettingsDialogAIContext | null) => {
+        setSettingsDialogInitialTab(tab);
+        setSettingsDialogAIContext(tab === 'ai' ? aiContext || null : null);
+        setSettingsDialogOpen(true);
     }, []);
 
     const handleExcalidrawPropertyPanelModeChange = useCallback((mode: ExcalidrawPropertyPanelMode) => {
@@ -206,6 +208,7 @@ export default function IndexPage({
 
     const resources = useIndexPageResourceActions({
         activeTab,
+        activeProjectId: workspace.activeProjectId,
         data: workspace.data,
         docsItems: workspace.docsItems,
         canvasItems: workspace.canvasItems,
@@ -233,8 +236,6 @@ export default function IndexPage({
         setSidebarTab,
         setViewMode,
         setResourceSection,
-        setCreateDialogVisible,
-        setCreateDialogSelectedDocs: setSelectedDocs,
         loadData: workspace.loadData,
         loadProjects: workspace.loadProjects,
         reloadSidebarAssets: workspace.reloadSidebarAssets,
@@ -261,17 +262,40 @@ export default function IndexPage({
     }, [contentMode, resources.selectedDoc, resources.selectedTemplate]);
     const currentMarkdownItem = currentMarkdownResource.item;
     const currentMarkdownLabel = currentMarkdownResource.kind === 'template' ? '模板' : '文档';
+    const prototypePlaceholderActive = contentMode === 'preview' && viewMode === 'demo' && selectedItem?.placeholder === true;
+    const prototypePlaceholderAutoCloseKey = prototypePlaceholderActive && selectedItem
+        ? selectedItem.resourceId || selectedItem.name
+        : '';
+    const prototypeWaitingGenerationActive = contentMode === 'preview' && viewMode === 'demo' && selectedItem?.generationStatus === 'waiting' && selectedItem?.placeholder !== true;
+    const prototypeWaitingGenerationAutoOpenKey = prototypeWaitingGenerationActive && selectedItem
+        ? selectedItem.resourceId || selectedItem.name
+        : '';
+
+    const preferences = useIndexPagePreferences({
+        setDefaultThemeName: resources.setDefaultThemeName,
+        activeProjectId: workspace.activeProjectId,
+        enabled: !workspace.loading,
+        onProjectConfigSaved: workspace.loadProjectResources,
+        onExcalidrawPropertyPanelModeLoaded: setExcalidrawPropertyPanelMode,
+        onExcalidrawPropertyPanelPositionLoaded: setExcalidrawPropertyPanelPosition,
+    });
 
     const assistantController = useAssistantPanelController({
         messageApi,
         modal,
         preferredPromptClient: null,
+        onOpenAISettings: (runtime, message) => openSettingsDialog('ai', {
+            runtime,
+            failureSource: '右侧 ACP UI 助手面板',
+            failureMessage: message,
+        }),
         activeProjectId: workspace.activeProjectId,
         activeTab,
         viewMode,
         selectedItem,
         contentMode,
         currentMarkdownResource,
+        assistantImageGenerationConfig: preferences.assistantImageGenerationConfig,
         currentCanvas: resources.selectedCanvas,
         currentTheme: resources.selectedTheme,
         currentDataTable: resources.selectedDataTable,
@@ -293,6 +317,40 @@ export default function IndexPage({
     const assistantAutoOpenDismissedStorageKey = useMemo(() => (
         buildAssistantAutoOpenDismissedStorageKey(assistantAutoOpenProjectScope)
     ), [assistantAutoOpenProjectScope]);
+
+    useEffect(() => {
+        const nextScope = assistantAutoOpenProjectScope;
+        const previousScope = previousAssistantAutoOpenProjectScopeRef.current;
+        if (previousScope && nextScope && previousScope !== nextScope && !assistantController.assistantVisible) {
+            assistantAutoOpenSuppressedProjectScopeRef.current = nextScope;
+        }
+        if (previousScope !== nextScope) {
+            onlineOpenAutoTriggeredRef.current = '';
+        }
+        previousAssistantAutoOpenProjectScopeRef.current = nextScope;
+    }, [
+        assistantAutoOpenProjectScope,
+        assistantController.assistantVisible,
+    ]);
+
+    const handleSubmitAnnotationAssistantPrompt = useCallback(async (
+        context: AssistantContextV1,
+        promptText: string,
+        options?: { forceNewThread?: boolean },
+    ) => {
+        const prompt = String(promptText || '').trim();
+        if (!prompt) {
+            messageApi.warning('请输入提示词');
+            return false;
+        }
+        assistantAutoOpenSuppressedProjectScopeRef.current = '';
+        setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);
+        return assistantController.openAssistantWithContextAndSubmitPrompt(context, prompt, options);
+    }, [
+        assistantAutoOpenDismissedStorageKey,
+        assistantController.openAssistantWithContextAndSubmitPrompt,
+        messageApi,
+    ]);
 
     const preview = useIndexPagePreviewActions({
         activeTab,
@@ -319,14 +377,13 @@ export default function IndexPage({
         setIsDarkMode,
         assistantContextV1: assistantController.assistantContextV1,
         assistantProjectPath: assistantController.assistantProjectPath,
-        assistantApiBaseUrl: assistantController.assistantApiBaseUrl,
-        assistantWebEditorClientId: assistantController.assistantWebEditorClientId,
+        assistantContextAppendAvailable: assistantController.assistantContextAppendAvailable,
+        onOpenAnnotationAssistant: assistantController.openAssistantWithContext,
+        onSubmitAnnotationAssistantPrompt: handleSubmitAnnotationAssistantPrompt,
         probeAssistantRuntimeSilently: assistantController.probeAssistantRuntimeSilently,
-        startAssistantRuntimeForWebEditor: assistantController.startAssistantRuntimeForWebEditor,
-        handleWebEditorGenieRequest: assistantController.handleWebEditorGenieRequest,
+        connectAssistantRuntimeSilently: assistantController.connectAssistantRuntimeSilently,
         syncAssistantCanvasComments: assistantController.syncAssistantCanvasComments,
         clearAssistantSelectedElementsOnExit: assistantController.clearAssistantSelectedElementsOnExit,
-        tryOpenByAssistantIframe: assistantController.tryOpenByAssistantIframe,
         onPrototypeRouteInfo: (routeInfo: PrototypeRouteInfo) => {
             if (!selectedItem) {
                 return;
@@ -491,43 +548,40 @@ export default function IndexPage({
         };
     }, [appDialog, messageApi]);
 
-    const preferences = useIndexPagePreferences({
-        setDefaultThemeName: resources.setDefaultThemeName,
-        onProjectConfigSaved: workspace.loadProjectResources,
-        onExcalidrawPropertyPanelModeLoaded: setExcalidrawPropertyPanelMode,
-        onExcalidrawPropertyPanelPositionLoaded: setExcalidrawPropertyPanelPosition,
-    });
-
     useEffect(() => {
-        if (!preferences.initialPreferencesLoaded || onlineOpenAutoTriggeredRef.current) {
+        if (!preferences.initialPreferencesLoaded || !assistantAutoOpenTargetPath) {
             return;
         }
-        if (initialResourceDeepLink) {
+        if (prototypePlaceholderActive) {
             return;
         }
-        const cachedOpenMethod = parseOpenMethod(preferences.preferredIDE);
-        const cachedOnlineProvider = cachedOpenMethod ? resolveCachedOnlineOpenProvider(cachedOpenMethod) : null;
-        if (cachedOnlineProvider === null) {
+        if (prototypeWaitingGenerationActive) {
             return;
         }
-        if (!assistantAutoOpenTargetPath) {
+        const autoOpenTargetKey = assistantAutoOpenTargetPath;
+        if (onlineOpenAutoTriggeredRef.current === autoOpenTargetKey) {
             return;
         }
         if (getAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey)) {
             return;
         }
-        onlineOpenAutoTriggeredRef.current = true;
-        assistantController.handleOpenGenieWebAgent(assistantAutoOpenTargetPath, cachedOnlineProvider);
+        if (assistantAutoOpenSuppressedProjectScopeRef.current === assistantAutoOpenProjectScope) {
+            return;
+        }
+        onlineOpenAutoTriggeredRef.current = autoOpenTargetKey;
+        void assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);
     }, [
+        assistantAutoOpenProjectScope,
         assistantAutoOpenTargetPath,
         assistantAutoOpenDismissedStorageKey,
         assistantController,
-        initialResourceDeepLink,
         preferences.initialPreferencesLoaded,
-        preferences.preferredIDE,
+        prototypePlaceholderActive,
+        prototypeWaitingGenerationActive,
     ]);
 
     const handleOpenGenieWebAgent = useCallback((targetPath?: string, provider?: GenieProvider) => {
+        assistantAutoOpenSuppressedProjectScopeRef.current = '';
         setAssistantAutoOpenDismissed(buildAssistantAutoOpenKeyForTarget(targetPath), false);
         assistantController.handleOpenGenieWebAgent(targetPath, provider);
     }, [
@@ -546,6 +600,9 @@ export default function IndexPage({
     ]);
 
     const handleToggleAssistantPanel = useCallback(() => {
+        if (!assistantController.assistantVisible) {
+            assistantAutoOpenSuppressedProjectScopeRef.current = '';
+        }
         setAssistantAutoOpenDismissed(
             assistantAutoOpenDismissedStorageKey,
             assistantController.assistantVisible,
@@ -554,6 +611,96 @@ export default function IndexPage({
     }, [
         assistantAutoOpenDismissedStorageKey,
         assistantController,
+    ]);
+
+    useEffect(() => {
+        if (!prototypePlaceholderAutoCloseKey) {
+            closedPrototypePlaceholderAutoCloseKeyRef.current = '';
+            return;
+        }
+        if (!assistantController.assistantVisible) {
+            return;
+        }
+        if (closedPrototypePlaceholderAutoCloseKeyRef.current === prototypePlaceholderAutoCloseKey) {
+            return;
+        }
+
+        closedPrototypePlaceholderAutoCloseKeyRef.current = prototypePlaceholderAutoCloseKey;
+        assistantController.hideAssistantPanelTemporarily();
+    }, [
+        assistantController.assistantVisible,
+        assistantController.hideAssistantPanelTemporarily,
+        prototypePlaceholderAutoCloseKey,
+    ]);
+
+    useEffect(() => {
+        if (!assistantController.assistantPanelMounted) {
+            return;
+        }
+        if (assistantController.assistantVisible) {
+            return;
+        }
+        if (!preferences.initialPreferencesLoaded) {
+            return;
+        }
+        if (prototypePlaceholderActive) {
+            return;
+        }
+        if (prototypeWaitingGenerationActive) {
+            return;
+        }
+        if (!assistantAutoOpenTargetPath) {
+            return;
+        }
+        if (getAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey)) {
+            return;
+        }
+        if (assistantAutoOpenSuppressedProjectScopeRef.current === assistantAutoOpenProjectScope) {
+            return;
+        }
+
+        assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);
+    }, [
+        assistantAutoOpenProjectScope,
+        assistantAutoOpenDismissedStorageKey,
+        assistantAutoOpenTargetPath,
+        assistantController,
+        preferences.initialPreferencesLoaded,
+        prototypePlaceholderActive,
+        prototypeWaitingGenerationActive,
+    ]);
+
+    useEffect(() => {
+        if (!prototypeWaitingGenerationActive) {
+            openedPrototypeWaitingGenerationKeyRef.current = '';
+            return;
+        }
+        if (!preferences.initialPreferencesLoaded) {
+            return;
+        }
+        if (!prototypeWaitingGenerationAutoOpenKey) {
+            return;
+        }
+        const waitingGenerationAutoOpenKey = prototypeWaitingGenerationAutoOpenKey;
+        if (openedPrototypeWaitingGenerationKeyRef.current === waitingGenerationAutoOpenKey) {
+            return;
+        }
+        if (!assistantAutoOpenTargetPath) {
+            return;
+        }
+        if (assistantAutoOpenSuppressedProjectScopeRef.current === assistantAutoOpenProjectScope) {
+            return;
+        }
+
+        openedPrototypeWaitingGenerationKeyRef.current = waitingGenerationAutoOpenKey;
+        void assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);
+    }, [
+        assistantAutoOpenProjectScope,
+        assistantAutoOpenTargetPath,
+        assistantController,
+        preferences.initialPreferencesLoaded,
+        prototypeWaitingGenerationActive,
+        prototypeWaitingGenerationAutoOpenKey,
     ]);
 
     useEffect(() => {
@@ -599,14 +746,22 @@ export default function IndexPage({
         }
         setPendingReturnTarget((previous) => previous ?? getCurrentReturnTarget());
         setStartServerError('');
+        setStartServerErrorPrompt('');
         setStartServerLoading(true);
         const hide = messageApi.loading('正在启动客户端...', 0);
         try {
             const payload = await workspace.startActiveProjectServer();
+            setStartServerErrorPrompt('');
             messageApi.success(payload?.reused ? '客户端已在运行' : '客户端已启动');
         } catch (error: any) {
             const message = error?.message || '启动客户端失败';
+            const diagnostic = error?.diagnostic || error;
             setStartServerError(message);
+            setStartServerErrorPrompt(buildMakeClientStartupFailurePrompt(diagnostic, {
+                projectName: workspace.projectTitle,
+                displayMessage: message,
+                currentUrl: typeof window !== 'undefined' ? window.location.href : '',
+            }));
             messageApi.error(message);
         } finally {
             hide();
@@ -614,18 +769,139 @@ export default function IndexPage({
         }
     };
 
+    const handleCopyStartServerErrorPrompt = useCallback(async () => {
+        const fallbackPrompt = startServerError
+            ? buildMakeClientStartupFailurePrompt({
+                projectId: workspace.activeProjectId,
+                error: startServerError,
+            }, {
+                projectName: workspace.projectTitle,
+                displayMessage: startServerError,
+                currentUrl: typeof window !== 'undefined' ? window.location.href : '',
+            })
+            : '';
+        const prompt = startServerErrorPrompt || fallbackPrompt;
+        if (!prompt) {
+            messageApi.error('当前没有可复制的启动错误');
+            return;
+        }
+        try {
+            await copyToClipboard(prompt);
+            messageApi.success('已复制给 AI 的处理说明');
+        } catch (error: any) {
+            messageApi.error(error?.message || '复制失败');
+        }
+    }, [messageApi, startServerError, startServerErrorPrompt, workspace.activeProjectId, workspace.projectTitle]);
+
     const handleOpenCanvasInIDE = useCallback(async (canvasFilePath: string) => {
         const targetPath = canvasFilePath.trim();
         await openFileInIDE({
             filePath: targetPath,
             copyText: targetPath ? `[画布](${targetPath})` : undefined,
+            projectId: workspace.activeProjectId?.trim() || undefined,
             emptySelectionMessage: '当前画布文件路径不可用，无法在编辑器中打开',
         });
-    }, [openFileInIDE]);
+    }, [openFileInIDE, workspace.activeProjectId]);
 
     const handleOpenCanvasGenie = useCallback(async () => {
         await Promise.resolve(handleOpenGenieWebAgent());
     }, [handleOpenGenieWebAgent]);
+
+    const buildCanvasAssistantContext = useCallback((request: CanvasAiGenerationRequest): AssistantContextV1 => {
+        const canvasFilePath = String(request.canvasFilePath || '').trim();
+        const isPrototypePlaceholderStart = request.source === 'placeholder-start' && request.scene === 'page';
+        const isDesignPlaceholderStart = request.source === 'placeholder-start' && request.scene === 'design';
+        const placeholderStartCurrentFile = isPrototypePlaceholderStart
+            ? resolveAssistantCurrentFile({
+                selectedItem,
+                activeTab,
+                viewMode: 'demo',
+                contentMode: 'preview',
+                currentMarkdownResource,
+                currentCanvas: resources.selectedCanvas,
+                currentTheme: resources.selectedTheme,
+                currentDataTable: resources.selectedDataTable,
+            })
+            : null;
+        const canvasCurrentFile = canvasFilePath
+            ? {
+                path: canvasFilePath,
+                displayName: canvasFilePath.split('/').filter(Boolean).pop() || 'canvas.excalidraw',
+            }
+            : resolveAssistantCurrentFile({
+            selectedItem,
+            activeTab,
+            viewMode,
+            contentMode,
+            currentMarkdownResource,
+            currentCanvas: resources.selectedCanvas,
+            currentTheme: resources.selectedTheme,
+            currentDataTable: resources.selectedDataTable,
+        });
+        const currentFile = isPrototypePlaceholderStart
+            ? placeholderStartCurrentFile
+            : canvasCurrentFile;
+        const currentFilePath = isPrototypePlaceholderStart ? getAssistantContextCurrentFilePath({ currentFile }) : canvasFilePath || getAssistantContextCurrentFilePath({ currentFile });
+        const currentFileDirectory = currentFilePath.replace(/\/[^/]+$/u, '');
+
+        return {
+            version: '1',
+            systemContext: '',
+            currentFile,
+            selectedElements: [],
+            extensions: {
+                ...(assistantController.assistantContextV1.extensions || {}),
+                viewMode: isPrototypePlaceholderStart ? 'demo' : isDesignPlaceholderStart ? 'canvas' : 'canvas',
+                activeTab,
+                contentMode,
+                selectedItem: selectedItem
+                    ? {
+                        name: selectedItem.name,
+                        displayName: selectedItem.displayName,
+                        clientUrl: selectedItem.clientUrl,
+                        previewUrl: selectedItem.previewUrl,
+                        specUrl: selectedItem.specUrl,
+                    }
+                    : null,
+                paths: {
+                    currentFilePath,
+                    currentFileDirectory,
+                },
+                canvasAiGeneration: {
+                    scene: request.scene,
+                    source: request.source || 'canvas-node',
+                    generatorId: request.generatorId,
+                    canvasFilePath: isPrototypePlaceholderStart ? undefined : request.canvasFilePath,
+                    referenceImages: request.referenceImages || [],
+                    localContextRefs: isPrototypePlaceholderStart ? [] : request.localContextRefs || [],
+                    provider: request.provider,
+                    model: request.model,
+                    mode: request.mode,
+                    thought: request.thought,
+                    contextBundle: request.contextBundle,
+                },
+                updatedAt: new Date().toISOString(),
+            },
+        };
+    }, [
+        activeTab,
+        assistantController.assistantContextV1.extensions,
+        contentMode,
+        currentMarkdownResource,
+        resources.selectedCanvas,
+        resources.selectedDataTable,
+        resources.selectedTheme,
+        selectedItem,
+        viewMode,
+    ]);
+
+    const handleSubmitCanvasAssistantPrompt = useCallback(async (request: CanvasAiGenerationRequest) => {
+        return handleSubmitAnnotationAssistantPrompt(
+            buildCanvasAssistantContext(request),
+            request.prompt,
+            { forceNewThread: true },
+        );
+    }, [buildCanvasAssistantContext, handleSubmitAnnotationAssistantPrompt]);
 
     const switchProjectWithReturnTarget = async (projectId: string) => {
         setPendingReturnTarget(getCurrentReturnTarget());
@@ -662,6 +938,18 @@ export default function IndexPage({
 
     // ── Canvas → Bridge context callbacks ──
     const handleAddCanvasElementsToContext = useCallback((elements: CanvasElementContextInfo[]) => {
+        const currentFilePath = resolveOpenCodeCurrentFilePath({
+            selectedItem,
+            selectedDoc: resources.selectedDoc,
+            selectedCanvas: resources.selectedCanvas,
+            selectedTheme: resources.selectedTheme,
+            resourceSection,
+            sidebarTab,
+            viewMode,
+        }) || assistantCurrentFilePath || '';
+
+        assistantController.addCanvasElementsToAssistantContext(elements, currentFilePath);
+
         if (bridge.connectionState !== 'connected') return;
         for (const info of elements) {
             const comment = [
@@ -672,25 +960,29 @@ export default function IndexPage({
             bridge.addContext({
                 id: `axhub:canvas-element:${info.elementId}`,
                 type: 'file',
-                path: resolveOpenCodeCurrentFilePath({
-                    selectedItem,
-                    selectedDoc: resources.selectedDoc,
-                    selectedCanvas: resources.selectedCanvas,
-                    selectedTheme: resources.selectedTheme,
-                    resourceSection,
-                    sidebarTab,
-                    viewMode,
-                }) || '',
+                path: currentFilePath,
                 comment,
                 preview: info.title || info.type || info.elementId,
             });
         }
-    }, [bridge, resourceSection, selectedItem, resources.selectedDoc, resources.selectedCanvas, resources.selectedTheme, sidebarTab, viewMode]);
+    }, [assistantController.addCanvasElementsToAssistantContext, assistantCurrentFilePath, bridge, resourceSection, selectedItem, resources.selectedDoc, resources.selectedCanvas, resources.selectedTheme, sidebarTab, viewMode]);
 
     const [canvasAnnotations, setCanvasAnnotations] = useState<CanvasElementContextInfo[]>([]);
     const handleCanvasAnnotationsChange = useCallback((annotations: CanvasElementContextInfo[]) => {
         setCanvasAnnotations(annotations);
     }, []);
+
+    const handleAddCanvasScreenshotToAssistant = useCallback(async (attachment: AssistantImageAttachmentPayload) => {
+        return assistantController.addImageAttachment(attachment);
+    }, [assistantController.addImageAttachment]);
+
+    const handleAddCanvasImageToAssistant = useCallback(async (attachment: AssistantImageAttachmentPayload, promptText?: string) => {
+        const added = await assistantController.addImageAttachment(attachment);
+        if (!added) return false;
+        const prompt = String(promptText || '').trim();
+        if (!prompt) return true;
+        return assistantController.appendComposerText(prompt);
+    }, [assistantController.addImageAttachment, assistantController.appendComposerText]);
 
     // Auto-sync annotations to bridge context
     const prevSyncedAnnotationIdsRef = React.useRef<Set<string>>(new Set());
@@ -775,6 +1067,7 @@ export default function IndexPage({
                 copyText: matchedItem && filePath
                     ? `[${matchedItem.displayName || embedTitle}](${basePath || filePath})`
                     : undefined,
+                projectId: matchedItem?.projectId,
                 emptySelectionMessage: matchedItem
                     ? '当前资源未声明本地文件路径，无法在 IDE 中打开'
                     : '未找到对应的本地文件路径，无法在 IDE 中打开',
@@ -812,6 +1105,7 @@ export default function IndexPage({
             docsItems: workspace.docsItems,
             canvasItems: workspace.canvasItems,
             themes: workspace.themes,
+            defaultThemeName: resources.defaultThemeName,
             searchText: workspace.searchText,
             selectedItem,
             selectedPrototypePageId,
@@ -825,11 +1119,11 @@ export default function IndexPage({
             lanAccessAllowed,
             isDarkMode,
             sidebarTrees: workspace.sidebarTrees,
-            defaultThemeName: resources.defaultThemeName,
+            webAgentPanelOpen: assistantController.assistantVisible,
             selectedDoc: resources.selectedDoc,
+            selectedResourceFolder: resources.selectedResourceFolder,
             selectedCanvas: resources.selectedCanvas,
             selectedTheme: resources.selectedTheme,
-            webAgentPanelOpen: assistantController.assistantVisible,
         },
         deps: {
             preferredPromptClient: preferences.preferredPromptClient,
@@ -838,7 +1132,7 @@ export default function IndexPage({
             agentAvailability: preferences.agentAvailability,
             setPreferredIDE: preferences.setPreferredIDE,
             setIsDarkMode,
-            setSettingsDialogOpen,
+            openSettingsDialog,
             setActiveTab,
             setSidebarTab,
             setViewMode,
@@ -859,7 +1153,6 @@ export default function IndexPage({
             handleOpenGenieWebAgent,
             handleOpenWebAgentInPanel: assistantController.openRawUrlInAssistantPanel,
             onCloseWebAgentPanel: handleCloseWebAgentPanel,
-            refreshAvailability: preferences.refreshAvailability,
             handleOpenSelectedDocInIDE: ideActions.handleOpenSelectedDocInIDE,
             handleOpenSelectedThemeInIDE: ideActions.handleOpenSelectedThemeInIDE,
             handleOpenSelectedThemeDocInIDE: ideActions.handleOpenSelectedThemeDocInIDE,
@@ -877,21 +1170,30 @@ export default function IndexPage({
 
     const handleRefreshCanvasPrototypeItems = useCallback(async () => {
         await workspace.loadData();
+        let nextPrototypes: ItemData[] = workspace.data.prototypes;
         const projectId = workspace.activeProjectId?.trim();
         if (projectId) {
             const projectResponse = await fetch(`/api/projects/${encodeURIComponent(projectId)}/resources`).catch(() => null);
             if (projectResponse?.ok) {
                 const payload = await projectResponse.json().catch(() => null);
-                return normalizeProjectResourcesPayload(payload, projectId).prototypes;
+                nextPrototypes = normalizeProjectResourcesPayload(payload, projectId).data.prototypes;
             }
         }
-        const response = await fetch('/api/entries.json').catch(() => null);
-        if (!response?.ok) {
-            return workspace.data.prototypes;
+        if (!projectId || nextPrototypes === workspace.data.prototypes) {
+            const response = await fetch('/api/entries.json').catch(() => null);
+            if (response?.ok) {
+                const body = await response.json().catch(() => null);
+                nextPrototypes = Array.isArray(body?.prototypes) ? body.prototypes : workspace.data.prototypes;
+            }
         }
-        const body = await response.json().catch(() => null);
-        return Array.isArray(body?.prototypes) ? body.prototypes : workspace.data.prototypes;
-    }, [workspace]);
+        const refreshedSelectedItem = selectedItem?.name
+            ? nextPrototypes.find((item) => item.name === selectedItem.name)
+            : null;
+        if (refreshedSelectedItem) {
+            setSelectedItem(refreshedSelectedItem);
+        }
+        return nextPrototypes;
+    }, [selectedItem?.name, setSelectedItem, workspace]);
 
     const presentationAreaProps = useIndexPagePresentationPropsBuilder({
         state: {
@@ -909,6 +1211,7 @@ export default function IndexPage({
             selectedCanvas: resources.selectedCanvas,
             selectedTheme: resources.selectedTheme,
             selectedDataTable: resources.selectedDataTable,
+            defaultThemeName: resources.defaultThemeName,
             preferredPromptClient: preferences.preferredPromptClient,
             preferredIDE: preferences.preferredIDE,
             ideAvailability: preferences.ideAvailability,
@@ -922,14 +1225,13 @@ export default function IndexPage({
             hasDocItems: workspace.docsItems.length > 0,
             excalidrawPropertyPanelMode,
             excalidrawPropertyPanelPosition,
-            bridgeConnected: bridge.connectionState === 'connected',
+            bridgeConnected: assistantController.assistantContextAppendAvailable,
             activeProjectId: workspace.activeProjectId,
             webAgentPanelOpen: assistantController.assistantVisible,
             assistantApiBaseUrl: assistantController.assistantApiBaseUrl,
             assistantProjectPath: assistantController.assistantProjectPath,
             prototypes: workspace.data.prototypes,
             themes: workspace.themes,
-            defaultThemeName: resources.defaultThemeName,
         },
         preview,
         actions: {
@@ -938,6 +1240,7 @@ export default function IndexPage({
             handleEnterSelectedPrototypePreview,
             handleToggleAssistant: handleToggleAssistantPanel,
             handleStartCurrentProjectServer,
+            handleCopyStartServerErrorPrompt,
             handleOpenIdeFile: ideActions.handleOpenIdeFile,
             handleOpenSelectedDocInIDE: ideActions.handleOpenSelectedDocInIDE,
             handleOpenSelectedThemeInIDE: ideActions.handleOpenSelectedThemeInIDE,
@@ -954,6 +1257,8 @@ export default function IndexPage({
             setExcalidrawPropertyPanelPosition: handleExcalidrawPropertyPanelPositionChange,
             onAddCanvasElementToContext: handleAddCanvasElementsToContext,
             onCanvasAnnotationsChange: handleCanvasAnnotationsChange,
+            onAddCanvasScreenshotToAI: handleAddCanvasScreenshotToAssistant,
+            onAddCanvasImageToAI: handleAddCanvasImageToAssistant,
             onOpenCanvasInIDE: handleOpenCanvasInIDE,
             onOpenCanvasGenie: handleOpenCanvasGenie,
             handleOpenProjectInIDE: ideActions.handleOpenProjectInIDE,
@@ -961,8 +1266,9 @@ export default function IndexPage({
             onOpenWebAgentInPanel: assistantController.openRawUrlInAssistantPanel,
             onCloseWebAgentPanel: handleCloseWebAgentPanel,
             onPreferredIDEChange: preferences.setPreferredIDE,
-            onRefreshAvailability: preferences.refreshAvailability,
+            openSettingsDialog,
             onRefreshPrototypes: handleRefreshCanvasPrototypeItems,
+            onSubmitCanvasAssistantPrompt: handleSubmitCanvasAssistantPrompt,
         },
         ui: {
             startServerLoading,
@@ -988,6 +1294,7 @@ export default function IndexPage({
         iframeRef: assistantController.assistantIframeRef,
         onLoad: assistantController.handleAssistantIframeLoad,
         onResize: assistantController.setAssistantPanelWidth,
+        onAddContextItems: assistantController.addContextItems,
     };
 
     const dialogsProps = {
@@ -1073,6 +1380,8 @@ export default function IndexPage({
             onSaved: () => undefined,
         },
         settingsDialogOpen,
+        settingsDialogInitialTab,
+        settingsDialogAIContext,
         setSettingsDialogOpen,
         onSettingsSaved: preferences.handleSettingsSaved,
         excalidrawPropertyPanelMode,

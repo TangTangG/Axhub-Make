@@ -1,0 +1,743 @@
+.tat-shell {
+    --ink: #0a1f3d;
+    --ink-rgb: 10, 31, 61;
+    --paper: #f1f3f5;
+    --paper-rgb: 241, 243, 245;
+    --paper-tint: #e4e8ec;
+    --line: rgba(var(--ink-rgb), 0.18);
+    --line-strong: rgba(var(--ink-rgb), 0.34);
+    --text: var(--ink);
+    --muted: rgba(var(--ink-rgb), 0.68);
+    --serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', STSong, Georgia, serif;
+    --sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --mono: 'IBM Plex Mono', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    background:
+        radial-gradient(circle at 76% 12%, rgba(90, 123, 162, 0.18), transparent 28vw),
+        radial-gradient(circle at 24% 86%, rgba(80, 70, 55, 0.12), transparent 30vw),
+        linear-gradient(135deg, var(--paper), var(--paper-tint));
+    color: var(--text);
+    font-family: var(--sans);
+    letter-spacing: 0;
+}
+
+.tat-shell *,
+.tat-shell *::before,
+.tat-shell *::after {
+    box-sizing: border-box;
+}
+
+.tat-shell button {
+    font: inherit;
+}
+
+.tat-sidebar {
+    min-width: 0;
+    min-height: 100vh;
+    padding: 34px 22px 28px;
+    border-right: 1px solid var(--line);
+    background: rgba(var(--paper-rgb), 0.74);
+    backdrop-filter: blur(18px);
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 34px;
+}
+
+.tat-brand p,
+.tat-kicker,
+.tat-slide-chrome,
+.tat-slide-footer,
+.tat-brand span,
+.tat-nav small,
+.tat-execute-label,
+.tat-media-head span {
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+}
+
+.tat-brand p {
+    margin: 0 0 8px;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.25;
+}
+
+.tat-brand h1 {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 26px;
+    font-weight: 600;
+    line-height: 1.12;
+}
+
+.tat-brand span {
+    display: block;
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 9px;
+    line-height: 1.35;
+}
+
+.tat-nav {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.tat-nav button {
+    width: 100%;
+    min-height: 42px;
+    border: 0;
+    border-left: 2px solid transparent;
+    border-radius: 2px;
+    background: transparent;
+    color: var(--muted);
+    display: grid;
+    grid-template-columns: 34px 24px minmax(0, 1fr);
+    align-items: center;
+    gap: 9px;
+    padding: 7px 6px 7px 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.tat-nav button:hover,
+.tat-nav button.is-active {
+    color: var(--text);
+    border-left-color: currentColor;
+    background: rgba(var(--ink-rgb), 0.055);
+}
+
+.tat-nav button:focus-visible,
+.tat-slide-footer button:focus-visible {
+    outline: 1px solid currentColor;
+    outline-offset: 3px;
+}
+
+.tat-nav small {
+    font-size: 10px;
+    line-height: 1;
+}
+
+.tat-nav span {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tat-stage {
+    min-width: 0;
+    min-height: 100vh;
+    padding: 32px clamp(24px, 4vw, 56px);
+    display: grid;
+    align-items: start;
+    justify-items: center;
+}
+
+.tat-slide {
+    width: min(1120px, 100%);
+    min-height: calc(100vh - 64px);
+    border: 1px solid var(--line);
+    background:
+        linear-gradient(90deg, rgba(var(--ink-rgb), 0.03) 1px, transparent 1px),
+        linear-gradient(rgba(var(--ink-rgb), 0.026) 1px, transparent 1px),
+        rgba(var(--paper-rgb), 0.88);
+    background-size: 34px 34px;
+    box-shadow: 0 26px 72px rgba(var(--ink-rgb), 0.16);
+    position: relative;
+    display: grid;
+    grid-template-rows: auto auto auto;
+}
+
+.is-dark .tat-slide,
+.is-hero-dark .tat-slide {
+    --text: var(--paper);
+    --muted: rgba(var(--paper-rgb), 0.68);
+    --line: rgba(var(--paper-rgb), 0.18);
+    --line-strong: rgba(var(--paper-rgb), 0.36);
+    background:
+        radial-gradient(circle at 74% 24%, rgba(166, 191, 224, 0.2), transparent 25vw),
+        linear-gradient(90deg, rgba(var(--paper-rgb), 0.04) 1px, transparent 1px),
+        linear-gradient(rgba(var(--paper-rgb), 0.03) 1px, transparent 1px),
+        var(--ink);
+    background-size: auto, 34px 34px, 34px 34px, auto;
+    color: var(--text);
+}
+
+.is-hero-light .tat-slide {
+    background:
+        radial-gradient(circle at 80% 18%, rgba(10, 31, 61, 0.12), transparent 26vw),
+        linear-gradient(90deg, rgba(var(--ink-rgb), 0.03) 1px, transparent 1px),
+        linear-gradient(rgba(var(--ink-rgb), 0.026) 1px, transparent 1px),
+        rgba(var(--paper-rgb), 0.92);
+    background-size: auto, 34px 34px, 34px 34px, auto;
+}
+
+.tat-slide-chrome {
+    min-height: 54px;
+    border-bottom: 1px solid var(--line);
+    padding: 0 28px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    font-size: 10px;
+    line-height: 1.2;
+}
+
+.tat-slide-body {
+    min-width: 0;
+    padding: clamp(42px, 5vw, 72px);
+}
+
+.tat-section-copy {
+    max-width: 800px;
+}
+
+.tat-kicker {
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.35;
+}
+
+.tat-cover-copy h1,
+.tat-section-copy h2 {
+    margin: 0;
+    font-family: var(--serif);
+    font-weight: 600;
+    letter-spacing: 0;
+}
+
+.tat-cover-copy h1 {
+    display: grid;
+    gap: 3px;
+    font-size: clamp(56px, 8vw, 104px);
+    line-height: 0.95;
+}
+
+.tat-section-copy h2 {
+    max-width: 850px;
+    font-size: clamp(36px, 5vw, 72px);
+    line-height: 1.02;
+}
+
+.tat-cover-copy p:not(.tat-kicker),
+.tat-section-copy p:not(.tat-kicker) {
+    margin: 18px 0 0;
+    max-width: 660px;
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1.7;
+}
+
+.tat-cover-slide {
+    display: grid;
+    gap: 36px;
+}
+
+.tat-cover-top {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+    align-items: start;
+    gap: 32px;
+}
+
+.tat-cover-copy {
+    min-width: 0;
+}
+
+.tat-cover-manifesto {
+    margin-top: 38px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 13px;
+    color: var(--muted);
+    font-family: var(--serif);
+    font-size: 19px;
+}
+
+.tat-cover-manifesto i {
+    width: 36px;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.7;
+}
+
+.tat-cover-principles {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+}
+
+.tat-cover-principles article {
+    min-width: 0;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 12px;
+}
+
+.tat-cover-principles span {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    line-height: 1.35;
+}
+
+.tat-cover-principles h3 {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.18;
+}
+
+.tat-cover-principles p {
+    margin: 7px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.tat-cover-visual {
+    min-width: 0;
+    width: 100%;
+    max-width: 320px;
+    justify-self: end;
+}
+
+.tat-media-frame {
+    margin: 0;
+    min-width: 0;
+    min-height: 340px;
+    border: 1px solid var(--line-strong);
+    padding: 12px;
+    background: rgba(var(--paper-rgb), 0.08);
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 10px;
+}
+
+.tat-media-frame.is-compact {
+    min-height: 190px;
+}
+
+.tat-media-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.tat-media-head i {
+    width: 48px;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.5;
+}
+
+.tat-media-frame img {
+    width: 100%;
+    height: 100%;
+    min-height: 140px;
+    border: 1px solid var(--line);
+    background: rgba(var(--paper-rgb), 0.9);
+    display: block;
+    object-fit: contain;
+}
+
+.tat-media-frame figcaption {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.tat-tips-slide,
+.tat-scenes-slide {
+    display: grid;
+    gap: 40px;
+}
+
+.tat-flow-steps article,
+.tat-tip-grid article,
+.tat-voice-card,
+.tat-voice-side article,
+.tat-execute-grid article,
+.tat-scenes-grid article {
+    border: 1px solid var(--line);
+    background: rgba(var(--paper-rgb), 0.08);
+}
+
+.tat-flow-steps span,
+.tat-tip-grid span {
+    color: var(--muted);
+    font-family: var(--serif);
+    font-size: 44px;
+    line-height: 0.9;
+}
+
+.tat-flow-steps h3,
+.tat-tip-grid h3,
+.tat-voice-layout h3,
+.tat-execute-grid h3,
+.tat-scenes-grid h3 {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 25px;
+    font-weight: 600;
+    line-height: 1.15;
+}
+
+.tat-flow-steps p,
+.tat-tip-grid p,
+.tat-voice-layout p,
+.tat-execute-grid p,
+.tat-scenes-grid p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.65;
+}
+
+.tat-flow-slide {
+    display: grid;
+    gap: 36px;
+}
+
+.tat-flow-layout {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.95fr);
+    gap: 24px;
+    align-items: stretch;
+}
+
+.tat-flow-steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.tat-flow-steps article {
+    min-height: 176px;
+    padding: 18px;
+    display: grid;
+    align-content: start;
+    gap: 14px;
+}
+
+.tat-prompt-stack {
+    min-width: 0;
+    display: grid;
+}
+
+.tat-flow-slide .tat-media-frame {
+    height: 100%;
+}
+
+.tat-flow-slide .tat-media-frame img {
+    min-height: 320px;
+}
+
+.tat-voice-slide {
+    display: grid;
+    gap: 36px;
+}
+
+.tat-voice-layout {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+    gap: 20px;
+}
+
+.tat-voice-card,
+.tat-voice-side article {
+    padding: 24px;
+}
+
+.tat-voice-main {
+    display: grid;
+    align-content: start;
+    gap: 18px;
+}
+
+.tat-voice-side {
+    display: grid;
+    gap: 20px;
+}
+
+.tat-voice-side article {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+}
+
+.tat-transcript {
+    margin-top: 8px;
+    border-left: 2px solid currentColor;
+    padding-left: 18px;
+    display: grid;
+    gap: 12px;
+    font-family: var(--serif);
+}
+
+.tat-transcript span,
+.tat-transcript strong {
+    display: block;
+    font-size: 22px;
+    font-weight: 500;
+    line-height: 1.32;
+}
+
+.tat-transcript span {
+    color: var(--muted);
+}
+
+.tat-tip-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.tat-tip-grid article {
+    min-height: 280px;
+    padding: 22px;
+    display: grid;
+    align-content: start;
+    gap: 16px;
+}
+
+.tat-execute-slide {
+    display: grid;
+    gap: 34px;
+}
+
+.tat-execute-grid {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px;
+}
+
+.tat-execute-grid article {
+    min-width: 0;
+    padding: 20px;
+    display: grid;
+    align-content: start;
+    gap: 14px;
+}
+
+.tat-execute-grid .tat-media-frame img {
+    min-height: 150px;
+}
+
+.tat-execute-label {
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.tat-scenes-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+}
+
+.tat-scenes-grid article {
+    min-width: 0;
+    min-height: 245px;
+    padding: 20px;
+    display: grid;
+    align-content: start;
+    gap: 14px;
+}
+
+.tat-slide-footer {
+    min-height: 58px;
+    border-top: 1px solid var(--line);
+    padding: 12px 24px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 18px;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.2;
+}
+
+.tat-slide-footer > span {
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tat-slide-footer button {
+    min-height: 34px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: transparent;
+    color: currentColor;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 13px;
+    cursor: pointer;
+}
+
+.tat-slide-footer button:disabled {
+    cursor: not-allowed;
+    opacity: 0.36;
+}
+
+@media (max-width: 1100px) {
+    .tat-shell {
+        grid-template-columns: 220px minmax(0, 1fr);
+    }
+
+    .tat-slide-body {
+        padding: 36px;
+    }
+
+    .tat-cover-top,
+    .tat-flow-layout,
+    .tat-voice-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .tat-cover-visual {
+        justify-self: stretch;
+    }
+
+    .tat-tip-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tat-scenes-grid,
+    .tat-cover-principles {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 760px) {
+    .tat-shell {
+        min-height: 100vh;
+        grid-template-columns: 1fr;
+    }
+
+    .tat-sidebar {
+        min-height: auto;
+        position: relative;
+        padding: 18px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        gap: 16px;
+    }
+
+    .tat-brand h1 {
+        font-size: 22px;
+    }
+
+    .tat-nav {
+        overflow-x: auto;
+        flex-direction: row;
+        gap: 8px;
+        padding-bottom: 4px;
+    }
+
+    .tat-nav button {
+        width: auto;
+        min-width: 132px;
+        grid-template-columns: auto auto minmax(0, 1fr);
+        border-left: 0;
+        border-bottom: 2px solid transparent;
+        padding: 8px 10px;
+    }
+
+    .tat-nav button:hover,
+    .tat-nav button.is-active {
+        border-left-color: transparent;
+        border-bottom-color: currentColor;
+    }
+
+    .tat-stage {
+        padding: 14px;
+        place-items: stretch;
+    }
+
+    .tat-slide {
+        min-height: calc(100vh - 160px);
+    }
+
+    .tat-slide-chrome,
+    .tat-slide-footer {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+
+    .tat-slide-chrome {
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .tat-slide-body {
+        padding: 28px 18px;
+    }
+
+    .tat-cover-copy h1 {
+        font-size: clamp(48px, 16vw, 72px);
+    }
+
+    .tat-section-copy h2 {
+        font-size: clamp(32px, 10vw, 48px);
+    }
+
+    .tat-cover-copy p:not(.tat-kicker),
+    .tat-section-copy p:not(.tat-kicker) {
+        font-size: 16px;
+    }
+
+    .tat-flow-steps,
+    .tat-tip-grid,
+    .tat-execute-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .tat-media-frame {
+        min-height: 240px;
+    }
+
+    .tat-transcript span,
+    .tat-transcript strong {
+        font-size: 19px;
+    }
+
+    .tat-slide-footer {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .tat-slide-footer > span {
+        display: none;
+    }
+}

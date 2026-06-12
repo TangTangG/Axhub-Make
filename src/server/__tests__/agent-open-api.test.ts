@@ -208,6 +208,7 @@ function closeNetServer(server: net.Server): Promise<void> {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
   runLocalCommandMock.mockReset();
   runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => ({
@@ -224,7 +225,7 @@ afterEach(() => {
 });
 
 describe('make-server agent open API', () => {
-  it('returns CLI, local app, and web agent availability in config', async () => {
+  it('keeps agent availability out of config because the open menu is fixed', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
     mockDetectedCommands(['codex', 'opencode', 'npx']);
@@ -236,13 +237,11 @@ describe('make-server agent open API', () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
-      expect(body.agentAvailability.cli.codex).toMatchObject({ status: 'installed' });
-      expect(body.agentAvailability.cli.gemini).toMatchObject({ status: 'missing' });
-      expect(body.agentAvailability.localApp.codex).toMatchObject({ status: 'installed' });
-      expect(body.agentAvailability.localApp.opencode).toMatchObject({ status: 'installed' });
-      expect(body.agentAvailability.web.opencode).toMatchObject({ status: 'missing' });
-      expect(body.agentAvailability.web.opencode.reason).toContain('temporarily disabled');
-      expect(body.agentAvailability.web.genie).toMatchObject({ status: 'installed' });
+      expect(body.agentAvailability).toEqual({
+        cli: {},
+        localApp: {},
+        web: {},
+      });
     } finally {
       await server.close();
     }
@@ -251,6 +250,25 @@ describe('make-server agent open API', () => {
   it('detects local AI agent versions on demand without the config availability endpoint', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const match = url.match(/^https:\/\/registry\.npmjs\.org\/([^/]+)\/latest$/u);
+      if (match) {
+        const packageName = decodeURIComponent(match[1] || '');
+        const versions: Record<string, string> = {
+          '@openai/codex': '1.3.0',
+          '@anthropic-ai/claude-code': '2.4.0',
+          '@google/gemini-cli': '0.9.5',
+          'opencode-ai': '1.5.0',
+        };
+        return new Response(JSON.stringify({ version: versions[packageName] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    });
     runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
       if (args.includes('--version')) {
         if (command === 'codex') return { command, escapedCommand: 'codex --version', stdout: 'codex-cli 1.2.3\n', stderr: '' };
@@ -284,12 +302,23 @@ describe('make-server agent open API', () => {
           opencode: { status: 'missing' },
           gemini: { status: 'installed', version: '0.9.0' },
         },
+        latestAgents: {
+          codex: { status: 'installed', version: '1.3.0', packageName: '@openai/codex' },
+          claudecode: { status: 'installed', version: '2.4.0', packageName: '@anthropic-ai/claude-code' },
+          opencode: { status: 'installed', version: '1.5.0', packageName: 'opencode-ai' },
+          gemini: { status: 'installed', version: '0.9.5', packageName: '@google/gemini-cli' },
+        },
       });
       expect(body.agents.codex.checkedAt).toEqual(expect.any(String));
+      expect(body.latestAgents.codex.checkedAt).toEqual(expect.any(String));
       expect(runLocalCommandMock).toHaveBeenCalledWith('codex', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('claude', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('opencode', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('gemini', ['--version'], expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40openai%2Fcodex/latest', expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40anthropic-ai%2Fclaude-code/latest', expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40google%2Fgemini-cli/latest', expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/opencode-ai/latest', expect.any(Object));
     } finally {
       await server.close();
     }
@@ -711,7 +740,7 @@ describe('make-server agent open API', () => {
       agent: 'genie',
       targetPath: projectRoot,
     });
-    expect(web.command).toContain('npx @axhub/genie@latest');
+    expect(web.command).toContain('npx @axhub/acp@latest');
   });
 
   it('surfaces direct launcher failures and delayed terminal launcher success', async () => {
@@ -780,7 +809,11 @@ describe('make-server agent open API', () => {
     });
     expect(getMissingWebAgentOpenError('genie')).toMatchObject({
       statusCode: 404,
-      body: { code: 'WEB_AGENT_MISSING', agent: 'genie' },
+      body: {
+        error: '未检测到 ACP UI，请先安装后再试',
+        code: 'WEB_AGENT_MISSING',
+        agent: 'genie',
+      },
     });
     expect(getMissingLocalAppOpenError('opencode')).toMatchObject({
       statusCode: 404,

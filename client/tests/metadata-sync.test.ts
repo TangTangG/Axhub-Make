@@ -85,6 +85,7 @@ describe('make-project metadata sync', () => {
 
     expect(ignoreRules).toContain('.axhub/make/*');
     expect(ignoreRules).toContain('!.axhub/make/client.json');
+    expect(ignoreRules).toContain('!.axhub/make/axhub.config.json');
     expect(ignoreRules).toContain('!.axhub/make/README.md');
     expect(ignoreRules).not.toContain('!.axhub/make/project.json');
   });
@@ -112,6 +113,85 @@ describe('make-project metadata sync', () => {
     });
     expect(JSON.stringify(metadata)).not.toContain(projectRoot);
     expect(JSON.stringify(metadata)).not.toContain('localhost:51720');
+  });
+
+  it('restores generated empty prototype placeholders from source files during sync', () => {
+    const projectRoot = createFixtureProject();
+    writeFile(path.join(projectRoot, 'src/prototypes/untitled-2/index.tsx'), `/**
+ * @name 未命名
+ */
+import React from 'react';
+import './style.css';
+
+const displayName = "未命名";
+
+export default function Placeholder() {
+    return (
+        <main className="placeholder-empty-page" aria-label={displayName}>
+            <p>{displayName}，打开左侧默认引导页继续创建。</p>
+        </main>
+    );
+}
+`);
+    writeFile(path.join(projectRoot, 'src/prototypes/untitled-2/canvas.excalidraw'), JSON.stringify({
+      type: 'excalidraw',
+      version: 2,
+      source: 'axhub-make',
+      elements: [],
+      appState: { viewBackgroundColor: '#ffffff' },
+      files: {},
+    }, null, 2));
+
+    const metadata = buildMakeProjectMetadata(projectRoot, {
+      clientOrigin: 'http://localhost:51720',
+    });
+    const placeholder = metadata.resources.prototypes.find((item: any) => item.id === 'untitled-2');
+    const regularUntitled = metadata.resources.prototypes.find((item: any) => item.id === 'express-home');
+
+    expect(placeholder).toMatchObject({
+      id: 'untitled-2',
+      title: '未命名',
+      placeholder: true,
+      placeholderGuide: {
+        kind: 'prototype-empty',
+        title: '这个原型还没有开始创建',
+      },
+    });
+    expect(regularUntitled).not.toHaveProperty('placeholder');
+  });
+
+  it('does not keep placeholder state when only a stale source marker remains', () => {
+    const projectRoot = createFixtureProject();
+    writeFile(path.join(projectRoot, 'src/prototypes/untitled-2/index.tsx'), `/**
+ * @name 已编辑
+ * @axhub-placeholder prototype-empty
+ */
+import React from 'react';
+
+export default function EditedPrototype() {
+    return <main><h1>真实页面</h1></main>;
+}
+`);
+    writeFile(path.join(projectRoot, 'src/prototypes/untitled-2/canvas.excalidraw'), JSON.stringify({
+      type: 'excalidraw',
+      version: 2,
+      source: 'axhub-make',
+      elements: [],
+      appState: { viewBackgroundColor: '#ffffff' },
+      files: {},
+    }, null, 2));
+
+    const metadata = buildMakeProjectMetadata(projectRoot, {
+      clientOrigin: 'http://localhost:51720',
+    });
+    const edited = metadata.resources.prototypes.find((item: any) => item.id === 'untitled-2');
+
+    expect(edited).toMatchObject({
+      id: 'untitled-2',
+      title: '已编辑',
+    });
+    expect(edited).not.toHaveProperty('placeholder');
+    expect(edited).not.toHaveProperty('placeholderGuide');
   });
 
   it('includes built runtime artifact metadata when the dist entry exists', () => {
@@ -258,6 +338,7 @@ describe('make-project metadata sync', () => {
     expect(metadata.resources.prototypes.map((item: any) => item.id)).toEqual([
       'annotation-demo',
       'beginner-guide',
+      'touch-and-talk-annotation-demo',
     ]);
     expect(annotationDemo).toMatchObject({
       pages: [

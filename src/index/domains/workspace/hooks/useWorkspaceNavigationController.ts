@@ -36,6 +36,74 @@ interface UseWorkspaceNavigationControllerOptions {
 const UNTITLED_PROJECT_LABEL = '未命名项目';
 const MAKE_CLIENT_DEV_START_TIMEOUT_MS = 60_000;
 
+interface MakeClientProgressStepPayload {
+    id?: unknown;
+    label?: unknown;
+    durationMs?: unknown;
+    status?: unknown;
+}
+
+interface MakeClientProgressPayload {
+    status?: unknown;
+    totalMs?: unknown;
+    steps?: unknown;
+}
+
+function formatMakeClientProgressDuration(durationMs: number): string {
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+        return '未知';
+    }
+    if (durationMs >= 1000) {
+        return `${(durationMs / 1000).toFixed(2)}s`;
+    }
+    return `${Math.round(durationMs)}ms`;
+}
+
+function readMakeClientCreateProgress(payload: unknown): { status: string; totalMs: number; steps: Array<{ id: string; label: string; durationMs: number; status: string }> } | null {
+    if (!payload || typeof payload !== 'object') {
+        return null;
+    }
+    const progress = (payload as { progress?: MakeClientProgressPayload }).progress;
+    if (!progress || typeof progress !== 'object') {
+        return null;
+    }
+    const steps = Array.isArray(progress.steps)
+        ? progress.steps.map((step: MakeClientProgressStepPayload) => ({
+            id: typeof step?.id === 'string' ? step.id : '',
+            label: typeof step?.label === 'string' ? step.label : '',
+            durationMs: typeof step?.durationMs === 'number' && Number.isFinite(step.durationMs) ? step.durationMs : 0,
+            status: typeof step?.status === 'string' ? step.status : '',
+        })).filter((step) => step.id || step.label)
+        : [];
+    const totalMs = typeof progress.totalMs === 'number' && Number.isFinite(progress.totalMs)
+        ? progress.totalMs
+        : steps.reduce((sum, step) => sum + step.durationMs, 0);
+    return {
+        status: typeof progress.status === 'string' ? progress.status : 'unknown',
+        totalMs,
+        steps,
+    };
+}
+
+function logMakeClientCreateProgress(payload: unknown): void {
+    const progress = readMakeClientCreateProgress(payload);
+    if (!progress || typeof console === 'undefined') {
+        return;
+    }
+    const rows = progress.steps.map((step, index) => ({
+        '#': index + 1,
+        阶段: step.label || step.id,
+        id: step.id,
+        状态: step.status || '-',
+        耗时: formatMakeClientProgressDuration(step.durationMs),
+        durationMs: Math.round(step.durationMs),
+    }));
+    console.groupCollapsed(`[Axhub Make] 新建项目耗时 ${formatMakeClientProgressDuration(progress.totalMs)} (${progress.status})`);
+    console.table(rows);
+    console.info('totalMs', Math.round(progress.totalMs), 'status', progress.status);
+    console.groupEnd();
+}
+
 function readInitialProjectIdFromUrl(): string | null {
     if (typeof window === 'undefined') {
         return null;
@@ -56,6 +124,18 @@ function isLANHostname(hostname: string): boolean {
         && normalized !== '::1'
         && normalized !== '[::1]'
         && !/^127(?:\.\d{1,3}){3}$/u.test(normalized);
+}
+
+function withActiveProjectParam(url: string, activeProjectId: string | null): string {
+    const normalizedProjectId = String(activeProjectId || '').trim();
+    if (!normalizedProjectId) {
+        return url;
+    }
+    const [path, query = ''] = url.split('?');
+    const params = new URLSearchParams(query);
+    params.set('projectId', normalizedProjectId);
+    const nextQuery = params.toString();
+    return nextQuery ? `${path}?${nextQuery}` : path;
 }
 
 export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNavigationControllerOptions) {
@@ -90,6 +170,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
 
     const loadedSidebarTreeTabsRef = useRef<Set<SidebarTreeTab>>(new Set());
     const loadingSidebarTreeTabsRef = useRef<Set<SidebarTreeTab>>(new Set());
+    const sidebarTreeRequestVersionRef = useRef<Partial<Record<SidebarTreeTab, number>>>({});
     const sidebarAssetsRequestedRef = useRef(false);
     const projectResourcesLoadedRef = useRef(false);
     const projectSetupRequiredRef = useRef(false);
@@ -157,8 +238,13 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             return fallback;
         }
         const payload = normalizeProjectsPayload(await response.json().catch(() => null));
+        const requestedProjectId = initialProjectIdRef.current;
+        const requestedProjectExists = Boolean(
+            requestedProjectId
+            && payload.projects.some((project) => project.id === requestedProjectId),
+        );
         setProjects(payload.projects);
-        setActiveProjectId(payload.activeProjectId);
+        setActiveProjectId(requestedProjectExists ? requestedProjectId : payload.activeProjectId);
         setProjectSetupRequired(payload.projects.length === 0);
         projectSetupRequiredRef.current = payload.projects.length === 0;
         return payload;
@@ -305,7 +391,9 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         });
         const payload = await response.json().catch(() => null);
         if (!response.ok) {
-            throw new Error(formatMakeClientProjectError(payload, '启动 Make 客户端失败'));
+            const error = new Error(formatMakeClientProjectError(payload, '启动 Make 客户端失败'));
+            (error as Error & { diagnostic?: unknown }).diagnostic = payload;
+            throw error;
         }
         return payload;
     }, []);
@@ -323,20 +411,23 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
     const switchProject = useCallback(async (projectId: string) => {
         const normalizedProjectId = projectId.trim();
         const alreadyActiveProject = normalizedProjectId === activeProjectId;
-        if (!normalizedProjectId || (alreadyActiveProject && projectResourcesLoadedRef.current)) {
+        if (!normalizedProjectId) {
             return;
         }
         initialProjectIdRef.current = null;
-        if (!alreadyActiveProject) {
-            const response = await fetch('/api/projects/active', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ projectId: normalizedProjectId }),
-            });
-            if (!response.ok) {
-                const payload = await response.json().catch(() => null);
-                throw new Error(payload?.error || '切换项目失败');
-            }
+        const response = await fetch('/api/projects/active', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId: normalizedProjectId }),
+        });
+        if (!response.ok) {
+            const payload = await response.json().catch(() => null);
+            throw new Error(payload?.error || '切换项目失败');
+        }
+        if (alreadyActiveProject && projectResourcesLoadedRef.current) {
+            await loadProjects();
+            await probeProjectRuntimeStatus(normalizedProjectId);
+            return;
         }
         resetProjectScopedState();
         setLoading(true);
@@ -443,6 +534,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             body: JSON.stringify(params),
         });
         const payload = await response.json().catch(() => null);
+        logMakeClientCreateProgress(payload);
         if (!response.ok) {
             const error = new Error(formatMakeClientProjectError(payload, '新建空白项目失败'));
             (error as Error & { diagnostic?: unknown }).diagnostic = payload;
@@ -484,8 +576,8 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
                 themesResponse,
                 themeOrderResponse,
             ] = await Promise.all([
-                fetch('/api/docs'),
-                fetch('/api/themes'),
+                fetch(withActiveProjectParam('/api/docs', activeProjectId)),
+                fetch(withActiveProjectParam('/api/themes', activeProjectId)),
                 sidebarApi.getResourceOrder('themes').catch(() => null),
             ]);
 
@@ -496,7 +588,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
 
             if (docsResponse.ok) {
                 const docs = await docsResponse.json();
-                setDocsItems(normalizeDocsItems(docs));
+                setDocsItems(normalizeDocsItems(docs, activeProjectId));
             }
 
             if (themesResponse.ok) {
@@ -510,18 +602,18 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         } finally {
             setSidebarAssetsLoaded(true);
         }
-    }, [loadProjectResources]);
+    }, [activeProjectId, loadProjectResources]);
 
     const reloadDocsItems = useCallback(async (): Promise<ItemData[]> => {
-        const response = await fetch('/api/docs');
+        const response = await fetch(withActiveProjectParam('/api/docs', activeProjectId));
         if (!response.ok) {
             throw new Error('Failed to fetch docs');
         }
         const docs = await response.json();
-        const docsList = normalizeDocsItems(docs);
+        const docsList = normalizeDocsItems(docs, activeProjectId);
         setDocsItems(docsList);
         return docsList;
-    }, []);
+    }, [activeProjectId]);
 
     const reloadCanvasItems = useCallback(async (): Promise<CanvasItem[]> => {
         const response = await fetch('/api/canvas');
@@ -552,11 +644,11 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         return data.prototypes;
     }, [canvasItems, data.prototypes, docsItems, themes]);
 
-    const loadSidebarTree = useCallback(async (tab: SidebarTreeTab, options?: { force?: boolean }) => {
+    const loadSidebarTree = useCallback(async (tab: SidebarTreeTab, options?: { force?: boolean; items?: ItemData[] }) => {
         if (!options?.force && loadedSidebarTreeTabsRef.current.has(tab)) {
             return;
         }
-        if (loadingSidebarTreeTabsRef.current.has(tab)) {
+        if (!options?.force && loadingSidebarTreeTabsRef.current.has(tab)) {
             return;
         }
         if (tab === 'prototypes' && loading) {
@@ -566,7 +658,9 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             return;
         }
 
-        const items = getSidebarTabItems(tab);
+        const requestVersion = (sidebarTreeRequestVersionRef.current[tab] || 0) + 1;
+        sidebarTreeRequestVersionRef.current[tab] = requestVersion;
+        const items = options?.items || getSidebarTabItems(tab);
         setSidebarTrees((previous) => ({
             ...previous,
             [tab]: previous[tab].length > 0 ? previous[tab] : buildDefaultTree(tab, items),
@@ -580,13 +674,21 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
                 Array.isArray(response.tree) ? response.tree : [],
                 items,
             );
+            if (sidebarTreeRequestVersionRef.current[tab] !== requestVersion) {
+                return;
+            }
             loadedSidebarTreeTabsRef.current.add(tab);
             setSidebarTrees((previous) => ({ ...previous, [tab]: nextTree }));
         } catch {
+            if (sidebarTreeRequestVersionRef.current[tab] !== requestVersion) {
+                return;
+            }
             loadedSidebarTreeTabsRef.current.add(tab);
             setSidebarTrees((previous) => ({ ...previous, [tab]: buildDefaultTree(tab, items) }));
         } finally {
-            loadingSidebarTreeTabsRef.current.delete(tab);
+            if (sidebarTreeRequestVersionRef.current[tab] === requestVersion) {
+                loadingSidebarTreeTabsRef.current.delete(tab);
+            }
         }
     }, [getSidebarTabItems, loading, sidebarAssetsLoaded]);
 

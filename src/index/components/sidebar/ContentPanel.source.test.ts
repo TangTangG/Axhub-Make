@@ -7,6 +7,22 @@ function readContentPanelSource() {
 }
 
 describe('ContentPanel make client project setup source', () => {
+  it('renders the AI open dropdown in the sidebar header chrome', () => {
+    const source = readContentPanelSource();
+    const headerSource = source.slice(
+      source.indexOf('<div className="border-b border-border">'),
+      source.indexOf('<div className="px-2 pb-2">'),
+    );
+
+    expect(source).toContain("import OpenInDropdown from './OpenInDropdown';");
+    expect(source).toContain('const openInSelectedItem =');
+    expect(headerSource).toContain('<OpenInDropdown');
+    expect(headerSource).toContain('handleOpenProjectInIDE={handleOpenProjectInIDE}');
+    expect(headerSource).toContain('webAgentPanelOpen={webAgentPanelOpen}');
+    expect(headerSource).toContain('onCloseWebAgentPanel={onCloseWebAgentPanel}');
+    expect(headerSource).not.toContain('variant="toolbar"');
+  });
+
   it('does not expose metadata sync as a separate setup progress step', () => {
     const source = readContentPanelSource();
     const setupPhasesSource = source.slice(
@@ -105,6 +121,17 @@ describe('ContentPanel make client project setup source', () => {
     expect(dialogSource).toContain('!dismissDisabled ? (');
   });
 
+  it('does not expose the legacy create prototype action from document resource menus', () => {
+    const source = readContentPanelSource();
+    const renderItemActionsSource = source.slice(
+      source.indexOf('const renderItemActions ='),
+      source.indexOf('const renderFolderActions ='),
+    );
+
+    expect(renderItemActionsSource).not.toContain('创建原型');
+    expect(renderItemActionsSource).not.toContain('onCreatePrototypeFromDoc');
+  });
+
   it('allows successful required project setup to close the setup dialog', () => {
     const source = readContentPanelSource();
     const dialogSource = source.slice(
@@ -151,9 +178,10 @@ describe('ContentPanel make client project setup source', () => {
 
   it('uses beginner-friendly project setup copy and exposes template download links', () => {
     const source = readContentPanelSource();
+    const menuStart = source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? (');
     const menuSource = source.slice(
-      source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? ('),
-      source.indexOf('</div>', source.indexOf('下载客户端包')),
+      menuStart,
+      source.indexOf('</div>', source.indexOf('下载客户端包', menuStart)),
     );
     const existingOptionStart = source.indexOf('data-project-setup-option="existing"');
     const existingOptionSource = source.slice(
@@ -186,6 +214,37 @@ describe('ContentPanel make client project setup source', () => {
     expect(existingOptionSource.match(/onKeyDown=\{stopProjectSetupLinkPropagation\}/gu)).toHaveLength(2);
     expect(menuSource).not.toContain('仓库');
     expect(menuSource).not.toContain('开发服务');
+  });
+
+  it('offers AI project creation as the second setup option with a concise directory-first prompt', () => {
+    const source = readContentPanelSource();
+    const menuSource = source.slice(
+      source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? ('),
+      source.indexOf('{renderFailureMessage()}'),
+    );
+    const quickCreateIndex = menuSource.indexOf('快速新建项目');
+    const aiCreateIndex = menuSource.indexOf('AI 新建');
+    const existingIndex = menuSource.indexOf('选择已有项目');
+
+    expect(source).toContain('function buildMakeClientAiCreatePrompt');
+    expect(source).toContain('const handleCopyAiCreatePrompt = async () => {');
+    expect(source).toContain('primaryTemplateDownloadUrl');
+    expect(source).toContain('mirrorTemplateDownloadUrl');
+    expect(source).toContain('先和我确认项目目录');
+    expect(source).toContain('确认前不要下载、解压、安装依赖或写文件');
+    expect(source).toContain('当前目录、我指定的目录，或你根据当前 workspace 推荐的目录');
+    expect(source).toContain('不要要求我再手动选择或导入目录');
+    expect(source).toContain('不要让我再回到 Axhub Make 选择“已有项目”手动导入该目录');
+    expect(source).toContain('你已经负责把客户端项目写入到可识别的项目目录中');
+    expect(source).toContain('实际使用的模板下载链接');
+    expect(source).toContain('请按当前系统选择命令写法，兼容 macOS、Windows 和 Linux');
+    expect(source).toContain('已复制 AI 新建提示词');
+    expect(source).not.toContain('完成后告诉我项目目录，并让我回到 Axhub Make 选择“已有项目”导入该目录');
+    expect(source).not.toContain('你将作为');
+    expect(source).not.toContain('UI/UX 设计架构师');
+    expect(quickCreateIndex).toBeGreaterThanOrEqual(0);
+    expect(aiCreateIndex).toBeGreaterThan(quickCreateIndex);
+    expect(existingIndex).toBeGreaterThan(aiCreateIndex);
   });
 
   it('uses the in-app folder browser for project setup paths without exposing folder creation', () => {
@@ -285,6 +344,53 @@ describe('ContentPanel prototype canvas entry source', () => {
   });
 });
 
+describe('ContentPanel draft wording source', () => {
+  it('uses draft wording for external canvas actions in the sidebar', () => {
+    const source = readContentPanelSource();
+
+    expect(source).toContain('添加到画布');
+    expect(source).toContain('<TooltipContent>新建画布</TooltipContent>');
+    expect(source).toContain('toast.success(`已添加「${payload.displayName}」到画布`)');
+    expect(source).not.toContain('添加到草稿');
+    expect(source).not.toContain('<TooltipContent>新建草稿</TooltipContent>');
+    expect(source).not.toContain('toast.success(`已添加「${payload.displayName}」到草稿`)');
+  });
+});
+
+describe('ContentPanel sidebar rename source', () => {
+  it('uses the visible sidebar title as the item rename default value', () => {
+    const source = readContentPanelSource();
+    const renderItemActionsSource = source.slice(
+      source.indexOf('const renderItemActions ='),
+      source.indexOf('const renderFolderActions ='),
+    );
+
+    expect(renderItemActionsSource).toContain('startItemRename(itemNodeId, node?.title || item.displayName || item.name)');
+    expect(renderItemActionsSource).not.toContain('startItemRename(itemNodeId, item.displayName || item.name)');
+  });
+});
+
+describe('ContentPanel chrome styles source', () => {
+  it('uses an explicit design-token border color for the sidebar header divider', () => {
+    const source = readContentPanelSource();
+
+    expect(source).toContain('<div className="border-b border-border">');
+  });
+
+  it('labels the top-left settings entry as settings instead of project settings', () => {
+    const source = readContentPanelSource();
+    const settingsItemIndex = source.indexOf('onSelect={handleSettingsMenuSelect}');
+    const menuSource = source.slice(
+      source.lastIndexOf('<DropdownMenuContent align="start"', settingsItemIndex),
+      source.indexOf('<DropdownMenuSeparator />', settingsItemIndex),
+    );
+
+    expect(menuSource).toContain('<Settings className="h-3.5 w-3.5" />');
+    expect(menuSource).toContain('设置');
+    expect(menuSource).not.toContain('项目设置');
+  });
+});
+
 describe('ContentPanel resource folder selection source', () => {
   it('selects resource folders separately from file items', () => {
     const source = readContentPanelSource();
@@ -318,6 +424,160 @@ describe('ContentPanel resource folder selection source', () => {
   });
 });
 
+describe('ContentPanel document paste upload source', () => {
+  it('registers image paste upload only while the document tab resource panel is active', () => {
+    const source = readContentPanelSource();
+    const pasteEffectSource = source.slice(
+      source.indexOf('const handleDocumentPaste = (event: ClipboardEvent) => {'),
+      source.indexOf("document.addEventListener('paste'", source.indexOf('const handleDocumentPaste = (event: ClipboardEvent) => {')),
+    );
+
+    expect(source).toContain("const [documentPasteTargetFolder, setDocumentPasteTargetFolder] = useState<string | null>(null);");
+    expect(pasteEffectSource).toContain("if (activeTab !== 'document') {");
+    expect(pasteEffectSource).toContain('if (!isDocumentPasteUploadActive(documentPanelRoot, documentPasteArmedRef.current)) {');
+    expect(source).toContain("document.addEventListener('paste', handleDocumentPaste, true);");
+    expect(source).toContain("document.removeEventListener('paste', handleDocumentPaste, true);");
+  });
+
+  it('keeps paste armed after clicking the document resource surface even when the active element is outside the panel', () => {
+    const source = readContentPanelSource();
+    const pasteEffectSource = source.slice(
+      source.indexOf('const handleDocumentPaste = (event: ClipboardEvent) => {'),
+      source.indexOf("document.addEventListener('paste'", source.indexOf('const handleDocumentPaste = (event: ClipboardEvent) => {')),
+    );
+
+    expect(source).toContain('const documentPasteArmedRef = useRef(false);');
+    expect(source).toContain('const armDocumentPasteUpload = useCallback((targetFolder: string | null = null) => {');
+    expect(pasteEffectSource).toContain('if (!isDocumentPasteUploadActive(documentPanelRoot, documentPasteArmedRef.current)) {');
+    expect(pasteEffectSource).not.toContain('if (!documentPanelRoot.contains(document.activeElement)) {');
+  });
+
+  it('marks implicit paste focus surfaces so they do not render the global focus ring', () => {
+    const source = readContentPanelSource();
+    const emptyStateSource = source.slice(
+      source.lastIndexOf('<div', source.indexOf('className="px-4 py-8 text-center text-[12px] leading-5 text-muted-foreground"')),
+      source.indexOf('暂无内容，拖拽或上传文件到此处'),
+    );
+    const treeRootSource = source.slice(
+      source.lastIndexOf('<div', source.indexOf('className="space-y-0.5 w-full min-w-0"')),
+      source.indexOf('onDragOver={(e) => {', source.indexOf('className="space-y-0.5 w-full min-w-0"')),
+    );
+    const panelRootSource = source.slice(
+      source.lastIndexOf('<div', source.indexOf('ref={documentPanelRootRef}')),
+      source.indexOf('onDragEnter={(event) => {', source.indexOf('ref={documentPanelRootRef}')),
+    );
+
+    expect(emptyStateSource).toContain('data-document-paste-focus-surface');
+    expect(treeRootSource).toContain('data-document-paste-focus-surface');
+    expect(panelRootSource).toContain('data-document-paste-focus-surface');
+  });
+
+  it('lets editable and control targets keep their own paste behavior', () => {
+    const source = readContentPanelSource();
+
+    expect(source).toContain('function isDocumentPasteBlockedTarget(target: EventTarget | null): boolean');
+    expect(source).toContain("element.closest('input, textarea, [contenteditable=\"true\"], [role=\"textbox\"], button, [data-document-paste-ignore]')");
+    expect(source).toContain("const roleButton = element.closest('[role=\"button\"]');");
+    expect(source).toContain("!roleButton.hasAttribute('data-document-paste-surface')");
+    expect(source).toContain('data-document-paste-surface');
+    expect(source).toContain('if (isDocumentPasteBlockedTarget(event.target)) {');
+  });
+
+  it('extracts image clipboard items, keeps original names when available, and uploads them to the active folder', () => {
+    const source = readContentPanelSource();
+    const pasteEffectSource = source.slice(
+      source.indexOf('const handleDocumentPaste = (event: ClipboardEvent) => {'),
+      source.indexOf("document.addEventListener('paste'", source.indexOf('const handleDocumentPaste = (event: ClipboardEvent) => {')),
+    );
+    const uploadSource = source.slice(
+      source.indexOf('const uploadResourceFiles = useCallback(async (files: FileList | File[], options?: { targetFolder?: string | null }) => {'),
+      source.indexOf('const resetSidebarHorizontalScroll = () => {'),
+    );
+
+    expect(source).toContain('function getClipboardImageFiles(event: ClipboardEvent): File[]');
+    expect(source).toContain('function createPastedImageFile(blob: Blob): File');
+    expect(source).toContain('function getPastedImageFileName(blob: Blob): string');
+    expect(source).toContain('return new globalThis.File([blob]');
+    expect(source).toContain('const originalName = blob instanceof globalThis.File ? String(blob.name || \'\').trim() : \'\';');
+    expect(source).toContain('return `${timestamp}${extension}`;');
+    expect(source).toContain('return `${baseName}${extension}`;');
+    expect(source).not.toContain('pasted-image-${timestamp}');
+    expect(pasteEffectSource).toContain('const pastedFiles = getClipboardImageFiles(event);');
+    expect(pasteEffectSource).toContain('if (pastedFiles.length === 0) {');
+    expect(pasteEffectSource).toContain('event.preventDefault();');
+    expect(pasteEffectSource).toContain('void uploadResourceFiles(pastedFiles, { targetFolder: documentPasteTargetFolder });');
+    expect(uploadSource).toContain("formData.append('projectId', activeProjectId);");
+    expect(uploadSource).toContain("formData.append('targetFolder', targetFolder);");
+  });
+
+  it('passes uploaded document resources back to the parent so the new file can be selected', () => {
+    const source = readContentPanelSource();
+    const uploadSource = source.slice(
+      source.indexOf('const uploadResourceFiles = useCallback(async (files: FileList | File[], options?: { targetFolder?: string | null }) => {'),
+      source.indexOf('const resetSidebarHorizontalScroll = () => {'),
+    );
+
+    expect(source).toContain("import type { SelectedResourceFolder, UploadedResourceFile } from '../../types/index-page.types';");
+    expect(source).toContain('onUploadedResourceFiles?: (files: UploadedResourceFile[]) => void | Promise<void>;');
+    expect(uploadSource).toContain('const uploadedFiles = Array.isArray(result?.files)');
+    expect(uploadSource).toContain('await Promise.resolve(onUploadedResourceFiles?.(uploadedFiles));');
+  });
+
+  it('expands the target document folder before selecting pasted uploads', () => {
+    const source = readContentPanelSource();
+    const uploadSource = source.slice(
+      source.indexOf('const uploadResourceFiles = useCallback(async (files: FileList | File[], options?: { targetFolder?: string | null }) => {'),
+      source.indexOf('const resetSidebarHorizontalScroll = () => {'),
+    );
+
+    expect(source).toContain('function findFolderIdByPath(nodes: SidebarTreeNode[], folderPath: string): string | null');
+    expect(source).toContain('const expandDocumentFolderPath = useCallback((folderPath: string | null | undefined) => {');
+    expect(source).toContain('const folderId = findFolderIdByPath(tree, folderPath);');
+    expect(uploadSource).toContain("const targetFolder = String(options?.targetFolder || '').trim();");
+    expect(uploadSource).toContain('expandDocumentFolderPath(targetFolder);');
+    expect(uploadSource.indexOf('expandDocumentFolderPath(targetFolder);'))
+      .toBeLessThan(uploadSource.indexOf('await Promise.resolve(onUploadedResourceFiles?.(uploadedFiles));'));
+    expect(uploadSource).toContain('}, [activeProjectId, expandDocumentFolderPath, onUploadedResourceFiles]);');
+  });
+
+  it('syncs the selected document resource folder into the paste upload target', () => {
+    const source = readContentPanelSource();
+    const syncEffectSource = source.slice(
+      source.indexOf('const selectedDocumentFolderPath = useMemo(() => {'),
+      source.indexOf('const uploadResourceFiles = useCallback'),
+    );
+
+    expect(syncEffectSource).toContain("if (activeTab !== 'document' || !selectedFolder) {");
+    expect(syncEffectSource).toContain("return String(selectedFolder.folderPath || selectedFolder.path || '').trim();");
+    expect(syncEffectSource).toContain('armDocumentPasteUpload(selectedDocumentFolderPath);');
+    expect(syncEffectSource).toContain('[activeTab, selectedDocumentFolderPath, armDocumentPasteUpload]');
+  });
+
+  it('tracks the document paste target from root and folder focus without switching to file paths', () => {
+    const source = readContentPanelSource();
+    const folderClickSource = source.slice(
+      source.indexOf("if (dataTab === 'docs') {"),
+      source.indexOf("if (item) {", source.indexOf("if (dataTab === 'docs') {")),
+    );
+    const itemClickSource = source.slice(
+      source.indexOf("if (item) {", source.indexOf('const renderTreeNodes =')),
+      source.indexOf('}', source.indexOf('onItemClick(item);')),
+    );
+
+    expect(source).toContain('const handleDocumentPanelRootFocus = useCallback(() => {');
+    expect(source).toContain('armDocumentPasteUpload(null);');
+    expect(source).toContain('const setDocumentPasteTargetFromFolder = useCallback((folder: SidebarTreeNode) => {');
+    expect(source).toContain('armDocumentPasteUpload(String(folder.folderPath || folder.path || \'\').trim() || null);');
+    expect(folderClickSource).toContain('setDocumentPasteTargetFromFolder(node);');
+    expect(source).toContain('onFocus={() => {');
+    expect(source).toContain('setDocumentPasteTargetFromFolder(node);');
+    expect(itemClickSource).not.toContain('setDocumentPasteTargetFolder');
+    expect(source).toContain('onMouseDown={(event) => {');
+    expect(source).toContain('if (shouldUseDocumentRootPasteTarget(event.target)) {');
+    expect(source).toContain('handleDocumentPanelRootFocus();');
+  });
+});
+
 describe('ContentPanel resource drag and drop source', () => {
   it('keeps sidebar tree reordering separate from file upload drops', () => {
     const source = readContentPanelSource();
@@ -335,9 +595,48 @@ describe('ContentPanel resource drag and drop source', () => {
     expect(treeDragSource).toContain('e.dataTransfer.setData(SIDEBAR_TREE_DRAG_MIME, node.id);');
     expect(fileDropZoneSource).toContain('if (isSidebarTreeDragEvent(event)) return;');
   });
+
+  it('adds assistant-context drag payloads without changing existing tree and canvas drag payloads', () => {
+    const source = readContentPanelSource();
+    const pageRowsSource = source.slice(
+      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderTreeNodes ='),
+    );
+    const treeDragSource = source.slice(
+      source.indexOf('onDragStart={(e) => {', source.indexOf('const renderTreeNodes =')),
+      source.indexOf('setDraggingNodeId(node.id);', source.indexOf('const renderTreeNodes =')),
+    );
+
+    expect(source).toContain("import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';");
+    expect(source).toContain("import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';");
+    expect(pageRowsSource).toContain('event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
+    expect(pageRowsSource).toContain('event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
+    expect(pageRowsSource).toContain("resourceType: 'prototype-page'");
+    expect(treeDragSource).toContain('e.dataTransfer.setData(SIDEBAR_TREE_DRAG_MIME, node.id);');
+    expect(treeDragSource).toContain('e.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
+    expect(treeDragSource).toContain('e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
+    expect(treeDragSource).toContain('items: buildAssistantContextItemsFromResource({');
+  });
 });
 
 describe('ContentPanel prototype page children source', () => {
+  it('uses a layout icon for prototype items while keeping file icons for prototype pages', () => {
+    const source = readContentPanelSource();
+    const pageRowsSource = source.slice(
+      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderTreeNodes ='),
+    );
+    const treeNodeRenderSource = source.slice(
+      source.indexOf('const renderTreeNodes ='),
+      source.indexOf('let actionsElement: React.ReactNode = null;'),
+    );
+
+    expect(source).toContain('PanelsTopLeft,');
+    expect(pageRowsSource).toContain('icon={<File className="h-3.5 w-3.5" />}');
+    expect(treeNodeRenderSource).toContain("} else if (dataTab === 'prototypes') {");
+    expect(treeNodeRenderSource).toContain('iconElement = <PanelsTopLeft className="h-3.5 w-3.5" />;');
+  });
+
   it('derives page rows from prototype item pages without persisting them into the sidebar tree', () => {
     const source = readContentPanelSource();
 
@@ -370,7 +669,7 @@ describe('ContentPanel prototype page children source', () => {
     expect(helperSource).toContain("resourceType: 'prototype'");
     expect(helperSource).toContain('resourceId');
     expect(helperSource).toContain("previewKind: 'web'");
-    expect(helperSource).toContain("embedViewMode: 'link'");
+    expect(helperSource).toContain("embedViewMode: 'preview'");
     expect(helperSource).toContain('displayName: resolvePrototypePageEmbedDisplayName(item, page.title)');
     expect(helperSource).toContain('return `${trimmedPageTitle} - ${prototypeTitle}`;');
     expect(helperSource).toContain('buildPrototypePagePreviewUrl(item, page.id)');
@@ -378,6 +677,17 @@ describe('ContentPanel prototype page children source', () => {
     expect(helperSource).toContain('pageId: page.id');
     expect(payloadSource).not.toContain('pageId,');
     expect(payloadSource).not.toContain('pageTitle:');
+  });
+
+  it('drags prototype and document items as preview embeds by default', () => {
+    const source = readContentPanelSource();
+    const payloadSource = source.slice(
+      source.indexOf('const payload = {'),
+      source.indexOf('try {', source.indexOf('const payload = {')),
+    );
+
+    expect(payloadSource).toContain('embedViewMode: \'preview\'');
+    expect(payloadSource).not.toContain('embedViewMode: \'link\'');
   });
 
   it('uses a text-only selected state for prototype pages so parent and first page backgrounds do not stack', () => {
@@ -477,6 +787,17 @@ describe('ContentPanel project switcher source', () => {
     expect(projectSwitcherSource).not.toContain('<Check className="h-3.5 w-3.5 shrink-0 text-primary" />');
   });
 
+  it('lets active project rows retry switching so stale selected state cannot swallow the click', () => {
+    const source = readContentPanelSource();
+    const switchStart = source.indexOf('const handleProjectSwitch = async');
+    const deleteStart = source.indexOf('const handleProjectDelete = async', switchStart);
+    const switchSource = source.slice(switchStart, deleteStart);
+
+    expect(switchSource).toContain('if (!projectId) {');
+    expect(switchSource).toContain('await Promise.resolve(onProjectSwitch(projectId));');
+    expect(switchSource).not.toContain('projectId === activeProjectId');
+  });
+
   it('shows local runtime state and a stop action for running projects', () => {
     const source = readContentPanelSource();
     const projectSwitcherSource = source.slice(
@@ -509,6 +830,20 @@ describe('ContentPanel default design source', () => {
     expect(source).toContain('onSetDefaultTheme(item.name)');
     expect(source).toContain("isDefaultDesign ? '取消默认设计' : '设为默认设计'");
     expect(source).not.toContain('设为默认主题');
+  });
+
+  it('marks the default design row with a visible default badge', () => {
+    const source = readContentPanelSource();
+    const treeNodeRenderSource = source.slice(
+      source.indexOf('const renderTreeNodes ='),
+      source.indexOf('const dataTabTitle ='),
+    );
+
+    expect(treeNodeRenderSource).toContain("const isDefaultDesignItem = !isFolder && dataTab === 'themes' && item?.name === defaultThemeName;");
+    expect(treeNodeRenderSource).toContain('const suffixElement = isDefaultDesignItem ? (');
+    expect(treeNodeRenderSource).toContain('data-default-design-badge');
+    expect(treeNodeRenderSource).toContain('默认');
+    expect(treeNodeRenderSource).toContain('suffix={suffixElement}');
   });
 
   it('does not show folder-open or generate-design actions on design rows', () => {

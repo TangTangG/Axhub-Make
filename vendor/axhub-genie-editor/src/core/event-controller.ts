@@ -263,6 +263,24 @@ export function createEventController(options: EventControllerOptions): EventCon
   // Single rAF management (avoids Disposer array growth)
   let hoverRafId: number | null = null;
   let allowPageInteraction = false;
+  let nativeTextSelectionClickTimer: ReturnType<typeof setTimeout> | null = null;
+  let nativeTextSelectionClickCandidate: {
+    pointerId: number;
+    target: Element;
+    modifiers: EventModifiers;
+    startClientX: number;
+    startClientY: number;
+    isPointerEventOrigin: boolean;
+  } | null = null;
+  // On mobile, touch-originated pointerdown defers selection to pointerup.
+  const TOUCH_TAP_THRESHOLD_PX = 15;
+  let touchTapCandidate: {
+    target: Element;
+    modifiers: EventModifiers;
+    clientX: number;
+    clientY: number;
+    nextMode?: 'selecting';
+  } | null = null;
 
   // ==========================================================================
   // Helpers
@@ -337,7 +355,7 @@ export function createEventController(options: EventControllerOptions): EventCon
    * Get pointer ID from event (PointerEvent has pointerId, MouseEvent uses 0)
    */
   function getEventPointerId(event: PointerEvent | MouseEvent): number {
-    return event instanceof PointerEvent ? event.pointerId : 0;
+    return hasPointerEvents && event instanceof PointerEvent ? event.pointerId : 0;
   }
 
   /**
@@ -378,6 +396,63 @@ export function createEventController(options: EventControllerOptions): EventCon
     dragCandidate = null;
     draggingPointerId = null;
     draggingIsPointerOrigin = false;
+  }
+
+  function clearNativeTextSelectionClickCandidate(): void {
+    nativeTextSelectionClickCandidate = null;
+    if (nativeTextSelectionClickTimer !== null) {
+      clearTimeout(nativeTextSelectionClickTimer);
+      nativeTextSelectionClickTimer = null;
+    }
+  }
+
+  disposer.add(clearNativeTextSelectionClickCandidate);
+
+  function hasNativeTextSelection(): boolean {
+    try {
+      const selection = window.getSelection?.();
+      return Boolean(
+        selection &&
+        !selection.isCollapsed &&
+        selection.rangeCount > 0 &&
+        selection.toString().trim(),
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function queueNativeTextSelectionClickCommit(event: PointerEvent | MouseEvent): void {
+    const candidate = nativeTextSelectionClickCandidate;
+    nativeTextSelectionClickCandidate = null;
+    if (!candidate) return;
+
+    const isPointerEvent = hasPointerEvents && event instanceof PointerEvent;
+    if (candidate.isPointerEventOrigin !== isPointerEvent) return;
+    if (candidate.pointerId !== getEventPointerId(event)) return;
+
+    const dx = event.clientX - candidate.startClientX;
+    const dy = event.clientY - candidate.startClientY;
+    if (Math.hypot(dx, dy) >= WEB_EDITOR_V2_DRAG_THRESHOLD_PX) return;
+
+    if (nativeTextSelectionClickTimer !== null) {
+      clearTimeout(nativeTextSelectionClickTimer);
+    }
+    nativeTextSelectionClickTimer = setTimeout(() => {
+      nativeTextSelectionClickTimer = null;
+      if (disposer.isDisposed) return;
+      if (!candidate.target.isConnected) return;
+      if (isElementInteractionLocked?.(candidate.target) ?? false) return;
+      if (hasNativeTextSelection()) return;
+
+      setMode('selecting');
+      onSelect({
+        element: candidate.target,
+        modifiers: candidate.modifiers,
+        clientX: candidate.startClientX,
+        clientY: candidate.startClientY,
+      });
+    }, 10);
   }
 
   /**
@@ -648,7 +723,7 @@ export function createEventController(options: EventControllerOptions): EventCon
     // Dragging: forward pointer moves (only from matching event type)
     if (mode === 'dragging' && shouldProcessAsPrimaryPointer(event)) {
       const pointerId = getEventPointerId(event);
-      const isPointerEvent = event instanceof PointerEvent;
+      const isPointerEvent = hasPointerEvents && event instanceof PointerEvent;
 
       // Ensure event type matches the origin (prevent Pointer/Mouse conflict)
       if (draggingIsPointerOrigin !== isPointerEvent) return;
@@ -674,7 +749,7 @@ export function createEventController(options: EventControllerOptions): EventCon
       if (pointerId !== dragCandidate.pointerId) return;
 
       // Ensure event type matches the origin (prevent Pointer/Mouse conflict)
-      const isPointerEvent = event instanceof PointerEvent;
+      const isPointerEvent = hasPointerEvents && event instanceof PointerEvent;
       if (dragCandidate.isPointerEventOrigin !== isPointerEvent) return;
 
       const dx = event.clientX - dragCandidate.startClientX;
@@ -714,21 +789,8 @@ export function createEventController(options: EventControllerOptions): EventCon
   /**
    * Handle pointer/mouse down for element selection
    */
-  // ── Mobile touch-tap deferred selection ──
-  // On mobile, touch-originated pointerdown defers selection to pointerup.
-  // If the finger moves more than TAP_MOVE_THRESHOLD_PX, the tap candidate is
-  // silently dropped (the user was scrolling). Desktop is completely unaffected.
-  const TOUCH_TAP_THRESHOLD_PX = 15;
-  let touchTapCandidate: {
-    target: Element;
-    modifiers: EventModifiers;
-    clientX: number;
-    clientY: number;
-    nextMode?: 'selecting';
-  } | null = null;
-
   function isTouchPointerEvent(event: PointerEvent | MouseEvent): boolean {
-    return isMobileDevice() && event instanceof PointerEvent && event.pointerType === 'touch';
+    return isMobileDevice() && hasPointerEvents && event instanceof PointerEvent && event.pointerType === 'touch';
   }
 
   function handlePointerDown(event: PointerEvent | MouseEvent): void {
@@ -741,10 +803,25 @@ export function createEventController(options: EventControllerOptions): EventCon
     lastClientY = event.clientY;
     hasPointerPosition = true;
 
-    // In native text selection mode, do NOT run element selection logic.
-    // The browser handles text selection natively; our mouseup listener
-    // (in lifecycle.ts) commits the selection afterward.
+    // In native text selection mode, keep browser selection native, but remember
+    // simple clicks so element-level comments can still open a bubble card.
     if (options.allowNativeTextSelection) {
+      if (event.button !== 0) return;
+      if (!shouldProcessAsPrimaryPointer(event)) return;
+
+      nativeTextSelectionClickCandidate = null;
+      const modifiers = extractModifiers(event);
+      const target = getTargetElementForSelection(event, event.clientX, event.clientY, modifiers);
+      if (!target) return;
+
+      nativeTextSelectionClickCandidate = {
+        pointerId: getEventPointerId(event),
+        target,
+        modifiers,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        isPointerEventOrigin: hasPointerEvents && event instanceof PointerEvent,
+      };
       return;
     }
 
@@ -802,7 +879,7 @@ export function createEventController(options: EventControllerOptions): EventCon
         !(isElementInteractionLocked?.(selected) ?? false) &&
         isEventWithinElement(event, selected)
       ) {
-        const isPointerOrigin = event instanceof PointerEvent;
+        const isPointerOrigin = hasPointerEvents && event instanceof PointerEvent;
 
         dragCandidate = {
           pointerId: getEventPointerId(event),
@@ -923,8 +1000,13 @@ export function createEventController(options: EventControllerOptions): EventCon
       return;
     }
 
+    if (options.allowNativeTextSelection) {
+      queueNativeTextSelectionClickCommit(event);
+      return;
+    }
+
     const pointerId = getEventPointerId(event);
-    const isPointerEvent = event instanceof PointerEvent;
+    const isPointerEvent = hasPointerEvents && event instanceof PointerEvent;
 
     // ── Commit deferred touch-tap selection ──
     if (touchTapCandidate && isTouchPointerEvent(event)) {
@@ -982,6 +1064,13 @@ export function createEventController(options: EventControllerOptions): EventCon
     ) {
       dragCandidate = null;
     }
+    if (
+      nativeTextSelectionClickCandidate &&
+      nativeTextSelectionClickCandidate.pointerId === pointerId &&
+      nativeTextSelectionClickCandidate.isPointerEventOrigin
+    ) {
+      nativeTextSelectionClickCandidate = null;
+    }
 
     if (mode !== 'dragging') return;
     // Only cancel if the dragging was initiated by PointerEvent
@@ -998,9 +1087,6 @@ export function createEventController(options: EventControllerOptions): EventCon
     if (mode === 'interaction' && allowPageInteraction) return;
     if (isEventFromEditorUi(event)) return;
     if (shouldEventBypassPageBlock(event)) return;
-    // In native text selection mode, let all events pass through
-    if (options.allowNativeTextSelection) return;
-
     // Route pointerup/mouseup to end drag candidate / dragging session
     if (event.type === 'pointerup' || event.type === 'mouseup') {
       handlePointerUp(event as PointerEvent | MouseEvent);
@@ -1012,6 +1098,9 @@ export function createEventController(options: EventControllerOptions): EventCon
       handlePointerCancel(event as PointerEvent);
       return;
     }
+
+    // In native text selection mode, let all remaining events pass through.
+    if (options.allowNativeTextSelection) return;
 
     if (event.type === 'dblclick') {
       handleDoubleClick(event as MouseEvent);

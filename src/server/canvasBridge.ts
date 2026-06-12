@@ -1,9 +1,9 @@
 /**
- * Canvas Bridge — WebSocket channel for CLI/AI ↔ Browser canvas collaboration.
+ * Canvas Bridge — WebSocket channel for browser canvas hot reload.
  *
  * Browser clients connect when a canvas is open, registering which canvas they
- * are viewing. The server can then relay commands (screenshot, refresh) to the
- * appropriate browser tab and return results to HTTP callers.
+ * are viewing. The server can then notify matching browser tabs to reload when
+ * the backing .excalidraw file changes outside the current tab.
  *
  * Protocol messages are JSON frames over a minimal RFC 6455 WebSocket
  * implementation (same approach as opencodeBridge — no external dependencies).
@@ -23,8 +23,6 @@ import { isPathInside } from './projectCore/index.ts';
 export type CanvasBridgeMessageType =
   | 'canvas.register'
   | 'canvas.reload'
-  | 'canvas.screenshot.request'
-  | 'canvas.screenshot.response'
   | 'canvas.status'
   | 'ping'
   | 'pong'
@@ -36,8 +34,6 @@ export interface CanvasBridgeMessage {
   canvas?: string;
   canvasFilePath?: string;
   dirty?: boolean;
-  dataUrl?: string;
-  error?: string;
   payload?: unknown;
 }
 
@@ -138,21 +134,9 @@ interface CanvasBridgeClient {
 let clientIdCounter = 0;
 
 // ---------------------------------------------------------------------------
-// Pending screenshot request
-// ---------------------------------------------------------------------------
-
-interface PendingScreenshotRequest {
-  requestId: string;
-  resolve: (dataUrl: string) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-// ---------------------------------------------------------------------------
 // CanvasBridgeHub — singleton
 // ---------------------------------------------------------------------------
 
-const SCREENSHOT_TIMEOUT_MS = 15_000;
 const DEFAULT_REFRESH_QUIET_MS = 2_000;
 const DEFAULT_REFRESH_MAX_WAIT_MS = 8_000;
 const DEFAULT_SUPPRESS_TTL_MS = 12_000;
@@ -246,7 +230,6 @@ function normalizeClientCanvasName(canvasName: string): string {
 export class CanvasBridgeHub {
   private clients = new Map<string, CanvasBridgeClient>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private pendingScreenshots = new Map<string, PendingScreenshotRequest>();
   private projectRoot = '';
   private fileWatchers = new Map<string, CanvasFileWatcher>();
   private clientWatcherFiles = new Map<string, string>();
@@ -300,11 +283,6 @@ export class CanvasBridgeHub {
       }
     }
     this.suppressHashes.clear();
-    for (const pending of this.pendingScreenshots.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error('Bridge destroyed'));
-    }
-    this.pendingScreenshots.clear();
   }
 
   // ---- Client management ---------------------------------------------------
@@ -416,22 +394,6 @@ export class CanvasBridgeHub {
         this.updateClientCanvasStatus(client, msg);
         break;
 
-      case 'canvas.screenshot.response':
-        if (msg.requestId) {
-          const pending = this.pendingScreenshots.get(msg.requestId);
-          if (pending) {
-            this.pendingScreenshots.delete(msg.requestId);
-            clearTimeout(pending.timer);
-            if (msg.error) {
-              pending.reject(new Error(msg.error));
-            } else if (msg.dataUrl) {
-              pending.resolve(msg.dataUrl);
-            } else {
-              pending.reject(new Error('Empty screenshot response'));
-            }
-          }
-        }
-        break;
     }
   }
 
@@ -530,11 +492,6 @@ export class CanvasBridgeHub {
     return result;
   }
 
-  /** Find the first connected client for a given canvas name (or any canvas if null). */
-  private findClient(canvasName?: string): CanvasBridgeClient | null {
-    return this.findClients(canvasName)[0] || null;
-  }
-
   /** Request the browser to reload the canvas from disk. */
   requestRefresh(canvasName?: string, options: { excludeClientId?: string } = {}): boolean {
     const clients = this.findClients(canvasName);
@@ -546,29 +503,6 @@ export class CanvasBridgeHub {
       this.sendToClient(client, { type: 'canvas.reload' });
     }
     return true;
-  }
-
-  /** Request a screenshot from the browser. Returns PNG data URL. */
-  requestScreenshot(canvasName?: string): Promise<string> {
-    const client = this.findClient(canvasName);
-    if (!client) {
-      return Promise.reject(new Error('No canvas browser connected'));
-    }
-
-    const requestId = `ss-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-    return new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingScreenshots.delete(requestId);
-        reject(new Error('Screenshot request timed out'));
-      }, SCREENSHOT_TIMEOUT_MS);
-
-      this.pendingScreenshots.set(requestId, { requestId, resolve, reject, timer });
-      this.sendToClient(client, {
-        type: 'canvas.screenshot.request',
-        requestId,
-      });
-    });
   }
 
   get clientCount(): number {

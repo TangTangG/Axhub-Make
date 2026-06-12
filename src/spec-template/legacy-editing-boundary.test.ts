@@ -48,7 +48,27 @@ describe('spec-template quick editing regression boundary', () => {
     expect(bootstrapSource).toContain("typeof payload?.content === 'string'");
   });
 
-  it('initializes Genie text comment editing for Markdown documents', () => {
+  it('renders Markdown with the built-in renderer without adding a separate white page shell', () => {
+    const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
+
+    expect(viewerSource).toContain("import { XMarkdown } from '@ant-design/x-markdown';");
+    expect(viewerSource).toContain('<XMarkdown');
+    expect(viewerSource).toContain('className="x-markdown-light"');
+    expect(viewerSource).not.toMatch(/\.markdown-content\s*>\s*div\s*\{[\s\S]*background:\s*#fff/);
+  });
+
+  it('keeps long Markdown table-of-contents lists scrollable and active links visible', () => {
+    const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
+
+    expect(viewerSource).toContain('anchor-sidebar-scroll');
+    expect(viewerSource).toMatch(/\.anchor-sidebar-scroll\s*\{[\s\S]*overflow-y:\s*auto/);
+    expect(viewerSource).toContain('scrollActiveAnchorIntoView');
+    expect(viewerSource).toContain('onChange={scrollActiveAnchorIntoView}');
+    expect(viewerSource).toContain("link.getAttribute('href') === activeHref");
+    expect(viewerSource).not.toContain('targetElement.scrollIntoView');
+  });
+
+  it('initializes text comment editing for Markdown documents', () => {
     const bootstrapSource = readSpecTemplateSource('index.tsx');
     const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
 
@@ -63,6 +83,9 @@ describe('spec-template quick editing regression boundary', () => {
     expect(viewerSource).toContain("interactionProfile: 'text-comment'");
     expect(viewerSource).toContain("toolbarMode: 'host'");
     expect(viewerSource).toContain('initialDarkMode');
+    expect(viewerSource).not.toContain('genieBridge');
+    expect(viewerSource).not.toContain('integrationWs');
+    expect(viewerSource).not.toContain('resolveDefaultEditorApiBaseUrl');
     expect(viewerSource).not.toContain('showCopyPromptAction: false');
     expect(viewerSource).toContain('getHostToolbarState');
     expect(viewerSource).toContain('subscribeHostToolbarState');

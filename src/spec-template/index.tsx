@@ -37,7 +37,11 @@ function handleRenderedDocumentChange(document: MarkdownDocument | null): void {
   currentDocumentUrl = document?.url || currentDocumentUrl;
 }
 
-function enableDocumentEditor(options?: { toolbarMode?: GenieEditorToolbarMode; initialDarkMode?: boolean }): void {
+function enableDocumentEditor(options?: {
+  toolbarMode?: GenieEditorToolbarMode;
+  initialDarkMode?: boolean;
+  assistantPanelOpen?: boolean;
+}): void {
   markdownViewerRef.current?.enableDocumentEditor(options);
 }
 
@@ -203,10 +207,16 @@ if (typeof window !== 'undefined') {
     loadMarkdownDocumentsFromUrls,
   };
   window.SpecTemplateBootstrap.editors = {
-    enable(_mode?: string, options?: { toolbarMode?: GenieEditorToolbarMode }) {
+    enable(_mode?: string, options?: {
+      toolbarMode?: GenieEditorToolbarMode;
+      assistantPanelOpen?: boolean;
+    }) {
       markdownViewerRef.current?.enableQuickEdit();
       if (options?.toolbarMode) {
-        enableDocumentEditor({ toolbarMode: options.toolbarMode });
+        enableDocumentEditor({
+          toolbarMode: options.toolbarMode,
+          assistantPanelOpen: options.assistantPanelOpen,
+        });
       }
     },
     disable(options?: { discardChanges?: boolean }) {

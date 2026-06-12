@@ -130,8 +130,8 @@ describe('project resource frontend adapter', () => {
 	      expect.objectContaining({
         name: 'product-spec',
         displayName: 'Product Spec',
-        specUrl: '/api/markdown-file?path=%2Fworkspace%2Fdocs%2Fproduct-spec.md',
-        previewUrl: '/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fdocs%252Fproduct-spec.md',
+        specUrl: '/api/projects/client-project/docs/product-spec/content',
+        previewUrl: '/spec-template.html?url=%2Fapi%2Fprojects%2Fclient-project%2Fdocs%2Fproduct-spec%2Fcontent',
         absoluteFilePath: '/workspace/docs/product-spec.md',
       }),
     ]);
@@ -264,6 +264,32 @@ describe('project resource frontend adapter', () => {
 	    expect(bundle.data.prototypes[0]).not.toHaveProperty('demoUrl');
   });
 
+  it('does not infer placeholder state from untitled prototype names when a preview URL exists', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      resources: {
+        prototypes: [
+          {
+            id: 'untitled',
+            title: '未命名',
+            clientUrl: 'http://localhost:3000/prototypes/untitled',
+            filePath: 'src/prototypes/untitled/index.tsx',
+          },
+        ],
+      },
+    }, 'client-project');
+
+    expect(bundle.data.prototypes).toEqual([
+      expect.objectContaining({
+        name: 'untitled',
+        displayName: '未命名',
+        previewUrl: 'http://localhost:3000/prototypes/untitled',
+        previewDisabled: false,
+        placeholder: false,
+      }),
+    ]);
+    expect(bundle.data.prototypes[0]).not.toHaveProperty('placeholderGuide');
+  });
+
   it('preserves placeholder guide metadata for empty prototype guidance', () => {
     const bundle = normalizeProjectResourcesPayload({
       resources: {
@@ -278,7 +304,7 @@ describe('project resource frontend adapter', () => {
               kind: 'prototype-empty',
               title: '这个原型还没有开始创建',
               description: '告诉 AI 你想做什么：目标用户、使用场景、页面内容和参考风格。',
-              steps: ['在本地 AI 软件中打开本页面', '打开画布创作原型'],
+              steps: ['在本地 AI 软件中打开本页面', '打开草稿创作原型'],
               tips: ['模型不要用 auto，推荐：Claude Opus 4.7、Gemini 3.1 Pro、GPT-5.5、Kimi K2.6、GLM-5.1。'],
             },
           },
@@ -294,11 +320,37 @@ describe('project resource frontend adapter', () => {
           kind: 'prototype-empty',
           title: '这个原型还没有开始创建',
           description: '告诉 AI 你想做什么：目标用户、使用场景、页面内容和参考风格。',
-          steps: ['在本地 AI 软件中打开本页面', '打开画布创作原型'],
+          steps: ['在本地 AI 软件中打开本页面', '打开草稿创作原型'],
           tips: ['模型不要用 auto，推荐：Claude Opus 4.7、Gemini 3.1 Pro、GPT-5.5、Kimi K2.6、GLM-5.1。'],
         },
       }),
     ]);
+  });
+
+  it('preserves waiting generation status without restoring placeholder metadata', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      resources: {
+        prototypes: [
+          {
+            id: 'untitled',
+            title: '未命名',
+            clientUrl: 'http://localhost:3000/prototypes/untitled',
+            filePath: 'src/prototypes/untitled/index.tsx',
+            generationStatus: 'waiting',
+          },
+        ],
+      },
+    }, 'client-project');
+
+    expect(bundle.data.prototypes).toEqual([
+      expect.objectContaining({
+        name: 'untitled',
+        previewUrl: 'http://localhost:3000/prototypes/untitled',
+        placeholder: false,
+        generationStatus: 'waiting',
+      }),
+    ]);
+    expect(bundle.data.prototypes[0]).not.toHaveProperty('placeholderGuide');
   });
 
   it('adds Admin placeholder guide metadata for placeholder prototypes missing legacy guide data', () => {
@@ -428,8 +480,59 @@ describe('project resource frontend adapter', () => {
       expect.objectContaining({
         name: 'assets/logo.png',
         displayName: 'assets/logo',
-        specUrl: '/api/markdown-file?path=%2Fworkspace%2Fsrc%2Fresources%2Fassets%2Flogo.png',
-        previewUrl: '/api/markdown-file?path=%2Fworkspace%2Fsrc%2Fresources%2Fassets%2Flogo.png',
+        specUrl: '/api/docs/assets%2Flogo.png?projectId=client-project',
+        previewUrl: '/api/docs/assets%2Flogo.png?projectId=client-project',
+      }),
+    ]);
+  });
+
+  it('recovers nested docs file preview paths from metadata paths when pasted images have basename ids', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        docs: [
+          {
+            id: 'image-2',
+            name: 'image-2',
+            title: 'image-2',
+            path: '/workspace/axhub-make/client/src/resources/素材/image-2.png',
+          },
+        ],
+      },
+    }, null);
+
+    expect(bundle.docs).toEqual([
+      expect.objectContaining({
+        name: '素材/image-2.png',
+        displayName: 'image-2',
+        resourceId: 'image-2',
+        specUrl: '/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project',
+        previewUrl: '/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project',
+      }),
+    ]);
+  });
+
+  it('uses project-scoped doc content endpoints for markdown files with absolute paths', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        docs: [
+          {
+            id: 'express-official-home-annotation-source',
+            title: '星驰速运官网首页标注源整理',
+            path: '/workspace/axhub-make/client/src/resources/express-official-home-annotation-source.md',
+          },
+        ],
+      },
+    }, null);
+
+    expect(bundle.docs).toEqual([
+      expect.objectContaining({
+        name: 'express-official-home-annotation-source',
+        displayName: '星驰速运官网首页标注源整理',
+        specUrl: '/api/projects/make-project/docs/express-official-home-annotation-source/content',
+        previewUrl: '/spec-template.html?url=%2Fapi%2Fprojects%2Fmake-project%2Fdocs%2Fexpress-official-home-annotation-source%2Fcontent',
+        absoluteFilePath: '/workspace/axhub-make/client/src/resources/express-official-home-annotation-source.md',
       }),
     ]);
   });

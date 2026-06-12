@@ -1,11 +1,24 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, FileIcon, ImageIcon, Lightbulb, MessageSquareCode, Monitor, PencilRuler, Play, Rocket, Smartphone } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { ChevronDown, Copy, ExternalLink, FileIcon, ImageIcon, Monitor, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone } from 'lucide-react';
+import { Segmented } from 'antd';
 import { ItemData, CanvasItem, TabType, ViewMode, type PromptClientPreference } from '../../types';
 import type { DataTableResourceItem, ThemeResourceItem } from '../../domains/resources/resource.types';
 import DeviceShell from '../DeviceShell';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import HomeDataTable from './HomeDataTable';
 import CanvasWelcomeGuide from './CanvasWelcomeGuide';
 import CanvasFloatingToolbar from './CanvasFloatingToolbar';
@@ -14,20 +27,87 @@ import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide'
 import type { RuntimeAgentAvailability } from '../../../common/agent';
 import type { GenieProvider } from '@/common/genie/types';
 import type { SelectedResourceFolder } from '../../types/index-page.types';
-import type { PreviewConfig, PreviewMeasuredContentSize } from '../../domains/device/preview-layout';
+import type {
+    MultiPageColumns,
+    PreviewConfig,
+    PreviewMeasuredContentSize,
+    PreviewScaleMode,
+    PreviewSinglePreset,
+} from '../../domains/device/preview-layout';
 import { DEVICE_PRESET_SIZES, resolvePreviewLayout } from '../../domains/device/preview-layout';
-import { DEFAULT_PROTOTYPE_PLACEHOLDER_GUIDE, type ProjectRuntimeStatus } from '../../services/projectResources';
+import type { ProjectRuntimeStatus } from '../../services/projectResources';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
 import type { CanvasElementContextInfo } from './canvas-embeds/AnnotationOverlay';
 import { resolveCanvasFilePath, resolvePrototypeCanvasFilePath } from './canvasFilePath';
 import { injectPreviewIframeScrollbarStyle } from './previewIframeScrollbar';
 import ResourceFolderPreview from './ResourceFolderPreview';
+import MultiPagePreviewCanvas from './MultiPagePreviewCanvas';
+import { CanvasGenerationDisplayComposer } from '../../domains/shared/CanvasGenerationComposer';
+import type { CanvasAiScene } from '../../domains/shared/CanvasGenerationComposer';
+import { createCanvasGenerationComposerDraftStorageKey } from '../../domains/shared/canvasGenerationComposerDraft';
+import type { CanvasAiGenerationRequest } from '../../domains/ai-generation/CanvasAiGenerationTool';
+import type { AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
+import type { CanvasLocalContextRef } from '../../domains/ai-image/canvasReferenceImages';
+import type { AiImageTaskParams } from '../../domains/ai-image/aiImageStore';
+import {
+    NO_PROTOTYPE_THEME_VALUE,
+    resolvePrototypeGenerationInitialThemeName,
+    resolvePrototypeGenerationSyncedThemeName,
+} from '../../domains/prototype-generation/prototypeGenerationThemeSelection';
+import { PrototypeThemeSearchSelect } from '../../domains/prototype-generation/PrototypeThemeSearchSelect';
+import {
+    appendCanvasAiPrototypeStartSystemPrompt,
+    CANVAS_AI_SCENE_OPTIONS,
+    getCanvasAiPrototypeStartPlaceholders,
+    getCanvasAiPrototypeStartQuickPrompts,
+    getCanvasAiPrototypeStartSystemPrompt,
+    getCanvasAiSceneDefinition,
+    pickCanvasAiPrototypeStartPlaceholder,
+} from '../../domains/ai-generation/canvasAiSceneRegistry';
+import {
+    appendImageStartPromptSettings,
+    appendPrototypeStartPromptSettings,
+} from '../../domains/ai-generation/canvasGenerationPromptSettings';
+import { apiService } from '../../services/index.api';
 
 const ExcalidrawCanvas = React.lazy(() => import('./ExcalidrawCanvas'));
 
 const PREVIEW_DEVICE_SHELL_INSET = { width: 32, height: 32 } as const;
 const SPLIT_PREVIEW_HEADER_HEIGHT = 40;
 const SPLIT_PREVIEW_HORIZONTAL_INSET = 44;
+const PROTOTYPE_START_COUNT_OPTIONS = [1, 2, 3, 4] as const;
+const START_SETTINGS_SELECT_CONTENT_STYLE = { zIndex: 1400 } satisfies CSSProperties;
+const IMAGE_START_SIZE_OPTIONS = [
+    { label: 'auto', value: 'auto' },
+    { label: '1:1', value: '1024x1024' },
+    { label: '3:2', value: '1536x1024' },
+    { label: '2:3', value: '1024x1536' },
+    { label: '4:3', value: '1365x1024' },
+    { label: '3:4', value: '1024x1365' },
+    { label: '16:9(2k)', value: '2048x1152' },
+    { label: '9:16(2k)', value: '1152x2048' },
+] as const;
+const IMAGE_START_QUALITY_OPTIONS = [
+    { label: '自动', value: 'auto' },
+    { label: '高', value: 'high' },
+    { label: '中', value: 'medium' },
+    { label: '低', value: 'low' },
+] as const;
+const IMAGE_START_FORMAT_OPTIONS = [
+    { label: 'PNG', value: 'png' },
+    { label: 'JPEG', value: 'jpeg' },
+    { label: 'WebP', value: 'webp' },
+] as const;
+const IMAGE_START_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+const DEFAULT_IMAGE_START_PARAMS: AiImageTaskParams = {
+    size: 'auto',
+    quality: 'auto',
+    output_format: 'png',
+    output_compression: null,
+    moderation: 'auto',
+    n: 1,
+    disable_prompt_optimization: false,
+};
 type MeasuredSplitContentSizes = {
     primary: PreviewMeasuredContentSize | null;
     secondary: PreviewMeasuredContentSize | null;
@@ -100,8 +180,17 @@ interface ContentAreaProps {
     activeTab: TabType;
     previewConfig: PreviewConfig;
     reviewPageZoomEnabled?: boolean;
+    handleChangeMultiPageColumns: (columns: MultiPageColumns) => void;
+    handleSelectPreviewSinglePreset: (preset: PreviewSinglePreset) => void;
+    handleSelectCustomPreview: () => void;
+    handleActivateMultiPagePreview: (pageCount?: number) => void;
+    handleChangeCustomPreviewWidth: (width: number) => void;
+    handleChangeCustomPreviewHeight: (height: number) => void;
+    handleChangePreviewScaleMode: (mode: PreviewScaleMode) => void;
     handleChangeSplitPreviewWidth: (pane: 'primary' | 'secondary', width: number) => void;
     handleChangeSplitPreviewHeight: (pane: 'primary' | 'secondary', height: number) => void;
+    quickEditActive?: boolean;
+    onRunPrototypePanePromptAction?: (pane: 'primary' | 'secondary', action: 'copy-prompt' | 'send-to-genie') => void | Promise<boolean>;
     currentDevice: { id: string; [key: string]: any };
     displaySize: { width: number; height: number };
     scale: number;
@@ -127,6 +216,7 @@ interface ContentAreaProps {
     hasPrototypeItems?: boolean;
     hasDocItems?: boolean;
     onStartMakeProject?: () => void | Promise<void>;
+    onCopyStartServerErrorPrompt?: () => void | Promise<void>;
     startServerLoading?: boolean;
     startServerError?: string;
     collapsed?: boolean;
@@ -156,7 +246,7 @@ interface ContentAreaProps {
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
-    onRefreshAvailability?: () => void;
+    onOpenAISettings?: () => void;
     assistantApiBaseUrl?: string;
     assistantProjectPath?: string;
     preferredPromptClient?: PromptClientPreference;
@@ -164,6 +254,9 @@ interface ContentAreaProps {
     themes?: ThemeResourceItem[];
     defaultThemeName?: string | null;
     onRefreshPrototypes?: () => Promise<ItemData[]>;
+    onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;
+    onAddCanvasScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;
+    onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;
 }
 
 function ProjectContentEmptyState({
@@ -171,6 +264,7 @@ function ProjectContentEmptyState({
     projectRuntimeStatus,
     projectRuntimeStatusLoading = false,
     onStartMakeProject,
+    onCopyStartServerErrorPrompt,
     startServerLoading = false,
     startServerError = '',
 }: {
@@ -178,6 +272,7 @@ function ProjectContentEmptyState({
     projectRuntimeStatus?: ProjectRuntimeStatus | null;
     projectRuntimeStatusLoading?: boolean;
     onStartMakeProject?: () => void | Promise<void>;
+    onCopyStartServerErrorPrompt?: () => void | Promise<void>;
     startServerLoading?: boolean;
     startServerError?: string;
 }) {
@@ -221,7 +316,27 @@ function ProjectContentEmptyState({
                     </Button>
                 ) : null}
                 {startServerError ? (
-                    <div className="mt-3 text-[12px] leading-5 text-destructive">{startServerError}</div>
+                    <div className="mt-3 rounded-md border border-border/70 bg-muted/30 p-3 text-left">
+                        <div className="flex items-start gap-2 text-[12px]">
+                            <span className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-destructive" />
+                            <div className="min-w-0 space-y-2">
+                                <div className="font-medium text-destructive">启动客户端失败</div>
+                                <div className="break-words leading-5 text-muted-foreground">{startServerError}</div>
+                                {startServerError && onCopyStartServerErrorPrompt ? (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 gap-1.5"
+                                        onClick={() => { void onCopyStartServerErrorPrompt(); }}
+                                    >
+                                        <Copy className="h-3.5 w-3.5" />
+                                        复制给 AI 处理
+                                    </Button>
+                                ) : null}
+                            </div>
+                        </div>
+                    </div>
                 ) : null}
             </div>
         </div>
@@ -233,6 +348,7 @@ function ClientPreviewUnavailableState({
     clientUrl,
     projectRuntimeStatusLoading = false,
     onStartMakeProject,
+    onCopyStartServerErrorPrompt,
     startServerLoading = false,
     startServerError = '',
 }: {
@@ -240,6 +356,7 @@ function ClientPreviewUnavailableState({
     clientUrl?: string;
     projectRuntimeStatusLoading?: boolean;
     onStartMakeProject?: () => void | Promise<void>;
+    onCopyStartServerErrorPrompt?: () => void | Promise<void>;
     startServerLoading?: boolean;
     startServerError?: string;
 }) {
@@ -276,7 +393,27 @@ function ClientPreviewUnavailableState({
                     </Button>
                 ) : null}
                 {startServerError ? (
-                    <div className="mt-3 text-[12px] leading-5 text-destructive">{startServerError}</div>
+                    <div className="mt-3 rounded-md border border-border/70 bg-muted/30 p-3 text-left">
+                        <div className="flex items-start gap-2 text-[12px]">
+                            <span className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-destructive" />
+                            <div className="min-w-0 space-y-2">
+                                <div className="font-medium text-destructive">启动客户端失败</div>
+                                <div className="break-words leading-5 text-muted-foreground">{startServerError}</div>
+                                {startServerError && onCopyStartServerErrorPrompt ? (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 gap-1.5"
+                                        onClick={() => { void onCopyStartServerErrorPrompt(); }}
+                                    >
+                                        <Copy className="h-3.5 w-3.5" />
+                                        复制给 AI 处理
+                                    </Button>
+                                ) : null}
+                            </div>
+                        </div>
+                    </div>
                 ) : null}
             </div>
         </div>
@@ -287,43 +424,27 @@ function PrototypeClientUnavailableState(props: Omit<React.ComponentProps<typeof
     return <ClientPreviewUnavailableState {...props} contentKind="prototype" />;
 }
 
-function CanvasPlayPrototypeButton({
-    disabled,
-    disabledReason,
-    onEnterPreview,
-}: {
-    disabled: boolean;
-    disabledReason: string;
-    onEnterPreview: () => void;
-}) {
-    const title = disabled ? disabledReason : '进入预览';
-
-    return (
-        <div className="axhub-canvas-return-anchor" title={title}>
-            <button
-                type="button"
-                className="standalone main-menu-trigger axhub-canvas-return-button"
-                onClick={() => {
-                    if (!disabled) {
-                        onEnterPreview();
-                    }
-                }}
-                disabled={disabled}
-                title={title}
-                aria-label={title}
-            >
-                <Play />
-                <span>预览</span>
-            </button>
-        </div>
-    );
+function runtimeUnavailablePathMatchesResource(requestPath: string | null, prefix: 'prototypes' | 'themes', resourceName?: string | null): boolean {
+    const normalizedResourceName = String(resourceName || '').trim();
+    if (!requestPath || !normalizedResourceName) {
+        return false;
+    }
+    try {
+        const baseOrigin = typeof window === 'undefined' ? 'http://localhost' : window.location.origin;
+        const pathname = new URL(requestPath, baseOrigin).pathname;
+        const [section, name] = pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part));
+        return section === prefix && name === normalizedResourceName;
+    } catch {
+        const [section, name] = requestPath.split('?')[0].split('/').filter(Boolean).map((part) => {
+            try {
+                return decodeURIComponent(part);
+            } catch {
+                return part;
+            }
+        });
+        return section === prefix && name === normalizedResourceName;
+    }
 }
-
-const PLACEHOLDER_GUIDE_CARD_CLASS = 'placeholder-guide-card flex min-h-[78px] w-full items-center justify-between gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-left';
-const PLACEHOLDER_GUIDE_AI_CARD_CLASS = 'placeholder-guide-ai-card';
-const PLACEHOLDER_GUIDE_ACTION_CARD_CLASS = `${PLACEHOLDER_GUIDE_CARD_CLASS} placeholder-guide-card-action transition-colors hover:border-slate-300 hover:bg-slate-50`;
-const PLACEHOLDER_GUIDE_EXPANDABLE_CARD_CLASS = 'placeholder-guide-card placeholder-guide-card-action flex w-full flex-col rounded-lg border border-slate-200 bg-white text-left transition-colors hover:border-slate-300 hover:bg-slate-50';
-const PLACEHOLDER_GUIDE_ICON_CLASS = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600';
 
 function resolvePrototypeIndexFilePath(item: ItemData): string {
     const explicitPath = String(item.filePath || item.absoluteFilePath || '').trim().replace(/\\/g, '/');
@@ -337,135 +458,355 @@ function resolvePrototypeIndexFilePath(item: ItemData): string {
     return `src/prototypes/${item.name}/index.tsx`;
 }
 
+function PrototypeStartSettingsPopover({
+    count,
+    selectedThemeName,
+    themeLabel,
+    themes,
+    onCountChange,
+    onThemeChange,
+}: {
+    count: number;
+    selectedThemeName: string;
+    themeLabel: string;
+    themes?: ThemeResourceItem[];
+    onCountChange: (count: number) => void;
+    onThemeChange: (themeName: string) => void;
+}) {
+    const countLabel = `${count} 个`;
+    return (
+        <Popover>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    data-axhub-prototype-start-settings-trigger
+                    className="ax-ai-image-settings-trigger"
+                    aria-label="原型设置"
+                >
+                    <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span className="ax-ai-image-settings-summary">{countLabel} · {themeLabel}</span>
+                    <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
+                <div className="space-y-3">
+                    <div className="space-y-1">
+                        <div className="text-sm font-medium text-foreground">原型设置</div>
+                        <div className="text-xs text-muted-foreground">{countLabel} · {themeLabel}</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">生成数量</span>
+                            <Select value={String(count)} onValueChange={(value) => onCountChange(Number(value))}>
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    {PROTOTYPE_START_COUNT_OPTIONS.map((option) => (
+                                        <SelectItem key={option} value={String(option)}>
+                                            {option} 个
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </label>
+
+                        <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">设计系统</span>
+                            <PrototypeThemeSearchSelect
+                                themes={themes}
+                                value={selectedThemeName}
+                                onValueChange={onThemeChange}
+                            />
+                        </label>
+                    </div>
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+}
+
+function ImageStartSettingsPopover({
+    params,
+    onParamsChange,
+}: {
+    params: AiImageTaskParams;
+    onParamsChange: (params: AiImageTaskParams) => void;
+}) {
+    const sizeLabel = IMAGE_START_SIZE_OPTIONS.find((option) => option.value === params.size)?.label || params.size;
+    const qualityLabel = IMAGE_START_QUALITY_OPTIONS.find((option) => option.value === params.quality)?.label || params.quality;
+    const formatLabel = IMAGE_START_FORMAT_OPTIONS.find((option) => option.value === params.output_format)?.label || params.output_format.toUpperCase();
+    const summary = `${sizeLabel} · ${qualityLabel} · ${params.n} 张 · ${formatLabel}`;
+    const updateParam = <K extends keyof AiImageTaskParams>(key: K, value: AiImageTaskParams[K]) => {
+        onParamsChange({
+            ...params,
+            [key]: value,
+        });
+    };
+
+    return (
+        <Popover>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    data-axhub-image-start-settings-trigger
+                    className="ax-ai-image-settings-trigger"
+                    aria-label="图片设置"
+                >
+                    <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span className="ax-ai-image-settings-summary">{summary}</span>
+                    <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
+                <div className="space-y-3">
+                    <div className="space-y-1">
+                        <div className="text-sm font-medium text-foreground">图片设置</div>
+                        <div className="text-xs text-muted-foreground">{summary}</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">尺寸</span>
+                            <Select value={params.size} onValueChange={(value) => updateParam('size', value)}>
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    {IMAGE_START_SIZE_OPTIONS.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                            {option.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </label>
+
+                        <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">质量</span>
+                            <Select value={params.quality} onValueChange={(value) => updateParam('quality', value as AiImageTaskParams['quality'])}>
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    {IMAGE_START_QUALITY_OPTIONS.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                            {option.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </label>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">图片数量</span>
+                            <Select value={String(params.n)} onValueChange={(value) => updateParam('n', Number(value))}>
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    {IMAGE_START_COUNT_OPTIONS.map((count) => (
+                                        <SelectItem key={count} value={String(count)}>
+                                            {count} 张
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </label>
+
+                        <label className="space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">格式</span>
+                            <Select value={params.output_format} onValueChange={(value) => updateParam('output_format', value as AiImageTaskParams['output_format'])}>
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    {IMAGE_START_FORMAT_OPTIONS.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                            {option.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </label>
+                    </div>
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+}
+
 function PrototypePlaceholderGuide({
     item,
-    assistantVisible = false,
-    onOpenCanvas,
     activeProjectId,
+    assistantProjectPath,
     preferredIDE,
     ideAvailability,
     agentAvailability,
-    webAgentPanelOpen,
     onOpenProjectInIDE,
-    onOpenGenieWebAgent,
-    onOpenWebAgentInPanel,
-    onCloseWebAgentPanel,
     onPreferredIDEChange,
-    onRefreshAvailability,
+    onOpenAISettings,
+    themes,
+    defaultThemeName,
+    onSubmitPrototypeStartRequest,
 }: {
     item: ItemData;
-    assistantVisible?: boolean;
-    onOpenAssistant?: () => void;
-    onOpenCanvas?: () => void;
     activeProjectId?: string | null;
+    assistantProjectPath?: string;
     preferredIDE?: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
-    webAgentPanelOpen?: boolean;
     onOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
-    onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
-    onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
-    onRefreshAvailability?: () => void;
+    onOpenAISettings?: () => void;
+    themes?: ThemeResourceItem[];
+    defaultThemeName?: string | null;
+    onSubmitPrototypeStartRequest?: (request: CanvasAiGenerationRequest) => void | Promise<void>;
 }) {
-    const [tipsOpen, setTipsOpen] = useState(false);
-    const guide = item.placeholderGuide || DEFAULT_PROTOTYPE_PLACEHOLDER_GUIDE;
-    const tips = guide.tips.length > 0 ? guide.tips : DEFAULT_PROTOTYPE_PLACEHOLDER_GUIDE.tips;
+    const [activeScene, setActiveScene] = useState<CanvasAiScene>('page');
+    const activeSceneDefinition = getCanvasAiSceneDefinition(activeScene);
+    const activeStartPlaceholders = getCanvasAiPrototypeStartPlaceholders(activeScene);
+    const activeQuickPrompts = getCanvasAiPrototypeStartQuickPrompts(activeScene);
+    const activeStartSystemPrompt = getCanvasAiPrototypeStartSystemPrompt(activeScene);
+    const [placeholder, setPlaceholder] = useState(() => pickCanvasAiPrototypeStartPlaceholder(activeScene));
+    const [prototypeGenerationCount, setPrototypeGenerationCount] = useState(1);
+    const [imageStartParams, setImageStartParams] = useState<AiImageTaskParams>(DEFAULT_IMAGE_START_PARAMS);
+    const [selectedThemeName, setSelectedThemeName] = useState(() => resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
+    const previousDefaultThemeNameRef = useRef(defaultThemeName);
+    const userSelectedThemeRef = useRef(false);
     const prototypeIndexPath = resolvePrototypeIndexFilePath(item);
-    const shouldShowOpenAiCard = Boolean(onOpenProjectInIDE) && !assistantVisible && !webAgentPanelOpen;
+    const prototypeLocalContextRef = useMemo<CanvasLocalContextRef>(() => ({
+        resourceType: 'prototype',
+        resourceId: item.name,
+        title: item.displayName || item.name,
+        paths: [prototypeIndexPath],
+    }), [item.displayName, item.name, prototypeIndexPath]);
+    const placeholderStartComposerDraftStorageKey = useMemo(() => (
+        createCanvasGenerationComposerDraftStorageKey([
+            assistantProjectPath || activeProjectId || '',
+            item.name,
+            prototypeIndexPath,
+            'placeholder-start',
+            activeScene,
+        ])
+    ), [activeProjectId, activeScene, assistantProjectPath, item.name, prototypeIndexPath]);
+    const shouldShowInlineAppList = Boolean(onOpenProjectInIDE);
+    const selectedTheme = useMemo(() => (
+        themes?.find((theme) => theme.name === selectedThemeName) || null
+    ), [selectedThemeName, themes]);
+    const themeLabel = selectedTheme?.displayName || selectedTheme?.name || '无设计系统';
+
+    useEffect(() => {
+        setPlaceholder(pickCanvasAiPrototypeStartPlaceholder(activeScene));
+    }, [activeScene]);
+
+    useEffect(() => {
+        const previousDefaultThemeName = previousDefaultThemeNameRef.current;
+        setSelectedThemeName((current) => resolvePrototypeGenerationSyncedThemeName({
+            currentThemeName: current,
+            defaultThemeName,
+            previousDefaultThemeName,
+            themes,
+            userSelectedTheme: userSelectedThemeRef.current,
+        }));
+        previousDefaultThemeNameRef.current = defaultThemeName;
+    }, [defaultThemeName, themes]);
 
     return (
-        <div className="flex h-full w-full items-center justify-center bg-[#f7f9fb] px-6 text-center">
-            <div className="w-full max-w-[560px] rounded-lg border border-slate-200 bg-white px-7 py-8 text-left shadow-sm">
-                <div className="text-center">
-                    <div className="text-lg font-semibold text-slate-950">{guide.title || DEFAULT_PROTOTYPE_PLACEHOLDER_GUIDE.title}</div>
-                    <div className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-slate-600">
-                        {guide.description || DEFAULT_PROTOTYPE_PLACEHOLDER_GUIDE.description}
+        <div className="flex h-full w-full items-center justify-center bg-[#f7f9fb] px-6 py-12 text-center">
+            <div className="flex min-h-full w-full max-w-[960px] flex-col items-center justify-center">
+                <div className="w-full">
+                    <h1 className="text-[28px] font-semibold leading-tight text-slate-950 sm:text-[34px]">
+                        我们先从哪里开始呢?
+                    </h1>
+                    <div className="mt-5 flex justify-center">
+                        <Segmented
+                            value={activeScene}
+                            options={CANVAS_AI_SCENE_OPTIONS.map((option) => ({ label: option.label, value: option.value }))}
+                            onChange={(value) => setActiveScene(value as CanvasAiScene)}
+                        />
                     </div>
                 </div>
 
-                <div className="placeholder-guide-cards mt-7 space-y-3">
-                    {shouldShowOpenAiCard ? (
+                <div className="mt-8 w-full">
+                    <CanvasGenerationDisplayComposer
+                        placeholder={placeholder || activeStartPlaceholders[0] || activeSceneDefinition.placeholders[0] || '描述你想创建的内容'}
+                        ariaLabel="原型起始页 AI 输入"
+                        quickPrompts={activeQuickPrompts}
+                        showSelectors
+                        workspacePath={assistantProjectPath}
+                        draftStorageKey={placeholderStartComposerDraftStorageKey}
+                        onOpenAISettings={onOpenAISettings}
+                        onSubmit={(prompt, selection) => {
+                            const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(prompt, activeStartSystemPrompt);
+                            const prototypeStartSettings = {
+                                count: prototypeGenerationCount,
+                                themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : selectedTheme?.name || '',
+                            };
+                            const submittedPrompt = activeScene === 'page'
+                                ? appendPrototypeStartPromptSettings({
+                                    prompt: promptWithStartSystemPrompt,
+                                    settings: prototypeStartSettings,
+                                })
+                                : activeScene === 'design'
+                                    ? appendImageStartPromptSettings({
+                                        prompt: promptWithStartSystemPrompt,
+                                        settings: imageStartParams,
+                                    })
+                                    : promptWithStartSystemPrompt;
+                            return onSubmitPrototypeStartRequest?.({
+                                scene: activeScene,
+                                prompt: submittedPrompt,
+                                source: 'placeholder-start',
+                                sceneSettings: activeScene === 'design' ? imageStartParams : undefined,
+                                provider: selection?.provider,
+                                model: selection?.model,
+                                mode: selection?.mode,
+                                thought: selection?.thought,
+                                contextBundle: selection?.contextBundle,
+                                localContextRefs: activeScene === 'page' ? [] : [prototypeLocalContextRef],
+                            });
+                        }}
+                        postSelectorActions={
+                            activeScene === 'page' ? (
+                                <PrototypeStartSettingsPopover
+                                    count={prototypeGenerationCount}
+                                    selectedThemeName={selectedThemeName}
+                                    themeLabel={themeLabel}
+                                    themes={themes}
+                                    onCountChange={setPrototypeGenerationCount}
+                                    onThemeChange={(themeName) => {
+                                        userSelectedThemeRef.current = true;
+                                        setSelectedThemeName(themeName);
+                                    }}
+                                />
+                            ) : activeScene === 'design' ? (
+                                <ImageStartSettingsPopover
+                                    params={imageStartParams}
+                                    onParamsChange={setImageStartParams}
+                                />
+                            ) : null
+                        }
+                    />
+                </div>
+
+                {shouldShowInlineAppList ? (
+                    <div className="w-full pt-24">
                         <OpenInDropdown
-                            variant="placeholder-card"
-                            className={PLACEHOLDER_GUIDE_AI_CARD_CLASS}
-                            cardTitle="打开 AI"
-                            cardDescription="选择 AI 工具打开当前原型。"
-                            cardIcon={<MessageSquareCode className="h-4 w-4" />}
-                            handleOpenProjectInIDE={onOpenProjectInIDE}
+                            variant="inline-app-list"
+                            handleOpenProjectInIDE={onOpenProjectInIDE!}
                             preferredIDE={preferredIDE ?? null}
                             activeProjectId={activeProjectId}
                             targetPath={prototypeIndexPath}
                             ideAvailability={ideAvailability}
                             agentAvailability={agentAvailability}
-                            webAgentPanelOpen={webAgentPanelOpen}
-                            onOpenGenieWebAgent={onOpenGenieWebAgent}
-                            onOpenWebAgentInPanel={onOpenWebAgentInPanel}
-                            onCloseWebAgentPanel={onCloseWebAgentPanel}
                             onPreferredIDEChange={onPreferredIDEChange}
-                            onRefreshAvailability={onRefreshAvailability}
                         />
-                    ) : null}
-
-                    {onOpenCanvas ? (
-                        <button
-                            type="button"
-                            className={PLACEHOLDER_GUIDE_ACTION_CARD_CLASS}
-                            onClick={() => { onOpenCanvas(); }}
-                        >
-                            <span className="min-w-0">
-                                <span className="placeholder-guide-card-title block text-[13px] font-medium text-slate-950">
-                                    <span className="inline-flex items-center gap-2">
-                                        <PencilRuler className="h-4 w-4 text-slate-500" />
-                                        <span>打开画布创作原型</span>
-                                    </span>
-                                </span>
-                                <span className="placeholder-guide-card-description mt-1 block text-[12px] leading-5 text-slate-600">
-                                    整理灵感，构思方案，生成原型
-                                </span>
-                            </span>
-                            <span className={PLACEHOLDER_GUIDE_ICON_CLASS}>
-                                <ChevronRight className="h-4 w-4" />
-                            </span>
-                        </button>
-                    ) : null}
-
-                    <div className={cn(PLACEHOLDER_GUIDE_EXPANDABLE_CARD_CLASS, 'placeholder-guide-card-static')}>
-                        <button
-                            type="button"
-                            className="flex min-h-[78px] w-full items-center justify-between gap-4 px-4 py-3 text-left"
-                            onClick={() => { setTipsOpen((open) => !open); }}
-                            aria-expanded={tipsOpen}
-                        >
-                            <span className="min-w-0">
-                                <span className="placeholder-guide-card-title block text-[13px] font-medium text-slate-950">
-                                    <span className="inline-flex items-center gap-2">
-                                        <Lightbulb className="h-4 w-4 text-slate-500" />
-                                        <span>新手对话技巧</span>
-                                    </span>
-                                </span>
-                                <span className="placeholder-guide-card-description mt-1 block text-[12px] leading-5 text-slate-600">
-                                    模型、对话和参考材料的简短建议。
-                                </span>
-                            </span>
-                            <span className={PLACEHOLDER_GUIDE_ICON_CLASS}>
-                                <ChevronDown className={cn('h-4 w-4 transition-transform', tipsOpen ? 'rotate-180' : '')} />
-                            </span>
-                        </button>
-
-                        {tipsOpen ? (
-                            <ul className="m-0 space-y-2 px-4 pb-4 pt-1 text-[12px] leading-5 text-slate-700">
-                                {tips.map((tip) => (
-                                    <li key={tip} className="flex gap-2">
-                                        <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
-                                        <span>{tip}</span>
-                                    </li>
-                                ))}
-                            </ul>
-                        ) : null}
                     </div>
-                </div>
+                ) : null}
             </div>
         </div>
     );
@@ -480,8 +821,17 @@ export default function ContentArea({
     activeTab: _activeTab,
     previewConfig,
     reviewPageZoomEnabled = false,
+    handleChangeMultiPageColumns,
+    handleSelectPreviewSinglePreset,
+    handleSelectCustomPreview,
+    handleActivateMultiPagePreview,
+    handleChangeCustomPreviewWidth,
+    handleChangeCustomPreviewHeight,
+    handleChangePreviewScaleMode,
     handleChangeSplitPreviewWidth,
     handleChangeSplitPreviewHeight,
+    quickEditActive,
+    onRunPrototypePanePromptAction,
     currentDevice,
     displaySize,
     scale,
@@ -492,7 +842,6 @@ export default function ContentArea({
     setElementIframeSize: _setElementIframeSize,
     viewMode,
     setViewMode,
-    onEnterSelectedPrototypePreview,
     contentMode = 'preview',
     docsItems = [],
     selectedDoc = null,
@@ -507,6 +856,7 @@ export default function ContentArea({
     hasPrototypeItems = true,
     hasDocItems = true,
     onStartMakeProject,
+    onCopyStartServerErrorPrompt,
     startServerLoading = false,
     startServerError = '',
     collapsed = false,
@@ -517,12 +867,9 @@ export default function ContentArea({
     excalidrawPropertyPanelPosition,
     setExcalidrawPropertyPanelPosition,
     bridgeConnected,
-    assistantVisible = false,
-    onToggleAssistant,
     onAddToContext,
     onAnnotationsChange,
     onOpenCanvasInIDE,
-    onOpenCanvasGenie,
     onSelectResourceFolder,
     onSelectResourceFolderItem,
     onOpenResourceFolderInSystem,
@@ -533,17 +880,18 @@ export default function ContentArea({
     webAgentPanelOpen,
     onOpenProjectInIDE,
     onOpenGenieWebAgent,
-    onOpenWebAgentInPanel,
     onCloseWebAgentPanel,
     onPreferredIDEChange,
-    onRefreshAvailability,
-    assistantApiBaseUrl,
+    onOpenAISettings,
     assistantProjectPath,
     preferredPromptClient,
     prototypes,
     themes,
     defaultThemeName,
     onRefreshPrototypes,
+    onSubmitCanvasAssistantPrompt,
+    onAddCanvasScreenshotToAI,
+    onAddCanvasImageToAI,
 }: ContentAreaProps) {
     const [previewContainerSize, setPreviewContainerSize] = useState({ width: 0, height: 0 });
     const [splitPrimaryWidthDraft, setSplitPrimaryWidthDraft] = useState('');
@@ -560,18 +908,10 @@ export default function ContentArea({
         splitPrimary?: () => void;
         splitSecondary?: () => void;
     }>({});
+    const [runtimeUnavailablePreviewPath, setRuntimeUnavailablePreviewPath] = useState<string | null>(null);
 
     const selectedMarkdownItem = contentMode === 'template' ? selectedTemplate : selectedDoc;
     const markdownEmptyLabel = contentMode === 'template' ? '模板' : '资源';
-    const selectedPrototypePreviewUrl = String(selectedItem ? selectedItem.clientUrl || selectedItem.previewUrl : '').trim();
-    const prototypePreviewDisabled = selectedItem ? selectedItem.previewDisabled === true : false;
-    const prototypePreviewDisabledReason = prototypePreviewDisabled || !selectedPrototypePreviewUrl
-            ? '当前原型缺少 clientUrl，无法进入预览'
-            : '当前页面暂不支持进入原型预览';
-    const handleEnterPrototypePreview = onEnterSelectedPrototypePreview || (setViewMode ? () => setViewMode('demo') : null);
-    const canPlayPrototypePreview = Boolean(handleEnterPrototypePreview)
-        && !prototypePreviewDisabled
-        && Boolean(selectedPrototypePreviewUrl);
     const selectedPrototypeCanvasName = selectedItem
         ? `prototypes/${selectedItem.name}/canvas.excalidraw`
         : '';
@@ -581,16 +921,69 @@ export default function ContentArea({
     const selectedStandaloneCanvasFilePath = selectedCanvas
         ? resolveCanvasFilePath(selectedCanvas, selectedCanvas.name)
         : '';
-    const selectedPrototypeClientUnavailable = viewMode === 'demo'
+    const handleSubmitPrototypeStartRequest = async (request: CanvasAiGenerationRequest) => {
+        if (request.scene === 'page' && selectedItem?.name) {
+            await apiService.startPlaceholderPrototypeGeneration(selectedItem.name);
+            await onRefreshPrototypes?.();
+            setViewMode?.('demo');
+            await onSubmitCanvasAssistantPrompt?.(request);
+            return;
+        }
+        setViewMode?.('canvas');
+        await onSubmitCanvasAssistantPrompt?.(request);
+    };
+    const selectedPrototypeRuntimeUnavailable = viewMode === 'demo'
+        && Boolean(selectedItem)
+        && selectedItem?.previewDisabled !== true
+        && runtimeUnavailablePathMatchesResource(runtimeUnavailablePreviewPath, 'prototypes', selectedItem?.name);
+    const selectedThemeRuntimeUnavailable = contentMode === 'theme'
+        && Boolean(selectedTheme)
+        && Boolean(String(selectedTheme ? selectedTheme.clientUrl || selectedTheme.previewUrl : '').trim())
+        && runtimeUnavailablePathMatchesResource(runtimeUnavailablePreviewPath, 'themes', selectedTheme?.name);
+    const selectedPrototypeClientUnavailable = selectedPrototypeRuntimeUnavailable || (
+        viewMode === 'demo'
         && Boolean(selectedItem)
         && selectedItem?.previewDisabled !== true
         && projectRuntimeStatus?.makeClient === true
-        && projectRuntimeStatus.running !== true;
-    const selectedThemeClientUnavailable = contentMode === 'theme'
+        && projectRuntimeStatus.running !== true
+    );
+    const selectedThemeClientUnavailable = selectedThemeRuntimeUnavailable || (
+        contentMode === 'theme'
         && Boolean(selectedTheme)
         && Boolean(String(selectedTheme ? selectedTheme.clientUrl || selectedTheme.previewUrl : '').trim())
         && projectRuntimeStatus?.makeClient === true
-        && projectRuntimeStatus.running !== true;
+        && projectRuntimeStatus.running !== true
+    );
+
+    useEffect(() => {
+        setRuntimeUnavailablePreviewPath(null);
+    }, [contentMode, primaryIframeUrl, secondaryIframeUrl, selectedItem?.name, selectedTheme?.name, viewMode]);
+
+    useEffect(() => {
+        if (projectRuntimeStatus?.running === true) {
+            setRuntimeUnavailablePreviewPath(null);
+        }
+    }, [projectRuntimeStatus?.running]);
+
+    useEffect(() => {
+        const handleRuntimeUnavailableMessage = (event: MessageEvent) => {
+            if (event.origin !== window.location.origin) {
+                return;
+            }
+            const payload = event.data;
+            if (!payload || typeof payload !== 'object' || payload.type !== 'axhub:runtime-unavailable') {
+                return;
+            }
+            const requestPath = typeof payload.requestPath === 'string' ? payload.requestPath : '';
+            if (requestPath) {
+                setRuntimeUnavailablePreviewPath(requestPath);
+            }
+        };
+        window.addEventListener('message', handleRuntimeUnavailableMessage);
+        return () => {
+            window.removeEventListener('message', handleRuntimeUnavailableMessage);
+        };
+    }, []);
 
     useEffect(() => {
         const node = containerRef.current;
@@ -836,9 +1229,39 @@ export default function ContentArea({
         }
     };
 
+    const renderSplitPromptActions = (pane: 'primary' | 'secondary') => (
+        quickEditActive && onRunPrototypePanePromptAction ? (
+            <div className="ml-auto flex items-center gap-1">
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground"
+                    title="复制本视窗提示词"
+                    aria-label="复制本视窗提示词"
+                    onClick={() => { void onRunPrototypePanePromptAction(pane, 'copy-prompt'); }}
+                >
+                    <Copy className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground"
+                    title="执行本视窗批注"
+                    aria-label="执行本视窗批注"
+                    onClick={() => { void onRunPrototypePanePromptAction(pane, 'send-to-genie'); }}
+                >
+                    <Play className="h-3.5 w-3.5" />
+                </Button>
+            </div>
+        ) : null
+    );
+
     const splitTitleControl = (
         icon: React.ReactNode,
         label: string,
+        actions: React.ReactNode,
         widthDraft: string,
         heightDraft: string,
         setWidthDraft: (value: string) => void,
@@ -878,6 +1301,7 @@ export default function ContentArea({
                     className="h-6 w-14 rounded-md px-2 text-[11px]"
                 />
             </div>
+            {actions}
         </div>
     );
 
@@ -939,6 +1363,7 @@ export default function ContentArea({
                         projectRuntimeStatus={projectRuntimeStatus}
                         projectRuntimeStatusLoading={projectRuntimeStatusLoading}
                         onStartMakeProject={onStartMakeProject}
+                        onCopyStartServerErrorPrompt={onCopyStartServerErrorPrompt}
                         startServerLoading={startServerLoading}
                         startServerError={startServerError}
                     />
@@ -1080,6 +1505,7 @@ export default function ContentArea({
                         clientUrl={themePreviewUrl}
                         projectRuntimeStatusLoading={projectRuntimeStatusLoading}
                         onStartMakeProject={onStartMakeProject}
+                        onCopyStartServerErrorPrompt={onCopyStartServerErrorPrompt}
                         startServerLoading={startServerLoading}
                         startServerError={startServerError}
                     />
@@ -1142,16 +1568,26 @@ export default function ContentArea({
                             onPropertyPanelPositionChange={setExcalidrawPropertyPanelPosition}
                             bridgeConnected={bridgeConnected}
                             onAddToContext={onAddToContext}
+                            onAddScreenshotToAI={onAddCanvasScreenshotToAI}
+                            onAddImageToAI={onAddCanvasImageToAI}
                             onAnnotationsChange={onAnnotationsChange}
                             onOpenCanvasInIDE={onOpenCanvasInIDE}
-                            onOpenCanvasGenie={onOpenCanvasGenie}
-                            assistantApiBaseUrl={assistantApiBaseUrl}
+                            preferredIDE={preferredIDE}
+                            ideAvailability={ideAvailability}
+                            agentAvailability={agentAvailability}
+                            onOpenProjectInIDE={onOpenProjectInIDE}
+                            onOpenGenieWebAgent={onOpenGenieWebAgent}
+                            webAgentPanelOpen={webAgentPanelOpen}
+                            onCloseWebAgentPanel={onCloseWebAgentPanel}
+                            onPreferredIDEChange={onPreferredIDEChange}
+                            onOpenAISettings={onOpenAISettings}
                             assistantProjectPath={assistantProjectPath}
                             preferredPromptClient={preferredPromptClient}
                             prototypes={prototypes}
                             themes={themes}
                             defaultThemeName={defaultThemeName}
                             onRefreshPrototypes={onRefreshPrototypes}
+                            onSubmitCanvasAssistantPrompt={onSubmitCanvasAssistantPrompt}
                             overlayChildren={<CanvasFloatingToolbar />}
                         />
                     </React.Suspense>
@@ -1165,29 +1601,24 @@ export default function ContentArea({
             ref={containerRef}
             className={cn(
                 "relative h-full min-h-0 min-w-0 flex items-start justify-center bg-muted/20",
-                previewLayout.mode === 'split' ? 'overflow-hidden' : 'overflow-auto',
+                previewLayout.mode === 'split' || previewLayout.mode === 'multi-page' ? 'overflow-hidden' : 'overflow-auto',
             )}
         >
             {selectedItem ? (
                 selectedItem.placeholder === true && viewMode === 'demo' ? (
-                    <PrototypePlaceholderGuide
+                        <PrototypePlaceholderGuide
                         item={selectedItem}
-                        assistantVisible={assistantVisible}
-                        onOpenAssistant={onToggleAssistant}
                         activeProjectId={activeProjectId}
                         preferredIDE={preferredIDE}
                         ideAvailability={ideAvailability}
                         agentAvailability={agentAvailability}
-                        webAgentPanelOpen={webAgentPanelOpen}
+                        assistantProjectPath={assistantProjectPath}
                         onOpenProjectInIDE={onOpenProjectInIDE}
-                        onOpenGenieWebAgent={onOpenGenieWebAgent}
-                        onOpenWebAgentInPanel={onOpenWebAgentInPanel}
-                        onCloseWebAgentPanel={onCloseWebAgentPanel}
                         onPreferredIDEChange={onPreferredIDEChange}
-                        onRefreshAvailability={onRefreshAvailability}
-                        onOpenCanvas={() => {
-                            setViewMode?.('canvas');
-                        }}
+                        themes={themes}
+                        defaultThemeName={defaultThemeName}
+                        onSubmitPrototypeStartRequest={handleSubmitPrototypeStartRequest}
+                        onOpenAISettings={onOpenAISettings}
                     />
                 ) : viewMode === 'canvas' ? (
                     <div className="h-full w-full min-h-0 relative overflow-hidden bg-background">
@@ -1205,29 +1636,27 @@ export default function ContentArea({
                                     onPropertyPanelPositionChange={setExcalidrawPropertyPanelPosition}
                                     bridgeConnected={bridgeConnected}
                                     onAddToContext={onAddToContext}
+                                    onAddScreenshotToAI={onAddCanvasScreenshotToAI}
+                                    onAddImageToAI={onAddCanvasImageToAI}
                                     onAnnotationsChange={onAnnotationsChange}
                                     onOpenCanvasInIDE={onOpenCanvasInIDE}
-                                    onOpenCanvasGenie={onOpenCanvasGenie}
-                                    assistantApiBaseUrl={assistantApiBaseUrl}
+                                    preferredIDE={preferredIDE}
+                                    ideAvailability={ideAvailability}
+                                    agentAvailability={agentAvailability}
+                                    onOpenProjectInIDE={onOpenProjectInIDE}
+                                    onOpenGenieWebAgent={onOpenGenieWebAgent}
+                                    webAgentPanelOpen={webAgentPanelOpen}
+                                    onCloseWebAgentPanel={onCloseWebAgentPanel}
+                                    onPreferredIDEChange={onPreferredIDEChange}
+                                    onOpenAISettings={onOpenAISettings}
                                     assistantProjectPath={assistantProjectPath}
                                     preferredPromptClient={preferredPromptClient}
                                     prototypes={prototypes}
                                     themes={themes}
                                     defaultThemeName={defaultThemeName}
                                     onRefreshPrototypes={onRefreshPrototypes}
-                                    showPrototypePreviewHint={canPlayPrototypePreview}
-                                    overlayChildren={
-                                        <>
-                                            <CanvasFloatingToolbar />
-                                            <CanvasPlayPrototypeButton
-                                                disabled={!canPlayPrototypePreview}
-                                                disabledReason={prototypePreviewDisabledReason}
-                                                onEnterPreview={() => {
-                                                    handleEnterPrototypePreview?.();
-                                                }}
-                                            />
-                                        </>
-                                    }
+                                    onSubmitCanvasAssistantPrompt={onSubmitCanvasAssistantPrompt}
+                                    overlayChildren={<CanvasFloatingToolbar />}
                                 />
                             </React.Suspense>
                         </CanvasErrorBoundary>
@@ -1245,8 +1674,25 @@ export default function ContentArea({
                             clientUrl={selectedItem.clientUrl || selectedItem.previewUrl}
                             projectRuntimeStatusLoading={projectRuntimeStatusLoading}
                             onStartMakeProject={onStartMakeProject}
+                            onCopyStartServerErrorPrompt={onCopyStartServerErrorPrompt}
                             startServerLoading={startServerLoading}
                             startServerError={startServerError}
+                        />
+                    ) : previewLayout.mode === 'multi-page' ? (
+                        <MultiPagePreviewCanvas
+                            selectedItem={selectedItem}
+                            previewConfig={previewConfig}
+                            layout={previewLayout.multiPage}
+                            previewUrl={primaryIframeUrl}
+                            iframeKey={elementIframeKey}
+                            previewIframeRef={previewIframeRef}
+                            onPreviewIframeLoad={onPreviewIframeLoad}
+                            handleChangeMultiPageColumns={handleChangeMultiPageColumns}
+                            handleSelectPreviewSinglePreset={handleSelectPreviewSinglePreset}
+                            handleSelectCustomPreview={handleSelectCustomPreview}
+                            handleActivateMultiPagePreview={handleActivateMultiPagePreview}
+                            handleChangeCustomPreviewWidth={handleChangeCustomPreviewWidth}
+                            handleChangeCustomPreviewHeight={handleChangeCustomPreviewHeight}
                         />
                     ) : previewLayout.mode === 'split' ? (
                         <div className="flex h-full w-full items-start justify-center gap-3 px-4 pt-4">
@@ -1254,6 +1700,7 @@ export default function ContentArea({
                                 {splitTitleControl(
                                     <Monitor />,
                                     'PC',
+                                    renderSplitPromptActions('primary'),
                                     splitPrimaryWidthDraft,
                                     splitPrimaryHeightDraft,
                                     setSplitPrimaryWidthDraft,
@@ -1284,6 +1731,7 @@ export default function ContentArea({
                                 {splitTitleControl(
                                     <Smartphone />,
                                     '手机',
+                                    renderSplitPromptActions('secondary'),
                                     splitSecondaryWidthDraft,
                                     splitSecondaryHeightDraft,
                                     setSplitSecondaryWidthDraft,
@@ -1392,6 +1840,7 @@ export default function ContentArea({
                         projectRuntimeStatus={projectRuntimeStatus}
                         projectRuntimeStatusLoading={projectRuntimeStatusLoading}
                         onStartMakeProject={onStartMakeProject}
+                        onCopyStartServerErrorPrompt={onCopyStartServerErrorPrompt}
                         startServerLoading={startServerLoading}
                         startServerError={startServerError}
                     />

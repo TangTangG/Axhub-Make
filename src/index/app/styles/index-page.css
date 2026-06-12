@@ -13,7 +13,7 @@
     transform: translate(50%, -50%);
     width: 2px;
     height: 40px;
-    background: hsl(var(--border));
+    background: var(--axhub-border-color);
     border-radius: 1px;
     transition: all 0.2s;
     z-index: 100;
@@ -39,7 +39,7 @@
     transform: translate(-50%, 50%);
     width: 40px;
     height: 2px;
-    background: hsl(var(--border));
+    background: var(--axhub-border-color);
     border-radius: 1px;
     transition: all 0.2s;
     z-index: 100;
@@ -64,7 +64,7 @@
     bottom: 0;
     width: 12px;
     height: 12px;
-    background: hsl(var(--border));
+    background: var(--axhub-border-color);
     border-radius: 0 0 6px 0;
     transition: all 0.2s;
     z-index: 100;
@@ -72,7 +72,7 @@
 
 .resize-handle-bottomRight:hover::before,
 .resize-handle-bottomRight:active::before {
-    background: hsl(var(--border-strong));
+    background: var(--axhub-border-strong-color);
     width: 16px;
     height: 16px;
 }
@@ -80,7 +80,7 @@
 .ant-card-hoverable:hover .resize-handle-right::before,
 .ant-card-hoverable:hover .resize-handle-bottom::before,
 .ant-card-hoverable:hover .resize-handle-bottomRight::before {
-    background: hsl(var(--border-strong));
+    background: var(--axhub-border-strong-color);
 }
 
 .menu-item-wrapper .more-btn {
@@ -117,7 +117,7 @@
 
 .mobile-item-card {
     background: var(--mobile-item-bg, hsl(var(--card)));
-    border: 1px solid var(--mobile-item-border, hsl(var(--border)));
+    border: 1px solid var(--mobile-item-border, var(--axhub-border-color));
     border-radius: 8px;
     padding: 16px;
     margin-bottom: 12px;
@@ -126,7 +126,7 @@
 }
 
 .mobile-item-card:hover {
-    border-color: var(--mobile-item-hover-border, hsl(var(--ring)));
+    border-color: var(--mobile-item-hover-border, var(--axhub-ring-color));
     box-shadow: var(--mobile-item-hover-shadow, var(--shadow-sm));
 }
 

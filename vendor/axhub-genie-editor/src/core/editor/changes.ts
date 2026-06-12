@@ -365,7 +365,7 @@ export function createChangesService(options: {
       }
       return buildFallbackAnchor(element);
     }
-    return fallbackAnchor;
+    return null;
   }
 
   function resolveSelectionAnchor(
@@ -494,8 +494,8 @@ export function createChangesService(options: {
 
     const visibleMetas = filterVisibleChangeMarkerMetas(dirtyMetas, activeMarkerKey);
 
-    layer.hidden = visibleMetas.length === 0;
     if (visibleMetas.length === 0) {
+      layer.hidden = true;
       layer.replaceChildren();
       return;
     }
@@ -552,6 +552,7 @@ export function createChangesService(options: {
       return marker;
     }).filter((node): node is HTMLDivElement => node !== null);
 
+    layer.hidden = nodes.length === 0;
     layer.replaceChildren(...nodes);
   }
 

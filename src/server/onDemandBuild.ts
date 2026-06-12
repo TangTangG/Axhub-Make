@@ -118,8 +118,8 @@ export async function buildOnDemand(projectRoot: string, entryFilePath: string):
     },
     css: {
       preprocessorOptions: {
-        scss: { api: 'modern-compiler' as any },
-        sass: { api: 'modern-compiler' as any },
+        scss: { api: 'modern' as any },
+        sass: { api: 'modern' as any },
       },
     },
     build: {

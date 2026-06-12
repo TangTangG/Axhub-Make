@@ -1,10 +1,9 @@
 export const MAIN_IDE_OPTIONS = [
     { value: 'cursor', label: 'Cursor' },
     { value: 'trae', label: 'TRAE' },
-    { value: 'vscode', label: 'Visual Studio Code' },
+    { value: 'vscode', label: 'vscode' },
     { value: 'trae_cn', label: 'TRAE CN' },
     { value: 'windsurf', label: 'Windsurf' },
-    { value: 'kiro', label: 'Kiro' },
     { value: 'qoder', label: 'Qoder' },
     { value: 'antigravity', label: 'Antigravity' },
 ] as const;
@@ -17,10 +16,9 @@ export const MAIN_IDE_VALUES = MAIN_IDE_OPTIONS.map((option) => option.value) as
 export const MAIN_IDE_APP_NAMES: Record<MainIDE, string> = {
     cursor: 'Cursor',
     trae: 'TRAE',
-    vscode: 'Visual Studio Code',
+    vscode: 'vscode',
     trae_cn: 'TRAE CN',
     windsurf: 'Windsurf',
-    kiro: 'Kiro',
     qoder: 'Qoder',
     antigravity: 'Antigravity',
 };
@@ -46,21 +44,18 @@ export function isIDEMissing(ide: MainIDE, availability?: IDEAvailabilityMap | n
     return availability?.[ide]?.status === 'missing';
 }
 
-export function getVisibleIDEOptions(availability?: IDEAvailabilityMap | null) {
-    const visibleOptions = MAIN_IDE_OPTIONS.filter((option) => !isIDEMissing(option.value, availability));
-    return visibleOptions.length > 0 ? visibleOptions : MAIN_IDE_OPTIONS;
+export function getVisibleIDEOptions(_availability?: IDEAvailabilityMap | null) {
+    return MAIN_IDE_OPTIONS;
 }
 
 export function resolveVisibleIDEPreference(
     preferredIDE: MainIDEPreference,
-    availability?: IDEAvailabilityMap | null,
+    _availability?: IDEAvailabilityMap | null,
 ): MainIDEPreference {
-    const visibleOptions = getVisibleIDEOptions(availability);
-    if (preferredIDE && visibleOptions.some((option) => option.value === preferredIDE)) {
+    if (preferredIDE && MAIN_IDE_VALUES.includes(preferredIDE)) {
         return preferredIDE;
     }
-    const installedOption = visibleOptions.find((option) => availability?.[option.value]?.status === 'installed');
-    return installedOption?.value ?? visibleOptions[0]?.value ?? null;
+    return MAIN_IDE_OPTIONS[0]?.value ?? null;
 }
 
 export type OpenMethodType = 'ide' | 'cli' | 'web' | 'local-app';

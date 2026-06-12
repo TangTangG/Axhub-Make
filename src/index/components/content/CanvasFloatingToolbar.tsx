@@ -21,7 +21,7 @@ export default function CanvasFloatingToolbar({
             className="absolute z-[10] flex items-center gap-1 rounded-lg border bg-background/80 backdrop-blur-sm shadow-sm px-1 py-1"
             style={{
                 top: 'var(--editor-container-padding, 0.5rem)',
-                right: 'calc(var(--editor-container-padding, 0.5rem) + var(--axhub-canvas-return-button-width, 70px) + 0.5rem)',
+                right: 'calc(var(--editor-container-padding, 0.5rem) + var(--axhub-canvas-top-right-capsule-width, 73px) + 0.5rem)',
                 pointerEvents: 'auto',
             }}
         >

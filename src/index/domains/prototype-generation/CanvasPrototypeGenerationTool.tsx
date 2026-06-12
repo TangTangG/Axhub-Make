@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import type { ItemData, PromptClientPreference } from '../../types';
+import type { CanvasAiSubmitRequest } from '../shared/CanvasGenerationComposer';
 import type { ThemeResourceItem } from '../resources/resource.types';
 import PrototypeGenerationComposer, { type PrototypeGenerationComposerSettings } from './PrototypeGenerationComposer';
 import {
@@ -19,6 +20,7 @@ import {
 import {
   createCanvasReferenceSnapshot,
   renderCanvasReferenceContext,
+  type CanvasLocalContextRef,
   type CanvasReferenceSnapshot,
 } from '../ai-image/canvasReferenceImages';
 import {
@@ -31,6 +33,7 @@ import {
   resolveStableCanvasGeneratorOverlayBounds,
   type CanvasGeneratorOverlayBounds,
 } from '../shared/canvasGeneratorOverlayPosition';
+import { createCanvasGenerationComposerDraftStorageKey } from '../shared/canvasGenerationComposerDraft';
 import CanvasNodeTitleLabel, {
   CANVAS_NODE_TITLE_LABEL_HEIGHT,
   CANVAS_NODE_TITLE_LABEL_MAX_WIDTH,
@@ -42,10 +45,10 @@ interface CanvasPrototypeGenerationToolProps {
   excalidrawAPI: any;
   containerRef: React.RefObject<HTMLDivElement>;
   canvasFilePath?: string;
+  assistantProjectPath?: string;
   preferredPromptClient?: PromptClientPreference;
   prototypes?: ItemData[];
   themes?: ThemeResourceItem[];
-  defaultThemeName?: string | null;
   onRefreshPrototypes?: () => Promise<ItemData[]>;
   onSceneMutated?: () => void;
 }
@@ -167,6 +170,28 @@ function pickCreatedPrototype(items: ItemData[], beforePrototypeNames: Set<strin
   return createdItems[createdItems.length - 1] ?? null;
 }
 
+function pickPrototypeFromArtifact(items: ItemData[], artifact: any, fallbackNames: Set<string>): ItemData | null {
+  if (!artifact || artifact.kind !== 'prototype') return null;
+  const target = artifact.target && typeof artifact.target === 'object' ? artifact.target : {};
+  const metadata = artifact.metadata && typeof artifact.metadata === 'object' ? artifact.metadata : {};
+  const candidates = [
+    target.resourceId,
+    target.artifactId,
+    metadata.resourceId,
+    metadata.name,
+    metadata.title,
+    typeof target.path === 'string' ? target.path.match(/(?:^|\/)prototypes\/([^/]+)/u)?.[1] : '',
+    typeof target.targetPath === 'string' ? target.targetPath.match(/^prototypes\/([^/]+)/u)?.[1] : '',
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim());
+  for (const candidate of candidates) {
+    const matched = items.find((item) => item?.name === candidate || item?.resourceId === candidate);
+    if (matched) return matched;
+  }
+  return pickCreatedPrototype(items, fallbackNames);
+}
+
 function derivePrototypeIdFromCanvasPath(canvasFilePath: string | undefined): string | null {
   const normalized = String(canvasFilePath || '').trim().replace(/\\/g, '/').replace(/^src\//, '');
   const match = normalized.match(/(?:^|\/)prototypes\/([^/]+)\/canvas(?:\.excalidraw)?$/u);
@@ -198,20 +223,35 @@ async function fetchProjectPrototypes(): Promise<ItemData[]> {
   return Array.isArray(body?.prototypes) ? body.prototypes : [];
 }
 
+function providerToPromptClientPreference(provider: string | null | undefined): PromptClientPreference {
+  const normalized = String(provider || '').trim().toLowerCase();
+  if (
+    normalized === 'claude'
+    || normalized === 'codex'
+    || normalized === 'gemini'
+    || normalized === 'opencode'
+  ) {
+    return `acp:${normalized}` as PromptClientPreference;
+  }
+  return null;
+}
+
 export default function CanvasPrototypeGenerationTool({
   excalidrawAPI,
   containerRef,
   canvasFilePath,
+  assistantProjectPath,
   preferredPromptClient,
   prototypes,
   themes,
-  defaultThemeName,
   onRefreshPrototypes,
   onSceneMutated,
 }: CanvasPrototypeGenerationToolProps) {
   const [selectedInfo, setSelectedInfo] = useState<SelectedPrototypeGeneratorInfo | null>(null);
   const [pendingInitialReferenceImagesState, setPendingInitialReferenceImages] = useState<string[]>([]);
   const [pendingInitialReferenceImagesGeneratorId, setPendingInitialReferenceImagesGeneratorId] = useState<string | null>(null);
+  const [pendingInitialLocalContextRefsState, setPendingInitialLocalContextRefs] = useState<CanvasLocalContextRef[]>([]);
+  const [pendingInitialLocalContextRefsGeneratorId, setPendingInitialLocalContextRefsGeneratorId] = useState<string | null>(null);
   const [taskRevision, setTaskRevision] = useState(0);
   const [canvasOverlayRevision, setCanvasOverlayRevision] = useState(0);
   const copiedCanvasReferenceRef = useRef<CanvasReferenceSnapshot | null>(null);
@@ -391,8 +431,13 @@ export default function CanvasPrototypeGenerationTool({
     }
   }, [excalidrawAPI]);
 
-  const insertGenerator = useCallback((referenceImages?: string[], referencePlacement?: CanvasGeneratorPlacement) => {
+  const insertGenerator = useCallback((
+    referenceImages?: string[],
+    referencePlacement?: CanvasGeneratorPlacement,
+    initialLocalContextRefs?: CanvasLocalContextRef[],
+  ) => {
     setPendingInitialReferenceImages(referenceImages || []);
+    setPendingInitialLocalContextRefs(initialLocalContextRefs || []);
     ensurePlaceholderFile();
     const appState = excalidrawAPI.getAppState();
     const placement = referencePlacement || resolveCanvasGeneratorPlacement({
@@ -407,6 +452,7 @@ export default function CanvasPrototypeGenerationTool({
     });
     selectedGeneratorViewportFitRef.current.elementId = generator.id;
     setPendingInitialReferenceImagesGeneratorId(referenceImages?.length ? generator.id : null);
+    setPendingInitialLocalContextRefsGeneratorId(initialLocalContextRefs?.length ? generator.id : null);
     excalidrawAPI.updateScene({
       elements: [...excalidrawAPI.getSceneElements(), generator],
       appState: {
@@ -501,6 +547,12 @@ export default function CanvasPrototypeGenerationTool({
   }, [onRefreshPrototypes]);
 
   const replaceGeneratorWithPrototype = useCallback((generatorId: string, prototype: ItemData, task: PrototypeGenerationTaskRecord) => {
+    const existing = excalidrawAPI.getSceneElements().some((element: any) => (
+      !element.isDeleted
+      && element.customData?.generatedBy === 'axhub-prototype-generator'
+      && element.customData?.sourceTaskId === task.id
+    ));
+    if (existing) return;
     const result = replacePrototypeGeneratorWithEmbeddable({
       elements: excalidrawAPI.getSceneElements(),
       generatorId,
@@ -522,28 +574,52 @@ export default function CanvasPrototypeGenerationTool({
     if (!snapshot) return [];
     const context = await renderCanvasReferenceContext(snapshot);
     const images = context.referenceImages;
+    if (selectedInfo?.element) {
+      setPendingInitialLocalContextRefs((previous) => {
+        const next = [...previous];
+        const existingKeys = new Set(next.map((ref) => `${ref.resourceType}:${ref.resourceId}:${ref.paths.join('|')}`));
+        for (const ref of context.localContextRefs) {
+          const key = `${ref.resourceType}:${ref.resourceId}:${ref.paths.join('|')}`;
+          if (!existingKeys.has(key)) {
+            existingKeys.add(key);
+            next.push(ref);
+          }
+        }
+        return next;
+      });
+      setPendingInitialLocalContextRefsGeneratorId(context.localContextRefs.length ? selectedInfo.element.id : pendingInitialLocalContextRefsGeneratorId);
+    }
     if (images.length) {
       toast.info(`已添加 ${images.length} 张画布参考图`);
     }
+    if (context.localContextRefs.length) {
+      toast.info(`已添加 ${context.localContextRefs.length} 个本地上下文`);
+    }
     return images;
-  }, []);
+  }, [pendingInitialLocalContextRefsGeneratorId, selectedInfo]);
 
   const handleSubmitPrompt = useCallback(async (
-    prompt: string,
-    _message: unknown,
-    settings: PrototypeGenerationComposerSettings,
-    referenceImages: string[],
+    request: CanvasAiSubmitRequest<PrototypeGenerationComposerSettings>,
   ) => {
     if (!selectedInfo?.element) {
       return { ok: false, text: '请先选择原型生成占位', error: '请先选择原型生成占位' };
     }
 
+    const settings = request.sceneSettings || { count: 1, themeName: '' };
+    const referenceImages = request.referenceImages;
+    const prompt = request.prompt;
     const beforePrototypeNames = normalizePrototypeNames(prototypes);
     const generatorId = selectedInfo.element.id;
     const selectedTheme = (themes || []).find((theme) => theme.name === settings.themeName) || null;
+    const selectedPromptClient = providerToPromptClientPreference(request.provider) || preferredPromptClient;
     const task = await getPrototypeGenerationTaskStore().submit({
       prompt,
-      preferredPromptClient,
+      preferredPromptClient: selectedPromptClient,
+      provider: request.provider,
+      model: request.model,
+      mode: request.mode,
+      thought: request.thought,
+      contextBundle: request.contextBundle,
       canvasFilePath,
       canvasName: derivePrototypeCanvasName(canvasFilePath),
       generatorElementId: generatorId,
@@ -582,6 +658,14 @@ export default function CanvasPrototypeGenerationTool({
           replaceGeneratorWithPrototype(generatorId, createdPrototype, runningTaskRecord);
         }
         return createdPrototype;
+      },
+      onArtifact: async (artifact, runningTaskRecord) => {
+        if (artifact.kind !== 'prototype') return;
+        const refreshedPrototypes = await refreshProjectPrototypes();
+        const prototype = pickPrototypeFromArtifact(refreshedPrototypes, artifact, beforePrototypeNames);
+        if (prototype) {
+          replaceGeneratorWithPrototype(generatorId, prototype, runningTaskRecord);
+        }
       },
     });
 
@@ -684,6 +768,20 @@ export default function CanvasPrototypeGenerationTool({
       ? pendingInitialReferenceImagesState
       : []
   ), [pendingInitialReferenceImagesGeneratorId, pendingInitialReferenceImagesState, selectedInfo]);
+  const pendingInitialLocalContextRefs = useMemo(() => (
+    selectedInfo?.element?.id === pendingInitialLocalContextRefsGeneratorId
+      ? pendingInitialLocalContextRefsState
+      : []
+  ), [pendingInitialLocalContextRefsGeneratorId, pendingInitialLocalContextRefsState, selectedInfo]);
+  const selectedPrototypeComposerDraftStorageKey = useMemo(() => (
+    selectedInfo?.element?.id
+      ? createCanvasGenerationComposerDraftStorageKey([
+        assistantProjectPath,
+        canvasFilePath,
+        selectedInfo.element.id,
+      ])
+      : null
+  ), [assistantProjectPath, canvasFilePath, selectedInfo]);
 
   return (
     <>
@@ -703,11 +801,13 @@ export default function CanvasPrototypeGenerationTool({
         <PrototypeGenerationComposer
           placement={selectedInfo.composerPlacement}
           allowAttachments={true}
+          assistantProjectPath={assistantProjectPath}
           canPasteReferenceImages={Boolean(copiedCanvasReferenceRef.current)}
+          draftStorageKey={selectedPrototypeComposerDraftStorageKey}
           initialReferenceImages={pendingInitialReferenceImages}
+          initialLocalContextRefs={pendingInitialLocalContextRefs}
           onPasteReferenceImages={pasteCanvasReferenceImages}
           themes={themes}
-          defaultThemeName={defaultThemeName}
           onSubmitPrompt={handleSubmitPrompt}
         />
       ) : null}

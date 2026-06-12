@@ -5,6 +5,8 @@ import type {
   GenieEditorModifiedElementSummary,
   GenieEditorStyleChangeSet,
   GenieEditorTextChange,
+  PrototypeEditCommentEntry,
+  PrototypeEditCommentsDocument,
   Transaction,
 } from '../../web-editor-types';
 import { aggregateTransactionsByElement } from '../transaction-aggregator';
@@ -38,6 +40,16 @@ type SaveRunCommentMeta = {
   actions: string[];
   imageCount: number;
   dirtySince: number;
+};
+
+type CopyPromptPersistedCommentMeta = {
+  elementKey: string;
+  label: string;
+  locator: ElementLocator;
+  pageScope: string;
+  note: string;
+  skillIds?: string[];
+  actions: string[];
 };
 
 type ElementSnapshot = {
@@ -222,11 +234,14 @@ export function createEditorSummariesService(options: {
   promptContext?: WebEditorV2PromptContextOptions;
   projectPath?: string;
   getResourceContext?: () => GenieEditorHostResource | null;
+  getPersistedPrototypeCommentsDocument?: () => PrototypeEditCommentsDocument | null;
   buildCopyPromptOverride?: (context: GenieEditorCopyPromptContext) => string;
 }): EditorSummariesService {
   const { state, buildCopyPromptOverride } = options;
   const promptContext = resolvePromptContext(options.promptContext, options.projectPath);
   const getResourceContext = options.getResourceContext ?? (() => null);
+  const readPersistedPrototypeCommentsDocument =
+    options.getPersistedPrototypeCommentsDocument ?? (() => null);
 
   function resolvePromptPageUrl(): string {
     if (typeof window === 'undefined') return '';
@@ -556,6 +571,7 @@ export function createEditorSummariesService(options: {
       fallbackLabel?: string;
       fallbackText?: string;
       debugFileHint?: string;
+      pageScope?: string;
       actions: string[];
       note?: string;
     },
@@ -570,6 +586,7 @@ export function createEditorSummariesService(options: {
     if (snapshot.tagName) lines.push(`  - 当前元素标签: ${snapshot.tagName}`);
     if (snapshot.currentText) lines.push(`  - 当前元素文本: ${snapshot.currentText}`);
     if (selectorPath) lines.push(`  - 元素定位: ${selectorPath}`);
+    if (params.pageScope) lines.push(`  - 页面范围: ${params.pageScope}`);
     if (params.debugFileHint) lines.push(`  - 可能相关文件: ${params.debugFileHint}`);
     const allActions = [...params.actions];
     if (params.note) allActions.push(params.note);
@@ -660,14 +677,87 @@ export function createEditorSummariesService(options: {
     return [...(meta.tweakSummaryLines ?? [])];
   }
 
+  function resolvePersistedPrototypeCommentsDocument(): PrototypeEditCommentsDocument | null {
+    try {
+      const document = readPersistedPrototypeCommentsDocument();
+      if (!document || document.kind !== 'prototype-edit-comments' || !Array.isArray(document.comments)) {
+        return null;
+      }
+      return document;
+    } catch {
+      return null;
+    }
+  }
+
+  function buildPersistedCommentActionLines(comment: PrototypeEditCommentEntry): string[] {
+    const actionLines: string[] = [];
+
+    const tweakLines = Array.isArray(comment.tweak?.summaryLines)
+      ? comment.tweak.summaryLines.map((line) => normalizePathValue(line)).filter(Boolean)
+      : [];
+    actionLines.push(...tweakLines);
+
+    const textChange = comment.textChange;
+    if (textChange && String(textChange.before ?? '') !== String(textChange.after ?? '')) {
+      actionLines.push(
+        `文本内容 "${formatTextValue(textChange.before)}" -> "${formatTextValue(textChange.after)}"`,
+      );
+    }
+
+    const styleChanges = comment.styleChanges;
+    if (styleChanges) {
+      const keys = new Set<string>([
+        ...Object.keys(styleChanges.before ?? {}),
+        ...Object.keys(styleChanges.after ?? {}),
+      ]);
+      for (const prop of Array.from(keys).sort()) {
+        const before = String((styleChanges.before ?? {})[prop] ?? '').trim();
+        const after = String((styleChanges.after ?? {})[prop] ?? '').trim();
+        if (before === after) continue;
+        actionLines.push(`样式 ${prop}: "${formatStyleValue(before)}" -> "${formatStyleValue(after)}"`);
+      }
+    }
+
+    return actionLines;
+  }
+
+  function collectPersistedPrototypeCommentMetas(): CopyPromptPersistedCommentMeta[] {
+    const document = resolvePersistedPrototypeCommentsDocument();
+    if (!document) return [];
+
+    return document.comments
+      .map((comment) => ({
+        elementKey: String(comment.elementKey ?? '').trim(),
+        label: String(comment.label ?? '').trim() || String(comment.elementKey ?? '').trim() || 'element',
+        locator: comment.locator,
+        pageScope: String(comment.pageScope ?? '').trim(),
+        note: buildPromptNoteWithSkills(comment.comment ?? '', comment),
+        skillIds: comment.skillIds?.slice(),
+        actions: buildPersistedCommentActionLines(comment),
+      }))
+      .filter(
+        (comment) =>
+          Boolean(comment.locator) &&
+          (Boolean(comment.note) || (comment.skillIds?.length ?? 0) > 0 || comment.actions.length > 0),
+      );
+  }
+
   function buildDefaultCopyPrompt(): string {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
     const moveSummaries = collectMoveSummaries(undoStack);
+    const persistedCommentMetas = collectPersistedPrototypeCommentMetas();
     const noteOnlyMetas = collectNoteOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey))),
     );
-    if (summaries.length === 0 && noteOnlyMetas.length === 0 && moveSummaries.length === 0) return '';
+    if (
+      persistedCommentMetas.length === 0 &&
+      summaries.length === 0 &&
+      noteOnlyMetas.length === 0 &&
+      moveSummaries.length === 0
+    ) {
+      return '';
+    }
 
     const currentFilePath = resolveCurrentFilePath();
     const prototypeFilePath = resolvePrototypeFilePath();
@@ -703,44 +793,58 @@ export function createEditorSummariesService(options: {
 
     let itemIndex = 1;
 
-    for (const summary of summaries) {
-      const meta = state.editMetaByKey.get(summary.elementKey);
-      const note = buildPromptNoteWithSkills(meta?.note ?? '', meta);
-      const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
-
-      appendChangeItem(lines, {
-        index: itemIndex,
-        locator: summary.netEffect.locator,
-        fallbackLabel: summary.fullLabel || summary.label,
-        fallbackText: summary.netEffect.textChange?.after ?? summary.netEffect.textChange?.before ?? '',
-        debugFileHint: includeDebugFileHint ? formatDebugSource(summary.debugSource) : '',
-        actions,
-        note,
-      });
-      itemIndex += 1;
-    }
-
-    for (const meta of noteOnlyMetas) {
-      const comment = isTextCommentKey(meta.elementKey)
-        ? findTextComment(meta.elementKey)
-        : null;
-
-      if (comment) {
-        appendTextCommentItem(lines, {
-          index: itemIndex,
-          comment,
-          note: meta.note,
-        });
-      } else if (meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0) {
+    if (persistedCommentMetas.length > 0) {
+      for (const meta of persistedCommentMetas) {
         appendChangeItem(lines, {
           index: itemIndex,
           locator: meta.locator,
           fallbackLabel: meta.label,
           actions: meta.actions,
-	        note: meta.note,
-	      });
+          pageScope: meta.pageScope,
+          note: meta.note,
+        });
+        itemIndex += 1;
       }
-      itemIndex += 1;
+    } else {
+      for (const summary of summaries) {
+        const meta = state.editMetaByKey.get(summary.elementKey);
+        const note = buildPromptNoteWithSkills(meta?.note ?? '', meta);
+        const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
+
+        appendChangeItem(lines, {
+          index: itemIndex,
+          locator: summary.netEffect.locator,
+          fallbackLabel: summary.fullLabel || summary.label,
+          fallbackText: summary.netEffect.textChange?.after ?? summary.netEffect.textChange?.before ?? '',
+          debugFileHint: includeDebugFileHint ? formatDebugSource(summary.debugSource) : '',
+          actions,
+          note,
+        });
+        itemIndex += 1;
+      }
+
+      for (const meta of noteOnlyMetas) {
+        const comment = isTextCommentKey(meta.elementKey)
+          ? findTextComment(meta.elementKey)
+          : null;
+
+        if (comment) {
+          appendTextCommentItem(lines, {
+            index: itemIndex,
+            comment,
+            note: meta.note,
+          });
+        } else if (meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0) {
+          appendChangeItem(lines, {
+            index: itemIndex,
+            locator: meta.locator,
+            fallbackLabel: meta.label,
+            actions: meta.actions,
+            note: meta.note,
+          });
+        }
+        itemIndex += 1;
+      }
     }
 
     if (moveSummaries.length > 0) {
@@ -825,6 +929,8 @@ export function createEditorSummariesService(options: {
   }
 
   function getCopyPromptFilteredNotice(): string | undefined {
+    const persistedDocument = resolvePersistedPrototypeCommentsDocument();
+    const hasPersistedImages = (persistedDocument?.images?.length ?? 0) > 0;
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
     const summarizedKeys = new Set(summaries.map((summary) => String(summary.elementKey)));
@@ -837,7 +943,7 @@ export function createEditorSummariesService(options: {
       (meta) => !summarizedKeys.has(meta.elementKey) && (meta.images.length ?? 0) > 0,
     );
 
-    return hasFilteredImages ? '不支持批注图片，已过滤。' : undefined;
+    return hasPersistedImages || hasFilteredImages ? '不支持批注图片，已过滤。' : undefined;
   }
 
   function buildSaveRunPromptFromParts(params: {

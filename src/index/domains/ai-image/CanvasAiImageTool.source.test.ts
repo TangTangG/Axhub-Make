@@ -79,19 +79,21 @@ describe('CanvasAiImageTool source', () => {
     expect(source).not.toContain('formatElapsed(runningTask)');
   });
 
-  it('keeps ordinary generated images limited to the history entry point', () => {
+  it('does not render generated image detail entry points', () => {
     const source = readSource();
 
     expect(source).toContain("selectedInfo?.kind === 'generator'");
-    expect(source).toContain("selectedInfo?.kind === 'image'");
-    expect(source).toContain('const [detailTarget, setDetailTarget] = useState<{ imageId?: string; taskId?: string } | null>(null);');
-    expect(source).toContain('handleOpenSelectedImageDetail');
-    expect(source).toContain('setDetailOpen(true)');
-    expect(source).toContain('aria-label="查看图片详情"');
-    expect(source).toContain("import AiImageDetailDialog from './AiImageDetailDialog';");
-    expect(source).toContain('<AiImageDetailDialog');
-    expect(source).toContain('selectedImageId={detailTarget?.imageId}');
-    expect(source).toContain('sourceTaskId={detailTarget?.taskId}');
+    expect(source).toContain("kind: 'generator' | 'image';");
+    expect(source).not.toContain('const [detailTarget, setDetailTarget]');
+    expect(source).not.toContain('handleOpenSelectedImageDetail');
+    expect(source).not.toContain('setDetailOpen(true)');
+    expect(source).not.toContain('aria-label="查看图片详情"');
+    expect(source).not.toContain("import AiImageDetailDialog from './AiImageDetailDialog';");
+    expect(source).not.toContain('<AiImageDetailDialog');
+    expect(source).not.toContain('selectedImageId={detailTarget?.imageId}');
+    expect(source).not.toContain('sourceTaskId={detailTarget?.taskId}');
+    expect(source).not.toContain('data-axhub-ai-image-detail-trigger');
+    expect(source).not.toContain('<Info style={AI_IMAGE_DETAIL_ICON_STYLE} />');
     expect(source).not.toContain("import AiImageHistoryDialog from './AiImageHistoryDialog';");
     expect(source).not.toContain('<AiImageHistoryDialog');
     expect(source).not.toContain('历史');
@@ -99,17 +101,14 @@ describe('CanvasAiImageTool source', () => {
     expect(source).not.toContain('setGenerationOpen(true)');
   });
 
-  it('renders the generated image detail entry as a single inline icon control', () => {
+  it('does not render inline controls for selected ordinary generated images', () => {
     const source = readSource();
-    const imageActionStart = source.indexOf("{selectedInfo?.kind === 'image' ? (");
-    const imageActionEnd = source.indexOf("{selectedInfo?.kind === 'generator' ? (", imageActionStart);
-    const imageActionSource = source.slice(imageActionStart, imageActionEnd);
 
-    expect(imageActionSource).toContain('data-axhub-ai-image-detail-trigger');
-    expect(imageActionSource).toContain('createImageDetailTriggerStyle');
-    expect(imageActionSource).toContain('<Info style={AI_IMAGE_DETAIL_ICON_STYLE} />');
-    expect(imageActionSource).not.toContain('<Button');
-    expect(imageActionSource).not.toContain('rounded-md border bg-background/95 p-1 shadow-sm backdrop-blur');
+    expect(source).not.toContain("{selectedInfo?.kind === 'image' ? (");
+    expect(source).not.toContain('data-axhub-ai-image-detail-trigger');
+    expect(source).not.toContain('createImageDetailTriggerStyle');
+    expect(source).not.toContain('<Info style={AI_IMAGE_DETAIL_ICON_STYLE} />');
+    expect(source).not.toContain('rounded-md border bg-background/95 p-1 shadow-sm backdrop-blur');
     expect(source).not.toContain("import { Button } from '@/components/ui/button';");
   });
 
@@ -127,6 +126,17 @@ describe('CanvasAiImageTool source', () => {
     expect(source).not.toContain("import AiImageGenerationDialog from './AiImageGenerationDialog';");
     expect(source).not.toContain('<AiImageGenerationDialog');
     expect(source).not.toContain('const [generationOpen');
+  });
+
+  it('scopes unsent image composer drafts to the selected image generator node', () => {
+    const source = readSource();
+
+    expect(source).toContain("import { createCanvasGenerationComposerDraftStorageKey } from '../shared/canvasGenerationComposerDraft';");
+    expect(source).toContain('selectedImageComposerDraftStorageKey');
+    expect(source).toContain('assistantProjectPath');
+    expect(source).toContain('selectedInfo.element.id');
+    expect(source).toContain("'ai-image'");
+    expect(source).toContain('draftStorageKey={selectedImageComposerDraftStorageKey}');
   });
 
   it('resizes the selected generator placeholder when image size settings change', () => {
@@ -186,6 +196,7 @@ describe('CanvasAiImageTool source', () => {
     expect(source).toContain("document.removeEventListener('copy'");
     expect(source).toContain('canPasteReferenceImages');
     expect(source).toContain('onPasteReferenceImages');
+    expect(source).toContain('initialLocalContextRefs={pendingInitialLocalContextRefs}');
     expect(source).toContain('toast.info(`已添加 ${images.length} 张画布参考图`)');
   });
 
@@ -197,6 +208,22 @@ describe('CanvasAiImageTool source', () => {
     expect(source).toContain('preferredPromptClient={preferredPromptClient}');
   });
 
+  it('delegates completed image artifacts to the canvas-level image artifact listener', () => {
+    const source = readSource();
+
+    expect(source).toContain('onImageArtifact?: (event: CanvasImageArtifactEvent) => void;');
+    expect(source).toContain("import { createCanvasImageArtifactEventFromAiImageTask, type CanvasImageArtifactEvent } from './canvasImageArtifacts';");
+    expect(source).toContain('const handleImageTaskFinished = useCallback((task: AiImageTaskRecord) => {');
+    expect(source).toContain('createCanvasImageArtifactEventFromAiImageTask(task, {');
+    expect(source).toContain("sourceScene: 'design',");
+    expect(source).toContain('onImageArtifact?.(artifactEvent);');
+    expect(source).toContain('generatorElementId={selectedInfo.element.id}');
+    expect(source).toContain('assistantProjectPath={assistantProjectPath}');
+    expect(source).toContain('onTaskFinished={handleImageTaskFinished}');
+    expect(source).not.toContain('const replaceSelectedGeneratorWithTask = useCallback');
+    expect(source).not.toContain('replaceGeneratorWithImageElements');
+  });
+
   it('shows local context and prompt generation stages in the generator overlay', () => {
     const source = readSource();
 
@@ -205,22 +232,19 @@ describe('CanvasAiImageTool source', () => {
     expect(source).toContain("return '生成图片中';");
   });
 
-  it('can start image-to-image from the image detail dialog with the selected image attached', () => {
+  it('keeps image-to-image detail dialog entry points removed from selected images', () => {
     const source = readSource();
 
     expect(source).toContain('pendingInitialReferenceImages');
-    expect(source).toContain('handleCreateImageToImage');
-    expect(source).toContain('resolveCanvasGeneratorPlacementFromReferenceElement');
-    expect(source).toContain('createReferenceImageGeneratorPlacement');
-    expect(source).toContain('selectedInfo?.kind === \'image\' ? selectedInfo.element : null');
-    expect(source).toContain('setPendingInitialReferenceImages([imageDataUrl])');
-    expect(source).toContain('insertGenerator(createReferenceImageGeneratorPlacement(), [imageDataUrl])');
     expect(source).toContain('initialReferenceImages={pendingInitialReferenceImages}');
-    expect(source).toContain('onCreateImageToImage={handleCreateImageToImage}');
-    expect(source).toContain('toast.success(\'已创建图生图生成器\')');
-    expect(source).toContain('referencePlacement');
     expect(source).toContain('width: placement.width');
     expect(source).toContain('height: placement.height');
+    expect(source).not.toContain('handleCreateImageToImage');
+    expect(source).not.toContain('handleCreateImageToPrototype');
+    expect(source).not.toContain('resolveCanvasGeneratorPlacementFromReferenceElement');
+    expect(source).not.toContain('createReferenceImageGeneratorPlacement');
+    expect(source).not.toContain('onCreateImageToImage={handleCreateImageToImage}');
+    expect(source).not.toContain('toast.success(\'已创建图生图生成器\')');
   });
 
   it('keeps an image-to-image generator deletable while reference attachments are preloaded', () => {

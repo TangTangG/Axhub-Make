@@ -25,6 +25,10 @@ export interface BridgeContextItem {
   commentOrigin?: 'file' | 'review';
   /** Preview text of the selected lines. */
   preview?: string;
+  /** Hide this context item from visible context chips while still sending it. */
+  hidden?: boolean;
+  /** Keep this context item across runtime context clearing. */
+  pinned?: boolean;
 }
 
 export type BridgeMessageType =

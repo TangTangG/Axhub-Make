@@ -3,6 +3,7 @@ import { createCanvasGeneratorPlaceholderDataUrl } from '../shared/canvasGenerat
 
 export const PROTOTYPE_GENERATOR_CUSTOM_TYPE = 'axhub-prototype-generator';
 export const PROTOTYPE_PLACEHOLDER_FILE_ID = 'axhub-prototype-generator-placeholder-v4';
+const CANVAS_AI_GENERATION_CUSTOM_TYPE = 'axhub-ai-generation';
 
 export interface CreatePrototypeGeneratorOptions {
   x: number;
@@ -18,6 +19,20 @@ export interface ReplacePrototypeGeneratorOptions {
   taskId?: string;
 }
 
+export interface CreatePrototypeGenerationSlotsOptions {
+  elements: readonly any[];
+  generatorId: string;
+  taskId: string;
+  count: number;
+}
+
+export interface FinishPrototypeGenerationSlotsOptions {
+  elements: readonly any[];
+  taskId: string;
+  status: 'done' | 'error';
+  error?: string | null;
+}
+
 export interface ReplacePrototypeGeneratorResult {
   elements: any[];
   selectedElementIds: Record<string, true>;
@@ -28,6 +43,7 @@ const DEFAULT_GENERATOR_HEIGHT = 260;
 const GENERATED_PROTOTYPE_VISIBLE_WIDTH = 720;
 const GENERATED_PROTOTYPE_VISIBLE_HEIGHT = 450;
 const GENERATED_PROTOTYPE_CONTENT_SCALE = 0.5;
+const GENERATED_PROTOTYPE_GAP = 24;
 
 function randomId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -178,6 +194,94 @@ export function isPrototypeGeneratorElement(element: any): boolean {
   return element?.type === 'image' && element?.customData?.type === PROTOTYPE_GENERATOR_CUSTOM_TYPE;
 }
 
+function isPrototypeGenerationPlaceholderElement(element: any): boolean {
+  return element?.type === 'image' && (
+    element?.customData?.type === PROTOTYPE_GENERATOR_CUSTOM_TYPE
+    || element?.customData?.type === CANVAS_AI_GENERATION_CUSTOM_TYPE
+  );
+}
+
+function touchElement(element: any): any {
+  return {
+    ...element,
+    version: (element.version || 0) + 1,
+    versionNonce: Math.floor(Math.random() * 2147483647),
+    updated: Date.now(),
+  };
+}
+
+function isPrototypeGenerationSlot(element: any, taskId: string): boolean {
+  return (
+    isPrototypeGenerationPlaceholderElement(element)
+    && !element?.isDeleted
+    && element.customData?.generationTaskId === taskId
+    && element.customData?.generationSlotStatus !== 'error'
+  );
+}
+
+function createPrototypeGenerationSlot(base: any, options: {
+  id: string;
+  taskId: string;
+  index: number;
+  count: number;
+  x: number;
+  y: number;
+}) {
+  return {
+    ...base,
+    id: options.id,
+    x: options.x,
+    y: options.y,
+    width: GENERATED_PROTOTYPE_VISIBLE_WIDTH,
+    height: GENERATED_PROTOTYPE_VISIBLE_HEIGHT,
+    isDeleted: false,
+    version: base.id === options.id ? (base.version || 0) + 1 : 1,
+    versionNonce: Math.floor(Math.random() * 2147483647),
+    updated: Date.now(),
+    customData: {
+      ...base.customData,
+      generationTaskId: options.taskId,
+      generationSlotIndex: options.index,
+      generationSlotCount: options.count,
+      generationSlotStatus: 'running',
+      generationError: undefined,
+    },
+  };
+}
+
+export function createPrototypeGenerationSlots(
+  options: CreatePrototypeGenerationSlotsOptions,
+): ReplacePrototypeGeneratorResult {
+  const generator = options.elements.find((element) => element?.id === options.generatorId && !element.isDeleted);
+  if (!generator) {
+    return {
+      elements: [...options.elements],
+      selectedElementIds: {},
+    };
+  }
+  const count = Math.max(1, Math.min(4, Math.round(Number(options.count) || 1)));
+  const selectedElementIds: Record<string, true> = {};
+  const slots = Array.from({ length: count }, (_, index) => {
+    const id = index === 0 ? generator.id : randomId('prototype-slot');
+    selectedElementIds[id] = true;
+    return createPrototypeGenerationSlot(generator, {
+      id,
+      taskId: options.taskId,
+      index,
+      count,
+      x: generator.x + index * (GENERATED_PROTOTYPE_VISIBLE_WIDTH + GENERATED_PROTOTYPE_GAP),
+      y: generator.y,
+    });
+  });
+  return {
+    elements: [
+      ...options.elements.filter((element) => element?.id !== options.generatorId),
+      ...slots,
+    ],
+    selectedElementIds,
+  };
+}
+
 export function replacePrototypeGeneratorWithEmbeddable(
   options: ReplacePrototypeGeneratorOptions,
 ): ReplacePrototypeGeneratorResult {
@@ -208,5 +312,29 @@ export function replacePrototypeGeneratorWithEmbeddable(
   return {
     elements: [...elements, inserted],
     selectedElementIds: { [inserted.id]: true },
+  };
+}
+
+export function finishPrototypeGenerationSlots(
+  options: FinishPrototypeGenerationSlotsOptions,
+): { elements: any[] } {
+  return {
+    elements: options.elements.map((element) => {
+      if (!isPrototypeGenerationSlot(element, options.taskId)) return element;
+      if (options.status === 'done') {
+        return {
+          ...touchElement(element),
+          isDeleted: true,
+        };
+      }
+      return {
+        ...touchElement(element),
+        customData: {
+          ...element.customData,
+          generationSlotStatus: 'error',
+          generationError: options.error || '原型生成失败',
+        },
+      };
+    }),
   };
 }

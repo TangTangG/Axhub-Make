@@ -27,6 +27,7 @@ import {
 } from './projects-api.helpers';
 import { handleMakeClientProjectApi } from '../managementApi.makeClient.ts';
 import {
+  getMakeClientDevStatus,
   slugifyMakeClientFolderName,
   suggestMakeClientFolderName,
 } from '../makeClientProject.ts';
@@ -79,7 +80,7 @@ import { runLocalCommand } from '../localCommand.ts';
 
 const runLocalCommandMock = vi.mocked(runLocalCommand);
 
-const DEFAULT_TEMPLATE_VERSION = '0.1.4';
+const DEFAULT_TEMPLATE_VERSION = '0.1.6';
 const TEMPLATE_ZIP_URL = `https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v${DEFAULT_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
 const TEMPLATE_MIRROR_ZIP_URL = `https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v${DEFAULT_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
 const TEMPLATE_MIRROR_SOURCE_URL = 'https://gitee.com/axhub/Axhub-Make/tree/main/client';
@@ -143,17 +144,19 @@ afterEach(() => {
   cleanupProjectApiTestRoots();
 });
 
-function writeMakeClientMarker(projectRoot: string, id = 'make-client-a', name = 'Make Client A') {
+function writeMakeClientMarker(projectRoot: string, id = 'make-client-a', name = 'Make Client A', templateVersion?: string) {
   writeJson(getMakeClientMarkerPath(projectRoot), {
     schemaVersion: 1,
     kind: 'axhub-make-client',
     repository: TEMPLATE_SOURCE_URL,
+    ...(templateVersion ? { templateVersion } : {}),
     project: { id, name },
   });
 }
 
-function writeMakeClientPackage(projectRoot: string) {
+function writeMakeClientPackage(projectRoot: string, version?: string) {
   writeJson(path.join(projectRoot, 'package.json'), {
+    ...(version ? { version } : {}),
     scripts: {
       dev: 'vite',
       'metadata:sync': 'node scripts/sync-project-metadata.mjs',
@@ -189,6 +192,7 @@ function writeMakeClientMetadata(projectRoot: string, id = 'make-client-a', name
 function writeMakeClientTemplate(templateRoot: string) {
   writeJson(path.join(templateRoot, 'package.json'), {
     name: '@axhub/make-client',
+    version: DEFAULT_TEMPLATE_VERSION,
     scripts: {
       dev: 'vite',
       'metadata:sync': 'node scripts/sync-project-metadata.mjs',
@@ -198,6 +202,10 @@ function writeMakeClientTemplate(templateRoot: string) {
   fs.writeFileSync(path.join(templateRoot, 'scripts', 'sync-project-metadata.mjs'), 'export {};\n', 'utf8');
   fs.mkdirSync(path.join(templateRoot, 'src', 'prototypes', 'template-home'), { recursive: true });
   fs.writeFileSync(path.join(templateRoot, 'src', 'prototypes', 'template-home', 'index.tsx'), 'export default function TemplateHome() { return null; }\n', 'utf8');
+  fs.mkdirSync(path.join(templateRoot, 'src', 'prototypes', 'beginner-guide'), { recursive: true });
+  fs.writeFileSync(path.join(templateRoot, 'src', 'prototypes', 'beginner-guide', 'index.tsx'), 'export default function BeginnerGuide() { return "updated"; }\n', 'utf8');
+  fs.mkdirSync(path.join(templateRoot, 'src', 'prototypes', 'annotation-demo'), { recursive: true });
+  fs.writeFileSync(path.join(templateRoot, 'src', 'prototypes', 'annotation-demo', 'index.tsx'), 'export default function AnnotationDemo() { return "updated"; }\n', 'utf8');
   writeJson(getMakeClientMarkerPath(templateRoot), {
     schemaVersion: 1,
     kind: 'axhub-make-client',
@@ -327,6 +335,62 @@ function installRemoteTemplateCommandMock(options: {
     return localCommandResult(command, args);
   });
   installRemoteTemplateFetchMock(options);
+}
+
+function runGit(projectRoot: string, args: string[]): string {
+  return execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+function initCleanGitRepo(projectRoot: string): string {
+  runGit(projectRoot, ['init']);
+  runGit(projectRoot, ['config', 'user.email', 'test@example.com']);
+  runGit(projectRoot, ['config', 'user.name', 'Test User']);
+  runGit(projectRoot, ['add', '.']);
+  runGit(projectRoot, ['commit', '-m', 'initial']);
+  return runGit(projectRoot, ['rev-parse', 'HEAD']);
+}
+
+function commitGitChangesIfNeeded(projectRoot: string, message: string): string {
+  const status = runGit(projectRoot, ['status', '--porcelain']);
+  if (status) {
+    runGit(projectRoot, ['add', '.']);
+    runGit(projectRoot, ['commit', '-m', message]);
+  }
+  return runGit(projectRoot, ['rev-parse', 'HEAD']);
+}
+
+function installMakeClientUpdateCommandMock(options: {
+  failMetadataSync?: boolean;
+  metadataId?: string;
+  metadataName?: string;
+} = {}) {
+  runLocalCommandMock.mockImplementation(async (command: string, args: string[], commandOptions: any) => {
+    const cwd = String(commandOptions?.cwd || '');
+    if (command === 'git') {
+      return {
+        ...localCommandResult(command, args),
+        stdout: runGit(cwd, args),
+      };
+    }
+    if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+      writeInstalledMakeClientDependencies(cwd);
+      return localCommandResult(command, args);
+    }
+    if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'run' && args[1] === 'metadata:sync') {
+      if (options.failMetadataSync) {
+        const error = new Error('metadata sync exploded') as Error & { stderr?: string };
+        error.stderr = 'metadata sync exploded';
+        throw error;
+      }
+      writeMakeClientMetadata(
+        cwd,
+        options.metadataId || path.basename(cwd),
+        options.metadataName || options.metadataId || path.basename(cwd),
+      );
+      return localCommandResult(command, args);
+    }
+    return localCommandResult(command, args);
+  });
 }
 
 describe('make-server make client project APIs', () => {
@@ -736,6 +800,14 @@ describe('make-server make client project APIs', () => {
     writeMakeClientMetadata(projectRoot, 'stop-running-client', 'Stop Running Client');
     const server = await startTestServer(defaultRoot);
     const runtimePid = 987654;
+    const runtimeOrigin = 'http://localhost:51781';
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === `${runtimeOrigin}/api/health`) {
+        return new Response('', { status: 404 });
+      }
+      return originalFetch(input, init);
+    });
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
       if (pid === runtimePid && (signal === 0 || signal === 'SIGTERM')) {
         return true;
@@ -748,9 +820,9 @@ describe('make-server make client project APIs', () => {
     try {
       writeServerInfo(projectRoot, 'runtime', {
         pid: runtimePid,
-        port: 51721,
+        port: 51781,
         host: 'localhost',
-        origin: 'http://localhost:51721',
+        origin: runtimeOrigin,
         projectRoot,
         startedAt: new Date().toISOString(),
         timestamp: new Date().toISOString(),
@@ -782,6 +854,94 @@ describe('make-server make client project APIs', () => {
         },
       });
       expect(killSpy).toHaveBeenCalledWith(runtimePid, 'SIGTERM');
+      expect(fs.existsSync(getRuntimeServerInfoPath(projectRoot))).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not stop the admin server when stale runtime info points at admin health', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-stop-admin-guard-');
+    writeMakeClientMarker(projectRoot, 'stop-admin-guard-client', 'Stop Admin Guard Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'stop-admin-guard-client', 'Stop Admin Guard Client');
+    const server = await startTestServer(defaultRoot);
+    const runtimePid = 987655;
+    const runtimeOrigin = 'http://localhost:53817';
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === `${runtimeOrigin}/api/health`) {
+        return new Response(JSON.stringify({
+          ok: true,
+          role: 'admin',
+          projectRoot: defaultRoot,
+          server: {
+            pid: runtimePid,
+            port: 53817,
+            host: 'localhost',
+            origin: runtimeOrigin,
+            projectRoot: defaultRoot,
+            startedAt: new Date().toISOString(),
+          },
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+      if (pid === runtimePid && signal === 0) {
+        return true;
+      }
+      if (pid === runtimePid && signal === 'SIGTERM') {
+        throw new Error('admin process should not be stopped');
+      }
+      const error: NodeJS.ErrnoException = new Error('process not found');
+      error.code = 'ESRCH';
+      throw error;
+    }) as typeof process.kill);
+
+    try {
+      writeServerInfo(projectRoot, 'runtime', {
+        pid: runtimePid,
+        port: 53817,
+        host: 'localhost',
+        origin: runtimeOrigin,
+        projectRoot,
+        startedAt: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
+      });
+
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const stopResponse = await fetch(`${server.origin}/api/projects/stop-admin-guard-client/dev/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const stopBody = await stopResponse.json();
+
+      expect(stopResponse.status).toBe(200);
+      expect(stopBody).toMatchObject({
+        success: true,
+        projectId: 'stop-admin-guard-client',
+        stopped: false,
+        status: {
+          makeClient: true,
+          running: false,
+          reason: 'stale-runtime',
+        },
+      });
+      expect(killSpy).not.toHaveBeenCalledWith(runtimePid, 'SIGTERM');
       expect(fs.existsSync(getRuntimeServerInfoPath(projectRoot))).toBe(false);
     } finally {
       await server.close();
@@ -873,8 +1033,6 @@ describe('make-server make client project APIs', () => {
   });
 
   it('marks stale make client runtime info as not running', async () => {
-    const defaultRoot = createTempRoot();
-    writeProjectMetadata(defaultRoot);
     const projectRoot = createTempRoot('axhub-make-client-stale-');
     writeMakeClientMarker(projectRoot, 'stale-client', 'Stale Client');
     writeMakeClientPackage(projectRoot);
@@ -888,30 +1046,16 @@ describe('make-server make client project APIs', () => {
       startedAt: new Date().toISOString(),
       timestamp: new Date(Date.now() - 60_000).toISOString(),
     });
-    const server = await startTestServer(defaultRoot);
 
-    try {
-      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ root: projectRoot }),
-      });
-      expect(registerResponse.status).toBe(201);
+    const status = await getMakeClientDevStatus('stale-client', projectRoot);
 
-      const statusResponse = await fetch(`${server.origin}/api/projects/stale-client/dev/status`);
-      const statusBody = await statusResponse.json();
-
-      expect(statusResponse.status).toBe(200);
-      expect(statusBody).toMatchObject({
-        projectId: 'stale-client',
-        makeClient: true,
-        running: false,
-        reason: 'stale-runtime',
-      });
-      expect(childProcessMock.spawn).not.toHaveBeenCalled();
-    } finally {
-      await server.close();
-    }
+    expect(status).toMatchObject({
+      projectId: 'stale-client',
+      makeClient: true,
+      running: false,
+      reason: 'stale-runtime',
+    });
+    expect(childProcessMock.spawn).not.toHaveBeenCalled();
   });
 
   it('does not reuse stale make client runtime info when ensuring dev', async () => {
@@ -1080,6 +1224,86 @@ describe('make-server make client project APIs', () => {
           }),
         }),
       );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('keeps make client dev ensure available when admin server info cannot be overwritten', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const projectRoot = createTempRoot('axhub-make-client-admin-info-locked-');
+    writeMakeClientMarker(projectRoot, 'admin-info-locked-client', 'Admin Info Locked Client');
+    writeMakeClientPackage(projectRoot);
+    writeMakeClientMetadata(projectRoot, 'admin-info-locked-client', 'Admin Info Locked Client');
+    const registryHome = createTempRoot('axhub-make-client-admin-info-locked-home-');
+    const adminInfoPath = getAdminServerInfoPath(undefined, { homeDir: registryHome });
+    fs.mkdirSync(path.dirname(adminInfoPath), { recursive: true });
+    fs.writeFileSync(adminInfoPath, '{"kind":"admin"}\n', 'utf8');
+    const permissionError = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    const originalWriteFileSync = fs.writeFileSync;
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(((filePath: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, options?: any) => {
+      if (path.resolve(String(filePath)) === adminInfoPath) {
+        throw permissionError;
+      }
+      return originalWriteFileSync(filePath, data as any, options);
+    }) as typeof fs.writeFileSync);
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51727,
+        host: 'localhost',
+        origin: 'http://localhost:51727',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+    const server = await startTestServer(defaultRoot, registryHome);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const ensureResponse = await fetch(`${server.origin}/api/projects/admin-info-locked-client/dev/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutMs: 50, pollIntervalMs: 5 }),
+      });
+      const ensureBody = await ensureResponse.json();
+
+      expect(ensureResponse.status).toBe(200);
+      expect(ensureBody).toMatchObject({
+        success: true,
+        projectId: 'admin-info-locked-client',
+        reused: false,
+        runtime: {
+          origin: 'http://localhost:51727',
+        },
+      });
+      const healthResponse = await fetch(`${server.origin}/api/make-state/health`);
+      const healthBody = await healthResponse.json();
+      expect(healthBody).toMatchObject({
+        ok: false,
+        stage: 'state-file-overwrite',
+        targetPath: adminInfoPath,
+        fileName: '.admin-server-info.json',
+      });
     } finally {
       await server.close();
     }
@@ -2054,7 +2278,7 @@ describe('make-server make client project APIs', () => {
       expect(fs.existsSync(path.join(targetRoot, 'tests'))).toBe(false);
       expect(fs.existsSync(path.join(targetRoot, '.trae'))).toBe(false);
       expect(fs.existsSync(path.join(targetRoot, 'temp'))).toBe(false);
-      expect(fs.existsSync(path.join(targetRoot, '.axhub', 'make', 'axhub.config.json'))).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(targetRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'))).toEqual({});
       expect(JSON.parse(fs.readFileSync(path.join(targetRoot, '.axhub', 'make', 'sidebar-tree.json'), 'utf8'))).toMatchObject({
         themesTree: [
           expect.objectContaining({
@@ -2120,6 +2344,85 @@ describe('make-server make client project APIs', () => {
       );
       expect(fs.existsSync(getRuntimeServerInfoPath(targetRoot))).toBe(true);
       expect(fs.existsSync(getProjectMetadataPath(targetRoot))).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('logs progress timings while creating a blank make client project', async () => {
+    vi.stubEnv('AXHUB_MAKE_PROGRESS_LOG', '1');
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const parentRoot = createTempRoot('axhub-make-parent-');
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startTestServer(defaultRoot, registryHome);
+
+    installRemoteTemplateCommandMock({
+      metadataId: 'progress-demo',
+      metadataName: 'Progress Demo',
+    });
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeMakeClientMetadata(targetRoot, 'progress-demo', 'Progress Demo');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51722,
+        host: 'localhost',
+        origin: 'http://localhost:51722',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/projects/make/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRoot,
+          folderName: 'Progress Demo',
+          projectName: 'Progress Demo',
+        }),
+      });
+      const body = await response.json();
+      const output = infoSpy.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
+
+      expect(response.status).toBe(201);
+      expect(body.progress).toMatchObject({
+        status: 'success',
+        totalMs: expect.any(Number),
+        steps: expect.arrayContaining([
+          expect.objectContaining({ id: 'download-template', label: '下载模板', durationMs: expect.any(Number), status: 'done' }),
+          expect.objectContaining({ id: 'write-project', label: '写入项目', durationMs: expect.any(Number), status: 'done' }),
+          expect.objectContaining({ id: 'install', label: '安装依赖', durationMs: expect.any(Number), status: 'done' }),
+          expect.objectContaining({ id: 'dev', label: '启动客户端', durationMs: expect.any(Number), status: 'done' }),
+        ]),
+      });
+      expect(output).toContain('[make-client:create]');
+      expect(output).toContain('step=start id=download-template label=下载模板');
+      expect(output).toContain('step=done id=download-template label=下载模板 durationMs=');
+      expect(output).toContain('step=start id=write-project label=写入项目');
+      expect(output).toContain('step=done id=write-project label=写入项目 durationMs=');
+      expect(output).toContain('step=start id=install label=安装依赖');
+      expect(output).toContain('step=done id=install label=安装依赖 durationMs=');
+      expect(output).toContain('step=start id=dev label=启动客户端');
+      expect(output).toContain('step=done id=dev label=启动客户端 durationMs=');
+      expect(output).toMatch(/summary status=success totalMs=\d+/u);
+      expect(output).toContain('download-template=');
+      expect(output).toContain('write-project=');
+      expect(output).toContain('install=');
+      expect(output).toContain('dev=');
     } finally {
       await server.close();
     }
@@ -2994,6 +3297,350 @@ describe('make-server make client project APIs', () => {
       expect(activeBody.activeProject).toMatchObject({ id: 'switch-client' });
       expect(childProcessMock.execFile).not.toHaveBeenCalled();
       expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reports make client update status with version and Git blockers', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-update-status-');
+    writeMakeClientMarker(projectRoot, 'update-status-client', 'Update Status Client');
+    writeMakeClientPackage(projectRoot, '0.1.0');
+    writeMakeClientMetadata(projectRoot, 'update-status-client', 'Update Status Client');
+    installMakeClientUpdateCommandMock();
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const statusResponse = await fetch(`${server.origin}/api/projects/update-status-client/make-client/update/status`);
+      const statusBody = await statusResponse.json();
+
+      expect(statusResponse.status).toBe(200);
+      expect(statusBody).toMatchObject({
+        projectId: 'update-status-client',
+        projectRoot,
+        currentVersion: '0.1.0',
+        targetVersion: DEFAULT_TEMPLATE_VERSION,
+        updateAvailable: true,
+        canApply: false,
+        git: {
+          available: true,
+          isRepository: false,
+          hasCommits: false,
+          clean: false,
+        },
+        template: {
+          version: DEFAULT_TEMPLATE_VERSION,
+          sources: [
+            expect.objectContaining({ url: TEMPLATE_ZIP_URL }),
+            expect.objectContaining({ url: TEMPLATE_MIRROR_ZIP_URL }),
+          ],
+        },
+      });
+      expect(statusBody.blockedReasons).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'GIT_REPOSITORY_REQUIRED' }),
+      ]));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('allows make client update checks when Git is unavailable but blocks applying the update', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-update-no-git-');
+    writeMakeClientMarker(projectRoot, 'update-no-git-client', 'Update No Git Client');
+    writeMakeClientPackage(projectRoot, '0.1.0');
+    writeMakeClientMetadata(projectRoot, 'update-no-git-client', 'Update No Git Client');
+    runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'git') {
+        const error = new Error('git command not found') as Error & { stderr?: string };
+        error.stderr = 'git command not found';
+        throw error;
+      }
+      return localCommandResult(command, args);
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const statusResponse = await fetch(`${server.origin}/api/projects/update-no-git-client/make-client/update/status`);
+      const statusBody = await statusResponse.json();
+      expect(statusResponse.status).toBe(200);
+      expect(statusBody).toMatchObject({
+        projectId: 'update-no-git-client',
+        projectRoot,
+        currentVersion: '0.1.0',
+        targetVersion: DEFAULT_TEMPLATE_VERSION,
+        updateAvailable: true,
+        canApply: false,
+        git: {
+          available: false,
+          isRepository: false,
+          hasCommits: false,
+          clean: false,
+          error: 'git command not found',
+        },
+      });
+      expect(statusBody.blockedReasons).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          code: 'GIT_UNAVAILABLE',
+          message: '已完成版本检测；更新前需要先安装或修复 Git',
+        }),
+      ]));
+
+      const applyResponse = await fetch(`${server.origin}/api/projects/update-no-git-client/make-client/update/apply`, {
+        method: 'POST',
+      });
+      const applyBody = await applyResponse.json();
+      expect(applyResponse.status).toBe(409);
+      expect(applyBody).toMatchObject({
+        code: 'MAKE_CLIENT_UPDATE_GIT_UNAVAILABLE',
+        phase: 'git-check',
+        projectRoot,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('treats prerelease make client template versions as older than the matching stable target', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-update-prerelease-');
+    writeMakeClientMarker(projectRoot, 'update-prerelease-client', 'Update Prerelease Client', `${DEFAULT_TEMPLATE_VERSION}-beta.1`);
+    writeMakeClientPackage(projectRoot, `${DEFAULT_TEMPLATE_VERSION}-beta.1`);
+    writeMakeClientMetadata(projectRoot, 'update-prerelease-client', 'Update Prerelease Client');
+    initCleanGitRepo(projectRoot);
+    installMakeClientUpdateCommandMock();
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+      commitGitChangesIfNeeded(projectRoot, 'registered');
+
+      const statusResponse = await fetch(`${server.origin}/api/projects/update-prerelease-client/make-client/update/status`);
+      const statusBody = await statusResponse.json();
+
+      expect(statusResponse.status).toBe(200);
+      expect(statusBody).toMatchObject({
+        currentVersion: `${DEFAULT_TEMPLATE_VERSION}-beta.1`,
+        targetVersion: DEFAULT_TEMPLATE_VERSION,
+        updateAvailable: true,
+        canApply: true,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('blocks make client updates when the Git worktree is dirty', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-update-dirty-');
+    writeMakeClientMarker(projectRoot, 'update-dirty-client', 'Update Dirty Client', '0.1.0');
+    writeMakeClientPackage(projectRoot, '0.1.0');
+    writeMakeClientMetadata(projectRoot, 'update-dirty-client', 'Update Dirty Client');
+    initCleanGitRepo(projectRoot);
+    fs.writeFileSync(path.join(projectRoot, 'dirty.txt'), 'dirty\n', 'utf8');
+    installMakeClientUpdateCommandMock();
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const statusResponse = await fetch(`${server.origin}/api/projects/update-dirty-client/make-client/update/status`);
+      const statusBody = await statusResponse.json();
+      expect(statusResponse.status).toBe(200);
+      expect(statusBody).toMatchObject({
+        canApply: false,
+        git: {
+          isRepository: true,
+          hasCommits: true,
+          clean: false,
+        },
+      });
+      expect(statusBody.blockedReasons).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'GIT_WORKTREE_DIRTY' }),
+      ]));
+
+      const applyResponse = await fetch(`${server.origin}/api/projects/update-dirty-client/make-client/update/apply`, {
+        method: 'POST',
+      });
+      const applyBody = await applyResponse.json();
+      expect(applyResponse.status).toBe(409);
+      expect(applyBody).toMatchObject({
+        code: 'MAKE_CLIENT_UPDATE_GIT_DIRTY',
+        phase: 'git-check',
+        projectRoot,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('updates official make client template files while preserving project-owned content', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-update-apply-');
+    writeMakeClientMarker(projectRoot, 'update-apply-client', 'Update Apply Client', '0.1.0');
+    writeMakeClientPackage(projectRoot, '0.1.0');
+    writeMakeClientMetadata(projectRoot, 'update-apply-client', 'Update Apply Client');
+    fs.mkdirSync(path.join(projectRoot, 'src', 'prototypes', 'beginner-guide'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src', 'prototypes', 'beginner-guide', 'index.tsx'), 'old official\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src', 'prototypes', 'custom-prototype'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src', 'prototypes', 'custom-prototype', 'index.tsx'), 'custom prototype\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src', 'resources'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src', 'resources', 'notes.md'), '# User notes\n', 'utf8');
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'sidebar-tree.json'), { version: 1, prototypes: [{ id: 'custom-order' }] });
+    fs.mkdirSync(path.join(projectRoot, '.axhub', 'make', 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, '.axhub', 'make', 'sessions', 'keep.json'), '{}\n', 'utf8');
+    initCleanGitRepo(projectRoot);
+    installRemoteTemplateFetchMock();
+    installMakeClientUpdateCommandMock({ metadataId: 'update-apply-client', metadataName: 'Update Apply Client' });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+      const preUpdateHead = commitGitChangesIfNeeded(projectRoot, 'registered');
+
+      const applyResponse = await fetch(`${server.origin}/api/projects/update-apply-client/make-client/update/apply`, {
+        method: 'POST',
+      });
+      const applyBody = await applyResponse.json();
+
+      expect(applyResponse.status).toBe(200);
+      expect(applyBody).toMatchObject({
+        success: true,
+        projectId: 'update-apply-client',
+        projectRoot,
+        currentVersion: '0.1.0',
+        targetVersion: DEFAULT_TEMPLATE_VERSION,
+        preUpdateHead,
+        templateUrl: TEMPLATE_ZIP_URL,
+        installMethod: 'npm',
+        metadataSynced: true,
+      });
+      expect(applyBody.backupRoot).toContain('.axhub/make/backups/client-update-');
+      expect(applyBody.writtenFiles).toEqual(expect.arrayContaining([
+        'package.json',
+        'src/prototypes/beginner-guide/index.tsx',
+        'src/prototypes/annotation-demo/index.tsx',
+        '.axhub/make/client.json',
+      ]));
+      expect(fs.readFileSync(path.join(projectRoot, 'src', 'prototypes', 'beginner-guide', 'index.tsx'), 'utf8')).toContain('BeginnerGuide');
+      expect(fs.readFileSync(path.join(projectRoot, 'src', 'prototypes', 'custom-prototype', 'index.tsx'), 'utf8')).toBe('custom prototype\n');
+      expect(fs.readFileSync(path.join(projectRoot, 'src', 'resources', 'notes.md'), 'utf8')).toBe('# User notes\n');
+      expect(JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'sidebar-tree.json'), 'utf8'))).toEqual({
+        version: 1,
+        prototypes: [{ id: 'custom-order' }],
+      });
+      expect(fs.existsSync(path.join(projectRoot, '.axhub', 'make', 'sessions', 'keep.json'))).toBe(true);
+      expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(projectRoot), 'utf8'))).toMatchObject({
+        repository: TEMPLATE_SOURCE_URL,
+        templateUrl: TEMPLATE_ZIP_URL,
+        templateVersion: DEFAULT_TEMPLATE_VERSION,
+        project: {
+          id: 'update-apply-client',
+          name: 'Update Apply Client',
+        },
+      });
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install', '--include=dev'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['run', 'metadata:sync'],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('returns AI handoff diagnostics when a make client update fails after writing files', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-update-fail-');
+    writeMakeClientMarker(projectRoot, 'update-fail-client', 'Update Fail Client', '0.1.0');
+    writeMakeClientPackage(projectRoot, '0.1.0');
+    writeMakeClientMetadata(projectRoot, 'update-fail-client', 'Update Fail Client');
+    initCleanGitRepo(projectRoot);
+    installRemoteTemplateFetchMock();
+    installMakeClientUpdateCommandMock({ failMetadataSync: true });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+      const preUpdateHead = commitGitChangesIfNeeded(projectRoot, 'registered');
+
+      const applyResponse = await fetch(`${server.origin}/api/projects/update-fail-client/make-client/update/apply`, {
+        method: 'POST',
+      });
+      const applyBody = await applyResponse.json();
+
+      expect(applyResponse.status).toBe(500);
+      expect(applyBody).toMatchObject({
+        code: 'MAKE_CLIENT_METADATA_SYNC_FAILED',
+        phase: 'metadata',
+        projectRoot,
+        currentVersion: '0.1.0',
+        targetVersion: DEFAULT_TEMPLATE_VERSION,
+        preUpdateHead,
+        backupRoot: expect.stringContaining('.axhub/make/backups/client-update-'),
+        templateUrl: TEMPLATE_ZIP_URL,
+      });
+      expect(applyBody.error).toContain('metadata sync exploded');
+      expect(applyBody.writtenFiles).toEqual(expect.arrayContaining(['package.json', '.axhub/make/client.json']));
+      expect(applyBody.plannedFiles).toEqual(expect.arrayContaining(['package.json', '.axhub/make/client.json']));
     } finally {
       await server.close();
     }

@@ -14,6 +14,11 @@ import { releaseListeningProcessesOnPort } from './src/server/portOccupancy';
 
 const adminOutDir = path.resolve(__dirname, 'dist/admin');
 const FRESH_VENDOR_ALIAS_PACKAGES = new Set(['axhub-genie-editor']);
+const REACT_SINGLETON_PACKAGES = ['react', 'react-dom'] as const;
+const ASSISTANT_UI_SINGLETON_PACKAGES = [
+  '@assistant-ui/react',
+  '@assistant-ui/react-ai-sdk',
+] as const;
 const ADMIN_RUNTIME_ASSETS = [
   {
     source: 'assets/auto-debug-client.js',
@@ -75,6 +80,17 @@ function createVendorResolveAliases() {
         ? path.resolve(__dirname, pkg.outputDirRelative)
         : path.resolve(__dirname, 'node_modules', pkg.packageName),
     }];
+  });
+}
+
+function createPackageSingletonAliases(packageNames: readonly string[]) {
+  return packageNames.flatMap((packageName) => {
+    const packageRoot = path.resolve(__dirname, 'node_modules', packageName);
+    const escapedPackageName = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return [
+      { find: new RegExp(`^${escapedPackageName}$`), replacement: packageRoot },
+      { find: new RegExp(`^${escapedPackageName}/`), replacement: `${packageRoot}/` },
+    ];
   });
 }
 
@@ -241,8 +257,8 @@ function portReleaseBeforeListenPlugin(): Plugin {
 export default defineConfig({
   css: {
     preprocessorOptions: {
-      scss: { api: 'modern-compiler' },
-      sass: { api: 'modern-compiler' },
+      scss: { api: 'modern' },
+      sass: { api: 'modern' },
     },
   },
   plugins: [
@@ -268,7 +284,18 @@ export default defineConfig({
     cors: true,
     strictPort: true,
     watch: {
-      ignored: ['**/client/**'],
+      ignored: [
+        '**/.axhub/**',
+        '**/.spec/**',
+        '**/automation-reports/**',
+        '**/dist/**',
+        '**/src/server/**',
+        '**/client/**',
+        '**/midscene/**',
+        '**/vendor/**',
+        '**/*.excalidraw',
+        '**/canvas-assets/**',
+      ],
     },
   },
   build: {
@@ -304,14 +331,21 @@ export default defineConfig({
     },
   },
   resolve: {
-    dedupe: ['react', 'react-dom'],
+    dedupe: [
+      ...REACT_SINGLETON_PACKAGES,
+      ...ASSISTANT_UI_SINGLETON_PACKAGES,
+    ],
     alias: [
       { find: '@', replacement: path.resolve(__dirname, 'src') },
       ...createVendorResolveAliases(),
+      ...createPackageSingletonAliases(ASSISTANT_UI_SINGLETON_PACKAGES),
       { find: /^@axhub\/excalidraw\/index\.css$/, replacement: path.resolve(__dirname, 'vendor/axhub-excalidraw/dist/prod/index.css') },
       { find: '@ant-design/cssinjs', replacement: path.resolve(__dirname, 'node_modules/@ant-design/cssinjs') },
       { find: '@ant-design/icons', replacement: path.resolve(__dirname, 'node_modules/@ant-design/icons') },
       { find: 'antd', replacement: path.resolve(__dirname, 'node_modules/antd') },
+      { find: /^assistant-stream$/, replacement: path.resolve(__dirname, 'node_modules/assistant-stream/dist/index.js') },
+      { find: /^assistant-stream\/resumable$/, replacement: path.resolve(__dirname, 'node_modules/assistant-stream/dist/resumable/index.js') },
+      { find: /^assistant-stream\/utils$/, replacement: path.resolve(__dirname, 'node_modules/assistant-stream/dist/utils.js') },
       { find: 'react', replacement: path.resolve(__dirname, 'node_modules/react') },
       { find: 'react-dom', replacement: path.resolve(__dirname, 'node_modules/react-dom') },
     ],
@@ -326,6 +360,7 @@ export default defineConfig({
       'lucide-react',
       'dayjs',
       '@braintree/sanitize-url',
+      'lodash.throttle',
       '@axhub/excalidraw > png-chunk-text',
       '@axhub/excalidraw > png-chunks-encode',
       '@axhub/excalidraw > png-chunks-extract',
@@ -334,6 +369,7 @@ export default defineConfig({
       '@axhub/excalidraw > fuzzy',
       '@axhub/excalidraw > @excalidraw/markdown-to-text',
       'use-sync-external-store/shim',
+      'use-sync-external-store/shim/index.js',
       'use-sync-external-store/shim/with-selector',
       'use-sync-external-store/shim/with-selector.js',
       '@radix-ui/react-checkbox',

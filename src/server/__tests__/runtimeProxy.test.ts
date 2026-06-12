@@ -4,7 +4,10 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createRuntimeUnavailableHtml,
   getRuntimeProxyTargetPath,
+  isRuntimeDocumentRequest,
+  isRuntimeDevModuleRequest,
   isRuntimeHtmlProxyRequest,
   isRuntimeOnlyRoute,
   proxyToRuntime,
@@ -54,12 +57,14 @@ describe('runtime proxy route ownership', () => {
   it('proxies runtime-only routes to the runtime server', () => {
     expect(isRuntimeOnlyRoute('/ws')).toBe(true);
     expect(isRuntimeOnlyRoute('/ws?client=1')).toBe(true);
+    expect(isRuntimeOnlyRoute('/@react-refresh?projectId=make-project')).toBe(true);
+    expect(isRuntimeOnlyRoute('/@vite/client?projectId=make-project')).toBe(true);
     expect(isRuntimeOnlyRoute('/api/ws/clients')).toBe(true);
     expect(isRuntimeOnlyRoute('/api/text-replace/count')).toBe(true);
     expect(isRuntimeOnlyRoute('/api/hack-css/save')).toBe(true);
     expect(isRuntimeOnlyRoute('/@vite/client')).toBe(true);
     expect(isRuntimeOnlyRoute('/@react-refresh')).toBe(true);
-    expect(isRuntimeOnlyRoute('/@fs/Users/demo/project/src/App.tsx')).toBe(true);
+    expect(isRuntimeOnlyRoute('/@fs/workspace/demo/project/src/App.tsx')).toBe(true);
     expect(isRuntimeOnlyRoute('/@id/react')).toBe(true);
     expect(isRuntimeOnlyRoute('/@vite/deps/react.js')).toBe(true);
     expect(isRuntimeOnlyRoute('/src/prototypes/ref-app-home/index.tsx')).toBe(true);
@@ -84,6 +89,184 @@ describe('runtime proxy route ownership', () => {
     expect(isRuntimeHtmlProxyRequest('/prototypes/home/index.html')).toBe(false);
   });
 
+  it('uses prototype referers to route dev module graph requests to the runtime server', () => {
+    const headers = { referer: 'http://localhost:53817/prototypes/annotation-demo?genieToolbar=host' };
+
+    expect(isRuntimeDevModuleRequest('/@fs/workspace/make14/node_modules/.vite/deps/@axhub_annotation.js?v=a8419558', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/@vite/client', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/common/useHashPage.ts', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/hooks/use-mobile.ts', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/lib/utils.ts', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/styles/globals.css', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/types/index.ts', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/app/dashboard/page.tsx', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/pages/home.tsx', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/public/card.glb?url', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/services/api.ts', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/prototypes/annotation-demo/assets/make-annotation.png?import', headers)).toBe(true);
+    expect(isRuntimeDevModuleRequest('/assets/dev-template-bootstrap.js', headers)).toBe(false);
+    expect(isRuntimeDevModuleRequest('/@fs/workspace/make14/node_modules/.vite/deps/@axhub_annotation.js?v=a8419558', {
+      referer: 'http://localhost:53817/?projectId=make-project',
+    })).toBe(false);
+  });
+
+  it('keeps nested template-style runtime source imports in the runtime module graph', () => {
+    expect(isRuntimeDevModuleRequest('/lib/utils.ts', {
+      referer: 'http://localhost:53817/hooks/use-mobile.ts?projectId=make-project',
+    })).toBe(true);
+    expect(isRuntimeDevModuleRequest('/components/ui/button.tsx', {
+      referer: 'http://localhost:53817/lib/utils.ts?projectId=make-project',
+    })).toBe(true);
+    expect(isRuntimeDevModuleRequest('/public/card.glb?url', {
+      referer: 'http://localhost:53817/app/lanyard/page.tsx?projectId=make-project',
+    })).toBe(true);
+    expect(isRuntimeDevModuleRequest('/lib/utils.ts', {
+      referer: 'http://localhost:53817/@vite/client',
+    })).toBe(false);
+    expect(isRuntimeDevModuleRequest('/@fs/workspace/make14/node_modules/.vite/deps/react.js?v=a8419558', {
+      referer: 'http://localhost:53817/lib/utils.ts?projectId=make-project',
+    }, {
+      runtimeProjectRoot: '/workspace/make14',
+    })).toBe(true);
+  });
+
+  it('routes project-scoped runtime module graph files without hard-coding template directories', () => {
+    expect(isRuntimeDevModuleRequest('/features/onboarding/wizard.tsx', {
+      referer: 'http://localhost:53817/prototypes/annotation-demo?genieToolbar=host',
+    })).toBe(true);
+    expect(isRuntimeDevModuleRequest('/new-template-space/assets/model.glb?url', {
+      referer: 'http://localhost:53817/features/onboarding/wizard.tsx?projectId=make-project',
+    })).toBe(true);
+    expect(isRuntimeDevModuleRequest('/api/source?path=features/onboarding/wizard.tsx', {
+      referer: 'http://localhost:53817/features/onboarding/wizard.tsx?projectId=make-project',
+    })).toBe(false);
+    expect(isRuntimeDevModuleRequest('/features/onboarding/wizard', {
+      referer: 'http://localhost:53817/prototypes/annotation-demo?genieToolbar=host',
+    })).toBe(false);
+  });
+
+  it('routes historical project-scoped Vite client entry requests to runtime', () => {
+    expect(isRuntimeDevModuleRequest('/@vite/client?projectId=make-project', {})).toBe(true);
+  });
+
+  it('keeps nested active-project @fs imports in the runtime module graph', () => {
+    const options = { runtimeProjectRoot: '/workspace/make14' };
+
+    expect(isRuntimeDevModuleRequest(
+      '/@fs/workspace/make14/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs',
+      { referer: 'http://localhost:53817/@vite/client' },
+      options,
+    )).toBe(true);
+    expect(isRuntimeDevModuleRequest(
+      '/@fs/workspace/make14/node_modules/.vite/deps/chunk-KQSTW7SD.js?v=a8419558',
+      { referer: 'http://localhost:53817/@fs/workspace/make14/node_modules/.vite/deps/react.js?v=a8419558' },
+      options,
+    )).toBe(true);
+    expect(isRuntimeDevModuleRequest(
+      '/@fs/workspace/axhub-runtime/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs',
+      { referer: 'http://localhost:53817/@vite/client' },
+      options,
+    )).toBe(false);
+    expect(isRuntimeDevModuleRequest(
+      '/@fs/workspace/make14/node_modules/.vite/deps/chunk-KQSTW7SD.js?v=a8419558',
+      { referer: 'http://localhost:53817/@vite/client' },
+    )).toBe(false);
+  });
+
+  it('routes non-admin Vite client env imports in the runtime graph to runtime', () => {
+    const adminViteClientEnvPath = '/workspace/axhub-runtime/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs';
+
+    expect(isRuntimeDevModuleRequest(
+      '/@fs/workspace/axhub-make/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs',
+      { referer: 'http://localhost:53817/@vite/client' },
+      { runtimeProjectRoot: '/workspace/axhub-make/client', adminViteClientEnvPath },
+    )).toBe(true);
+    expect(isRuntimeDevModuleRequest(
+      '/@fs/workspace/axhub-runtime/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs',
+      { referer: 'http://localhost:53817/@vite/client' },
+      { runtimeProjectRoot: '/workspace/axhub-make/client', adminViteClientEnvPath },
+    )).toBe(false);
+  });
+
+  it('appends projectId to Vite client env imports in proxied runtime modules', async () => {
+    const upstream = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.end([
+        'import "/@fs/workspace/make14/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs";',
+        'import React from "/@fs/workspace/make14/node_modules/.vite/deps/react.js";',
+        'const lazy = () => import("/@fs/workspace/make14/src/prototypes/home/Lazy.tsx");',
+      ].join('\n'));
+    });
+    const runtimeOrigin = await listen(upstream);
+    const proxy = http.createServer((req, res) => proxyToRuntime(req, res, runtimeOrigin));
+    const proxyOrigin = await listen(proxy);
+
+    const response = await fetch(`${proxyOrigin}/prototypes/home/index.tsx?projectId=make-project`, {
+      headers: {
+        referer: `${proxyOrigin}/@id/__x00__/prototypes/home/index.html?html-proxy&index=0.js`,
+      },
+    });
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('import "/@fs/workspace/make14/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs?projectId=make-project";');
+    expect(body).not.toContain('import "/@fs/workspace/make14/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs";');
+    expect(body).toContain('import React from "/@fs/workspace/make14/node_modules/.vite/deps/react.js?projectId=make-project";');
+    expect(body).toContain('const lazy = () => import("/@fs/workspace/make14/src/prototypes/home/Lazy.tsx?projectId=make-project");');
+  });
+
+  it('does not append project context to the Vite client entry import', async () => {
+    const upstream = http.createServer((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.end([
+        'import { createHotContext } from "/@vite/client";',
+        'import * as RefreshRuntime from "/@react-refresh";',
+        'import "/@fs/workspace/make14/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs";',
+      ].join('\n'));
+    });
+    const runtimeOrigin = await listen(upstream);
+    const proxy = http.createServer((req, res) => proxyToRuntime(req, res, runtimeOrigin));
+    const proxyOrigin = await listen(proxy);
+
+    const response = await fetch(`${proxyOrigin}/prototypes/home/index.tsx?projectId=make-project`, {
+      headers: {
+        referer: `${proxyOrigin}/@id/__x00__/prototypes/home/index.html?html-proxy&index=0.js`,
+      },
+    });
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('import { createHotContext } from "/@vite/client";');
+    expect(body).not.toContain('/@vite/client?projectId=');
+    expect(body).toContain('import * as RefreshRuntime from "/@react-refresh";');
+    expect(body).toContain('import "/@fs/workspace/make14/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs?projectId=make-project";');
+  });
+
+  it('uses projectId on Vite client env requests only for routing and strips it before proxying upstream', async () => {
+    const upstream = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ url: req.url }));
+    });
+    const runtimeOrigin = await listen(upstream);
+    const proxy = http.createServer((req, res) => proxyToRuntime(req, res, runtimeOrigin));
+    const proxyOrigin = await listen(proxy);
+
+    const response = await fetch(`${proxyOrigin}/@fs/workspace/make14/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs?projectId=make-project`, {
+      headers: {
+        referer: `${proxyOrigin}/@vite/client?projectId=make-project`,
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      url: '/@fs/workspace/make14/node_modules/.pnpm/vite@5.4.21/node_modules/vite/dist/client/env.mjs',
+    });
+  });
+
   it('does not proxy legacy component preview paths as a fallback renderer', () => {
     expect(isRuntimeOnlyRoute('/components/ref-button/index.tsx')).toBe(false);
     expect(isRuntimeOnlyRoute('/components/ref-button/hack.css')).toBe(false);
@@ -95,7 +278,34 @@ describe('runtime proxy route ownership', () => {
 
   it('preserves query strings when building runtime proxy targets', () => {
     expect(getRuntimeProxyTargetPath('/build/components/ref-button.js?v=1')).toBe('/build/components/ref-button.js?v=1');
+    expect(getRuntimeProxyTargetPath('/@vite/client?projectId=make-project')).toBe('/@vite/client');
     expect(getRuntimeProxyTargetPath('')).toBe('/');
+  });
+
+  it('identifies prototype and theme document requests without treating modules and assets as documents', () => {
+    expect(isRuntimeDocumentRequest('/prototypes/home')).toBe(true);
+    expect(isRuntimeDocumentRequest('/prototypes/home/')).toBe(true);
+    expect(isRuntimeDocumentRequest('/prototypes/home?editor=1')).toBe(true);
+    expect(isRuntimeDocumentRequest('/themes/brand')).toBe(true);
+    expect(isRuntimeDocumentRequest('/themes/brand/')).toBe(true);
+    expect(isRuntimeDocumentRequest('/prototypes/home/index.tsx')).toBe(false);
+    expect(isRuntimeDocumentRequest('/prototypes/home/style.css')).toBe(false);
+    expect(isRuntimeDocumentRequest('/prototypes/home/canvas-assets/screenshot.png')).toBe(false);
+    expect(isRuntimeDocumentRequest('/@vite/client')).toBe(false);
+  });
+
+  it('builds an HTML runtime unavailable page for direct prototype and theme navigation', () => {
+    const html = createRuntimeUnavailableHtml('/prototypes/home', 'connect ECONNREFUSED');
+
+    expect(html).toContain('<!doctype html>');
+    expect(html).toContain('Make 客户端未启动');
+    expect(html).toContain('/prototypes/home');
+    expect(html).toContain('axhub:runtime-unavailable');
+    expect(html).toContain('postMessage');
+    expect(html).toContain('回到管理页');
+    expect(html).not.toContain('Axhub Make client runtime unavailable');
+    expect(html).not.toContain('connect ECONNREFUSED');
+    expect(html).not.toContain('复制诊断给 AI');
   });
 
   it('proxies requests to the runtime origin while preserving method, path, query, body, and host', async () => {
@@ -110,6 +320,8 @@ describe('runtime proxy route ownership', () => {
           method: req.method,
           url: req.url,
           host: req.headers.host,
+          forwardedHost: req.headers['x-forwarded-host'],
+          forwardedProto: req.headers['x-forwarded-proto'],
           custom: req.headers['x-custom-header'],
           body: Buffer.concat(chunks).toString('utf8'),
         }));
@@ -136,6 +348,8 @@ describe('runtime proxy route ownership', () => {
       method: 'POST',
       url: '/api/ws/echo?room=canvas',
       host: runtimeHost,
+      forwardedHost: new URL(proxyOrigin).host,
+      forwardedProto: 'http',
       custom: 'from-test',
       body: 'hello runtime',
     });
@@ -153,6 +367,23 @@ describe('runtime proxy route ownership', () => {
     expect(body).toMatchObject({
       error: 'Runtime unavailable',
     });
+  });
+
+  it('returns an HTML 502 for direct prototype documents when the runtime transport cannot connect', async () => {
+    const proxy = http.createServer((req, res) => proxyToRuntime(req, res, 'http://127.0.0.1:1'));
+    const proxyOrigin = await listen(proxy);
+
+    const response = await fetch(`${proxyOrigin}/prototypes/home`, {
+      headers: { accept: 'text/html' },
+    });
+    const body = await response.text();
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    expect(body).toContain('Make 客户端未启动');
+    expect(body).toContain('/prototypes/home');
+    expect(body).toContain('axhub:runtime-unavailable');
+    expect(body).not.toContain('runtime origin is empty or unreachable');
   });
 
   it('destroys the response when the runtime transport errors after headers are sent', () => {

@@ -5,6 +5,7 @@ import { normalizePromptClientPreference } from '@/common/promptExecution';
 import type { PromptClientPreference } from '../../types';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
+import type { AssistantImageGenerationConfig } from '../../domains/assistant/assistantAcpContext';
 import {
     persistExcalidrawPropertyPanelModePreference,
     persistExcalidrawPropertyPanelPositionPreference,
@@ -18,6 +19,8 @@ const EMPTY_AGENT_AVAILABILITY: RuntimeAgentAvailability = { cli: {}, localApp: 
 
 export interface UseIndexPagePreferencesParams {
     setDefaultThemeName: (name: string | null) => void;
+    activeProjectId?: string | null;
+    enabled?: boolean;
     onProjectConfigSaved?: () => void | Promise<void>;
     onExcalidrawPropertyPanelModeLoaded?: (mode: ExcalidrawPropertyPanelMode) => void;
     onExcalidrawPropertyPanelPositionLoaded?: (position: ExcalidrawPropertyPanelPosition) => void;
@@ -28,14 +31,16 @@ export interface UseIndexPagePreferencesResult {
     preferredIDE: MainIDEPreference;
     ideAvailability: IDEAvailabilityMap;
     agentAvailability: RuntimeAgentAvailability;
+    assistantImageGenerationConfig: AssistantImageGenerationConfig | null;
     initialPreferencesLoaded: boolean;
     setPreferredIDE: (ide: MainIDEPreference) => void;
     handleSettingsSaved: () => void;
-    refreshAvailability: () => void;
 }
 
 export function useIndexPagePreferences({
     setDefaultThemeName,
+    activeProjectId,
+    enabled = true,
     onProjectConfigSaved,
     onExcalidrawPropertyPanelModeLoaded,
     onExcalidrawPropertyPanelPositionLoaded,
@@ -44,23 +49,22 @@ export function useIndexPagePreferences({
     const [preferredIDE, setPreferredIDE] = useState<MainIDEPreference>(null);
     const [ideAvailability, setIDEAvailability] = useState<IDEAvailabilityMap>({});
     const [agentAvailability, setAgentAvailability] = useState<RuntimeAgentAvailability>(EMPTY_AGENT_AVAILABILITY);
+    const [assistantImageGenerationConfig, setAssistantImageGenerationConfig] = useState<AssistantImageGenerationConfig | null>(null);
     const [initialPreferencesLoaded, setInitialPreferencesLoaded] = useState(false);
 
-    const applyAvailability = useCallback((config: {
-        ideAvailability?: IDEAvailabilityMap;
-        agentAvailability?: RuntimeAgentAvailability;
-    }) => {
-        setIDEAvailability(config?.ideAvailability || {});
-        setAgentAvailability(config?.agentAvailability || EMPTY_AGENT_AVAILABILITY);
-    }, []);
-
     useEffect(() => {
+        if (!enabled) {
+            setInitialPreferencesLoaded(false);
+            return undefined;
+        }
+
         let canceled = false;
-        apiService.getBootstrapConfig()
+        apiService.getBootstrapConfig({ projectId: activeProjectId })
             .then((config) => {
                 if (canceled) return;
                 setPreferredPromptClient(normalizePromptClientPreference(config?.automation?.defaultPromptClient));
                 setPreferredIDE(config?.automation?.defaultIDE || null);
+                setAssistantImageGenerationConfig(config?.ai?.imageGeneration || null);
                 setInitialPreferencesLoaded(true);
                 setDefaultThemeName((config as any)?.projectDefaults?.defaultTheme || null);
                 onExcalidrawPropertyPanelModeLoaded?.(persistExcalidrawPropertyPanelModePreference(
@@ -69,18 +73,12 @@ export function useIndexPagePreferences({
                 onExcalidrawPropertyPanelPositionLoaded?.(persistExcalidrawPropertyPanelPositionPreference(
                     sanitizeExcalidrawPropertyPanelPosition(config?.uiPreferences?.excalidrawPropertyPanelPosition),
                 ));
-                apiService.getConfigAvailability()
-                    .then((availability) => {
-                        if (!canceled) {
-                            applyAvailability(availability);
-                        }
-                    })
-                    .catch(() => { /* keep empty availability until refresh succeeds */ });
             })
             .catch(() => {
                 if (!canceled) {
                     setPreferredPromptClient(null);
                     setPreferredIDE(null);
+                    setAssistantImageGenerationConfig(null);
                     setInitialPreferencesLoaded(true);
                     setIDEAvailability({});
                     setAgentAvailability(EMPTY_AGENT_AVAILABILITY);
@@ -91,13 +89,18 @@ export function useIndexPagePreferences({
         return () => {
             canceled = true;
         };
-    }, [applyAvailability, onExcalidrawPropertyPanelModeLoaded, onExcalidrawPropertyPanelPositionLoaded, setDefaultThemeName]);
+    }, [activeProjectId, enabled, onExcalidrawPropertyPanelModeLoaded, onExcalidrawPropertyPanelPositionLoaded, setDefaultThemeName]);
 
     const handleSettingsSaved = useCallback(() => {
-        apiService.getConfig()
+        if (!enabled) {
+            return;
+        }
+
+        apiService.getConfig({ projectId: activeProjectId })
             .then((config) => {
                 setPreferredPromptClient(normalizePromptClientPreference(config?.automation?.defaultPromptClient));
                 setPreferredIDE(config?.automation?.defaultIDE || null);
+                setAssistantImageGenerationConfig(config?.ai?.imageGeneration || null);
                 setIDEAvailability(config?.ideAvailability || {});
                 setAgentAvailability(config?.agentAvailability || EMPTY_AGENT_AVAILABILITY);
                 setDefaultThemeName((config as any)?.projectDefaults?.defaultTheme || null);
@@ -112,26 +115,21 @@ export function useIndexPagePreferences({
             .catch(() => {
                 setPreferredPromptClient(null);
                 setPreferredIDE(null);
+                setAssistantImageGenerationConfig(null);
                 setIDEAvailability({});
                 setAgentAvailability(EMPTY_AGENT_AVAILABILITY);
                 setDefaultThemeName(null);
             });
-    }, [onExcalidrawPropertyPanelModeLoaded, onExcalidrawPropertyPanelPositionLoaded, onProjectConfigSaved, setDefaultThemeName]);
-
-    const refreshAvailability = useCallback(() => {
-        apiService.getConfigAvailability()
-            .then(applyAvailability)
-            .catch(() => { /* keep existing cache on failure */ });
-    }, [applyAvailability]);
+    }, [activeProjectId, enabled, onExcalidrawPropertyPanelModeLoaded, onExcalidrawPropertyPanelPositionLoaded, onProjectConfigSaved, setDefaultThemeName]);
 
     return {
         preferredPromptClient,
         preferredIDE,
         ideAvailability,
         agentAvailability,
+        assistantImageGenerationConfig,
         initialPreferencesLoaded,
         setPreferredIDE,
         handleSettingsSaved,
-        refreshAvailability,
     };
 }

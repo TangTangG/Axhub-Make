@@ -205,6 +205,86 @@ describe('make client runtime discovery', () => {
     });
   });
 
+  it('captures spawned dev server output when diagnostic logging is enabled', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarker(projectRoot);
+    writeJson(path.join(projectRoot, 'package.json'), {
+      scripts: {
+        dev: 'vite',
+        'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+      },
+    });
+    const viteRoot = path.join(projectRoot, 'node_modules', 'vite');
+    writeJson(path.join(viteRoot, 'package.json'), { bin: { vite: 'bin/vite.js' } });
+    writeJson(path.join(viteRoot, 'bin', 'vite.js'), '');
+
+    const logLines: string[] = [];
+    const stdoutHandlers: Array<(chunk: Buffer) => void> = [];
+    const stderrHandlers: Array<(chunk: Buffer) => void> = [];
+    const spawn = vi.fn((_file: string, _args: string[], options: { cwd?: string; stdio?: unknown }) => {
+      expect(options.stdio).toEqual(['ignore', 'pipe', 'pipe']);
+      const targetRoot = String(options.cwd || '');
+      setTimeout(() => {
+        stdoutHandlers.forEach((handler) => handler(Buffer.from('dev stdout\n')));
+        stderrHandlers.forEach((handler) => handler(Buffer.from('dev stderr\n')));
+        writeJson(path.join(targetRoot, '.axhub', 'make', '.dev-server-info.json'), {
+          pid: process.pid,
+          port: 51731,
+          host: 'localhost',
+          origin: 'http://localhost:51731',
+          projectRoot: targetRoot,
+          startedAt: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+        });
+      }, 0);
+      return {
+        once: vi.fn(),
+        unref: vi.fn(),
+        stdout: {
+          on: vi.fn((event: string, handler: (chunk: Buffer) => void) => {
+            if (event === 'data') {
+              stdoutHandlers.push(handler);
+            }
+          }),
+        },
+        stderr: {
+          on: vi.fn((event: string, handler: (chunk: Buffer) => void) => {
+            if (event === 'data') {
+              stderrHandlers.push(handler);
+            }
+          }),
+        },
+      } as any;
+    });
+
+    const result = await ensureMakeClientDevServer(projectRoot, {
+      commandRunner: {
+        runCommand: vi.fn(),
+        spawn: spawn as any,
+      },
+      diagnosticLog: {
+        write: (line: string) => {
+          logLines.push(line);
+        },
+      },
+      devTimeoutMs: 250,
+      pollIntervalMs: 5,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      reused: false,
+      phase: 'ready',
+      runtime: {
+        origin: 'http://localhost:51731',
+      },
+    });
+    expect(logLines.join('\n')).toContain('[make-client:dev:stdout]');
+    expect(logLines.join('\n')).toContain('dev stdout');
+    expect(logLines.join('\n')).toContain('[make-client:dev:stderr]');
+    expect(logLines.join('\n')).toContain('dev stderr');
+  });
+
   it('reports local runtime info as running when the recorded project root is realpath-equivalent', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarker(projectRoot, 'realpath-runtime-client');

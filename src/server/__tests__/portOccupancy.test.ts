@@ -7,19 +7,28 @@ import {
 
 describe('make-server port occupancy helpers', () => {
   it('reads listening PIDs with lsof on macOS and Linux', () => {
-    const spawnSync = vi.fn(() => ({
-      stdout: '123\n456\n123\n',
-      stderr: '',
-      status: 0,
-    })) as any;
+    const spawnSync = vi.fn((command: string, args: string[]) => {
+      if (command === 'lsof' && args.includes('-tiTCP:53817')) {
+        return {
+          stdout: '123\n456\n123\n',
+          stderr: '',
+          status: 0,
+        };
+      }
+      return {
+        stdout: '',
+        stderr: 'invalid lsof selector',
+        status: 1,
+      };
+    }) as any;
 
     expect(findListeningPidsOnPort(53817, {
       platform: 'darwin',
       spawnSync,
     })).toEqual([123, 456]);
     expect(spawnSync).toHaveBeenCalledWith('lsof', [
-      '-tiTCP',
-      ':53817',
+      '-nP',
+      '-tiTCP:53817',
       '-sTCP:LISTEN',
     ], expect.objectContaining({ encoding: 'utf8' }));
   });
@@ -58,6 +67,85 @@ describe('make-server port occupancy helpers', () => {
       waitMs: 0,
     })).toEqual([222]);
     expect(killPid).toHaveBeenCalledWith(222, 'SIGTERM');
+  });
+
+  it('terminates the listening process group on POSIX so dev-server parents do not keep running', () => {
+    const spawnSync = vi.fn((command: string, args: string[]) => {
+      if (command === 'lsof') {
+        return {
+          stdout: args.includes('-tiTCP:32123') ? '222\n' : '',
+          stderr: '',
+          status: 0,
+        };
+      }
+      if (command === 'ps' && args.includes('222')) {
+        return {
+          stdout: '333\n',
+          stderr: '',
+          status: 0,
+        };
+      }
+      if (command === 'ps' && args.includes('111')) {
+        return {
+          stdout: '111\n',
+          stderr: '',
+          status: 0,
+        };
+      }
+      return { stdout: '', stderr: '', status: 0 };
+    }) as any;
+    const killPid = vi.fn();
+
+    expect(releaseListeningProcessesOnPort(32123, {
+      platform: 'darwin',
+      spawnSync,
+      killPid,
+      currentPid: 111,
+      waitMs: 0,
+    })).toEqual([222]);
+    expect(killPid).toHaveBeenCalledWith(-333, 'SIGTERM');
+    expect(killPid).not.toHaveBeenCalledWith(222, 'SIGTERM');
+  });
+
+  it('waits for the port again after force killing remaining POSIX listeners', () => {
+    let lsofCalls = 0;
+    const spawnSync = vi.fn((command: string, args: string[]) => {
+      if (command === 'lsof') {
+        lsofCalls += 1;
+        return {
+          stdout: args.includes('-tiTCP:32123') && lsofCalls <= 3 ? '222\n' : '',
+          stderr: '',
+          status: 0,
+        };
+      }
+      if (command === 'ps' && args.includes('222')) {
+        return {
+          stdout: '333\n',
+          stderr: '',
+          status: 0,
+        };
+      }
+      if (command === 'ps' && args.includes('111')) {
+        return {
+          stdout: '111\n',
+          stderr: '',
+          status: 0,
+        };
+      }
+      return { stdout: '', stderr: '', status: 0 };
+    }) as any;
+    const killPid = vi.fn();
+
+    expect(releaseListeningProcessesOnPort(32123, {
+      platform: 'darwin',
+      spawnSync,
+      killPid,
+      currentPid: 111,
+      waitMs: 1,
+    })).toEqual([222]);
+    expect(killPid).toHaveBeenCalledWith(-333, 'SIGTERM');
+    expect(killPid).toHaveBeenCalledWith(-333, 'SIGKILL');
+    expect(lsofCalls).toBeGreaterThanOrEqual(4);
   });
 
   it('does not try to release ephemeral or invalid ports', () => {

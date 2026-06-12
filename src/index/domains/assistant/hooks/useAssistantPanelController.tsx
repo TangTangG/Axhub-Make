@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type {
     CanvasItem,
     AssistantContextV1,
@@ -14,7 +15,6 @@ import { ASSISTANT_OPEN_URL_EVENT, STORAGE_KEY_ASSISTANT_WIDTH } from '../../../
 import {
     type AssistantContentMode,
     type AssistantMarkdownResourceSelection,
-    buildAssistantContextUrl,
     buildAssistantContextWithCanvasComments,
     buildAssistantCurrentFileSyncContext,
     getAssistantCanvasCommentsSignature,
@@ -26,23 +26,148 @@ import {
 import type { CanvasElementContextInfo } from '../../../components/content/canvas-embeds/AnnotationOverlay';
 import { useAssistantBridge } from './useAssistantBridge';
 import { useAssistantRuntime } from './useAssistantRuntime';
-import { mergeSelectedElementsBySelector, dedupeSelectedElementsByTriple } from '../assistant.utils';
+import {
+    type AcpContextItem,
+    type AssistantImageGenerationConfig,
+    buildAcpContextPostMessage,
+    getAcpImageGenerationConfigSignature,
+} from '../assistantAcpContext';
+import { buildAssistantContextItemsFromCanvasElements, type AssistantImageAttachmentPayload } from '../assistantContextPayload';
+import {
+    getAssistantResourceThreadId,
+    getAssistantResourceThreadIdWithFallback,
+    setAssistantResourceThreadId,
+} from '../assistantResourceThread';
 import {
     getGenieCurrentFilePath,
     mergeGenieContextV1,
-    normalizeGenieContextV1,
     normalizeGenieCurrentFileV1,
-    normalizeWebEditorGenieRequestPayload,
 } from '@/common/genie/bridge';
-import type { GenieProvider, WebEditorGenieRequestPayload } from '@/common/genie/types';
-import { createGenieIntegrationBridge } from '@/common/genie/ws';
-import {
-    appendRequiredGenieOpenParams,
-} from '@/common/genie/url';
-import { toGenieProvider } from '@/common/promptExecution';
+import type { GenieProvider } from '@/common/genie/types';
 
 type AssistantTriggerSource = 'button' | 'event';
 type AssistantRuntimeState = Awaited<ReturnType<typeof apiService.getAssistantRuntime>>;
+type EnsureAssistantOpenOptions = {
+    loadingText?: string | false;
+    suppressResourceThreadBinding?: boolean;
+    openSettingsOnFailure?: boolean;
+};
+type OpenAssistantSubmitOptions = {
+    forceNewThread?: boolean;
+};
+type AcpNavigationChangedMessage = {
+    href: string;
+    threadId?: string | null;
+};
+
+const ACP_NAVIGATION_CHANGED_EVENT = 'acp.navigation.changed';
+
+const LEGACY_ASSISTANT_OPEN_PARAMS = [
+    'context',
+    'prompt',
+    'provider',
+    'model',
+    'modeId',
+    'thoughtLevel',
+    'permissionMode',
+    'integrationWs',
+    'integrationClientId',
+    'integrationChannel',
+    'genieApiBaseUrl',
+    'genieIntegrationChannel',
+    'genieTargetClientId',
+    'editorClientId',
+    'editorIntegrationWs',
+    'editorApiBaseUrl',
+    'editorIntegrationChannel',
+    'editorSessionId',
+    'editorMobileMode',
+    'slashCommands',
+] as const;
+
+function removeLegacyAssistantOpenParams(url: URL): void {
+    for (const paramName of LEGACY_ASSISTANT_OPEN_PARAMS) {
+        url.searchParams.delete(paramName);
+    }
+}
+
+function readAcpNavigationChangedMessage(data: unknown): AcpNavigationChangedMessage | null {
+    if (!data || typeof data !== 'object') {
+        return null;
+    }
+
+    const record = data as { type?: unknown; payload?: unknown };
+    if (record.type !== ACP_NAVIGATION_CHANGED_EVENT || !record.payload || typeof record.payload !== 'object') {
+        return null;
+    }
+
+    const payload = record.payload as { href?: unknown; threadId?: unknown };
+    const href = typeof payload.href === 'string' ? payload.href.trim() : '';
+    if (!href) {
+        return null;
+    }
+
+    const threadId = typeof payload.threadId === 'string'
+        ? payload.threadId.trim() || null
+        : payload.threadId === null
+            ? null
+            : undefined;
+
+    return {
+        href,
+        ...(threadId !== undefined ? { threadId } : {}),
+    };
+}
+
+function resolveAcpNavigationThreadId(navigationUrl: string): string | null {
+    try {
+        const url = new URL(navigationUrl);
+        const match = url.pathname.match(/^\/thread\/([^/]+)\/?$/u);
+        if (!match) {
+            return null;
+        }
+        try {
+            return decodeURIComponent(match[1]).trim() || null;
+        } catch {
+            return match[1]?.trim() || null;
+        }
+    } catch {
+        return null;
+    }
+}
+
+function waitForAssistantPanelPaint(): Promise<void> {
+    return new Promise((resolve) => {
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => resolve());
+        });
+    });
+}
+
+function isUntitledPrototypeName(value: string): boolean {
+    return /^untitled(?:-[a-z0-9-]+)?$/u.test(value.trim());
+}
+
+function resolveAssistantFallbackResourcePathFromUrl(targetPath?: string): string {
+    const normalizedTargetPath = String(targetPath || '').trim().replace(/\\/g, '/');
+    if (!normalizedTargetPath.match(/^src\/prototypes\/[^/]+\/canvas\.excalidraw$/u)) {
+        return '';
+    }
+    if (typeof window === 'undefined') {
+        return '';
+    }
+
+    try {
+        const url = new URL(window.location.href);
+        const fromP = String(url.searchParams.get('fromP') || '').trim();
+        if (!fromP || !isUntitledPrototypeName(fromP)) {
+            return '';
+        }
+        return `src/prototypes/${fromP}/canvas.excalidraw`;
+    } catch {
+        return '';
+    }
+}
 
 interface AssistantMessageApi {
     success: (content: string) => void;
@@ -61,59 +186,46 @@ interface OpenAssistantUrlEventDetail {
     targetPath?: string;
 }
 
+interface ResolvedAssistantUrl {
+    url: string;
+    resourceThreadStoragePath: string;
+}
+
 interface UseAssistantPanelControllerParams {
     messageApi: AssistantMessageApi;
     modal: AssistantModalApi;
     preferredPromptClient: PromptClientPreference;
+    onOpenAISettings?: (runtime?: AssistantRuntimeState | null, message?: string) => void;
     activeProjectId: string | null;
     activeTab: TabType;
     viewMode: ViewMode;
     selectedItem: ItemData | null;
     contentMode: AssistantContentMode;
     currentMarkdownResource: AssistantMarkdownResourceSelection;
+    assistantImageGenerationConfig?: AssistantImageGenerationConfig | null;
     currentCanvas?: CanvasItem | null;
     currentTheme?: ThemeResourceItem | null;
     currentDataTable?: DataTableResourceItem | null;
 }
 
-function createSessionClientId(storageKey: string, prefix: string) {
-    try {
-        const stored = sessionStorage.getItem(storageKey);
-        if (stored) {
-            return stored;
-        }
-    } catch {
-        // ignore sessionStorage failures
-    }
-
-    const next = `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
-
-    try {
-        sessionStorage.setItem(storageKey, next);
-    } catch {
-        // ignore sessionStorage failures
-    }
-
-    return next;
-}
-
 export function useAssistantPanelController({
     messageApi,
-    modal,
-    preferredPromptClient,
+    modal: _modal,
+    onOpenAISettings,
     activeProjectId,
     activeTab,
     viewMode,
     selectedItem,
     contentMode,
     currentMarkdownResource,
+    assistantImageGenerationConfig = null,
     currentCanvas = null,
     currentTheme = null,
     currentDataTable = null,
 }: UseAssistantPanelControllerParams) {
     const ASSISTANT_RUNTIME_UI_LOG_PREFIX = '[assistant-runtime-ui]';
     const DEFAULT_ASSISTANT_WEB_BASE_URL = 'http://localhost:32123';
-    const DEFAULT_ASSISTANT_INSTALL_CMD = 'npx @axhub/genie@latest';
+    const DEFAULT_ASSISTANT_INSTALL_CMD = 'npx -y @axhub/acp --port 32123';
     const DEFAULT_ASSISTANT_PANEL_WIDTH = 320;
     const MIN_ASSISTANT_PANEL_WIDTH = 320;
     const MAX_ASSISTANT_PANEL_WIDTH = 640;
@@ -130,13 +242,12 @@ export function useAssistantPanelController({
             commandSource: 'default',
             hints: {
                 installGlobal: DEFAULT_ASSISTANT_INSTALL_CMD,
-                start: 'npx @axhub/genie@latest',
-                status: 'npx @axhub/genie@latest status --json',
+                start: DEFAULT_ASSISTANT_INSTALL_CMD,
+                status: 'curl http://localhost:32123/api/chat',
             },
         },
     };
 
-    const genieProvider = useMemo(() => toGenieProvider(preferredPromptClient), [preferredPromptClient]);
     const [assistantVisible, setAssistantVisible] = useState(false);
     const [assistantPanelMounted, setAssistantPanelMounted] = useState(false);
     const [assistantPanelWidth, setAssistantPanelWidth] = useState<number>(() => {
@@ -148,24 +259,18 @@ export function useAssistantPanelController({
         return DEFAULT_ASSISTANT_PANEL_WIDTH;
     });
     const [assistantIframeOverrideUrl, setAssistantIframeOverrideUrl] = useState<string | null>(null);
-    const [assistantPanelMode, setAssistantPanelMode] = useState<'genie' | 'external'>('genie');
+    const [assistantPanelMode, setAssistantPanelMode] = useState<'assistant' | 'external'>('assistant');
     const [assistantExternalContext, setAssistantExternalContext] = useState<AssistantContextV1 | null>(null);
-    const assistantBridgeRef = useRef<ReturnType<typeof createGenieIntegrationBridge> | null>(null);
-    const assistantBridgeApiBaseUrlRef = useRef('');
-    const assistantBridgeIntegrationChannelRef = useRef('');
-    const assistantOpenedRef = useRef(false);
-    const assistantTargetPageUrlRef = useRef('');
     const assistantCurrentFilePathRef = useRef('');
     const assistantContextCommentsSignatureRef = useRef('');
-    const assistantBridgeContextSyncSignatureRef = useRef('');
     const assistantIframeLoadSyncSignatureRef = useRef('');
+    const assistantImageGenerationConfigSyncSignatureRef = useRef('');
+    const assistantIframeCurrentUrlRef = useRef('');
     const latestAssistantSyncContextRef = useRef<AssistantContextV1 | null>(null);
-    const assistantBridgeExternalClientIdRef = useRef(
-        createSessionClientId('__axhub_make_host_client_id__', 'make-host'),
-    );
-    const webEditorIntegrationClientIdRef = useRef(
-        createSessionClientId('__axhub_make_editor_client_id__', 'make-editor'),
-    );
+    const latestAssistantResourcePathRef = useRef('');
+    const latestAssistantNavigationThreadIdRef = useRef<string | null | undefined>(undefined);
+    const assistantResourceThreadBindingSuppressedRef = useRef(false);
+    const previousAssistantProjectIdRef = useRef(projectId || '');
     const {
         runtime: assistantRuntime,
         setRuntime: setAssistantRuntime,
@@ -177,167 +282,217 @@ export function useAssistantPanelController({
         projectId,
     });
 
-    const buildAssistantIframeUrlForRuntime = useCallback((
-        runtime?: AssistantRuntimeState | null,
-        providerOverride?: GenieProvider | null,
-    ) => {
+    const buildAssistantIframeUrlForRuntime = useCallback((runtime?: AssistantRuntimeState | null) => {
         const webBaseUrl = (runtime?.webBaseUrl || DEFAULT_ASSISTANT_WEB_BASE_URL).replace(/\/+$/g, '');
         const url = new URL(`${webBaseUrl}/`);
         const projectPath = runtime?.projectPath || '';
         if (projectPath) {
             url.searchParams.set('cwd', projectPath);
         }
-        const provider = providerOverride || genieProvider;
-        if (provider) {
-            url.searchParams.set('provider', provider);
-        }
-        return appendRequiredGenieOpenParams(url.toString(), window.location.origin);
-    }, [genieProvider]);
+        return url.toString();
+    }, []);
 
     const assistantIframeUrl = useMemo(() => (
         buildAssistantIframeUrlForRuntime(assistantRuntime)
     ), [assistantRuntime, buildAssistantIframeUrlForRuntime]);
 
     const assistantIframeSrc = assistantIframeOverrideUrl || assistantIframeUrl;
-    const assistantSupportsBridge = assistantPanelMode === 'genie';
+    const assistantSupportsAcpContext = assistantPanelMode === 'assistant';
+    const assistantContextAppendAvailable = assistantSupportsAcpContext && assistantVisible;
+
+    useEffect(() => {
+        assistantIframeCurrentUrlRef.current = assistantIframeSrc;
+    }, [assistantIframeSrc]);
+
+    const handleAssistantActiveThreadChange = useCallback((threadId: string | null | undefined) => {
+        if (assistantResourceThreadBindingSuppressedRef.current) {
+            return;
+        }
+        const resourcePath = latestAssistantResourcePathRef.current;
+        if (!resourcePath) {
+            return;
+        }
+        setAssistantResourceThreadId({
+            projectScope: projectId || assistantRuntime?.projectPath || '',
+            resourcePath,
+        }, threadId);
+    }, [
+        assistantRuntime?.projectPath,
+        projectId,
+    ]);
+    const assistantBridgeOptions = useMemo(() => ({
+        onActiveThreadChanged: handleAssistantActiveThreadChange,
+    }), [handleAssistantActiveThreadChange]);
+
     const {
         iframeRef: assistantIframeRef,
         iframeLoaded: assistantIframeLoaded,
         setIframeLoaded: setAssistantIframeLoaded,
         syncContext: postAssistantContextToIframe,
         syncContextWithRetry: postAssistantContextToIframeWithRetry,
-        syncPrompt: postAssistantPromptToIframe,
+        addContextItems: postAssistantContextItemsToIframe,
+        syncImageGenerationConfigWithRetry: postAssistantImageGenerationConfigToIframeWithRetry,
+        addImageAttachmentWithRetry,
+        appendComposerTextWithRetry,
+        submitPromptWithRetry,
         waitForReady: waitForAssistantIframeReady,
-    } = useAssistantBridge(assistantIframeSrc);
+    } = useAssistantBridge(assistantIframeSrc, assistantBridgeOptions);
+
+    const resolveAssistantNavigationUrl = useCallback((href: string) => {
+        const baseUrl = assistantIframeCurrentUrlRef.current || assistantIframeSrc || assistantIframeUrl;
+        try {
+            const navigationUrl = new URL(href, baseUrl);
+            const assistantUrl = new URL(baseUrl, window.location.origin);
+            if (navigationUrl.origin !== assistantUrl.origin) {
+                return '';
+            }
+            return navigationUrl.toString();
+        } catch {
+            return '';
+        }
+    }, [
+        assistantIframeSrc,
+        assistantIframeUrl,
+    ]);
+
+    const resolveAssistantMessageOrigin = useCallback(() => {
+        const baseUrl = assistantIframeCurrentUrlRef.current || assistantIframeSrc || assistantIframeUrl;
+        try {
+            return new URL(baseUrl, window.location.origin).origin;
+        } catch {
+            return '';
+        }
+    }, [
+        assistantIframeSrc,
+        assistantIframeUrl,
+    ]);
+
+    useEffect(() => {
+        const handleAssistantNavigationChanged = (event: MessageEvent) => {
+            if (!assistantSupportsAcpContext) {
+                return;
+            }
+            if (event.source !== assistantIframeRef.current?.contentWindow) {
+                return;
+            }
+            const assistantOrigin = resolveAssistantMessageOrigin();
+            if (assistantOrigin && event.origin !== assistantOrigin) {
+                return;
+            }
+
+            const navigation = readAcpNavigationChangedMessage(event.data);
+            if (!navigation) {
+                return;
+            }
+
+            const navigationUrl = resolveAssistantNavigationUrl(navigation.href);
+            if (!navigationUrl) {
+                return;
+            }
+
+            assistantIframeCurrentUrlRef.current = navigationUrl;
+            const navigationThreadId = navigation.threadId ?? resolveAcpNavigationThreadId(navigationUrl);
+            latestAssistantNavigationThreadIdRef.current = navigationThreadId;
+            handleAssistantActiveThreadChange(navigationThreadId);
+        };
+
+        window.addEventListener('message', handleAssistantNavigationChanged);
+        return () => {
+            window.removeEventListener('message', handleAssistantNavigationChanged);
+        };
+    }, [
+        assistantIframeRef,
+        assistantSupportsAcpContext,
+        handleAssistantActiveThreadChange,
+        resolveAssistantMessageOrigin,
+        resolveAssistantNavigationUrl,
+    ]);
 
     useEffect(() => {
         localStorage.setItem(STORAGE_KEY_ASSISTANT_WIDTH, String(Math.round(assistantPanelWidth)));
     }, [assistantPanelWidth]);
-
-    const buildAssistantUrlWithContext = useCallback((baseUrl: string, context: AssistantContextV1) => {
-        return buildAssistantContextUrl(baseUrl, context, window.location.origin);
-    }, []);
 
     const syncAssistantContextToTargets = useCallback((
         context: AssistantContextV1,
         mode: 'replace' | 'append' = 'replace',
         options: {
             retryIframe?: boolean;
-            forceBridge?: boolean;
         } = {},
     ) => {
         latestAssistantSyncContextRef.current = context;
 
-        if (assistantSupportsBridge && assistantVisible && assistantIframeLoaded && assistantIframeRef.current?.contentWindow) {
+        if (assistantSupportsAcpContext && assistantVisible && assistantIframeLoaded && assistantIframeRef.current?.contentWindow) {
             if (options.retryIframe ?? mode === 'replace') {
                 postAssistantContextToIframeWithRetry(context, mode);
             } else {
                 postAssistantContextToIframe(context, mode);
             }
         }
-
-        if (!assistantSupportsBridge || !assistantOpenedRef.current) {
-            return;
-        }
-
-        const bridgeSignature = JSON.stringify({ mode, context });
-        if (!options.forceBridge && assistantBridgeContextSyncSignatureRef.current === bridgeSignature) {
-            return;
-        }
-        assistantBridgeContextSyncSignatureRef.current = bridgeSignature;
-
-        void assistantBridgeRef.current?.updateContext(context, mode).catch((error) => {
-            if (assistantBridgeContextSyncSignatureRef.current === bridgeSignature) {
-                assistantBridgeContextSyncSignatureRef.current = '';
-            }
-            console.warn(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} integration context sync failed`, error);
-        });
     }, [
         assistantIframeLoaded,
         assistantIframeRef,
-        assistantSupportsBridge,
+        assistantSupportsAcpContext,
         assistantVisible,
         postAssistantContextToIframe,
         postAssistantContextToIframeWithRetry,
     ]);
 
-    const stopAssistantIntegrationBridge = useCallback(() => {
-        assistantBridgeRef.current?.stop();
-        assistantBridgeRef.current = null;
-        assistantBridgeApiBaseUrlRef.current = '';
-        assistantBridgeIntegrationChannelRef.current = '';
-        assistantTargetPageUrlRef.current = '';
-        assistantBridgeContextSyncSignatureRef.current = '';
-    }, []);
-
-    const ensureAssistantIntegrationBridgeStarted = useCallback((runtime?: AssistantRuntimeState | null) => {
-        assistantOpenedRef.current = true;
-        const resolvedApiBaseUrl = String(
-            runtime?.apiBaseUrl
-            || assistantRuntime?.apiBaseUrl
-            || DEFAULT_ASSISTANT_RUNTIME_STATE.apiBaseUrl,
-        ).trim();
-        const resolvedIntegrationChannel = String(
-            runtime?.projectPath
-            || assistantRuntime?.projectPath
-            || 'axhub',
-        ).trim();
-
-        if (!resolvedApiBaseUrl || !resolvedIntegrationChannel) {
-            return;
-        }
-
+    const syncAssistantImageGenerationConfigToIframe = useCallback((options: { requireLoaded?: boolean } = {}) => {
+        const requireLoaded = options.requireLoaded !== false;
         if (
-            assistantBridgeRef.current
-            && assistantBridgeApiBaseUrlRef.current === resolvedApiBaseUrl
-            && assistantBridgeIntegrationChannelRef.current === resolvedIntegrationChannel
+            !assistantSupportsAcpContext
+            || !assistantVisible
+            || (requireLoaded && !assistantIframeLoaded)
+            || !assistantIframeRef.current?.contentWindow
         ) {
             return;
         }
 
-        stopAssistantIntegrationBridge();
-
-        const bridge = createGenieIntegrationBridge({
-            apiBaseUrl: resolvedApiBaseUrl,
-            integrationChannel: resolvedIntegrationChannel,
-            externalClientId: assistantBridgeExternalClientIdRef.current,
-            probeOnStart: true,
-            targetPageUrl: () => assistantTargetPageUrlRef.current || assistantIframeSrc,
-            onAvailabilityChange: (available) => {
-                if (!available) {
-                    return;
-                }
-                const latestContext = latestAssistantSyncContextRef.current;
-                if (!latestContext) {
-                    return;
-                }
-                void assistantBridgeRef.current?.updateContext(latestContext, 'replace').catch((error) => {
-                    console.warn(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} integration availability resync failed`, error);
-                });
-            },
-        });
-        bridge.start();
-        assistantBridgeRef.current = bridge;
-        assistantBridgeApiBaseUrlRef.current = resolvedApiBaseUrl;
-        assistantBridgeIntegrationChannelRef.current = resolvedIntegrationChannel;
-    }, [
-        assistantRuntime?.apiBaseUrl,
-        assistantRuntime?.projectPath,
-        assistantIframeSrc,
-        stopAssistantIntegrationBridge,
-        DEFAULT_ASSISTANT_RUNTIME_STATE.apiBaseUrl,
-    ]);
-
-    useEffect(() => {
-        if (!assistantOpenedRef.current) {
+        const imageConfigSignature = getAcpImageGenerationConfigSignature(assistantImageGenerationConfig);
+        if (assistantImageGenerationConfigSyncSignatureRef.current === imageConfigSignature) {
             return;
         }
-        ensureAssistantIntegrationBridgeStarted(assistantRuntime);
-    }, [assistantRuntime, ensureAssistantIntegrationBridgeStarted]);
 
-    useEffect(() => () => {
-        stopAssistantIntegrationBridge();
-    }, [stopAssistantIntegrationBridge]);
+        assistantImageGenerationConfigSyncSignatureRef.current = imageConfigSignature;
+        postAssistantImageGenerationConfigToIframeWithRetry(assistantImageGenerationConfig);
+    }, [
+        assistantIframeLoaded,
+        assistantIframeRef,
+        assistantImageGenerationConfig,
+        assistantSupportsAcpContext,
+        assistantVisible,
+        postAssistantImageGenerationConfigToIframeWithRetry,
+    ]);
+
+    const postAssistantContextToWindowWithRetry = useCallback((
+        targetWindow: Window | null,
+        targetUrl: string,
+        context: AssistantContextV1 | null | undefined,
+    ) => {
+        if (!targetWindow || !context) {
+            return;
+        }
+
+        let targetOrigin = '*';
+        try {
+            targetOrigin = new URL(targetUrl, window.location.origin).origin;
+        } catch {
+            // Keep wildcard only for malformed URLs that still opened.
+        }
+
+        const postContext = () => {
+            try {
+                targetWindow.postMessage(buildAcpContextPostMessage(context, 'replace'), targetOrigin);
+            } catch (error) {
+                console.warn(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} child window context sync failed`, error);
+            }
+        };
+
+        postContext();
+        window.setTimeout(postContext, 160);
+        window.setTimeout(postContext, 520);
+        window.setTimeout(postContext, 1200);
+    }, []);
 
     const assistantBaseContextV1 = useMemo<AssistantContextV1>(() => {
         const currentFile = resolveAssistantCurrentFile({
@@ -365,7 +520,6 @@ export function useAssistantPanelController({
             extensions: {
                 source: 'axhub-runtime',
                 projectPath: assistantRuntime?.projectPath || '',
-                provider: genieProvider,
                 viewMode,
                 activeTab,
                 contentMode,
@@ -393,7 +547,6 @@ export function useAssistantPanelController({
         currentDataTable,
         currentMarkdownResource,
         currentTheme,
-        genieProvider,
         selectedItem,
         viewMode,
     ]);
@@ -401,6 +554,13 @@ export function useAssistantPanelController({
     const assistantContextV1 = useMemo<AssistantContextV1>(() => (
         mergeAssistantContextForActiveFile(assistantBaseContextV1, assistantExternalContext)
     ), [assistantBaseContextV1, assistantExternalContext]);
+
+    useEffect(() => {
+        if (assistantResourceThreadBindingSuppressedRef.current) {
+            return;
+        }
+        latestAssistantResourcePathRef.current = getAssistantContextCurrentFilePath(assistantContextV1);
+    }, [assistantContextV1]);
 
     const buildAssistantContextForItem = useCallback((
         item: ItemData,
@@ -430,7 +590,6 @@ export function useAssistantPanelController({
             extensions: {
                 source: 'axhub-runtime',
                 projectPath: assistantRuntime?.projectPath || '',
-                provider: genieProvider,
                 viewMode: resolvedViewMode,
                 activeTab: resolvedActiveTab,
 	                selectedItem: {
@@ -454,7 +613,7 @@ export function useAssistantPanelController({
         }
 
         return mergeGenieContextV1(baseContext, externalContext) ?? baseContext;
-    }, [activeTab, assistantRuntime?.projectPath, genieProvider]);
+    }, [activeTab, assistantRuntime?.projectPath]);
 
     useEffect(() => {
         const nextCurrentFilePath = getAssistantContextCurrentFilePath(assistantBaseContextV1);
@@ -491,7 +650,6 @@ export function useAssistantPanelController({
 
         syncAssistantContextToTargets(nextContext, 'replace', {
             retryIframe: true,
-            forceBridge: true,
         });
     }, [
         assistantBaseContextV1,
@@ -503,7 +661,11 @@ export function useAssistantPanelController({
     }, [assistantContextV1, syncAssistantContextToTargets]);
 
     useEffect(() => {
-        if (!assistantSupportsBridge || !assistantVisible || !assistantIframeLoaded) {
+        syncAssistantImageGenerationConfigToIframe();
+    }, [syncAssistantImageGenerationConfigToIframe]);
+
+    useEffect(() => {
+        if (!assistantSupportsAcpContext || !assistantVisible || !assistantIframeLoaded) {
             return;
         }
 
@@ -515,65 +677,120 @@ export function useAssistantPanelController({
         assistantIframeLoadSyncSignatureRef.current = contextSignature;
         syncAssistantContextToTargets(assistantContextV1, 'replace', {
             retryIframe: true,
-            forceBridge: true,
         });
     }, [
         assistantContextV1,
         assistantIframeLoaded,
-        assistantSupportsBridge,
+        assistantSupportsAcpContext,
         assistantVisible,
         syncAssistantContextToTargets,
+    ]);
+
+    const resolveAssistantThreadLandingUrl = useCallback((
+        sourceUrl: string,
+        targetPath?: string,
+        runtimeOverride?: AssistantRuntimeState | null,
+    ): ResolvedAssistantUrl => {
+        const resourceThreadStoragePath = String(targetPath || '').trim();
+        if (!targetPath) {
+            return {
+                url: sourceUrl,
+                resourceThreadStoragePath,
+            };
+        }
+
+        const runtimeForUrl = runtimeOverride || assistantRuntime;
+        const projectScope = projectId || runtimeForUrl?.projectPath || '';
+        const fallbackResourcePath = resolveAssistantFallbackResourcePathFromUrl(targetPath);
+        const threadId = getAssistantResourceThreadId({
+            projectScope,
+            resourcePath: targetPath,
+        });
+        const resolvedThreadId = threadId || getAssistantResourceThreadIdWithFallback({
+            projectScope,
+            resourcePath: targetPath,
+            fallbackResourcePath,
+        });
+        if (!resolvedThreadId) {
+            return {
+                url: sourceUrl,
+                resourceThreadStoragePath,
+            };
+        }
+        const resolvedResourceThreadStoragePath = threadId
+            ? resourceThreadStoragePath
+            : fallbackResourcePath || resourceThreadStoragePath;
+
+        try {
+            const parsedUrl = new URL(sourceUrl, window.location.origin);
+            parsedUrl.pathname = `/thread/${encodeURIComponent(resolvedThreadId)}`;
+            return {
+                url: parsedUrl.toString(),
+                resourceThreadStoragePath: resolvedResourceThreadStoragePath,
+            };
+        } catch {
+            return {
+                url: sourceUrl,
+                resourceThreadStoragePath,
+            };
+        }
+    }, [
+        assistantRuntime,
+        projectId,
     ]);
 
     const resolveAssistantUrl = useCallback((
         targetUrl?: string,
         targetPath?: string,
         runtimeOverride?: AssistantRuntimeState | null,
-        providerOverride?: GenieProvider | null,
     ) => {
         const runtimeForUrl = runtimeOverride || assistantRuntime;
-        const sourceUrl = targetUrl || buildAssistantIframeUrlForRuntime(runtimeForUrl, providerOverride);
+        const sourceUrl = targetUrl || buildAssistantIframeUrlForRuntime(runtimeForUrl);
         let nextUrl = sourceUrl;
 
         try {
-            const parsedUrl = new URL(appendRequiredGenieOpenParams(sourceUrl, window.location.origin));
+            const parsedUrl = new URL(sourceUrl, window.location.origin);
+            removeLegacyAssistantOpenParams(parsedUrl);
             const runtimeProjectPath = runtimeForUrl?.projectPath || '';
 
             if (!parsedUrl.searchParams.get('cwd') && runtimeProjectPath) {
                 parsedUrl.searchParams.set('cwd', runtimeProjectPath);
             }
 
-            const provider = providerOverride || genieProvider;
-            if (!parsedUrl.searchParams.get('provider') && provider) {
-                parsedUrl.searchParams.set('provider', provider);
-            }
-
-            if (targetPath && !parsedUrl.searchParams.get('targetPath')) {
-                parsedUrl.searchParams.set('targetPath', targetPath);
-            }
-
-            nextUrl = buildAssistantUrlWithContext(parsedUrl.toString(), assistantContextV1);
+            nextUrl = parsedUrl.toString();
         } catch {
-            nextUrl = buildAssistantUrlWithContext(sourceUrl, assistantContextV1);
+            nextUrl = sourceUrl;
         }
 
-        return appendRequiredGenieOpenParams(nextUrl, window.location.origin);
-    }, [assistantContextV1, assistantRuntime, buildAssistantIframeUrlForRuntime, buildAssistantUrlWithContext, genieProvider]);
+        return resolveAssistantThreadLandingUrl(nextUrl, targetPath, runtimeForUrl);
+    }, [
+        assistantRuntime,
+        buildAssistantIframeUrlForRuntime,
+        resolveAssistantThreadLandingUrl,
+    ]);
 
     const openAssistantWithUrl = useCallback((
         targetUrl?: string,
         targetPath?: string,
         runtimeOverride?: AssistantRuntimeState | null,
-        providerOverride?: GenieProvider | null,
+        options: Pick<EnsureAssistantOpenOptions, 'suppressResourceThreadBinding'> = {},
     ) => {
-        const nextUrl = resolveAssistantUrl(targetUrl, targetPath, runtimeOverride, providerOverride);
+        assistantResourceThreadBindingSuppressedRef.current = options.suppressResourceThreadBinding === true;
+        const resolvedAssistantUrl = resolveAssistantUrl(targetUrl, targetPath, runtimeOverride);
+        latestAssistantResourcePathRef.current = options.suppressResourceThreadBinding === true
+            ? ''
+            : resolvedAssistantUrl.resourceThreadStoragePath;
+        const nextUrl = resolvedAssistantUrl.url;
+        assistantIframeCurrentUrlRef.current = nextUrl;
+        latestAssistantNavigationThreadIdRef.current = resolveAcpNavigationThreadId(nextUrl);
 
-        assistantTargetPageUrlRef.current = nextUrl;
-        setAssistantPanelMode('genie');
-        setAssistantPanelMounted(true);
-        setAssistantVisible(true);
-        setAssistantIframeLoaded(false);
-        setAssistantIframeOverrideUrl(nextUrl);
+        flushSync(() => {
+            setAssistantPanelMode('assistant');
+            setAssistantPanelMounted(true);
+            setAssistantVisible(true);
+            setAssistantIframeLoaded(false);
+            setAssistantIframeOverrideUrl(nextUrl);
+        });
     }, [resolveAssistantUrl, setAssistantIframeLoaded]);
 
     const openRawUrlInAssistantPanel = useCallback((url: string) => {
@@ -582,68 +799,39 @@ export function useAssistantPanelController({
             return false;
         }
 
-        assistantOpenedRef.current = false;
-        stopAssistantIntegrationBridge();
+        assistantIframeCurrentUrlRef.current = nextUrl;
+        latestAssistantNavigationThreadIdRef.current = undefined;
         setAssistantPanelMode('external');
         setAssistantPanelMounted(true);
         setAssistantVisible(true);
         setAssistantIframeLoaded(false);
         setAssistantIframeOverrideUrl(nextUrl);
         return true;
-    }, [setAssistantIframeLoaded, stopAssistantIntegrationBridge]);
+    }, [setAssistantIframeLoaded]);
 
     const openAssistantInNewWindowWithUrl = useCallback((
         targetUrl?: string,
         targetPath?: string,
         runtimeOverride?: AssistantRuntimeState | null,
-        providerOverride?: GenieProvider | null,
+        contextOverride?: AssistantContextV1 | null,
     ) => {
-        const nextUrl = resolveAssistantUrl(targetUrl, targetPath, runtimeOverride, providerOverride);
-        assistantTargetPageUrlRef.current = nextUrl;
-        window.open(nextUrl, '_blank', 'noopener,noreferrer');
-    }, [resolveAssistantUrl]);
+        assistantResourceThreadBindingSuppressedRef.current = false;
+        const resolvedAssistantUrl = resolveAssistantUrl(targetUrl, targetPath, runtimeOverride);
+        latestAssistantResourcePathRef.current = resolvedAssistantUrl.resourceThreadStoragePath;
+        const nextUrl = resolvedAssistantUrl.url;
+        assistantIframeCurrentUrlRef.current = nextUrl;
+        latestAssistantNavigationThreadIdRef.current = resolveAcpNavigationThreadId(nextUrl);
+        const windowFeatures = contextOverride ? undefined : 'noopener,noreferrer';
+        const childWindow = window.open(nextUrl, '_blank', windowFeatures);
+        postAssistantContextToWindowWithRetry(childWindow, nextUrl, contextOverride);
+    }, [postAssistantContextToWindowWithRetry, resolveAssistantUrl]);
 
-    const showAssistantNotReadyModal = useCallback((
-        runtime: AssistantRuntimeState,
-        trigger: AssistantTriggerSource,
-        _targetUrl?: string,
-        _targetPath?: string,
-        _openTarget: 'iframe' | 'window' = 'iframe',
+    const openAISettingsForAssistantRuntime = useCallback((
+        runtime?: AssistantRuntimeState | null,
+        message?: string,
     ) => {
-        const hints = runtime.health.hints;
-        const setupCommand = String(hints.installGlobal || DEFAULT_ASSISTANT_INSTALL_CMD).trim() || DEFAULT_ASSISTANT_INSTALL_CMD;
-
-        modal.confirm({
-            title: 'AI 助手未就绪',
-            content: (
-                <div className="space-y-3">
-                    <div className="whitespace-pre-line text-sm leading-6 text-muted-foreground">
-                        请先通过 CLI 启动 AI 助手。
-                    </div>
-                    <div className="rounded-2xl border border-border/70 bg-muted/70 px-4 py-3 font-mono text-[13px] leading-6 text-foreground shadow-sm">
-                        {setupCommand}
-                    </div>
-                    <div className="text-xs leading-5 text-muted-foreground">
-                        在终端执行这条启动命令，完成后再回来打开 AI。
-                    </div>
-                </div>
-            ),
-            okText: '复制命令',
-            cancelText: '稍后再说',
-            onOk: async () => {
-                try {
-                    await navigator.clipboard.writeText(setupCommand);
-                    messageApi.success('启动命令已复制');
-                } catch {
-                    messageApi.warning('复制命令失败，请手动复制');
-                }
-            },
-        });
-
-        if (trigger === 'event') {
-            messageApi.warning('AI 助手未就绪，已回退为安装引导。');
-        }
-    }, [messageApi, modal, DEFAULT_ASSISTANT_INSTALL_CMD]);
+        onOpenAISettings?.(runtime, message);
+    }, [onOpenAISettings]);
 
     const waitForAssistantRuntimeReady = useCallback(async (runtime: AssistantRuntimeState): Promise<AssistantRuntimeState> => {
         if (runtime.health.status !== 'runtime_unreachable') {
@@ -658,7 +846,7 @@ export function useAssistantPanelController({
             await new Promise((resolve) => setTimeout(resolve, intervalMs));
 
             try {
-                const nextRuntime = await refreshRuntime() as AssistantRuntimeState;
+                const nextRuntime = await refreshRuntime({ autoStart: false }) as AssistantRuntimeState;
                 latestRuntime = nextRuntime;
                 setAssistantRuntime(nextRuntime);
 
@@ -687,14 +875,18 @@ export function useAssistantPanelController({
         targetUrl?: string,
         targetPath?: string,
         openTarget: 'iframe' | 'window' = 'iframe',
-        providerOverride?: GenieProvider | null,
+        contextOverride?: AssistantContextV1 | null,
+        options: EnsureAssistantOpenOptions = {},
     ): Promise<boolean> => {
         if (assistantChecking) {
             return false;
         }
 
         setAssistantChecking(true);
-        const hideLoading = messageApi.loading('正在打开 AI...', 0);
+        const hideLoading = options.loadingText === false
+            ? () => undefined
+            : messageApi.loading(options.loadingText || '正在打开 AI...', 0);
+        const shouldOpenSettingsOnFailure = options.openSettingsOnFailure !== false;
         console.info(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} begin runtime check`, {
             trigger,
             openTarget,
@@ -703,7 +895,7 @@ export function useAssistantPanelController({
         });
 
         try {
-            const runtime = await apiService.getAssistantRuntime({ projectId }) as AssistantRuntimeState;
+            const runtime = await apiService.getAssistantRuntime({ autoStart: true, projectId }) as AssistantRuntimeState;
             setAssistantRuntime(runtime);
             console.info(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} runtime response`, {
                 status: runtime.health.status,
@@ -717,11 +909,12 @@ export function useAssistantPanelController({
             const resolvedRuntime = await waitForAssistantRuntimeReady(runtime);
 
             if (resolvedRuntime.health.status === 'ready') {
-                ensureAssistantIntegrationBridgeStarted(resolvedRuntime);
                 if (openTarget === 'window') {
-                    openAssistantInNewWindowWithUrl(targetUrl, targetPath, resolvedRuntime, providerOverride);
+                    openAssistantInNewWindowWithUrl(targetUrl, targetPath, resolvedRuntime, contextOverride);
                 } else {
-                    openAssistantWithUrl(targetUrl, targetPath, resolvedRuntime, providerOverride);
+                    openAssistantWithUrl(targetUrl, targetPath, resolvedRuntime, {
+                        suppressResourceThreadBinding: options.suppressResourceThreadBinding,
+                    });
                 }
                 return true;
             }
@@ -731,13 +924,19 @@ export function useAssistantPanelController({
                 message: resolvedRuntime.health.message,
                 hints: resolvedRuntime.health.hints,
             });
-            showAssistantNotReadyModal(resolvedRuntime, trigger, targetUrl, targetPath, openTarget);
+            if (shouldOpenSettingsOnFailure) {
+                openAISettingsForAssistantRuntime(resolvedRuntime, resolvedRuntime.health.message || '本地 ACP 服务未链接');
+                messageApi.warning('已打开 AI 设置，请检查本地 ACP 服务');
+            }
         } catch (error: any) {
             const runtime = assistantRuntime || DEFAULT_ASSISTANT_RUNTIME_STATE;
             setAssistantRuntime(runtime);
             console.error(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} runtime check failed`, error);
-            messageApi.error(error?.message || '检测 AI 助手状态失败');
-            showAssistantNotReadyModal(runtime, trigger, targetUrl, targetPath, openTarget);
+            if (shouldOpenSettingsOnFailure) {
+                messageApi.error(error?.message || '检测 AI 助手状态失败');
+                openAISettingsForAssistantRuntime(runtime, error?.message || '检测 AI 助手状态失败');
+                messageApi.warning('已打开 AI 设置，请检查本地 ACP 服务');
+            }
         } finally {
             hideLoading();
             setAssistantChecking(false);
@@ -747,123 +946,55 @@ export function useAssistantPanelController({
     }, [
         assistantChecking,
         assistantRuntime,
-        ensureAssistantIntegrationBridgeStarted,
         messageApi,
         openAssistantInNewWindowWithUrl,
         openAssistantWithUrl,
         projectId,
         setAssistantChecking,
-        showAssistantNotReadyModal,
+        openAISettingsForAssistantRuntime,
         waitForAssistantRuntimeReady,
         DEFAULT_ASSISTANT_RUNTIME_STATE,
     ]);
 
-    const handleWebEditorGenieRequest = useCallback(async (payload: WebEditorGenieRequestPayload) => {
-        const normalizedPayload = normalizeWebEditorGenieRequestPayload(payload, {
-            fallbackCurrentFile: assistantContextV1.currentFile,
+    useEffect(() => {
+        const nextProjectId = projectId || '';
+        if (previousAssistantProjectIdRef.current === nextProjectId) {
+            return;
+        }
+
+        previousAssistantProjectIdRef.current = nextProjectId;
+        const reopenMountedAssistantForProjectChange = assistantPanelMounted
+            && assistantVisible
+            && assistantSupportsAcpContext;
+        if (!assistantPanelMounted || !assistantSupportsAcpContext) {
+            return;
+        }
+
+        assistantResourceThreadBindingSuppressedRef.current = false;
+        assistantIframeCurrentUrlRef.current = '';
+        latestAssistantResourcePathRef.current = getAssistantContextCurrentFilePath(assistantContextV1);
+        latestAssistantNavigationThreadIdRef.current = undefined;
+        assistantIframeLoadSyncSignatureRef.current = '';
+        assistantImageGenerationConfigSyncSignatureRef.current = '';
+        setAssistantIframeLoaded(false);
+        setAssistantIframeOverrideUrl(null);
+
+        if (!reopenMountedAssistantForProjectChange) {
+            return;
+        }
+
+        void ensureAssistantReadyThenOpen('event', undefined, getAssistantContextCurrentFilePath(assistantContextV1), 'iframe', null, {
+            loadingText: false,
+            openSettingsOnFailure: false,
         });
-        if (!normalizedPayload) {
-            messageApi.warning('收到无效的 Genie 请求');
-            return;
-        }
-
-        const targetPath = normalizedPayload.targetPath?.trim() || undefined;
-        const context = normalizedPayload.context;
-        const prompt = String(normalizedPayload.prompt || '').trim();
-        const isSelectionAppend = normalizedPayload.mode === 'selection_context';
-
-        const nextContext: AssistantContextV1 | null = (() => {
-            if (!context) {
-                return assistantExternalContext;
-            }
-            const activeBase = normalizeGenieContextV1(assistantContextV1, {
-                fallbackCurrentFile: assistantContextV1.currentFile,
-            }) ?? {
-                version: '1' as const,
-                systemContext: '',
-                currentFile: normalizeGenieCurrentFileV1(assistantContextV1.currentFile),
-                selectedElements: [],
-                extensions: {},
-            };
-            const base = activeBase;
-            const mergedSelectedElements = mergeSelectedElementsBySelector(
-                base.selectedElements,
-                context.selectedElements,
-            );
-            return mergeGenieContextV1(base, {
-                version: '1',
-                systemContext: context.systemContext || base.systemContext,
-                currentFile: normalizeGenieCurrentFileV1(context.currentFile, normalizeGenieCurrentFileV1(base.currentFile)),
-                selectedElements: dedupeSelectedElementsByTriple(mergedSelectedElements),
-                extensions: {
-                    ...(base.extensions || {}),
-                    ...(context.extensions || {}),
-                },
-            });
-        })();
-
-        if (nextContext) {
-            setAssistantExternalContext(nextContext);
-            latestAssistantSyncContextRef.current = nextContext;
-        }
-
-        let isReady =
-            assistantVisible
-            && assistantIframeLoaded
-            && !!assistantIframeRef.current?.contentWindow;
-
-        if (!isReady) {
-            const openContext = nextContext ?? context;
-            const openUrl = openContext
-                ? buildAssistantUrlWithContext(assistantIframeUrl, openContext)
-                : undefined;
-            const opened = await ensureAssistantReadyThenOpen('event', openUrl, targetPath);
-            if (!opened) {
-                return;
-            }
-            isReady = await waitForAssistantIframeReady(8000);
-            if (!isReady) {
-                messageApi.warning('助手面板尚未加载完成，请稍后再试。');
-                return;
-            }
-        }
-
-        if (nextContext) {
-            const contextToSync = nextContext;
-            if (contextToSync) {
-                syncAssistantContextToTargets(contextToSync, 'replace', {
-                    retryIframe: true,
-                    forceBridge: true,
-                });
-            }
-        }
-
-        if (isSelectionAppend) {
-            return;
-        }
-
-        if (!prompt) {
-            messageApi.warning('缺少发送内容');
-            return;
-        }
-
-        const posted = postAssistantPromptToIframe(prompt, true);
-        if (!posted) {
-            messageApi.error('发送失败：无法写入助手输入框');
-        }
     }, [
         assistantContextV1,
-        assistantExternalContext,
-        assistantIframeLoaded,
-        assistantIframeRef,
-        assistantIframeUrl,
+        assistantPanelMounted,
+        assistantSupportsAcpContext,
         assistantVisible,
-        buildAssistantUrlWithContext,
         ensureAssistantReadyThenOpen,
-        messageApi,
-        postAssistantPromptToIframe,
-        syncAssistantContextToTargets,
-        waitForAssistantIframeReady,
+        projectId,
+        setAssistantIframeLoaded,
     ]);
 
     const syncAssistantCanvasComments = useCallback((annotations: CanvasElementContextInfo[], currentFilePath: string) => {
@@ -881,22 +1012,95 @@ export function useAssistantPanelController({
         setAssistantExternalContext(nextContext);
         syncAssistantContextToTargets(nextContext, 'replace', {
             retryIframe: true,
-            forceBridge: true,
         });
     }, [
         assistantBaseContextV1,
         syncAssistantContextToTargets,
     ]);
 
+    const addContextItems = useCallback((items: AcpContextItem[]) => {
+        if (!assistantContextAppendAvailable || !Array.isArray(items) || items.length === 0) {
+            return false;
+        }
+
+        const postItems = () => {
+            postAssistantContextItemsToIframe(items);
+        };
+
+        if (assistantIframeLoaded && assistantIframeRef.current?.contentWindow) {
+            postItems();
+            return true;
+        }
+
+        void waitForAssistantIframeReady().then((ready) => {
+            if (ready) {
+                postItems();
+            }
+        });
+        return true;
+    }, [
+        assistantContextAppendAvailable,
+        assistantIframeLoaded,
+        assistantIframeRef,
+        postAssistantContextItemsToIframe,
+        waitForAssistantIframeReady,
+    ]);
+
+    const addImageAttachment = useCallback(async (attachment: AssistantImageAttachmentPayload) => {
+        if (!assistantSupportsAcpContext || !assistantVisible) {
+            messageApi.warning('请先打开 AI 助手');
+            return false;
+        }
+        try {
+            await addImageAttachmentWithRetry(attachment);
+            return true;
+        } catch (error: any) {
+            messageApi.error(error?.message || '添加图片到 AI 失败');
+            return false;
+        }
+    }, [
+        addImageAttachmentWithRetry,
+        assistantSupportsAcpContext,
+        assistantVisible,
+        messageApi,
+    ]);
+
+    const appendComposerText = useCallback(async (text: string) => {
+        if (!assistantSupportsAcpContext || !assistantVisible) {
+            messageApi.warning('请先打开 AI 助手');
+            return false;
+        }
+        try {
+            await appendComposerTextWithRetry(text);
+            return true;
+        } catch (error: any) {
+            messageApi.error(error?.message || '填充 AI 提示词失败');
+            return false;
+        }
+    }, [
+        appendComposerTextWithRetry,
+        assistantSupportsAcpContext,
+        assistantVisible,
+        messageApi,
+    ]);
+
+    const addCanvasElementsToAssistantContext = useCallback((
+        elements: CanvasElementContextInfo[],
+        currentFilePath: string,
+    ) => {
+        if (!assistantContextAppendAvailable || !Array.isArray(elements) || elements.length === 0) {
+            return false;
+        }
+
+        return addContextItems(buildAssistantContextItemsFromCanvasElements(elements, currentFilePath));
+    }, [
+        addContextItems,
+        assistantContextAppendAvailable,
+    ]);
+
     const handleToggleAssistant = useCallback(() => {
         if (assistantVisible) {
             setAssistantVisible(false);
-            setAssistantPanelMounted(false);
-            setAssistantIframeLoaded(false);
-            setAssistantIframeOverrideUrl(null);
-            setAssistantPanelMode('genie');
-            assistantOpenedRef.current = false;
-            stopAssistantIntegrationBridge();
             return;
         }
 
@@ -905,18 +1109,44 @@ export function useAssistantPanelController({
             return;
         }
 
-        void ensureAssistantReadyThenOpen('button');
+        void ensureAssistantReadyThenOpen(
+            'button',
+            undefined,
+            getAssistantContextCurrentFilePath(assistantContextV1),
+            'iframe',
+        );
+    }, [
+        assistantContextV1,
+        assistantPanelMounted,
+        assistantVisible,
+        ensureAssistantReadyThenOpen,
+    ]);
+
+    const handleOpenGenieWebAgent = useCallback((targetPath?: string, _provider?: GenieProvider) => {
+        void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe');
+    }, [ensureAssistantReadyThenOpen]);
+
+    const hideAssistantPanelTemporarily = useCallback(() => {
+        setAssistantVisible(false);
+    }, []);
+
+    const restoreAssistantPanel = useCallback((targetPath?: string) => {
+        if (assistantVisible) {
+            return true;
+        }
+        if (assistantPanelMounted) {
+            setAssistantVisible(true);
+            return true;
+        }
+        return ensureAssistantReadyThenOpen('event', undefined, targetPath, 'iframe', null, {
+            loadingText: false,
+            openSettingsOnFailure: false,
+        });
     }, [
         assistantPanelMounted,
         assistantVisible,
         ensureAssistantReadyThenOpen,
-        setAssistantIframeLoaded,
-        stopAssistantIntegrationBridge,
     ]);
-
-    const handleOpenGenieWebAgent = useCallback((targetPath?: string, provider?: GenieProvider) => {
-        void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe', provider);
-    }, [ensureAssistantReadyThenOpen]);
 
     useEffect(() => {
         const handleOpenAssistantUrl = (event: Event) => {
@@ -937,22 +1167,6 @@ export function useAssistantPanelController({
         };
     }, [ensureAssistantReadyThenOpen]);
 
-    const tryOpenByAssistantIframe = useCallback((url: string, targetPath?: string) => {
-        try {
-            const event = new CustomEvent<OpenAssistantUrlEventDetail>(ASSISTANT_OPEN_URL_EVENT, {
-                detail: {
-                    url,
-                    ...(targetPath ? { targetPath } : {}),
-                },
-                cancelable: true,
-            });
-            const dispatched = window.dispatchEvent(event);
-            return !dispatched;
-        } catch {
-            return false;
-        }
-    }, []);
-
     const clearAssistantSelectedElementsOnExit = useCallback(() => {
         setAssistantExternalContext((prev) => {
             if (!prev) {
@@ -972,7 +1186,6 @@ export function useAssistantPanelController({
             extensions: assistantContextV1.extensions,
         }, 'replace', {
             retryIframe: true,
-            forceBridge: true,
         });
     }, [
         assistantContextV1,
@@ -980,13 +1193,7 @@ export function useAssistantPanelController({
     ]);
 
     const handleOpenAssistantInNewWindowNoContext = useCallback(() => {
-        try {
-            const url = new URL(assistantIframeUrl);
-            url.searchParams.set('context', JSON.stringify({ version: '1' }));
-            void ensureAssistantReadyThenOpen('button', url.toString(), undefined, 'window');
-        } catch {
-            void ensureAssistantReadyThenOpen('button', assistantIframeUrl, undefined, 'window');
-        }
+        void ensureAssistantReadyThenOpen('button', assistantIframeUrl, undefined, 'window');
     }, [assistantIframeUrl, ensureAssistantReadyThenOpen]);
 
     const handleOpenAssistantWithItemContext = useCallback((item: ItemData) => {
@@ -995,16 +1202,132 @@ export function useAssistantPanelController({
             activeTab: 'prototypes',
         });
         const targetPath = getGenieCurrentFilePath(itemContext.currentFile);
-        const targetUrl = buildAssistantUrlWithContext(assistantIframeUrl, itemContext);
+        setAssistantExternalContext(itemContext);
+        latestAssistantSyncContextRef.current = itemContext;
 
         try {
-            const url = new URL(targetUrl);
-            url.searchParams.set('targetPath', targetPath);
-            void ensureAssistantReadyThenOpen('button', url.toString(), undefined, 'window');
+            const url = new URL(assistantIframeUrl);
+            removeLegacyAssistantOpenParams(url);
+            void ensureAssistantReadyThenOpen('button', url.toString(), undefined, 'window', itemContext);
         } catch {
-            void ensureAssistantReadyThenOpen('button', targetUrl, targetPath, 'window');
+            void ensureAssistantReadyThenOpen('button', assistantIframeUrl, targetPath, 'window', itemContext);
         }
-    }, [assistantIframeUrl, buildAssistantContextForItem, buildAssistantUrlWithContext, ensureAssistantReadyThenOpen]);
+    }, [assistantIframeUrl, buildAssistantContextForItem, ensureAssistantReadyThenOpen]);
+
+    const openAssistantWithContext = useCallback(async (context: AssistantContextV1 | null) => {
+        if (context) {
+            setAssistantExternalContext(context);
+            latestAssistantSyncContextRef.current = context;
+        }
+        const targetPath = context ? getAssistantContextCurrentFilePath(context) : undefined;
+        return ensureAssistantReadyThenOpen('button', assistantIframeUrl, targetPath, 'iframe', context);
+    }, [assistantIframeUrl, ensureAssistantReadyThenOpen]);
+
+    const openAssistantWithContextAndSubmitPrompt = useCallback(async (
+        context: AssistantContextV1 | null,
+        prompt: string,
+        options: OpenAssistantSubmitOptions = {},
+    ) => {
+        const text = String(prompt || '').trim();
+        if (!text) {
+            messageApi.warning('请输入提示词');
+            return false;
+        }
+
+        const shouldForceNewThread = options.forceNewThread === true;
+        assistantResourceThreadBindingSuppressedRef.current = shouldForceNewThread;
+        if (shouldForceNewThread) {
+            latestAssistantNavigationThreadIdRef.current = undefined;
+        }
+        const panelAlreadyOpen = assistantSupportsAcpContext
+            && (assistantVisible || assistantPanelMounted)
+            && Boolean(assistantIframeRef.current?.contentWindow);
+        if (panelAlreadyOpen && !assistantVisible) {
+            setAssistantVisible(true);
+        }
+        let hideLoading = panelAlreadyOpen
+            ? () => undefined
+            : messageApi.loading('正在启动 AI 助手...', 0);
+        const closeLoading = () => {
+            hideLoading();
+            hideLoading = () => undefined;
+        };
+        try {
+            if (context) {
+                setAssistantExternalContext(context);
+                latestAssistantSyncContextRef.current = context;
+                if (!shouldForceNewThread) {
+                    syncAssistantContextToTargets(context, 'replace', {
+                        retryIframe: true,
+                    });
+                }
+            }
+
+            const targetPath = shouldForceNewThread
+                ? undefined
+                : context ? getAssistantContextCurrentFilePath(context) : undefined;
+            const assistantOpenUrl = assistantIframeUrl;
+            if (shouldForceNewThread) {
+                latestAssistantResourcePathRef.current = '';
+            } else if (targetPath) {
+                latestAssistantResourcePathRef.current = targetPath;
+            }
+            const opened = panelAlreadyOpen
+                ? true
+                : await ensureAssistantReadyThenOpen('button', assistantOpenUrl, targetPath, 'iframe', context, {
+                    loadingText: false,
+                    suppressResourceThreadBinding: shouldForceNewThread,
+                });
+            if (!opened) {
+                return false;
+            }
+
+            await waitForAssistantPanelPaint();
+            const ready = panelAlreadyOpen
+                ? await waitForAssistantIframeReady(8_000)
+                : await waitForAssistantIframeReady(30_000);
+            if (!ready) {
+                messageApi.error('AI 助手未就绪，请稍后重试');
+                return false;
+            }
+
+            if (context) {
+                postAssistantContextToIframeWithRetry(context, 'replace');
+            }
+
+            closeLoading();
+            await submitPromptWithRetry(text, { newThread: shouldForceNewThread });
+            return true;
+        } catch (error: any) {
+            messageApi.error(error?.message || '提交 AI 助手对话失败');
+            return false;
+        } finally {
+            if (shouldForceNewThread) {
+                assistantResourceThreadBindingSuppressedRef.current = false;
+                latestAssistantResourcePathRef.current = context ? getAssistantContextCurrentFilePath(context) : getAssistantContextCurrentFilePath(assistantContextV1);
+                const latestNavigationThreadId = latestAssistantNavigationThreadIdRef.current;
+                if (latestNavigationThreadId !== undefined) {
+                    handleAssistantActiveThreadChange(latestNavigationThreadId);
+                }
+            }
+            closeLoading();
+        }
+    }, [
+        assistantContextV1,
+        assistantIframeLoaded,
+        assistantIframeRef,
+        assistantIframeUrl,
+        assistantPanelMounted,
+        assistantSupportsAcpContext,
+        assistantVisible,
+        ensureAssistantReadyThenOpen,
+        handleAssistantActiveThreadChange,
+        messageApi,
+        postAssistantContextToIframeWithRetry,
+        submitPromptWithRetry,
+        syncAssistantContextToTargets,
+        waitForAssistantIframeReady,
+    ]);
 
     const probeAssistantRuntimeSilently = useCallback(async () => {
         if (assistantChecking) {
@@ -1025,38 +1348,29 @@ export function useAssistantPanelController({
         }
     }, [assistantChecking, assistantRuntime, refreshRuntime, setAssistantRuntime]);
 
-    const startAssistantRuntimeForWebEditor = useCallback(async () => {
+    const connectAssistantRuntimeSilently = useCallback(async () => {
         if (assistantChecking) {
             return assistantRuntime;
         }
 
         if (assistantRuntime?.health.status === 'ready') {
-            ensureAssistantIntegrationBridgeStarted(assistantRuntime);
             return assistantRuntime;
         }
 
-        setAssistantChecking(true);
         try {
-            const runtime = await apiService.getAssistantRuntime({ projectId }) as AssistantRuntimeState;
+            const runtime = await refreshRuntime({ autoStart: true }) as AssistantRuntimeState;
             setAssistantRuntime(runtime);
             const resolvedRuntime = await waitForAssistantRuntimeReady(runtime);
             setAssistantRuntime(resolvedRuntime);
-            if (resolvedRuntime.health.status === 'ready') {
-                ensureAssistantIntegrationBridgeStarted(resolvedRuntime);
-            }
             return resolvedRuntime;
         } catch (error) {
-            console.warn(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} web editor runtime start failed`, error);
+            console.warn(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} silent runtime connect failed`, error);
             return assistantRuntime;
-        } finally {
-            setAssistantChecking(false);
         }
     }, [
         assistantChecking,
         assistantRuntime,
-        ensureAssistantIntegrationBridgeStarted,
-        projectId,
-        setAssistantChecking,
+        refreshRuntime,
         setAssistantRuntime,
         waitForAssistantRuntimeReady,
     ]);
@@ -1079,11 +1393,14 @@ export function useAssistantPanelController({
 
     const handleAssistantIframeLoad = useCallback(() => {
         assistantIframeLoadSyncSignatureRef.current = '';
+        assistantImageGenerationConfigSyncSignatureRef.current = '';
         setAssistantIframeLoaded(true);
-    }, [setAssistantIframeLoaded]);
+        syncAssistantImageGenerationConfigToIframe({ requireLoaded: false });
+    }, [setAssistantIframeLoaded, syncAssistantImageGenerationConfigToIframe]);
 
     return {
         assistantVisible,
+        assistantContextAppendAvailable,
         assistantPanelMounted,
         assistantPanelWidth,
         setAssistantPanelWidth,
@@ -1095,18 +1412,23 @@ export function useAssistantPanelController({
         assistantContextV1,
         assistantProjectPath: assistantRuntime?.projectPath || '',
         assistantApiBaseUrl: (assistantRuntime?.apiBaseUrl || DEFAULT_ASSISTANT_RUNTIME_STATE.apiBaseUrl).trim(),
-        assistantWebEditorClientId: webEditorIntegrationClientIdRef.current,
         probeAssistantRuntimeSilently,
-        startAssistantRuntimeForWebEditor,
+        connectAssistantRuntimeSilently,
+        addCanvasElementsToAssistantContext,
+        addContextItems,
+        addImageAttachment,
+        appendComposerText,
         handleToggleAssistant,
         handleOpenGenieWebAgent,
+        hideAssistantPanelTemporarily,
+        restoreAssistantPanel,
         openRawUrlInAssistantPanel,
-        handleWebEditorGenieRequest,
         syncAssistantCanvasComments,
         clearAssistantSelectedElementsOnExit,
-        tryOpenByAssistantIframe,
         handleOpenAssistantInNewWindowNoContext,
         handleOpenAssistantWithItemContext,
+        openAssistantWithContext,
+        openAssistantWithContextAndSubmitPrompt,
         handleCopyProjectDirectory: handleCopyProjectDirectoryForMobile,
     };
 }

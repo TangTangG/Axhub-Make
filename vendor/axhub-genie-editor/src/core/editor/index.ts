@@ -86,6 +86,8 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     promptContext: resolvedOptions.promptContext,
     projectPath: resolvedProjectPath,
     getResourceContext: resolvedOptions.host.getResourceContext,
+    getPersistedPrototypeCommentsDocument: () =>
+      persistence?.getPersistedPrototypeCommentsDocument() ?? null,
     buildCopyPromptOverride: resolvedOptions.host.buildCopyPrompt,
   });
   const feedback = createFeedbackService({
@@ -284,6 +286,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
       disablePageAnimations: false,
       pageZoomEnabled: false,
       copySkillInstallPromptDisabled: true,
+      selectionModeActive: true,
       fullExitAvailable: false,
     };
   }
@@ -307,6 +310,13 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
   ): Promise<boolean> {
     if (destroyed) return false;
     return state.propertyPanel?.runHostToolbarAction?.(action) ?? false;
+  }
+
+  function refresh(): void {
+    if (destroyed) return;
+    state.breadcrumbs?.refresh();
+    state.propertyPanel?.refresh();
+    state.positionTracker?.forceUpdate(true);
   }
 
   function normalizeExternalTaskRef(
@@ -585,6 +595,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     state,
     changes,
     getResourceContext: resolvedOptions.host.getResourceContext,
+    persistenceAdapter: resolvedOptions.host.persistenceAdapter,
     interactionProfile: resolvedOptions.interactionProfile,
   });
 
@@ -813,6 +824,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     getState,
     getStatus,
     subscribeStatus,
+    refresh,
     getSelectedElement: buildSelectedElementSummary,
     getModifiedElements,
     getTextChanges,

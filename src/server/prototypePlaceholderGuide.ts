@@ -4,7 +4,7 @@ export const PROTOTYPE_PLACEHOLDER_GUIDE = {
   description: '告诉 AI 你想做什么：目标用户、使用场景、页面内容和参考风格。',
   steps: [
     '在本地 AI 软件中打开本页面',
-    '打开画布创作原型',
+    '打开草稿创作原型',
   ],
   tips: [
     '模型不要用 auto，推荐：Claude Opus 4.7、Gemini 3.1 Pro、GPT-5.5、Kimi K2.6、GLM-5.1。',

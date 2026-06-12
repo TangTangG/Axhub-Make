@@ -29,4 +29,17 @@ describe('PresentationArea resource folder source', () => {
     expect(reviewPanelSource).not.toContain('onClose');
     expect(reviewPanelSource).not.toContain('handleReviewPanelToggle');
   });
+
+  it('forwards pane-scoped prototype prompt actions into the content area', () => {
+    const source = readPresentationAreaSource();
+
+    expect(source).toContain('onRunPrototypePanePromptAction={props.handleRunPrototypePanePromptAction}');
+  });
+
+  it('forwards canvas AI prompt submissions into the content area', () => {
+    const source = readPresentationAreaSource();
+
+    expect(source).toContain('onSubmitCanvasAssistantPrompt={props.onSubmitCanvasAssistantPrompt}');
+    expect(source).not.toContain('onSubmitPrototypeAssistantPrompt={props.onSubmitPrototypeAssistantPrompt}');
+  });
 });

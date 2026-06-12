@@ -3,9 +3,9 @@ import path from 'node:path';
 
 import { getConfigPath, getGlobalServerConfigPath } from './paths.ts';
 
-export type ServerPromptClientPreference = 'genie:codex' | 'genie:claude' | 'genie:gemini' | 'manual';
-export type ServerAcpxExecutionMode = 'prompt' | 'exec';
-export type ServerAcpxPermissionMode = 'approve-all';
+export type ServerPromptClientPreference = 'acp:codex' | 'acp:claude' | 'acp:gemini' | 'acp:opencode' | 'manual';
+export type ServerAcpExecutionMode = 'prompt' | 'exec';
+export type ServerAcpPermissionMode = 'approve-all';
 
 export type ServerIDEPreference =
   | 'cursor'
@@ -14,7 +14,6 @@ export type ServerIDEPreference =
   | 'windsurf'
   | 'vscode'
   | 'antigravity'
-  | 'kiro'
   | 'qoder'
   | 'none'
   | `web:${string}`
@@ -22,10 +21,6 @@ export type ServerIDEPreference =
 
 export type ExcalidrawPropertyPanelModePreference = 'collapsed' | 'expanded';
 export type ExcalidrawPropertyPanelPositionPreference = 'left' | 'right';
-export type AiImageGenerationApiMode = 'images' | 'responses';
-export type AiImageGenerationQuality = 'auto' | 'low' | 'medium' | 'high';
-export type AiImageGenerationOutputFormat = 'png' | 'jpeg' | 'webp';
-export type AiImageGenerationModeration = 'auto' | 'low';
 export type ToolOpenKind = 'ide' | 'cli' | 'web' | 'local-app';
 export type ToolOpenMode = 'direct-app' | 'app-path' | 'browser-deeplink' | 'deeplink' | 'terminal' | 'managed-web';
 
@@ -38,29 +33,28 @@ export interface ToolOpenStateEntry {
 
 export type ToolOpenState = Record<string, ToolOpenStateEntry>;
 
+export type AiImageGenerationLastTestStatus = 'passed' | 'failed';
+
+export interface AiImageGenerationLastTest {
+  status: AiImageGenerationLastTestStatus;
+  message: string;
+  testedAt: number;
+}
+
 export interface AiImageGenerationConfig {
   baseUrl: string;
   apiKey: string | null;
   model: string;
-  apiMode: AiImageGenerationApiMode;
-  timeout: number;
-  size: string;
-  quality: AiImageGenerationQuality;
-  outputFormat: AiImageGenerationOutputFormat;
-  outputCompression: number | null;
-  moderation: AiImageGenerationModeration;
-  n: number;
-  codexCli: boolean;
-  responseFormatB64Json: boolean;
+  lastTest?: AiImageGenerationLastTest;
 }
 
 export interface MakeServerConfig {
   automation: {
     defaultPromptClient: ServerPromptClientPreference;
     defaultIDE: ServerIDEPreference;
-    acpx: {
-      mode: ServerAcpxExecutionMode;
-      permission: ServerAcpxPermissionMode;
+    acp: {
+      mode: ServerAcpExecutionMode;
+      permission: ServerAcpPermissionMode;
       timeout: number;
     };
   };
@@ -93,9 +87,9 @@ type DeepPartial<T> = {
 
 const DEFAULT_SERVER_CONFIG: MakeServerConfig = {
   automation: {
-    defaultPromptClient: 'genie:codex',
+    defaultPromptClient: 'acp:codex',
     defaultIDE: 'none',
-    acpx: {
+    acp: {
       mode: 'prompt',
       permission: 'approve-all',
       timeout: 1800,
@@ -110,16 +104,6 @@ const DEFAULT_SERVER_CONFIG: MakeServerConfig = {
       baseUrl: 'https://api.openai.com/v1',
       apiKey: null,
       model: 'gpt-image-2',
-      apiMode: 'images',
-      timeout: 600,
-      size: 'auto',
-      quality: 'auto',
-      outputFormat: 'png',
-      outputCompression: null,
-      moderation: 'auto',
-      n: 1,
-      codexCli: false,
-      responseFormatB64Json: true,
     },
   },
   uiPreferences: {
@@ -130,11 +114,25 @@ const DEFAULT_SERVER_CONFIG: MakeServerConfig = {
 };
 
 const PROMPT_CLIENT_VALUES = new Set<ServerPromptClientPreference>([
-  'genie:codex',
-  'genie:claude',
-  'genie:gemini',
+  'acp:codex',
+  'acp:claude',
+  'acp:gemini',
+  'acp:opencode',
   'manual',
 ]);
+
+const LEGACY_PROMPT_CLIENT_VALUES: Record<string, ServerPromptClientPreference> = {
+  codex: 'acp:codex',
+  openai: 'acp:codex',
+  'genie:codex': 'acp:codex',
+  claude: 'acp:claude',
+  claudecode: 'acp:claude',
+  'genie:claude': 'acp:claude',
+  gemini: 'acp:gemini',
+  'genie:gemini': 'acp:gemini',
+  opencode: 'acp:opencode',
+  'genie:opencode': 'acp:opencode',
+};
 
 const IDE_VALUES = new Set<ServerIDEPreference>([
   'cursor',
@@ -143,7 +141,6 @@ const IDE_VALUES = new Set<ServerIDEPreference>([
   'windsurf',
   'vscode',
   'antigravity',
-  'kiro',
   'qoder',
   'none',
 ]);
@@ -224,15 +221,28 @@ function normalizePositiveInteger(value: unknown, fallback: number, options: { m
   return rounded;
 }
 
-function normalizeOutputCompression(value: unknown, fallback: number | null): number | null {
+function normalizeAiImageGenerationLastTest(
+  value: unknown,
+  fallback?: AiImageGenerationLastTest,
+): AiImageGenerationLastTest | undefined {
   if (value === null) {
-    return null;
+    return undefined;
   }
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  const data = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const status = data.status === 'passed' || data.status === 'failed'
+    ? data.status
+    : fallback?.status;
+  const testedAt = typeof data.testedAt === 'number' && Number.isFinite(data.testedAt) && data.testedAt > 0
+    ? Math.round(data.testedAt)
+    : fallback?.testedAt;
+  if (!status || !testedAt) {
     return fallback;
   }
-  const rounded = Math.round(value);
-  return rounded >= 0 && rounded <= 100 ? rounded : fallback;
+  const rawMessage = hasOwn(data, 'message')
+    ? normalizeTrimmedString(data.message)
+    : fallback?.message || '';
+  const message = (rawMessage || (status === 'passed' ? '已返回图片结果' : '测试失败')).slice(0, 500);
+  return { status, message, testedAt };
 }
 
 function normalizeAiImageGenerationConfig(
@@ -240,38 +250,19 @@ function normalizeAiImageGenerationConfig(
   fallback: AiImageGenerationConfig,
 ): AiImageGenerationConfig {
   const data = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const apiMode = data.apiMode === 'images' || data.apiMode === 'responses'
-    ? data.apiMode
-    : fallback.apiMode;
-  const quality = data.quality === 'auto' || data.quality === 'low' || data.quality === 'medium' || data.quality === 'high'
-    ? data.quality
-    : fallback.quality;
-  const outputFormat = data.outputFormat === 'png' || data.outputFormat === 'jpeg' || data.outputFormat === 'webp'
-    ? data.outputFormat
-    : fallback.outputFormat;
-  const moderation = data.moderation === 'auto' || data.moderation === 'low'
-    ? data.moderation
-    : fallback.moderation;
+  const lastTest = hasOwn(data, 'lastTest')
+    ? normalizeAiImageGenerationLastTest(data.lastTest, fallback.lastTest)
+    : fallback.lastTest;
 
-  return {
+  const config: AiImageGenerationConfig = {
     baseUrl: hasOwn(data, 'baseUrl') ? normalizeBaseUrl(data.baseUrl, fallback.baseUrl) : fallback.baseUrl,
     apiKey: hasOwn(data, 'apiKey') ? normalizeNullableString(data.apiKey) : fallback.apiKey,
     model: hasOwn(data, 'model') ? normalizeOptionalString(data.model, fallback.model) : fallback.model,
-    apiMode,
-    timeout: hasOwn(data, 'timeout') ? normalizePositiveInteger(data.timeout, fallback.timeout, { min: 5, max: 3600 }) : fallback.timeout,
-    size: hasOwn(data, 'size') ? normalizeOptionalString(data.size, fallback.size) : fallback.size,
-    quality,
-    outputFormat,
-    outputCompression: hasOwn(data, 'outputCompression')
-      ? normalizeOutputCompression(data.outputCompression, fallback.outputCompression)
-      : fallback.outputCompression,
-    moderation,
-    n: hasOwn(data, 'n') ? normalizePositiveInteger(data.n, fallback.n, { min: 1, max: 10 }) : fallback.n,
-    codexCli: hasOwn(data, 'codexCli') ? Boolean(data.codexCli) : fallback.codexCli,
-    responseFormatB64Json: hasOwn(data, 'responseFormatB64Json')
-      ? Boolean(data.responseFormatB64Json)
-      : fallback.responseFormatB64Json,
   };
+  if (lastTest) {
+    config.lastTest = lastTest;
+  }
+  return config;
 }
 
 function normalizePromptClient(value: unknown, fallback: ServerPromptClientPreference): ServerPromptClientPreference {
@@ -282,19 +273,19 @@ function normalizePromptClient(value: unknown, fallback: ServerPromptClientPrefe
     return fallback;
   }
   const normalized = value.trim().toLowerCase();
-  if (normalized === 'codex') return 'genie:codex';
-  if (normalized === 'claude') return 'genie:claude';
-  if (normalized === 'gemini') return 'genie:gemini';
+  if (LEGACY_PROMPT_CLIENT_VALUES[normalized]) {
+    return LEGACY_PROMPT_CLIENT_VALUES[normalized];
+  }
   if (PROMPT_CLIENT_VALUES.has(normalized as ServerPromptClientPreference)) {
     return normalized as ServerPromptClientPreference;
   }
   return fallback;
 }
 
-function normalizeAcpxConfig(
+function normalizeAcpExecutionConfig(
   value: unknown,
-  fallback: MakeServerConfig['automation']['acpx'],
-): MakeServerConfig['automation']['acpx'] {
+  fallback: MakeServerConfig['automation']['acp'],
+): MakeServerConfig['automation']['acp'] {
   const data = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const mode = data.mode === 'exec' || data.mode === 'prompt' ? data.mode : fallback.mode;
   const permission = data.permission === 'approve-all' ? data.permission : fallback.permission;
@@ -419,9 +410,12 @@ function normalizeConfig(input: unknown, fallback: MakeServerConfig = DEFAULT_SE
       defaultIDE: hasOwn(automation, 'defaultIDE')
         ? normalizeIDE(automation.defaultIDE, fallback.automation.defaultIDE)
         : fallback.automation.defaultIDE,
-      acpx: hasOwn(automation, 'acpx')
-        ? normalizeAcpxConfig(automation.acpx, fallback.automation.acpx)
-        : fallback.automation.acpx,
+      acp: hasOwn(automation, 'acp') || hasOwn(automation, 'acpx')
+        ? normalizeAcpExecutionConfig(
+          hasOwn(automation, 'acp') ? automation.acp : automation.acpx,
+          fallback.automation.acp,
+        )
+        : fallback.automation.acp,
     },
     assistant: {
       webBaseUrl: hasOwn(assistant, 'webBaseUrl')

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { expect } from 'vitest';
 
 import {
+  getGlobalServerConfigPath,
   getMakeClientMarkerPath,
   getProjectMetadataPath,
   getProjectRegistryPath,
@@ -112,14 +113,18 @@ export function getTestProjectRegistryPath(registryHome: string) {
 export async function startTestServer(
   projectRoot: string,
   registryHome = createTempRoot('axhub-make-projects-api-home-'),
-  options: { runtimeOrigin?: string } = {},
+  options: { runtimeOrigin?: string; serverConfig?: unknown } = {},
 ) {
+  if (options.serverConfig) {
+    writeJson(getGlobalServerConfigPath(registryHome), options.serverConfig);
+  }
+  const registryPath = getProjectRegistryPath(registryHome);
   return startMakeServer({
     projectRoot,
     host: 'localhost',
     port: 0,
     adminRoot: path.join(projectRoot, 'missing-admin'),
-    registryPath: getProjectRegistryPath(registryHome),
+    registryPath,
     runtimeOrigin: options.runtimeOrigin,
   });
 }

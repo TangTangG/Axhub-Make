@@ -62,12 +62,11 @@ describe('CanvasPrototypeGenerationTool source', () => {
     expect(source).not.toContain('formatElapsed(runningTask)');
   });
 
-  it('runs acpx prompt execution and replaces the matching generator from prototype resource deltas', () => {
+  it('runs ACP prompt execution and replaces the matching generator from prototype resource deltas', () => {
     const source = readSource();
 
     expect(source).toContain('getPrototypeGenerationTaskStore().submit');
     expect(source).not.toContain('onStartAssistantRuntime?.()');
-    expect(source).not.toContain('Genie 运行时不可用');
     expect(source).toContain('derivePrototypeCanvasName');
     expect(source).toContain('deriveCurrentPrototypeContext');
     expect(source).toContain('canvasName: derivePrototypeCanvasName(canvasFilePath)');
@@ -76,7 +75,11 @@ describe('CanvasPrototypeGenerationTool source', () => {
     expect(source).toContain('beforePrototypeNames');
     expect(source).toContain('refreshProjectPrototypes');
     expect(source).toContain('pickCreatedPrototype');
+    expect(source).toContain('pickPrototypeFromArtifact');
+    expect(source).toContain('onArtifact: async (artifact, runningTaskRecord)');
+    expect(source).toContain("if (artifact.kind !== 'prototype') return;");
     expect(source).toContain('replacePrototypeGeneratorWithEmbeddable');
+    expect(source).toContain("element.customData?.sourceTaskId === task.id");
     expect(source).toContain('selectedInfo.element.id');
     expect(source).toContain('onSceneMutated?.()');
   });
@@ -124,10 +127,23 @@ describe('CanvasPrototypeGenerationTool source', () => {
     const source = readSource();
 
     expect(source).toContain('PROTOTYPE_COMPOSER_WIDTH = 640');
+    expect(source).toContain('assistantProjectPath?: string;');
+    expect(source).toContain('assistantProjectPath={assistantProjectPath}');
     expect(source).toContain('themes?: ThemeResourceItem[]');
-    expect(source).toContain('defaultThemeName?: string | null');
     expect(source).toContain('themes={themes}');
-    expect(source).toContain('defaultThemeName={defaultThemeName}');
+    expect(source).not.toContain('defaultThemeName?: string | null');
+    expect(source).not.toContain('defaultThemeName={defaultThemeName}');
+  });
+
+  it('scopes unsent prototype composer drafts to the current project, canvas, and placeholder', () => {
+    const source = readSource();
+
+    expect(source).toContain("import { createCanvasGenerationComposerDraftStorageKey } from '../shared/canvasGenerationComposerDraft';");
+    expect(source).toContain('selectedPrototypeComposerDraftStorageKey');
+    expect(source).toContain('assistantProjectPath');
+    expect(source).toContain('canvasFilePath');
+    expect(source).toContain("selectedInfo.element.id");
+    expect(source).toContain('draftStorageKey={selectedPrototypeComposerDraftStorageKey}');
   });
 
   it('turns copied canvas elements into prototype composer reference images on paste', () => {
@@ -136,11 +152,15 @@ describe('CanvasPrototypeGenerationTool source', () => {
     expect(source).toContain('createCanvasReferenceSnapshot');
     expect(source).toContain('renderCanvasReferenceContext');
     expect(source).toContain('copiedCanvasReferenceRef');
+    expect(source).toContain('pendingInitialLocalContextRefs');
+    expect(source).toContain('localContextRefs');
     expect(source).toContain("document.addEventListener('copy'");
     expect(source).toContain("document.removeEventListener('copy'");
     expect(source).toContain('pasteCanvasReferenceImages');
     expect(source).toContain('canPasteReferenceImages={Boolean(copiedCanvasReferenceRef.current)}');
     expect(source).toContain('onPasteReferenceImages={pasteCanvasReferenceImages}');
+    expect(source).toContain('initialLocalContextRefs={pendingInitialLocalContextRefs}');
+    expect(source).toContain('toast.info(`已添加 ${context.localContextRefs.length} 个本地上下文`)');
     expect(source).toContain('toast.info(`已添加 ${images.length} 张画布参考图`)');
   });
 

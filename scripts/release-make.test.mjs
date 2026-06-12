@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -46,6 +47,35 @@ function listSourceFiles(rootDir) {
   return files.sort((left, right) => left.localeCompare(right));
 }
 
+function readTrackedFiles() {
+  const result = spawnSync('git', ['ls-files'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function shouldScanTrackedFile(relativePath) {
+  if (relativePath === 'scripts/release-make.test.mjs') {
+    return false;
+  }
+  if (/^(?:automation-reports|\.local|\.release|coverage|dist|node_modules)\//u.test(relativePath)) {
+    return false;
+  }
+  return /^(?:package\.json|pnpm-lock\.yaml|bin\/|scripts\/|src\/|client\/(?:package\.json|src\/|\.axhub\/make\/|\.agents\/|\.claude\/|rules\/|vite-plugins\/))/u
+    .test(relativePath);
+}
+
+function containsLocalMachinePath(source) {
+  return /(?:file:\/(?:Users|Volumes)|\/Users\/jianzhoulin\/rd|\/Volumes\/WORK\/rd)\/[^'"`\s]*/u.test(source)
+    || /[A-Za-z]:\\Users\\/u.test(source)
+    || new RegExp('%2F(?:Users%2Fjianzhoulin%2Frd|Volumes%2FWORK%2Frd)%2F', 'iu').test(source);
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -53,6 +83,25 @@ afterEach(() => {
 });
 
 describe('release make artifact helpers', () => {
+  it('keeps tracked source files free of local machine paths', () => {
+    const offenders = [];
+    for (const relativePath of readTrackedFiles()) {
+      if (!shouldScanTrackedFile(relativePath)) {
+        continue;
+      }
+      const absolutePath = path.resolve(relativePath);
+      if (!fs.existsSync(absolutePath) || fs.statSync(absolutePath).isDirectory()) {
+        continue;
+      }
+      const source = fs.readFileSync(absolutePath, 'utf8');
+      if (containsLocalMachinePath(source)) {
+        offenders.push(relativePath);
+      }
+    }
+
+    assert.deepEqual(offenders, []);
+  });
+
   it('builds independent make client template zip metadata', () => {
     const metadata = releaseMake.createTemplateZipMetadata({
       templateVersion: '0.2.0-beta.1',
@@ -161,6 +210,7 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, '.axhub/make/axhub.config.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/sessions/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/exports/stale.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.axhub/sessions/conversations.json'), '{}\n');
 
     const result = await releaseMake.createMakeClientTemplateZip({
       sourceClientDir: clientRoot,
@@ -183,22 +233,39 @@ describe('release make artifact helpers', () => {
     assert(!entries.some((entry) => entry.startsWith('.trae/')));
     assert(!entries.some((entry) => entry.startsWith('temp/')));
     assert(entries.includes('.axhub/make/client.json'));
+    assert(entries.includes('.axhub/make/axhub.config.json'));
     assert(entries.includes('.axhub/make/README.md'));
     assert(entries.includes('.axhub/make/sidebar-tree.json'));
     assert(!entries.includes('.axhub/make/project.json'));
     assert(!entries.includes('.axhub/make/.dev-server-info.json'));
-    assert(!entries.includes('.axhub/make/axhub.config.json'));
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/sessions/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/exports/')));
+    assert(!entries.some((entry) => entry.startsWith('.axhub/sessions/')));
   });
 
-  it('exposes npm-only latest and beta release scripts from the workspace root', () => {
+  it('rejects make client template zips with local machine paths', async () => {
+    const sourceRoot = createTempRoot('axhub-release-template-leak-source-');
+    const outputRoot = createTempRoot('axhub-release-template-leak-output-');
+    const clientRoot = path.join(sourceRoot, 'client');
+    writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
+    writeFile(
+      path.join(clientRoot, 'src/prototypes/template-home/index.js'),
+      `export const leakedPath = "/${'Users'}/builder/project";\n`,
+    );
+
+    assert.throws(
+      () => releaseMake.createMakeClientTemplateZip({
+        sourceClientDir: clientRoot,
+        outputDir: outputRoot,
+      }),
+      /local machine path/,
+    );
+  });
+
+  it('exposes only the npm beta release script from the workspace root', () => {
     const rootPackageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
 
-    assert.equal(
-      rootPackageJson.scripts['release:make:npm:latest'],
-      'node scripts/release-make.mjs --skip-github --npm-tag latest',
-    );
+    assert.equal(rootPackageJson.scripts['release:make:npm:latest'], undefined);
     assert.equal(
       rootPackageJson.scripts['release:make:npm:beta'],
       'node scripts/release-make.mjs --skip-github --npm-tag beta',
@@ -217,6 +284,33 @@ describe('release make artifact helpers', () => {
     const sourcePackageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
 
     assert.equal(sourcePackageJson.private, true);
+  });
+
+  it('defaults publish commands to the beta npm tag', () => {
+    const commands = releaseMake.publishCommands({
+      packageName: '@axhub/make',
+      version: '1.2.3',
+      tagName: 'make-v1.2.3',
+      npmPackageDir: '/tmp/axhub-make-npm-package',
+      releaseAssets: [],
+    }, {
+      githubRepo: 'lintendo/Axhub-Make',
+    });
+
+    assert.deepEqual(commands.npmArgs, [
+      'publish',
+      '/tmp/axhub-make-npm-package',
+      '--access',
+      'public',
+      '--tag',
+      'beta',
+    ]);
+  });
+
+  it('skips platform release artifacts for npm-only releases', () => {
+    assert.equal(releaseMake.shouldBuildPlatformArtifacts({ skipGithub: true }), false);
+    assert.equal(releaseMake.shouldBuildPlatformArtifacts({ skipGithub: false }), true);
+    assert.equal(releaseMake.shouldBuildPlatformArtifacts({}), true);
   });
 
   it('keeps make publish source independent from the project-core workspace package', () => {
@@ -354,6 +448,8 @@ describe('release make artifact helpers', () => {
       'dist/server/cli.test.mjs',
       'coverage/index.html',
       'node_modules/example/index.js',
+      '.next/required-server-files.json',
+      'dist/server/.next/required-server-files.js',
       '.DS_Store',
       'dist/admin/.DS_Store',
       '.env',
@@ -381,6 +477,28 @@ describe('release make artifact helpers', () => {
       }),
       /packed size/,
     );
+
+    writeFile(path.join(packageDir, 'dist/server/cli.mjs'), `const leakedPath = "/${'Users'}/builder/acp-ui";\n`);
+    assert.throws(
+      () => releaseMake.assertNpmPackageShape({ dryRunInfo: [validPackInfo], packageDir }),
+      /local machine path/,
+    );
+  });
+
+  it('sanitizes bundled local machine paths without changing file size', () => {
+    const root = createTempRoot('axhub-release-bundle-sanitize-');
+    const bundlePath = path.join(root, 'cli.mjs');
+    const source = 'var __dirname = "/Volumes/WORK/rd/Axhub Runtime/node_modules/typescript/lib";\n'
+      + 'var __filename = "C:\\\\Users\\\\builder\\\\repo\\\\node_modules\\\\typescript\\\\lib\\\\typescript.js";\n';
+    writeFile(bundlePath, source);
+
+    const result = releaseMake.sanitizeLocalMachinePathsInFile(bundlePath);
+    const sanitized = fs.readFileSync(bundlePath, 'utf8');
+
+    assert.equal(result.changed, true);
+    assert.equal(Buffer.byteLength(sanitized), Buffer.byteLength(source));
+    assert.doesNotMatch(sanitized, /\/Volumes\//u);
+    assert.doesNotMatch(sanitized, /[A-Za-z]:\\Users\\/u);
   });
 
   it('externalizes project-side build toolchain packages from the bundled npm server', () => {

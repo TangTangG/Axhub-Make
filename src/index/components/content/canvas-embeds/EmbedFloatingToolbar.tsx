@@ -976,6 +976,8 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
     }, [info]);
 
     const handleSwitchViewMode = useCallback((targetMode: 'link' | 'preview') => {
+        clearTooltip();
+        setHoveredBtn(null);
         if (!excalidrawAPI || !info) return;
         const elements = excalidrawAPI.getSceneElements();
         const appState = excalidrawAPI.getAppState();
@@ -991,7 +993,7 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
         if (targetMode === 'preview') {
             dispatchEmbedSelectionChanged(info.elementId, true, 'activate');
         }
-    }, [excalidrawAPI, info, containerRef, dispatchEmbedSelectionChanged]);
+    }, [clearTooltip, excalidrawAPI, info, containerRef, dispatchEmbedSelectionChanged]);
 
     /* ── Close size popover when selection changes ──────────────── */
     useEffect(() => {
@@ -1359,12 +1361,12 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
             {previewSessionHint ? (
                 <div
                     style={{
-                        position: 'fixed',
+                        position: 'absolute',
                         left: '50%',
                         top: '50%',
                         transform: 'translate(-50%, -50%)',
                         minHeight: 36,
-                        maxWidth: 'min(360px, calc(100vw - 32px))',
+                        maxWidth: 'min(360px, calc(100% - 32px))',
                         zIndex: POPOVER_Z_INDEX,
                         display: 'flex',
                         alignItems: 'center',

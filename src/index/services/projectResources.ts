@@ -114,6 +114,59 @@ export function buildDocContentEndpoint(projectId: string | null, resourceId: st
     return `/api/projects/${encodeURIComponent(projectId)}/docs/${encodeURIComponent(normalizedResourceId)}/content`;
 }
 
+function withProjectIdQuery(url: string, projectId: string | null): string {
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId || !url) {
+        return url;
+    }
+    const [path, query = ''] = url.split('?');
+    const params = new URLSearchParams(query);
+    params.set('projectId', normalizedProjectId);
+    const nextQuery = params.toString();
+    return nextQuery ? `${path}?${nextQuery}` : path;
+}
+
+function hasFileExtension(value: unknown): boolean {
+    const normalized = pickString(value).replace(/\\/g, '/').split('/').pop() || '';
+    return /\.[a-z0-9]+$/iu.test(normalized);
+}
+
+function getDocRelativePathFromResourcePath(value: unknown): string {
+    const normalizedPath = pickString(value).replace(/\\/g, '/');
+    if (!normalizedPath) {
+        return '';
+    }
+    const markers = [
+        '/src/resources/',
+        'src/resources/',
+        '/content/docs/',
+        'content/docs/',
+    ];
+    for (const marker of markers) {
+        const index = normalizedPath.indexOf(marker);
+        if (index >= 0) {
+            return normalizedPath.slice(index + marker.length).replace(/^\/+/, '');
+        }
+    }
+    return '';
+}
+
+function resolveDocFileRouteName(resourceName: string, markdownPath: string): string {
+    if (hasFileExtension(resourceName)) {
+        return resourceName.replace(/\\/g, '/').replace(/^\/+/, '');
+    }
+    const pathRouteName = getDocRelativePathFromResourcePath(markdownPath);
+    return pathRouteName || resourceName.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function buildDocsFileUrl(routeName: string, projectId: string | null): string {
+    const normalizedRouteName = String(routeName || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!normalizedRouteName || !String(projectId || '').trim()) {
+        return '';
+    }
+    return withProjectIdQuery(`/api/docs/${encodeURIComponent(normalizedRouteName)}`, projectId);
+}
+
 function pickString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
@@ -252,6 +305,10 @@ function normalizePrototypeRoutePages(value: unknown): { id: string; title: stri
         .filter((page): page is { id: string; title: string } => Boolean(page));
 }
 
+function normalizePrototypeGenerationStatus(value: unknown): ItemData['generationStatus'] | undefined {
+    return value === 'waiting' ? 'waiting' : undefined;
+}
+
 function pickBoolean(value: unknown, fallback: boolean): boolean {
     return typeof value === 'boolean' ? value : fallback;
 }
@@ -321,8 +378,8 @@ export function normalizeProjectPrototypeResource(
         ? resource.artifacts as Record<string, unknown>
         : undefined;
     const placeholderGuide = normalizePlaceholderGuide(resource.placeholderGuide);
-    const placeholder = resource.placeholder === true
-        || (name.startsWith('untitled') && displayName === '未命名');
+    const placeholder = resource.placeholder === true;
+    const generationStatus = normalizePrototypeGenerationStatus(resource.generationStatus);
     const pages = normalizePrototypeRoutePages(resource.pages);
     const requestedDefaultPageId = normalizePageId(resource.defaultPageId);
     const defaultPageId = pages.some((page) => page.id === requestedDefaultPageId)
@@ -344,6 +401,7 @@ export function normalizeProjectPrototypeResource(
         previewDisabled: !clientUrl,
         placeholder,
         ...(placeholder ? { placeholderGuide: placeholderGuide || DEFAULT_PROTOTYPE_PLACEHOLDER_GUIDE } : {}),
+        ...(generationStatus ? { generationStatus } : {}),
         ...(pages.length > 0 ? { pages, defaultPageId } : {}),
     };
 }
@@ -360,18 +418,29 @@ export function normalizeProjectDocResource(
     const displayName = pickString(resource.title) || pickString(resource.displayName) || pickString(resource.name) || name;
     const markdownPath = pickString(resource.path);
     const contentEndpoint = buildDocContentEndpoint(projectId, name);
-    const markdownUrl = buildMarkdownFileUrl(markdownPath) || contentEndpoint;
     const isMarkdown = [
         name,
         markdownPath,
     ].some(hasMarkdownExtension);
+    const looksLikeFileResource = Boolean(markdownPath) || hasFileExtension(name);
+    const docFileRouteName = !isMarkdown && looksLikeFileResource
+        ? resolveDocFileRouteName(name, markdownPath)
+        : '';
+    const directDocsFileUrl = !isMarkdown && looksLikeFileResource
+        ? buildDocsFileUrl(docFileRouteName, projectId)
+        : '';
+    const itemName = directDocsFileUrl && docFileRouteName ? docFileRouteName : name;
+    const markdownUrl = isMarkdown && contentEndpoint
+        ? contentEndpoint
+        : directDocsFileUrl || buildMarkdownFileUrl(markdownPath) || contentEndpoint;
+    const shouldUseSpecTemplatePreview = isMarkdown || (!markdownPath && !directDocsFileUrl);
 
     return {
-        name,
+        name: itemName,
         displayName,
         jsUrl: '',
         specUrl: markdownUrl,
-        previewUrl: isMarkdown || !markdownPath ? buildSpecTemplatePreviewUrl(markdownUrl) : markdownUrl,
+        previewUrl: shouldUseSpecTemplatePreview ? buildSpecTemplatePreviewUrl(markdownUrl) : markdownUrl,
         filePath: markdownPath || undefined,
         absoluteFilePath: markdownPath || undefined,
         projectId: projectId || undefined,

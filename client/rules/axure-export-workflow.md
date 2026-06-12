@@ -60,12 +60,35 @@
 - 不为了“通过导出检测”强行引入 `forwardRef<AxureHandle, AxureProps>`。
 - 只有明确需要配置面板、外部数据源、事件回调或动作触发时，才按 `rules/axure-api-guide.md` 集成。
 
-### 5. 交付前自检
+### 5. 标注数据随 Runtime 构建
+
+- 如果页面使用 `@axhub/annotation` 的 `AnnotationViewer`，必须在当前导出入口文件里静态导入本地标注源，例如 `import annotationSourceDocument from './annotation-source.json'`。
+- `AnnotationViewer` 的 `source` 必须直接使用该本地 JSON 导入，确保 on-demand Axure bundle 会把标注数据一起打进 Runtime 组件代码。
+- 不要依赖运行后再请求 `annotation-source.json`，也不要只把标注源放在目录或外部文档里。
+- Axure Runtime 组件运行后，对外读取入口是 `window.__AXHUB_ANNOTATION_SOURCE__`；该快照包含 `directory` 和已合并 Markdown 正文的 `nodes`，不是原始 `markdownMap`。
+
+推荐写法：
+
+```typescript
+import {
+  AnnotationViewer,
+  type AnnotationSourceDocument,
+} from '@axhub/annotation';
+import annotationSourceDocument from './annotation-source.json';
+
+// ...
+<AnnotationViewer
+  source={annotationSourceDocument as unknown as AnnotationSourceDocument}
+/>
+```
+
+### 6. 交付前自检
 
 - 全部阻断错误已修复。
 - warning 已评估并尽量处理。
 - 文件头包含 `@mode axure` 和相关 rules 路径。
 - 默认导出符合当前导出检查逻辑。
+- 如果使用 `AnnotationViewer`，当前文件已静态导入并传入 `annotation-source.json`。
 
 ## 非目标
 

@@ -1,23 +1,27 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
+import { networkInterfaces } from 'node:os';
+import path from 'node:path';
 
 import {
   buildLocalCommandEnv,
   commandExists as localCommandExists,
-  runLocalCommand,
 } from './localCommand.ts';
+import { releaseListeningProcessesOnPort } from './portOccupancy.ts';
 
 const DEFAULT_ASSISTANT_WEB_BASE_URL = 'http://localhost:32123';
-const DEFAULT_ASSISTANT_API_BASE_URL = 'http://localhost:32123/api';
-const DEFAULT_ASSISTANT_HEALTH_URL = `${DEFAULT_ASSISTANT_WEB_BASE_URL}/health`;
-const ASSISTANT_SERVICE_ID = '@axhub/genie';
-const ASSISTANT_SERVICE_NAME = 'Axhub Genie';
-const ASSISTANT_NPX_COMMAND = 'npx';
-const ASSISTANT_NPX_PACKAGE = '@axhub/genie@latest';
-const ASSISTANT_STATUS_TIMEOUT_MS = 8_000;
-const ASSISTANT_WEB_UI_PROBE_TIMEOUT_MS = 1_500;
+const DEFAULT_ASSISTANT_PORT = '32123';
+const DEFAULT_ASSISTANT_PORT_NUMBER = 32123;
+const ACP_UI_NPX_COMMAND = 'npx';
+const ACP_UI_NPX_PACKAGE = '@axhub/acp@latest';
+const ACP_UI_NPM_COMMAND = 'npm';
+const ACP_UI_START_CHECK_DELAY_MS = 500;
+const ACP_UI_READY_CHECK_TIMEOUT_MS = 8_000;
+const ACP_UI_READY_CHECK_INTERVAL_MS = 500;
+const ACP_UI_ENDPOINT_PROBE_TIMEOUT_MS = 1_500;
 const COMMAND_AVAILABILITY_TIMEOUT_MS = 2_000;
-const ASSISTANT_START_CHECK_DELAY_MS = 500;
+const ACP_UI_SERVICE_ID = '@axhub/acp';
 
 export type AssistantHealthStatus =
   | 'ready'
@@ -26,21 +30,14 @@ export type AssistantHealthStatus =
   | 'runtime_unreachable'
   | 'needs_update';
 
-export type AssistantCommandSource = 'axhub-genie' | 'cloudcli' | 'config' | 'env' | 'default';
-type AssistantEndpointSource = 'axhub-genie' | 'config' | 'env' | 'default';
+export type AssistantCommandSource = 'acp-ui' | 'config' | 'env' | 'default';
+type AssistantEndpointSource = 'config' | 'env' | 'default';
 
-export type AssistantBootstrapMode = 'install_global' | 'start_existing';
+export type AssistantBootstrapMode = 'install_global' | 'start_existing' | 'restart_existing';
 
 interface AssistantConfig {
   webBaseUrl: string | null;
   apiBaseUrl: string | null;
-}
-
-interface AssistantProbeResult {
-  status: 'ready' | 'missing_cli' | 'cli_error' | 'not_running' | 'needs_update';
-  message: string;
-  commandSource: Exclude<AssistantCommandSource, 'default'>;
-  config: AssistantConfig | null;
 }
 
 interface AssistantHealthInfo {
@@ -72,6 +69,24 @@ export interface AssistantRuntimeResponse extends AssistantRuntimeInfo {
   };
 }
 
+interface AcpUiStartCommandSpec {
+  command: string;
+  args: string[];
+  cwd: string;
+  displayCommand: string;
+}
+
+interface ResolvedRuntimeEndpoints {
+  webBaseUrl: string;
+  apiBaseUrl: string;
+  source: AssistantEndpointSource;
+}
+
+interface AssistantRuntimeConfigUpdate {
+  webBaseUrl: string;
+  apiBaseUrl: string;
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -92,15 +107,177 @@ function normalizeBaseUrl(value: unknown): string | null {
   }
 }
 
-function formatAssistantCommand(extraArgs: string[] = []): string {
-  return [ASSISTANT_NPX_COMMAND, ASSISTANT_NPX_PACKAGE, ...extraArgs].join(' ');
+function quoteDisplayArg(value: string): string {
+  return /\s/u.test(value) ? JSON.stringify(value) : value;
 }
 
-export function getAssistantHealthHints() {
+function formatDisplayCommand(command: string, args: string[], cwd?: string): string {
+  const commandText = [command, ...args].map(quoteDisplayArg).join(' ');
+  return cwd ? `cd ${quoteDisplayArg(cwd)} && ${commandText}` : commandText;
+}
+
+function normalizeCorsOriginList(...values: unknown[]): string {
+  const origins = new Set<string>();
+  for (const value of values) {
+    const raw = typeof value === 'string' ? value.trim() : '';
+    if (!raw) continue;
+    for (const item of raw.split(/[,\s]+/u)) {
+      const origin = item.trim().replace(/\/+$/u, '');
+      if (origin) origins.add(origin);
+    }
+  }
+  return Array.from(origins).join(',');
+}
+
+function getLocalNetworkHosts(): string[] {
+  const hosts = new Set<string>();
+  for (const nets of Object.values(networkInterfaces())) {
+    for (const net of nets || []) {
+      if (net.family === 'IPv4' && !net.internal) {
+        hosts.add(net.address);
+      }
+    }
+  }
+  return Array.from(hosts);
+}
+
+function formatOriginWithHost(url: URL, hostname: string): string {
+  const defaultPort = url.protocol === 'https:' ? '443' : '80';
+  const port = url.port || defaultPort;
+  const host = hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname;
+  return port === defaultPort ? `${url.protocol}//${host}` : `${url.protocol}//${host}:${port}`;
+}
+
+function addCorsOriginWithLocalVariants(origins: Set<string>, rawOrigin: string, localHosts: string[]): void {
+  const origin = rawOrigin.trim().replace(/\/+$/u, '');
+  if (!origin) return;
+  origins.add(origin);
+
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return;
+    }
+    origins.add(formatOriginWithHost(parsed, 'localhost'));
+    origins.add(formatOriginWithHost(parsed, '127.0.0.1'));
+    for (const host of localHosts) {
+      origins.add(formatOriginWithHost(parsed, host));
+    }
+  } catch {
+    // Keep non-URL values such as "*" as provided.
+  }
+}
+
+export function resolveAssistantMakeCorsOrigins(
+  corsOrigin?: string,
+  options: {
+    env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+    localHosts?: string[];
+  } = {},
+): string {
+  const env = options.env || process.env;
+  const localHosts = options.localHosts || getLocalNetworkHosts();
+  const origins = new Set<string>();
+  for (const value of [
+    env.AXHUB_ACP_UI_CORS_ORIGIN,
+    env.ACP_UI_CORS_ORIGINS,
+    corsOrigin,
+  ]) {
+    const normalized = normalizeCorsOriginList(value);
+    for (const origin of normalized.split(',')) {
+      addCorsOriginWithLocalVariants(origins, origin, localHosts);
+    }
+  }
+  return Array.from(origins).join(',');
+}
+
+function normalizeLocalAcpUiProjectRoot(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveAcpUiCorsOrigins(corsOrigin?: string): string {
+  return resolveAssistantMakeCorsOrigins(corsOrigin);
+}
+
+function resolveAcpUiProjectRootCandidate(candidate: string): string {
+  const root = path.resolve(candidate);
+  return existsSync(path.join(root, 'package.json')) ? root : '';
+}
+
+function resolveAutoDiscoveredAcpUiProjectRoot(): string {
+  const cwd = process.cwd();
+  const candidates = [
+    path.resolve(cwd, 'acp-ui'),
+    path.resolve(cwd, '../acp-ui'),
+    path.resolve(cwd, '../../acp-ui'),
+    path.resolve(cwd, '../../../acp-ui'),
+    path.resolve(cwd, '../../../../acp-ui'),
+  ];
+  for (const candidate of candidates) {
+    const root = resolveAcpUiProjectRootCandidate(candidate);
+    if (root) return root;
+  }
+  return '';
+}
+
+function resolveLocalAcpUiProjectRoot(): string {
+  const configuredRoot = normalizeLocalAcpUiProjectRoot(process.env.AXHUB_ACP_UI_PROJECT_ROOT);
+  if (configuredRoot) {
+    return resolveAcpUiProjectRootCandidate(configuredRoot);
+  }
+  return resolveAutoDiscoveredAcpUiProjectRoot();
+}
+
+function resolveAcpUiStartCommandSpec(
+  projectPath: string,
+  options: { port?: number; corsOrigin?: string } = {},
+): AcpUiStartCommandSpec {
+  const port = String(options.port || DEFAULT_ASSISTANT_PORT);
+  const corsOrigins = resolveAcpUiCorsOrigins(options.corsOrigin);
+  const corsArgs = corsOrigins ? ['--cors-origin', corsOrigins] : [];
+  const localAcpUiProjectRoot = resolveLocalAcpUiProjectRoot();
+  if (localAcpUiProjectRoot) {
+    const args = ['run', 'dev', '--', '--port', port, ...corsArgs];
+    return {
+      command: ACP_UI_NPM_COMMAND,
+      args,
+      cwd: localAcpUiProjectRoot,
+      displayCommand: formatDisplayCommand(ACP_UI_NPM_COMMAND, args, localAcpUiProjectRoot),
+    };
+  }
+
+  const args = ['-y', ACP_UI_NPX_PACKAGE, '--port', port, ...corsArgs];
+  const cwd = projectPath || process.cwd();
   return {
-    installGlobal: formatAssistantCommand(),
-    start: formatAssistantCommand(),
-    status: formatAssistantCommand(['status', '--json']),
+    command: ACP_UI_NPX_COMMAND,
+    args,
+    cwd,
+    displayCommand: formatDisplayCommand(ACP_UI_NPX_COMMAND, args),
+  };
+}
+
+function buildAcpUiStartEnv(options: { corsOrigin?: string } = {}) {
+  const env = buildLocalCommandEnv();
+  const corsOrigins = resolveAcpUiCorsOrigins(options.corsOrigin);
+  if (corsOrigins) {
+    env.ACP_UI_CORS_ORIGINS = corsOrigins;
+  }
+  return env;
+}
+
+export function getAssistantHealthHints(options: { port?: number; corsOrigin?: string } = {}) {
+  const port = options.port || DEFAULT_ASSISTANT_PORT_NUMBER;
+  const startSpec = resolveAcpUiStartCommandSpec('', {
+    port,
+    corsOrigin: options.corsOrigin,
+  });
+  const localAcpUiProjectRoot = resolveLocalAcpUiProjectRoot();
+  return {
+    installGlobal: localAcpUiProjectRoot
+      ? formatDisplayCommand(ACP_UI_NPM_COMMAND, ['install'], localAcpUiProjectRoot)
+      : `${ACP_UI_NPX_COMMAND} -y ${ACP_UI_NPX_PACKAGE} --help`,
+    start: startSpec.displayCommand,
+    status: `curl http://localhost:${port}/api/chat`,
   };
 }
 
@@ -108,20 +285,25 @@ function createAssistantHealthInfo(params: {
   status: AssistantHealthStatus;
   message: string;
   commandSource: AssistantCommandSource;
+  port?: number;
+  corsOrigin?: string;
 }): AssistantHealthInfo {
   return {
     status: params.status,
     message: params.message,
     checkedAt: new Date().toISOString(),
     commandSource: params.commandSource,
-    hints: getAssistantHealthHints(),
+    hints: getAssistantHealthHints({
+      port: params.port,
+      corsOrigin: params.corsOrigin,
+    }),
   };
 }
 
 export function normalizeAssistantBootstrapMode(value: unknown): AssistantBootstrapMode | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
-  if (normalized === 'install_global' || normalized === 'start_existing') {
+  if (normalized === 'install_global' || normalized === 'start_existing' || normalized === 'restart_existing') {
     return normalized;
   }
   return null;
@@ -154,174 +336,6 @@ export function rewriteAssistantLocalhostUrl(rawUrl: string, req: IncomingMessag
   return rawUrl;
 }
 
-function decodeOutput(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (Buffer.isBuffer(value)) return value.toString('utf8');
-  if (value instanceof Uint8Array) return Buffer.from(value).toString('utf8');
-  return value == null ? '' : String(value);
-}
-
-async function runCommand(command: string, args: string[], timeoutMs: number) {
-  try {
-    const result = await runLocalCommand(command, args, {
-      timeoutMs,
-      maxBuffer: 1024 * 1024,
-    });
-    return {
-      status: 0,
-      error: null,
-      stdout: decodeOutput(result.stdout).trim(),
-      stderr: decodeOutput(result.stderr).trim(),
-    };
-  } catch (error: any) {
-    const exitCode = typeof error?.exitCode === 'number' ? error.exitCode : null;
-    return {
-      status: exitCode,
-      error: exitCode == null ? error : null,
-      stdout: decodeOutput(error?.stdout).trim(),
-      stderr: decodeOutput(error?.stderr).trim(),
-    };
-  }
-}
-
-function containsNeedsUpdateHint(text: string): boolean {
-  const normalized = text.trim();
-  return Boolean(normalized && /(need\s*update|needs\s*update|outdated|upgrade|please\s*update|版本过旧|需要更新|请更新)/i.test(normalized));
-}
-
-function containsNotRunningHint(text: string): boolean {
-  const normalized = text.trim();
-  return Boolean(normalized && /(not\s*running|service\s*not\s*running|not\s*started|未启动|尚未启动|未运行|服务未运行)/i.test(normalized));
-}
-
-function containsMissingCommandHint(text: string): boolean {
-  const normalized = text.trim();
-  return Boolean(normalized && /(not\s+recognized\s+as\s+an?\s+internal|command\s+not\s+found|no\s+such\s+file|未找到|不是内部或外部命令)/i.test(normalized));
-}
-
-function extractAssistantConfigFromStatusPayload(parsed: any): AssistantConfig | null {
-  const endpoint = parsed?.endpoint ?? parsed?.assistant?.endpoint ?? parsed?.runtime?.endpoint ?? {};
-  const webBaseUrl = normalizeBaseUrl(
-    endpoint?.frontendUrl
-    ?? endpoint?.webBaseUrl
-    ?? endpoint?.webUrl
-    ?? parsed?.frontendUrl
-    ?? parsed?.webBaseUrl
-    ?? parsed?.webUrl,
-  );
-  const apiBaseUrl = normalizeBaseUrl(
-    endpoint?.apiBaseUrl
-    ?? endpoint?.apiUrl
-    ?? parsed?.apiBaseUrl
-    ?? parsed?.apiUrl,
-  );
-
-  if (!webBaseUrl && !apiBaseUrl) {
-    return null;
-  }
-
-  return { webBaseUrl, apiBaseUrl };
-}
-
-async function readAssistantStatusFromCli(): Promise<AssistantProbeResult> {
-  if (!(await localCommandExists(ASSISTANT_NPX_COMMAND, { timeoutMs: COMMAND_AVAILABILITY_TIMEOUT_MS }))) {
-    return {
-      status: 'missing_cli',
-      message: `未检测到 ${ASSISTANT_NPX_COMMAND} 命令`,
-      commandSource: 'axhub-genie',
-      config: null,
-    };
-  }
-
-  const result = await runCommand(
-    ASSISTANT_NPX_COMMAND,
-    [ASSISTANT_NPX_PACKAGE, 'status', '--json'],
-    ASSISTANT_STATUS_TIMEOUT_MS,
-  );
-  const mergedOutput = [result.stdout, result.stderr].filter(Boolean).join('\n');
-
-  if (result.error) {
-    const error = result.error as NodeJS.ErrnoException;
-    if (error.code === 'ENOENT') {
-      return {
-        status: 'missing_cli',
-        message: `未检测到 ${ASSISTANT_NPX_COMMAND} 命令`,
-        commandSource: 'axhub-genie',
-        config: null,
-      };
-    }
-    if (error.code === 'ETIMEDOUT' || /timed?\s*out/i.test(error.message || '')) {
-      return {
-        status: 'not_running',
-        message: `${formatAssistantCommand(['status', '--json'])} 执行超时（>${ASSISTANT_STATUS_TIMEOUT_MS}ms），请确认服务已启动后重试`,
-        commandSource: 'axhub-genie',
-        config: null,
-      };
-    }
-    return {
-      status: 'cli_error',
-      message: `${formatAssistantCommand(['status', '--json'])} 执行失败: ${error.message || 'unknown error'}`,
-      commandSource: 'axhub-genie',
-      config: null,
-    };
-  }
-
-  if (containsMissingCommandHint(mergedOutput)) {
-    return {
-      status: 'missing_cli',
-      message: `未检测到 ${ASSISTANT_NPX_COMMAND} 命令`,
-      commandSource: 'axhub-genie',
-      config: null,
-    };
-  }
-
-  if (result.status !== 0) {
-    const status = containsNeedsUpdateHint(mergedOutput) ? 'needs_update' : 'cli_error';
-    return {
-      status,
-      message: mergedOutput || `${formatAssistantCommand(['status', '--json'])} 返回非 0 状态`,
-      commandSource: 'axhub-genie',
-      config: null,
-    };
-  }
-
-  let parsed: any = null;
-  try {
-    parsed = JSON.parse(result.stdout || result.stderr || '{}');
-  } catch {
-    return {
-      status: containsNotRunningHint(mergedOutput) ? 'not_running' : 'cli_error',
-      message: mergedOutput || 'Axhub Genie status 输出不是有效 JSON',
-      commandSource: 'axhub-genie',
-      config: null,
-    };
-  }
-
-  const config = extractAssistantConfigFromStatusPayload(parsed);
-  if (parsed?.running === false || parsed?.status === 'stopped' || parsed?.status === 'not_running') {
-    return {
-      status: 'not_running',
-      message: 'Axhub Genie 尚未启动',
-      commandSource: 'axhub-genie',
-      config,
-    };
-  }
-  if (!config) {
-    return {
-      status: 'cli_error',
-      message: 'Axhub Genie status 未返回服务地址',
-      commandSource: 'axhub-genie',
-      config: null,
-    };
-  }
-  return {
-    status: 'ready',
-    message: 'Axhub Genie 已就绪',
-    commandSource: 'axhub-genie',
-    config,
-  };
-}
-
 function getSpawnCommandSpec(command: string, args: string[], platform = process.platform) {
   if (platform !== 'win32' || /\.(exe|com)$/i.test(command)) {
     return { command, args, windowsHide: platform === 'win32' };
@@ -333,16 +347,118 @@ function getSpawnCommandSpec(command: string, args: string[], platform = process
   };
 }
 
-function runExecutableCommandInBackground(command: string, args: string[], cwd: string): Promise<void> {
+function resolvePortFromUrl(rawUrl: string): number | null {
+  try {
+    const url = new URL(rawUrl);
+    const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+    return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+function createLocalAcpEndpoints(port: number): ResolvedRuntimeEndpoints {
+  const webBaseUrl = `http://localhost:${port}`;
+  return {
+    webBaseUrl,
+    apiBaseUrl: `${webBaseUrl}/api`,
+    source: port === DEFAULT_ASSISTANT_PORT_NUMBER ? 'default' : 'config',
+  };
+}
+
+function isLocalAssistantEndpoint(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'http:' && isLocalhostName(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isDefaultLocalAssistantEndpoint(rawUrl: string): boolean {
+  return isLocalAssistantEndpoint(rawUrl) && resolvePortFromUrl(rawUrl) === DEFAULT_ASSISTANT_PORT_NUMBER;
+}
+
+function isAssistantEndpointNetworkFailure(message: string): boolean {
+  const normalized = String(message || '').toLowerCase();
+  return normalized.includes('fetch failed')
+    || normalized.includes('failed to fetch')
+    || normalized.includes('econnrefused')
+    || normalized.includes('econnreset')
+    || normalized.includes('enotfound')
+    || normalized.includes('timed out')
+    || normalized.includes('timeout')
+    || normalized.includes('operation was aborted')
+    || normalized.includes('aborted');
+}
+
+function shouldUseDefaultForFailedLocalConfig(
+  endpoints: ResolvedRuntimeEndpoints,
+  probe: { ok: boolean; message: string },
+): boolean {
+  return endpoints.source === 'config'
+    && !probe.ok
+    && isLocalAssistantEndpoint(endpoints.webBaseUrl)
+    && !isDefaultLocalAssistantEndpoint(endpoints.webBaseUrl)
+    && isAssistantEndpointNetworkFailure(probe.message);
+}
+
+function isAssistantEndpointCorsFailure(message: string): boolean {
+  return String(message || '').includes('跨域预检失败');
+}
+
+function shouldRestartLocalEndpointForAutoStart(
+  endpoints: ResolvedRuntimeEndpoints,
+  probe: { ok: boolean; message: string },
+): boolean {
+  return endpoints.source !== 'env'
+    && !probe.ok
+    && isLocalAssistantEndpoint(endpoints.webBaseUrl)
+    && (isAssistantEndpointNetworkFailure(probe.message) || isAssistantEndpointCorsFailure(probe.message));
+}
+
+function formatRuntimeUnreachableMessage(
+  probeMessage: string,
+  ignoredLocalConfig?: ResolvedRuntimeEndpoints | null,
+): string {
+  if (!ignoredLocalConfig) {
+    return `ACP UI 未就绪：${probeMessage}`;
+  }
+  return [
+    `ACP UI 未就绪：默认端口 ${DEFAULT_ASSISTANT_PORT} 不可访问`,
+    `已忽略失效的本地 ACP 配置 ${ignoredLocalConfig.webBaseUrl}`,
+    probeMessage,
+  ].join('；');
+}
+
+function resolveStartEndpoints(preferredEndpoints: ResolvedRuntimeEndpoints): ResolvedRuntimeEndpoints {
+  const preferredPort = resolvePortFromUrl(preferredEndpoints.webBaseUrl) || DEFAULT_ASSISTANT_PORT_NUMBER;
+  return preferredPort === DEFAULT_ASSISTANT_PORT_NUMBER
+    ? createLocalAcpEndpoints(DEFAULT_ASSISTANT_PORT_NUMBER)
+    : preferredEndpoints;
+}
+
+async function runAcpUiCommandInBackground(
+  projectPath: string,
+  options: {
+    port?: number;
+    corsOrigin?: string;
+  } = {},
+): Promise<void> {
+  const startSpec = resolveAcpUiStartCommandSpec(projectPath, options);
+  if (!(await localCommandExists(startSpec.command, { timeoutMs: COMMAND_AVAILABILITY_TIMEOUT_MS }))) {
+    throw new Error(`未检测到 ${startSpec.command} 命令，请先安装 Node.js/npm 后重试`);
+  }
+
   return new Promise((resolve, reject) => {
-    const spawnSpec = getSpawnCommandSpec(command, args, process.platform);
+    const spawnSpec = getSpawnCommandSpec(startSpec.command, startSpec.args, process.platform);
     const child = spawn(spawnSpec.command, spawnSpec.args, {
-      cwd,
+      cwd: startSpec.cwd,
       detached: true,
       stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: spawnSpec.windowsHide,
       shell: false,
-      env: buildLocalCommandEnv(),
+      env: buildAcpUiStartEnv({ corsOrigin: options.corsOrigin }),
     });
 
     if (typeof (child as any)?.once !== 'function') {
@@ -369,113 +485,6 @@ function runExecutableCommandInBackground(command: string, args: string[], cwd: 
   });
 }
 
-function resolveRuntimeEndpoints(params: {
-  statusConfig?: AssistantConfig | null;
-  configAssistant?: AssistantConfig | null;
-  envAssistant?: AssistantConfig | null;
-}) {
-  const webBaseUrl = params.statusConfig?.webBaseUrl
-    || params.envAssistant?.webBaseUrl
-    || params.configAssistant?.webBaseUrl
-    || DEFAULT_ASSISTANT_WEB_BASE_URL;
-  const apiBaseUrl = params.statusConfig?.apiBaseUrl
-    || params.envAssistant?.apiBaseUrl
-    || params.configAssistant?.apiBaseUrl
-    || DEFAULT_ASSISTANT_API_BASE_URL;
-  const source = params.statusConfig
-    ? 'axhub-genie'
-    : params.envAssistant?.webBaseUrl || params.envAssistant?.apiBaseUrl
-      ? 'env'
-      : params.configAssistant?.webBaseUrl || params.configAssistant?.apiBaseUrl
-        ? 'config'
-        : 'default';
-  return { webBaseUrl, apiBaseUrl, source } as const;
-}
-
-function getAssistantHealthUrl(webBaseUrl: string): string {
-  return `${webBaseUrl.replace(/\/+$/u, '')}/health`;
-}
-
-function isSameAssistantOrigin(sourceUrl: string, targetUrl: string): boolean {
-  try {
-    return new URL(sourceUrl).origin === new URL(targetUrl).origin;
-  } catch {
-    return false;
-  }
-}
-
-function getCommandSourceForEndpointSource(source: AssistantEndpointSource): AssistantCommandSource {
-  return source === 'axhub-genie' ? 'axhub-genie' : source;
-}
-
-async function verifyAssistantHealthEndpoint(webBaseUrl: string): Promise<{ ok: boolean; message: string }> {
-  try {
-    const response = await fetch(getAssistantHealthUrl(webBaseUrl), { method: 'GET' });
-    if (!response.ok) {
-      return { ok: false, message: `/health 探测失败: status ${response.status}` };
-    }
-
-    const appIdentifier = response.headers.get('X-App-Identifier') || response.headers.get('x-app-identifier') || '';
-    const payload = await response.json().catch(() => null);
-    const serviceId = payload?.service?.id || '';
-    const serviceName = payload?.service?.name || '';
-    const idMatched = serviceId === ASSISTANT_SERVICE_ID || appIdentifier === ASSISTANT_SERVICE_ID;
-    const nameMatched = typeof serviceName === 'string' && serviceName.toLowerCase().includes(ASSISTANT_SERVICE_NAME.toLowerCase());
-
-    if (!idMatched && !nameMatched) {
-      return { ok: false, message: '健康检查服务身份不匹配（非 Axhub Genie）' };
-    }
-    if (payload?.status !== 'ok') {
-      return { ok: false, message: `健康检查状态异常: ${String(payload?.status || 'unknown')}` };
-    }
-
-    const webProbe = await verifyAssistantWebUiEndpoint(webBaseUrl);
-    if (!webProbe.ok) {
-      return webProbe;
-    }
-
-    return { ok: true, message: 'Axhub Genie 健康检查通过' };
-  } catch (error: any) {
-    return { ok: false, message: `健康检查请求失败: ${error?.message || 'unknown error'}` };
-  }
-}
-
-async function verifyAssistantWebUiEndpoint(webBaseUrl: string): Promise<{ ok: boolean; message: string }> {
-  const normalizedWebBaseUrl = webBaseUrl.replace(/\/+$/u, '');
-  try {
-    const response = await fetch(`${normalizedWebBaseUrl}/`, {
-      method: 'GET',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(ASSISTANT_WEB_UI_PROBE_TIMEOUT_MS),
-    });
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location') || '';
-      const resolvedLocation = location ? new URL(location, normalizedWebBaseUrl).toString() : '';
-      if (!resolvedLocation) {
-        return { ok: false, message: 'Web UI 探测失败: 首页重定向缺少 Location' };
-      }
-      if (!isSameAssistantOrigin(normalizedWebBaseUrl, resolvedLocation)) {
-        return { ok: false, message: `Web UI 探测失败: 首页重定向到不同端口 ${resolvedLocation}` };
-      }
-      return { ok: true, message: 'Axhub Genie Web UI 可访问' };
-    }
-    if (!response.ok) {
-      return { ok: false, message: `Web UI 探测失败: status ${response.status}` };
-    }
-    return { ok: true, message: 'Axhub Genie Web UI 可访问' };
-  } catch (error: any) {
-    return { ok: false, message: `Web UI 探测失败: ${error?.message || 'unknown error'}` };
-  }
-}
-
-async function verifyAssistantRuntimeEndpoint(webBaseUrl: string): Promise<{ ok: boolean; message: string }> {
-  const healthProbe = await verifyAssistantHealthEndpoint(webBaseUrl);
-  if (!healthProbe.ok) {
-    return healthProbe;
-  }
-  return { ok: true, message: healthProbe.message };
-}
-
 function normalizeAssistantConfig(value: unknown): AssistantConfig {
   const raw = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -486,108 +495,422 @@ function normalizeAssistantConfig(value: unknown): AssistantConfig {
   };
 }
 
+function resolveRuntimeEndpoints(params: {
+  configAssistant?: AssistantConfig | null;
+  envAssistant?: AssistantConfig | null;
+}) {
+  const webBaseUrl = params.envAssistant?.webBaseUrl
+    || params.configAssistant?.webBaseUrl
+    || DEFAULT_ASSISTANT_WEB_BASE_URL;
+  const apiBaseUrl = params.envAssistant?.apiBaseUrl
+    || params.configAssistant?.apiBaseUrl
+    || `${webBaseUrl}/api`;
+  const source = params.envAssistant?.webBaseUrl || params.envAssistant?.apiBaseUrl
+    ? 'env'
+    : params.configAssistant?.webBaseUrl || params.configAssistant?.apiBaseUrl
+      ? 'config'
+      : 'default';
+  return { webBaseUrl, apiBaseUrl, source } as const;
+}
+
+function getCommandSourceForEndpointSource(source: AssistantEndpointSource): AssistantCommandSource {
+  return source === 'default' ? 'default' : source;
+}
+
+async function fetchEndpoint(url: string, options: RequestInit = {}) {
+  return fetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(ACP_UI_ENDPOINT_PROBE_TIMEOUT_MS),
+  });
+}
+
+function isSameAssistantOrigin(sourceUrl: string, targetUrl: string): boolean {
+  try {
+    return new URL(sourceUrl).origin === new URL(targetUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+async function verifyAcpWebUiEndpoint(webBaseUrl: string): Promise<{ ok: boolean; message: string }> {
+  const normalizedWebBaseUrl = webBaseUrl.replace(/\/+$/u, '');
+  try {
+    const response = await fetchEndpoint(`${normalizedWebBaseUrl}/`, {
+      method: 'GET',
+      redirect: 'manual',
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location') || '';
+      const resolvedLocation = location ? new URL(location, normalizedWebBaseUrl).toString() : '';
+      if (!resolvedLocation) {
+        return { ok: false, message: 'ACP UI 页面探测失败: 首页重定向缺少 Location' };
+      }
+      if (!isSameAssistantOrigin(normalizedWebBaseUrl, resolvedLocation)) {
+        return { ok: false, message: `ACP UI 页面探测失败: 首页重定向到不同端口 ${resolvedLocation}` };
+      }
+      return { ok: true, message: 'ACP UI 页面可访问' };
+    }
+    if (!response.ok) {
+      return { ok: false, message: `ACP UI 页面探测失败: status ${response.status}` };
+    }
+    return { ok: true, message: 'ACP UI 页面可访问' };
+  } catch (error: any) {
+    return { ok: false, message: `ACP UI 页面探测失败: ${error?.message || 'unknown error'}` };
+  }
+}
+
+async function verifyAcpChatEndpoint(apiBaseUrl: string): Promise<{ ok: boolean; message: string }> {
+  const normalizedApiBaseUrl = apiBaseUrl.replace(/\/+$/u, '');
+  try {
+    const response = await fetchEndpoint(`${normalizedApiBaseUrl}/chat`, { method: 'GET' });
+    if (!response.ok && response.status !== 405) {
+      return { ok: false, message: `ACP UI /api/chat 探测失败: status ${response.status}` };
+    }
+    return { ok: true, message: 'ACP UI /api/chat 可访问' };
+  } catch (error: any) {
+    return { ok: false, message: `ACP UI /api/chat 探测失败: ${error?.message || 'unknown error'}` };
+  }
+}
+
+async function verifyAcpServerRuntimeEndpoint(params: {
+  webBaseUrl: string;
+  apiBaseUrl: string;
+}): Promise<{ ok: boolean; detected: boolean; message: string }> {
+  const normalizedApiBaseUrl = params.apiBaseUrl.replace(/\/+$/u, '');
+  try {
+    const response = await fetchEndpoint(`${normalizedApiBaseUrl}/acp/runtime`, {
+      method: 'GET',
+    });
+    if (response.status === 404) {
+      return { ok: true, detected: false, message: 'ACP server runtime metadata unavailable' };
+    }
+    if (!response.ok) {
+      return { ok: false, detected: true, message: `ACP server runtime 探测失败: status ${response.status}` };
+    }
+    const payload = await response.json().catch(() => null) as Record<string, any> | null;
+    if (!payload || typeof payload !== 'object') {
+      return { ok: false, detected: true, message: 'ACP server runtime 探测失败: 响应不是 JSON 对象' };
+    }
+    if (payload.service?.id !== ACP_UI_SERVICE_ID) {
+      return { ok: false, detected: true, message: 'ACP server runtime 探测失败: 服务身份不匹配' };
+    }
+    if (payload.status && payload.status !== 'ready') {
+      return { ok: false, detected: true, message: `ACP server runtime 状态异常: ${String(payload.status)}` };
+    }
+
+    const runtimeWebBaseUrl = normalizeBaseUrl(payload.webBaseUrl);
+    if (runtimeWebBaseUrl && !isSameAssistantOrigin(params.webBaseUrl, runtimeWebBaseUrl)) {
+      return {
+        ok: false,
+        detected: true,
+        message: `ACP server runtime 探测失败: 声明的页面地址为 ${runtimeWebBaseUrl}`,
+      };
+    }
+    const runtimeApiBaseUrl = normalizeBaseUrl(payload.apiBaseUrl);
+    if (runtimeApiBaseUrl && !isSameAssistantOrigin(params.apiBaseUrl, runtimeApiBaseUrl)) {
+      return {
+        ok: false,
+        detected: true,
+        message: `ACP server runtime 探测失败: 声明的 API 地址为 ${runtimeApiBaseUrl}`,
+      };
+    }
+
+    return { ok: true, detected: true, message: 'ACP server runtime 声明通过' };
+  } catch (error: any) {
+    return {
+      ok: true,
+      detected: false,
+      message: `ACP server runtime metadata unavailable: ${error?.message || 'unknown error'}`,
+    };
+  }
+}
+
+function headerAllowsToken(headerValue: string | null, token: string): boolean {
+  const normalizedToken = token.trim().toLowerCase();
+  if (!normalizedToken) return true;
+  return String(headerValue || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .some((item) => item === normalizedToken || item === '*');
+}
+
+function headerAllowsOrigin(headerValue: string | null, origin: string): boolean {
+  const normalizedOrigin = origin.trim().replace(/\/+$/u, '');
+  if (!normalizedOrigin) return true;
+  return String(headerValue || '')
+    .split(',')
+    .map((item) => item.trim().replace(/\/+$/u, ''))
+    .some((item) => item === '*' || item === normalizedOrigin);
+}
+
+async function verifyAcpCorsEndpoint(params: {
+  apiBaseUrl: string;
+  makeOrigin?: string;
+}): Promise<{ ok: boolean; message: string }> {
+  const makeOrigin = String(params.makeOrigin || '').trim().replace(/\/+$/u, '');
+  if (!makeOrigin) {
+    return { ok: true, message: 'ACP UI 跨域未检测：Make origin 为空' };
+  }
+  const normalizedApiBaseUrl = params.apiBaseUrl.replace(/\/+$/u, '');
+  try {
+    const response = await fetchEndpoint(`${normalizedApiBaseUrl}/chat`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: makeOrigin,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type',
+      },
+    });
+    if (!response.ok && response.status !== 204) {
+      return { ok: false, message: `ACP UI 跨域预检失败: status ${response.status}` };
+    }
+    if (!headerAllowsOrigin(response.headers.get('access-control-allow-origin'), makeOrigin)) {
+      return { ok: false, message: `ACP UI 跨域预检失败: 未允许 ${makeOrigin}` };
+    }
+    if (!headerAllowsToken(response.headers.get('access-control-allow-methods'), 'POST')) {
+      return { ok: false, message: 'ACP UI 跨域预检失败: 未允许 POST' };
+    }
+    if (!headerAllowsToken(response.headers.get('access-control-allow-headers'), 'content-type')) {
+      return { ok: false, message: 'ACP UI 跨域预检失败: 未允许 content-type' };
+    }
+    return { ok: true, message: 'ACP UI 跨域预检通过' };
+  } catch (error: any) {
+    return { ok: false, message: `ACP UI 跨域预检失败: ${error?.message || 'unknown error'}` };
+  }
+}
+
+async function verifyAssistantRuntimeEndpoint(params: {
+  webBaseUrl: string;
+  apiBaseUrl: string;
+  makeOrigin?: string;
+}): Promise<{ ok: boolean; message: string }> {
+  const runtimeProbe = await verifyAcpServerRuntimeEndpoint(params);
+  if (!runtimeProbe.ok) {
+    return runtimeProbe;
+  }
+  const webProbe = await verifyAcpWebUiEndpoint(params.webBaseUrl);
+  if (!webProbe.ok) {
+    return webProbe;
+  }
+  const chatProbe = await verifyAcpChatEndpoint(params.apiBaseUrl);
+  if (!chatProbe.ok) {
+    return chatProbe;
+  }
+  const corsProbe = await verifyAcpCorsEndpoint({
+    apiBaseUrl: params.apiBaseUrl,
+    makeOrigin: params.makeOrigin,
+  });
+  if (!corsProbe.ok) {
+    return corsProbe;
+  }
+  return {
+    ok: true,
+    message: [
+      runtimeProbe.detected ? runtimeProbe.message : '',
+      'ACP UI 页面、/api/chat 和跨域预检通过',
+    ].filter(Boolean).join('；'),
+  };
+}
+
+async function waitForAssistantRuntimeEndpoint(params: {
+  webBaseUrl: string;
+  apiBaseUrl: string;
+  makeOrigin?: string;
+  timeoutMs?: number;
+  intervalMs?: number;
+}): Promise<{ ok: boolean; message: string }> {
+  const timeoutMs = Math.max(0, params.timeoutMs ?? ACP_UI_READY_CHECK_TIMEOUT_MS);
+  const intervalMs = Math.max(50, params.intervalMs ?? ACP_UI_READY_CHECK_INTERVAL_MS);
+  const deadline = Date.now() + timeoutMs;
+  let lastProbe = await verifyAssistantRuntimeEndpoint(params);
+  while (!lastProbe.ok && Date.now() < deadline) {
+    await sleep(Math.min(intervalMs, Math.max(0, deadline - Date.now())));
+    lastProbe = await verifyAssistantRuntimeEndpoint(params);
+  }
+  return lastProbe;
+}
+
 export async function resolveAssistantRuntime(params: {
   projectPath: string;
   assistantConfig?: unknown;
   autoStart?: boolean;
+  makeOrigin?: string;
+  allowConfiguredLocalEndpointFallback?: boolean;
+  onRuntimeConfigResolved?: (config: AssistantRuntimeConfigUpdate) => void | Promise<void>;
 }): Promise<AssistantRuntimeInfo> {
   const configAssistant = normalizeAssistantConfig(params.assistantConfig);
   const envAssistant: AssistantConfig = {
     webBaseUrl: normalizeBaseUrl(process.env.AXHUB_ASSISTANT_WEB_BASE_URL),
     apiBaseUrl: normalizeBaseUrl(process.env.AXHUB_ASSISTANT_API_BASE_URL),
   };
-  const initialEndpoints = resolveRuntimeEndpoints({ configAssistant, envAssistant });
-  const healthProbe = await verifyAssistantHealthEndpoint(initialEndpoints.webBaseUrl);
-  if (healthProbe.ok) {
+  let endpoints = resolveRuntimeEndpoints({ configAssistant, envAssistant });
+  let initialProbe = await verifyAssistantRuntimeEndpoint({
+    ...endpoints,
+    makeOrigin: params.makeOrigin,
+  });
+  let ignoredLocalConfig: ResolvedRuntimeEndpoints | null = null;
+  if (params.allowConfiguredLocalEndpointFallback !== false && shouldUseDefaultForFailedLocalConfig(endpoints, initialProbe)) {
+    ignoredLocalConfig = endpoints;
+    endpoints = createLocalAcpEndpoints(DEFAULT_ASSISTANT_PORT_NUMBER);
+    initialProbe = await verifyAssistantRuntimeEndpoint({
+      ...endpoints,
+      makeOrigin: params.makeOrigin,
+    });
+    await params.onRuntimeConfigResolved?.({
+      webBaseUrl: endpoints.webBaseUrl,
+      apiBaseUrl: endpoints.apiBaseUrl,
+    });
+  }
+  if (initialProbe.ok) {
     return {
-      webBaseUrl: initialEndpoints.webBaseUrl,
-      apiBaseUrl: initialEndpoints.apiBaseUrl,
+      webBaseUrl: endpoints.webBaseUrl,
+      apiBaseUrl: endpoints.apiBaseUrl,
       projectPath: params.projectPath,
-      source: initialEndpoints.source,
+      source: endpoints.source,
       health: createAssistantHealthInfo({
         status: 'ready',
-        message: healthProbe.message,
-        commandSource: getCommandSourceForEndpointSource(initialEndpoints.source),
+        message: initialProbe.message,
+        commandSource: getCommandSourceForEndpointSource(endpoints.source),
+        port: resolvePortFromUrl(endpoints.webBaseUrl) || DEFAULT_ASSISTANT_PORT_NUMBER,
+        corsOrigin: params.makeOrigin,
       }),
     };
   }
 
   const shouldAutoStart = params.autoStart !== false;
-  let status = await readAssistantStatusFromCli();
+  if (!shouldAutoStart) {
+    return {
+      webBaseUrl: endpoints.webBaseUrl,
+      apiBaseUrl: endpoints.apiBaseUrl,
+      projectPath: params.projectPath,
+      source: endpoints.source,
+      health: createAssistantHealthInfo({
+        status: 'runtime_unreachable',
+        message: formatRuntimeUnreachableMessage(initialProbe.message, ignoredLocalConfig),
+        commandSource: getCommandSourceForEndpointSource(endpoints.source),
+        port: resolvePortFromUrl(endpoints.webBaseUrl) || DEFAULT_ASSISTANT_PORT_NUMBER,
+        corsOrigin: params.makeOrigin,
+      }),
+    };
+  }
 
-  if (status.status === 'not_running' && shouldAutoStart) {
-    try {
-      await runExecutableCommandInBackground(ASSISTANT_NPX_COMMAND, [ASSISTANT_NPX_PACKAGE], params.projectPath);
-      await sleep(ASSISTANT_START_CHECK_DELAY_MS);
-      status = await readAssistantStatusFromCli();
-    } catch (error: any) {
-      status = {
-        status: 'cli_error',
-        message: `自动启动 AI 助手失败: ${error?.message || 'unknown error'}`,
-        commandSource: 'axhub-genie',
-        config: null,
-      };
+  try {
+    const shouldRestartSameEndpoint = shouldRestartLocalEndpointForAutoStart(endpoints, initialProbe);
+    const startEndpoints = shouldRestartSameEndpoint ? endpoints : resolveStartEndpoints(endpoints);
+    const startPort = resolvePortFromUrl(startEndpoints.webBaseUrl) || DEFAULT_ASSISTANT_PORT_NUMBER;
+    if (shouldRestartSameEndpoint || startPort === DEFAULT_ASSISTANT_PORT_NUMBER) {
+      releaseListeningProcessesOnPort(startPort);
     }
+    await runAcpUiCommandInBackground(params.projectPath, {
+      port: startPort,
+      corsOrigin: params.makeOrigin,
+    });
+    if (startEndpoints.source === 'config') {
+      await params.onRuntimeConfigResolved?.({
+        webBaseUrl: startEndpoints.webBaseUrl,
+        apiBaseUrl: startEndpoints.apiBaseUrl,
+      });
+    }
+    await sleep(ACP_UI_START_CHECK_DELAY_MS);
+    const endpointProbe = await waitForAssistantRuntimeEndpoint({
+      ...startEndpoints,
+      makeOrigin: params.makeOrigin,
+    });
+    return {
+      webBaseUrl: startEndpoints.webBaseUrl,
+      apiBaseUrl: startEndpoints.apiBaseUrl,
+      projectPath: params.projectPath,
+      source: startEndpoints.source,
+      health: createAssistantHealthInfo({
+        status: endpointProbe.ok ? 'ready' : 'runtime_unreachable',
+        message: endpointProbe.ok
+          ? endpointProbe.message
+          : `ACP UI 启动命令已触发，但服务仍不可访问：${endpointProbe.message}`,
+        commandSource: 'acp-ui',
+        port: startPort,
+        corsOrigin: params.makeOrigin,
+      }),
+    };
+  } catch (error: any) {
+    return {
+      webBaseUrl: endpoints.webBaseUrl,
+      apiBaseUrl: endpoints.apiBaseUrl,
+      projectPath: params.projectPath,
+      source: endpoints.source,
+      health: createAssistantHealthInfo({
+        status: error?.message?.includes('未检测到') ? 'missing_cli' : 'cli_error',
+        message: `启动 ACP UI 失败: ${error?.message || 'unknown error'}`,
+        commandSource: 'acp-ui',
+        port: resolvePortFromUrl(endpoints.webBaseUrl) || DEFAULT_ASSISTANT_PORT_NUMBER,
+        corsOrigin: params.makeOrigin,
+      }),
+    };
   }
-
-  const endpoints = resolveRuntimeEndpoints({
-    statusConfig: status.status === 'ready' ? status.config : null,
-    configAssistant,
-    envAssistant,
-  });
-  let endpointProbe: { ok: boolean; message: string } | null = null;
-  if (status.status === 'ready') {
-    endpointProbe = await verifyAssistantRuntimeEndpoint(endpoints.webBaseUrl);
-  }
-  const healthStatus: AssistantHealthStatus = status.status === 'ready' && endpointProbe?.ok === false
-    ? 'runtime_unreachable'
-    : status.status === 'ready'
-    ? 'ready'
-    : status.status === 'missing_cli'
-      ? 'missing_cli'
-      : status.status === 'needs_update'
-        ? 'needs_update'
-        : status.status === 'cli_error'
-          ? 'cli_error'
-          : 'runtime_unreachable';
-  const message = status.status === 'ready' && endpointProbe?.ok === false
-    ? `已通过 ${formatAssistantCommand(['status', '--json'])} 获取服务地址，但服务不可访问：${endpointProbe.message}`
-    : status.status === 'ready'
-    ? `已通过 ${formatAssistantCommand(['status', '--json'])} 获取服务地址（默认 /health 探测失败：${healthProbe.message}）`
-    : status.status === 'not_running'
-      ? shouldAutoStart
-        ? `Axhub Genie 自动启动失败，请手动执行 ${formatAssistantCommand()} 后重试`
-        : `Axhub Genie 未启动，请执行 ${formatAssistantCommand()}`
-      : status.message;
-
-  return {
-    webBaseUrl: endpoints.webBaseUrl,
-    apiBaseUrl: endpoints.apiBaseUrl,
-    projectPath: params.projectPath,
-    source: endpoints.source,
-    health: createAssistantHealthInfo({
-      status: healthStatus,
-      message,
-      commandSource: healthStatus === 'ready' && endpoints.source === 'default' ? 'default' : 'axhub-genie',
-    }),
-  };
 }
 
 export async function runAssistantBootstrap(params: {
   mode: AssistantBootstrapMode;
   projectPath: string;
   assistantConfig?: unknown;
+  makeOrigin?: string;
+  onRuntimeConfigResolved?: (config: AssistantRuntimeConfigUpdate) => void | Promise<void>;
 }): Promise<AssistantRuntimeInfo> {
-  if (!(await localCommandExists(ASSISTANT_NPX_COMMAND, { timeoutMs: COMMAND_AVAILABILITY_TIMEOUT_MS }))) {
-    throw new Error('未检测到 npx 命令，请先安装 Node.js/npm 后重试');
+  const configAssistant = normalizeAssistantConfig(params.assistantConfig);
+  const envAssistant: AssistantConfig = {
+    webBaseUrl: normalizeBaseUrl(process.env.AXHUB_ASSISTANT_WEB_BASE_URL),
+    apiBaseUrl: normalizeBaseUrl(process.env.AXHUB_ASSISTANT_API_BASE_URL),
+  };
+  const endpoints = resolveRuntimeEndpoints({ configAssistant, envAssistant });
+
+  let startEndpoints = endpoints;
+  if (params.mode === 'restart_existing') {
+    if (!isLocalAssistantEndpoint(endpoints.webBaseUrl)) {
+      throw new Error('只能重启本机 ACP 服务，请检查 assistant.webBaseUrl 配置');
+    }
+    const port = resolvePortFromUrl(endpoints.webBaseUrl);
+    if (!port) {
+      throw new Error('无法解析本机 ACP 服务端口');
+    }
+    releaseListeningProcessesOnPort(port);
+  } else if (!isLocalAssistantEndpoint(endpoints.webBaseUrl)) {
+    startEndpoints = createLocalAcpEndpoints(DEFAULT_ASSISTANT_PORT_NUMBER);
+  } else if (resolvePortFromUrl(endpoints.webBaseUrl) === DEFAULT_ASSISTANT_PORT_NUMBER) {
+    startEndpoints = resolveStartEndpoints(endpoints);
+  } else {
+    startEndpoints = endpoints;
   }
-  await runExecutableCommandInBackground(ASSISTANT_NPX_COMMAND, [ASSISTANT_NPX_PACKAGE], params.projectPath);
-  await sleep(ASSISTANT_START_CHECK_DELAY_MS);
-  return resolveAssistantRuntime({
-    projectPath: params.projectPath,
-    assistantConfig: params.assistantConfig,
-    autoStart: false,
+
+  const port = resolvePortFromUrl(startEndpoints.webBaseUrl) || DEFAULT_ASSISTANT_PORT_NUMBER;
+  await runAcpUiCommandInBackground(params.projectPath, {
+    port,
+    corsOrigin: params.makeOrigin,
   });
+  if (startEndpoints.source === 'config') {
+    await params.onRuntimeConfigResolved?.({
+      webBaseUrl: startEndpoints.webBaseUrl,
+      apiBaseUrl: startEndpoints.apiBaseUrl,
+    });
+  }
+  await sleep(ACP_UI_START_CHECK_DELAY_MS);
+  const endpointProbe = await waitForAssistantRuntimeEndpoint({
+    ...startEndpoints,
+    makeOrigin: params.makeOrigin,
+  });
+  return {
+    webBaseUrl: startEndpoints.webBaseUrl,
+    apiBaseUrl: startEndpoints.apiBaseUrl,
+    projectPath: params.projectPath,
+    source: startEndpoints.source,
+    health: createAssistantHealthInfo({
+      status: endpointProbe.ok ? 'ready' : 'runtime_unreachable',
+      message: endpointProbe.ok
+        ? endpointProbe.message
+        : `ACP UI 启动命令已触发，但服务仍不可访问：${endpointProbe.message}`,
+      commandSource: 'acp-ui',
+      port,
+      corsOrigin: params.makeOrigin,
+    }),
+  };
 }
 
 export function createAssistantRuntimeResponse(params: {

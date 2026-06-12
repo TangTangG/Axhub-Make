@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
+  registerProject,
+  setActiveProject,
   startTestServer,
   writeProjectMetadata,
 } from './projects-api.helpers';
@@ -23,6 +25,14 @@ function writePrototypeProject(projectRoot: string): void {
   fs.writeFileSync(path.join(prototypeDir, 'index.tsx'), 'export default function Home() { return null; }\n', 'utf8');
 }
 
+async function startActivatedProjectServer(projectRoot: string): Promise<Awaited<ReturnType<typeof startTestServer>>> {
+  const server = await startTestServer(projectRoot);
+  const projectId = path.basename(projectRoot);
+  await registerProject(server.origin, projectRoot, projectId, projectId);
+  await setActiveProject(server.origin, projectId);
+  return server;
+}
+
 afterEach(() => {
   cleanupProjectApiTestRoots();
 });
@@ -31,7 +41,7 @@ describe('prototype comments API', () => {
   it('returns exists:false when the prototype comments file is missing', async () => {
     const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
 
     try {
       const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`);
@@ -51,7 +61,7 @@ describe('prototype comments API', () => {
   it('writes and reads prototype comments under the fixed .spec file', async () => {
     const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
 
     try {
       const put = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`, {
@@ -60,7 +70,7 @@ describe('prototype comments API', () => {
         body: JSON.stringify({
           document: {
             schemaVersion: 1,
-            kind: 'prototype-comments',
+            kind: 'prototype-edit-comments',
             resource: {
               id: 'home',
               targetPath: 'prototypes/home',
@@ -88,7 +98,7 @@ describe('prototype comments API', () => {
         path: 'src/prototypes/home/.spec/prototype-comments.json',
         document: {
           schemaVersion: 1,
-          kind: 'prototype-comments',
+          kind: 'prototype-edit-comments',
           resource: {
             id: 'home',
             targetPath: 'prototypes/home',
@@ -99,13 +109,16 @@ describe('prototype comments API', () => {
 
       const filePath = path.join(projectRoot, 'src/prototypes/home/.spec/prototype-comments.json');
       expect(fs.existsSync(filePath)).toBe(true);
-      expect(JSON.parse(fs.readFileSync(filePath, 'utf8')).comments[0].comment).toBe('调整首屏文案');
+      const persistedDocument = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      expect(persistedDocument.kind).toBe('prototype-edit-comments');
+      expect(persistedDocument.comments[0].comment).toBe('调整首屏文案');
 
       const get = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`);
       expect(get.status).toBe(200);
       expect(await get.json()).toMatchObject({
         exists: true,
         document: {
+          kind: 'prototype-edit-comments',
           comments: [
             expect.objectContaining({
               elementKey: 'hero',
@@ -122,7 +135,7 @@ describe('prototype comments API', () => {
   it('rejects non-prototype and escaped target paths', async () => {
     const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
 
     try {
       const nonPrototype = await fetch(`${server.origin}/api/prototype-comments?targetPath=components/home`);
@@ -141,7 +154,7 @@ describe('prototype comments API', () => {
   it('extracts image payloads into .spec assets and keeps base64 out of JSON', async () => {
     const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
 
     try {
       const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`, {
@@ -150,7 +163,7 @@ describe('prototype comments API', () => {
         body: JSON.stringify({
           document: {
             schemaVersion: 1,
-            kind: 'prototype-comments',
+            kind: 'prototype-edit-comments',
             resource: {
               id: 'home',
               targetPath: 'prototypes/home',
@@ -175,6 +188,7 @@ describe('prototype comments API', () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
+      expect(body.document.kind).toBe('prototype-edit-comments');
       expect(body.document.images).toEqual([
         expect.objectContaining({
           id: 'hero-image',
@@ -213,7 +227,7 @@ describe('prototype comments API', () => {
     const prototypeDir = path.join(projectRoot, 'src/prototypes/home');
     fs.mkdirSync(prototypeDir, { recursive: true });
     fs.writeFileSync(path.join(prototypeDir, 'index.tsx'), 'export default function Home() { return null; }\n', 'utf8');
-    const server = await startTestServer(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
 
     try {
       const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`);
@@ -234,7 +248,7 @@ describe('prototype comments API', () => {
       },
     });
     fs.mkdirSync(path.join(projectRoot, 'screens/home'), { recursive: true });
-    const server = await startTestServer(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
 
     try {
       const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`);
@@ -250,7 +264,7 @@ describe('prototype comments API', () => {
   it('rejects unsafe asset paths', async () => {
     const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
 
     try {
       const escaped = await fetch(

@@ -89,10 +89,10 @@ export default defineConfig(({ command }) => {
 
     root: 'src',
     publicDir: false,
+    appType: 'mpa',
 
     optimizeDeps: {
       include: [
-        'echarts',
         'lucide-react',
       ],
     },
@@ -119,8 +119,8 @@ export default defineConfig(({ command }) => {
 
     css: {
       preprocessorOptions: {
-        scss: { api: 'modern-compiler' },
-        sass: { api: 'modern-compiler' },
+        scss: { api: 'modern' },
+        sass: { api: 'modern' },
       },
     },
 

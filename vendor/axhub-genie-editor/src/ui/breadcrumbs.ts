@@ -34,6 +34,8 @@ export interface BreadcrumbsOptions {
   onSelect: (element: Element) => void;
   /** Optional: add current selection into host assistant conversation context */
   onSendToGenie?: (element: Element) => void | Promise<void>;
+  /** Whether the host assistant panel is open and can receive context chips */
+  getAssistantPanelOpen?: () => boolean;
   /** Whether Genie is currently online and ready to receive context */
   getGenieBridgeAvailable?: () => boolean;
   /** Hide UI affordances that directly execute Genie/agent tasks. */
@@ -294,7 +296,12 @@ export function createBreadcrumbs(options: BreadcrumbsOptions): Breadcrumbs {
 
     const frag = document.createDocumentFragment();
 
-    if (currentTarget && options.onSendToGenie && (options.getGenieBridgeAvailable?.() ?? false)) {
+    const assistantPanelOpen = options.getAssistantPanelOpen?.();
+    const contextAppendAvailable = typeof assistantPanelOpen === 'boolean'
+      ? assistantPanelOpen
+      : Boolean(options.getGenieBridgeAvailable?.() ?? false);
+
+    if (currentTarget && options.onSendToGenie && contextAppendAvailable) {
       const sendBtn = document.createElement('button');
       sendBtn.type = 'button';
       sendBtn.className = 'we-crumb-send-btn';

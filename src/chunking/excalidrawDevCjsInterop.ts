@@ -11,6 +11,9 @@ const EXCALIDRAW_CJS_OPTIMIZED_DEPS: Record<string, string> = {
   fuzzy: '@axhub_excalidraw___fuzzy.js',
   '@excalidraw/markdown-to-text': '@axhub_excalidraw___@excalidraw_markdown-to-text.js',
 };
+const TIPTAP_EDITOR_CJS_OPTIMIZED_DEPS: Record<string, string> = {
+  'lodash.throttle': 'lodash__throttle.js',
+};
 const MARKDOWN_TO_TEXT_DEP = '@excalidraw/markdown-to-text';
 const MARKDOWN_TO_TEXT_CJS_IMPORT = '__axhubMarkdownToTextCjs';
 
@@ -36,6 +39,11 @@ function isMermaidToExcalidrawBundleId(id: string): boolean {
 
 function isExcalidrawDevCjsInteropId(id: string): boolean {
   return isExcalidrawDevBundleId(id) || isMermaidToExcalidrawBundleId(id);
+}
+
+function isTiptapEditorVendorBundleId(id: string): boolean {
+  const normalizedId = normalizeFilePath(id.split('?')[0] || id);
+  return normalizedId.includes('/vendor/tiptap-editor/dist/');
 }
 
 function toDevServerPath(filePath: string, root: string): string {
@@ -84,12 +92,16 @@ export function rewriteExcalidrawDevCjsImports(
   id: string,
   options: RewriteOptions,
 ): string | null {
-  if (!isExcalidrawDevCjsInteropId(id)) {
+  if (!isExcalidrawDevCjsInteropId(id) && !isTiptapEditorVendorBundleId(id)) {
     return null;
   }
 
   let rewritten = code;
-  for (const [depName, depFileName] of Object.entries(EXCALIDRAW_CJS_OPTIMIZED_DEPS)) {
+  const cjsOptimizedDeps = isTiptapEditorVendorBundleId(id)
+    ? TIPTAP_EDITOR_CJS_OPTIMIZED_DEPS
+    : EXCALIDRAW_CJS_OPTIMIZED_DEPS;
+
+  for (const [depName, depFileName] of Object.entries(cjsOptimizedDeps)) {
     const optimizedDepUrl = createOptimizedDepUrl(depFileName, options);
     if (depName === MARKDOWN_TO_TEXT_DEP) {
       rewritten = rewriteMarkdownToTextNamedImport(rewritten, optimizedDepUrl);

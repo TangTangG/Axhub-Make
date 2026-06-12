@@ -31,6 +31,8 @@ export interface BridgeContextItem {
   commentID?: string;
   commentOrigin?: 'file' | 'review';
   preview?: string;
+  hidden?: boolean;
+  pinned?: boolean;
 }
 
 export type BridgeMessageType =

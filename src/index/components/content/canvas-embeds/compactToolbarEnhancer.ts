@@ -15,10 +15,9 @@
 /* ── SVG icons ────────────────────────────────────────────────── */
 
 const ANNOTATION_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`;
-const AI_IMAGE_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/><circle cx="9" cy="9" r="2"/><path d="M19 3v6"/><path d="M16 6h6"/></svg>`;
-const PROTOTYPE_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/><path d="M8 8h5"/><path d="M8 12h6"/><path d="M8 16h8"/><path d="M19 3v6"/><path d="M16 6h6"/></svg>`;
-const AI_IMAGE_TOOLBAR_LABEL = 'AI 生成图片';
-const PROTOTYPE_TOOLBAR_LABEL = 'AI 生成原型';
+const DRAWIO_TOOL_LABEL = 'Drawio 图表';
+const DRAWIO_TOOL_TOOLTIP = '插入 Drawio 图表';
+const DRAWIO_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="8" y="14" width="8" height="7" rx="1"/><path d="M10 6h4"/><path d="M17.5 10v4"/><path d="M12 10v4"/></svg>`;
 
 /* Layer action icons (matching Excalidraw style) */
 const ICON_SEND_TO_BACK = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/><line x1="12" y1="9" x2="12" y2="21"/><polyline points="4 4 20 4"/></svg>`;
@@ -79,10 +78,8 @@ export interface CompactToolbarEnhancerOptions {
     container: HTMLElement;
     /** Callback when the user clicks the annotation button. */
     onAnnotationClick: () => void;
-    /** Callback when the user clicks the AI image generator toolbar icon. */
-    onAiImageToolClick: () => void;
-    /** Callback when the user clicks the AI prototype generator toolbar icon. */
-    onPrototypeToolClick: () => void;
+    /** Callback when the user clicks the Drawio menu item. */
+    onDrawioToolClick: () => void;
     /** Returns true when the currently selected element has an annotation. */
     hasAnnotation: () => boolean;
     /** Returns the currently open Excalidraw compact popup. */
@@ -94,8 +91,7 @@ export interface CompactToolbarEnhancerOptions {
 export class CompactToolbarEnhancer {
     private container: HTMLElement;
     private onAnnotationClick: () => void;
-    private onAiImageToolClick: () => void;
-    private onPrototypeToolClick: () => void;
+    private onDrawioToolClick: () => void;
     private hasAnnotation: () => boolean;
     private getOpenPopup: () => string | null | undefined;
     private observer: MutationObserver | null = null;
@@ -105,8 +101,7 @@ export class CompactToolbarEnhancer {
     constructor(opts: CompactToolbarEnhancerOptions) {
         this.container = opts.container;
         this.onAnnotationClick = opts.onAnnotationClick;
-        this.onAiImageToolClick = opts.onAiImageToolClick;
-        this.onPrototypeToolClick = opts.onPrototypeToolClick;
+        this.onDrawioToolClick = opts.onDrawioToolClick;
         this.hasAnnotation = opts.hasAnnotation;
         this.getOpenPopup = opts.getOpenPopup;
     }
@@ -136,6 +131,7 @@ export class CompactToolbarEnhancer {
         }
         cancelAnimationFrame(this.rafId);
         this.removeAiGenerationToolbarButtons();
+        this.removeDrawioExtraToolsMenuItems();
     }
 
     /** Call when the selection changes to refresh the annotation button highlight. */
@@ -160,7 +156,7 @@ export class CompactToolbarEnhancer {
         if (toolbar) {
             this.installToolbarTooltips(toolbar);
         }
-        this.injectAiGenerationToolbarButtons();
+        this.injectDrawioExtraToolsMenuItem();
 
         const actionsContainer = this.container.querySelector('.compact-shape-actions');
         if (!actionsContainer) return;
@@ -224,19 +220,6 @@ export class CompactToolbarEnhancer {
             input?.setAttribute('aria-label', label);
         }
 
-        for (const button of toolbar.querySelectorAll<HTMLButtonElement>(
-            '[data-axhub-ai-image-toolbar-btn], [data-axhub-prototype-toolbar-btn]',
-        )) {
-            const label = button.getAttribute('aria-label') || button.title || button.closest<HTMLElement>('[data-axhub-toolbar-tooltip]')?.getAttribute('data-axhub-toolbar-tooltip');
-            if (!label) continue;
-            this.applyToolbarAriaLabel(button, label);
-        }
-    }
-
-    private applyToolbarVisualTooltip(target: HTMLElement, label: string) {
-        target.removeAttribute('title');
-        target.setAttribute('aria-label', label);
-        target.setAttribute('data-axhub-toolbar-tooltip', label);
     }
 
     private applyToolbarAriaLabel(target: HTMLElement, label: string) {
@@ -254,145 +237,44 @@ export class CompactToolbarEnhancer {
         return input.closest('.ToolIcon') as HTMLElement | null;
     }
 
-    private injectAiGenerationToolbarButtons() {
-        const toolbar = this.getTopToolbar();
-        if (!toolbar) return;
+    private injectDrawioExtraToolsMenuItem() {
+        const menus = document.querySelectorAll<HTMLElement>('.App-toolbar__extra-tools-dropdown');
+        for (const menu of menus) {
+            const existingItem = menu.querySelector<HTMLButtonElement>('[data-axhub-drawio-extra-tools-item]');
+            const item = existingItem || this.createDrawioExtraToolsMenuItem();
+            this.wireDropdownMenuItem(item, () => this.onDrawioToolClick());
+            if (existingItem) continue;
 
-        const extraToolsTrigger = toolbar.querySelector<HTMLElement>('.App-toolbar__extra-tools-trigger');
-        if (!extraToolsTrigger) return;
-
-        const menuWrapper = extraToolsTrigger.closest('.dropdown-menu') || extraToolsTrigger;
-        const extraToolsWrapper = menuWrapper;
-        const toolbarParent = extraToolsWrapper.parentElement;
-        if (!toolbarParent || !toolbar.contains(toolbarParent)) return;
-
-        const aiImageWrapper = this.injectAiImageToolbarButton(toolbarParent);
-        const prototypeWrapper = this.injectPrototypeToolbarButton(toolbarParent);
-        this.syncAiGenerationToolbarButtonOrder(toolbarParent, aiImageWrapper, prototypeWrapper, extraToolsWrapper);
-    }
-
-    private injectAiImageToolbarButton(): HTMLElement | null;
-    private injectAiImageToolbarButton(toolbarParent: Element): HTMLElement | null;
-    private injectAiImageToolbarButton(toolbarParent?: Element): HTMLElement | null {
-        if (!toolbarParent) {
-            this.injectAiGenerationToolbarButtons();
-            return null;
-        }
-        const existingWrapper = toolbarParent.querySelector<HTMLElement>('[data-axhub-ai-image-toolbar-wrapper]');
-        const wrapper = existingWrapper || this.createAiImageToolbarButton();
-        this.ensureAiImageToolbarButton(wrapper);
-
-        return wrapper;
-    }
-
-    private injectPrototypeToolbarButton(toolbarParent: Element): HTMLElement {
-        const existingWrapper = toolbarParent.querySelector<HTMLElement>('[data-axhub-prototype-toolbar-wrapper]');
-        const wrapper = existingWrapper || this.createPrototypeToolbarButton();
-        this.ensurePrototypeToolbarButton(wrapper);
-
-        return wrapper;
-    }
-
-    private syncAiGenerationToolbarButtonOrder(
-        toolbarParent: Element,
-        aiImageWrapper: HTMLElement | null,
-        prototypeWrapper: HTMLElement,
-        extraToolsWrapper: Element,
-    ) {
-        if (!aiImageWrapper) return;
-
-        const expectedOrder = [aiImageWrapper, prototypeWrapper, extraToolsWrapper];
-        for (const expectedNode of expectedOrder) {
-            if (expectedNode.parentElement !== toolbarParent) {
-                toolbarParent.insertBefore(expectedNode, extraToolsWrapper);
+            const nativeEmbeddableItem = menu.querySelector<HTMLElement>('[data-testid="toolbar-embeddable"]');
+            if (nativeEmbeddableItem) {
+                nativeEmbeddableItem.after(item);
+            } else {
+                menu.appendChild(item);
             }
         }
-
-        let currentNode: Element | null = expectedOrder[0];
-        for (const expectedNode of expectedOrder) {
-            if (currentNode === expectedNode) {
-                currentNode = currentNode.nextElementSibling;
-                continue;
-            }
-            toolbarParent.insertBefore(expectedNode, currentNode);
-            currentNode = expectedNode.nextElementSibling;
-        }
     }
 
-    private createAiImageToolbarButton(): HTMLElement {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'ToolIcon axhub-ai-image-toolbar-tool';
-        wrapper.setAttribute('data-axhub-ai-image-toolbar-wrapper', 'true');
-        this.applyToolbarVisualTooltip(wrapper, AI_IMAGE_TOOLBAR_LABEL);
-
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'ToolIcon_type_button ToolIcon_size_medium axhub-ai-image-toolbar-button';
-        button.setAttribute('data-axhub-ai-image-toolbar-btn', 'true');
-        this.applyToolbarAriaLabel(button, AI_IMAGE_TOOLBAR_LABEL);
+    private createDrawioExtraToolsMenuItem(): HTMLButtonElement {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'dropdown-menu-item dropdown-menu-item-base';
+        item.setAttribute('data-axhub-drawio-extra-tools-item', 'true');
+        item.setAttribute('data-testid', 'toolbar-drawio');
+        item.title = DRAWIO_TOOL_TOOLTIP;
+        item.setAttribute('aria-label', DRAWIO_TOOL_TOOLTIP);
 
         const icon = document.createElement('div');
-        icon.className = 'ToolIcon__icon';
+        icon.className = 'dropdown-menu-item__icon';
         icon.setAttribute('aria-hidden', 'true');
-        icon.innerHTML = AI_IMAGE_ICON_SVG;
-        button.appendChild(icon);
+        icon.innerHTML = DRAWIO_ICON_SVG;
 
-        this.wireToolbarButton(button, () => this.onAiImageToolClick());
+        const text = document.createElement('div');
+        text.className = 'dropdown-menu-item__text';
+        text.textContent = DRAWIO_TOOL_LABEL;
 
-        wrapper.appendChild(button);
-        return wrapper;
-    }
-
-    private ensureAiImageToolbarButton(wrapper: HTMLElement) {
-        const existingButton = wrapper.querySelector<HTMLButtonElement>('[data-axhub-ai-image-toolbar-btn]');
-        if (existingButton?.getAttribute('data-axhub-toolbar-handler-version') === TOOLBAR_BUTTON_HANDLER_VERSION) {
-            return;
-        }
-        const button = this.createAiImageToolbarButton().querySelector<HTMLButtonElement>('[data-axhub-ai-image-toolbar-btn]');
-        if (!button) return;
-        if (existingButton) {
-            existingButton.replaceWith(button);
-        } else {
-            wrapper.replaceChildren(button);
-        }
-    }
-
-    private createPrototypeToolbarButton(): HTMLElement {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'ToolIcon axhub-prototype-toolbar-tool';
-        wrapper.setAttribute('data-axhub-prototype-toolbar-wrapper', 'true');
-        this.applyToolbarVisualTooltip(wrapper, PROTOTYPE_TOOLBAR_LABEL);
-
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'ToolIcon_type_button ToolIcon_size_medium axhub-prototype-toolbar-button';
-        button.setAttribute('data-axhub-prototype-toolbar-btn', 'true');
-        this.applyToolbarAriaLabel(button, PROTOTYPE_TOOLBAR_LABEL);
-
-        const icon = document.createElement('div');
-        icon.className = 'ToolIcon__icon';
-        icon.setAttribute('aria-hidden', 'true');
-        icon.innerHTML = PROTOTYPE_ICON_SVG;
-        button.appendChild(icon);
-
-        this.wireToolbarButton(button, () => this.onPrototypeToolClick());
-
-        wrapper.appendChild(button);
-        return wrapper;
-    }
-
-    private ensurePrototypeToolbarButton(wrapper: HTMLElement) {
-        const existingButton = wrapper.querySelector<HTMLButtonElement>('[data-axhub-prototype-toolbar-btn]');
-        if (existingButton?.getAttribute('data-axhub-toolbar-handler-version') === TOOLBAR_BUTTON_HANDLER_VERSION) {
-            return;
-        }
-        const button = this.createPrototypeToolbarButton().querySelector<HTMLButtonElement>('[data-axhub-prototype-toolbar-btn]');
-        if (!button) return;
-        if (existingButton) {
-            existingButton.replaceWith(button);
-        } else {
-            wrapper.replaceChildren(button);
-        }
+        item.appendChild(icon);
+        item.appendChild(text);
+        return item;
     }
 
     private wireToolbarButton(button: HTMLButtonElement, onActivate: () => void) {
@@ -413,9 +295,25 @@ export class CompactToolbarEnhancer {
         button.addEventListener('click', handleActivation);
     }
 
+    private wireDropdownMenuItem(item: HTMLButtonElement, onActivate: () => void) {
+        if (item.getAttribute('data-axhub-toolbar-handler-version') === TOOLBAR_BUTTON_HANDLER_VERSION) {
+            return;
+        }
+        item.setAttribute('data-axhub-toolbar-handler-version', TOOLBAR_BUTTON_HANDLER_VERSION);
+        item.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onActivate();
+        });
+    }
+
     private removeAiGenerationToolbarButtons() {
-        this.container.querySelectorAll('[data-axhub-ai-image-toolbar-wrapper], [data-axhub-prototype-toolbar-wrapper]')
+        this.container.querySelectorAll('[data-axhub-ai-generation-toolbar-wrapper], [data-axhub-ai-image-toolbar-wrapper], [data-axhub-prototype-toolbar-wrapper]')
             .forEach((node) => node.remove());
+    }
+
+    private removeDrawioExtraToolsMenuItems() {
+        document.querySelectorAll('[data-axhub-drawio-extra-tools-item]').forEach((node) => node.remove());
     }
 
     private getTopToolbar(): Element | null {
@@ -648,26 +546,22 @@ export function injectEnhancerStyles() {
             width: 1rem;
             height: 1rem;
         }
-        .axhub-ai-image-toolbar-tool,
-        .axhub-prototype-toolbar-tool {
+        .axhub-ai-generation-toolbar-tool {
             display: inline-flex;
             align-items: center;
             justify-content: center;
             position: relative;
         }
-        .axhub-ai-image-toolbar-button,
-        .axhub-prototype-toolbar-button {
+        .axhub-ai-generation-toolbar-button {
             padding: 0;
             border: 0;
             background: transparent;
             color: var(--icon-fill-color, var(--axhub-excalidraw-control-text, currentColor));
         }
-        .axhub-ai-image-toolbar-button:hover .ToolIcon__icon,
-        .axhub-prototype-toolbar-button:hover .ToolIcon__icon {
+        .axhub-ai-generation-toolbar-button:hover .ToolIcon__icon {
             background: var(--button-hover-bg, var(--axhub-excalidraw-control-hover-bg, rgba(0, 0, 0, 0.06)));
         }
-        .axhub-ai-image-toolbar-button .ToolIcon__icon svg,
-        .axhub-prototype-toolbar-button .ToolIcon__icon svg {
+        .axhub-ai-generation-toolbar-button .ToolIcon__icon svg {
             width: var(--axhub-excalidraw-icon-size, 17px);
             height: var(--axhub-excalidraw-icon-size, 17px);
         }

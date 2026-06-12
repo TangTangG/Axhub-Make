@@ -45,6 +45,19 @@ const DEV_ENTRY_ASSET_SOURCE_MAP = new Map<string, string>([
   ['/assets/runtime-export-core.js', '/src/runtime-export-core.ts'],
 ]);
 const EMBEDDED_VITE_CACHE_DIR_PREFIX = 'axhub-make-dev-';
+const EMBEDDED_VITE_WATCH_IGNORED = [
+  '**/.axhub/**',
+  '**/.spec/**',
+  '**/automation-reports/**',
+  '**/dist/**',
+  '**/node_modules/**',
+  '**/src/server/**',
+  '**/client/**',
+  '**/midscene/**',
+  '**/vendor/**',
+  '**/*.excalidraw',
+  '**/canvas-assets/**',
+];
 
 type CapturedHeaderValue = string | number | string[];
 
@@ -122,6 +135,10 @@ function pruneStaleEmbeddedViteCacheDirs(viteCacheRoot: string): void {
     }
     fs.rmSync(path.join(viteCacheRoot, entry.name), { recursive: true, force: true });
   }
+}
+
+export function getEmbeddedViteWatchIgnored(): string[] {
+  return [...EMBEDDED_VITE_WATCH_IGNORED];
 }
 
 function rewriteDevEntryAssetRequestUrl(requestUrl: string | undefined): string | undefined {
@@ -370,14 +387,9 @@ export async function createViteDevMiddleware(
           // Client runtime files have their own dev server; watching them here
           // makes the admin shell reload while the client is already applying
           // its local HMR update.
-          ignored: [
-            '**/dist/**',
-            '**/node_modules/**',
-            '**/src/server/**',
-            '**/client/**',
-            '**/*.excalidraw',
-            '**/canvas-assets/**',
-          ],
+          // Vendor files are synced by dev/start/build scripts. Watching that
+          // delete-and-copy output can flood HMR with reloads during startup.
+          ignored: getEmbeddedViteWatchIgnored(),
         },
       },
       appType: 'custom',
