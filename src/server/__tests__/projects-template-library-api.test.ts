@@ -26,6 +26,8 @@ const DEFAULT_TEMPLATE_INDEX = {
       sourcePath: 'templates/ref-free',
       coverPath: 'covers/ref-free.svg',
       description: 'Dependency-free remote template',
+      author: 'Template Author',
+      authorUrl: 'https://example.com/template-author',
       extraDependencies: [],
     },
     {
@@ -177,6 +179,8 @@ describe('make-server project template library APIs', () => {
         slug: 'ref-free',
         coverUrl: `https://raw.githubusercontent.com/${TEMPLATE_REPO}/main/covers/ref-free.svg`,
         sourceUrl: `https://github.com/${TEMPLATE_REPO}/tree/main/templates/ref-free`,
+        author: 'Template Author',
+        authorUrl: 'https://example.com/template-author',
         canDirectImport: true,
       });
       expect(listed.body.templates[0]).not.toHaveProperty('previewUrl');
@@ -262,6 +266,46 @@ describe('make-server project template library APIs', () => {
     }
   });
 
+  it('forwards optional author metadata from the remote template index', async () => {
+    const projectRoot = createTempRoot();
+    writeTemplateEnabledProject(projectRoot);
+    mockGitHubResponses({
+      index: {
+        schemaVersion: 1,
+        templates: [
+          {
+            id: 'ref-free',
+            title: 'Remote Free',
+            slug: 'ref-free',
+            sourcePath: 'templates/ref-free',
+            coverPath: 'covers/ref-free.svg',
+            description: 'Dependency-free remote template',
+            author: ' Suraj Bhat ',
+            authorUrl: ' https://www.figma.com/@2f705619_bfe5_4 ',
+            extraDependencies: [],
+          },
+        ],
+      },
+    });
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-library-client');
+
+    try {
+      const listed = await fetchJson(`${server.origin}/api/template-library`);
+
+      expect(listed.status).toBe(200);
+      expect(listed.body.templates).toEqual([
+        expect.objectContaining({
+          id: 'ref-free',
+          author: 'Suraj Bhat',
+          authorUrl: 'https://www.figma.com/@2f705619_bfe5_4',
+          sourceUrl: `https://github.com/${TEMPLATE_REPO}/tree/main/templates/ref-free`,
+        }),
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it.each([
     ['relative path', 'previews/ref-free/'],
     ['ftp URL', 'ftp://example.com/ref-free/'],
@@ -296,6 +340,46 @@ describe('make-server project template library APIs', () => {
         code: 'TEMPLATE_LIBRARY_SCHEMA_INVALID',
       });
       expect(listed.body.error).toContain('previewUrl');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.each([
+    ['relative path', 'profiles/suraj'],
+    ['ftp URL', 'ftp://example.com/suraj'],
+    ['invalid URL', 'not a url'],
+  ])('returns a structured error when authorUrl is a %s', async (_label, authorUrl) => {
+    const projectRoot = createTempRoot();
+    writeTemplateEnabledProject(projectRoot);
+    mockGitHubResponses({
+      index: {
+        schemaVersion: 1,
+        templates: [
+          {
+            id: 'ref-free',
+            title: 'Remote Free',
+            slug: 'ref-free',
+            sourcePath: 'templates/ref-free',
+            coverPath: 'covers/ref-free.svg',
+            description: 'Dependency-free remote template',
+            author: 'Suraj Bhat',
+            authorUrl,
+            extraDependencies: [],
+          },
+        ],
+      },
+    });
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-library-client');
+
+    try {
+      const listed = await fetchJson(`${server.origin}/api/template-library`);
+
+      expect(listed.status).toBe(502);
+      expect(listed.body).toMatchObject({
+        code: 'TEMPLATE_LIBRARY_SCHEMA_INVALID',
+      });
+      expect(listed.body.error).toContain('authorUrl');
     } finally {
       await server.close();
     }

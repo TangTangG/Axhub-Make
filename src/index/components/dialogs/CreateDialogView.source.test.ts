@@ -6,18 +6,24 @@ function readDialogSource() {
     return readFileSync(resolve(__dirname, './CreateDialogView.tsx'), 'utf8');
 }
 
+function readTemplateLibraryCardSource() {
+    return readFileSync(resolve(__dirname, './TemplateLibraryCard.tsx'), 'utf8');
+}
+
 describe('CreateDialogView online template library source', () => {
-    it('includes optional previewUrl in online template library item type', () => {
+    it('includes optional preview and author metadata in online template library item type', () => {
         const source = readDialogSource();
         const typeMatch = source.match(/interface TemplateLibraryItem[\s\S]*?\n}/);
 
         expect(typeMatch).not.toBeNull();
         expect(typeMatch?.[0] || '').toContain('previewUrl?: string;');
+        expect(typeMatch?.[0] || '').toContain('author?: string;');
+        expect(typeMatch?.[0] || '').toContain('authorUrl?: string;');
     });
 
     it('treats ok false template library payloads as failed loads', () => {
         const source = readDialogSource();
-        const effectMatch = source.match(/fetch\('\/api\/template-library'\)[\s\S]*?setTemplateLibrary\(\{/);
+        const effectMatch = source.match(new RegExp("fetch\\('/api/template-library'\\)[\\s\\S]*?setTemplateLibrary\\(\\{"));
 
         expect(effectMatch).not.toBeNull();
         expect(effectMatch?.[0] || '').toContain('result?.ok === false');
@@ -26,7 +32,7 @@ describe('CreateDialogView online template library source', () => {
 
     it('does not cancel the online template library request when marking it as loading', () => {
         const source = readDialogSource();
-        const effectMatch = source.match(/useEffect\(\(\) => \{[\s\S]*?fetch\('\/api\/template-library'\)[\s\S]*?\}, \[([^\]]+)\]\);/);
+        const effectMatch = source.match(new RegExp("useEffect\\(\\(\\) => \\{[\\s\\S]*?fetch\\('/api/template-library'\\)[\\s\\S]*?\\}, \\[([^\\]]+)\\]\\);"));
 
         expect(effectMatch).not.toBeNull();
         const dependencies = effectMatch?.[1] || '';
@@ -34,26 +40,32 @@ describe('CreateDialogView online template library source', () => {
         expect(effectMatch?.[0] || '').not.toContain("|| templateLibrary.loading ||");
     });
 
-    it('renders an online preview entry only when the template includes previewUrl', () => {
+    it('opens template previews from the whole card and warns when previewUrl is missing', () => {
         const source = readDialogSource();
-        const templateCardMatch = source.match(/templateLibrary\.templates\.map\(\(template\) => \{[\s\S]*?handleDirectTemplateImport\(template\)[\s\S]*?<\/TooltipProvider>/);
+        const cardSource = readTemplateLibraryCardSource();
 
-        expect(templateCardMatch).not.toBeNull();
-        const templateCardSource = templateCardMatch?.[0] || '';
-        expect(templateCardSource).toContain('template.previewUrl ? (');
-        expect(templateCardSource).toContain('在线预览');
-        expect(templateCardSource).toContain('href={template.previewUrl}');
+        expect(source).toContain('onPreview={handleTemplatePreviewCardClick}');
+        expect(cardSource).toContain('onClick={() => onPreview?.(template)}');
+        expect(cardSource).toContain("template.previewUrl ? '点击打开在线预览' : '该模板暂不支持在线预览'");
+        expect(source).toContain("toast.warning('该模板暂不支持在线预览')");
+        expect(cardSource).not.toContain('<Globe className="h-3.5 w-3.5" />');
+        expect(cardSource).not.toContain('href={template.previewUrl}');
     });
 
-    it('opens online previews in a new window without changing direct import disabled logic', () => {
+    it('renders author metadata in the old path position and keeps actions low emphasis', () => {
         const source = readDialogSource();
-        const templateCardMatch = source.match(/templateLibrary\.templates\.map\(\(template\) => \{[\s\S]*?handleDirectTemplateImport\(template\)[\s\S]*?<\/TooltipProvider>/);
+        const cardSource = readTemplateLibraryCardSource();
 
-        expect(templateCardMatch).not.toBeNull();
-        const templateCardSource = templateCardMatch?.[0] || '';
-        expect(templateCardSource).toContain('target="_blank"');
-        expect(templateCardSource).toContain('rel="noreferrer"');
-        expect(templateCardSource).toContain('const directDisabled = Boolean(disabledReason) || !template.canDirectImport || Boolean(templateImportingId);');
-        expect(templateCardSource).not.toContain('directDisabled = Boolean(template.previewUrl)');
+        expect(cardSource).toContain("const authorLabel = String(template.author || '').trim();");
+        expect(cardSource).toContain('authorLabel ? (');
+        expect(cardSource).toContain('href={template.authorUrl}');
+        expect(cardSource).toContain('作者：{authorLabel}');
+        expect(cardSource).toContain('{template.sourcePath}');
+        expect(cardSource).toContain('line-clamp-2 break-words text-[12px] leading-5 text-muted-foreground [overflow-wrap:anywhere]');
+        expect(cardSource).toContain('variant="ghost"');
+        expect(cardSource).toContain('onClick={(event) => event.stopPropagation()}');
+        expect(cardSource).toContain('onKeyDown={(event) => event.stopPropagation()}');
+        expect(source).toContain('const directDisabled = Boolean(disabledReason) || !template.canDirectImport || Boolean(templateImportingId);');
+        expect(source).not.toContain('directDisabled = Boolean(template.previewUrl)');
     });
 });
