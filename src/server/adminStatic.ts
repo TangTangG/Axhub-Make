@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createProjectMetadataStore, isPathInside, type PrototypeResource } from './projectCore/index.ts';
 
 import { getRequestUrl, sendFile, sendText } from './http.ts';
+import { AXHUB_CANVAS_MCP_PATH } from './axhubCanvasMcp.ts';
 import { AXHUB_HUG_SCRIPT, AXHUB_HUG_SCRIPT_PATH, OPENCODE_BASE_PATH } from './opencodeHug.ts';
 import { stripViteDevOnlyModuleImports } from './staticTemplateHtml.ts';
 
@@ -20,6 +21,7 @@ export interface AdminStaticOptions {
   port: number;
   opencodeServerOrigin?: string;
   runtimeOrigin?: string;
+  axhubCanvasMcpToken?: string;
 }
 
 export function escapeScriptString(value: string): string {
@@ -49,6 +51,8 @@ export function buildInjectScript(options: AdminStaticOptions): string {
     window.__LOCAL_PORT__ = ${options.port};
     window.__PROJECT_ROOT__ = '${escapeScriptString(options.projectRoot)}';
     window.__RUNTIME_ORIGIN__ = '${escapeScriptString(options.runtimeOrigin || '')}';
+    window.__AXHUB_CANVAS_MCP_URL__ = '${AXHUB_CANVAS_MCP_PATH}';
+    window.__AXHUB_CANVAS_MCP_TOKEN__ = '${escapeScriptString(options.axhubCanvasMcpToken || '')}';
   </script>`;
 }
 

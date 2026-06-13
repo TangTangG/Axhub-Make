@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 import { getOpenCodeBridgeHub, isOpenCodeBridgeUpgrade } from './opencodeBridge.ts';
 import { getCanvasBridgeHub, isCanvasBridgeUpgrade } from './canvasBridge.ts';
+import {
+  createAxhubCanvasMcpToken,
+  handleAxhubCanvasMcp,
+} from './axhubCanvasMcp.ts';
 
 import {
   checkMakeStateHealth,
@@ -312,6 +316,8 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   let runtimeOrigin = resolveRuntimeOrigin(null, options.runtimeOrigin);
   let origin = '';
   let adminServerInfo: AxhubServerInfo | null = null;
+  const canvasBridgeHub = getCanvasBridgeHub();
+  const axhubCanvasMcpToken = createAxhubCanvasMcpToken();
   let makeStateHealth: MakeStateHealthResult = checkMakeStateHealth(
     options.registryPath ? { registryPath: options.registryPath } : { homeDir: serverInfoHomeDir },
   );
@@ -347,6 +353,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       lanHost,
       port: Number(new URL(origin).port),
       runtimeOrigin,
+      axhubCanvasMcpToken,
     });
     const requestUrl = getRequestUrl(req);
     const htmlUrl = pathname || '/';
@@ -397,6 +404,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         port: Number(new URL(origin).port),
         opencodeServerOrigin: resolveOpenCodeServerOrigin(pathname),
         runtimeOrigin,
+        axhubCanvasMcpToken,
       };
 
       // ── 1. Management API ──
@@ -407,6 +415,12 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       });
       adminStaticOptions.runtimeOrigin = runtimeOrigin;
       if (redirectMissingPlaceholderPrototypeShortLink(req, res, adminStaticOptions)) {
+        return;
+      }
+      if (await handleAxhubCanvasMcp(req, res, {
+        token: axhubCanvasMcpToken,
+        bridgeHub: canvasBridgeHub,
+      })) {
         return;
       }
       if (await handleManagementApi(req, res, {
@@ -479,6 +493,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
             lanHost,
             port: Number(new URL(origin).port),
             runtimeOrigin,
+            axhubCanvasMcpToken,
           });
           const html = await currentViteMiddleware.transformHtml(
             '/src/index/index.html',
@@ -572,7 +587,6 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   // Attach WebSocket upgrade handlers for OpenCode context bridge and Canvas bridge.
   // In dev mode, non-bridge upgrades are left open for Vite HMR.
   const bridgeHub = getOpenCodeBridgeHub();
-  const canvasBridgeHub = getCanvasBridgeHub();
   canvasBridgeHub.configureProjectRoot(projectRoot);
   server.on('upgrade', (req, socket, head) => {
     if (isOpenCodeBridgeUpgrade(req)) {

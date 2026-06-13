@@ -559,4 +559,37 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain('targetPath: filePath');
     expect(source).not.toContain("fetch('/api/ide/open'");
   });
+
+  it('handles canvas MCP bridge commands inside the browser canvas tab', () => {
+    const source = readSource();
+
+    expect(source).toContain("type CanvasCommandName = 'canvas_get_state'");
+    expect(source).toContain('const handleCanvasBridgeCommandRequest = useCallback(async (msg: CanvasBridgeCommandRequestMessage) => {');
+    expect(source).toContain("type: 'canvas.command.result'");
+    expect(source).toContain("if (msg.type === 'canvas.command.request') {");
+    expect(source).toContain('canvasBridgeCommandHandlerRef.current = handleCanvasBridgeCommandRequest;');
+    expect(source).toContain('void canvasBridgeCommandHandlerRef.current?.(msg);');
+    expect(source).toContain("case 'canvas_get_state':");
+    expect(source).toContain('selectedElementIds: Object.keys(appState.selectedElementIds || {})');
+    expect(source).toContain('elementSummaries: summarizeCanvasCommandElements(');
+    expect(source).toContain("case 'canvas_refresh':");
+    expect(source).toContain('await handleRefreshCanvasFromServer();');
+    expect(source).toContain("case 'canvas_capture':");
+    expect(source).toContain('await captureExcalidrawElements(excalidrawAPI, captureElements, {');
+    expect(source).toContain("scope === 'rect'");
+    expect(source).toContain('createCanvasCommandRectElement(');
+    expect(source).toContain("scope === 'full'");
+    expect(source).toContain('exportPadding: scope === \'viewport\' || scope === \'rect\' ? 0 : 16,');
+    expect(source).toContain("case 'canvas_insert_elements':");
+    expect(source).toContain('resolveCanvasCommandInsertPosition(');
+    expect(source).toContain('scheduleExplicitCanvasSave({ elements: nextElements, appState: excalidrawAPI.getAppState() });');
+    expect(source).toContain("case 'canvas_update_elements':");
+    expect(source).toContain('applyCanvasCommandElementUpdates(');
+    expect(source).toContain("case 'canvas_delete_elements':");
+    expect(source).toContain('isDeleted: true');
+    expect(source).toContain("case 'canvas_focus':");
+    expect(source).toContain('excalidrawAPI.scrollToContent(');
+    expect(source).toContain('createCanvasCommandRectElement(targetRect, \'focus-rect\')');
+    expect(source).toContain('CANVAS_COMMAND_UPDATE_ALLOWED_FIELDS');
+  });
 });

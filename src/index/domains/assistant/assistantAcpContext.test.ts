@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildAcpCanvasMcpPostMessage,
   buildAcpImageGenerationPostMessage,
   buildAcpContextPostMessage,
+  getAcpCanvasMcpConfigSignature,
   getAcpImageGenerationConfigSignature,
   mapAssistantContextToAcpContextBundle,
 } from './assistantAcpContext';
@@ -245,5 +247,53 @@ describe('assistant ACP context mapping', () => {
     expect(firstSignature).not.toContain('acp.tool.imageGeneration');
     expect(firstSignature).not.toContain('"imageGeneration"');
     expect(firstSignature).not.toEqual(secondSignature);
+  });
+
+  it('builds transient ACP runtime MCP config for the Make canvas endpoint', () => {
+    const message = buildAcpCanvasMcpPostMessage({
+      makeOrigin: ' http://localhost:5174/ ',
+      token: ' canvas-secret ',
+    }, 'canvas-mcp-1');
+
+    expect(message).toEqual({
+      type: 'acp.runtime.configure',
+      requestId: 'canvas-mcp-1',
+      payload: {
+        merge: true,
+        mcpServers: [{
+          name: 'axhub-canvas',
+          type: 'http',
+          url: 'http://localhost:5174/api/mcp/axhub-canvas',
+          headers: [{
+            name: 'x-axhub-canvas-mcp-token',
+            value: 'canvas-secret',
+          }],
+        }],
+      },
+    });
+  });
+
+  it('builds ACP runtime MCP clear messages when canvas MCP details are unavailable', () => {
+    expect(buildAcpCanvasMcpPostMessage({
+      makeOrigin: 'http://localhost:5174',
+      token: '',
+    }, 'canvas-mcp-clear')).toEqual({
+      type: 'acp.runtime.clear',
+      requestId: 'canvas-mcp-clear',
+      payload: {
+        fields: ['mcpServers'],
+      },
+    });
+  });
+
+  it('does not retain the canvas MCP token in config sync signatures', () => {
+    const signature = getAcpCanvasMcpConfigSignature({
+      makeOrigin: 'http://localhost:5174',
+      token: 'canvas-secret',
+    });
+
+    expect(signature).toContain('axhub-canvas');
+    expect(signature).toContain('x-axhub-canvas-mcp-token');
+    expect(signature).not.toContain('canvas-secret');
   });
 });

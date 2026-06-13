@@ -357,6 +357,147 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
     hub.destroy();
   });
 
+  it('sends canvas command requests to a registered canvas client and resolves result payloads', async () => {
+    const { hub } = createHub();
+    const socket = registerClient(hub, 'prototypes/home/canvas.excalidraw');
+
+    const resultPromise = hub.sendCommand('canvas_get_state', { includeElements: true }, {
+      requestId: 'command-1',
+      timeoutMs: 5000,
+    });
+
+    expect(socket.sentMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'canvas.command.request',
+        requestId: 'command-1',
+        canvasName: 'prototypes/home/canvas',
+        command: 'canvas_get_state',
+        payload: { includeElements: true },
+        timeoutMs: 5000,
+      }),
+    ]));
+
+    socket.emit('data', encodeClientTextFrame({
+      type: 'canvas.command.result',
+      requestId: 'command-1',
+      ok: true,
+      payload: { canvasName: 'prototypes/home/canvas', selectedElementIds: [] },
+    }));
+
+    await expect(resultPromise).resolves.toEqual({
+      canvasName: 'prototypes/home/canvas',
+      selectedElementIds: [],
+    });
+    hub.destroy();
+  });
+
+  it('rejects canvas commands when no canvas tab is connected', async () => {
+    const { hub } = createHub();
+
+    await expect(hub.sendCommand('canvas_get_state', {}, {
+      requestId: 'command-no-client',
+      timeoutMs: 5000,
+    })).rejects.toMatchObject({
+      code: 'canvas_not_connected',
+    });
+    hub.destroy();
+  });
+
+  it('rejects duplicate canvas command request ids while a command is pending', async () => {
+    const { hub } = createHub();
+    const socket = registerClient(hub, 'prototypes/home/canvas.excalidraw');
+
+    const firstResultPromise = hub.sendCommand('canvas_get_state', {}, {
+      requestId: 'duplicate-command',
+      timeoutMs: 5000,
+    });
+
+    await expect(hub.sendCommand('canvas_capture', {}, {
+      requestId: 'duplicate-command',
+      timeoutMs: 5000,
+    })).rejects.toMatchObject({
+      code: 'canvas_command_duplicate_request',
+    });
+
+    socket.emit('data', encodeClientTextFrame({
+      type: 'canvas.command.result',
+      requestId: 'duplicate-command',
+      ok: true,
+      payload: { ok: true },
+    }));
+
+    await expect(firstResultPromise).resolves.toEqual({ ok: true });
+    hub.destroy();
+  });
+
+  it('rejects canvas commands when the browser does not answer before timeout', async () => {
+    const { hub } = createHub();
+    registerClient(hub, 'prototypes/home/canvas.excalidraw');
+
+    const resultPromise = hub.sendCommand('canvas_capture', { scope: 'viewport' }, {
+      requestId: 'timeout-command',
+      timeoutMs: 100,
+    });
+    const expectation = expect(resultPromise).rejects.toMatchObject({
+      code: 'canvas_command_timeout',
+    });
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expectation;
+    hub.destroy();
+  });
+
+  it('routes canvas commands to the requested canvas name when multiple tabs are connected', async () => {
+    const { hub } = createHub();
+    const home = registerClient(hub, 'prototypes/home/canvas.excalidraw');
+    const about = registerClient(hub, 'src/prototypes/about/canvas.excalidraw');
+
+    const resultPromise = hub.sendCommand('canvas_focus', { target: 'all' }, {
+      requestId: 'about-command',
+      canvasName: 'src/prototypes/about/canvas.excalidraw',
+      timeoutMs: 5000,
+    });
+
+    expect(home.sentMessages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'canvas.command.request', requestId: 'about-command' }),
+    ]));
+    expect(about.sentMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'canvas.command.request',
+        requestId: 'about-command',
+        canvasName: 'prototypes/about/canvas',
+        command: 'canvas_focus',
+      }),
+    ]));
+
+    about.emit('data', encodeClientTextFrame({
+      type: 'canvas.command.result',
+      requestId: 'about-command',
+      ok: true,
+      payload: { focused: true },
+    }));
+
+    await expect(resultPromise).resolves.toEqual({ focused: true });
+    hub.destroy();
+  });
+
+  it('rejects pending canvas commands when the target browser tab disconnects', async () => {
+    const { hub } = createHub();
+    const socket = registerClient(hub, 'prototypes/home/canvas.excalidraw');
+
+    const resultPromise = hub.sendCommand('canvas_get_state', {}, {
+      requestId: 'disconnect-command',
+      timeoutMs: 5000,
+    });
+
+    socket.end();
+
+    await expect(resultPromise).rejects.toMatchObject({
+      code: 'canvas_disconnected',
+    });
+    hub.destroy();
+  });
+
   it('responds to ping frames and ignores malformed text frames without dropping the client', () => {
     const { hub } = createHub();
     const socket = registerClient(hub, 'prototypes/home/canvas');
