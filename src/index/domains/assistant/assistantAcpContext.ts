@@ -99,6 +99,8 @@ export interface AcpRuntimeConfigurePostMessage {
     merge?: boolean;
     builtinTools?: string[];
     builtinToolSettings?: Record<string, unknown>;
+    mcpServers?: unknown[];
+    commands?: unknown[];
   };
 }
 
@@ -114,8 +116,16 @@ export type AcpImageGenerationPostMessage =
   | AcpRuntimeConfigurePostMessage
   | AcpRuntimeClearPostMessage;
 
+export type AcpCanvasMcpPostMessage =
+  | AcpRuntimeConfigurePostMessage
+  | AcpRuntimeClearPostMessage;
+
 const ACP_IMAGE_GENERATION_TOOL_ID = 'image-generation';
 const ACP_IMAGE_GENERATION_RUNTIME_CLEAR_FIELDS: AcpRuntimeConfigField[] = ['builtinTools', 'builtinToolSettings'];
+const ACP_CANVAS_MCP_NAME = 'axhub-canvas';
+const ACP_CANVAS_MCP_PATH = '/api/mcp/axhub-canvas';
+const ACP_CANVAS_MCP_TOKEN_HEADER = 'x-axhub-canvas-mcp-token';
+const ACP_CANVAS_MCP_RUNTIME_CLEAR_FIELDS: AcpRuntimeConfigField[] = ['mcpServers'];
 
 function normalizeContextPath(value: unknown): string {
   return typeof value === 'string' ? value.trim().replace(/\\/g, '/') : '';
@@ -127,6 +137,16 @@ function normalizeOptionalPostMessageString(value: unknown): string {
 
 function normalizeImageGenerationBaseUrl(value: unknown): string {
   return normalizeOptionalPostMessageString(value).replace(/\/+$/u, '');
+}
+
+function normalizeMakeOrigin(value: unknown): string {
+  const normalized = normalizeOptionalPostMessageString(value).replace(/\/+$/u, '');
+  if (!normalized) return '';
+  try {
+    return new URL(normalized).origin;
+  } catch {
+    return '';
+  }
 }
 
 function getImageGenerationSecretFingerprint(value: string): string {
@@ -379,6 +399,71 @@ export function getAcpImageGenerationConfigSignature(
       builtinToolSettings: {
         [ACP_IMAGE_GENERATION_TOOL_ID]: imageGenerationSettings,
       },
+    },
+  });
+}
+
+export function buildAcpCanvasMcpPostMessage(
+  config: { makeOrigin?: string | null; token?: string | null } | null | undefined,
+  requestId?: string,
+): AcpCanvasMcpPostMessage {
+  const makeOrigin = normalizeMakeOrigin(config?.makeOrigin);
+  const token = normalizeOptionalPostMessageString(config?.token);
+  if (!makeOrigin || !token) {
+    return {
+      type: 'acp.runtime.clear',
+      ...(requestId ? { requestId } : {}),
+      payload: {
+        fields: ACP_CANVAS_MCP_RUNTIME_CLEAR_FIELDS,
+      },
+    };
+  }
+
+  return {
+    type: 'acp.runtime.configure',
+    ...(requestId ? { requestId } : {}),
+    payload: {
+      merge: true,
+      mcpServers: [{
+        name: ACP_CANVAS_MCP_NAME,
+        type: 'http',
+        url: `${makeOrigin}${ACP_CANVAS_MCP_PATH}`,
+        headers: [{
+          name: ACP_CANVAS_MCP_TOKEN_HEADER,
+          value: token,
+        }],
+      }],
+    },
+  };
+}
+
+export function getAcpCanvasMcpConfigSignature(
+  config: { makeOrigin?: string | null; token?: string | null } | null | undefined,
+): string {
+  const makeOrigin = normalizeMakeOrigin(config?.makeOrigin);
+  const token = normalizeOptionalPostMessageString(config?.token);
+  if (!makeOrigin || !token) {
+    return JSON.stringify({
+      type: 'acp.runtime.clear',
+      payload: {
+        fields: ACP_CANVAS_MCP_RUNTIME_CLEAR_FIELDS,
+      },
+    });
+  }
+
+  return JSON.stringify({
+    type: 'acp.runtime.configure',
+    payload: {
+      merge: true,
+      mcpServers: [{
+        name: ACP_CANVAS_MCP_NAME,
+        type: 'http',
+        url: `${makeOrigin}${ACP_CANVAS_MCP_PATH}`,
+        headers: [{
+          name: ACP_CANVAS_MCP_TOKEN_HEADER,
+          hasValue: true,
+        }],
+      }],
     },
   });
 }

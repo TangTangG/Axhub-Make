@@ -5,6 +5,7 @@ import {
     type AssistantImageGenerationConfig,
     buildAcpContextItemsPostMessage,
     buildAcpContextPostMessage,
+    buildAcpCanvasMcpPostMessage,
     buildAcpImageGenerationPostMessage,
 } from '../assistantAcpContext';
 import type { AssistantImageAttachmentPayload } from '../assistantContextPayload';
@@ -54,6 +55,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
     const [iframeLoaded, setIframeLoaded] = useState(false);
     const iframeLoadedRef = useRef(false);
     const imageGenerationConfigSyncAttemptRef = useRef(0);
+    const canvasMcpConfigSyncAttemptRef = useRef(0);
 
     useEffect(() => {
         setIframeLoaded(false);
@@ -139,6 +141,37 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
             }
         }, 520);
     }, [syncImageGenerationConfig]);
+
+    const syncCanvasMcpConfig = useCallback((config: { makeOrigin?: string | null; token?: string | null } | null | undefined) => {
+        const iframe = iframeRef.current;
+        if (!iframe || !iframe.contentWindow) {
+            return false;
+        }
+
+        try {
+            const message = buildAcpCanvasMcpPostMessage(config);
+            iframe.contentWindow.postMessage(message, resolveTargetOrigin());
+            return true;
+        } catch {
+            return false;
+        }
+    }, [resolveTargetOrigin]);
+
+    const syncCanvasMcpConfigWithRetry = useCallback((config: { makeOrigin?: string | null; token?: string | null } | null | undefined) => {
+        const attempt = canvasMcpConfigSyncAttemptRef.current + 1;
+        canvasMcpConfigSyncAttemptRef.current = attempt;
+        syncCanvasMcpConfig(config);
+        window.setTimeout(() => {
+            if (canvasMcpConfigSyncAttemptRef.current === attempt) {
+                syncCanvasMcpConfig(config);
+            }
+        }, 160);
+        window.setTimeout(() => {
+            if (canvasMcpConfigSyncAttemptRef.current === attempt) {
+                syncCanvasMcpConfig(config);
+            }
+        }, 520);
+    }, [syncCanvasMcpConfig]);
 
     const waitForReady = useCallback(async (maxWaitMs = 8000) => {
         const startedAt = Date.now();
@@ -376,6 +409,8 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         addContextItems,
         syncImageGenerationConfig,
         syncImageGenerationConfigWithRetry,
+        syncCanvasMcpConfig,
+        syncCanvasMcpConfigWithRetry,
         addImageAttachmentWithRetry,
         appendComposerTextWithRetry,
         submitPromptWithRetry,
