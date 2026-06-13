@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppWindow, Boxes, Code2, Copy, Download, Globe, Loader2, UploadCloud, X } from 'lucide-react';
+import { AppWindow, Boxes, Code2, Globe, Loader2, UploadCloud, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { PromptClientPreference } from '../../types';
 import { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
@@ -21,8 +21,8 @@ import {
 } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import AiCreateGuideContent from './AiCreateGuideContent';
+import TemplateLibraryCard from './TemplateLibraryCard';
 
 interface DocOption {
     name: string;
@@ -79,6 +79,8 @@ interface UploadResult {
 interface TemplateLibraryItem extends TemplateLibraryPromptItem {
     coverUrl: string;
     sourceUrl: string;
+    author?: string;
+    authorUrl?: string;
     previewUrl?: string;
     canDirectImport: boolean;
     directImportDisabledReason?: string;
@@ -375,6 +377,15 @@ export default function CreateDialog({
         }
     };
 
+    const handleTemplatePreviewCardClick = useCallback((template: TemplateLibraryItem) => {
+        const previewUrl = String(template.previewUrl || '').trim();
+        if (!previewUrl) {
+            toast.warning('该模板暂不支持在线预览');
+            return;
+        }
+        window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    }, []);
+
     const directoryInputProps: DirectoryInputProps = uploadMode === 'folder' ? { directory: '', webkitdirectory: '' } : {};
 
     return (
@@ -596,76 +607,16 @@ export default function CreateDialog({
                                                 ? '直接导入不可用，请复制提示词让 AI 完成导入'
                                                 : templateImportingId && !importing ? '已有模板正在导入，请稍候' : '';
                                             return (
-                                                <div key={template.id} className="overflow-hidden rounded-md border bg-background">
-                                                    <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-4 p-3">
-                                                        <div className="h-[112px] overflow-hidden rounded border bg-muted">
-                                                            <img
-                                                                src={template.coverUrl}
-                                                                alt={template.title}
-                                                                className="h-full w-full object-cover"
-                                                                loading="lazy"
-                                                            />
-                                                        </div>
-                                                        <div className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
-                                                            <div className="flex items-start justify-between gap-3">
-                                                                <div className="min-w-0">
-                                                                    <div className="truncate text-sm font-medium">{template.title}</div>
-                                                                    <div className="mt-1 truncate text-[12px] text-muted-foreground">{template.sourcePath}</div>
-                                                                </div>
-                                                            </div>
-                                                            <p className="line-clamp-2 text-[12px] leading-5 text-muted-foreground">{template.description}</p>
-                                                            <div className="flex flex-wrap gap-2">
-                                                                <Button
-                                                                    type="button"
-                                                                    variant="outline"
-                                                                    size="sm"
-                                                                    className="h-7 gap-1.5 px-2.5 text-xs"
-                                                                    onClick={() => void handleCopyTemplatePrompt(template)}
-                                                                    disabled={Boolean(templateImportingId)}
-                                                                >
-                                                                    <Copy className="h-3.5 w-3.5" />
-                                                                    复制提示词
-                                                                </Button>
-                                                                {template.previewUrl ? (
-                                                                    <Button
-                                                                        asChild
-                                                                        variant="outline"
-                                                                        size="sm"
-                                                                        className="h-7 gap-1.5 px-2.5 text-xs"
-                                                                    >
-                                                                        <a href={template.previewUrl} target="_blank" rel="noreferrer">
-                                                                            <Globe className="h-3.5 w-3.5" />
-                                                                            在线预览
-                                                                        </a>
-                                                                    </Button>
-                                                                ) : null}
-                                                                <TooltipProvider>
-                                                                    <Tooltip>
-                                                                        <TooltipTrigger asChild>
-                                                                            <span className="inline-flex">
-                                                                                <Button
-                                                                                    type="button"
-                                                                                    size="sm"
-                                                                                    className="h-7 gap-1.5 px-2.5 text-xs"
-                                                                                    onClick={() => void handleDirectTemplateImport(template)}
-                                                                                    disabled={directDisabled}
-                                                                                >
-                                                                                    {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                                                                                    直接导入
-                                                                                </Button>
-                                                                            </span>
-                                                                        </TooltipTrigger>
-                                                                        {directImportTooltip ? (
-                                                                            <TooltipContent side="top">
-                                                                                {directImportTooltip}
-                                                                            </TooltipContent>
-                                                                        ) : null}
-                                                                    </Tooltip>
-                                                                </TooltipProvider>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                                <TemplateLibraryCard
+                                                    key={template.id}
+                                                    template={template}
+                                                    importing={importing}
+                                                    directImportDisabled={directDisabled}
+                                                    directImportTooltip={directImportTooltip}
+                                                    onPreview={handleTemplatePreviewCardClick}
+                                                    onCopyPrompt={(item) => void handleCopyTemplatePrompt(item as TemplateLibraryItem)}
+                                                    onDirectImport={(item) => void handleDirectTemplateImport(item as TemplateLibraryItem)}
+                                                />
                                             );
                                         })}
                                     </div>

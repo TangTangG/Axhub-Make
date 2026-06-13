@@ -63,6 +63,8 @@ export interface TemplateLibraryIndexItem {
   sourcePath: string;
   coverPath: string;
   description: string;
+  author?: string;
+  authorUrl?: string;
   previewUrl?: string;
   extraDependencies: string[];
 }
@@ -110,6 +112,17 @@ function assertTemplateId(value: unknown, fieldName: string): string {
 }
 
 function assertString(value: unknown, fieldName: string): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) {
+    throw new Error(`Invalid ${fieldName}`);
+  }
+  return raw;
+}
+
+function assertOptionalString(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw) {
     throw new Error(`Invalid ${fieldName}`);
@@ -177,6 +190,8 @@ function validateTemplateIndex(raw: unknown): TemplateLibraryIndexItem[] {
     if (!Array.isArray(extraDependencies) || extraDependencies.some((dependency) => typeof dependency !== 'string' || !dependency.trim())) {
       throw new Error(`Invalid templates[${index}].extraDependencies`);
     }
+    const author = assertOptionalString(template.author, `templates[${index}].author`);
+    const authorUrl = assertOptionalHttpUrl(template.authorUrl, `templates[${index}].authorUrl`);
     const previewUrl = assertOptionalHttpUrl(template.previewUrl, `templates[${index}].previewUrl`);
     return {
       id,
@@ -185,6 +200,8 @@ function validateTemplateIndex(raw: unknown): TemplateLibraryIndexItem[] {
       sourcePath,
       coverPath,
       description: assertString(template.description, `templates[${index}].description`),
+      ...(author ? { author } : {}),
+      ...(authorUrl ? { authorUrl } : {}),
       ...(previewUrl ? { previewUrl } : {}),
       extraDependencies: extraDependencies.map((dependency) => dependency.trim()),
     };
