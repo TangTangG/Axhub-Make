@@ -6,6 +6,9 @@ import { describe, expect, it } from 'vitest';
 const appRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(appRoot, '../..');
 const themesRoot = path.join(appRoot, 'src/themes');
+const templateOnlyThemeIds = new Set([
+  'google-for-education',
+]);
 
 const localResourcePattern = /\.(?:avif|css|gif|html|jpe?g|json|otf|png|svg|ttf|webp|woff2?)(?:[?#].*)?$/iu;
 
@@ -119,6 +122,13 @@ function collectThemeJsonResourceReferences(value: unknown, references: string[]
 }
 
 describe('theme resource boundaries', () => {
+  it('does not include template-only themes in the default client bundle', () => {
+    const themeIds = new Set(listThemeDirs().map((themeDir) => path.basename(themeDir)));
+    for (const themeId of templateOnlyThemeIds) {
+      expect(themeIds.has(themeId), `${themeId} should live in make-template, not client/src/themes`).toBe(false);
+    }
+  });
+
   it('keeps every local theme resource reference inside its own theme directory', () => {
     for (const themeDir of listThemeDirs()) {
       const indexPath = path.join(themeDir, 'index.tsx');

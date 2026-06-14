@@ -60,7 +60,7 @@ async function callMcp(body: unknown, options: {
     bridgeHub: options.bridgeHub ?? { sendCommand: vi.fn(async () => ({})) },
   });
 
-  return { handled, response, json: response.json() };
+  return { handled, response, json: response.body ? response.json() : null };
 }
 
 describe('axhub canvas MCP endpoint', () => {
@@ -106,6 +106,19 @@ describe('axhub canvas MCP endpoint', () => {
       type: 'object',
       properties: expect.any(Object),
     });
+  });
+
+  it('accepts MCP initialized notifications without a JSON-RPC response body', async () => {
+    const { response, json } = await callMcp({
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+    }, {
+      headerToken: 'secret-token',
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.body).toBe('');
+    expect(json).toBeNull();
   });
 
   it('routes tool calls to the canvas bridge and returns MCP text content', async () => {
