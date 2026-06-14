@@ -9,6 +9,8 @@ import { getProjectMetadataPath } from '../projectCore/index.ts';
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
+  registerProject,
+  setActiveProject,
   startTestServer,
   writeProjectMetadata,
 } from './projects-api.helpers';
@@ -79,6 +81,13 @@ function writeThemeImportEnabledProject(projectRoot: string, id = 'theme-library
 
 function readMetadata(projectRoot: string): any {
   return JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
+}
+
+async function startThemeLibraryTestServer(projectRoot: string, projectId = String(readMetadata(projectRoot).project.id)) {
+  const server = await startTestServer(projectRoot);
+  await registerProject(server.origin, projectRoot, projectId);
+  await setActiveProject(server.origin, projectId);
+  return server;
 }
 
 function createTemplateTarball(files: Record<string, string>): string {
@@ -167,7 +176,7 @@ describe('make-server project theme library APIs', () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot);
     mockGitHubResponses();
-    const server = await startTestServer(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
       const listed = await fetchJson(`${server.origin}/api/theme-library`);
@@ -199,7 +208,7 @@ describe('make-server project theme library APIs', () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot);
     mockGitHubResponses({ rawStatus: 404 });
-    const server = await startTestServer(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
       const listed = await fetchJson(`${server.origin}/api/theme-library`);
@@ -216,7 +225,7 @@ describe('make-server project theme library APIs', () => {
   it('loads local make-template design systems when available', async () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
       const listed = await fetchJson(`${server.origin}/api/theme-library`);
@@ -250,7 +259,7 @@ describe('make-server project theme library APIs', () => {
   it('exposes migrated getdesign.md themes from local make-template design systems', async () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot);
-    const server = await startTestServer(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
       const listed = await fetchJson(`${server.origin}/api/theme-library`);
@@ -281,6 +290,7 @@ describe('make-server project theme library APIs', () => {
   it('prefers local make-template design systems without waiting for the remote index', async () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
     const originalFetch = globalThis.fetch;
     const remoteRequests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -291,7 +301,6 @@ describe('make-server project theme library APIs', () => {
       remoteRequests.push(url);
       throw new Error(`Remote theme library should not be requested when local make-template exists: ${url}`);
     }));
-    const server = await startTestServer(projectRoot);
 
     try {
       const listed = await fetchJson(`${server.origin}/api/theme-library`);
@@ -339,7 +348,7 @@ describe('make-server project theme library APIs', () => {
         ],
       },
     });
-    const server = await startTestServer(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
       const listed = await fetchJson(`${server.origin}/api/theme-library`);
@@ -363,7 +372,7 @@ describe('make-server project theme library APIs', () => {
       'design-systems/trae-design/globals.css': ':root { --primary: #32f08c; }\n',
     });
     mockGitHubResponses({ tarballPath });
-    const server = await startTestServer(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
       const imported = await fetchJson(`${server.origin}/api/theme-library/import`, {
@@ -412,7 +421,7 @@ describe('make-server project theme library APIs', () => {
   it('imports a migrated local make-template design system into the declared themes target', async () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot, 'theme-local-import-client');
-    const server = await startTestServer(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
       const imported = await fetchJson(`${server.origin}/api/theme-library/import`, {
@@ -470,7 +479,7 @@ describe('make-server project theme library APIs', () => {
       'design-systems/trae-design/designToken.json': JSON.stringify({ name: 'TRAE Design' }, null, 2),
     });
     mockGitHubResponses({ tarballPath });
-    const server = await startTestServer(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
       const imported = await fetchJson(`${server.origin}/api/theme-library/import`, {
@@ -506,7 +515,7 @@ describe('make-server project theme library APIs', () => {
       },
     });
     mockGitHubResponses();
-    const server = await startTestServer(projectRoot);
+    const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
       const imported = await fetchJson(`${server.origin}/api/theme-library/import`, {

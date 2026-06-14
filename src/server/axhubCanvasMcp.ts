@@ -221,9 +221,22 @@ export async function handleAxhubCanvasMcp(
     return true;
   }
 
+  if (isJsonRpcNotification(request)) {
+    res.statusCode = 202;
+    res.setHeader('Cache-Control', 'no-store');
+    res.end();
+    return true;
+  }
+
   const response = await dispatchJsonRpcRequest(request, options);
   sendJson(res, response);
   return true;
+}
+
+function isJsonRpcNotification(request: JsonRpcRequest): boolean {
+  return request.jsonrpc === '2.0'
+    && typeof request.method === 'string'
+    && !Object.prototype.hasOwnProperty.call(request, 'id');
 }
 
 async function dispatchJsonRpcRequest(
