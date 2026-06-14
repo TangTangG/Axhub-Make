@@ -30,6 +30,7 @@ import {
     type AcpContextItem,
     type AssistantImageGenerationConfig,
     buildAcpContextPostMessage,
+    getAcpCanvasMcpConfigSignature,
     getAcpImageGenerationConfigSignature,
 } from '../assistantAcpContext';
 import { buildAssistantContextItemsFromCanvasElements, type AssistantImageAttachmentPayload } from '../assistantContextPayload';
@@ -58,6 +59,10 @@ type OpenAssistantSubmitOptions = {
 type AcpNavigationChangedMessage = {
     href: string;
     threadId?: string | null;
+};
+type AssistantCanvasMcpRuntimeConfig = {
+    makeOrigin: string;
+    token: string;
 };
 
 const ACP_NAVIGATION_CHANGED_EVENT = 'acp.navigation.changed';
@@ -169,6 +174,25 @@ function resolveAssistantFallbackResourcePathFromUrl(targetPath?: string): strin
     }
 }
 
+function isAssistantCanvasMcpContext(context: AssistantContextV1): boolean {
+    const currentFilePath = getAssistantContextCurrentFilePath(context).replace(/\\/g, '/');
+    return /^src\/prototypes\/[^/]+\/canvas\.excalidraw$/u.test(currentFilePath);
+}
+
+function getAssistantCanvasMcpRuntimeConfig(context: AssistantContextV1): AssistantCanvasMcpRuntimeConfig | null {
+    if (!isAssistantCanvasMcpContext(context) || typeof window === 'undefined') {
+        return null;
+    }
+    const token = String((window as unknown as Record<string, unknown>).__AXHUB_CANVAS_MCP_TOKEN__ || '').trim();
+    if (!token) {
+        return null;
+    }
+    return {
+        makeOrigin: window.location.origin,
+        token,
+    };
+}
+
 interface AssistantMessageApi {
     success: (content: string) => void;
     error: (content: string) => void;
@@ -265,6 +289,7 @@ export function useAssistantPanelController({
     const assistantContextCommentsSignatureRef = useRef('');
     const assistantIframeLoadSyncSignatureRef = useRef('');
     const assistantImageGenerationConfigSyncSignatureRef = useRef('');
+    const assistantCanvasMcpConfigSyncSignatureRef = useRef('');
     const assistantIframeCurrentUrlRef = useRef('');
     const latestAssistantSyncContextRef = useRef<AssistantContextV1 | null>(null);
     const latestAssistantResourcePathRef = useRef('');
@@ -332,6 +357,7 @@ export function useAssistantPanelController({
         syncContextWithRetry: postAssistantContextToIframeWithRetry,
         addContextItems: postAssistantContextItemsToIframe,
         syncImageGenerationConfigWithRetry: postAssistantImageGenerationConfigToIframeWithRetry,
+        syncCanvasMcpConfigWithRetry: postAssistantCanvasMcpConfigToIframeWithRetry,
         addImageAttachmentWithRetry,
         appendComposerTextWithRetry,
         submitPromptWithRetry,
@@ -462,6 +488,34 @@ export function useAssistantPanelController({
         assistantSupportsAcpContext,
         assistantVisible,
         postAssistantImageGenerationConfigToIframeWithRetry,
+    ]);
+
+    const syncAssistantCanvasMcpConfigToIframe = useCallback((options: { requireLoaded?: boolean } = {}) => {
+        const requireLoaded = options.requireLoaded !== false;
+        if (
+            !assistantSupportsAcpContext
+            || !assistantVisible
+            || (requireLoaded && !assistantIframeLoaded)
+            || !assistantIframeRef.current?.contentWindow
+        ) {
+            return;
+        }
+
+        const canvasMcpConfig = getAssistantCanvasMcpRuntimeConfig(assistantContextV1);
+        const canvasMcpConfigSignature = getAcpCanvasMcpConfigSignature(canvasMcpConfig);
+        if (assistantCanvasMcpConfigSyncSignatureRef.current === canvasMcpConfigSignature) {
+            return;
+        }
+
+        assistantCanvasMcpConfigSyncSignatureRef.current = canvasMcpConfigSignature;
+        postAssistantCanvasMcpConfigToIframeWithRetry(canvasMcpConfig);
+    }, [
+        assistantContextV1,
+        assistantIframeLoaded,
+        assistantIframeRef,
+        assistantSupportsAcpContext,
+        assistantVisible,
+        postAssistantCanvasMcpConfigToIframeWithRetry,
     ]);
 
     const postAssistantContextToWindowWithRetry = useCallback((
@@ -663,6 +717,10 @@ export function useAssistantPanelController({
     useEffect(() => {
         syncAssistantImageGenerationConfigToIframe();
     }, [syncAssistantImageGenerationConfigToIframe]);
+
+    useEffect(() => {
+        syncAssistantCanvasMcpConfigToIframe();
+    }, [syncAssistantCanvasMcpConfigToIframe]);
 
     useEffect(() => {
         if (!assistantSupportsAcpContext || !assistantVisible || !assistantIframeLoaded) {
@@ -976,6 +1034,7 @@ export function useAssistantPanelController({
         latestAssistantNavigationThreadIdRef.current = undefined;
         assistantIframeLoadSyncSignatureRef.current = '';
         assistantImageGenerationConfigSyncSignatureRef.current = '';
+        assistantCanvasMcpConfigSyncSignatureRef.current = '';
         setAssistantIframeLoaded(false);
         setAssistantIframeOverrideUrl(null);
 
@@ -1394,9 +1453,15 @@ export function useAssistantPanelController({
     const handleAssistantIframeLoad = useCallback(() => {
         assistantIframeLoadSyncSignatureRef.current = '';
         assistantImageGenerationConfigSyncSignatureRef.current = '';
+        assistantCanvasMcpConfigSyncSignatureRef.current = '';
         setAssistantIframeLoaded(true);
         syncAssistantImageGenerationConfigToIframe({ requireLoaded: false });
-    }, [setAssistantIframeLoaded, syncAssistantImageGenerationConfigToIframe]);
+        syncAssistantCanvasMcpConfigToIframe({ requireLoaded: false });
+    }, [
+        setAssistantIframeLoaded,
+        syncAssistantCanvasMcpConfigToIframe,
+        syncAssistantImageGenerationConfigToIframe,
+    ]);
 
     return {
         assistantVisible,

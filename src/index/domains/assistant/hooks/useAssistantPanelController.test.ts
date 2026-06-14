@@ -310,6 +310,28 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).not.toContain("url.searchParams.set('imageGeneration'");
   });
 
+  it('syncs axhub-canvas MCP only for canvas assistant context', () => {
+    const adapterSource = readFileSync(resolve(__dirname, '../assistantAcpContext.ts'), 'utf8');
+    const bridgeSource = readFileSync(resolve(__dirname, './useAssistantBridge.ts'), 'utf8');
+    const controllerSource = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+
+    expect(adapterSource).toContain('buildAcpCanvasMcpPostMessage');
+    expect(adapterSource).toContain("'axhub-canvas'");
+    expect(adapterSource).toContain("'x-axhub-canvas-mcp-token'");
+    expect(adapterSource).toContain('ACP_CANVAS_MCP_RUNTIME_CLEAR_FIELDS');
+    expect(bridgeSource).toContain('syncCanvasMcpConfigWithRetry');
+    expect(bridgeSource).toContain('buildAcpCanvasMcpPostMessage(config)');
+    expect(controllerSource).toContain('const assistantCanvasMcpConfigSyncSignatureRef = useRef(\'\');');
+    expect(controllerSource).toContain('syncCanvasMcpConfigWithRetry: postAssistantCanvasMcpConfigToIframeWithRetry,');
+    expect(controllerSource).toContain('function isAssistantCanvasMcpContext(context: AssistantContextV1): boolean');
+    expect(controllerSource).toContain('getAssistantCanvasMcpRuntimeConfig(assistantContextV1)');
+    expect(controllerSource).toContain('const canvasMcpConfigSignature = getAcpCanvasMcpConfigSignature(canvasMcpConfig);');
+    expect(controllerSource).toContain('postAssistantCanvasMcpConfigToIframeWithRetry(canvasMcpConfig);');
+    expect(controllerSource).toContain('syncAssistantCanvasMcpConfigToIframe();');
+    expect(controllerSource).toContain('syncAssistantCanvasMcpConfigToIframe({ requireLoaded: false });');
+    expect(controllerSource).not.toContain('url.searchParams.set(\'mcpServers\'');
+  });
+
   it('does not subscribe to ACP artifact bridge messages after canvas history removal', () => {
     const bridgeSource = readFileSync(resolve(__dirname, './useAssistantBridge.ts'), 'utf8');
 

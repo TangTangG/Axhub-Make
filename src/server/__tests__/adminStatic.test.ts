@@ -168,6 +168,19 @@ describe('make-server admin static assets', () => {
     expect(redirect.header('location')).toBe('/?projectId=make14&p=latest&v=canvas&fromP=untitled-5');
   });
 
+  it('injects the canvas MCP token as a transient Make runtime global', () => {
+    const script = buildInjectScript({
+      adminRoot: '/tmp/admin',
+      projectRoot: '/tmp/project',
+      host: 'localhost',
+      port: 5174,
+      axhubCanvasMcpToken: 'secret-token',
+    });
+
+    expect(script).toContain("window.__AXHUB_CANVAS_MCP_TOKEN__ = 'secret-token';");
+    expect(script).toContain("window.__AXHUB_CANVAS_MCP_URL__ = '/api/mcp/axhub-canvas';");
+  });
+
   it('does not redirect existing placeholders, regular missing prototypes, or empty prototype lists', () => {
     const projectRoot = createTempRoot('axhub-admin-placeholder-project-');
     const adminRoot = createTempRoot('axhub-admin-placeholder-dist-');

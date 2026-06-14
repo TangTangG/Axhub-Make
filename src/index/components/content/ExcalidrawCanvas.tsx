@@ -90,6 +90,22 @@ import type { GenieProvider } from '@/common/genie/types';
 type ExcalidrawAPI = NonNullable<Parameters<NonNullable<React.ComponentProps<typeof Excalidraw>['onExcalidrawAPI']>>[0]>;
 type ExcalidrawOpenPopup = ReturnType<ExcalidrawAPI['getAppState']>['openPopup'];
 type CanvasDropPreviewKind = 'web' | 'doc' | 'image' | 'none';
+type CanvasCommandName = 'canvas_get_state'
+    | 'canvas_insert_elements'
+    | 'canvas_refresh'
+    | 'canvas_capture'
+    | 'canvas_update_elements'
+    | 'canvas_delete_elements'
+    | 'canvas_focus';
+
+interface CanvasBridgeCommandRequestMessage {
+    type: 'canvas.command.request';
+    requestId?: string;
+    canvasName?: string;
+    command?: CanvasCommandName;
+    payload?: any;
+    timeoutMs?: number;
+}
 
 interface AxhubExcalidrawCaptureOptions {
     exportBackground?: boolean;
@@ -412,6 +428,224 @@ function isCanvasWelcomeSceneEmpty(excalidrawAPI: ExcalidrawAPI): boolean {
 
 function getCaptureSceneElements(excalidrawAPI: ExcalidrawAPI): any[] {
     return excalidrawAPI.getSceneElements().filter((element: any) => !element.isDeleted);
+}
+
+const CANVAS_COMMAND_UPDATE_ALLOWED_FIELDS = new Set([
+    'x',
+    'y',
+    'width',
+    'height',
+    'angle',
+    'strokeColor',
+    'backgroundColor',
+    'fillStyle',
+    'strokeWidth',
+    'strokeStyle',
+    'roughness',
+    'opacity',
+    'text',
+    'fontSize',
+    'fontFamily',
+    'textAlign',
+    'verticalAlign',
+    'link',
+    'customData',
+]);
+
+function summarizeCanvasCommandElements(elements: readonly any[]): any[] {
+    return elements
+        .filter((element) => !element?.isDeleted)
+        .map((element) => ({
+            id: element.id,
+            type: element.type,
+            x: element.x,
+            y: element.y,
+            width: element.width,
+            height: element.height,
+            text: typeof element.text === 'string' ? element.text.slice(0, 120) : undefined,
+            link: element.link || undefined,
+            customData: element.customData,
+        }));
+}
+
+function resolveCanvasCommandElementsByIds(elements: readonly any[], elementIds: unknown): any[] {
+    if (!Array.isArray(elementIds) || elementIds.length === 0) {
+        return [];
+    }
+    const idSet = new Set(elementIds.map((id) => String(id || '').trim()).filter(Boolean));
+    return elements.filter((element) => idSet.has(String(element.id)));
+}
+
+function normalizeCanvasCommandRect(value: unknown): { x: number; y: number; width: number; height: number } | null {
+    if (!value || typeof value !== 'object') {
+        return null;
+    }
+    const rect = value as any;
+    if (
+        !Number.isFinite(rect.x)
+        || !Number.isFinite(rect.y)
+        || !Number.isFinite(rect.width)
+        || !Number.isFinite(rect.height)
+        || rect.width <= 0
+        || rect.height <= 0
+    ) {
+        return null;
+    }
+    return {
+        x: Number(rect.x),
+        y: Number(rect.y),
+        width: Number(rect.width),
+        height: Number(rect.height),
+    };
+}
+
+function createCanvasCommandRectElement(
+    rect: { x: number; y: number; width: number; height: number },
+    id = 'capture-rect',
+): any {
+    return {
+        id: `mcp-${id}`,
+        type: 'rectangle',
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        angle: 0,
+        strokeColor: 'transparent',
+        backgroundColor: 'transparent',
+        fillStyle: 'solid',
+        strokeWidth: 0,
+        strokeStyle: 'solid',
+        roughness: 0,
+        opacity: 0,
+        groupIds: [],
+        frameId: null,
+        roundness: null,
+        seed: 1,
+        version: 1,
+        versionNonce: 1,
+        isDeleted: false,
+        boundElements: null,
+        updated: Date.now(),
+        link: null,
+        locked: false,
+    };
+}
+
+function doCanvasCommandRectsIntersect(
+    first: { x: number; y: number; width: number; height: number },
+    second: { x: number; y: number; width: number; height: number },
+): boolean {
+    return (
+        first.x < second.x + second.width
+        && first.x + first.width > second.x
+        && first.y < second.y + second.height
+        && first.y + first.height > second.y
+    );
+}
+
+function getCanvasCommandElementsInRect(elements: readonly any[], rect: { x: number; y: number; width: number; height: number }): any[] {
+    return elements.filter((element) => (
+        !element?.isDeleted
+        && doCanvasCommandRectsIntersect(rect, {
+            x: Number(element.x || 0),
+            y: Number(element.y || 0),
+            width: Number(element.width || 0),
+            height: Number(element.height || 0),
+        })
+    ));
+}
+
+function getCanvasCommandViewportRect(appState: any): { x: number; y: number; width: number; height: number } {
+    const zoom = Number(appState.zoom?.value || 1) || 1;
+    return {
+        x: Number(appState.scrollX || 0) * -1,
+        y: Number(appState.scrollY || 0) * -1,
+        width: Number(appState.width || 0) / zoom,
+        height: Number(appState.height || 0) / zoom,
+    };
+}
+
+function resolveCanvasCommandInsertPosition(excalidrawAPI: ExcalidrawAPI, payload: any, elements: readonly any[]): { x: number; y: number } {
+    const position = payload?.position;
+    if (position && typeof position === 'object' && Number.isFinite(position.x) && Number.isFinite(position.y)) {
+        return { x: Number(position.x), y: Number(position.y) };
+    }
+    const appState = excalidrawAPI.getAppState();
+    const zoom = Number(appState.zoom?.value || 1) || 1;
+    const centerX = Number(appState.scrollX || 0) * -1 + Number(appState.width || 0) / 2 / zoom;
+    const centerY = Number(appState.scrollY || 0) * -1 + Number(appState.height || 0) / 2 / zoom;
+    const occupied = new Set(elements.filter((element) => !element.isDeleted).map((element) => {
+        const gridX = Math.round(Number(element.x || 0) / 96);
+        const gridY = Math.round(Number(element.y || 0) / 96);
+        return `${gridX}:${gridY}`;
+    }));
+    for (let index = 0; index < 60; index += 1) {
+        const column = index % 6;
+        const row = Math.floor(index / 6);
+        const x = Math.round(centerX + (column - 2) * 96);
+        const y = Math.round(centerY + row * 96);
+        const key = `${Math.round(x / 96)}:${Math.round(y / 96)}`;
+        if (!occupied.has(key)) {
+            return { x, y };
+        }
+    }
+    return { x: centerX, y: centerY };
+}
+
+function createCanvasCommandElement(rawElement: any, index: number, position: { x: number; y: number }): any {
+    const element = rawElement && typeof rawElement === 'object' ? rawElement : {};
+    return {
+        ...element,
+        id: String(element.id || `mcp-element-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`),
+        type: String(element.type || 'rectangle'),
+        x: Number.isFinite(element.x) ? element.x : position.x + index * 24,
+        y: Number.isFinite(element.y) ? element.y : position.y + index * 24,
+        width: Number.isFinite(element.width) ? element.width : 240,
+        height: Number.isFinite(element.height) ? element.height : 160,
+        angle: element.angle || 0,
+        strokeColor: element.strokeColor || '#1e1e1e',
+        backgroundColor: element.backgroundColor || 'transparent',
+        fillStyle: element.fillStyle || 'solid',
+        strokeWidth: element.strokeWidth ?? 2,
+        strokeStyle: element.strokeStyle || 'solid',
+        roughness: element.roughness ?? 1,
+        opacity: element.opacity ?? 100,
+        groupIds: Array.isArray(element.groupIds) ? element.groupIds : [],
+        frameId: element.frameId ?? null,
+        roundness: element.roundness ?? null,
+        seed: element.seed || Math.floor(Math.random() * 2147483647),
+        version: Number(element.version || 0) + 1,
+        versionNonce: Math.floor(Math.random() * 2147483647),
+        isDeleted: false,
+        boundElements: element.boundElements ?? null,
+        updated: Date.now(),
+        link: element.link ?? null,
+        locked: element.locked === true,
+    };
+}
+
+function applyCanvasCommandElementUpdates(elements: readonly any[], updates: unknown): { elements: any[]; updatedElementIds: string[] } {
+    const updateList = Array.isArray(updates) ? updates : [];
+    const updateById = new Map(updateList
+        .filter((update) => update && typeof update === 'object' && typeof (update as any).id === 'string')
+        .map((update: any) => [update.id, update]));
+    const updatedElementIds: string[] = [];
+    const nextElements = elements.map((element) => {
+        const update = updateById.get(element.id);
+        if (!update) return element;
+        const nextElement = { ...element };
+        for (const [key, value] of Object.entries(update)) {
+            if (key === 'id' || !CANVAS_COMMAND_UPDATE_ALLOWED_FIELDS.has(key)) continue;
+            (nextElement as any)[key] = value;
+        }
+        nextElement.version = Number(element.version || 0) + 1;
+        nextElement.versionNonce = Math.floor(Math.random() * 2147483647);
+        nextElement.updated = Date.now();
+        updatedElementIds.push(element.id);
+        return nextElement;
+    });
+    return { elements: nextElements, updatedElementIds };
 }
 
 async function captureExcalidrawElements(
@@ -1155,6 +1389,7 @@ export default function ExcalidrawCanvas({
     const bridgeSocketRef = useRef<WebSocket | null>(null);
     const bridgeClientIdRef = useRef<string | null>(null);
     const bridgeDirtyRef = useRef(false);
+    const canvasBridgeCommandHandlerRef = useRef<((msg: CanvasBridgeCommandRequestMessage) => void) | null>(null);
     const applyingRemoteCanvasReloadRef = useRef(false);
     const remoteReloadIgnoreUntilRef = useRef(0);
     const remoteCanvasFileAliasesRef = useRef<Record<string, RemoteCanvasFileAlias>>({});
@@ -1621,6 +1856,10 @@ export default function ExcalidrawCanvas({
                     void reloadCanvasFromServer().catch(() => { /* ignore reload errors */ });
                 }
 
+                if (msg.type === 'canvas.command.request') {
+                    void canvasBridgeCommandHandlerRef.current?.(msg);
+                }
+
                 if (msg.type === 'ping') {
                     ws?.send(JSON.stringify({ type: 'pong' }));
                 }
@@ -1795,6 +2034,199 @@ export default function ExcalidrawCanvas({
             void saveToServer(latestElements, appState);
         }, IDLE_SAVE_DELAY_MS);
     }, [excalidrawAPI, saveLocally, scheduleServerSave, saveToServer]);
+
+    const executeCanvasBridgeCommand = useCallback(async (command: CanvasCommandName, payload: any = {}) => {
+        if (!excalidrawAPI) {
+            throw new Error('Canvas API is not ready.');
+        }
+
+        const elements = excalidrawAPI.getSceneElements();
+        const appState = excalidrawAPI.getAppState();
+
+        switch (command) {
+            case 'canvas_get_state':
+                return {
+                    canvasName: getCanvasBridgeCanvasName(currentNameRef.current),
+                    canvasFilePath: canvasFilePath || null,
+                    viewport: {
+                        scrollX: appState.scrollX,
+                        scrollY: appState.scrollY,
+                        zoom: appState.zoom,
+                        width: appState.width,
+                        height: appState.height,
+                    },
+                    selectedElementIds: Object.keys(appState.selectedElementIds || {}),
+                    elementSummaries: summarizeCanvasCommandElements(
+                        payload?.includeElements ? elements : elements.slice(0, 80),
+                    ),
+                    dirty: Boolean(pendingLocalContentRef.current || bridgeDirtyRef.current),
+                    saveStatus,
+                };
+            case 'canvas_refresh':
+                await handleRefreshCanvasFromServer();
+                return { refreshed: true };
+            case 'canvas_capture': {
+                const scope = String(payload?.scope || 'viewport');
+                const selectedIds = Object.keys(appState.selectedElementIds || {});
+                const rect = normalizeCanvasCommandRect(payload?.rect);
+                const viewportRect = getCanvasCommandViewportRect(appState);
+                const captureElements = scope === 'selection'
+                    ? resolveCanvasCommandElementsByIds(elements, selectedIds)
+                    : scope === 'elements'
+                        ? resolveCanvasCommandElementsByIds(elements, payload?.elementIds)
+                        : scope === 'rect' && rect
+                            ? [
+                                ...getCanvasCommandElementsInRect(elements, rect),
+                                createCanvasCommandRectElement(rect),
+                            ]
+                            : scope === 'full'
+                                ? getCaptureSceneElements(excalidrawAPI)
+                                : [
+                                    ...getCanvasCommandElementsInRect(elements, viewportRect),
+                                    createCanvasCommandRectElement(viewportRect, 'viewport-rect'),
+                                ];
+                const capture = await captureExcalidrawElements(excalidrawAPI, captureElements, {
+                    mimeType: 'image/png',
+                    exportPadding: scope === 'viewport' || scope === 'rect' ? 0 : 16,
+                    ...(Number.isFinite(payload?.maxWidthOrHeight) ? { maxWidthOrHeight: Number(payload.maxWidthOrHeight) } : {}),
+                });
+                return {
+                    dataUrl: capture.dataUrl,
+                    width: capture.width,
+                    height: capture.height,
+                    elementIds: capture.elementIds,
+                };
+            }
+            case 'canvas_insert_elements': {
+                const incomingElements = Array.isArray(payload?.elements) ? payload.elements : [];
+                const position = resolveCanvasCommandInsertPosition(excalidrawAPI, payload, elements);
+                const insertedElements = incomingElements.map((element, index) => createCanvasCommandElement(element, index, position));
+                if (payload?.files && typeof payload.files === 'object' && typeof excalidrawAPI.addFiles === 'function') {
+                    excalidrawAPI.addFiles(Object.values(payload.files as Record<string, unknown>) as any);
+                }
+                const nextElements = [...elements, ...insertedElements];
+                excalidrawAPI.updateScene({
+                    elements: nextElements as any,
+                    appState: {
+                        selectedElementIds: Object.fromEntries(insertedElements.map((element) => [element.id, true])),
+                    },
+                    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+                } as any);
+                scheduleExplicitCanvasSave({ elements: nextElements, appState: excalidrawAPI.getAppState() });
+                return {
+                    insertedElementIds: insertedElements.map((element) => element.id),
+                };
+            }
+            case 'canvas_update_elements': {
+                const updateResult = applyCanvasCommandElementUpdates(elements, payload?.updates);
+                excalidrawAPI.updateScene({
+                    elements: updateResult.elements as any,
+                    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+                } as any);
+                scheduleExplicitCanvasSave({ elements: updateResult.elements, appState: excalidrawAPI.getAppState() });
+                return {
+                    updatedElementIds: updateResult.updatedElementIds,
+                };
+            }
+            case 'canvas_delete_elements': {
+                const deleteIds = new Set(Array.isArray(payload?.elementIds) ? payload.elementIds.map((id: unknown) => String(id || '').trim()) : []);
+                const nextElements = elements.map((element: any) => (
+                    deleteIds.has(element.id)
+                        ? {
+                            ...element,
+                            isDeleted: true,
+                            version: Number(element.version || 0) + 1,
+                            versionNonce: Math.floor(Math.random() * 2147483647),
+                            updated: Date.now(),
+                        }
+                        : element
+                ));
+                excalidrawAPI.updateScene({
+                    elements: nextElements as any,
+                    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+                } as any);
+                scheduleExplicitCanvasSave({ elements: nextElements, appState: excalidrawAPI.getAppState() });
+                return {
+                    deletedElementIds: [...deleteIds],
+                };
+            }
+            case 'canvas_focus': {
+                const target = payload?.target;
+                const targetRect = normalizeCanvasCommandRect(target?.rect || payload?.rect);
+                if (targetRect) {
+                    excalidrawAPI.scrollToContent([createCanvasCommandRectElement(targetRect, 'focus-rect')] as any, {
+                        fitToContent: true,
+                        animate: true,
+                    } as any);
+                    return { focused: true, rect: targetRect };
+                }
+                const targetIds = Array.isArray(target?.elementIds)
+                    ? target.elementIds
+                    : Array.isArray(payload?.elementIds)
+                        ? payload.elementIds
+                        : target === 'selection'
+                            ? Object.keys(appState.selectedElementIds || {})
+                            : [];
+                const focusElements = resolveCanvasCommandElementsByIds(elements, targetIds);
+                if (focusElements.length > 0) {
+                    excalidrawAPI.scrollToContent(focusElements as any, {
+                        fitToContent: true,
+                        animate: true,
+                    } as any);
+                    return { focused: true, elementIds: focusElements.map((element) => element.id) };
+                }
+                excalidrawAPI.scrollToContent(elements.filter((element: any) => !element.isDeleted) as any, {
+                    fitToContent: true,
+                    animate: true,
+                } as any);
+                return { focused: true, elementIds: [] };
+            }
+            default:
+                throw new Error(`Unsupported canvas command: ${command}`);
+        }
+    }, [
+        canvasFilePath,
+        excalidrawAPI,
+        handleRefreshCanvasFromServer,
+        saveStatus,
+        scheduleExplicitCanvasSave,
+    ]);
+
+    const handleCanvasBridgeCommandRequest = useCallback(async (msg: CanvasBridgeCommandRequestMessage) => {
+        const socket = bridgeSocketRef.current;
+        if (!socket || socket.readyState !== WebSocket.OPEN || !msg.requestId) {
+            return;
+        }
+
+        try {
+            const payload = await executeCanvasBridgeCommand(msg.command as CanvasCommandName, msg.payload || {});
+            socket.send(JSON.stringify({
+                type: 'canvas.command.result',
+                requestId: msg.requestId,
+                ok: true,
+                payload,
+            }));
+        } catch (error) {
+            socket.send(JSON.stringify({
+                type: 'canvas.command.result',
+                requestId: msg.requestId,
+                ok: false,
+                error: {
+                    code: 'canvas_command_failed',
+                    message: error instanceof Error ? error.message : String(error),
+                },
+            }));
+        }
+    }, [executeCanvasBridgeCommand]);
+
+    useEffect(() => {
+        canvasBridgeCommandHandlerRef.current = handleCanvasBridgeCommandRequest;
+        return () => {
+            if (canvasBridgeCommandHandlerRef.current === handleCanvasBridgeCommandRequest) {
+                canvasBridgeCommandHandlerRef.current = null;
+            }
+        };
+    }, [handleCanvasBridgeCommandRequest]);
 
     const handleCanvasImageArtifactEvent = useCallback((event: CanvasImageArtifactEvent) => {
         if (!excalidrawAPI) return;

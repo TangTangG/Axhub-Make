@@ -24,6 +24,8 @@ export type CanvasBridgeMessageType =
   | 'canvas.register'
   | 'canvas.reload'
   | 'canvas.status'
+  | 'canvas.command.request'
+  | 'canvas.command.result'
   | 'ping'
   | 'pong'
   | 'hello';
@@ -32,9 +34,45 @@ export interface CanvasBridgeMessage {
   type: CanvasBridgeMessageType;
   requestId?: string;
   canvas?: string;
+  canvasName?: string;
+  command?: string;
+  timeoutMs?: number;
+  ok?: boolean;
+  error?: CanvasBridgeErrorPayload;
   canvasFilePath?: string;
   dirty?: boolean;
   payload?: unknown;
+}
+
+export interface CanvasBridgeErrorPayload {
+  code: string;
+  message: string;
+}
+
+export class CanvasBridgeError extends Error {
+  readonly code: string;
+  readonly payload?: unknown;
+
+  constructor(code: string, message: string, payload?: unknown) {
+    super(message);
+    this.name = 'CanvasBridgeError';
+    this.code = code;
+    this.payload = payload;
+  }
+}
+
+export interface CanvasCommandOptions {
+  requestId?: string;
+  canvasName?: string;
+  timeoutMs?: number;
+}
+
+interface PendingCanvasCommand {
+  requestId: string;
+  clientId: string;
+  timer: ReturnType<typeof setTimeout>;
+  resolve: (payload: unknown) => void;
+  reject: (error: CanvasBridgeError) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +178,7 @@ let clientIdCounter = 0;
 const DEFAULT_REFRESH_QUIET_MS = 2_000;
 const DEFAULT_REFRESH_MAX_WAIT_MS = 8_000;
 const DEFAULT_SUPPRESS_TTL_MS = 12_000;
+const DEFAULT_CANVAS_COMMAND_TIMEOUT_MS = 15_000;
 
 interface ResolvedPrototypeCanvas {
   canvasName: string;
@@ -227,8 +266,20 @@ function normalizeClientCanvasName(canvasName: string): string {
   return normalizePrototypeCanvasName(canvasName) || String(canvasName || '').trim();
 }
 
+function createRequestId(): string {
+  return `canvas-command-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function sanitizeTimeoutMs(timeoutMs?: number): number {
+  if (!Number.isFinite(timeoutMs) || !timeoutMs || timeoutMs <= 0) {
+    return DEFAULT_CANVAS_COMMAND_TIMEOUT_MS;
+  }
+  return Math.max(1, Math.min(Math.floor(timeoutMs), 120_000));
+}
+
 export class CanvasBridgeHub {
   private clients = new Map<string, CanvasBridgeClient>();
+  private pendingCommands = new Map<string, PendingCanvasCommand>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private projectRoot = '';
   private fileWatchers = new Map<string, CanvasFileWatcher>();
@@ -268,6 +319,13 @@ export class CanvasBridgeHub {
 
   destroy(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    for (const pending of this.pendingCommands.values()) {
+      this.rejectPendingCommand(
+        pending,
+        new CanvasBridgeError('canvas_bridge_destroyed', 'Canvas bridge was closed before the command completed.'),
+      );
+    }
+    this.pendingCommands.clear();
     for (const client of this.clients.values()) {
       try { client.socket.end(); } catch { /* noop */ }
     }
@@ -336,6 +394,14 @@ export class CanvasBridgeHub {
     const client = this.clients.get(clientId);
     if (!client) return;
     this.clients.delete(clientId);
+    for (const pending of [...this.pendingCommands.values()]) {
+      if (pending.clientId === clientId) {
+        this.rejectPendingCommand(
+          pending,
+          new CanvasBridgeError('canvas_disconnected', 'Canvas tab disconnected before the command completed.'),
+        );
+      }
+    }
     this.detachClientFromFileWatcher(client);
     try { client.socket.end(); } catch { /* noop */ }
   }
@@ -392,6 +458,10 @@ export class CanvasBridgeHub {
 
       case 'canvas.status':
         this.updateClientCanvasStatus(client, msg);
+        break;
+
+      case 'canvas.command.result':
+        this.resolveCommandResult(client, msg);
         break;
 
     }
@@ -505,6 +575,64 @@ export class CanvasBridgeHub {
     return true;
   }
 
+  sendCommand(
+    command: string,
+    payload: unknown,
+    options: CanvasCommandOptions = {},
+  ): Promise<unknown> {
+    const requestId = options.requestId || createRequestId();
+    if (this.pendingCommands.has(requestId)) {
+      return Promise.reject(new CanvasBridgeError(
+        'canvas_command_duplicate_request',
+        `Canvas command request "${requestId}" is already pending.`,
+      ));
+    }
+
+    const targetClient = this.findClients(options.canvasName)[0];
+    if (!targetClient) {
+      return Promise.reject(new CanvasBridgeError(
+        'canvas_not_connected',
+        options.canvasName
+          ? `Canvas "${normalizeClientCanvasName(options.canvasName)}" is not connected.`
+          : 'No browser canvas tab is connected.',
+      ));
+    }
+
+    const timeoutMs = sanitizeTimeoutMs(options.timeoutMs);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const pending = this.pendingCommands.get(requestId);
+        if (!pending) return;
+        this.rejectPendingCommand(
+          pending,
+          new CanvasBridgeError(
+            'canvas_command_timeout',
+            `Canvas command "${command}" timed out after ${timeoutMs}ms.`,
+          ),
+        );
+      }, timeoutMs);
+      timer.unref?.();
+
+      const pending: PendingCanvasCommand = {
+        requestId,
+        clientId: targetClient.id,
+        timer,
+        resolve,
+        reject,
+      };
+      this.pendingCommands.set(requestId, pending);
+
+      this.sendToClient(targetClient, {
+        type: 'canvas.command.request',
+        requestId,
+        canvasName: targetClient.canvasName,
+        command,
+        payload,
+        timeoutMs,
+      });
+    });
+  }
+
   get clientCount(): number {
     return this.clients.size;
   }
@@ -581,6 +709,33 @@ export class CanvasBridgeHub {
         }
       }
     }
+  }
+
+  private resolveCommandResult(client: CanvasBridgeClient, msg: CanvasBridgeMessage): void {
+    if (!msg.requestId) {
+      return;
+    }
+    const pending = this.pendingCommands.get(msg.requestId);
+    if (!pending || pending.clientId !== client.id) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pendingCommands.delete(msg.requestId);
+    if (msg.ok === false) {
+      const error = msg.error || {
+        code: 'canvas_command_failed',
+        message: 'Canvas command failed.',
+      };
+      pending.reject(new CanvasBridgeError(error.code, error.message, msg.payload));
+      return;
+    }
+    pending.resolve(msg.payload);
+  }
+
+  private rejectPendingCommand(pending: PendingCanvasCommand, error: CanvasBridgeError): void {
+    clearTimeout(pending.timer);
+    this.pendingCommands.delete(pending.requestId);
+    pending.reject(error);
   }
 
   private attachClientToFileWatcher(client: CanvasBridgeClient, resolved: ResolvedPrototypeCanvas): void {
