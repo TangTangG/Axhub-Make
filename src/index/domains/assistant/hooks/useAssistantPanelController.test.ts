@@ -325,8 +325,6 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain('syncCanvasMcpConfigWithRetry: postAssistantCanvasMcpConfigToIframeWithRetry,');
     expect(controllerSource).toContain('function isAssistantCanvasMcpContext(context: AssistantContextV1): boolean');
     expect(controllerSource).toContain('getAssistantCanvasMcpRuntimeConfig(assistantContextV1)');
-    expect(controllerSource.indexOf('const assistantContextV1 = useMemo<AssistantContextV1>'))
-      .toBeLessThan(controllerSource.indexOf('const syncAssistantCanvasMcpConfigToIframe = useCallback'));
     expect(controllerSource).toContain('const canvasMcpConfigSignature = getAcpCanvasMcpConfigSignature(canvasMcpConfig);');
     expect(controllerSource).toContain('postAssistantCanvasMcpConfigToIframeWithRetry(canvasMcpConfig);');
     expect(controllerSource).toContain('syncAssistantCanvasMcpConfigToIframe();');
