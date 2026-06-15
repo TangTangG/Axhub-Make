@@ -10,6 +10,7 @@ import {
 export type AiImageQuality = 'auto' | 'low' | 'medium' | 'high';
 export type AiImageOutputFormat = 'png' | 'jpeg' | 'webp';
 export type AiImageModeration = 'auto' | 'low';
+export type AiImageBackground = 'auto' | 'transparent';
 
 export interface AiImageTaskParams {
   size: string;
@@ -17,6 +18,7 @@ export interface AiImageTaskParams {
   output_format: AiImageOutputFormat;
   output_compression: number | null;
   moderation: AiImageModeration;
+  background?: AiImageBackground;
   n: number;
   disable_prompt_optimization?: boolean;
 }
@@ -68,6 +70,7 @@ const DEFAULT_IMAGE_REQUEST_PARAMS: AiImageTaskParams = {
   output_format: 'png',
   output_compression: null,
   moderation: 'auto',
+  background: 'auto',
   n: 1,
   disable_prompt_optimization: false,
 };
@@ -103,6 +106,12 @@ export function normalizeAiImageRequestParams(
   const moderation = input?.moderation === 'auto' || input?.moderation === 'low'
     ? input.moderation
     : resolvedDefaults.moderation;
+  const resolvedBackground = input?.background === 'auto' || input?.background === 'transparent'
+    ? input.background
+    : resolvedDefaults.background;
+  const background = outputFormat === 'png' && resolvedBackground === 'transparent'
+    ? 'transparent'
+    : 'auto';
   const n = typeof input?.n === 'number' && Number.isFinite(input.n)
     ? Math.min(10, Math.max(1, Math.round(input.n)))
     : resolvedDefaults.n;
@@ -118,6 +127,7 @@ export function normalizeAiImageRequestParams(
     output_format: outputFormat,
     output_compression: outputCompression,
     moderation,
+    background,
     n,
     disable_prompt_optimization: input?.disable_prompt_optimization === true,
   };
@@ -145,6 +155,7 @@ function pickActualParams(source: unknown): Partial<AiImageTaskParams> | undefin
   }
   if (typeof source.output_compression === 'number') actualParams.output_compression = source.output_compression;
   if (source.moderation === 'auto' || source.moderation === 'low') actualParams.moderation = source.moderation;
+  if (source.background === 'auto' || source.background === 'transparent') actualParams.background = source.background;
   if (typeof source.n === 'number') actualParams.n = source.n;
   if (typeof source.disable_prompt_optimization === 'boolean') {
     actualParams.disable_prompt_optimization = source.disable_prompt_optimization;
@@ -191,6 +202,7 @@ export function buildImageGenerationPrompt(params: {
     `- quality: ${requestParams.quality}`,
     `- output format: ${requestParams.output_format}`,
     `- moderation: ${requestParams.moderation}`,
+    ...(requestParams.background === 'transparent' ? [`- background: ${requestParams.background}`] : []),
     `- count: ${requestParams.n}`,
     ...(requestParams.output_compression == null ? [] : [`- output compression: ${requestParams.output_compression}`]),
     ...(requestParams.disable_prompt_optimization ? ['- preserve the prompt text; do not rewrite it before using the tool'] : []),

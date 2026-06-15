@@ -42,10 +42,43 @@ describe('ContentPanel make client project setup source', () => {
     );
 
     expect(source).toContain("const MAKE_CLIENT_SETUP_PENDING_LABEL = '创建并启动项目';");
+    expect(source).toContain("const MAKE_CLIENT_SETUP_PENDING_DESCRIPTION = '首次新建会下载模板、安装依赖并启动客户端，可能需要几分钟；后续建议复制已有项目，会快很多';");
     expect(dialogSource).toContain("setRunningPhase('creating')");
     expect(dialogSource).not.toContain("setRunningPhase('template')");
     expect(dialogSource).toContain('MAKE_CLIENT_SETUP_PENDING_LABEL');
     expect(dialogSource).toContain('MAKE_CLIENT_SETUP_PENDING_DESCRIPTION');
+  });
+
+  it('adds a copy-current-project setup mode only inside the project setup dialog when an active project exists', () => {
+    const source = readContentPanelSource();
+    const dialogPropsSource = source.slice(
+      source.indexOf('interface ProjectSetupDialogProps'),
+      source.indexOf('function ProjectSetupDialog'),
+    );
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+    const dialogRenderSource = source.slice(
+      source.indexOf('<ProjectSetupDialog'),
+      source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
+    );
+
+    expect(source).toContain("type ProjectSetupMode = 'menu' | 'blank' | 'copy';");
+    expect(dialogPropsSource).toContain('hasActiveProject?: boolean;');
+    expect(dialogPropsSource).toContain('copyingProject: boolean;');
+    expect(dialogPropsSource).toContain('onCopyProject: (params: {');
+    expect(dialogSource).toContain("hasActiveProject ? (");
+    expect(dialogSource).toContain('复制当前项目');
+    expect(dialogSource).toContain("setSetupMode('copy');");
+    expect(dialogSource).toContain('handleCopyMakeProject');
+    expect(dialogSource).toContain("setupMode === 'copy'");
+    expect(dialogSource).toContain('复制并启动');
+    expect(dialogRenderSource).toContain('hasActiveProject={Boolean(activeProjectId)}');
+    expect(dialogRenderSource).toContain('copyingProject={isCopyingProject}');
+    expect(dialogRenderSource).toContain('onCopyProject={handleCopyMakeProject}');
+    expect(source).toContain("const [projectSetupInitialMode, setProjectSetupInitialMode] = useState<'menu'>('menu');");
+    expect(source).not.toContain("setProjectSetupInitialMode('copy');");
   });
 
   it('keeps blank project creation failures as a single inline error with details', () => {
@@ -132,6 +165,20 @@ describe('ContentPanel make client project setup source', () => {
     expect(renderItemActionsSource).not.toContain('onCreatePrototypeFromDoc');
   });
 
+  it('does not show an import prototype action in the prototype toolbar', () => {
+    const source = readContentPanelSource();
+    const prototypeToolbarSource = source.slice(
+      source.indexOf("{!isSearchExpanded && activeTab === 'prototype' ? ("),
+      source.indexOf("{!isSearchExpanded && activeTab === 'assets' ? ("),
+    );
+
+    expect(prototypeToolbarSource).toContain('新建原型');
+    expect(prototypeToolbarSource).toContain('新建文件夹');
+    expect(prototypeToolbarSource).not.toContain('aria-label="导入原型"');
+    expect(prototypeToolbarSource).not.toContain('<TooltipContent>导入原型</TooltipContent>');
+    expect(prototypeToolbarSource).not.toContain('onImportPrototype');
+  });
+
   it('allows successful required project setup to close the setup dialog', () => {
     const source = readContentPanelSource();
     const dialogSource = source.slice(
@@ -150,7 +197,7 @@ describe('ContentPanel make client project setup source', () => {
     expect(renderSource).toContain('setProjectSwitcherMenuOpen(false);');
   });
 
-  it('switches to the prototype tab after an existing or blank project setup succeeds', () => {
+  it('switches to the prototype tab after an existing, blank, or copied project setup succeeds', () => {
     const source = readContentPanelSource();
     const dialogSource = source.slice(
       source.indexOf('function ProjectSetupDialog'),
@@ -161,7 +208,7 @@ describe('ContentPanel make client project setup source', () => {
       source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
     );
 
-    expect(dialogSource.match(/onSetupComplete\(\);/gu)).toHaveLength(2);
+    expect(dialogSource.match(/onSetupComplete\(\);/gu)).toHaveLength(3);
     expect(renderSource).toContain("onTabChange('prototype');");
   });
 
@@ -194,8 +241,10 @@ describe('ContentPanel make client project setup source', () => {
     expect(source).toContain('const mirrorTemplateDownloadUrl = makeClientTemplateMirrorDownloadUrl();');
     expect(source).toContain('function stopProjectSetupLinkPropagation(event: React.SyntheticEvent)');
     expect(source).toContain('data-project-setup-option="existing"');
-    expect(menuSource).toContain('快速新建项目');
-    expect(menuSource).toContain('从空白一键创建项目，系统会自动准备好基础项目，新手优先使用，不需要自己下载。');
+    expect(menuSource).toContain('新建项目');
+    expect(menuSource).toContain('首次会自动下载模板并安装依赖，可能需要几分钟。复制当前项目速度最快。');
+    expect(menuSource).not.toContain('快速新建项目');
+    expect(menuSource).not.toContain('已有项目时，复制当前项目会快很多。');
     expect(menuSource).toContain('选择已有项目');
     expect(menuSource).toContain('已有项目可直接选择文件夹导入；没有客户端包可先');
     expect(menuSource).toContain('下载客户端包');
@@ -216,18 +265,53 @@ describe('ContentPanel make client project setup source', () => {
     expect(menuSource).not.toContain('开发服务');
   });
 
-  it('offers AI project creation as the second setup option with a concise directory-first prompt', () => {
+  it('does not show client version labels in project setup options', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+    const dialogRenderSource = source.slice(
+      source.indexOf('<ProjectSetupDialog'),
+      source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
+    );
+    const menuSource = source.slice(
+      source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? ('),
+      source.indexOf('{renderFailureMessage()}'),
+    );
+
+    expect(source).not.toContain('DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION');
+    expect(source).not.toContain('formatProjectClientVersion');
+    expect(dialogSource).not.toContain('currentClientVersion');
+    expect(menuSource).not.toContain('客户端版本');
+    expect(dialogRenderSource).not.toContain('currentClientVersion=');
+  });
+
+  it('does not render an empty project setup footer divider in menu mode', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+
+    expect(dialogSource).toContain("const showProjectSetupFooter = setupMode === 'blank' || setupMode === 'copy' || !dismissDisabled;");
+    expect(dialogSource).toContain('{showProjectSetupFooter ? (');
+    expect(dialogSource).toContain('<DialogFooter className="border-t p-3 sm:justify-between sm:space-x-0">');
+    expect(dialogSource).toContain('</DialogFooter>\n                    ) : null}');
+  });
+
+  it('offers assistant project setup as the second setup option with a concise directory-first prompt', () => {
     const source = readContentPanelSource();
     const menuSource = source.slice(
       source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? ('),
       source.indexOf('{renderFailureMessage()}'),
     );
-    const quickCreateIndex = menuSource.indexOf('快速新建项目');
-    const aiCreateIndex = menuSource.indexOf('AI 新建');
+    const quickCreateIndex = menuSource.indexOf('新建项目');
+    const aiCreateIndex = menuSource.indexOf('AI 执行');
     const existingIndex = menuSource.indexOf('选择已有项目');
 
     expect(source).toContain('function buildMakeClientAiCreatePrompt');
-    expect(source).toContain('const handleCopyAiCreatePrompt = async () => {');
+    expect(source).toContain('const handleRunAiCreatePrompt = async () => {');
     expect(source).toContain('primaryTemplateDownloadUrl');
     expect(source).toContain('mirrorTemplateDownloadUrl');
     expect(source).toContain('先和我确认项目目录');
@@ -238,7 +322,9 @@ describe('ContentPanel make client project setup source', () => {
     expect(source).toContain('你已经负责把客户端项目写入到可识别的项目目录中');
     expect(source).toContain('实际使用的模板下载链接');
     expect(source).toContain('请按当前系统选择命令写法，兼容 macOS、Windows 和 Linux');
-    expect(source).toContain('已复制 AI 新建提示词');
+    expect(source).toContain('复制提示词');
+    expect(source).toContain('AI 执行');
+    expect(source).not.toContain('已复制 AI 新建提示词');
     expect(source).not.toContain('完成后告诉我项目目录，并让我回到 Axhub Make 选择“已有项目”导入该目录');
     expect(source).not.toContain('你将作为');
     expect(source).not.toContain('UI/UX 设计架构师');
@@ -494,13 +580,10 @@ describe('ContentPanel document paste upload source', () => {
       source.indexOf('const resetSidebarHorizontalScroll = () => {'),
     );
 
-    expect(source).toContain('function getClipboardImageFiles(event: ClipboardEvent): File[]');
-    expect(source).toContain('function createPastedImageFile(blob: Blob): File');
-    expect(source).toContain('function getPastedImageFileName(blob: Blob): string');
-    expect(source).toContain('return new globalThis.File([blob]');
-    expect(source).toContain('const originalName = blob instanceof globalThis.File ? String(blob.name || \'\').trim() : \'\';');
-    expect(source).toContain('return `${timestamp}${extension}`;');
-    expect(source).toContain('return `${baseName}${extension}`;');
+    expect(source).toContain("import { getClipboardImageFiles } from '../../domains/shared/clipboardImages';");
+    expect(source).not.toContain('function getClipboardImageFiles(event: ClipboardEvent): File[]');
+    expect(source).not.toContain('function createPastedImageFile(blob: Blob): File');
+    expect(source).not.toContain('function getPastedImageFileName(blob: Blob): string');
     expect(source).not.toContain('pasted-image-${timestamp}');
     expect(pasteEffectSource).toContain('const pastedFiles = getClipboardImageFiles(event);');
     expect(pasteEffectSource).toContain('if (pastedFiles.length === 0) {');
@@ -817,6 +900,18 @@ describe('ContentPanel project switcher source', () => {
     expect(projectSwitcherSource).toContain('void handleProjectStop(project.id);');
     expect(projectSwitcherSource).toContain('event.stopPropagation();');
   });
+
+  it('does not show make client versions in the project switcher', () => {
+    const source = readContentPanelSource();
+    const projectSwitcherSource = source.slice(
+      source.indexOf('{projects.length > 0 ? projects.map((project) => {'),
+      source.indexOf(') : (', source.indexOf('{projects.length > 0 ? projects.map((project) => {')),
+    );
+
+    expect(projectSwitcherSource).not.toContain('clientVersion');
+    expect(projectSwitcherSource).not.toContain('客户端 {clientVersion}');
+    expect(projectSwitcherSource).not.toContain('客户端版本');
+  });
 });
 
 describe('ContentPanel default design source', () => {
@@ -846,7 +941,7 @@ describe('ContentPanel default design source', () => {
     expect(treeNodeRenderSource).toContain('suffix={suffixElement}');
   });
 
-  it('does not show folder-open or generate-design actions on design rows', () => {
+  it('does not show folder-open or legacy generate-design prompt actions on design rows', () => {
     const source = readContentPanelSource();
     const itemActionsSource = source.slice(
       source.indexOf('const renderItemActions ='),
@@ -855,7 +950,8 @@ describe('ContentPanel default design source', () => {
 
     expect(itemActionsSource).toContain("const showOpenResourceDirectoryAction = dataTab === 'docs';");
     expect(itemActionsSource).toContain('{showOpenResourceDirectoryAction ? (');
-    expect(itemActionsSource).toContain('{isPrototypeItem && onGenerateThemeFromPrototype ? (');
+    expect(itemActionsSource).not.toContain('onGenerateThemeFromPrototype');
+    expect(itemActionsSource).not.toContain('生成设计');
     expect(itemActionsSource).not.toContain('{isResourceTreeItem ? (');
     expect(itemActionsSource).not.toContain('{!isDocItem && onGenerateThemeFromPrototype ? (');
   });
@@ -929,6 +1025,20 @@ describe('NewSidebar design ZIP export source', () => {
 });
 
 describe('ContentPanel settings menu source', () => {
+  it('shows only new project creation below the project switcher list', () => {
+    const source = readContentPanelSource();
+    const switcherSource = source.slice(
+      source.indexOf('<DropdownMenu open={projectSwitcherMenuOpen}'),
+      source.indexOf('</DropdownMenuContent>', source.indexOf('<DropdownMenu open={projectSwitcherMenuOpen}')),
+    );
+
+    expect(source).toContain("const [projectSetupInitialMode, setProjectSetupInitialMode] = useState<'menu'>('menu');");
+    expect(switcherSource).not.toContain('复制当前项目');
+    expect(switcherSource).not.toContain('setProjectSetupInitialMode(\'copy\');');
+    expect(switcherSource).toContain('setProjectSetupInitialMode(\'menu\');');
+    expect(source).toContain('initialMode={projectSetupInitialMode}');
+  });
+
   it('opens project settings from the dropdown select event after the menu closes', () => {
     const source = readContentPanelSource();
     const menuSource = source.slice(

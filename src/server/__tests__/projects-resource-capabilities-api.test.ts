@@ -10,7 +10,9 @@ import {
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
+  registerProject,
   startTestServer,
+  setActiveProject,
   writeJson,
   writeMakeClientProjectMarker,
   writeProjectMetadata,
@@ -49,11 +51,14 @@ describe('make-server project resource capability APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'capability-client', 'Capability Client');
+      await setActiveProject(server.origin, 'capability-client');
+
       const resources = await fetch(`${server.origin}/api/projects/capability-client/resources`)
         .then((response) => response.json());
 
       expect(resources.capabilities.resourceWrites).toEqual({
-        prototypeCreate: false,
+        prototypeCreate: true,
         prototypeUpload: true,
         docCreate: true,
         docImport: true,

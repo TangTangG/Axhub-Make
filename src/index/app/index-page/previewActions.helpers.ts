@@ -655,6 +655,36 @@ export function buildProjectPrototypeIframeUrl(
     }
 }
 
+export function buildSameOriginRuntimePreviewUrl(previewUrl: string): string {
+    if (!previewUrl) {
+        return '';
+    }
+    try {
+        const currentOrigin = getWindowLocationOrigin();
+        const runtimeOrigin = getRuntimeOrigin();
+        const url = new URL(previewUrl, currentOrigin);
+        if (
+            runtimeOrigin
+            && url.origin === runtimeOrigin
+            && isRuntimeOwnedRelativePreviewUrl(url.pathname)
+        ) {
+            url.protocol = new URL(currentOrigin).protocol;
+            url.host = new URL(currentOrigin).host;
+        }
+        return url.toString();
+    } catch {
+        return previewUrl;
+    }
+}
+
+export function buildProjectPrototypeScreenshotIframeUrl(
+    selectedItem: any,
+    selectedPageId?: string | null,
+): string {
+    const previewUrl = buildProjectPrototypeIframeUrl(selectedItem, undefined, selectedPageId);
+    return buildSameOriginRuntimePreviewUrl(previewUrl);
+}
+
 export function buildPrototypePageHashUrl(inputUrl: URL | string, pageId?: string | null): string {
     let url: URL;
     try {

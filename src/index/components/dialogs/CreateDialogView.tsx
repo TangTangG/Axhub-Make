@@ -3,14 +3,13 @@ import { AppWindow, Boxes, Code2, Globe, Loader2, UploadCloud, X } from 'lucide-
 import { toast } from 'sonner';
 import { PromptClientPreference } from '../../types';
 import { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
+import type { CreateDialogTab, PrototypeUploadType } from '../../types/index-page.types';
 import PromptActionButton from '../PromptActionButton';
 import { Button } from '@/components/ui/button';
-import { Field, FieldLabelWithHint } from '@/components/ui/field';
 import { FileDropzone } from '@/components/ui/file-dropzone';
-import { MultiSelect } from '@/components/ui/multi-select';
-import { copyToClipboard } from '../../utils/clipboard';
 import { generateTemplateImportPrompt, type TemplateLibraryPromptItem } from '../../utils/templateImportPrompts';
 import { getUserFriendlyUploadErrorMessage } from '../../utils/uploadErrors';
+import { cn } from '@/lib/utils';
 import type { ResourceWriteCapabilities } from '../../services/projectResources';
 import {
     Sheet,
@@ -21,47 +20,25 @@ import {
 } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import AiCreateGuideContent from './AiCreateGuideContent';
 import TemplateLibraryCard from './TemplateLibraryCard';
 
-interface DocOption {
-    name: string;
-    displayName: string;
-}
-
-interface ThemeOption {
-    name: string;
-    displayName: string;
-}
-
-interface DataAssetOption {
-    name: string;
-    displayName: string;
-}
-
-type CreateDialogTab = 'ai' | 'create' | 'upload';
-type CreateDialogViewTab = CreateDialogTab | 'onlineImport';
+type CreateDialogViewTab = 'upload' | 'onlineImport';
 
 interface CreateDialogProps {
     visible: boolean;
     onClose: () => void;
     activeTab: 'prototypes';
+    activeProjectId?: string | null;
     initialTab?: CreateDialogTab;
-    selectedThemes: string[];
-    setSelectedThemes: (themes: string[]) => void;
-    availableThemes: ThemeOption[];
-    selectedDocs: string[];
-    setSelectedDocs: (docs: string[]) => void;
-    availableDocs: DocOption[];
-    selectedDataAssets: string[];
-    setSelectedDataAssets: (dataAssets: string[]) => void;
-    availableDataAssets: DataAssetOption[];
     resourceWriteCapabilities: ResourceWriteCapabilities;
     preferredPromptClient: PromptClientPreference;
     preferredIDE: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
-    buildCreatePrompt: () => Promise<string> | string;
+    assistantOpen?: boolean;
+    initialUploadType?: PrototypeUploadType;
+    targetPrototypeName?: string;
     onAfterCreatePromptAction: () => void;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     onUploadSuccess?: () => void | Promise<void>;
 }
 
@@ -104,27 +81,22 @@ export default function CreateDialog({
     visible,
     onClose,
     activeTab,
-    initialTab = 'ai',
-    selectedThemes,
-    setSelectedThemes,
-    availableThemes,
-    selectedDocs,
-    setSelectedDocs,
-    availableDocs,
-    selectedDataAssets,
-    setSelectedDataAssets,
-    availableDataAssets,
+    activeProjectId,
+    initialTab = 'onlineImport',
     resourceWriteCapabilities,
     preferredPromptClient,
     preferredIDE,
     ideAvailability,
-    buildCreatePrompt,
+    assistantOpen,
+    initialUploadType,
+    targetPrototypeName,
     onAfterCreatePromptAction,
+    onExecutePrompt,
     onUploadSuccess,
 }: CreateDialogProps) {
     const [sheetPortalContainer, setSheetPortalContainer] = useState<HTMLDivElement | null>(null);
-    const [activeKey, setActiveKey] = useState<CreateDialogViewTab>('ai');
-    const [uploadType, setUploadType] = useState('make');
+    const [activeKey, setActiveKey] = useState<CreateDialogViewTab>('onlineImport');
+    const [uploadType, setUploadType] = useState<PrototypeUploadType>('make');
     const [uploadMode, setUploadMode] = useState<'zip' | 'folder'>('zip');
     const [uploading, setUploading] = useState(false);
     const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
@@ -141,29 +113,35 @@ export default function CreateDialog({
 
     const uploadTabTitle = '导入原型';
     const canUploadPrototype = resourceWriteCapabilities.prototypeUpload;
-    const isPrototypeImportEntry = initialTab === 'upload' && canUploadPrototype;
 
     useEffect(() => {
         if (visible) {
-            setActiveKey(isPrototypeImportEntry && canUploadPrototype ? 'upload' : initialTab === 'upload' && !canUploadPrototype ? 'create' : initialTab);
-            setUploadType('make');
+            setActiveKey(initialTab === 'upload' && canUploadPrototype ? 'upload' : 'onlineImport');
+            setUploadType(initialUploadType || 'make');
             setUploadMode('zip');
             setUploading(false);
             setUploadResult(null);
             setSelectedUploadFiles([]);
             setTemplateImportingId('');
         }
-    }, [canUploadPrototype, initialTab, isPrototypeImportEntry, visible]);
+    }, [canUploadPrototype, initialTab, initialUploadType, visible]);
 
     const isAlwaysDirectType = (type: string) => ['make', 'axhub'].includes(type);
     const shouldTreatAsDirectResult = (type: string, result?: UploadResult | null) => {
         if (isAlwaysDirectType(type)) return true;
+        if (type === 'axure_html') return result?.requiresAi !== true;
         if (type === 'google_stitch') return result?.requiresAi !== true;
         return false;
     };
     const isZipOnlyUploadType = (type: string) => type === 'figma_make';
 
-    const uploadOptions = useMemo(() => {
+    const uploadOptions = useMemo<Array<{
+        key: PrototypeUploadType;
+        title: string;
+        description: string;
+        requiresAi?: boolean;
+        icon: React.ReactNode;
+    }>>(() => {
         return [
             {
                 key: 'make',
@@ -176,6 +154,13 @@ export default function CreateDialog({
                 title: 'Google Stitch',
                 description: 'AI 驱动的 UI 设计工具（静态）',
                 icon: <AppWindow className="h-8 w-8 text-rose-500" />,
+            },
+            {
+                key: 'axure_html',
+                title: 'Axure HTML 原型',
+                description: 'Axure HTML ZIP（实验性）',
+                requiresAi: false,
+                icon: <Boxes className="h-8 w-8 text-violet-500" />,
             },
             {
                 key: 'figma_make',
@@ -268,6 +253,12 @@ export default function CreateDialog({
         formData.append('uploadType', uploadType);
         formData.append('targetType', activeTab);
         formData.append('uploadMode', uploadMode);
+        if (activeProjectId) {
+            formData.append('projectId', activeProjectId);
+        }
+        if (targetPrototypeName) {
+            formData.append('targetPrototypeName', targetPrototypeName);
+        }
 
         if (uploadMode === 'zip') {
             const file = files[0];
@@ -338,19 +329,6 @@ export default function CreateDialog({
         return uploadResult.prompt;
     }, [uploadResult]);
 
-    const handleCopyTemplatePrompt = async (template: TemplateLibraryItem) => {
-        try {
-            await copyToClipboard(generateTemplateImportPrompt({
-                template,
-                repo: templateLibrary.repo,
-            }));
-            toast.success('提示词已复制到剪贴板');
-            onAfterCreatePromptAction();
-        } catch (error: any) {
-            toast.error(error?.message || '复制失败，请检查浏览器剪贴板权限');
-        }
-    };
-
     const handleDirectTemplateImport = async (template: TemplateLibraryItem) => {
         if (!template.canDirectImport) {
             toast.warning(template.directImportDisabledReason || '该模板暂不支持直接导入');
@@ -361,7 +339,7 @@ export default function CreateDialog({
             const response = await fetch('/api/template-library/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ templateId: template.id }),
+                body: JSON.stringify({ templateId: template.id, targetPrototypeName }),
             });
             const result = await response.json();
             if (!response.ok || !result?.success) {
@@ -398,45 +376,27 @@ export default function CreateDialog({
                 <Tabs
                     value={activeKey}
                     onValueChange={(value) => {
-                        if (isPrototypeImportEntry) {
-                            if ((value === 'upload' && canUploadPrototype) || value === 'onlineImport') {
-                                setActiveKey(value);
-                            }
-                            return;
-                        }
-                        if (value === 'ai' || value === 'create' || value === 'upload') {
-                            setActiveKey(value === 'upload' && !canUploadPrototype ? 'create' : value);
+                        if (value === 'upload' || value === 'onlineImport') {
+                            setActiveKey(value === 'upload' && !canUploadPrototype ? 'onlineImport' : value);
                         }
                     }}
                     className="flex h-full flex-col"
                 >
                     <SheetHeader className="border-b px-5 py-3.5">
-                        <SheetTitle className="sr-only">{isPrototypeImportEntry ? uploadTabTitle : `新建原型 / ${uploadTabTitle}`}</SheetTitle>
+                        <SheetTitle className="sr-only">{uploadTabTitle}</SheetTitle>
                         <div className="flex items-center justify-between gap-3">
-                            {isPrototypeImportEntry ? (
-                                <TabsList className="grid h-8 w-full max-w-[240px] grid-cols-2 rounded-lg border border-border/70 bg-muted/50 p-0.5">
-                                    <TabsTrigger value="upload" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
-                                        上传
-                                    </TabsTrigger>
-                                    <TabsTrigger value="onlineImport" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
-                                        在线导入
-                                    </TabsTrigger>
-                                </TabsList>
-                            ) : (
-                                <TabsList className={`grid h-8 w-full ${canUploadPrototype ? 'max-w-[360px] grid-cols-3' : 'max-w-[240px] grid-cols-2'} rounded-lg border border-border/70 bg-muted/50 p-0.5`}>
-                                    <TabsTrigger value="ai" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
-                                        AI 新建
-                                    </TabsTrigger>
-                                    <TabsTrigger value="create" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
-                                        生成 Prompt
-                                    </TabsTrigger>
-                                    {canUploadPrototype ? (
-                                        <TabsTrigger value="upload" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
-                                            导入原型
-                                        </TabsTrigger>
-                                    ) : null}
-                                </TabsList>
-                            )}
+                            <TabsList className="grid h-8 w-full max-w-[240px] grid-cols-2 rounded-lg border border-border/70 bg-muted/50 p-0.5">
+                                <TabsTrigger
+                                    value="upload"
+                                    disabled={!canUploadPrototype}
+                                    className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none"
+                                >
+                                    上传
+                                </TabsTrigger>
+                                <TabsTrigger value="onlineImport" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
+                                    在线导入
+                                </TabsTrigger>
+                            </TabsList>
                             <Button
                                 variant="ghost"
                                 size="icon-sm"
@@ -451,48 +411,6 @@ export default function CreateDialog({
                     </SheetHeader>
 
                     <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4.5">
-                        {activeKey === 'ai' ? <AiCreateGuideContent /> : null}
-
-                        {activeKey === 'create' ? (
-                            <div className="space-y-4">
-                                <Field>
-                                    <FieldLabelWithHint hint="AI 会根据所选主题的规范、token 或全局样式生成原型">主题配置</FieldLabelWithHint>
-                                    <MultiSelect
-                                        value={selectedThemes}
-                                        onChange={setSelectedThemes}
-                                        placeholder="自动"
-                                        searchPlaceholder="搜索主题..."
-                                        options={availableThemes.map((theme) => ({ value: theme.name, label: theme.displayName }))}
-                                        portalContainer={sheetPortalContainer}
-                                    />
-                                </Field>
-
-                                <Field>
-                                    <FieldLabelWithHint hint="AI 会参考所选文档补充产品、页面或业务上下文">参考文档</FieldLabelWithHint>
-                                    <MultiSelect
-                                        value={selectedDocs}
-                                        onChange={setSelectedDocs}
-                                        placeholder="自动"
-                                        searchPlaceholder="搜索文档..."
-                                        options={availableDocs.map((doc) => ({ value: doc.name, label: doc.displayName }))}
-                                        portalContainer={sheetPortalContainer}
-                                    />
-                                </Field>
-
-                                <Field>
-                                    <FieldLabelWithHint hint="AI 会参考所选数据辅助界面结构与字段设计">参考数据</FieldLabelWithHint>
-                                    <MultiSelect
-                                        value={selectedDataAssets}
-                                        onChange={setSelectedDataAssets}
-                                        placeholder="自动"
-                                        searchPlaceholder="搜索数据..."
-                                        options={availableDataAssets.map((asset) => ({ value: asset.name, label: asset.displayName }))}
-                                        portalContainer={sheetPortalContainer}
-                                    />
-                                </Field>
-                            </div>
-                        ) : null}
-
                         {activeKey === 'upload' && canUploadPrototype ? (
                             <div className="space-y-4">
                                 <div className="grid grid-cols-2 gap-4">
@@ -502,18 +420,25 @@ export default function CreateDialog({
                                             <button
                                                 key={option.key}
                                                 type="button"
+                                                aria-pressed={selected}
                                                 onClick={() => {
                                                     setUploadType(option.key);
                                                     setUploadMode('zip');
                                                     setUploadResult(null);
                                                     setSelectedUploadFiles([]);
                                                 }}
-                                                className={`flex items-center gap-2.5 rounded-md border p-3 text-left transition ${selected ? 'border-foreground/60 bg-muted/40' : 'border-border hover:bg-muted/30'}`}
+                                                className={cn(
+                                                    'flex min-w-0 items-center gap-2.5 rounded-md border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                                                    selected
+                                                        ? 'border-border/80'
+                                                        : 'border-border/80 hover:border-primary/30 hover:bg-muted/30',
+                                                )}
+                                                style={selected ? { borderColor: 'hsl(var(--brand))' } : undefined}
                                             >
                                                 <div className="flex-shrink-0 text-muted-foreground/80 [&_svg]:h-6 [&_svg]:w-6">{option.icon}</div>
-                                                <div className="grid gap-1">
+                                                <div className="grid min-w-0 gap-1">
                                                     <div className="text-sm font-medium leading-none">{option.title}</div>
-                                                    <div className="text-[12px] leading-4 text-muted-foreground line-clamp-2">{option.description}</div>
+                                                    <div className="truncate text-[12px] leading-4 text-muted-foreground" title={option.description}>{option.description}</div>
                                                 </div>
                                             </button>
                                         );
@@ -614,7 +539,30 @@ export default function CreateDialog({
                                                     directImportDisabled={directDisabled}
                                                     directImportTooltip={directImportTooltip}
                                                     onPreview={handleTemplatePreviewCardClick}
-                                                    onCopyPrompt={(item) => void handleCopyTemplatePrompt(item as TemplateLibraryItem)}
+                                                    renderCopyPromptAction={(item) => (
+                                                        <PromptActionButton
+                                                            type="borderless"
+                                                            preferredClient={preferredPromptClient}
+                                                            preferredIDE={preferredIDE}
+                                                            ideAvailability={ideAvailability}
+                                                            assistantOpen={assistantOpen}
+                                                            scene="template-library-import"
+                                                            buildPrompt={() => generateTemplateImportPrompt({
+                                                                template: item as TemplateLibraryItem,
+                                                                repo: templateLibrary.repo,
+                                                                targetPrototypeName,
+                                                            })}
+                                                            getTargetPath={() => targetPrototypeName ? `src/prototypes/${targetPrototypeName}/index.tsx` : null}
+                                                            onExecutePrompt={onExecutePrompt}
+                                                            onAfterCopy={onAfterCreatePromptAction}
+                                                            onAfterExecute={onAfterCreatePromptAction}
+                                                            copyLabel="复制提示词"
+                                                            copySuccessMessage="提示词已复制到剪贴板"
+                                                            executeSuccessMessage="已发送到 AI 侧栏"
+                                                            fallbackMessage="AI 执行失败，已回退为复制提示词"
+                                                            disabled={Boolean(templateImportingId)}
+                                                        />
+                                                    )}
                                                     onDirectImport={(item) => void handleDirectTemplateImport(item as TemplateLibraryItem)}
                                                 />
                                             );
@@ -629,28 +577,19 @@ export default function CreateDialog({
                         <Button variant="outline" size="sm" onClick={onClose} disabled={uploading || Boolean(templateImportingId)}>
                             取消
                         </Button>
-                        {activeKey === 'create' ? (
+                        {activeKey === 'upload' && !shouldTreatAsDirectResult(uploadType, uploadResult) ? (
                             <PromptActionButton
                                 type="primary"
                                 preferredClient={preferredPromptClient}
                                 preferredIDE={preferredIDE}
                                 ideAvailability={ideAvailability}
-                                scene="create-prototype"
-                                buildPrompt={buildCreatePrompt}
-                                onAfterCopy={onAfterCreatePromptAction}
-                                copySuccessMessage="复制成功，请返回 IDE 发送给 AI"
-                                executeSuccessMessage="已打开新会话"
-                                fallbackMessage="自动执行失败，已回退为复制 Prompt"
-                            />
-                        ) : activeKey === 'upload' && !shouldTreatAsDirectResult(uploadType, uploadResult) ? (
-                            <PromptActionButton
-                                type="primary"
-                                preferredClient={preferredPromptClient}
-                                preferredIDE={preferredIDE}
-                                ideAvailability={ideAvailability}
+                                assistantOpen={assistantOpen}
                                 scene={`upload-${uploadType}-${activeTab}`}
                                 buildPrompt={buildImportPrompt}
+                                getTargetPath={() => uploadResult?.path || null}
+                                onExecutePrompt={onExecutePrompt}
                                 onAfterCopy={onAfterCreatePromptAction}
+                                onAfterExecute={onAfterCreatePromptAction}
                                 copySuccessMessage="提示词已复制到剪贴板，请粘贴给 AI 继续完善"
                                 executeSuccessMessage="已打开新会话"
                                 fallbackMessage="自动执行失败，已回退为复制 Prompt"

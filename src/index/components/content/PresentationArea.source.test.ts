@@ -24,7 +24,12 @@ describe('PresentationArea resource folder source', () => {
     expect(source).toContain('reviewPageZoomEnabled={props.reviewPageZoomEnabled}');
     expect(source).toContain("{props.reviewPanelOpen && props.viewMode !== 'canvas' ? (");
     expect(reviewPanelSource).toContain('activeKind={props.activeReviewKind || \'design\'}');
+    expect(reviewPanelSource).toContain('reviewPrompt={props.reviewPrompt || \'\'}');
+    expect(reviewPanelSource).toContain('reviewDocumentPath={props.reviewDocumentPath}');
+    expect(reviewPanelSource).toContain("assistantOpen={props.assistantVisible === true && props.aiPanelMode === 'general-ai'}");
+    expect(reviewPanelSource).toContain('onExecutePrompt={props.onExecutePrompt}');
     expect(reviewPanelSource).toContain('onKindChange={(kind) => props.handleReviewKindChange?.(kind)}');
+    expect(reviewPanelSource).toContain('onCopyPrompt={() => { void props.handleCopyReviewPrompt?.(); }}');
     expect(reviewPanelSource).toContain('onTogglePageZoom={() => props.handleToggleReviewPageZoom?.()}');
     expect(reviewPanelSource).not.toContain('onClose');
     expect(reviewPanelSource).not.toContain('handleReviewPanelToggle');

@@ -127,7 +127,7 @@ describe('OpenCode bridge current file context resolution', () => {
     });
   });
 
-  it('builds stable comment records for canvas annotations', () => {
+  it('builds stable comment records for annotated canvas elements', () => {
     expect(resolveOpenCodeCanvasAnnotationContext({
       elementId: 'el-1',
       type: 'rectangle',

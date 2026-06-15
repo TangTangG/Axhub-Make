@@ -328,7 +328,45 @@ describe('sidebarTree', () => {
             },
         ];
 
-        expect(sanitizeSidebarTree('docs', scannedTree, items)).toEqual(scannedTree);
+        expect(sanitizeSidebarTree('docs', scannedTree, items)).toEqual([
+            {
+                id: 'folder-docs-test-files',
+                kind: 'folder',
+                title: 'test-files',
+                path: 'test-files',
+                folderPath: 'test-files',
+                children: [
+                    {
+                        id: 'item-docs-test-files-sample-pdf',
+                        kind: 'item',
+                        title: 'sample',
+                        itemKey: 'docs/test-files/sample.pdf',
+                        path: 'test-files/sample.pdf',
+                    },
+                    {
+                        id: 'item-docs-test-files-sample-xlsx',
+                        kind: 'item',
+                        title: 'sample',
+                        itemKey: 'docs/test-files/sample.xlsx',
+                        path: 'test-files/sample.xlsx',
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it('drops stale root README resource nodes from docs trees', () => {
+        const lookup = createSidebarTreeItemLookup('docs', []);
+        const node: SidebarTreeNode = {
+            id: 'item-docs-README-md',
+            kind: 'item',
+            title: 'README.md',
+            itemKey: 'docs/README.md',
+            path: 'README.md',
+        };
+
+        expect(resolveSidebarTreeItem('docs', node, lookup)).toBeNull();
+        expect(sanitizeSidebarTree('docs', [node], [])).toEqual([]);
     });
 
     it('resolves filesystem document tree nodes before docs metadata catches up', () => {

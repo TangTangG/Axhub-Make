@@ -867,6 +867,42 @@ describe('client preview routes', () => {
     expect(res.end).not.toHaveBeenCalled();
   });
 
+  it('lets Vite transform static asset imports requested by prototype modules', async () => {
+    const projectRoot = createFixtureProject();
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const assetPath = path.join(projectRoot, 'src/prototypes/home/assets/hero.png');
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.writeFileSync(assetPath, pngBytes);
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home/assets/hero.png?import',
+      headers: {
+        accept: '*/*',
+        referer: 'http://localhost:51720/prototypes/home/index.tsx',
+      },
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.end).not.toHaveBeenCalled();
+  });
+
   it('serves prototype CSS assets as stylesheets for direct link requests', async () => {
     const projectRoot = createFixtureProject();
     process.chdir(projectRoot);
@@ -1024,5 +1060,108 @@ describe('client preview routes', () => {
     expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/png');
     expect(Buffer.concat(chunks)).toEqual(pngBytes);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('serves safely nested static assets from a prototype directory', async () => {
+    const projectRoot = createFixtureProject();
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const assetPath = path.join(projectRoot, 'src/prototypes/home/assets/images/u1.png');
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.writeFileSync(assetPath, pngBytes);
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home/assets/images/u1.png?v=123',
+      headers: {},
+    };
+    const chunks: Buffer[] = [];
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn((chunk?: Buffer | string) => {
+        if (chunk) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+      }),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/png');
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    expect(Buffer.concat(chunks)).toEqual(pngBytes);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('does not serve nested static assets outside the prototype directory', async () => {
+    const projectRoot = createFixtureProject();
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home/assets/../index.tsx',
+      headers: {},
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.end).not.toHaveBeenCalled();
+  });
+
+  it('rejects encoded path separators before resolving static asset routes', async () => {
+    const projectRoot = createFixtureProject();
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const assetPath = path.join(projectRoot, 'src/prototypes/home/assets/images/u1.png');
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.writeFileSync(assetPath, pngBytes);
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home/assets%2Fimages%2Fu1.png',
+      headers: {},
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.end).not.toHaveBeenCalled();
   });
 });

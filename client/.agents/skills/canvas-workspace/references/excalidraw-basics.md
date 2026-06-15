@@ -1,8 +1,6 @@
 # Excalidraw 基础指导
 
-这份只说明如何把内容组织成 Excalidraw 图，不规定 Axhub 画布流程。基础思路参考 `excalidraw-diagram-generator`：先判断图类型，再抽取元素、关系和复杂度，最后生成清晰布局。
-
-参考来源：https://www.skills.sh/github/awesome-copilot/excalidraw-diagram-generator
+这份只说明如何把内容组织成 Excalidraw 图，不规定 Axhub 画布流程。先判断图类型，再抽取元素、关系和复杂度，最后生成清晰布局。
 
 ## 先判断图类型
 

@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
 import type { GenieContextV1 } from '@/common/genie/types';
 import type { CanvasItem, ItemData, SidebarTreeNode, SidebarTreeTab, TabType } from '../types';
-import { STORAGE_KEY_ASSISTANT_AUTO_OPEN_DISMISSED } from '../constants';
+import {
+    STORAGE_KEY_ASSISTANT_AUTO_OPEN_DISMISSED,
+    STORAGE_KEY_ASSISTANT_AUTO_OPEN_PANEL_MODE,
+} from '../constants';
 import { normalizeMarkdownResourceName } from '../utils/markdownResourcePath';
 import { buildMarkdownFileUrl, buildSpecTemplatePreviewUrl } from '../utils/markdownPreview';
 
@@ -88,6 +91,7 @@ export function parseDismissedStorageValue(value: string | null): boolean {
 }
 
 type AssistantAutoOpenDismissedStorage = Pick<Storage, 'getItem' | 'setItem'>;
+type AssistantAutoOpenPanelMode = 'general-ai' | 'image-ai';
 
 function getLocalStorage(): AssistantAutoOpenDismissedStorage | null {
     if (typeof window === 'undefined') {
@@ -114,6 +118,20 @@ export function buildAssistantAutoOpenDismissedStorageKey(
 
     return [
         STORAGE_KEY_ASSISTANT_AUTO_OPEN_DISMISSED,
+        encodeStorageKeyPart(projectPart),
+    ].join(':');
+}
+
+export function buildAssistantAutoOpenPanelModeStorageKey(
+    projectScope?: string | null,
+    _targetPath?: string | null,
+): string {
+    const normalizedProjectScope = String(projectScope || '').trim();
+    const origin = typeof window === 'undefined' ? 'unknown-origin' : window.location.origin;
+    const projectPart = normalizedProjectScope || `origin:${origin}`;
+
+    return [
+        STORAGE_KEY_ASSISTANT_AUTO_OPEN_PANEL_MODE,
         encodeStorageKeyPart(projectPart),
     ].join(':');
 }
@@ -146,6 +164,36 @@ export function setAssistantAutoOpenDismissed(
     }
     try {
         storage.setItem(storageKey, dismissed ? '1' : '0');
+    } catch {
+        // Ignore storage failures in private or embedded contexts.
+    }
+}
+
+export function getAssistantAutoOpenPanelMode(
+    storageKey: string,
+    storage: AssistantAutoOpenDismissedStorage | null = getLocalStorage(),
+): AssistantAutoOpenPanelMode {
+    if (!storage) {
+        return 'general-ai';
+    }
+    try {
+        const storedValue = storage.getItem(storageKey);
+        return storedValue === 'image-ai' ? 'image-ai' : 'general-ai';
+    } catch {
+        return 'general-ai';
+    }
+}
+
+export function setAssistantAutoOpenPanelMode(
+    storageKey: string,
+    mode: AssistantAutoOpenPanelMode,
+    storage: AssistantAutoOpenDismissedStorage | null = getLocalStorage(),
+) {
+    if (!storage) {
+        return;
+    }
+    try {
+        storage.setItem(storageKey, mode);
     } catch {
         // Ignore storage failures in private or embedded contexts.
     }
@@ -268,7 +316,7 @@ function buildDocsFileUrl(name: string, projectId: string | null): string {
 }
 
 export function normalizeDocItem(
-    doc: { name?: string; displayName?: string; path?: string; absoluteFilePath?: string },
+    doc: { name?: string; displayName?: string; path?: string; absoluteFilePath?: string; fileSize?: number },
     projectId: string | null = null,
 ): ItemData {
     const normalizedName = normalizeMarkdownResourceName('doc', String(doc?.name || '').trim());
@@ -290,6 +338,7 @@ export function normalizeDocItem(
         previewUrl: isMarkdown ? buildSpecTemplatePreviewUrl(markdownUrl) : markdownUrl,
         filePath: sourcePath || undefined,
         absoluteFilePath: absoluteFilePath || undefined,
+        ...(typeof doc?.fileSize === 'number' ? { fileSize: doc.fileSize } : {}),
     };
 }
 
@@ -299,7 +348,7 @@ export function normalizeDocsItems(docs: unknown, projectId: string | null = nul
     }
     return docs
         .map((doc) => normalizeDocItem(
-            doc as { name?: string; displayName?: string; path?: string; absoluteFilePath?: string },
+            doc as { name?: string; displayName?: string; path?: string; absoluteFilePath?: string; fileSize?: number },
             projectId,
         ))
         .filter((doc) => Boolean(doc.name));

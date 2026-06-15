@@ -826,6 +826,54 @@ describe('make-server resource sidebar filesystem tree API', () => {
     }
   });
 
+  it('reconciles stale root README docs from cached navigation', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'docs-readme-tree-client', 'Docs README Tree Client');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'docs-readme-tree-client', name: 'Docs README Tree Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+    });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/README.md'), '# Resources\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/overview.md'), '# Overview\n', 'utf8');
+    writeJson(path.join(projectRoot, '.axhub/make/sidebar-tree.json'), {
+      version: 1,
+      updatedAt: '2026-05-19T00:00:00.000Z',
+      prototypes: [],
+      docs: [
+        { id: 'item-docs-README-md', kind: 'item', title: 'README.md', itemKey: 'docs/README.md' },
+      ],
+      themesTree: [],
+      themes: [],
+      data: [],
+      templates: [],
+    });
+
+    const server = await startTestServer(projectRoot);
+    try {
+      await registerProject(server.origin, projectRoot, 'docs-readme-tree-client', 'Docs README Tree Client');
+      const response = await fetch(`${server.origin}/api/workspace/navigation?tab=docs&projectId=docs-readme-tree-client`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(findNode(body.tree, (node) => node.itemKey === 'docs/overview.md')).toBeTruthy();
+      expect(JSON.stringify(body.tree)).not.toContain('README.md');
+
+      const stored = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub/make/sidebar-tree.json'), 'utf8'));
+      expect(JSON.stringify(stored.docs)).not.toContain('README.md');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('keeps metadata-only prototype navigation when no local prototype root is declared or present', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'metadata-only-tree-client', 'Metadata Only Tree Client');

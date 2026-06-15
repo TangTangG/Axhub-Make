@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-11T09:28:32.739Z",
+  "updatedAt": "2026-06-15T05:24:46.141Z",
   "prototypes": [
     {
       "id": "item:prototypes:beginner-guide",
@@ -586,12 +586,6 @@
           "kind": "item",
           "title": "Duolingo",
           "itemKey": "themes/duolingo"
-        },
-        {
-          "id": "item-themes-google-for-education",
-          "kind": "item",
-          "title": "Google for Education",
-          "itemKey": "themes/google-for-education"
         },
         {
           "id": "item-themes-school",

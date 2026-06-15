@@ -15,15 +15,15 @@ function getSourceSegment(source: string, startNeedle: string, endNeedle: string
 }
 
 describe('MultiPagePreviewCanvas source', () => {
-  it('caps live iframes, renders all pages in the card selector, and falls back through page screenshots', () => {
+  it('caps live iframes, renders all pages in the card selector, and renders page screenshots', () => {
     const source = readMultiPagePreviewCanvasSource();
 
     expect(source).toContain('activateMultiPageLiveSlot(activeSlots, slotId)');
     expect(source).toContain('resolveMultiPageCardPages({ item: selectedItem })');
     expect(source).toContain('cardState.pageId');
     expect(source).toContain('pageOptions.allPages.map((page)');
-    expect(source).toContain('derivePrototypePageScreenshotUrl(previewUrl, selectedItem.name, page.id)');
-    expect(source).toContain('derivePrototypeScreenshotUrl(previewUrl)');
+    expect(source).toContain('derivePrototypePageScreenshotUrl(screenshotPreviewUrl, selectedItem.name, page.id)');
+    expect(source).not.toContain('derivePrototypeScreenshotUrl(previewUrl)');
     expect(source).toContain('persistPrototypeScreenshot({');
     expect(source).toContain('pageId: page.id');
     expect(source).toContain("import { captureSameOriginIframeScreenshot } from './canvas-embeds/parentScreenshotCapture';");
@@ -42,7 +42,8 @@ describe('MultiPagePreviewCanvas source', () => {
     expect(source).toContain('requestHiddenPageScreenshot');
     expect(source).toContain('hiddenScreenshotPages');
     expect(source).toContain('pendingHiddenPageCapturesRef');
-    expect(source).toContain('src={buildPrototypePageHashUrl(previewUrl, page.id)}');
+    expect(source).toContain('const iframeSrc = buildPrototypePageHashUrl(previewUrl, page.id);');
+    expect(source).toContain('src={iframeSrc}');
     expect(source).toContain('capturedPageIdsRef');
     expect(source).toContain('clearImageFailure(page.id)');
     expect(source).toContain('MULTI_PAGE_SCREENSHOT_LOAD_DELAY_MS');
@@ -58,9 +59,30 @@ describe('MultiPagePreviewCanvas source', () => {
     expect(source).toContain('[prototypeIdentityKey, visiblePageKey]');
   });
 
+  it('does not show the prototype-level latest screenshot as a multi-page card fallback', () => {
+    const source = readMultiPagePreviewCanvasSource();
+    const fallbackSource = getSourceSegment(
+      source,
+      'const renderScreenshotFallback = (page: MultiPagePreviewPage) => {',
+      'return (',
+    );
+
+    expect(fallbackSource).toContain('const pageScreenshotUrl = getPageScreenshotUrl(page);');
+    expect(fallbackSource).not.toContain('prototypeScreenshotUrl');
+    expect(fallbackSource).not.toContain("failure === 'page' ? prototypeScreenshotUrl : pageScreenshotUrl");
+  });
+
   it('creates hidden same-origin iframes to capture missing multi-page screenshots without user activation', () => {
     const source = readMultiPagePreviewCanvasSource();
+    const hiddenIframeSource = getSourceSegment(
+      source,
+      '{hiddenScreenshotPages.map((page) => (',
+      '<div className="multi-page-zoom-toolbar',
+    );
 
+    expect(source).toContain('buildProjectPrototypeScreenshotIframeUrl(selectedItem)');
+    expect(source).toContain('derivePrototypePageScreenshotUrl(screenshotPreviewUrl, selectedItem.name, page.id)');
+    expect(source).toContain('previewUrl: screenshotPreviewUrl');
     expect(source).toContain('const hiddenScreenshotPages = React.useMemo');
     expect(source).toContain('for (const page of [...pageOptions.visiblePages, ...cardPages])');
     expect(source).toContain('return Array.from(pageMap.values());');
@@ -74,6 +96,7 @@ describe('MultiPagePreviewCanvas source', () => {
     expect(source).toContain('pointerEvents: \'none\'');
     expect(source).toContain('left: -10000');
     expect(source).toContain('hiddenScreenshotPages.map((page)');
+    expect(hiddenIframeSource).toContain('src={buildPrototypePageHashUrl(screenshotPreviewUrl, page.id)}');
   });
 
   it('waits for persisted page screenshots before hidden recapture so entering multi-page does not always screenshot', () => {
@@ -93,9 +116,33 @@ describe('MultiPagePreviewCanvas source', () => {
     expect(source).toContain('const shouldWaitForPersistedPageScreenshot = React.useCallback');
     expect(source).toContain('imageFailures[page.id] === undefined');
     expect(requestMissingSource).toContain('shouldWaitForPersistedPageScreenshot(page)');
-    expect(requestMissingSource).toContain('requestHiddenPageScreenshot(page, iframe);');
+    expect(requestMissingSource).toContain('requestHiddenPageScreenshot(page, iframe, { force: forceRefresh });');
     expect(hiddenIframeSource).toContain('requestMissingPageScreenshots();');
     expect(hiddenIframeSource).not.toContain('requestHiddenPageScreenshot(page, iframe);');
+  });
+
+  it('forces a hidden same-origin refresh when the user activates a live page card', () => {
+    const source = readMultiPagePreviewCanvasSource();
+    const requestMissingSource = getSourceSegment(
+      source,
+      'const requestMissingPageScreenshots = React.useCallback(() => {',
+      'const persistSlotScreenshot = React.useCallback',
+    );
+    const activateSlotSource = getSourceSegment(
+      source,
+      'const activateSlot = React.useCallback((slotId: string) => {',
+      'const handlePageChange = React.useCallback',
+    );
+
+    expect(source).toContain('const forceHiddenPageScreenshotIdsRef = React.useRef<Set<string>>(new Set());');
+    expect(source).toContain('forceHiddenPageScreenshotIdsRef.current = new Set();');
+    expect(requestMissingSource).toContain('const forceRefresh = forceHiddenPageScreenshotIdsRef.current.has(page.id);');
+    expect(requestMissingSource).toContain('if ((!forceRefresh && capturedPageIdsRef.current.has(page.id)) || pendingHiddenPageCapturesRef.current.has(page.id))');
+    expect(requestMissingSource).toContain('if (!forceRefresh && shouldWaitForPersistedPageScreenshot(page))');
+    expect(activateSlotSource).toContain('const page = cardPagesRef.current[slotIndex];');
+    expect(activateSlotSource).toContain('forceHiddenPageScreenshotIdsRef.current.add(page.id);');
+    expect(activateSlotSource).toContain('capturedPageIdsRef.current.delete(page.id);');
+    expect(activateSlotSource).toContain('requestHiddenPageScreenshot(page, iframe, { force: true });');
   });
 
   it('keeps stale persisted screenshots visible while scheduling a refresh instead of blanking the card', () => {
@@ -112,7 +159,9 @@ describe('MultiPagePreviewCanvas source', () => {
     expect(imageLoadSource).toContain('stalePageScreenshotIdsRef.current.add(pageId);');
     expect(imageLoadSource).toContain('requestHiddenPageScreenshot(page, iframe);');
     expect(imageLoadSource).toContain('return;');
-    expect(imageLoadSource).toContain("failure === 'page' ? 'prototype' : 'page'");
+    expect(imageLoadSource).not.toContain("failure === 'page' ? 'prototype' : 'page'");
+    expect(source).toContain("const src = failure === undefined ? pageScreenshotUrl : undefined;");
+    expect(source).toContain("[page.id]: 'page'");
   });
 
   it('captures multi-page screenshots from the parent page without iframe postMessage protocols', () => {

@@ -40,6 +40,7 @@ import {
   resolveCanvasGenerationComposerDraftRestoreText,
   writeCanvasGenerationComposerDraft,
 } from './canvasGenerationComposerDraft';
+import { getClipboardImageFiles } from './clipboardImages';
 
 export interface CanvasGenerationComposerPlacement {
   left: number;
@@ -79,6 +80,7 @@ export interface CanvasGenerationDisplaySubmitSelection {
   model: string | null;
   mode: string | null;
   thought: string | null;
+  referenceImages: string[];
 }
 
 type CanvasGenerationDisplaySubmitResult = boolean | void;
@@ -205,6 +207,10 @@ async function readFileAsDataUrl(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const mimeType = file.type || 'application/octet-stream';
   return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
+}
+
+async function readFilesAsDataUrls(files: File[]): Promise<string[]> {
+  return Promise.all(files.map((file) => readFileAsDataUrl(file)));
 }
 
 export const canvasReferenceImageAttachmentAdapter: AttachmentAdapter = {
@@ -529,7 +535,7 @@ function CanvasGenerationDisplayQuickPromptsButton({
 
 interface CanvasGenerationDisplayComposerContentProps extends Omit<CanvasGenerationDisplayComposerProps, 'onSubmit' | 'showSelectors' | 'workspacePath'> {
   onEnsureAcpRuntime?: (autoStart?: boolean) => Promise<boolean>;
-  onSubmitText?: (text: string) => CanvasGenerationDisplaySubmitResult | Promise<CanvasGenerationDisplaySubmitResult>;
+  onSubmitText?: (text: string, referenceImages: string[]) => CanvasGenerationDisplaySubmitResult | Promise<CanvasGenerationDisplaySubmitResult>;
   showModelSelectorFallback?: boolean;
   showSelectors?: boolean;
 }
@@ -550,6 +556,7 @@ function CanvasGenerationDisplayComposerContent({
   showSelectors = false,
 }: CanvasGenerationDisplayComposerContentProps) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [displayReferenceImages, setDisplayReferenceImages] = useState<string[]>([]);
   const loadedDisplayDraftStorageKeyRef = useRef<string | null>(null);
   const persistDisplayDraft = useCallback((text: string) => {
     const storage = getCanvasGenerationComposerDraftStorage();
@@ -559,7 +566,8 @@ function CanvasGenerationDisplayComposerContent({
     if (disabled) return;
     const text = inputRef.current?.value.trim() ?? '';
     if (!text) return;
-    const submitResult = await onSubmitText?.(text);
+    const referenceImages = displayReferenceImages;
+    const submitResult = await onSubmitText?.(text, referenceImages);
     if (submitResult === false) {
       persistDisplayDraft(text);
       return;
@@ -569,7 +577,8 @@ function CanvasGenerationDisplayComposerContent({
     if (inputRef.current) {
       inputRef.current.value = '';
     }
-  }, [disabled, draftStorageKey, onSubmitText, persistDisplayDraft]);
+    setDisplayReferenceImages([]);
+  }, [disabled, displayReferenceImages, draftStorageKey, onSubmitText, persistDisplayDraft]);
   useEffect(() => {
     if (!draftStorageKey) return;
     const storage = getCanvasGenerationComposerDraftStorage();
@@ -594,6 +603,16 @@ function CanvasGenerationDisplayComposerContent({
     event.preventDefault();
     void submitDisplayText();
   }, [submitDisplayText]);
+  const handleDisplayPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (disabled) return;
+    const pastedFiles = getClipboardImageFiles(event.nativeEvent);
+    if (!pastedFiles.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void readFilesAsDataUrls(pastedFiles).then((images) => {
+      setDisplayReferenceImages((previous) => [...previous, ...images]);
+    });
+  }, [disabled]);
   const handleQuickPromptClick = useCallback((quickPrompt: CanvasAiQuickPrompt) => {
     if (disabled) return;
     const nextText = appendCanvasAiQuickPrompt(inputRef.current?.value ?? '', quickPrompt.prompt);
@@ -624,7 +643,23 @@ function CanvasGenerationDisplayComposerContent({
             disabled={disabled}
             onChange={handleInputChange}
             onKeyDown={handleInputKeyDown}
+            onPaste={handleDisplayPaste}
           />
+          {displayReferenceImages.length ? (
+            <div className="flex items-center justify-between rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
+              <span data-axhub-display-composer-attachment-count>
+                已添加 {displayReferenceImages.length} 张图片
+              </span>
+              <button
+                type="button"
+                className="rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={disabled}
+                onClick={() => { setDisplayReferenceImages([]); }}
+              >
+                清除
+              </button>
+            </div>
+          ) : null}
           <div className="aui-composer-action-wrapper relative flex items-center justify-between text-[13px] md:text-sm">
             <div className="flex min-w-0 items-center gap-1">
               <button
@@ -675,7 +710,14 @@ function CanvasGenerationDisplayComposerWithoutAcp({
   return (
     <CanvasGenerationDisplayComposerContent
       {...props}
-      onSubmitText={(text) => onSubmit?.(text)}
+      onSubmitText={(text, referenceImages) => onSubmit?.(text, {
+        contextBundle: null,
+        provider: '',
+        model: null,
+        mode: null,
+        thought: null,
+        referenceImages,
+      })}
     />
   );
 }
@@ -690,13 +732,14 @@ function CanvasGenerationDisplayComposerRuntime({
   const acpContext = useAcpUiRuntimeContext();
   const transport = useMemo(() => new CanvasGenerationDisplayTransport(), []);
   const runtime = useChatRuntime<UIMessage>({ transport });
-  const handleSubmitText = useCallback((text: string) => {
+  const handleSubmitText = useCallback((text: string, referenceImages: string[]) => {
     return onSubmit?.(text, {
       contextBundle: acpContext.consumeContextBundle(),
       provider: acpContext.provider,
       model: acpContext.model,
       mode: acpContext.modeId,
       thought: acpContext.thoughtLevel,
+      referenceImages,
     });
   }, [acpContext, onSubmit]);
 
@@ -879,12 +922,22 @@ function CanvasGenerationRuntimeComposerContent({
   }, [aui, onPasteReferenceImages]);
 
   const handleComposerPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!canPasteReferenceImages || !onPasteReferenceImages) return;
-    if (!shouldUseCanvasReferencePaste(event.clipboardData)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    void handlePasteReferenceImages();
-  }, [canPasteReferenceImages, handlePasteReferenceImages, onPasteReferenceImages]);
+    if (canPasteReferenceImages && onPasteReferenceImages && shouldUseCanvasReferencePaste(event.clipboardData)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void handlePasteReferenceImages();
+      return;
+    }
+    if (allowAttachments) {
+      const pastedFiles = getClipboardImageFiles(event.nativeEvent);
+      if (pastedFiles.length > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        void Promise.all(pastedFiles.map((file) => aui.composer().addAttachment(file)));
+        return;
+      }
+    }
+  }, [allowAttachments, aui, canPasteReferenceImages, handlePasteReferenceImages, onPasteReferenceImages]);
   const handleQuickPromptSelect = useCallback((quickPrompt: CanvasAiQuickPrompt) => {
     const composer = aui.composer();
     composer.setText(appendCanvasAiQuickPrompt(composer.getState().text, quickPrompt.prompt));

@@ -2,7 +2,7 @@ import React from 'react';
 import { Download, FileArchive, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
-import type { MainIDEPreference } from '../../../common/ide';
+import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { PromptClientPreference } from '../../types';
 import { apiService, type ExportMakeProbeResponse } from '../../services/api';
 import PromptActionButton from '../PromptActionButton';
@@ -25,6 +25,9 @@ interface FigmaMakeExportDialogProps {
     ideTargetPath?: string | null;
     preferredPromptClient: PromptClientPreference;
     preferredIDE: MainIDEPreference;
+    ideAvailability?: IDEAvailabilityMap;
+    assistantOpen?: boolean;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     onDownloadSuccess?: (fileName: string) => void;
     onDownloadFailure?: (error: unknown) => void;
 }
@@ -52,6 +55,9 @@ export default function FigmaMakeExportDialog({
     ideTargetPath,
     preferredPromptClient,
     preferredIDE,
+    ideAvailability,
+    assistantOpen,
+    onExecutePrompt,
     onDownloadSuccess,
     onDownloadFailure,
 }: FigmaMakeExportDialogProps) {
@@ -196,6 +202,8 @@ export default function FigmaMakeExportDialog({
                         type="default"
                         preferredClient={preferredPromptClient}
                         preferredIDE={preferredIDE}
+                        ideAvailability={ideAvailability}
+                        assistantOpen={assistantOpen}
                         scene="export-figma-make"
                         buildPrompt={async () => {
                             if (!resolvedTargetPath) {
@@ -204,7 +212,8 @@ export default function FigmaMakeExportDialog({
                             const result = await apiService.getExportMakePrompt(resolvedTargetPath);
                             return result.prompt;
                         }}
-                        getIdeTargetPath={() => resolvedIdeTargetPath || null}
+                        getTargetPath={() => resolvedIdeTargetPath || resolvedTargetPath || null}
+                        onExecutePrompt={onExecutePrompt}
                         copySuccessMessage="导出 Prompt 已复制，请发送给 AI 继续生成或更新 .fig 文件"
                         executeSuccessMessage="已打开新会话"
                         fallbackMessage="自动执行失败，已回退为复制导出 Prompt"

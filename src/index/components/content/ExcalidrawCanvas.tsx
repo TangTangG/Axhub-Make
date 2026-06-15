@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
 import {
     Excalidraw,
     MainMenu,
@@ -11,7 +12,8 @@ import {
     getDataURL,
 } from '@axhub/excalidraw';
 import '@axhub/excalidraw/index.css';
-import { LayoutGrid, MessageSquareX, PanelLeftOpen, PanelLeftClose, PencilRuler, RefreshCw, Search, SlidersHorizontal } from 'lucide-react';
+import { ImageIcon, LayoutGrid, MessageSquareX, PanelLeftOpen, PanelLeftClose, PencilRuler, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import AxhubWebEmbed from './canvas-embeds/AxhubWebEmbed';
 import AxhubDocEmbed from './canvas-embeds/AxhubDocEmbed';
 import AxhubLinkEmbed, { type LinkEmbedKind } from './canvas-embeds/AxhubLinkEmbed';
@@ -71,10 +73,14 @@ import {
     type RemoteCanvasFileAlias,
 } from './canvasRemoteSceneMerge';
 import { enhanceCanvasImageCopyEvent } from './canvasImageClipboard';
+import { removeKeyedBackgroundFromDataUrl } from './canvas-embeds/transparentImage';
+import { createCanvasBackgroundTransparentImageUpdate } from './canvasBackgroundTransparentInsertion';
+import { copyImageDataUrlToClipboard } from '../../utils/clipboard';
 import { getAiImageTaskStore } from '../../domains/ai-image/aiImageStore';
 import { resolveCanvasImageArtifactUpdate, type CanvasImageArtifactEvent } from '../../domains/ai-image/canvasImageArtifacts';
-import CanvasAiGenerationTool, { type CanvasAiGenerationRequest } from '../../domains/ai-generation/CanvasAiGenerationTool';
+import CanvasAiGenerationTool, { type CanvasAiGenerationRequest, type CanvasAiGenerationResult } from '../../domains/ai-generation/CanvasAiGenerationTool';
 import { applyCanvasAiArtifactToElements } from '../../domains/ai-generation/canvasAiGeneration';
+import { applyGenerationArtifactsToCanvasElements } from '../../domains/ai-generation/canvasArtifactInsertion';
 import { buildAssistantImageAttachmentPayload, type AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
 import { getPrototypeGenerationTaskStore } from '../../domains/prototype-generation/prototypeTaskStore';
 import CanvasDrawioTool from '../../domains/drawio/CanvasDrawioTool';
@@ -82,7 +88,6 @@ import { DRAWIO_INSERT_EVENT_NAME } from '../../domains/drawio/canvasDrawio';
 import { apiService } from '../../services/index.api';
 import type { ItemData, PromptClientPreference } from '../../types';
 import type { ThemeResourceItem } from '../../domains/resources/resource.types';
-import OpenInDropdown from '../sidebar/OpenInDropdown';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
 import type { GenieProvider } from '@/common/genie/types';
@@ -133,6 +138,7 @@ interface AxhubExcalidrawCaptureApi {
 interface ExcalidrawCanvasProps {
     canvasName: string;
     canvasFilePath?: string;
+    activeProjectId?: string | null;
     isDarkMode: boolean;
     onCanvasAPIReady?: (api: ExcalidrawAPI) => void;
     collapsed?: boolean;
@@ -160,6 +166,9 @@ interface ExcalidrawCanvasProps {
     onOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
     onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
     webAgentPanelOpen?: boolean;
+    aiPanelMode?: 'general-ai' | 'image-ai' | null;
+    onOpenImageAiPanel?: () => void | Promise<void>;
+    onCloseAiPanel?: () => void;
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
     onOpenAISettings?: () => void;
@@ -168,7 +177,7 @@ interface ExcalidrawCanvasProps {
     themes?: ThemeResourceItem[];
     defaultThemeName?: string | null;
     onRefreshPrototypes?: () => Promise<ItemData[]>;
-    onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;
+    onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
 }
 
 const LOCAL_SAVE_DEBOUNCE_MS = 2000;
@@ -215,6 +224,15 @@ function encodeCanvasApiPath(canvasName: string): string {
         .filter(Boolean)
         .map((segment) => encodeURIComponent(segment))
         .join('/');
+}
+
+function buildCanvasApiUrl(canvasName: string, projectId?: string | null): string {
+    const url = new URL(`/api/canvas/${encodeCanvasApiPath(canvasName)}`, window.location.origin);
+    const normalizedProjectId = projectId?.trim();
+    if (normalizedProjectId) {
+        url.searchParams.set('projectId', normalizedProjectId);
+    }
+    return `${url.pathname}${url.search}`;
 }
 
 function getCanvasBridgeCanvasName(canvasName: string): string {
@@ -751,15 +769,22 @@ export function CanvasSidebarToggle({
 
     return (
         <div className="axhub-canvas-sidebar-toggle-anchor">
-            <button
-                type="button"
-                className="standalone main-menu-trigger axhub-canvas-sidebar-toggle"
-                onClick={() => setCollapsed(!collapsed)}
-                title={title}
-                aria-label={title}
-            >
-                {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-            </button>
+            <TooltipProvider>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <button
+                            type="button"
+                            className="standalone main-menu-trigger axhub-canvas-sidebar-toggle"
+                            onClick={() => setCollapsed(!collapsed)}
+                            title={title}
+                            aria-label={title}
+                        >
+                            {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+                        </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{title}</TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
         </div>
     );
 }
@@ -1334,6 +1359,7 @@ function resolvePropertyPanelOpenPopup(
 export default function ExcalidrawCanvas({
     canvasName,
     canvasFilePath,
+    activeProjectId,
     isDarkMode,
     onCanvasAPIReady,
     collapsed,
@@ -1350,14 +1376,11 @@ export default function ExcalidrawCanvas({
     onAnnotationsChange,
     onOpenCanvasInIDE,
     assistantProjectPath,
-    preferredIDE,
-    ideAvailability,
-    agentAvailability,
-    onOpenProjectInIDE,
     onOpenGenieWebAgent,
-    webAgentPanelOpen,
+    aiPanelMode,
+    onOpenImageAiPanel,
+    onCloseAiPanel,
     onCloseWebAgentPanel,
-    onPreferredIDEChange,
     onOpenAISettings,
     preferredPromptClient,
     prototypes,
@@ -1396,15 +1419,28 @@ export default function ExcalidrawCanvas({
     const canvasContainerRef = useRef<HTMLDivElement>(null);
     const previousDesktopUiModeRef = useRef(desktopUiMode);
     const aiOpenTargetPath = canvasFilePath || canvasName;
-    const handleCanvasOpenInIDE = useCallback((ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => {
-        if (onOpenProjectInIDE) {
-            return onOpenProjectInIDE(ideOverride, targetPath, projectId);
+    const imageAiActive = aiPanelMode === 'image-ai';
+    const generalAiActive = aiPanelMode === 'general-ai';
+    const handleCloseCanvasAiPanel = useCallback(() => {
+        onCloseAiPanel?.();
+        if (!onCloseAiPanel) {
+            onCloseWebAgentPanel?.();
         }
-        const target = targetPath?.trim() || canvasFilePath?.trim();
-        if (!target || !onOpenCanvasInIDE) return false;
-        void Promise.resolve(onOpenCanvasInIDE(target));
-        return true;
-    }, [canvasFilePath, onOpenCanvasInIDE, onOpenProjectInIDE]);
+    }, [onCloseAiPanel, onCloseWebAgentPanel]);
+    const handleToggleImageAiPanel = useCallback(() => {
+        if (imageAiActive) {
+            handleCloseCanvasAiPanel();
+            return;
+        }
+        onOpenImageAiPanel?.();
+    }, [handleCloseCanvasAiPanel, imageAiActive, onOpenImageAiPanel]);
+    const handleToggleGeneralAiPanel = useCallback(() => {
+        if (generalAiActive) {
+            handleCloseCanvasAiPanel();
+            return;
+        }
+        onOpenGenieWebAgent?.(aiOpenTargetPath);
+    }, [aiOpenTargetPath, generalAiActive, handleCloseCanvasAiPanel, onOpenGenieWebAgent]);
 
     // View state saver — persists zoom/scroll to localStorage with its own debounce
     const viewStateSaverRef = useRef(createViewStateSaver(() => currentNameRef.current));
@@ -1671,7 +1707,7 @@ export default function ExcalidrawCanvas({
         const loadCanvas = async () => {
             try {
                 logCanvasDebug('load:start', { canvasName });
-                const response = await fetch(`/api/canvas/${encodeCanvasApiPath(canvasName)}`);
+                const response = await fetch(buildCanvasApiUrl(canvasName, activeProjectId));
                 if (cancelled) return;
                 if (!response.ok) {
                     throw new Error(`加载画布失败 (${response.status})`);
@@ -1736,7 +1772,7 @@ export default function ExcalidrawCanvas({
         return () => {
             cancelled = true;
         };
-    }, [canvasName]);
+    }, [activeProjectId, canvasName]);
 
     useEffect(() => {
         if (excalidrawAPI && onCanvasAPIReady) {
@@ -1767,7 +1803,7 @@ export default function ExcalidrawCanvas({
     const reloadCanvasFromServer = useCallback(async () => {
         if (!excalidrawAPI) return;
 
-        const response = await fetch(`/api/canvas/${encodeCanvasApiPath(currentNameRef.current)}`);
+        const response = await fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId));
         if (!response.ok) return;
         const data = await response.json();
         const remoteContent = normalizeCanvasDataForSaveBaseline(data);
@@ -1811,7 +1847,7 @@ export default function ExcalidrawCanvas({
         setCanvasBackgroundDraft(data?.appState?.viewBackgroundColor || '#ffffff');
         sendCanvasBridgeStatus(false);
         void markLocalCacheSynced(currentNameRef.current).catch(() => {});
-    }, [excalidrawAPI]);
+    }, [activeProjectId, excalidrawAPI]);
 
     // ── Canvas Bridge WebSocket: enables canvas hot reload ──
     useEffect(() => {
@@ -1943,7 +1979,7 @@ export default function ExcalidrawCanvas({
                 canvasName: currentNameRef.current,
                 elements: elements.length,
             });
-            const response = await fetch(`/api/canvas/${encodeCanvasApiPath(currentNameRef.current)}`, {
+            const response = await fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1979,7 +2015,7 @@ export default function ExcalidrawCanvas({
                 void saveToServer(queuedSnapshot.elements, queuedSnapshot.appState);
             }
         }
-    }, [buildSavePayload]);
+    }, [activeProjectId, buildSavePayload]);
 
     const handleRefreshCanvasFromServer = useCallback(async () => {
         if (!excalidrawAPI) return;
@@ -2259,6 +2295,42 @@ export default function ExcalidrawCanvas({
         scheduleExplicitCanvasSave();
     }, [excalidrawAPI, scheduleExplicitCanvasSave]);
 
+    const handleSubmitCanvasAssistantPromptWithArtifacts = useCallback(async (request: CanvasAiGenerationRequest) => {
+        const result = await onSubmitCanvasAssistantPrompt?.(request);
+        const artifacts = typeof result === 'object' && result !== null && Array.isArray(result.artifacts)
+            ? result.artifacts
+            : [];
+        if (artifacts.length > 0 && excalidrawAPI) {
+            const appState = excalidrawAPI.getAppState();
+            const update = applyGenerationArtifactsToCanvasElements({
+                elements: excalidrawAPI.getSceneElements(),
+                appState,
+                artifacts,
+            });
+            if (update.files?.length) {
+                excalidrawAPI.addFiles(update.files);
+            }
+            if (update.insertedElementIds.length > 0 || update.updatedElementIds.length > 0) {
+                const nextAppState = {
+                    ...appState,
+                    selectedElementIds: update.selectedElementIds,
+                    selectedGroupIds: {},
+                };
+                excalidrawAPI.updateScene({
+                    elements: update.elements,
+                    appState: nextAppState,
+                    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+                });
+                scheduleExplicitCanvasSave({ elements: update.elements, appState: nextAppState });
+            }
+        }
+        return result;
+    }, [
+        excalidrawAPI,
+        onSubmitCanvasAssistantPrompt,
+        scheduleExplicitCanvasSave,
+    ]);
+
     const handleAddSelectedScreenshotToAI = useCallback(async (elements: CanvasElementContextInfo[]) => {
         if (!excalidrawAPI || !onAddScreenshotToAI || !Array.isArray(elements) || elements.length === 0) {
             return;
@@ -2303,6 +2375,66 @@ export default function ExcalidrawCanvas({
             dataUrl,
         }), promptText);
     }, [excalidrawAPI, onAddImageToAI]);
+
+    const handleCopySelectedImageToClipboard = useCallback(async (elements: CanvasElementContextInfo[]) => {
+        if (!excalidrawAPI || !Array.isArray(elements) || elements.length !== 1) {
+            return;
+        }
+        const elementId = elements[0]?.elementId;
+        if (!elementId) return;
+        const selectedImage = excalidrawAPI.getSceneElements()
+            .find((element: any) => !element.isDeleted && element.id === elementId && element.type === 'image');
+        const fileId = typeof selectedImage?.fileId === 'string' ? selectedImage.fileId.trim() : '';
+        if (!fileId) return;
+        const files = excalidrawAPI.getFiles?.() || {};
+        const file = files[fileId] as { dataURL?: string; dataUrl?: string } | undefined;
+        const dataUrl = String(file?.dataURL || file?.dataUrl || '').trim();
+        if (!dataUrl.startsWith('data:image/')) return;
+
+        try {
+            await copyImageDataUrlToClipboard(dataUrl);
+            toast.success('图片已复制到剪贴板');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error || '未知错误');
+            toast.error(`复制图片失败：${message}`);
+        }
+    }, [excalidrawAPI]);
+
+    const handleMakeImageBackgroundTransparent = useCallback(async (elements: CanvasElementContextInfo[]) => {
+        if (!excalidrawAPI || !Array.isArray(elements) || elements.length !== 1) {
+            return;
+        }
+        const elementId = elements[0]?.elementId;
+        if (!elementId) return;
+        const sceneElements = excalidrawAPI.getSceneElements();
+        const selectedImage = sceneElements
+            .find((element: any) => !element.isDeleted && element.id === elementId && element.type === 'image');
+        const fileId = typeof selectedImage?.fileId === 'string' ? selectedImage.fileId.trim() : '';
+        if (!fileId) return;
+        const files = excalidrawAPI.getFiles?.() || {};
+        const file = files[fileId] as { dataURL?: string; dataUrl?: string } | undefined;
+        const dataUrl = String(file?.dataURL || file?.dataUrl || '').trim();
+        if (!dataUrl.startsWith('data:image/')) return;
+
+        try {
+            const transparentDataUrl = await removeKeyedBackgroundFromDataUrl(dataUrl);
+            const update = createCanvasBackgroundTransparentImageUpdate({
+                elements: sceneElements,
+                sourceImage: selectedImage,
+                dataURL: transparentDataUrl,
+            });
+            excalidrawAPI.addFiles(update.files);
+            excalidrawAPI.updateScene({
+                elements: update.elements as any,
+                appState: update.appState as any,
+                captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+            });
+            scheduleExplicitCanvasSave();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error || '未知错误');
+            toast.error(`背景转透明失败：${message}`);
+        }
+    }, [excalidrawAPI, scheduleExplicitCanvasSave]);
 
     // ── Flush: immediately save to server (used by idle + beforeunload) ──
     const flushToServer = useCallback(() => {
@@ -2423,7 +2555,7 @@ export default function ExcalidrawCanvas({
                 content,
                 canvasBridgeClientId: bridgeClientIdRef.current,
             });
-            const url = `/api/canvas/${encodeCanvasApiPath(currentNameRef.current)}`;
+            const url = buildCanvasApiUrl(currentNameRef.current, activeProjectId);
             // sendBeacon is fire-and-forget, works reliably during unload
             if (navigator.sendBeacon) {
                 navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
@@ -2431,7 +2563,7 @@ export default function ExcalidrawCanvas({
         };
         window.addEventListener('beforeunload', handleBeforeUnload);
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-    }, [excalidrawAPI]);
+    }, [activeProjectId, excalidrawAPI]);
 
     // ── Search menu translation ──
     useEffect(() => {
@@ -2890,32 +3022,44 @@ export default function ExcalidrawCanvas({
                     sceneEmpty={isCanvasSceneEmpty}
                 />
             </Excalidraw>
-            <div className="axhub-canvas-top-right-capsule">
-                <button
-                    type="button"
-                    className="axhub-canvas-top-right-capsule__button"
-                    onClick={() => void handleRefreshCanvasFromServer()}
-                    aria-label="刷新画布"
-                    title="刷新画布"
-                >
-                    <RefreshCw aria-hidden="true" />
-                </button>
-                <span className="axhub-canvas-top-right-capsule__divider" aria-hidden="true" />
-                <OpenInDropdown
-                    variant="canvas-icon"
-                    className="axhub-canvas-top-right-capsule__button"
-                    handleOpenProjectInIDE={handleCanvasOpenInIDE}
-                    preferredIDE={preferredIDE ?? null}
-                    targetPath={aiOpenTargetPath}
-                    ideAvailability={ideAvailability}
-                    agentAvailability={agentAvailability}
-                    onOpenGenieWebAgent={onOpenGenieWebAgent}
-                    webAgentPanelOpen={webAgentPanelOpen}
-                    onCloseWebAgentPanel={onCloseWebAgentPanel}
-                    onPreferredIDEChange={onPreferredIDEChange}
-                    onOpenAISettings={onOpenAISettings}
-                />
-            </div>
+            <TooltipProvider>
+                <div className="axhub-canvas-top-right-capsule">
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <button
+                                type="button"
+                                className="axhub-canvas-top-right-capsule__button"
+                                onClick={handleToggleImageAiPanel}
+                                aria-label={imageAiActive ? '关闭生图 AI' : '打开生图 AI'}
+                                title={imageAiActive ? '关闭生图 AI' : '打开生图 AI'}
+                                data-active={imageAiActive ? 'true' : undefined}
+                            >
+                                <ImageIcon aria-hidden="true" />
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                            {imageAiActive ? '关闭生图 AI' : '打开生图 AI'}
+                        </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <button
+                                type="button"
+                                className="axhub-canvas-top-right-capsule__button"
+                                onClick={handleToggleGeneralAiPanel}
+                                aria-label={generalAiActive ? '关闭对话 AI' : '打开对话 AI'}
+                                title={generalAiActive ? '关闭对话 AI' : '打开对话 AI'}
+                                data-active={generalAiActive ? 'true' : undefined}
+                            >
+                                <Sparkles aria-hidden="true" />
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                            {generalAiActive ? '关闭对话 AI' : '打开对话 AI'}
+                        </TooltipContent>
+                    </Tooltip>
+                </div>
+            </TooltipProvider>
             <AxhubCanvasWelcomeOverlay
                 sceneEmpty={isCanvasSceneEmpty}
                 welcomeVisible={welcomeOverlayVisible}
@@ -2933,6 +3077,8 @@ export default function ExcalidrawCanvas({
                         onAddScreenshotToAI={handleAddSelectedScreenshotToAI}
                         onAddNodesToAI={onAddToContext}
                         onAddImageToAI={handleAddSelectedImageToAI}
+                        onCopyImageToClipboard={handleCopySelectedImageToClipboard}
+                        onMakeImageBackgroundTransparent={handleMakeImageBackgroundTransparent}
                         onAnnotationsChange={onAnnotationsChange}
                     />
                     <CanvasAiGenerationTool
@@ -2947,7 +3093,7 @@ export default function ExcalidrawCanvas({
                         onImageArtifact={handleCanvasImageArtifactEvent}
                         onRefreshPrototypes={onRefreshPrototypes}
                         onOpenAISettings={onOpenAISettings}
-                        onSubmitCanvasAssistantPrompt={onSubmitCanvasAssistantPrompt}
+                        onSubmitCanvasAssistantPrompt={handleSubmitCanvasAssistantPromptWithArtifacts}
                         onSceneMutated={scheduleExplicitCanvasSave}
                     />
                     <CanvasDrawioTool

@@ -225,6 +225,77 @@ describe('useIndexPageSelectionSync source', () => {
     });
   });
 
+  it('keeps a newly created placeholder selected before the resource refresh includes it', () => {
+    const firstPrototype = createPrototype('first-prototype');
+    const createdPlaceholder = {
+      ...createPrototype('untitled-8', '未命名'),
+      placeholder: true,
+      placeholderGuide: {
+        kind: 'prototype-empty',
+        title: '这个原型还没有开始创建',
+        description: '告诉 AI 你想做什么：目标用户、使用场景、页面内容和参考风格。',
+        steps: [],
+        tips: [],
+      },
+    };
+    const sidebarTrees = {
+      prototypes: [createItemNode(firstPrototype.name)],
+      docs: [],
+      canvas: [],
+    };
+
+    expect(resolvePrototypeAutoSelectionDecision({
+      activeTab: 'prototypes',
+      hasExplicitSelection: false,
+      items: [firstPrototype],
+      lastCanvasItem: null,
+      pendingReturnTarget: {
+        sidebarTab: 'prototype',
+        resourceId: createdPlaceholder.name,
+        pageId: null,
+        viewMode: 'demo',
+      },
+      selectedItem: createdPlaceholder,
+      sidebarTab: 'prototype',
+      sidebarTrees,
+      viewMode: 'demo',
+    })).toMatchObject({
+      kind: 'keep',
+      markExplicitSelection: false,
+      nextCanvasItem: null,
+    });
+  });
+
+  it('does not keep a missing placeholder without a matching pending target', () => {
+    const firstPrototype = createPrototype('first-prototype');
+    const stalePlaceholder = {
+      ...createPrototype('untitled-9', '未命名'),
+      placeholder: true,
+    };
+    const sidebarTrees = {
+      prototypes: [createItemNode(firstPrototype.name)],
+      docs: [],
+      canvas: [],
+    };
+
+    expect(resolvePrototypeAutoSelectionDecision({
+      activeTab: 'prototypes',
+      hasExplicitSelection: false,
+      items: [firstPrototype],
+      lastCanvasItem: null,
+      selectedItem: stalePlaceholder,
+      sidebarTab: 'prototype',
+      sidebarTrees,
+      viewMode: 'demo',
+    })).toMatchObject({
+      kind: 'select',
+      item: firstPrototype,
+      markExplicitSelection: false,
+      resetPageSelection: true,
+      nextCanvasItem: null,
+    });
+  });
+
   it('keeps a selected placeholder guide when refreshed metadata temporarily misses placeholder fields', () => {
     const firstPrototype = createPrototype('first-prototype');
     const selectedPlaceholder = {

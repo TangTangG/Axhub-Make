@@ -84,6 +84,21 @@ describe('PrototypeGenerationComposer source', () => {
     expect(source).toContain('onSubmitPrompt');
   });
 
+  it('keeps prototype generation count unspecified until the user selects one', () => {
+    const source = readComposerSource();
+
+    expect(source).toContain('count?: number;');
+    expect(source).toContain("const UNSPECIFIED_PROTOTYPE_SETTING_VALUE = '__unspecified__';");
+    expect(source).toContain('useState<number | undefined>(undefined)');
+    expect(source).toContain("].filter(Boolean).join(' · ') || '未指定';");
+    expect(source).toContain('value={hasGenerationCount ? String(generationCount) : UNSPECIFIED_PROTOTYPE_SETTING_VALUE}');
+    expect(source).toContain('setGenerationCount(value === UNSPECIFIED_PROTOTYPE_SETTING_VALUE ? undefined : Number(value))');
+    expect(source).toContain('<SelectItem value={UNSPECIFIED_PROTOTYPE_SETTING_VALUE}>');
+    expect(source).toContain('未指定');
+    expect(source).not.toContain('useState(1)');
+    expect(source).not.toContain('const countLabel = `${generationCount} 个`;');
+  });
+
   it('renders prototype settings after the shared model selector instead of before it', () => {
     const source = readComposerSource();
     const sharedSource = readSharedComposerSource();

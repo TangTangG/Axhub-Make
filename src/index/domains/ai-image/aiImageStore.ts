@@ -15,6 +15,7 @@ export type AiImageTaskStage =
 export type AiImageQuality = 'auto' | 'low' | 'medium' | 'high';
 export type AiImageOutputFormat = 'png' | 'jpeg' | 'webp';
 export type AiImageModeration = 'auto' | 'low';
+export type AiImageBackground = 'auto' | 'transparent';
 
 export interface AiImageTaskParams {
   size: string;
@@ -22,7 +23,9 @@ export interface AiImageTaskParams {
   output_format: AiImageOutputFormat;
   output_compression: number | null;
   moderation: AiImageModeration;
+  background?: AiImageBackground;
   n: number;
+  themeName?: string;
   disable_prompt_optimization?: boolean;
 }
 
@@ -533,6 +536,31 @@ function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+function normalizeLoadedImageTaskParams(value: unknown, imageCount: number): AiImageTaskParams {
+  const source = isRecord(value) ? value : {};
+  const outputFormat: AiImageOutputFormat = source.output_format === 'jpeg' || source.output_format === 'webp'
+    ? source.output_format
+    : 'png';
+  const outputCompression = source.output_compression == null
+    ? null
+    : typeof source.output_compression === 'number' && Number.isFinite(source.output_compression)
+      ? Math.min(100, Math.max(0, Math.round(source.output_compression)))
+      : null;
+  const n = numberField(source.n);
+
+  return {
+    size: stringField(source.size) || 'auto',
+    quality: source.quality === 'low' || source.quality === 'medium' || source.quality === 'high' ? source.quality : 'auto',
+    output_format: outputFormat,
+    output_compression: outputCompression,
+    moderation: source.moderation === 'low' ? 'low' : 'auto',
+    background: outputFormat === 'png' && source.background === 'transparent' ? 'transparent' : 'auto',
+    n: n == null ? Math.max(1, imageCount) : Math.min(10, Math.max(1, Math.round(n))),
+    themeName: stringField(source.themeName),
+    disable_prompt_optimization: source.disable_prompt_optimization === true,
+  };
+}
+
 function normalizeLoadedImageTask(value: unknown, imageIds: string[], options: { interruptRunning?: boolean }): AiImageTaskRecord | null {
   if (!isRecord(value)) return null;
   const id = stringField(value.taskId) || stringField(value.id);
@@ -541,16 +569,7 @@ function normalizeLoadedImageTask(value: unknown, imageIds: string[], options: {
   const createdAt = numberField(value.createdAt) || nowFromDateLike(value.createdAt) || Date.now();
   const updatedAt = numberField(value.updatedAt) || createdAt;
   const finishedAt = numberField(value.finishedAt) || (value.status === 'done' || value.status === 'error' ? updatedAt : null);
-  const params = isRecord(value.params)
-    ? value.params as AiImageTaskParams
-    : {
-        size: 'auto',
-        quality: 'auto',
-        output_format: 'png',
-        output_compression: null,
-        moderation: 'auto',
-        n: Math.max(1, imageIds.length),
-      };
+  const params = normalizeLoadedImageTaskParams(value.params, imageIds.length);
   const status: AiImageTaskStatus = value.status === 'error' ? 'error' : value.status === 'done' ? 'done' : 'running';
   const interrupted = options.interruptRunning === true && status === 'running';
   return {

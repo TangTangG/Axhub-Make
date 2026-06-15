@@ -21,6 +21,7 @@ import {
 import { getAiImageTaskStore, type AiImageTaskRecord } from './aiImageStore';
 import { createCanvasImageArtifactEventFromAiImageTask, type CanvasImageArtifactEvent } from './canvasImageArtifacts';
 import type { PromptClientPreference } from '../../types';
+import type { ThemeResourceItem } from '../resources/resource.types';
 import {
   resolveCanvasGeneratorPlacement,
   type CanvasGeneratorPlacement,
@@ -43,6 +44,7 @@ interface CanvasAiImageToolProps {
   containerRef: React.RefObject<HTMLDivElement>;
   assistantProjectPath?: string;
   preferredPromptClient?: PromptClientPreference;
+  themes?: ThemeResourceItem[];
   onImageArtifact?: (event: CanvasImageArtifactEvent) => void;
   onSceneMutated?: () => void;
 }
@@ -175,6 +177,7 @@ export default function CanvasAiImageTool({
   containerRef,
   assistantProjectPath,
   preferredPromptClient,
+  themes,
   onImageArtifact,
   onSceneMutated,
 }: CanvasAiImageToolProps) {
@@ -736,6 +739,7 @@ export default function CanvasAiImageTool({
           generatorElementId={selectedInfo.element.id}
           initialReferenceImages={pendingInitialReferenceImages}
           initialLocalContextRefs={pendingInitialLocalContextRefs}
+          themes={themes}
           preferredPromptClient={preferredPromptClient}
           onPasteReferenceImages={pasteCanvasReferenceImages}
           onParamsChanged={resizeSelectedGeneratorForParams}

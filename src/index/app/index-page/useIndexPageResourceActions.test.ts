@@ -119,6 +119,11 @@ describe('useIndexPageResourceActions source', () => {
     expect(source).toContain('setViewMode');
     expect(source).toContain('buildCreatedPlaceholderPrototypeItem(result)');
     expect(source).toContain("getSidebarTabItems?.('prototypes')");
+    expect(source).toContain("fetch(buildResourceUrl('/api/prototypes/create-placeholder'),");
+    expect(source).toContain('setPendingReturnTarget({');
+    expect(source).toContain("sidebarTab: 'prototype',");
+    expect(source).toContain('resourceId: createdName,');
+    expect(source).toContain("viewMode: 'demo',");
     expect(source).toContain('createdFromResult');
     expect(source).toContain('refreshedCreated?.placeholder === true');
     expect(source).toContain("setSidebarTab('prototype');");
@@ -140,18 +145,14 @@ describe('useIndexPageResourceActions source', () => {
       .toBeLessThan(handlerSource.indexOf('await loadData()'));
   });
 
-  it('copies a theme generation prompt from the prototype menu without opening the theme drawer', () => {
+  it('does not keep the legacy theme generation prompt action from prototype menus', () => {
     const source = readResourceRootSource();
-    const handlerStart = source.indexOf('const handleGenerateThemeFromPrototype = useCallback');
-    const handlerEnd = source.indexOf('const handleSidebarTreeChange', handlerStart);
-    const handlerSource = source.slice(handlerStart, handlerEnd);
 
-    expect(handlerSource).toContain('generateCreateThemePrompt(');
-    expect(handlerSource).toContain('await navigator.clipboard.writeText(prompt)');
-    expect(handlerSource).toContain("messageApi.success('提示词已复制')");
-    expect(handlerSource).not.toContain('setSelectedThemeReferencePages');
-    expect(handlerSource).not.toContain("setSidebarTab('assets')");
-    expect(handlerSource).not.toContain("setThemeCreateDialogVisible(true)");
+    expect(source).not.toContain('const handleGenerateThemeFromPrototype = useCallback');
+    expect(source).not.toContain('generateCreateThemePrompt(');
+    expect(source).not.toContain('setSelectedThemeReferencePages');
+    expect(source).toContain("setInitialThemeDialogTab('import')");
+    expect(source).toContain("setThemeCreateDialogVisible(true)");
   });
 
   it('persists and syncs the selected default design theme', () => {

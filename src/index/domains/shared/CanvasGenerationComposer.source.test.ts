@@ -156,6 +156,7 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayPropsSegment).toContain('className?: string;');
     expect(displayPropsSegment).toContain('disabled?: boolean;');
     expect(displayPropsSegment).toContain('quickPrompts?: readonly CanvasAiQuickPrompt[];');
+    expect(displayPropsSegment).toContain('referenceImages: string[];');
     expect(displayComponentSegment).toContain('aui-composer-root');
     expect(displayComponentSegment).toContain('data-slot="aui_composer-shell"');
     expect(displayComponentSegment).toContain('aui-composer-input');
@@ -167,7 +168,12 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment).toContain('min-h-[112px]');
     expect(displayComponentSegment).toContain('rounded-2xl border border-border bg-background p-3 shadow-sm');
     expect(displayComponentSegment).toContain('bg-slate-100 text-slate-700');
-    expect(displayComponentSegment).toContain('onClick={() => {}}');
+    expect(displayComponentSegment).toContain('onPaste={handleDisplayPaste}');
+    expect(displayComponentSegment).toContain('getClipboardImageFiles(event.nativeEvent)');
+    expect(displayComponentSegment).toContain('readFilesAsDataUrls(pastedFiles)');
+    expect(displayComponentSegment).toContain('displayReferenceImages');
+    expect(displayComponentSegment).toContain('data-axhub-display-composer-attachment-count');
+    expect(displayComponentSegment).toContain('onClick={() => { setDisplayReferenceImages([]); }}');
     expect(displayComponentSegment).not.toContain('aria-label="语音输入"');
     expect(displayComponentSegment).not.toContain('title="语音输入"');
     expect(displayComponentSegment).not.toContain('<Mic');
@@ -209,6 +215,7 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayPropsSegment).toContain('model: string | null;');
     expect(displayPropsSegment).toContain('mode: string | null;');
     expect(displayPropsSegment).toContain('thought: string | null;');
+    expect(displayPropsSegment).toContain('referenceImages: string[];');
     expect(displayPropsSegment).toContain('showSelectors?: boolean;');
     expect(displayPropsSegment).toContain('workspacePath?: string | null;');
     expect(displayAcpSegment).toContain('const canvasAcpRuntime = useCanvasAcpRuntimeBridge({ enabled: showSelectors, workspacePath });');
@@ -221,6 +228,7 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayAcpSegment).toContain('model: acpContext.model');
     expect(displayAcpSegment).toContain('mode: acpContext.modeId');
     expect(displayAcpSegment).toContain('thought: acpContext.thoughtLevel');
+    expect(displayAcpSegment).toContain('referenceImages,');
   });
 
   it('passes runtime ACP selector context through the real canvas composer submit transport', () => {
@@ -310,6 +318,25 @@ describe('CanvasGenerationComposer source', () => {
     expect(runtimeSegment).toContain('attachments: canvasReferenceImageAttachmentAdapter');
   });
 
+  it('adds ordinary clipboard images as composer attachments without requiring Excalidraw reference paste', () => {
+    const source = readCanvasGenerationComposerSource();
+    const runtimeContentSegment = source.slice(
+      source.indexOf('function CanvasGenerationRuntimeComposerContent('),
+      source.indexOf('function useAssistantUiDialogOverlayDismiss'),
+    );
+
+    expect(source).toContain("import { getClipboardImageFiles } from './clipboardImages';");
+    expect(runtimeContentSegment).toContain('if (canPasteReferenceImages && onPasteReferenceImages && shouldUseCanvasReferencePaste(event.clipboardData)) {');
+    expect(runtimeContentSegment.indexOf('shouldUseCanvasReferencePaste(event.clipboardData)')).toBeLessThan(
+      runtimeContentSegment.indexOf('const pastedFiles = getClipboardImageFiles(event.nativeEvent);'),
+    );
+    expect(runtimeContentSegment).toContain('if (allowAttachments) {');
+    expect(runtimeContentSegment).toContain('const pastedFiles = getClipboardImageFiles(event.nativeEvent);');
+    expect(runtimeContentSegment).toContain('if (pastedFiles.length > 0) {');
+    expect(runtimeContentSegment).toContain('event.preventDefault();');
+    expect(runtimeContentSegment).toContain('void Promise.all(pastedFiles.map((file) => aui.composer().addAttachment(file)));');
+  });
+
   it('can restore and persist an optional browser draft for runtime composers', () => {
     const source = readCanvasGenerationComposerSource();
     const runtimeContentSegment = source.slice(
@@ -368,7 +395,8 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment).toContain('persistDisplayDraft(event.currentTarget.value);');
     expect(displayComponentSegment).toContain('persistDisplayDraft(nextText);');
     expect(source).toContain('type CanvasGenerationDisplaySubmitResult = boolean | void;');
-    expect(displayComponentSegment).toContain('const submitResult = await onSubmitText?.(text);');
+    expect(displayComponentSegment).toContain('const referenceImages = displayReferenceImages;');
+    expect(displayComponentSegment).toContain('const submitResult = await onSubmitText?.(text, referenceImages);');
     expect(displayComponentSegment).toContain('if (submitResult === false) {');
     expect(displayComponentSegment).toContain('persistDisplayDraft(text);');
     expect(displayComponentSegment).toContain('clearCanvasGenerationComposerDraft(storage, draftStorageKey);');

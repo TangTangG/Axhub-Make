@@ -17,6 +17,7 @@ export interface ReviewKindConfig {
     targetDescription: string;
     emptyDescription: string;
     requiredBasis: string;
+    executionRequirement: string;
     minimumSections: string;
 }
 
@@ -31,6 +32,7 @@ export const REVIEW_KIND_CONFIGS: Record<ReviewKind, ReviewKindConfig> = {
         targetDescription: '当前原型执行 UI Review',
         emptyDescription: '复制提示词给 AI，让它帮你检查页面设计质量，并整理出可改进的问题清单。',
         requiredBasis: '只使用选定的 DESIGN.md 作为设计依据；没有 DESIGN.md 时先停止并说明需要提供。',
+        executionRequirement: '按 rules/ui-review-guide.md 的 Impeccable 参考流程做评审，不要调用 /impeccable 命令。',
         minimumSections: '总体点评、P0-P3 优先级问题、核心元件/关键区块点评。',
     },
     requirements: {
@@ -43,6 +45,7 @@ export const REVIEW_KIND_CONFIGS: Record<ReviewKind, ReviewKindConfig> = {
         targetDescription: '当前原型执行 Prototype Review / 需求评审',
         emptyDescription: '复制提示词给 AI，让它帮你检查原型需求是否完整，并整理出遗漏、冲突和风险。',
         requiredBasis: '使用用户资料、最新 .spec 决策、src/resources 资料和当前原型源码建立业务基线；如资料冲突需标记为待确认。',
+        executionRequirement: '按 rules/prototype-review-guide.md 的需求评审流程做评审，不要引用 Impeccable。',
         minimumSections: '总体点评、P0-P3 优先级问题、完整性与项目对齐。',
     },
 };
@@ -104,7 +107,7 @@ export function buildReviewPrompt(params: {
         `- 评审结果写入：${reviewDocumentPath || config.fallbackPath}`,
         '',
         '【执行要求】',
-        '1. 使用 /impeccable critique 的评审方法，但以 Axhub 规则为准。',
+        `1. ${config.executionRequirement}`,
         `2. ${config.requiredBasis}`,
         '3. 输出 Markdown，不要输出 JSON，不要写 .impeccable 产物作为交付。',
         '4. 优先级只使用 P0-P3，最多列出 5 条优先级问题。',

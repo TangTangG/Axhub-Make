@@ -15,6 +15,7 @@ describe('quick edit runtime script', () => {
     const listeners = new Map<string, Array<(...args: any[]) => void>>();
     const messages: Array<{ message: any; targetOrigin: string }> = [];
     const appendedElements: any[] = [];
+    const copiedPlainTexts: string[] = [];
     const sessionValues = new Map<string, string>();
     const addListener = (key: string, listener: (...args: any[]) => void) => {
       const nextListeners = listeners.get(key) || [];
@@ -23,11 +24,13 @@ describe('quick edit runtime script', () => {
     };
     const createElementStub = (tagName: string) => {
       let ownTextContent = '';
+      const elementListeners = new Map<string, Array<(...args: any[]) => void>>();
       const element: any = {
         tagName: tagName.toUpperCase(),
         innerHTML: '',
         style: {},
         children: [],
+        listeners: elementListeners,
         dataset: {},
         attributes: new Map<string, string>(),
         setAttribute: vi.fn((name: string, value: string) => {
@@ -42,6 +45,9 @@ describe('quick edit runtime script', () => {
           return child;
         }),
         addEventListener: vi.fn((type: string, listener: (...args: any[]) => void) => {
+          const nextElementListeners = elementListeners.get(type) || [];
+          nextElementListeners.push(listener);
+          elementListeners.set(type, nextElementListeners);
           addListener(`element:${tagName}:${type}:${element.children.length}`, listener);
         }),
         remove: vi.fn(() => {
@@ -51,6 +57,7 @@ describe('quick edit runtime script', () => {
           }
         }),
         focus: vi.fn(),
+        select: vi.fn(),
       };
       Object.defineProperty(element, 'textContent', {
         get() {
@@ -101,6 +108,11 @@ describe('quick edit runtime script', () => {
       focus: vi.fn(),
       ...extraWindow,
     };
+    const emitCopyListeners = (event: any) => {
+      for (const listener of listeners.get('document:copy') || []) {
+        listener(event);
+      }
+    };
     const documentStub: any = {
       readyState: 'complete',
       documentElement: {
@@ -110,12 +122,31 @@ describe('quick edit runtime script', () => {
           return element;
         }),
       },
-      body: {},
+      body: {
+        appendChild: vi.fn((element: any) => element),
+      },
       addEventListener: vi.fn((type: string, listener: (...args: any[]) => void) => {
         addListener(`document:${type}`, listener);
       }),
       removeEventListener: vi.fn(),
       createElement: vi.fn(createElementStub),
+      execCommand: vi.fn((command: string) => {
+        if (command !== 'copy') return false;
+        const clipboardData = new Map<string, string>();
+        emitCopyListeners({
+          clipboardData: {
+            setData(type: string, value: string) {
+              clipboardData.set(type, value);
+            },
+          },
+          preventDefault: vi.fn(),
+        });
+        const plainText = clipboardData.get('text/plain');
+        if (typeof plainText === 'string') {
+          copiedPlainTexts.push(plainText);
+        }
+        return clipboardData.size > 0;
+      }),
       elementFromPoint: vi.fn(),
     };
 
@@ -142,7 +173,7 @@ describe('quick edit runtime script', () => {
       }
     };
 
-    return { appendedElements, documentStub, emit, listeners, messages, windowStub };
+    return { appendedElements, copiedPlainTexts, documentStub, emit, listeners, messages, windowStub };
   }
 
   it('posts runtimeReady from a client page so make-server can detect the runtime handshake', () => {
@@ -566,6 +597,41 @@ describe('quick edit runtime script', () => {
     expect(appendedElements[0].textContent).toContain('/src/prototypes/home/index.tsx:12:8');
   });
 
+  it('copies prototype error diagnostics without calling the iframe Clipboard API', () => {
+    const writeText = vi.fn(async () => {
+      throw new Error("Failed to execute 'writeText' on 'Clipboard': Permissions policy violation.");
+    });
+    const { appendedElements, copiedPlainTexts, documentStub, messages, windowStub } = createRuntimeHarness({
+      navigator: {
+        userAgent: 'Vitest Browser',
+        clipboard: { writeText },
+      },
+    });
+
+    windowStub.axhub.prototypeRuntime.reportError(new Error('Render exploded'), {
+      type: 'react-render',
+      sourceFile: '/src/prototypes/home/index.tsx',
+      line: 12,
+      column: 8,
+      componentStack: '\n    at Home',
+      resourceType: 'prototype',
+      resourceId: 'home',
+    });
+    const dialog = appendedElements[0];
+    const actions = dialog.children[3];
+    const copyButton = actions.children[0];
+    copyButton.listeners.get('click')?.[0]?.({});
+
+    expect(writeText).not.toHaveBeenCalled();
+    expect(documentStub.execCommand).toHaveBeenCalledWith('copy');
+    expect(copiedPlainTexts[0]).toContain('Render exploded');
+    expect(copiedPlainTexts[0]).toContain('/src/prototypes/home/index.tsx');
+    expect(copyButton.textContent).toBe('已复制');
+    expect(messages).not.toContainEqual(expect.objectContaining({
+      message: expect.objectContaining({ type: 'axhub.quickEdit.error' }),
+    }));
+  });
+
   it('opens one prototype error dialog for window errors, unhandled rejections, and resource load failures', () => {
     const { appendedElements, emit } = createRuntimeHarness();
 
@@ -677,7 +743,7 @@ describe('quick edit runtime script', () => {
     const fixedNow = new Date('2026-05-29T10:11:12.000Z');
     vi.useFakeTimers();
     vi.setSystemTime(fixedNow);
-    const { appendedElements, windowStub } = createRuntimeHarness();
+    const { appendedElements, copiedPlainTexts, windowStub } = createRuntimeHarness();
     const error = new Error('Render exploded');
     error.stack = 'Error: Render exploded\n    at Home (/src/prototypes/home/index.tsx:12:8)';
 
@@ -707,8 +773,8 @@ describe('quick edit runtime script', () => {
     expect(copyButton).toBeTruthy();
     await copyButton.addEventListener.mock.calls.find(([type]: [string]) => type === 'click')?.[1]();
 
-    expect(windowStub.navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('type: react-render'));
-    const diagnostic = windowStub.navigator.clipboard.writeText.mock.calls[0][0];
+    expect(windowStub.navigator.clipboard.writeText).not.toHaveBeenCalled();
+    const diagnostic = copiedPlainTexts[0];
     expect(diagnostic).toContain('message: Render exploded');
     expect(diagnostic).toContain('stack:\nError: Render exploded');
     expect(diagnostic).toContain('componentStack:\n    at Home');

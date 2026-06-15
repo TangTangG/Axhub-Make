@@ -93,6 +93,7 @@ function createBuilderParams(overrides: Partial<Parameters<typeof useIndexPageSi
       stopProjectDevServer: vi.fn(),
       addProjectFromLocalPath: vi.fn(),
       createBlankMakeProject: vi.fn(async () => ({})),
+      copyMakeProject: vi.fn(async () => ({})),
       loadProjects: vi.fn(),
       setCreateDialogVisible: vi.fn(),
       setInitialCreateDialogTab: vi.fn(),
@@ -128,7 +129,6 @@ function createBuilderParams(overrides: Partial<Parameters<typeof useIndexPageSi
         handleDeleteCanvasItem: vi.fn(),
         handleCopyCanvasPath: vi.fn(),
         handleCreateFolder: vi.fn(),
-        handleGenerateThemeFromPrototype: vi.fn(),
         handleProjectTitleChange: vi.fn(),
         handleSidebarTreeChange: vi.fn(),
         handleSidebarTreePersist: vi.fn(),
@@ -244,12 +244,13 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     expect(props.state.projectSetupRequired).toBe(true);
   });
 
-  it('resets successful project setup to the prototype start page instead of preserving canvas mode', async () => {
+  it('resets successful project setup and copy to the prototype start page instead of preserving canvas mode', async () => {
     const setActiveTab = vi.fn();
     const setSidebarTab = vi.fn();
     const setViewMode = vi.fn();
     const setSelectedPrototypePageId = vi.fn();
     const createBlankMakeProject = vi.fn(async () => ({ project: { id: 'new-project' } }));
+    const copyMakeProject = vi.fn(async () => ({ project: { id: 'copied-project' } }));
     const addProjectFromLocalPath = vi.fn(async () => true);
     const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
       state: {
@@ -263,6 +264,7 @@ describe('useIndexPageSidebarPropsBuilder', () => {
         setViewMode,
         setSelectedPrototypePageId,
         createBlankMakeProject,
+        copyMakeProject,
         addProjectFromLocalPath,
       },
     }));
@@ -272,6 +274,11 @@ describe('useIndexPageSidebarPropsBuilder', () => {
       folderName: 'new-project',
       projectName: '',
     });
+    await props.actions.onCopyMakeProject({
+      parentRoot: '/tmp',
+      folderName: 'copied-project',
+      projectName: 'Copied Project',
+    });
     await props.actions.onAddProject('/tmp/existing-project');
 
     expect(createBlankMakeProject).toHaveBeenCalledWith({
@@ -279,25 +286,68 @@ describe('useIndexPageSidebarPropsBuilder', () => {
       folderName: 'new-project',
       projectName: '',
     });
+    expect(copyMakeProject).toHaveBeenCalledWith({
+      parentRoot: '/tmp',
+      folderName: 'copied-project',
+      projectName: 'Copied Project',
+    });
     expect(addProjectFromLocalPath).toHaveBeenCalledWith('/tmp/existing-project');
-    expect(setActiveTab).toHaveBeenCalledTimes(2);
+    expect(setActiveTab).toHaveBeenCalledTimes(3);
     expect(setActiveTab).toHaveBeenNthCalledWith(1, 'prototypes');
     expect(setActiveTab).toHaveBeenNthCalledWith(2, 'prototypes');
-    expect(setSidebarTab).toHaveBeenCalledTimes(2);
+    expect(setActiveTab).toHaveBeenNthCalledWith(3, 'prototypes');
+    expect(setSidebarTab).toHaveBeenCalledTimes(3);
     expect(setSidebarTab).toHaveBeenNthCalledWith(1, 'prototype');
     expect(setSidebarTab).toHaveBeenNthCalledWith(2, 'prototype');
-    expect(setViewMode).toHaveBeenCalledTimes(2);
+    expect(setSidebarTab).toHaveBeenNthCalledWith(3, 'prototype');
+    expect(setViewMode).toHaveBeenCalledTimes(3);
     expect(setViewMode).toHaveBeenNthCalledWith(1, 'demo');
     expect(setViewMode).toHaveBeenNthCalledWith(2, 'demo');
-    expect(setSelectedPrototypePageId).toHaveBeenCalledTimes(2);
+    expect(setViewMode).toHaveBeenNthCalledWith(3, 'demo');
+    expect(setSelectedPrototypePageId).toHaveBeenCalledTimes(3);
     expect(setSelectedPrototypePageId).toHaveBeenNthCalledWith(1, null);
     expect(setSelectedPrototypePageId).toHaveBeenNthCalledWith(2, null);
+    expect(setSelectedPrototypePageId).toHaveBeenNthCalledWith(3, null);
   });
 
   it('does not pass the legacy document-to-prototype drawer action into the sidebar', () => {
     const props = useIndexPageSidebarPropsBuilder(createBuilderParams());
 
     expect(props.actions).not.toHaveProperty('onCreatePrototypeFromDoc');
+  });
+
+  it('opens create dialog only on import tabs while sidebar plus creates a placeholder prototype', () => {
+    const setInitialCreateDialogTab = vi.fn();
+    const setCreateDialogVisible = vi.fn();
+    const setActiveTab = vi.fn();
+    const handleCreatePlaceholderPrototype = vi.fn();
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      deps: {
+        setActiveTab,
+        setInitialCreateDialogTab,
+        setCreateDialogVisible,
+        resources: {
+          ...createBuilderParams().deps.resources,
+          handleCreatePlaceholderPrototype,
+        },
+      },
+    }));
+
+    props.actions.onOpenCreateDialog();
+    props.actions.onOpenCreateDialog('upload');
+    props.actions.onOpenCreateDialog('onlineImport');
+    props.actions.onCreatePlaceholderPrototype();
+
+    expect(setActiveTab).toHaveBeenCalledTimes(3);
+    expect(setActiveTab).toHaveBeenCalledWith('prototypes');
+    expect(setInitialCreateDialogTab).toHaveBeenCalledTimes(3);
+    expect(setInitialCreateDialogTab).toHaveBeenNthCalledWith(1, 'onlineImport');
+    expect(setInitialCreateDialogTab).toHaveBeenNthCalledWith(2, 'upload');
+    expect(setInitialCreateDialogTab).toHaveBeenNthCalledWith(3, 'onlineImport');
+    expect(setInitialCreateDialogTab).not.toHaveBeenCalledWith('ai');
+    expect(setInitialCreateDialogTab).not.toHaveBeenCalledWith('create');
+    expect(setCreateDialogVisible).toHaveBeenCalledWith(true);
+    expect(handleCreatePlaceholderPrototype).toHaveBeenCalledTimes(1);
   });
 
   it('opens project settings with the requested tab', () => {

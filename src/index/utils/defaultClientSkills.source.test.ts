@@ -43,6 +43,14 @@ describe('default client skills', () => {
     expect(lock.skills.drawio.computedHash).toMatch(/^[a-f0-9]{64}$/u);
   });
 
+  it('keeps Impeccable as an on-demand rule reference instead of a default project skill', () => {
+    expect(existsSync(resolve(__dirname, '../../../client', '.agents/skills/impeccable'))).toBe(false);
+    expect(existsSync(resolve(__dirname, '../../../client', '.claude/skills/impeccable'))).toBe(false);
+    expect(existsSync(resolve(__dirname, '../../../client', 'rules/references/impeccable/SKILL.md'))).toBe(true);
+    expect(existsSync(resolve(__dirname, '../../../client', 'rules/references/impeccable/reference/critique.md'))).toBe(true);
+    expect(existsSync(resolve(__dirname, '../../../client', 'rules/references/impeccable/scripts/detect.mjs'))).toBe(true);
+  });
+
   it('routes canvas Drawio requests through the Drawio skill before placing canvas nodes', () => {
     const skillSources = [
       readClientFile('.agents/skills/canvas-workspace/SKILL.md'),
@@ -71,6 +79,44 @@ describe('default client skills', () => {
       expect(description).toContain('Drawio 图表');
       expect(description).not.toContain('主题嵌入节点');
       expect(description).not.toContain('AI 生成节点');
+    }
+  });
+
+  it('keeps canvas workspace reference docs gated and lean', () => {
+    const skillRoots = [
+      '.agents/skills/canvas-workspace',
+      '.claude/skills/canvas-workspace',
+    ];
+
+    for (const root of skillRoots) {
+      const skillSource = readClientFile(`${root}/SKILL.md`);
+
+      expect(skillSource).toContain('references/canvas-read-write.md');
+      expect(skillSource).toContain('references/axhub-nodes.md');
+      expect(skillSource).toContain('只有明确不使用 Draw.io');
+      expect(skillSource).toContain('references/excalidraw-basics.md');
+      expect(skillSource).not.toContain('element-templates.md');
+      expect(existsSync(resolve(__dirname, '../../../client', `${root}/references/element-templates.md`))).toBe(false);
+    }
+  });
+
+  it('bundles the Write PRD skill with Axhub resource and template rules', () => {
+    const skillRoots = [
+      '.agents/skills/write-prd',
+      '.claude/skills/write-prd',
+    ];
+
+    for (const root of skillRoots) {
+      const skillSource = readClientFile(`${root}/SKILL.md`);
+      const interfaceSource = readClientFile(`${root}/agents/openai.yaml`);
+
+      expect(skillSource).toContain('name: write-prd');
+      expect(skillSource).toContain('src/resources/');
+      expect(skillSource).toContain('用户提供的模板');
+      expect(skillSource).toContain('canvas.excalidraw');
+      expect(skillSource).not.toContain('ready-for-agent');
+      expect(skillSource).not.toContain('/setup-matt-pocock-skills');
+      expect(interfaceSource).toContain('display_name: "写 PRD"');
     }
   });
 });

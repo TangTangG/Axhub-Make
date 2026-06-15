@@ -12,7 +12,7 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain('const currentConfig = await configRes.json();');
   });
 
-  it('renders one Web AI action plus AI settings and nests CLI agents under the local app group', () => {
+  it('renders chat and image AI actions plus AI settings and nests CLI agents under the local app group', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
     const onlineOptionsSource = source.slice(
       source.indexOf('const WEB_AI_OPEN_OPTION'),
@@ -28,11 +28,18 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain("renderAgentGroup('在 CLI 中打开'");
     expect(source).toContain('本地 CLI');
     expect(source).toContain('在线打开');
-    expect(source).toContain('打开 Web AI');
+    expect(source).not.toContain('打开 Web AI');
+    expect(source).toContain('对话 AI');
+    expect(source).not.toContain('通用 AI');
+    expect(source).toContain('生图 AI');
+    expect(source).toContain('onOpenImageAiPanel?: () => void | Promise<void>;');
+    expect(source).toContain("const IMAGE_AI_OPEN_OPTION = {");
+    expect(source).toContain("label: '生图 AI'");
     expect(source).toContain('onOpenAISettings?: () => void;');
     expect(source).toContain('const handleOpenAISettings = useCallback(() => {');
     expect(source).toContain('onOpenAISettings?.();');
     expect(onlineGroupSource).toContain('onClick={handleToggleWebAiMenu}');
+    expect(onlineGroupSource).toContain('onClick={handleToggleImageAiMenu}');
     expect(onlineGroupSource).toContain('handleOpenAISettings');
     expect(onlineGroupSource).toContain('设置');
     expect(onlineGroupSource).not.toContain('visibleOnlineWebAgentOptions.map');
@@ -51,7 +58,8 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain('genieProvider?: GenieProvider;');
     expect(onlineOptionsSource).not.toContain("webAgent: 'opencode'");
     expect(onlineOptionsSource).not.toContain("label: 'OpenCode'");
-    expect(onlineOptionsSource).toContain("label: '打开 Web AI'");
+    expect(onlineOptionsSource).toContain("label: '对话 AI'");
+    expect(onlineOptionsSource).toContain("label: '生图 AI'");
     expect(onlineOptionsSource).toContain("webAgent: 'genie'");
     expect(source).not.toContain("availabilitySource: 'cli'");
     expect(source).not.toContain("availabilityKey: 'claudecode'");
@@ -100,6 +108,7 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain('className="-mx-1 my-1.5"');
     expect(source).toContain("if (agent === 'genie' && onOpenGenieWebAgent)");
     expect(source).toContain('onOpenGenieWebAgent(openTargetPath, provider)');
+    expect(source).toContain('await Promise.resolve(onOpenImageAiPanel?.());');
     expect(source).toContain("void savePreference({ type: 'web', value: provider || agent })");
     expect(source).not.toContain("if (agent === 'opencode' && onOpenGenieWebAgent)");
     expect(source).not.toContain("void savePreference({ type: 'web', value: 'opencode' })");
@@ -141,7 +150,7 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain('ml-auto');
   });
 
-  it('keeps the single Web AI action visible regardless of local agent availability', () => {
+  it('keeps the split Web AI actions visible regardless of local agent availability', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
     const propsSource = source.slice(
       source.indexOf('export default function OpenInDropdown({'),
@@ -150,6 +159,8 @@ describe('OpenInDropdown source', () => {
 
     expect(source).toContain('agentAvailability?: RuntimeAgentAvailability;');
     expect(source).toContain('const WEB_AI_OPEN_OPTION');
+    expect(source).toContain('const IMAGE_AI_OPEN_OPTION');
+    expect(source).toContain('const activeAiPanelMode = aiPanelMode !== undefined');
     expect(source).not.toContain('const visibleOnlineWebAgentOptions');
     expect(source).not.toContain("status !== 'missing'");
     expect(propsSource).not.toContain('agentAvailability,');
@@ -221,7 +232,7 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain("'text-primary hover:bg-primary/5 hover:text-primary'");
     expect(source).toContain("'border-primary/25 text-primary/70 hover:bg-primary/5 hover:text-primary'");
     expect(source).toContain('data-[active=true]:text-primary data-[active=true]:hover:bg-primary/5 data-[active=true]:hover:text-primary');
-    expect(source).toContain('data-active={buttonActive ? \'true\' : undefined}');
+    expect(source).toContain('data-active={generalAiMenuActive || imageAiMenuActive ? \'true\' : undefined}');
     expect(source).not.toContain('text-primary hover:bg-background hover:text-primary');
     expect(source).not.toContain('border border-slate-900 bg-slate-900');
     expect(source).not.toContain('text-white hover:bg-slate-800');
@@ -439,7 +450,7 @@ describe('OpenInDropdown source', () => {
     expect(canvasIconSegment).toContain('<DropdownMenuTrigger asChild>');
     expect(canvasIconSegment).toContain('aria-label={buttonActive ? \'AI 已打开\' : \'打开 AI\'}');
     expect(canvasIconSegment).toContain('title={buttonActive ? \'AI 已打开\' : \'打开 AI\'}');
-    expect(canvasIconSegment).toContain('data-active={buttonActive ? \'true\' : undefined}');
+    expect(canvasIconSegment).toContain('data-active={generalAiMenuActive || imageAiMenuActive ? \'true\' : undefined}');
     expect(canvasIconSegment).toContain('{openLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}');
     expect(canvasIconSegment).toContain('{menuContent}');
     expect(canvasIconSegment).not.toContain('onClick={handleOpenDefault}');
@@ -450,17 +461,21 @@ describe('OpenInDropdown source', () => {
   it('marks the toolbar Web AI action as active when the Web UI panel is open', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
     const menuSource = source.slice(
-      source.indexOf('const webAiMenuActive = buttonActive;'),
+      source.indexOf("const generalAiMenuActive = activeAiPanelMode === 'general-ai';"),
       source.indexOf("if (variant === 'toolbar')"),
     );
 
-    expect(menuSource).toContain('const webAiMenuActive = buttonActive;');
+    expect(menuSource).toContain("const generalAiMenuActive = activeAiPanelMode === 'general-ai';");
+    expect(menuSource).toContain("const imageAiMenuActive = activeAiPanelMode === 'image-ai';");
+    expect(menuSource).toContain('const webAiMenuActive = generalAiMenuActive;');
     expect(menuSource).toContain("webAiMenuActive && 'bg-secondary text-secondary-foreground'");
     expect(menuSource).toContain('aria-checked={webAiMenuActive}');
     expect(menuSource).toContain('{webAiMenuActive ? <Check className="h-3.5 w-3.5" /> : getWebAgentIcon(WEB_AI_OPEN_OPTION.webAgent)}');
+    expect(menuSource).toContain("imageAiMenuActive && 'bg-secondary text-secondary-foreground'");
+    expect(menuSource).toContain('aria-checked={imageAiMenuActive}');
   });
 
-  it('toggles the active Web AI menu item off and closes the side panel', () => {
+  it('toggles the active AI menu items off and closes the side panel', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
     const menuSource = source.slice(
       source.indexOf('const handleToggleWebAiMenu = useCallback(() => {'),
@@ -469,11 +484,15 @@ describe('OpenInDropdown source', () => {
 
     expect(menuSource).toContain('const handleToggleWebAiMenu = useCallback(() => {');
     expect(menuSource).toContain('if (webAiMenuActive) {');
-    expect(menuSource).toContain('onCloseWebAgentPanel?.();');
+    expect(menuSource).toContain('closeAiPanel();');
     expect(menuSource).toContain('return;');
     expect(menuSource).toContain('void handleOpenWithWebAgent(WEB_AI_OPEN_OPTION.webAgent);');
-    expect(menuSource).toContain('}, [handleOpenWithWebAgent, onCloseWebAgentPanel, webAiMenuActive]);');
+    expect(menuSource).toContain('}, [closeAiPanel, handleOpenWithWebAgent, webAiMenuActive]);');
+    expect(menuSource).toContain('const handleToggleImageAiMenu = useCallback(() => {');
+    expect(menuSource).toContain('if (imageAiMenuActive) {');
+    expect(menuSource).toContain('void handleOpenWithImageAi();');
     expect(menuSource).toContain('onClick={handleToggleWebAiMenu}');
+    expect(menuSource).toContain('onClick={handleToggleImageAiMenu}');
   });
 
   it('keeps ACP UI Web Agent provider selection typed through every open menu boundary', () => {

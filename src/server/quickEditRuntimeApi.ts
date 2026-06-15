@@ -145,13 +145,72 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
     return parts.join('\n');
   }
 
+  function writeTextWithCopyEvent(text) {
+    if (typeof document.execCommand !== 'function') {
+      return false;
+    }
+
+    let didWriteClipboardData = false;
+    const activeElement = document.activeElement && typeof document.activeElement.focus === 'function'
+      ? document.activeElement
+      : null;
+    const textArea = document.createElement('textarea');
+    const handleCopy = (event) => {
+      if (!event.clipboardData) return;
+      event.preventDefault();
+      event.clipboardData.setData('text/plain', text);
+      didWriteClipboardData = true;
+    };
+
+    try {
+      textArea.value = text;
+      textArea.setAttribute('readonly', '');
+      Object.assign(textArea.style, {
+        position: 'fixed',
+        left: '-9999px',
+        top: '0',
+        opacity: '0',
+        pointerEvents: 'none',
+      });
+      const container = document.body || document.documentElement;
+      container.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      document.addEventListener('copy', handleCopy, true);
+      const didCopy = document.execCommand('copy');
+      return didCopy && didWriteClipboardData;
+    } catch {
+      return false;
+    } finally {
+      document.removeEventListener('copy', handleCopy, true);
+      textArea.remove();
+      activeElement?.focus?.();
+    }
+  }
+
+  function canUseAsyncClipboardInCurrentFrame() {
+    return window.parent === window
+      && navigator.clipboard
+      && typeof navigator.clipboard.writeText === 'function';
+  }
+
   async function copyPrototypeError(button) {
     if (!latestPrototypeError) return;
     const text = buildDiagnosticText(latestPrototypeError);
+    if (writeTextWithCopyEvent(text)) {
+      if (button) button.textContent = '已复制';
+      return;
+    }
+    if (!canUseAsyncClipboardInCurrentFrame()) {
+      if (button) button.textContent = '复制失败';
+      postError('复制错误诊断失败', { error: 'Clipboard write is unavailable in embedded prototype frame' });
+      return;
+    }
     try {
-      await navigator.clipboard?.writeText(text);
+      await navigator.clipboard.writeText(text);
       if (button) button.textContent = '已复制';
     } catch (error) {
+      if (button) button.textContent = '复制失败';
       postError('复制错误诊断失败', { error: String(error) });
     }
   }

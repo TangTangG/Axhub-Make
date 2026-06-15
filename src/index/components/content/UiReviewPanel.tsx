@@ -8,16 +8,26 @@ import { Segmented } from 'antd';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { REVIEW_KIND_CONFIGS, type ReviewKind } from '../../utils/uiReviewPrompt';
+import type { PromptClientPreference } from '../../types';
+import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
+import PromptActionButton from '../PromptActionButton';
 
 interface UiReviewPanelProps {
     activeKind: ReviewKind;
     markdown: string;
+    reviewPrompt: string;
+    reviewDocumentPath?: string;
     updatedAt?: string | null;
     loading?: boolean;
     error?: string;
     pageZoomEnabled: boolean;
+    preferredPromptClient: PromptClientPreference;
+    preferredIDE: MainIDEPreference;
+    ideAvailability?: IDEAvailabilityMap;
+    assistantOpen?: boolean;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     onKindChange: (kind: ReviewKind) => void;
-    onCopyPrompt: () => void | Promise<void>;
+    onCopyPrompt?: () => void | Promise<void>;
     onTogglePageZoom: () => void;
 }
 
@@ -46,10 +56,17 @@ const Code: React.FC<ComponentProps> = (props) => {
 export default function UiReviewPanel({
     activeKind,
     markdown,
+    reviewPrompt,
+    reviewDocumentPath,
     updatedAt = null,
     loading = false,
     error = '',
     pageZoomEnabled,
+    preferredPromptClient,
+    preferredIDE,
+    ideAvailability,
+    assistantOpen,
+    onExecutePrompt,
     onKindChange,
     onCopyPrompt,
     onTogglePageZoom,
@@ -83,7 +100,7 @@ export default function UiReviewPanel({
                         size="icon-xs"
                         aria-label="复制提示词"
                         title="复制提示词"
-                        onClick={() => { void onCopyPrompt(); }}
+                        onClick={() => { void onCopyPrompt?.(); }}
                     >
                         <Copy className="h-3.5 w-3.5" />
                     </Button>
@@ -128,15 +145,23 @@ export default function UiReviewPanel({
                             <div className="mt-2 text-[12px] leading-5 text-muted-foreground">
                                 {activeConfig.emptyDescription}
                             </div>
-                            <Button
-                                type="button"
-                                size="sm"
-                                className="mt-4 h-8 gap-1.5 text-[12px]"
-                                onClick={() => { void onCopyPrompt(); }}
-                            >
-                                <Copy className="h-3.5 w-3.5" />
-                                复制提示词
-                            </Button>
+                            <PromptActionButton
+                                type="primary"
+                                preferredClient={preferredPromptClient}
+                                preferredIDE={preferredIDE}
+                                ideAvailability={ideAvailability}
+                                assistantOpen={assistantOpen}
+                                scene={`prototype-review-${activeKind}`}
+                                buildPrompt={() => reviewPrompt}
+                                getTargetPath={() => reviewDocumentPath || null}
+                                onExecutePrompt={onExecutePrompt}
+                                copyLabel="复制提示词"
+                                copySuccessMessage="评审 Prompt 已复制到剪贴板"
+                                executeSuccessMessage="已发送到 AI 侧栏"
+                                fallbackMessage="AI 执行失败，已回退为复制提示词"
+                                disabled={!reviewPrompt.trim()}
+                                className="mt-4"
+                            />
                         </div>
                     </div>
                 )}

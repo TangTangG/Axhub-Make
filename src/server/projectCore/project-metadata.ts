@@ -51,6 +51,7 @@ export interface PrototypeResource {
   artifacts?: PrototypeResourceArtifacts;
   pages?: PrototypeResourcePage[];
   defaultPageId?: string;
+  importReport?: Record<string, unknown>;
 }
 
 export interface DocResource {
@@ -410,6 +411,9 @@ function normalizePrototypeResources(value: unknown, projectRoot: string): Proto
       const defaultPageId = pages.some((page) => page.id === requestedDefaultPageId)
         ? requestedDefaultPageId
         : pages[0]?.id || '';
+      const importReport = item.importReport && typeof item.importReport === 'object' && !Array.isArray(item.importReport)
+        ? item.importReport as Record<string, unknown>
+        : null;
       return {
         id,
         name,
@@ -426,6 +430,7 @@ function normalizePrototypeResources(value: unknown, projectRoot: string): Proto
         ...(spec ? { spec } : {}),
         ...(artifacts ? { artifacts } : {}),
         ...(pages.length > 0 ? { pages, defaultPageId } : {}),
+        ...(importReport ? { importReport } : {}),
       };
     })
     .filter((item): item is PrototypeResource => Boolean(item));

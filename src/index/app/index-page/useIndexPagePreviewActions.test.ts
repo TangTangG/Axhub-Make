@@ -195,6 +195,8 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('handleToggleReviewPageZoom');
     expect(source).toContain('handleReviewPanelToggle');
     expect(source).toContain('handleCopyReviewPrompt');
+    expect(source).toContain('reviewPrompt,');
+    expect(source).toContain('reviewDocumentPath,');
     expect(source).toContain('activeReviewKind,');
     expect(source).toContain('reviewPanelOpen,');
     expect(source).toContain('reviewMarkdown,');

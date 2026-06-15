@@ -29,7 +29,7 @@ src/prototypes/<name>/
 
 - 原型入口文件必须是 `index.tsx`。
 - 原型目录名使用小写字母、数字、连字符，如 `order-review`。
-- `untitled`、`untitled-*` 或「未命名」只是占位原型；开始生成实际内容前，优先基于用户描述或轻量澄清确认目录名和 `@name`。只有用户明确进入需求探索时，才等待完整需求探索结果；用户要求直接生成时可按合理命名推进并说明假设。
+- 当目录名为 `untitled`、`untitled-*` 或显示名为「未命名」时，开始生成实际内容前应更新为有意义的目录名和 `@name`。
 - 本项目当前不产出独立 `components` 资源；原型内部组件放在对应原型目录下的 `components/`。
 
 每个原型的 `index.tsx` 顶部建议包含面向用户的中文 `@name`，用于预览列表展示名：
@@ -104,6 +104,6 @@ node scripts/check-app-ready.mjs /prototypes/[原型目录]
 
 - [ ] `index.tsx` 完整存在。
 - [ ] `index.tsx` 顶部有清晰的 `@name`。
-- [ ] 占位原型已基于确认结果更新目录名和显示名。
+- [ ] 占位原型已更新为有意义的目录名和显示名。
 - [ ] 新增依赖已写入 `package.json`。
 - [ ] `check-app-ready.mjs` 原型验收通过。

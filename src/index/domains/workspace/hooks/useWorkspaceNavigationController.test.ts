@@ -10,6 +10,7 @@ describe('useWorkspaceNavigationController source', () => {
     expect(source).toContain("fetch('/api/projects/active'");
     expect(source).toContain("fetch('/api/projects/make/register-existing'");
     expect(source).toContain("fetch('/api/projects/make/create'");
+    expect(source).toContain('fetch(`/api/projects/${encodeURIComponent(activeProjectId)}/make-client/copy`');
     expect(source).toContain("fetch(`/api/projects/${encodeURIComponent(projectId)}/dev/ensure`");
     expect(source).not.toContain('/api/projects/select-root');
     expect(source).not.toContain('selectMakeProjectParentFolder');
@@ -17,6 +18,7 @@ describe('useWorkspaceNavigationController source', () => {
     expect(source).toContain('body: JSON.stringify({ timeoutMs: MAKE_CLIENT_DEV_START_TIMEOUT_MS })');
     expect(source).toContain('addProjectFromLocalPath');
     expect(source).toContain('createBlankMakeProject');
+    expect(source).toContain('copyMakeProject');
     expect(source).toContain('switchProject');
   });
 
@@ -96,6 +98,22 @@ describe('useWorkspaceNavigationController source', () => {
     expect(createBlankSource).toContain('const loaded = await loadProjectResourcesFor(projectId);');
     expect(createBlankSource).toContain("messageApi.error('项目已创建，但加载资源失败，请刷新或重新切换项目');");
     expect(createBlankSource).not.toContain("throw new Error('加载项目资源失败');");
+  });
+
+  it('activates a copied make project even if its first resource load fails', () => {
+    const source = readFileSync(resolve(__dirname, './useWorkspaceNavigationController.ts'), 'utf8');
+    const copyStart = source.indexOf('const copyMakeProject = useCallback');
+    const reloadStart = source.indexOf('const reloadSidebarAssets = useCallback', copyStart);
+    const copySource = source.slice(copyStart, reloadStart);
+
+    expect(copySource).toContain("throw new Error('请先选择项目')");
+    expect(copySource).toContain('fetch(`/api/projects/${encodeURIComponent(activeProjectId)}/make-client/copy`');
+    expect(copySource).toContain('body: JSON.stringify(params),');
+    expect(copySource).toContain('setActiveProjectId(projectId);');
+    expect(copySource).toContain("setProjectTitle(typeof payload?.project?.name === 'string'");
+    expect(copySource).toContain('const loaded = await loadProjectResourcesFor(projectId);');
+    expect(copySource).toContain("messageApi.error('项目已复制，但加载资源失败，请刷新或重新切换项目');");
+    expect(copySource).not.toContain("throw new Error('加载项目资源失败');");
   });
 
   it('prints completed blank project setup timings to the browser console', () => {

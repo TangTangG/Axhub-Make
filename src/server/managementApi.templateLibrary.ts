@@ -357,37 +357,86 @@ function updatePrototypeMetadataAfterImport(
   context: TemplateLibraryProjectContext,
   params: {
     template: TemplateLibraryIndexItem;
+    prototypeId: string;
     indexPath: string;
     clientUrl: string;
   },
 ): string {
   const current = context.metadataStore.getMetadata();
   const filePath = createProjectRelativePath(context.project.root, params.indexPath);
+  const existing = current.resources.prototypes.find((prototype) => (
+    prototype.id === params.prototypeId || prototype.name === params.prototypeId
+  ));
+  const nextPrototype = {
+    ...(existing || {}),
+    id: existing?.id || params.prototypeId,
+    name: existing?.name || params.prototypeId,
+    title: params.template.title,
+    clientUrl: params.clientUrl,
+    previewMode: 'clientRuntime' as const,
+    description: params.template.description,
+    updatedAt: new Date().toISOString(),
+    placeholder: false,
+    filePath,
+    absoluteFilePath: params.indexPath,
+  };
+  const {
+    placeholderGuide: _placeholderGuide,
+    ...prototypeWithoutPlaceholderGuide
+  } = nextPrototype;
   context.metadata = context.metadataStore.saveMetadata({
     ...current,
     resources: {
       ...current.resources,
       prototypes: [
-        {
-          id: params.template.slug,
-          name: params.template.slug,
-          title: params.template.title,
-          clientUrl: params.clientUrl,
-          previewMode: 'clientRuntime',
-          description: params.template.description,
-          updatedAt: new Date().toISOString(),
-          filePath,
-          absoluteFilePath: params.indexPath,
-        },
-        ...current.resources.prototypes.filter((prototype) => prototype.id !== params.template.slug && prototype.name !== params.template.slug),
+        prototypeWithoutPlaceholderGuide,
+        ...current.resources.prototypes.filter((prototype) => prototype.id !== params.prototypeId && prototype.name !== params.prototypeId),
       ],
     },
     navigation: {
       ...current.navigation,
-      prototypes: prependUnique(current.navigation.prototypes, params.template.slug),
+      prototypes: prependUnique(current.navigation.prototypes, params.prototypeId),
     },
   });
   return filePath;
+}
+
+function resolveTargetPrototypeName(
+  res: ServerResponse,
+  context: TemplateLibraryProjectContext,
+  targetBaseDir: string,
+  rawTargetPrototypeName: unknown,
+): string | null | undefined {
+  if (rawTargetPrototypeName === undefined || rawTargetPrototypeName === null || rawTargetPrototypeName === '') {
+    return undefined;
+  }
+  const targetPrototypeName = typeof rawTargetPrototypeName === 'string' ? rawTargetPrototypeName.trim() : '';
+  if (
+    !targetPrototypeName
+    || targetPrototypeName.includes('/')
+    || targetPrototypeName.includes('\\')
+    || targetPrototypeName.includes('\0')
+  ) {
+    sendTemplateLibraryError(res, 400, 'TEMPLATE_LIBRARY_TARGET_PROTOTYPE_INVALID', 'Invalid targetPrototypeName');
+    return null;
+  }
+  const existing = context.metadata.resources.prototypes.find((prototype) => (
+    prototype.id === targetPrototypeName || prototype.name === targetPrototypeName
+  ));
+  if (!existing) {
+    sendTemplateLibraryError(res, 400, 'TEMPLATE_LIBRARY_TARGET_PROTOTYPE_NOT_FOUND', `Prototype not found: ${targetPrototypeName}`);
+    return null;
+  }
+  const targetDir = path.resolve(targetBaseDir, targetPrototypeName);
+  if (targetDir === path.resolve(targetBaseDir) || !isPathInside(targetBaseDir, targetDir)) {
+    sendTemplateLibraryError(res, 400, 'TEMPLATE_LIBRARY_TARGET_PROTOTYPE_INVALID', 'Invalid targetPrototypeName');
+    return null;
+  }
+  if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+    sendTemplateLibraryError(res, 400, 'TEMPLATE_LIBRARY_TARGET_PROTOTYPE_NOT_FOUND', `Prototype folder not found: ${targetPrototypeName}`);
+    return null;
+  }
+  return targetPrototypeName;
 }
 
 function findExtractedRepoRoot(extractDir: string): string {
@@ -471,7 +520,12 @@ async function handleImportTemplateLibrary(
   const tempRoot = path.join(context.project.root, 'temp', 'template-library');
   const tempDir = path.join(tempRoot, `${Date.now()}-${randomUUID()}`);
   let targetDir = '';
+  let cleanupTargetOnError = false;
   try {
+    const targetPrototypeName = resolveTargetPrototypeName(res, context, targetBaseDir, body?.targetPrototypeName);
+    if (targetPrototypeName === null) {
+      return;
+    }
     const library = await loadRemoteTemplateLibrary();
     const template = library.templates.find((item) => item.id === templateId);
     if (!template) {
@@ -494,11 +548,12 @@ async function handleImportTemplateLibrary(
       return;
     }
 
-    targetDir = path.join(targetBaseDir, template.slug);
+    const folderName = targetPrototypeName || template.slug;
+    targetDir = path.join(targetBaseDir, folderName);
     if (!isPathInside(targetBaseDir, targetDir) || targetDir === path.resolve(targetBaseDir)) {
       throw new Error('Template target path is unsafe');
     }
-    if (fs.existsSync(targetDir)) {
+    if (!targetPrototypeName && fs.existsSync(targetDir)) {
       sendJson(res, {
         error: `Prototype folder already exists: ${template.slug}`,
         code: 'TEMPLATE_LIBRARY_TARGET_EXISTS',
@@ -527,26 +582,32 @@ async function handleImportTemplateLibrary(
     }
 
     fs.mkdirSync(targetBaseDir, { recursive: true });
+    cleanupTargetOnError = true;
+    if (targetPrototypeName) {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    }
     copyDirectoryRecursive(sourceDir, targetDir);
     const indexPath = path.join(targetDir, 'index.tsx');
-    const clientUrl = resolvePrototypeClientUrl(options, context, template.slug);
+    const clientUrl = resolvePrototypeClientUrl(options, context, folderName);
     const filePath = updatePrototypeMetadataAfterImport(context, {
       template,
+      prototypeId: folderName,
       indexPath,
       clientUrl,
     });
+    cleanupTargetOnError = false;
     sendJson(res, {
       success: true,
       projectId: context.project.id,
       templateId: template.id,
-      folderName: template.slug,
-      path: `prototypes/${template.slug}`,
+      folderName,
+      path: `prototypes/${folderName}`,
       filePath,
       absoluteFilePath: indexPath,
       clientUrl,
     });
   } catch (error: any) {
-    if (targetDir && fs.existsSync(targetDir) && isPathInside(targetBaseDir, targetDir)) {
+    if (cleanupTargetOnError && targetDir && fs.existsSync(targetDir) && isPathInside(targetBaseDir, targetDir)) {
       fs.rmSync(targetDir, { recursive: true, force: true });
     }
     const code = error?.code === 'TEMPLATE_LIBRARY_SCHEMA_INVALID'

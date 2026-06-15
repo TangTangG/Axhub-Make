@@ -36,7 +36,7 @@ import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } fro
 import type { SpecQuickEditMode } from '../utils/specQuickEdit';
 import type { ReviewKind } from '../utils/uiReviewPrompt';
 import type { CanvasElementContextInfo } from '../components/content/canvas-embeds/AnnotationOverlay';
-import type { CanvasAiGenerationRequest } from '../domains/ai-generation/CanvasAiGenerationTool';
+import type { CanvasAiGenerationRequest, CanvasAiGenerationResult } from '../domains/ai-generation/CanvasAiGenerationTool';
 import type { AssistantImageAttachmentPayload } from '../domains/assistant/assistantContextPayload';
 
 export type {
@@ -52,6 +52,15 @@ export type PreviewPane = 'primary' | 'secondary';
 export type PrototypePanePromptAction = 'copy-prompt' | 'send-to-genie';
 export type QuickEditRuntimeStatus = 'idle' | 'pending' | 'ready' | 'missing' | 'error';
 export type QuickEditSaveAction = 'save-text' | 'save-style' | 'clear-style';
+export type CreateDialogTab = 'upload' | 'onlineImport';
+export type PrototypeUploadType = 'make' | 'google_stitch' | 'axure_html' | 'figma_make' | 'v0' | 'google_aistudio';
+export type AiPanelMode = 'general-ai' | 'image-ai' | null;
+
+export interface PrototypeCreateDialogOpenOptions {
+    initialTab: CreateDialogTab;
+    initialUploadType?: PrototypeUploadType;
+    targetPrototypeName?: string;
+}
 
 export interface SelectedResourceFolder {
     id: string;
@@ -89,30 +98,23 @@ export interface ExportAvailability {
 export interface CreateDialogState {
     visible: boolean;
     activeTab: TabType;
+    activeProjectId?: string | null;
     initialTab?: CreateDialogTab;
-    selectedThemes: string[];
-    availableThemes: Array<{ name: string; displayName: string }>;
-    selectedDocs: string[];
-    availableDocs: Array<{ name: string; displayName: string }>;
-    selectedDataAssets: string[];
-    availableDataAssets: Array<{ name: string; displayName: string }>;
+    initialUploadType?: PrototypeUploadType;
+    targetPrototypeName?: string;
     resourceWriteCapabilities: ResourceWriteCapabilities;
     preferredPromptClient: PromptClientPreference;
     preferredIDE: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
+    assistantOpen?: boolean;
 }
 
 export interface CreateDialogActions {
     onClose: () => void;
-    setSelectedDocs: (values: string[]) => void;
-    setSelectedThemes: (values: string[]) => void;
-    setSelectedDataAssets: (values: string[]) => void;
-    buildCreatePrompt: () => Promise<string>;
     onAfterCreatePromptAction: () => void;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     onUploadSuccess?: () => void | Promise<void>;
 }
-
-export type CreateDialogTab = 'ai' | 'create' | 'upload';
 
 export interface ExportState {
     open: boolean;
@@ -126,6 +128,8 @@ export interface ExportState {
     preferredPromptClient: PromptClientPreference;
     preferredIDE: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
+    assistantOpen?: boolean;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     initialReviewResult?: ReviewResult | null;
     exportAvailability: ExportAvailability;
 }
@@ -172,6 +176,7 @@ export interface NewSidebarState {
     isDarkMode: boolean;
     sidebarTrees: Record<SidebarTreeTab, SidebarTreeNode[]>;
     webAgentPanelOpen?: boolean;
+    aiPanelMode?: AiPanelMode;
 }
 
 export interface NewSidebarActions {
@@ -210,7 +215,6 @@ export interface NewSidebarActions {
     handleDeleteCanvasItem: (item: ItemData) => void | Promise<void>;
     handleCopyCanvasPath: (item: ItemData) => void | Promise<void>;
     onCreateFolder: (tab: SidebarTreeTab) => Promise<{ createdFolderId: string } | null>;
-    onGenerateThemeFromPrototype?: (item: ItemData) => void;
     onSettingsClick: () => void;
     onToggleTheme: () => void;
     onTitleChange: (title: string) => void | Promise<void>;
@@ -223,13 +227,21 @@ export interface NewSidebarActions {
         folderName: string;
         projectName?: string;
     }) => Promise<unknown>;
+    onCopyMakeProject: (params: {
+        parentRoot: string;
+        folderName: string;
+        projectName?: string;
+    }) => Promise<unknown>;
     onRefreshProjects: () => void | Promise<void>;
     onSidebarTreeChange: (tab: SidebarTreeTab, tree: SidebarTreeNode[]) => void;
     onSidebarTreePersist: (tab: SidebarTreeTab, tree: SidebarTreeNode[]) => void | Promise<void>;
     handleVersionManagement: (item: ItemData) => void;
     handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
     onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenImageAiPanel?: () => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
+    onCloseAiPanel?: () => void;
     onCloseWebAgentPanel?: () => void;
     onOpenAISettings?: () => void;
 }
@@ -276,6 +288,8 @@ export interface PresentationAreaState {
     reviewLoading?: boolean;
     reviewError?: string;
     reviewPageZoomEnabled?: boolean;
+    reviewPrompt?: string;
+    reviewDocumentPath?: string;
     quickEditRuntimeStatus?: QuickEditRuntimeStatus;
     exportAvailability?: ExportAvailability;
     editorMode?: 'none' | 'quickEdit';
@@ -320,11 +334,13 @@ export interface PresentationAreaState {
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
     webAgentPanelOpen?: boolean;
+    aiPanelMode?: AiPanelMode;
     assistantApiBaseUrl?: string;
     assistantProjectPath?: string;
     prototypes?: ItemData[];
     themes?: ThemeResourceItem[];
     defaultThemeName?: string | null;
+    onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;
     onRefreshPrototypes?: () => Promise<ItemData[]>;
 }
 
@@ -400,12 +416,15 @@ export interface PresentationAreaActions {
     onOpenCanvasGenie?: () => void | Promise<void>;
     handleOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
     onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenImageAiPanel?: () => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
+    onCloseAiPanel?: () => void;
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
     onOpenAISettings?: () => void;
     onRefreshPrototypes?: () => Promise<ItemData[]>;
-    onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;
+    onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     onAddCanvasScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;
     onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;
 }

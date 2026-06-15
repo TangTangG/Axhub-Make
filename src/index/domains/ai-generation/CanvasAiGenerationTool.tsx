@@ -7,6 +7,7 @@ import type { ThemeResourceItem } from '../resources/resource.types';
 import type { CanvasAiScene, CanvasAiSubmitRequest } from '../shared/CanvasGenerationComposer';
 import CanvasGenerationComposer from '../shared/CanvasGenerationComposer';
 import type { CanvasImageArtifactEvent } from '../ai-image/canvasImageArtifacts';
+import type { GenerationArtifactRecord } from './generationArtifactHistoryStore';
 import {
   createCanvasReferenceSnapshot,
   renderCanvasReferenceContext,
@@ -81,6 +82,16 @@ export interface CanvasAiGenerationRequest {
   sceneSettings?: CanvasAiSubmitRequest['sceneSettings'];
 }
 
+export interface CanvasAiGenerationResult {
+  ok: boolean;
+  artifacts?: GenerationArtifactRecord[];
+}
+
+interface CanvasAiGenerationSceneSnapshot {
+  elements: readonly any[];
+  appState: any;
+}
+
 interface CanvasAiGenerationToolProps {
   excalidrawAPI: any;
   containerRef: React.RefObject<HTMLDivElement>;
@@ -93,8 +104,8 @@ interface CanvasAiGenerationToolProps {
   onImageArtifact?: (event: CanvasImageArtifactEvent) => void;
   onRefreshPrototypes?: () => Promise<ItemData[]>;
   onOpenAISettings?: () => void;
-  onSceneMutated?: () => void;
-  onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;
+  onSceneMutated?: (snapshot?: CanvasAiGenerationSceneSnapshot) => void;
+  onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
 }
 
 interface SelectedAiGenerationInfo {
@@ -288,11 +299,11 @@ export default function CanvasAiGenerationTool({
             scene,
             artifactKind,
           },
-        }
+      }
         : element
     ));
     excalidrawAPI.updateScene({ elements });
-    onSceneMutated?.();
+    onSceneMutated?.({ elements, appState: excalidrawAPI.getAppState() });
   }, [excalidrawAPI, onSceneMutated]);
 
   const insertGenerator = useCallback((request: CanvasAiGenerationRequest = { scene: 'page', source: 'canvas-toolbar' }) => {
@@ -303,8 +314,9 @@ export default function CanvasAiGenerationTool({
     setPendingInitialLocalContextRefs(localContextRefs);
     ensurePlaceholderFile();
     const appState = excalidrawAPI.getAppState();
+    const currentElements = excalidrawAPI.getSceneElements();
     const placement = request.referencePlacement || resolveCanvasGeneratorPlacement({
-      elements: excalidrawAPI.getSceneElements(),
+      elements: currentElements,
       appState,
     });
     const generator = createCanvasAiGenerationElement({
@@ -328,12 +340,15 @@ export default function CanvasAiGenerationTool({
         generatorId: generator.id,
       });
     }
+    const nextElements = [...currentElements, generator];
+    const nextAppState = {
+      ...appState,
+      selectedElementIds: { [generator.id]: true },
+      selectedGroupIds: {},
+    };
     excalidrawAPI.updateScene({
-      elements: [...excalidrawAPI.getSceneElements(), generator],
-      appState: {
-        selectedElementIds: { [generator.id]: true },
-        selectedGroupIds: {},
-      },
+      elements: nextElements,
+      appState: nextAppState,
     });
     if (placement.needsScroll) {
       const currentZoom = appState.zoom?.value || 1;
@@ -346,7 +361,7 @@ export default function CanvasAiGenerationTool({
         });
       });
     }
-    onSceneMutated?.();
+    onSceneMutated?.({ elements: nextElements, appState: nextAppState });
   }, [ensurePlaceholderFile, excalidrawAPI, onSceneMutated]);
 
   useEffect(() => {
@@ -421,7 +436,7 @@ export default function CanvasAiGenerationTool({
       isCanvasAiGenerationElement(element) && !element.isDeleted
     ));
     if (hasGenerator) {
-      refreshPlaceholderFile(excalidrawAPI);
+      ensurePlaceholderFile();
       if (migrateGeneratorPlaceholders(excalidrawAPI)) {
         onSceneMutated?.();
       }
@@ -502,7 +517,7 @@ export default function CanvasAiGenerationTool({
         width: composerWidth,
       },
     });
-  }, [cancelPendingSelectedGeneratorViewportFit, containerRef, excalidrawAPI, onSceneMutated]);
+  }, [cancelPendingSelectedGeneratorViewportFit, containerRef, ensurePlaceholderFile, excalidrawAPI, onSceneMutated]);
 
   useEffect(() => {
     let raf = 0;
@@ -537,12 +552,12 @@ export default function CanvasAiGenerationTool({
       isCanvasAiGenerationElement(element) && !element.isDeleted
     ));
     if (hasGenerator) {
-      refreshPlaceholderFile(excalidrawAPI);
+      ensurePlaceholderFile();
       if (migrateGeneratorPlaceholders(excalidrawAPI)) {
         onSceneMutated?.();
       }
     }
-  }, [excalidrawAPI, onSceneMutated]);
+  }, [ensurePlaceholderFile, excalidrawAPI, onSceneMutated]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -568,14 +583,16 @@ export default function CanvasAiGenerationTool({
           }
           : element
       ));
+      const nextAppState = {
+        ...excalidrawAPI.getAppState(),
+        selectedElementIds: {},
+        selectedGroupIds: {},
+      };
       excalidrawAPI.updateScene({
         elements,
-        appState: {
-          selectedElementIds: {},
-          selectedGroupIds: {},
-        },
+        appState: nextAppState,
       });
-      onSceneMutated?.();
+      onSceneMutated?.({ elements, appState: nextAppState });
     };
     document.addEventListener('keydown', handleComposerKeyDown, true);
     return () => document.removeEventListener('keydown', handleComposerKeyDown, true);
@@ -658,6 +675,12 @@ export default function CanvasAiGenerationTool({
         scene: normalizeCanvasAiScene(request.scene),
         prompt: request.prompt,
         settings: options.sceneSettings ?? request.sceneSettings,
+        canvasContext: {
+          canvasFilePath,
+          canvasName: canvasFilePath,
+          generatorElementId: generatorId,
+          source: options.source || 'canvas-node',
+        },
       }),
       source: options.source || 'canvas-node',
       generatorId,
@@ -670,7 +693,10 @@ export default function CanvasAiGenerationTool({
       thought: request.thought,
       contextBundle: request.contextBundle,
     });
-    return submitted
+    const submittedOk = typeof submitted === 'object' && submitted !== null
+      ? submitted.ok !== false
+      : Boolean(submitted);
+    return submittedOk
       ? { ok: true, text: '已发送到右侧 AI 助手' }
       : { ok: false, text: 'AI 助手未提交提示词', error: 'AI 助手未提交提示词' };
   }, [

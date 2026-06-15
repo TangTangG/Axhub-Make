@@ -8,6 +8,7 @@ import { isPathInside, resolveProjectPath, type ProjectMetadata, type Registered
 import { readJsonBody, sendFile, sendJson } from './http.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { stripViteDevOnlyModuleImports } from './staticTemplateHtml.ts';
+import { sendUnsupportedFilePreview } from './unsupportedFilePreview.ts';
 
 interface LegacyDocsProjectContext {
   project: RegisteredProject;
@@ -102,6 +103,16 @@ function handleMarkdownFileApi(
         fs.writeFileSync(filePath, String(body?.content ?? ''), 'utf8');
         sendJson(res, { success: true, path: filePath });
       }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
+      return true;
+    }
+    if (sendUnsupportedFilePreview({
+      req,
+      res,
+      docName: path.basename(filePath),
+      filePath,
+      openEndpoint: '/api/docs/open-system',
+      resourceType: 'docs',
+    })) {
       return true;
     }
     if (!sendFile(res, filePath)) {

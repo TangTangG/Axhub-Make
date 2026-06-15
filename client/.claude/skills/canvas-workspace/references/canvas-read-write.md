@@ -49,14 +49,9 @@ src/prototypes/<prototype-name>/canvas-assets/embed-<elementId>.png
 | 原型节点 | `type == "embeddable"` 且 `customData.resourceType == "prototype"`，或 `link`/`previewUrl` 指向原型 |
 | 文档节点 | `type == "embeddable"` 且 `customData.type == "axhub-doc"` 或 `customData.resourceType == "doc"` |
 | 主题节点 | `type == "embeddable"` 且 `customData.resourceType == "theme"` 或 `customData.type == "axhub-theme"` |
-| AI 原型生成节点 | `type == "image"` 且 `customData.type == "axhub-prototype-generator"` |
 | Drawio 节点 | `type == "image"` 且 `customData.type == "axhub-drawio"` |
 | 图片元素 | `type == "image"` |
 | 批注元素 | `customData.annotation` 有值 |
-
-<!--
-暂时停用：AI 图片生成节点与 AI 图片结果节点。需要图片时使用普通图片元素。
--->
 
 Axhub 节点字段见 `axhub-nodes.md`。
 

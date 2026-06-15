@@ -192,10 +192,13 @@ describe('release make artifact helpers', () => {
     const clientRoot = path.join(sourceRoot, 'client');
     writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
     writeFile(path.join(clientRoot, 'src/prototypes/template-home/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/prototype-comments.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/prototype-review.md'), '# Keep review\n');
     writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.ttf'), 'source font\n');
     writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'), 'subset font\n');
     writeFile(path.join(clientRoot, 'tests/template.test.mjs'), 'export {};\n');
     writeFile(path.join(clientRoot, '.git/config'), '[core]\n');
+    writeFile(path.join(clientRoot, '.drawio-tmp/order-flow/order-flow.spec.yaml'), 'id: order-flow\n');
     writeFile(path.join(clientRoot, 'node_modules/left-pad/index.js'), 'module.exports = null;\n');
     writeFile(path.join(clientRoot, 'dist/build.js'), 'console.log("built");\n');
     writeFile(path.join(clientRoot, '.agents/skills/local/SKILL.md'), 'npm run typecheck\n');
@@ -222,10 +225,13 @@ describe('release make artifact helpers', () => {
     const entries = releaseMake.listZipEntries(result.path);
     assert(entries.includes('package.json'));
     assert(entries.includes('src/prototypes/template-home/index.tsx'));
+    assert(!entries.includes('src/prototypes/template-home/.spec/prototype-comments.json'));
+    assert(entries.includes('src/prototypes/template-home/.spec/prototype-review.md'));
     assert(!entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.ttf'));
     assert(entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'));
     assert(!entries.some((entry) => entry.startsWith('tests/')));
     assert(!entries.some((entry) => entry.startsWith('.git/')));
+    assert(!entries.some((entry) => entry.startsWith('.drawio-tmp/')));
     assert(!entries.some((entry) => entry.startsWith('node_modules/')));
     assert(!entries.some((entry) => entry.startsWith('dist/')));
     assert(entries.includes('.agents/skills/local/SKILL.md'));
@@ -488,7 +494,7 @@ describe('release make artifact helpers', () => {
   it('sanitizes bundled local machine paths without changing file size', () => {
     const root = createTempRoot('axhub-release-bundle-sanitize-');
     const bundlePath = path.join(root, 'cli.mjs');
-    const source = 'var __dirname = "/Volumes/example/rd/Axhub Runtime/node_modules/typescript/lib";\n'
+    const source = 'var __dirname = "/Users/builder/repo/node_modules/typescript/lib";\n'
       + 'var __filename = "C:\\\\Users\\\\builder\\\\repo\\\\node_modules\\\\typescript\\\\lib\\\\typescript.js";\n';
     writeFile(bundlePath, source);
 

@@ -153,4 +153,12 @@ describe('make-server canvas hot-update filter', () => {
     expect(viteConfigSource).toContain('!config.server.middlewareMode');
     expect(viteConfigSource).toContain('releaseListeningProcessesOnPort(config.server.port ?? DEFAULT_MAKE_SERVER_PORT)');
   });
+
+  it('serves the admin entry when the standalone Vite dev root is opened', () => {
+    const viteConfigSource = readFileSync(resolve(__dirname, '../../vite.config.ts'), 'utf8');
+
+    expect(viteConfigSource).toContain('adminRootDevEntryRedirectPlugin()');
+    expect(viteConfigSource).toContain("res.statusCode = 302");
+    expect(viteConfigSource).toContain("res.setHeader('Location', `/src/index/index.html${query}`)");
+  });
 });

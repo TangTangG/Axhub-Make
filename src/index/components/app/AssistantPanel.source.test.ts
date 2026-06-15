@@ -18,6 +18,13 @@ describe('AssistantPanel source', () => {
     expect(source).not.toContain('title="Axhub Genie"');
   });
 
+  it('allows the embedded ACP UI to request clipboard write permission', () => {
+    const source = readFileSync(resolve(__dirname, './AssistantPanel.tsx'), 'utf8');
+
+    expect(source).toContain('allow="clipboard-write"');
+    expect(source).not.toContain('sandbox=');
+  });
+
   it('shows a full-panel assistant context drop overlay only for assistant-context drags', () => {
     const source = readFileSync(resolve(__dirname, './AssistantPanel.tsx'), 'utf8');
 

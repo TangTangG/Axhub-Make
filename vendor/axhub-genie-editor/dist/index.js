@@ -22321,6 +22321,119 @@ function createParentSelectCorner(options) {
   };
 }
 
+// src/utils/annotation-shadow-hit-test.ts
+var AXHUB_ANNOTATION_HOST_ID = "__axhub_annotation_host__";
+var AXHUB_ANNOTATION_SHELL_IDS = /* @__PURE__ */ new Set([
+  AXHUB_ANNOTATION_HOST_ID,
+  "__axhub_annotation_overlay__",
+  "__axhub_annotation_ui__"
+]);
+var AXHUB_ANNOTATION_COMMENT_TARGET_ATTR = "data-axhub-annotation-comment-target";
+function isFinitePoint(x, y) {
+  return Number.isFinite(x) && Number.isFinite(y);
+}
+function getAnnotationShadowRoot() {
+  if (typeof document === "undefined" || typeof document.getElementById !== "function") {
+    return null;
+  }
+  const host = document.getElementById(AXHUB_ANNOTATION_HOST_ID);
+  const shadowRoot = host?.shadowRoot;
+  if (!shadowRoot || typeof shadowRoot !== "object") return null;
+  return shadowRoot;
+}
+function isAnnotationShellElement(element) {
+  const id = element.id;
+  return typeof id === "string" && AXHUB_ANNOTATION_SHELL_IDS.has(id);
+}
+function isPointerPassthroughElement(element) {
+  try {
+    return window.getComputedStyle(element).pointerEvents === "none";
+  } catch {
+    return false;
+  }
+}
+function getAttributeValue(element, name) {
+  try {
+    return element.getAttribute(name) ?? "";
+  } catch {
+    return "";
+  }
+}
+function readRect(element) {
+  try {
+    const rect = element.getBoundingClientRect();
+    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) return null;
+    if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
+    return rect;
+  } catch {
+    return null;
+  }
+}
+function isNearFullViewportElement(element) {
+  const rect = readRect(element);
+  if (!rect) return false;
+  const viewportWidth = Math.max(1, window.innerWidth || document.documentElement?.clientWidth || 1);
+  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement?.clientHeight || 1);
+  const viewportArea = viewportWidth * viewportHeight;
+  const area = rect.width * rect.height;
+  if (!Number.isFinite(area) || area <= 0) return false;
+  return area / viewportArea > 0.85 && rect.width >= viewportWidth * 0.9 && rect.height >= viewportHeight * 0.9;
+}
+function isAnnotationCommentTarget(element) {
+  return getAttributeValue(element, AXHUB_ANNOTATION_COMMENT_TARGET_ATTR) === "true";
+}
+function resolveAnnotationCommentTarget(element) {
+  let current = element;
+  while (current) {
+    if (isAnnotationCommentTarget(current)) return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+function uniqueElements(elements) {
+  const seen = /* @__PURE__ */ new Set();
+  const result = [];
+  for (const element of elements) {
+    if (seen.has(element)) continue;
+    seen.add(element);
+    result.push(element);
+  }
+  return result;
+}
+function readShadowElementsFromPoint(shadowRoot, x, y) {
+  try {
+    if (typeof shadowRoot.elementsFromPoint === "function") {
+      const elements = shadowRoot.elementsFromPoint(x, y);
+      return Array.isArray(elements) ? elements : Array.from(elements ?? []);
+    }
+  } catch {
+  }
+  try {
+    if (typeof shadowRoot.elementFromPoint === "function") {
+      const element = shadowRoot.elementFromPoint(x, y);
+      return element ? [element] : [];
+    }
+  } catch {
+  }
+  return [];
+}
+function getAxhubAnnotationShadowHitElementsAtPoint(x, y) {
+  if (!isFinitePoint(x, y)) return [];
+  const shadowRoot = getAnnotationShadowRoot();
+  if (!shadowRoot) return [];
+  const hitElements = readShadowElementsFromPoint(shadowRoot, x, y).filter(
+    (element) => !isAnnotationShellElement(element) && !isPointerPassthroughElement(element)
+  );
+  const declaredTargets = uniqueElements(
+    hitElements.map((element) => resolveAnnotationCommentTarget(element)).filter((element) => Boolean(element))
+  );
+  return declaredTargets.length > 0 ? declaredTargets : hitElements;
+}
+function getAxhubAnnotationShadowHitElementAtPoint(x, y) {
+  const elements = getAxhubAnnotationShadowHitElementsAtPoint(x, y);
+  return elements.find((element) => !isNearFullViewportElement(element)) ?? elements[0] ?? null;
+}
+
 // src/selection/selection-engine.ts
 var MAX_HIT_ELEMENTS = 8;
 var MAX_ANCESTOR_DEPTH = 6;
@@ -22407,6 +22520,8 @@ function getParentElementOrHost(element) {
 }
 function getHitElementsAtPoint(x, y) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+  const annotationHit = getAxhubAnnotationShadowHitElementsAtPoint(x, y);
+  if (annotationHit.length > 0) return annotationHit;
   try {
     if (typeof document.elementsFromPoint === "function") {
       return document.elementsFromPoint(x, y);
@@ -22421,7 +22536,7 @@ function getViewportArea() {
   const h = Math.max(1, window.innerHeight || 1);
   return w * h;
 }
-function readRect(element) {
+function readRect2(element) {
   try {
     const rect = element.getBoundingClientRect();
     if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) return null;
@@ -22565,7 +22680,7 @@ function createSelectionEngine(options) {
     if (isOverlayElement(element)) return null;
     const tag = element.tagName.toUpperCase();
     if (tag === "HTML" || tag === "BODY") return null;
-    const rect = readRect(element);
+    const rect = readRect2(element);
     if (!rect) return null;
     let style = styleCache.get(element);
     if (!style) {
@@ -22602,7 +22717,9 @@ function createSelectionEngine(options) {
     return { element, score, reasons, wrapperOnly };
   }
   function getCandidatesAtPoint(x, y) {
-    const hit = getHitElementsAtPoint(x, y);
+    const annotationHit = getAxhubAnnotationShadowHitElementsAtPoint(x, y);
+    const isAnnotationShadowHit = annotationHit.length > 0;
+    const hit = isAnnotationShadowHit ? annotationHit : getHitElementsAtPoint(x, y);
     if (hit.length === 0) return [];
     const map = /* @__PURE__ */ new Map();
     function addCandidate(element, meta) {
@@ -22617,6 +22734,7 @@ function createSelectionEngine(options) {
     for (let i = 0; i < limit; i++) {
       const el = hit[i];
       addCandidate(el, { hitOrder: i, depthFromHit: 0 });
+      if (isAnnotationShadowHit) continue;
       let current = el;
       for (let depth = 1; depth <= MAX_ANCESTOR_DEPTH; depth++) {
         current = current ? getParentElementOrHost(current) : null;
@@ -22646,7 +22764,7 @@ function createSelectionEngine(options) {
       if (isOverlayElement(parent)) return null;
       const tag = parent.tagName.toUpperCase();
       if (tag === "HTML" || tag === "BODY") return null;
-      const rect = readRect(parent);
+      const rect = readRect2(parent);
       if (!rect) {
         parent = getParentElementOrHost(parent);
         continue;
@@ -22717,6 +22835,10 @@ function createSelectionEngine(options) {
   function findBestTargetFromEvent(event, modifiers) {
     const pathElements = getComposedPathElements(event);
     const point = extractClientPoint(event);
+    const annotationHitElements = point ? getAxhubAnnotationShadowHitElementsAtPoint(point.x, point.y) : [];
+    if (annotationHitElements.length > 0 && point) {
+      return findBestTarget(point.x, point.y, modifiers);
+    }
     if (modifiers.ctrl || modifiers.meta) {
       const innermost = findInnermostVisible(pathElements);
       if (innermost) return innermost;
@@ -23155,7 +23277,7 @@ function createEventController(options) {
     if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
       return null;
     }
-    const element = document.elementFromPoint(clientX, clientY);
+    const element = getAxhubAnnotationShadowHitElementAtPoint(clientX, clientY) ?? document.elementFromPoint(clientX, clientY);
     if (!element) return null;
     if (isOverlayElement(element)) return null;
     const resolved = resolveTargetForHover ? resolveTargetForHover(element) : element;

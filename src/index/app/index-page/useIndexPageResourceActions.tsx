@@ -3,7 +3,6 @@ import type { CanvasItem, ItemData, SidebarTreeNode, SidebarTreeTab } from '../.
 import type { SelectedResourceFolder, UploadedResourceFile } from '../../types/index-page.types';
 import PromptActionButton from '../../components/PromptActionButton';
 import { sidebarApi } from '../../services/sidebar.api';
-import { generateCreateThemePrompt } from '../../utils';
 import { hasExplicitLocalPath } from '../../utils/localPath';
 import { removeDocsSidebarTreeItem, sanitizeSidebarTree } from '../../utils/sidebarTree';
 import {
@@ -161,8 +160,6 @@ export function useIndexPageResourceActions(params: any) {
         setSidebarTrees,
         projectTitle,
         setProjectTitle,
-        availableDocOptions,
-        availablePrototypeOptions,
         messageApi,
         modal,
         appDialog,
@@ -171,6 +168,7 @@ export function useIndexPageResourceActions(params: any) {
         setSidebarTab,
         setViewMode,
         setResourceSection,
+        setPendingReturnTarget,
         loadData,
         loadProjects,
         reloadSidebarAssets,
@@ -188,9 +186,7 @@ export function useIndexPageResourceActions(params: any) {
     const [selectedTheme, setSelectedTheme] = useState<any>(null);
     const [selectedDataTable, setSelectedDataTable] = useState<any>(null);
     const [themeCreateDialogVisible, setThemeCreateDialogVisible] = useState(false);
-    const [initialThemeDialogTab, setInitialThemeDialogTab] = useState<'ai' | 'prompt' | 'import'>('ai');
-    const [selectedThemeDocRefs, setSelectedThemeDocRefs] = useState<string[]>([]);
-    const [selectedThemeReferencePages, setSelectedThemeReferencePages] = useState<string[]>([]);
+    const [initialThemeDialogTab, setInitialThemeDialogTab] = useState<'import' | 'onlineSelect'>('import');
     const [versionDialogVisible, setVersionDialogVisible] = useState(false);
     const [currentVersionItem, setCurrentVersionItem] = useState<ItemData | null>(null);
     const [docReferencePromptDialog, setDocReferencePromptDialog] = useState<any>(null);
@@ -350,9 +346,7 @@ export function useIndexPageResourceActions(params: any) {
 
     const clearThemeCreateDialogState = useCallback(() => {
         setThemeCreateDialogVisible(false);
-        setInitialThemeDialogTab('ai');
-        setSelectedThemeDocRefs([]);
-        setSelectedThemeReferencePages([]);
+        setInitialThemeDialogTab('import');
     }, []);
 
     const handleThemeCreateCancel = useCallback(() => {
@@ -1348,7 +1342,7 @@ export function useIndexPageResourceActions(params: any) {
 
     const handleCreatePlaceholderPrototype = useCallback(async () => {
         try {
-            const response = await fetch('/api/prototypes/create-placeholder', {
+            const response = await fetch(buildResourceUrl('/api/prototypes/create-placeholder'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({}),
@@ -1358,6 +1352,15 @@ export function useIndexPageResourceActions(params: any) {
                 throw new Error((payload as any)?.error || '创建原型失败');
             }
             const result = await response.json();
+            const createdName = String(result?.name || '').trim();
+            if (createdName && typeof setPendingReturnTarget === 'function') {
+                setPendingReturnTarget({
+                    sidebarTab: 'prototype',
+                    resourceId: createdName,
+                    pageId: null,
+                    viewMode: 'demo',
+                });
+            }
             await loadData();
             // Select the newly created prototype and show its Admin-owned empty guide.
             const items = getSidebarTabItems?.('prototypes') || data?.prototypes || [];
@@ -1375,7 +1378,7 @@ export function useIndexPageResourceActions(params: any) {
         } catch (error: any) {
             messageApi.error(error?.message || '创建原型失败');
         }
-    }, [messageApi, loadData, data, getSidebarTabItems, setSelectedItem, setSidebarTab, setActiveTab, setViewMode]);
+    }, [buildResourceUrl, messageApi, loadData, data, getSidebarTabItems, setSelectedItem, setSidebarTab, setActiveTab, setPendingReturnTarget, setViewMode]);
 
     const handleRenameCanvasItem = useCallback(async (item: ItemData, nextName: string) => {
         const hide = messageApi.loading('正在重命名...', 0);
@@ -1477,26 +1480,6 @@ export function useIndexPageResourceActions(params: any) {
         }
     }, [getSidebarTabItems, messageApi, setSidebarTrees]);
 
-    const handleGenerateThemeFromPrototype = useCallback(async (item?: ItemData) => {
-        try {
-            const selectedReferencePages = item?.name ? [item.name] : [];
-            const prompt = generateCreateThemePrompt(
-                [],
-                availableDocOptions,
-                selectedReferencePages,
-                availablePrototypeOptions,
-            );
-            if (!prompt.trim()) {
-                messageApi.warning('没有可复制的提示词');
-                return;
-            }
-            await navigator.clipboard.writeText(prompt);
-            messageApi.success('提示词已复制');
-        } catch {
-            messageApi.error('复制提示词失败');
-        }
-    }, [availableDocOptions, availablePrototypeOptions, messageApi]);
-
     const handleSidebarTreeChange = useCallback((tab: SidebarTreeTab, nextTree: SidebarTreeNode[]) => {
         const items = getSidebarTabItems(tab);
         const normalizedTree = sanitizeSidebarTree(tab, nextTree, items);
@@ -1579,10 +1562,6 @@ export function useIndexPageResourceActions(params: any) {
         setThemeCreateDialogVisible,
         initialThemeDialogTab,
         setInitialThemeDialogTab,
-        selectedThemeDocRefs,
-        setSelectedThemeDocRefs,
-        selectedThemeReferencePages,
-        setSelectedThemeReferencePages,
         versionDialogVisible,
         setVersionDialogVisible,
         currentVersionItem,
@@ -1592,12 +1571,6 @@ export function useIndexPageResourceActions(params: any) {
         themes: orderedThemes,
         dataTables: orderedDataTables,
         templateAssets: orderedTemplates,
-        buildThemePrompt: () => generateCreateThemePrompt(
-            selectedThemeDocRefs,
-            availableDocOptions,
-            selectedThemeReferencePages,
-            availablePrototypeOptions,
-        ),
         clearThemeCreateDialogState,
         handleThemeCreateCancel,
         refreshSidebarAssets,
@@ -1634,7 +1607,6 @@ export function useIndexPageResourceActions(params: any) {
         handleDeleteCanvasItem,
         handleCopyCanvasPath,
         handleCreateFolder,
-        handleGenerateThemeFromPrototype,
         handleProjectTitleChange: async (title: string) => {
             const nextTitle = title.trim();
             const previousTitle = projectTitle;

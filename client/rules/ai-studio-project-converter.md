@@ -10,11 +10,9 @@
 
 ## 预处理
 
-```bash
-node scripts/ai-studio-converter.mjs <ai-studio-project-dir> [output-name]
-```
+Make 服务端上传接口会自动运行内置 AI Studio 预处理器。它会复制项目、分析 Import Map、样式、依赖和环境变量，并生成任务文档与分析 JSON。预处理器不直接修改业务代码。
 
-脚本位于客户端项目 `scripts/` 目录。它会复制项目、分析 Import Map、样式、依赖和环境变量，并生成任务文档与分析 JSON。脚本不直接修改业务代码。
+如果项目需要覆盖默认预处理行为，可以在目标项目中提供 `scripts/ai-studio-converter.mjs`；否则使用服务端内置版本。
 
 ## 典型结构
 

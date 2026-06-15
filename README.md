@@ -13,8 +13,6 @@
 - 面向新手的免费教程和上手路径
 - 可分享、可导出、可交付的原型成果
 
-官网：[https://axhub.im/make/](https://axhub.im/make/)
-
 ## 直接启动
 
 在你的项目目录里运行：
@@ -75,6 +73,7 @@ npx -y @axhub/make@latest
 | --- | --- |
 | 原型生产全链路 | 从需求分析、原型生成、批注编辑、原型评审到发布交付，覆盖产品想法落地的完整闭环。 |
 | 原型即 PRD | 用可运行页面承载流程、状态、字段、交互和业务说明，让需求不再散落在文档、截图和聊天记录里。 |
+| 多平台导入 | 支持 Axhub Make ZIP 包、Google Stitch、Axure HTML 原型、Figma Make、V0 App 和 Google AIStudio 等来源统一导入。 |
 | 免费资源库 | 内置新手教程、100+ 设计规范和 10+ 行业原型，帮助团队从模板、规范和案例直接起步。 |
 | 最强发布交付 | 支持云服务发布、HTML 导出、Figma 交付，以及独家 Axure 发布链路，满足评审、分享和正式交付。 |
 | 产品团队工作台 | 开源可自定义，支持多人协作和远程工作，把产品、设计、研发与 AI Agent 放在同一个项目上下文里。 |
@@ -83,9 +82,13 @@ npx -y @axhub/make@latest
 
 ![原型即 PRD](assets/images/make-demo-prd-annotation.png)
 
-![空原型引导](assets/images/make-demo-empty-prototype.png)
+![新建原型](assets/images/make-demo-empty-prototype.png)
 
 ![设计系统浏览](assets/images/make-demo-design-system.png)
+
+![在线对话](assets/images/make-demo-online-chat.png)
+
+![在线生图](assets/images/make-demo-online-image.png)
 
 ## 用户群
 

@@ -37,6 +37,7 @@ interface CloudPublishingHandlers {
   ) => CloudPublishingContext | null;
   resolveSourceFileFromMetadata: (context: CloudPublishingContext, targetPath: string) => string | null;
   findProjectResourceByPath: (metadata: unknown, targetPath: string) => any;
+  getDeclaredResourceWriteDir?: (context: CloudPublishingContext, type: 'media') => string | null;
   readProjectConfig: (projectRoot: string) => any;
   commandExecutor?: CommandExecutor;
   sendDisabledCapability: (
@@ -1319,6 +1320,7 @@ export function handleCloudPublishingApi(
           displayName: stringValue(resource?.title) || stringValue(resource?.name) || path.basename(path.dirname(sourceFile)),
           group: normalizedTargetPath.replace(/^src\//u, '').split('/')[0] || 'prototypes',
           includeSource: config.publishSettings?.includeSource === true,
+          mediaRoot: handlers.getDeclaredResourceWriteDir?.(context, 'media') || undefined,
         });
         const result = await publishTarget(target, config, files, context.project.root, handlers.commandExecutor);
         const url = result.url;

@@ -4,30 +4,22 @@ import { PromptClientPreference } from '../../types';
 import type { ResourceWriteCapabilities } from '../../services/projectResources';
 import CreateThemeDialog from './CreateThemeDialogView';
 
-interface DocOption {
-    name: string;
-    displayName: string;
-}
+type ThemeDialogTab = 'import' | 'onlineSelect';
 
 interface CreateThemeDialogContainerProps {
     state: {
         visible: boolean;
-        initialTab?: 'ai' | 'prompt' | 'import';
-        selectedDocs: string[];
-        availableDocs: DocOption[];
-        selectedReferencePages?: string[];
-        availableReferencePages?: DocOption[];
+        initialTab?: ThemeDialogTab;
         resourceWriteCapabilities: ResourceWriteCapabilities;
         preferredPromptClient: PromptClientPreference;
         preferredIDE: MainIDEPreference;
         ideAvailability?: IDEAvailabilityMap;
+        assistantOpen?: boolean;
     };
     actions: {
         onClose: () => void;
-        setSelectedDocs: (docs: string[]) => void;
-        setSelectedReferencePages?: (pages: string[]) => void;
-        buildCreateThemePrompt: () => Promise<string> | string;
         onAfterCreatePromptAction: () => void;
+        onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
         onImportSuccess?: () => void | Promise<void>;
     };
 }
@@ -41,17 +33,12 @@ export default function CreateThemeDialogContainer({
             visible={state.visible}
             onClose={actions.onClose}
             initialTab={state.initialTab}
-            selectedDocs={state.selectedDocs}
-            setSelectedDocs={actions.setSelectedDocs}
-            availableDocs={state.availableDocs}
-            selectedReferencePages={state.selectedReferencePages}
-            setSelectedReferencePages={actions.setSelectedReferencePages}
-            availableReferencePages={state.availableReferencePages}
             resourceWriteCapabilities={state.resourceWriteCapabilities}
             preferredPromptClient={state.preferredPromptClient}
             preferredIDE={state.preferredIDE}
             ideAvailability={state.ideAvailability}
-            buildCreateThemePrompt={actions.buildCreateThemePrompt}
+            assistantOpen={state.assistantOpen}
+            onExecutePrompt={actions.onExecutePrompt}
             onAfterCreatePromptAction={actions.onAfterCreatePromptAction}
             onImportSuccess={actions.onImportSuccess}
         />

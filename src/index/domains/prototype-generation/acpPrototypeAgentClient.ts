@@ -125,12 +125,19 @@ export function buildPrototypeGenerationPrompt({
   knownPrototypes,
   settings,
 }: PrototypeGenerationPromptOptions): string {
-  const requestedCount = Math.max(1, Math.min(4, Math.round(Number(settings?.count) || 1)));
+  const hasRequestedCount = typeof settings?.count === 'number' && Number.isFinite(settings.count);
+  const requestedCount = hasRequestedCount
+    ? Math.max(1, Math.min(4, Math.round(Number(settings.count))))
+    : null;
   const theme = settings?.theme?.name
     ? `${settings.theme.name}${settings.theme.displayName && settings.theme.displayName !== settings.theme.name ? ` (${settings.theme.displayName})` : ''}`
-    : '未指定';
+    : '';
   const targetPrototypeName = currentPrototype?.name || derivePrototypeIdFromCanvasPath(canvasFilePath);
   const targetPrototypeDirectory = targetPrototypeName ? `src/prototypes/${targetPrototypeName}/` : 'unknown';
+  const explicitScopeLines = [
+    requestedCount == null ? '' : `- 数量：${requestedCount}（当前 prototype 下页面/方案数）`,
+    theme ? `- 设计系统：${theme}` : '',
+  ].filter(Boolean);
 
   return [
     '你正在为 Axhub Make 当前项目生成/更新 prototype 原型资源；这是一次非交互式任务：用户无法补充信息，不要追问用户，直接完成。',
@@ -140,7 +147,7 @@ export function buildPrototypeGenerationPrompt({
     '',
     '原型生成范围：',
     `- 只在当前 prototype 中新增/更新页面；目标目录：${targetPrototypeDirectory}`,
-    `- 数量：${requestedCount}（当前 prototype 下页面/方案数）；设计系统：${theme}。`,
+    ...explicitScopeLines,
     '- 无页面时创建默认页面并补齐 metadata；不覆盖无关页面。',
     '- 原型 id 使用小写字母、数字和连字符；直接改文件生成可预览原型。',
     '',

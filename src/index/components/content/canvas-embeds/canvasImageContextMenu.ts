@@ -28,6 +28,8 @@ export interface CanvasImageContextMenuState {
   showNodeContextToAI: boolean;
   showOriginalImageToAI: boolean;
   showImageQuickActions: boolean;
+  showCopyOriginalImage: boolean;
+  showBackgroundToTransparent: boolean;
   quickPrompts: readonly CanvasAiQuickPrompt[];
 }
 
@@ -68,6 +70,8 @@ export function resolveCanvasImageContextMenuState({
     showNodeContextToAI: Boolean(bridgeConnected && canAddNodesToAI && selected.length > 0 && !isSingleImageSelection),
     showOriginalImageToAI,
     showImageQuickActions: showOriginalImageToAI,
+    showCopyOriginalImage: Boolean(isSingleImageSelection && singleImageHasOriginalData),
+    showBackgroundToTransparent: Boolean(isSingleImageSelection && singleImageHasOriginalData),
     quickPrompts: showOriginalImageToAI ? getCanvasAiSceneQuickPrompts('design') : [],
   };
 }

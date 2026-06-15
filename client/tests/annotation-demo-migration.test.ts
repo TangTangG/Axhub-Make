@@ -72,7 +72,7 @@ describe('annotation demo migration', () => {
     expect(annotationSource.format).toBe('axhub-annotation-source');
     expect(annotationSource.markdownMap).toHaveProperty('prototype-as-prd');
     expect(annotationSource.markdownMap['prototype-as-prd']).toContain('| 对比维度 |');
-    expect(annotationSource.markdownMap['prototype-as-prd']).toContain('| 传统 PRD |');
+    expect(annotationSource.markdownMap['prototype-as-prd']).toContain('| 原型 + PRD |');
   });
 
   it('does not expose the retired annotation display-mode controls in demos', () => {

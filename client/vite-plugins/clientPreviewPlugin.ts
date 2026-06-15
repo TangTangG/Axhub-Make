@@ -145,7 +145,10 @@ function handleHtmlProxyModuleRequestWithProjectContext(
   next();
 }
 
-function normalizeRoute(url: string): { type: ResourceType; name: string; action: 'preview' | 'spec'; assetPath?: string } | null {
+function normalizeRoute(
+  url: string,
+  projectRoot = process.cwd(),
+): { type: ResourceType; name: string; action: 'preview' | 'spec'; assetPath?: string } | null {
   const pathname = (url.split('?')[0] || '').replace(/\/index\.html$/u, '').replace(/\.html$/u, '');
   const parts = pathname.split('/').filter(Boolean).map((part) => {
     try {
@@ -154,12 +157,15 @@ function normalizeRoute(url: string): { type: ResourceType; name: string; action
       return part;
     }
   });
+  if (parts.some((part) => part.includes('/') || part.includes('\\') || part.includes('\0'))) {
+    return null;
+  }
   const type = parts[0] as ResourceType;
   if (!PREVIEW_TYPES.has(type) || parts.length < 2) {
     return null;
   }
   const lastPart = parts[parts.length - 1] || '';
-  const isAssetRequest = /\.(css|png|jpe?g|webp|svg)$/iu.test(lastPart);
+  const isAssetRequest = /\.(css|png|jpe?g|webp|svg|gif|avif|ico|json|txt|woff2?|ttf|otf|eot)$/iu.test(lastPart);
   const action = parts[parts.length - 1] === 'spec' ? 'spec' : 'preview';
   let nameParts = action === 'spec' || isAssetRequest ? parts.slice(1, -1) : parts.slice(1);
   let assetParts = isAssetRequest ? [lastPart] : [];
@@ -168,6 +174,24 @@ function normalizeRoute(url: string): { type: ResourceType; name: string; action
     if (canvasAssetsIndex > 1) {
       nameParts = parts.slice(1, canvasAssetsIndex);
       assetParts = parts.slice(canvasAssetsIndex);
+    } else {
+      const resourceRoot = path.resolve(projectRoot, 'src', type);
+      let resolvedNameParts = nameParts;
+      let resolvedAssetParts = assetParts;
+      for (let splitIndex = 2; splitIndex < parts.length; splitIndex += 1) {
+        const candidateNameParts = parts.slice(1, splitIndex);
+        const candidateResourceDir = path.resolve(resourceRoot, ...candidateNameParts);
+        if (
+          fs.existsSync(path.join(candidateResourceDir, 'index.tsx'))
+          || fs.existsSync(path.join(candidateResourceDir, 'index.ts'))
+        ) {
+          resolvedNameParts = candidateNameParts;
+          resolvedAssetParts = parts.slice(splitIndex);
+          break;
+        }
+      }
+      nameParts = resolvedNameParts;
+      assetParts = resolvedAssetParts;
     }
   }
   const name = nameParts.join('/');
@@ -542,6 +566,16 @@ function sendPreviewFile(res: {
     '.jpeg': 'image/jpeg',
     '.webp': 'image/webp',
     '.svg': 'image/svg+xml',
+    '.gif': 'image/gif',
+    '.avif': 'image/avif',
+    '.ico': 'image/x-icon',
+    '.json': 'application/json; charset=utf-8',
+    '.txt': 'text/plain; charset=utf-8',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.otf': 'font/otf',
+    '.eot': 'application/vnd.ms-fontobject',
   };
   res.statusCode = 200;
   res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
@@ -580,6 +614,15 @@ function isCssModuleRequest(
   }
 }
 
+function isViteAssetModuleRequest(requestUrl: string): boolean {
+  try {
+    const searchParams = new URL(requestUrl || '/', 'http://localhost').searchParams;
+    return ['import', 'url', 'raw', 'inline', 'worker', 'sharedworker'].some((key) => searchParams.has(key));
+  } catch {
+    return /[?&](?:import|url|raw|inline|worker|sharedworker)(?:[=&]|$)/u.test(requestUrl || '');
+  }
+}
+
 function resolvePreviewAssetPath(projectRoot: string, route: {
   type: ResourceType;
   name: string;
@@ -590,12 +633,6 @@ function resolvePreviewAssetPath(projectRoot: string, route: {
   const assetPath = route.assetPath.replace(/\\/gu, '/');
   const assetParts = assetPath.split('/').filter(Boolean);
   if (assetParts.length === 0 || assetParts.some((part) => part === '..')) {
-    return null;
-  }
-  if (
-    assetParts.length > 1
-    && (route.type !== 'prototypes' || assetParts[0] !== PROTOTYPE_CANVAS_ASSETS_DIR)
-  ) {
     return null;
   }
 
@@ -742,7 +779,7 @@ export function clientPreviewPlugin(): Plugin {
             return;
           }
 
-          const route = normalizeRoute(req.url);
+          const route = normalizeRoute(req.url, projectRoot);
           if (!route) {
             next();
             return;
@@ -756,6 +793,10 @@ export function clientPreviewPlugin(): Plugin {
           }
 
           if (route.assetPath) {
+            if (isViteAssetModuleRequest(req.url)) {
+              next();
+              return;
+            }
             if (isCssModuleRequest(req, route.assetPath)) {
               next();
               return;

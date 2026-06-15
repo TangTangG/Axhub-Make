@@ -831,6 +831,35 @@ describe('make-server project APIs', () => {
     }
   });
 
+  it('does not list make client versions in the project registry payload', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'versioned-client', 'Versioned Client');
+    writeMakeClientPackageForProject(projectRoot);
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'versioned-client', name: 'Versioned Client' },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const register = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(register.status).toBe(201);
+
+      const list = await fetch(`${server.origin}/api/projects`).then((response) => response.json());
+      expect(list.projects).toEqual([
+        expect.objectContaining({
+          id: 'versioned-client',
+        }),
+      ]);
+      expect(list.projects[0]).not.toHaveProperty('clientVersion');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects doc content reads when metadata points outside the project root', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');

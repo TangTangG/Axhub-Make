@@ -11,7 +11,7 @@ import {
     Trae,
     Windsurf,
 } from '@lobehub/icons';
-import { Check, ChevronDown, ChevronRight, CircleHelp, Loader2, MoreHorizontal, Settings, Sparkles, SquareTerminal } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, CircleHelp, ImageIcon, Loader2, MoreHorizontal, Settings, Sparkles, SquareTerminal } from 'lucide-react';
 import {
     getVisibleIDEOptions,
     IDEAvailabilityMap,
@@ -60,6 +60,9 @@ interface OpenInDropdownProps {
     onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     webAgentPanelOpen?: boolean;
+    aiPanelMode?: 'general-ai' | 'image-ai' | null;
+    onOpenImageAiPanel?: () => void | Promise<void>;
+    onCloseAiPanel?: () => void;
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
     onOpenAISettings?: () => void;
@@ -91,8 +94,12 @@ type LocalAppOpenOption =
     | { kind: 'ide'; option: (typeof MAIN_IDE_OPTIONS)[number] };
 
 const WEB_AI_OPEN_OPTION = {
-    label: '打开 Web AI',
+    label: '对话 AI',
     webAgent: 'genie' as const,
+};
+
+const IMAGE_AI_OPEN_OPTION = {
+    label: '生图 AI',
 };
 
 const resolveStoredWebOpenMethod = (method: OpenMethod) => {
@@ -117,6 +124,9 @@ export default function OpenInDropdown({
     ideAvailability,
     onOpenGenieWebAgent,
     webAgentPanelOpen,
+    aiPanelMode,
+    onOpenImageAiPanel,
+    onCloseAiPanel,
     onCloseWebAgentPanel,
     onPreferredIDEChange,
     onOpenAISettings,
@@ -154,6 +164,9 @@ export default function OpenInDropdown({
     // Resolve the current open method from preferredIDE (which may contain `web:opencode` etc.)
     const openMethod: OpenMethod = parseOpenMethod(preferredIDE) || { type: 'ide', value: activeOpenIDE };
     const buttonActive = Boolean(webAgentPanelOpen);
+    const activeAiPanelMode = aiPanelMode !== undefined
+        ? aiPanelMode
+        : buttonActive ? 'general-ai' : null;
     const shouldUpdateDefaultOpenMethod = !buttonActive;
     const storedWebOpenMethod = resolveStoredWebOpenMethod(openMethod);
     const displayOpenMethod = buttonActive && !storedWebOpenMethod
@@ -280,6 +293,21 @@ export default function OpenInDropdown({
         toast.warning('打开 Web Agent 失败');
     };
 
+    const handleOpenWithImageAi = useCallback(async () => {
+        if (openLoading) return;
+        if (!onOpenImageAiPanel) {
+            toast.warning('打开生图 AI 失败');
+            return;
+        }
+
+        setOpenLoading(true);
+        try {
+            await Promise.resolve(onOpenImageAiPanel?.());
+        } finally {
+            setOpenLoading(false);
+        }
+    }, [onOpenImageAiPanel, openLoading]);
+
     const handleOpenAISettings = useCallback(() => {
         onOpenAISettings?.();
     }, [onOpenAISettings]);
@@ -287,7 +315,10 @@ export default function OpenInDropdown({
     /** Main button click handler — Web Agent toggles panel, others fire-and-forget. */
     const handleOpenDefault = () => {
         if (buttonActive) {
-            onCloseWebAgentPanel?.();
+            onCloseAiPanel?.();
+            if (!onCloseAiPanel) {
+                onCloseWebAgentPanel?.();
+            }
             return;
         }
 
@@ -458,15 +489,33 @@ export default function OpenInDropdown({
         </Dialog>
     );
 
-    const webAiMenuActive = buttonActive;
+    const closeAiPanel = useCallback(() => {
+        onCloseAiPanel?.();
+        if (!onCloseAiPanel) {
+            onCloseWebAgentPanel?.();
+        }
+    }, [onCloseAiPanel, onCloseWebAgentPanel]);
+
+    const generalAiMenuActive = activeAiPanelMode === 'general-ai';
+    const imageAiMenuActive = activeAiPanelMode === 'image-ai';
+    const webAiMenuActive = generalAiMenuActive;
     const handleToggleWebAiMenu = useCallback(() => {
         if (webAiMenuActive) {
-            onCloseWebAgentPanel?.();
+            closeAiPanel();
             return;
         }
 
         void handleOpenWithWebAgent(WEB_AI_OPEN_OPTION.webAgent);
-    }, [handleOpenWithWebAgent, onCloseWebAgentPanel, webAiMenuActive]);
+    }, [closeAiPanel, handleOpenWithWebAgent, webAiMenuActive]);
+
+    const handleToggleImageAiMenu = useCallback(() => {
+        if (imageAiMenuActive) {
+            closeAiPanel();
+            return;
+        }
+
+        void handleOpenWithImageAi();
+    }, [closeAiPanel, handleOpenWithImageAi, imageAiMenuActive]);
     const menuContent = (
         <DropdownMenuContent
             side={variant === 'toolbar' || variant === 'canvas-icon' ? 'bottom' : 'right'}
@@ -492,6 +541,24 @@ export default function OpenInDropdown({
                             {webAiMenuActive ? <Check className="h-3.5 w-3.5" /> : getWebAgentIcon(WEB_AI_OPEN_OPTION.webAgent)}
                         </span>
                         <span className="min-w-0 flex-1 truncate">{WEB_AI_OPEN_OPTION.label}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                        onClick={handleToggleImageAiMenu}
+                        aria-checked={imageAiMenuActive}
+                        className={cn(
+                            "h-8 gap-2 px-2 text-[13px]",
+                            imageAiMenuActive && 'bg-secondary text-secondary-foreground',
+                        )}
+                    >
+                        <span
+                            className={cn(
+                                "flex h-4 w-4 items-center justify-center",
+                                imageAiMenuActive ? "text-secondary-foreground" : "text-foreground",
+                            )}
+                        >
+                            {imageAiMenuActive ? <Check className="h-3.5 w-3.5" /> : <ImageIcon className="h-3.5 w-3.5" />}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">{IMAGE_AI_OPEN_OPTION.label}</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                         onClick={handleOpenAISettings}
@@ -550,7 +617,7 @@ export default function OpenInDropdown({
                                 )}
                                 aria-label={buttonActive ? 'AI 已打开' : '打开 AI'}
                                 title={buttonActive ? 'AI 已打开' : '打开 AI'}
-                                data-active={buttonActive ? 'true' : undefined}
+                                data-active={generalAiMenuActive || imageAiMenuActive ? 'true' : undefined}
                                 disabled={openLoading}
                             >
                                 {openLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}

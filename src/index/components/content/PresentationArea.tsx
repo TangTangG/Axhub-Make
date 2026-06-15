@@ -168,9 +168,13 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         ideAvailability={props.ideAvailability}
                         agentAvailability={props.agentAvailability}
                         webAgentPanelOpen={props.webAgentPanelOpen}
+                        aiPanelMode={props.aiPanelMode}
                         onOpenProjectInIDE={props.handleOpenProjectInIDE}
                         onOpenGenieWebAgent={props.onOpenGenieWebAgent}
+                        onOpenImageAiPanel={props.onOpenImageAiPanel}
                         onOpenWebAgentInPanel={props.onOpenWebAgentInPanel}
+                        onExecutePrompt={props.onExecutePrompt}
+                        onCloseAiPanel={props.onCloseAiPanel}
                         onCloseWebAgentPanel={props.onCloseWebAgentPanel}
                         onPreferredIDEChange={props.onPreferredIDEChange}
                         assistantApiBaseUrl={props.assistantApiBaseUrl}
@@ -179,6 +183,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         prototypes={props.prototypes}
                         themes={props.themes}
                         defaultThemeName={props.defaultThemeName}
+                        onOpenPrototypeCreateDialog={props.onOpenPrototypeCreateDialog}
                         onOpenAISettings={props.onOpenAISettings}
                         onRefreshPrototypes={props.onRefreshPrototypes}
                         onSubmitCanvasAssistantPrompt={props.onSubmitCanvasAssistantPrompt}
@@ -188,10 +193,17 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     <UiReviewPanel
                         activeKind={props.activeReviewKind || 'design'}
                         markdown={props.reviewMarkdown || ''}
+                        reviewPrompt={props.reviewPrompt || ''}
+                        reviewDocumentPath={props.reviewDocumentPath}
                         updatedAt={props.reviewUpdatedAt}
                         loading={props.reviewLoading}
                         error={props.reviewError}
                         pageZoomEnabled={Boolean(props.reviewPageZoomEnabled)}
+                        preferredPromptClient={props.preferredPromptClient}
+                        preferredIDE={props.preferredIDE}
+                        ideAvailability={props.ideAvailability}
+                        assistantOpen={props.assistantVisible === true && props.aiPanelMode === 'general-ai'}
+                        onExecutePrompt={props.onExecutePrompt}
                         onKindChange={(kind) => props.handleReviewKindChange?.(kind)}
                         onCopyPrompt={() => { void props.handleCopyReviewPrompt?.(); }}
                         onTogglePageZoom={() => props.handleToggleReviewPageZoom?.()}

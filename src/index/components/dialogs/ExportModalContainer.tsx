@@ -32,6 +32,8 @@ export default function ExportModalContainer({ state, actions }: ExportModalCont
             preferredPromptClient={state.preferredPromptClient}
             preferredIDE={state.preferredIDE}
             ideAvailability={state.ideAvailability}
+            assistantOpen={state.assistantOpen}
+            onExecutePrompt={state.onExecutePrompt}
             initialReviewResult={state.initialReviewResult}
             onInitialReviewHandled={actions.onInitialReviewHandled}
         />

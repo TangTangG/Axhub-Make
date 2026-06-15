@@ -7,6 +7,7 @@ import type { ReviewResult } from '../../services/api';
 import type { CloudPublishTarget } from '../../services/api';
 import type { ResourceWriteCapabilities } from '../../services/projectResources';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
+import type { CreateDialogTab, PrototypeUploadType } from '../../types/index-page.types';
 import PromptActionButton from '../PromptActionButton';
 import CreateDialogContainer from '../dialogs/CreateDialogContainer';
 import CreateThemeDialogContainer from '../dialogs/CreateThemeDialogContainer';
@@ -34,38 +35,30 @@ interface IndexDialogsProps {
     preferredPromptClient: PromptClientPreference;
     preferredIDE: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
+    assistantOpen?: boolean;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     createDialog: {
         visible: boolean;
         activeTab: 'prototypes';
-        initialTab?: 'ai' | 'create' | 'upload';
-        selectedThemes: string[];
-        availableThemes: Array<{ name: string; displayName: string }>;
-        selectedDocs: string[];
-        availableDocs: Array<{ name: string; displayName: string }>;
-        selectedDataAssets: string[];
-        availableDataAssets: Array<{ name: string; displayName: string }>;
+        activeProjectId?: string | null;
+        initialTab?: CreateDialogTab;
+        initialUploadType?: PrototypeUploadType;
+        targetPrototypeName?: string;
         resourceWriteCapabilities: ResourceWriteCapabilities;
+        assistantOpen?: boolean;
         onClose: () => void;
-        setSelectedDocs: (value: string[]) => void;
-        setSelectedThemes: (value: string[]) => void;
-        setSelectedDataAssets: (value: string[]) => void;
-        buildPrompt: () => Promise<string>;
         onAfterCreatePromptAction: () => void;
+        onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
         onUploadSuccess: () => Promise<void> | void;
     };
     createThemeDialog: {
         visible: boolean;
-        initialTab?: 'ai' | 'prompt' | 'import';
-        selectedDocs: string[];
-        availableDocs: Array<{ name: string; displayName: string }>;
-        selectedReferencePages: string[];
-        availableReferencePages: Array<{ name: string; displayName: string }>;
+        initialTab?: 'import' | 'onlineSelect';
         resourceWriteCapabilities: ResourceWriteCapabilities;
+        assistantOpen?: boolean;
         onClose: () => void;
-        setSelectedDocs: (value: string[]) => void;
-        setSelectedReferencePages: (value: string[]) => void;
-        buildCreateThemePrompt: () => string;
         onAfterCreatePromptAction: () => void;
+        onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
         onImportSuccess: () => Promise<void> | void;
     };
     exportDialog: {
@@ -128,6 +121,8 @@ export default function IndexDialogs({
     preferredPromptClient,
     preferredIDE,
     ideAvailability,
+    assistantOpen,
+    onExecutePrompt,
     createDialog,
     createThemeDialog,
     exportDialog,
@@ -186,13 +181,16 @@ export default function IndexDialogs({
                                 preferredClient={preferredPromptClient}
                                 preferredIDE={preferredIDE}
                                 ideAvailability={ideAvailability}
-                                getIdeTargetPath={() => docReferencePromptDialog.targetPath}
+                                assistantOpen={assistantOpen}
+                                getTargetPath={() => docReferencePromptDialog.targetPath}
+                                onExecutePrompt={onExecutePrompt}
                                 scene={docReferencePromptDialog.scene}
                                 buildPrompt={() => docReferencePromptDialog.prompt}
                                 copySuccessMessage="已复制处理提示，请返回编辑器让 AI 处理。"
                                 executeSuccessMessage="已打开新会话"
                                 fallbackMessage="自动执行失败，已回退为复制 Prompt"
                                 onAfterCopy={() => setDocReferencePromptDialog(null)}
+                                onAfterExecute={() => setDocReferencePromptDialog(null)}
                             />
                         ) : null}
                     </DialogFooter>
@@ -204,25 +202,20 @@ export default function IndexDialogs({
                     state={{
                         visible: createDialog.visible,
                         activeTab: createDialog.activeTab,
+                        activeProjectId: createDialog.activeProjectId,
                         initialTab: createDialog.initialTab,
-                        selectedThemes: createDialog.selectedThemes,
-                        availableThemes: createDialog.availableThemes,
-                        selectedDocs: createDialog.selectedDocs,
-                        availableDocs: createDialog.availableDocs,
-                        selectedDataAssets: createDialog.selectedDataAssets,
-                        availableDataAssets: createDialog.availableDataAssets,
+                        initialUploadType: createDialog.initialUploadType,
+                        targetPrototypeName: createDialog.targetPrototypeName,
                         resourceWriteCapabilities: createDialog.resourceWriteCapabilities,
                         preferredPromptClient,
                         preferredIDE,
                         ideAvailability,
+                        assistantOpen: createDialog.assistantOpen,
                     }}
                     actions={{
                         onClose: createDialog.onClose,
-                        setSelectedDocs: createDialog.setSelectedDocs,
-                        setSelectedThemes: createDialog.setSelectedThemes,
-                        setSelectedDataAssets: createDialog.setSelectedDataAssets,
-                        buildCreatePrompt: createDialog.buildPrompt,
                         onAfterCreatePromptAction: createDialog.onAfterCreatePromptAction,
+                        onExecutePrompt: createDialog.onExecutePrompt,
                         onUploadSuccess: createDialog.onUploadSuccess,
                     }}
                 />
@@ -233,21 +226,16 @@ export default function IndexDialogs({
                     state={{
                         visible: createThemeDialog.visible,
                         initialTab: createThemeDialog.initialTab,
-                        selectedDocs: createThemeDialog.selectedDocs,
-                        availableDocs: createThemeDialog.availableDocs,
-                        selectedReferencePages: createThemeDialog.selectedReferencePages,
-                        availableReferencePages: createThemeDialog.availableReferencePages,
                         resourceWriteCapabilities: createThemeDialog.resourceWriteCapabilities,
                         preferredPromptClient,
                         preferredIDE,
                         ideAvailability,
+                        assistantOpen: createThemeDialog.assistantOpen,
                     }}
                     actions={{
                         onClose: createThemeDialog.onClose,
-                        setSelectedDocs: createThemeDialog.setSelectedDocs,
-                        setSelectedReferencePages: createThemeDialog.setSelectedReferencePages,
-                        buildCreateThemePrompt: createThemeDialog.buildCreateThemePrompt,
                         onAfterCreatePromptAction: createThemeDialog.onAfterCreatePromptAction,
+                        onExecutePrompt: createThemeDialog.onExecutePrompt,
                         onImportSuccess: createThemeDialog.onImportSuccess,
                     }}
                 />
@@ -270,6 +258,8 @@ export default function IndexDialogs({
                             preferredPromptClient,
                             preferredIDE,
                             ideAvailability,
+                            assistantOpen,
+                            onExecutePrompt,
                         }}
                         actions={{
                             onClose: exportDialog.onClose,
@@ -313,6 +303,9 @@ export default function IndexDialogs({
                         ideTargetPath={figmaMakeExportDialog.ideTargetPath}
                         preferredPromptClient={preferredPromptClient}
                         preferredIDE={preferredIDE}
+                        ideAvailability={ideAvailability}
+                        assistantOpen={assistantOpen}
+                        onExecutePrompt={onExecutePrompt}
                         onDownloadSuccess={figmaMakeExportDialog.onDownloadSuccess}
                         onDownloadFailure={figmaMakeExportDialog.onDownloadFailure}
                     />
@@ -358,6 +351,8 @@ export default function IndexDialogs({
                         preferredPromptClient={preferredPromptClient}
                         preferredIDE={preferredIDE}
                         ideAvailability={ideAvailability}
+                        assistantOpen={assistantOpen}
+                        onExecutePrompt={onExecutePrompt}
                     />
                 </React.Suspense>
             ) : null}

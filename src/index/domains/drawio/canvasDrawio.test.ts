@@ -6,6 +6,7 @@ import {
   createDrawioElement,
   createDrawioFile,
   createDrawioSvgDataUrl,
+  extractEditableDrawioXmlFromImageFile,
   extractDrawioSvgDimensionsFromDataUrl,
   extractDrawioXmlFromImageFile,
   isDrawioElement,
@@ -52,6 +53,43 @@ describe('canvas Drawio helpers', () => {
     expect(first.customData).not.toHaveProperty('diagramXml');
     expect(isDrawioElement(first)).toBe(true);
     expect(isDrawioElement({ ...first, customData: { type: 'image' } })).toBe(false);
+  });
+
+  it('recognizes preview-kind Drawio artifact image elements as editable Drawio nodes', () => {
+    const element = {
+      ...createDrawioElement({
+        x: 120,
+        y: 80,
+        width: 360,
+        height: 260,
+      }),
+      customData: {
+        generatedBy: 'axhub-ai-generation',
+        previewKind: DRAWIO_PREVIEW_KIND,
+      },
+    };
+
+    expect(isDrawioElement(element)).toBe(true);
+  });
+
+  it('recognizes AI-generated Drawio artifact image elements as editable Drawio nodes', () => {
+    const element = {
+      ...createDrawioElement({
+        x: 120,
+        y: 80,
+        width: 360,
+        height: 260,
+      }),
+      customData: {
+        generatedBy: 'axhub-ai-generation',
+        aiArtifact: {
+          kind: 'drawio',
+          target: { path: 'src/resources/flows/onboarding.drawio.svg' },
+        },
+      },
+    };
+
+    expect(isDrawioElement(element)).toBe(true);
   });
 
   it('creates an initial SVG file with recoverable default Drawio XML', () => {
@@ -180,6 +218,69 @@ describe('canvas Drawio helpers', () => {
       mimeType: 'image/svg+xml',
       dataURL,
     })).toBe(xml);
+  });
+
+  it('does not expose preview-only Drawio artifact placeholders as editable XML', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="480" data-axhub-drawio-source="src/resources/flow.drawio.svg"><rect width="720" height="480"/></svg>`;
+    const dataURL = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+
+    expect(extractEditableDrawioXmlFromImageFile({
+      id: 'preview-only',
+      mimeType: 'image/svg+xml',
+      dataURL,
+    })).toBeNull();
+  });
+
+  it('rejects plain diagram text before opening diagrams.net because it is not atob-safe', () => {
+    const xml = '<mxfile><diagram name="Inbound">E2E draw.io inbound flow</diagram></mxfile>';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><metadata id="drawio-source">${Buffer.from(xml, 'utf8').toString('base64')}</metadata><rect width="10" height="10"/></svg>`;
+    const dataURL = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+
+    expect(extractDrawioXmlFromImageFile({
+      id: 'plain-diagram-text',
+      mimeType: 'image/svg+xml',
+      dataURL,
+    })).toBe(xml);
+    expect(extractEditableDrawioXmlFromImageFile({
+      id: 'plain-diagram-text',
+      mimeType: 'image/svg+xml',
+      dataURL,
+    })).toBeNull();
+  });
+
+  it('exposes base64 diagram payloads as editable XML', () => {
+    const xml = `<mxfile><diagram name="Compressed">${Buffer.from('compressed-binary-ish', 'utf8').toString('base64')}</diagram></mxfile>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><metadata id="drawio-source">${Buffer.from(xml, 'utf8').toString('base64')}</metadata><rect width="10" height="10"/></svg>`;
+    const dataURL = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+
+    expect(extractEditableDrawioXmlFromImageFile({
+      id: 'compressed-diagram',
+      mimeType: 'image/svg+xml',
+      dataURL,
+    })).toBe(xml);
+  });
+
+  it('exposes uncompressed mxGraphModel Drawio XML as editable XML', () => {
+    const file = createDrawioFile({ fileId: 'drawio-file-default' });
+
+    expect(extractEditableDrawioXmlFromImageFile(file)).toContain('<mxGraphModel');
+  });
+
+  it('wraps bare mxGraphModel data-drawio sources so generated SVG nodes remain editable', () => {
+    const graphModel = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
+    const encodedGraphModel = Buffer.from(graphModel, 'utf8').toString('base64');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" data-drawio="${encodedGraphModel}"><rect width="10" height="10"/></svg>`;
+    const dataURL = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+
+    const editableXml = extractEditableDrawioXmlFromImageFile({
+      id: 'bare-mx-graph-model',
+      mimeType: 'image/svg+xml',
+      dataURL,
+    });
+
+    expect(editableXml).toContain('<mxfile');
+    expect(editableXml).toContain('<diagram');
+    expect(editableXml).toContain(graphModel);
   });
 
   it('extracts exported SVG dimensions from width and height attributes', () => {

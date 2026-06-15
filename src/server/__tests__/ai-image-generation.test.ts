@@ -64,4 +64,74 @@ describe('AI image generation ACP bridge', () => {
       },
     });
   });
+
+  it('includes transparent background requests in the ACP image generation prompt', async () => {
+    const fetchImpl = vi.fn(async () => createSseResponse([
+      sseJson({
+        type: 'tool-output-available',
+        toolCallId: 'tool-call-image',
+        toolName: 'generate_image',
+        output: {
+          status: 'completed',
+          images: [
+            { url: 'data:image/png;base64,aW1hZ2U=', fileName: 'image.png' },
+          ],
+        },
+      }),
+      sseJson({ type: 'finish', finishReason: 'stop' }),
+      'data: [DONE]\n\n',
+    ])) as unknown as typeof fetch;
+
+    await generateAiImages({
+      acpApiBaseUrl: 'http://acp.local/api',
+      workspacePath: '/workspace',
+      prompt: '生成透明背景图标',
+      params: { n: 1, output_format: 'png', background: 'transparent' },
+      config: {
+        baseUrl: '',
+        apiKey: '',
+        model: '',
+      },
+      fetchImpl,
+    });
+
+    const requestBody = JSON.parse(String((fetchImpl as any).mock.calls[0][1].body));
+    const prompt = requestBody.messages[0].parts[0].text;
+    expect(prompt).toContain('- background: transparent');
+  });
+
+  it('omits background prompt lines for default image background requests', async () => {
+    const fetchImpl = vi.fn(async () => createSseResponse([
+      sseJson({
+        type: 'tool-output-available',
+        toolCallId: 'tool-call-image',
+        toolName: 'generate_image',
+        output: {
+          status: 'completed',
+          images: [
+            { url: 'data:image/png;base64,aW1hZ2U=', fileName: 'image.png' },
+          ],
+        },
+      }),
+      sseJson({ type: 'finish', finishReason: 'stop' }),
+      'data: [DONE]\n\n',
+    ])) as unknown as typeof fetch;
+
+    await generateAiImages({
+      acpApiBaseUrl: 'http://acp.local/api',
+      workspacePath: '/workspace',
+      prompt: '生成普通图片',
+      params: { n: 1, output_format: 'png', background: 'auto' },
+      config: {
+        baseUrl: '',
+        apiKey: '',
+        model: '',
+      },
+      fetchImpl,
+    });
+
+    const requestBody = JSON.parse(String((fetchImpl as any).mock.calls[0][1].body));
+    const prompt = requestBody.messages[0].parts[0].text;
+    expect(prompt).not.toContain('- background:');
+  });
 });

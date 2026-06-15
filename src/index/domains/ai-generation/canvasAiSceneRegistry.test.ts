@@ -92,8 +92,34 @@ describe('canvas AI scene registry', () => {
         id: 'generate-wireframe',
         label: '生成草图',
       }),
+      expect.objectContaining({
+        id: 'generate-prototype',
+        label: '生成原型',
+      }),
+      expect.objectContaining({
+        id: 'generate-responsive',
+        label: '生成响应式',
+      }),
     ]);
     expect(getCanvasAiSceneQuickPrompts('image')).toEqual(getCanvasAiSceneQuickPrompts('design'));
+  });
+
+  it('keeps design prototype and responsive quick prompts concise and correctly scoped', () => {
+    const prompts = getCanvasAiSceneQuickPrompts('design');
+    const prototypePrompt = prompts.find((prompt) => prompt.id === 'generate-prototype');
+    const responsivePrompt = prompts.find((prompt) => prompt.id === 'generate-responsive');
+
+    expect(prototypePrompt?.prompt).toContain('还原');
+    expect(prototypePrompt?.prompt).toContain('原型页面');
+    expect(prototypePrompt?.prompt.length).toBeLessThanOrEqual(80);
+    expect(responsivePrompt?.label).toBe('生成响应式');
+    expect(responsivePrompt?.prompt).toContain('识别当前图片所属端');
+    expect(responsivePrompt?.prompt).toContain('PC、平板、手机');
+    expect(responsivePrompt?.prompt).toContain('补齐另外两个端');
+    expect(responsivePrompt?.prompt).toContain('UI 设计图');
+    expect(responsivePrompt?.prompt).toContain('生成新图片');
+    expect(responsivePrompt?.prompt).not.toContain('原型页面');
+    expect(responsivePrompt?.prompt.length).toBeLessThanOrEqual(90);
   });
 
   it('keeps prototype start prompts aligned with runtime document prompts and leaves design start without quick prompts', () => {
@@ -101,7 +127,7 @@ describe('canvas AI scene registry', () => {
 
     expect(getCanvasAiPrototypeStartPlaceholders('design')).toEqual(getCanvasAiSceneDefinition('design').placeholders);
     expect(getCanvasAiPrototypeStartQuickPrompts('design')).toEqual([]);
-    expect(getCanvasAiSceneQuickPrompts('design')).toHaveLength(2);
+    expect(getCanvasAiSceneQuickPrompts('design')).toHaveLength(4);
 
     expect(getCanvasAiPrototypeStartPlaceholders('document')).toEqual([
       '可以先通过文档、流程图或关系图等梳理需求，再生成原型',
@@ -134,14 +160,17 @@ describe('canvas AI scene registry', () => {
     expect(getCanvasAiPrototypeStartSystemPrompt('page')).toBe('请生成原型页面。');
     expect(getCanvasAiPrototypeStartSystemPrompt('page')).not.toContain('当前原型草稿画布');
     expect(getCanvasAiPrototypeStartSystemPrompt('page')).not.toContain('画布');
-    expect(getCanvasAiPrototypeStartSystemPrompt('design')).toContain('生成图片');
+    expect(getCanvasAiPrototypeStartSystemPrompt('design')).toBe(
+      '使用内置工具生成图片；若无相关工具，请停止并告知用户。生成后请将结果更新到当前画布。',
+    );
+    expect(getCanvasAiPrototypeStartSystemPrompt('design')).toContain('内置工具');
+    expect(getCanvasAiPrototypeStartSystemPrompt('design')).toContain('停止并告知用户');
     expect(getCanvasAiPrototypeStartSystemPrompt('design')).not.toContain('生成原型');
     expect(getCanvasAiPrototypeStartSystemPrompt('design')).not.toContain('图片节点');
-    expect(getCanvasAiPrototypeStartSystemPrompt('design')).not.toContain('画布');
-    expect(getCanvasAiPrototypeStartSystemPrompt('document')).toContain('Markdown .md 文档');
-    expect(getCanvasAiPrototypeStartSystemPrompt('document')).toContain('Draw.io .drawio.svg 图表');
+    expect(getCanvasAiPrototypeStartSystemPrompt('document')).toBe('请将结果更新到当前画布。');
+    expect(getCanvasAiPrototypeStartSystemPrompt('document')).not.toContain('Markdown .md 文档');
+    expect(getCanvasAiPrototypeStartSystemPrompt('document')).not.toContain('Draw.io .drawio.svg 图表');
     expect(getCanvasAiPrototypeStartSystemPrompt('document')).not.toContain('当前原型草稿画布');
-    expect(getCanvasAiPrototypeStartSystemPrompt('document')).not.toContain('画布');
   });
 
   it('picks placeholders from prototype start overrides when they exist', () => {

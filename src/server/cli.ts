@@ -164,6 +164,9 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCli
     if (arg.startsWith('--')) {
       throw new Error(`Unknown option: ${arg}`);
     }
+    if (!legacyProjectRoot && arg === 'canvas') {
+      throw new Error('Unknown command: canvas');
+    }
     if (legacyProjectRoot) {
       throw new Error(`Unexpected argument: ${arg}`);
     }
@@ -184,12 +187,6 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCli
 }
 
 export async function runCli(args = process.argv.slice(2)): Promise<void> {
-  if (args[0] === 'canvas') {
-    console.error('The axhub-make canvas CLI has been removed. Read and write canvas .excalidraw files directly.');
-    process.exitCode = 1;
-    return;
-  }
-
   const options = parseCliArgs(args);
   if (options.help) {
     console.log(CLI_USAGE.trimEnd());

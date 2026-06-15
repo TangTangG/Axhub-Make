@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ChevronDown, Copy, ExternalLink, FileIcon, ImageIcon, Monitor, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone } from 'lucide-react';
+import { ChevronDown, Copy, ExternalLink, FileIcon, Globe, ImageIcon, Monitor, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone, UploadCloud } from 'lucide-react';
+import { toast } from 'sonner';
 import { Segmented } from 'antd';
 import { ItemData, CanvasItem, TabType, ViewMode, type PromptClientPreference } from '../../types';
 import type { DataTableResourceItem, ThemeResourceItem } from '../../domains/resources/resource.types';
@@ -7,6 +8,7 @@ import DeviceShell from '../DeviceShell';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
     Popover,
     PopoverContent,
@@ -19,14 +21,17 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import HomeDataTable from './HomeDataTable';
 import CanvasWelcomeGuide from './CanvasWelcomeGuide';
 import CanvasFloatingToolbar from './CanvasFloatingToolbar';
 import OpenInDropdown from '../sidebar/OpenInDropdown';
+import TemplateLibraryCard, { type TemplateLibraryCardItem } from '../dialogs/TemplateLibraryCard';
+import PromptActionButton from '../PromptActionButton';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
 import type { GenieProvider } from '@/common/genie/types';
-import type { SelectedResourceFolder } from '../../types/index-page.types';
+import type { PrototypeCreateDialogOpenOptions, SelectedResourceFolder } from '../../types/index-page.types';
 import type {
     MultiPageColumns,
     PreviewConfig,
@@ -45,7 +50,7 @@ import MultiPagePreviewCanvas from './MultiPagePreviewCanvas';
 import { CanvasGenerationDisplayComposer } from '../../domains/shared/CanvasGenerationComposer';
 import type { CanvasAiScene } from '../../domains/shared/CanvasGenerationComposer';
 import { createCanvasGenerationComposerDraftStorageKey } from '../../domains/shared/canvasGenerationComposerDraft';
-import type { CanvasAiGenerationRequest } from '../../domains/ai-generation/CanvasAiGenerationTool';
+import type { CanvasAiGenerationRequest, CanvasAiGenerationResult } from '../../domains/ai-generation/CanvasAiGenerationTool';
 import type { AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
 import type { CanvasLocalContextRef } from '../../domains/ai-image/canvasReferenceImages';
 import type { AiImageTaskParams } from '../../domains/ai-image/aiImageStore';
@@ -69,12 +74,16 @@ import {
     appendPrototypeStartPromptSettings,
 } from '../../domains/ai-generation/canvasGenerationPromptSettings';
 import { apiService } from '../../services/index.api';
+import { generateTemplateImportPrompt, type TemplateLibraryPromptItem } from '../../utils/templateImportPrompts';
+import { getUserFriendlyUploadErrorMessage } from '../../utils/uploadErrors';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
-const ExcalidrawCanvas = React.lazy(() => import('./ExcalidrawCanvas'));
+const ExcalidrawCanvas = React.lazy(() => lazyWithRetry(() => import('./ExcalidrawCanvas')));
 
 const PREVIEW_DEVICE_SHELL_INSET = { width: 32, height: 32 } as const;
 const SPLIT_PREVIEW_HEADER_HEIGHT = 40;
 const SPLIT_PREVIEW_HORIZONTAL_INSET = 44;
+const UNSPECIFIED_START_SETTING_VALUE = '__unspecified__';
 const PROTOTYPE_START_COUNT_OPTIONS = [1, 2, 3, 4] as const;
 const START_SETTINGS_SELECT_CONTENT_STYLE = { zIndex: 1400 } satisfies CSSProperties;
 const IMAGE_START_SIZE_OPTIONS = [
@@ -99,19 +108,108 @@ const IMAGE_START_FORMAT_OPTIONS = [
     { label: 'WebP', value: 'webp' },
 ] as const;
 const IMAGE_START_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
-const DEFAULT_IMAGE_START_PARAMS: AiImageTaskParams = {
+const PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_KEY = 'axhub:placeholder-template-library:v1';
+const PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+const PLACEHOLDER_TEMPLATE_CASE_LIMIT = 9;
+type ImageStartParams = Omit<AiImageTaskParams, 'n' | 'output_format'> & {
+    n?: AiImageTaskParams['n'];
+    output_format?: AiImageTaskParams['output_format'];
+};
+const DEFAULT_IMAGE_START_PARAMS: ImageStartParams = {
     size: 'auto',
     quality: 'auto',
-    output_format: 'png',
+    output_format: undefined,
     output_compression: null,
     moderation: 'auto',
-    n: 1,
+    background: 'auto',
+    n: undefined,
     disable_prompt_optimization: false,
 };
 type MeasuredSplitContentSizes = {
     primary: PreviewMeasuredContentSize | null;
     secondary: PreviewMeasuredContentSize | null;
 };
+
+interface PlaceholderTemplateLibraryCache {
+    cachedAt: number;
+    templates: TemplateLibraryCardItem[];
+}
+
+function normalizeTemplateCases(value: unknown): TemplateLibraryCardItem[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((item) => {
+            if (!item || typeof item !== 'object') return null;
+            const record = item as Record<string, unknown>;
+            const id = typeof record.id === 'string' ? record.id.trim() : '';
+            const title = typeof record.title === 'string' ? record.title.trim() : '';
+            const slug = typeof record.slug === 'string' ? record.slug.trim() : '';
+            const sourcePath = typeof record.sourcePath === 'string' ? record.sourcePath.trim() : '';
+            const sourceUrl = typeof record.sourceUrl === 'string' ? record.sourceUrl.trim() : '';
+            const coverPath = typeof record.coverPath === 'string' ? record.coverPath.trim() : '';
+            const coverUrl = typeof record.coverUrl === 'string' ? record.coverUrl.trim() : '';
+            const description = typeof record.description === 'string' ? record.description.trim() : '';
+            if (!id || !title || !sourcePath || !coverUrl || !description) return null;
+            const extraDependencies = Array.isArray(record.extraDependencies)
+                ? record.extraDependencies
+                    .map((dependency) => typeof dependency === 'string' ? dependency.trim() : '')
+                    .filter(Boolean)
+                : [];
+            return {
+                id,
+                title,
+                ...(slug ? { slug } : {}),
+                sourcePath,
+                ...(sourceUrl ? { sourceUrl } : {}),
+                ...(coverPath ? { coverPath } : {}),
+                coverUrl,
+                description,
+                ...(typeof record.author === 'string' && record.author.trim() ? { author: record.author.trim() } : {}),
+                ...(typeof record.authorUrl === 'string' && record.authorUrl.trim() ? { authorUrl: record.authorUrl.trim() } : {}),
+                ...(typeof record.previewUrl === 'string' && record.previewUrl.trim() ? { previewUrl: record.previewUrl.trim() } : {}),
+                extraDependencies,
+                canDirectImport: record.canDirectImport === true,
+                ...(typeof record.directImportDisabledReason === 'string' && record.directImportDisabledReason.trim()
+                    ? { directImportDisabledReason: record.directImportDisabledReason.trim() }
+                    : {}),
+            } satisfies TemplateLibraryCardItem;
+        })
+        .filter((item): item is TemplateLibraryCardItem => Boolean(item));
+}
+
+function readPlaceholderTemplateLibraryCache(now = Date.now()): PlaceholderTemplateLibraryCache | null {
+    if (typeof window === 'undefined') return null;
+    try {
+        const raw = window.localStorage.getItem(PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as Partial<PlaceholderTemplateLibraryCache>;
+        const cachedAt = typeof parsed.cachedAt === 'number' ? parsed.cachedAt : 0;
+        const templates = normalizeTemplateCases(parsed.templates);
+        if (!cachedAt || templates.length === 0) return null;
+        if (now - cachedAt > PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_TTL_MS) {
+            return { cachedAt, templates };
+        }
+        return { cachedAt, templates };
+    } catch {
+        return null;
+    }
+}
+
+function isPlaceholderTemplateLibraryCacheFresh(cache: PlaceholderTemplateLibraryCache | null, now = Date.now()): boolean {
+    return Boolean(cache && now - cache.cachedAt <= PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_TTL_MS);
+}
+
+function writePlaceholderTemplateLibraryCache(templates: TemplateLibraryCardItem[], now = Date.now()): void {
+    if (typeof window === 'undefined') return;
+    try {
+        window.localStorage.setItem(PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_KEY, JSON.stringify({
+            cachedAt: now,
+            templates,
+        }));
+    } catch {
+        // Homepage examples are opportunistic; ignore storage failures.
+    }
+}
 
 interface CanvasErrorBoundaryProps {
     resetKey: string;
@@ -241,9 +339,13 @@ interface ContentAreaProps {
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
     webAgentPanelOpen?: boolean;
+    aiPanelMode?: 'general-ai' | 'image-ai' | null;
     onOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
     onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenImageAiPanel?: () => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
+    onCloseAiPanel?: () => void;
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
     onOpenAISettings?: () => void;
@@ -253,8 +355,9 @@ interface ContentAreaProps {
     prototypes?: ItemData[];
     themes?: ThemeResourceItem[];
     defaultThemeName?: string | null;
+    onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;
     onRefreshPrototypes?: () => Promise<ItemData[]>;
-    onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;
+    onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     onAddCanvasScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;
     onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;
 }
@@ -466,14 +569,20 @@ function PrototypeStartSettingsPopover({
     onCountChange,
     onThemeChange,
 }: {
-    count: number;
+    count?: number;
     selectedThemeName: string;
     themeLabel: string;
     themes?: ThemeResourceItem[];
-    onCountChange: (count: number) => void;
+    onCountChange: (count?: number) => void;
     onThemeChange: (themeName: string) => void;
 }) {
-    const countLabel = `${count} 个`;
+    const hasCount = typeof count === 'number';
+    const hasSelectedTheme = selectedThemeName !== NO_PROTOTYPE_THEME_VALUE;
+    const summaryItems = [
+        hasCount ? `${count} 个` : null,
+        hasSelectedTheme ? themeLabel : null,
+    ].filter(Boolean);
+    const summary = summaryItems.join(' · ') || '未指定';
     return (
         <Popover>
             <PopoverTrigger asChild>
@@ -484,7 +593,7 @@ function PrototypeStartSettingsPopover({
                     aria-label="原型设置"
                 >
                     <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
-                    <span className="ax-ai-image-settings-summary">{countLabel} · {themeLabel}</span>
+                    <span className="ax-ai-image-settings-summary">{summary}</span>
                     <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
                 </button>
             </PopoverTrigger>
@@ -492,17 +601,23 @@ function PrototypeStartSettingsPopover({
                 <div className="space-y-3">
                     <div className="space-y-1">
                         <div className="text-sm font-medium text-foreground">原型设置</div>
-                        <div className="text-xs text-muted-foreground">{countLabel} · {themeLabel}</div>
+                        <div className="text-xs text-muted-foreground">{summary}</div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
                         <label className="space-y-1.5">
                             <span className="text-xs font-medium text-muted-foreground">生成数量</span>
-                            <Select value={String(count)} onValueChange={(value) => onCountChange(Number(value))}>
+                            <Select
+                                value={hasCount ? String(count) : UNSPECIFIED_START_SETTING_VALUE}
+                                onValueChange={(value) => onCountChange(value === UNSPECIFIED_START_SETTING_VALUE ? undefined : Number(value))}
+                            >
                                 <SelectTrigger className="h-8 text-xs">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    <SelectItem value={UNSPECIFIED_START_SETTING_VALUE}>
+                                        未指定
+                                    </SelectItem>
                                     {PROTOTYPE_START_COUNT_OPTIONS.map((option) => (
                                         <SelectItem key={option} value={String(option)}>
                                             {option} 个
@@ -529,16 +644,37 @@ function PrototypeStartSettingsPopover({
 
 function ImageStartSettingsPopover({
     params,
+    selectedThemeName,
+    themeLabel,
+    themes,
     onParamsChange,
+    onThemeChange,
 }: {
-    params: AiImageTaskParams;
-    onParamsChange: (params: AiImageTaskParams) => void;
+    params: ImageStartParams;
+    selectedThemeName: string;
+    themeLabel: string;
+    themes?: ThemeResourceItem[];
+    onParamsChange: (params: ImageStartParams) => void;
+    onThemeChange: (themeName: string) => void;
 }) {
     const sizeLabel = IMAGE_START_SIZE_OPTIONS.find((option) => option.value === params.size)?.label || params.size;
     const qualityLabel = IMAGE_START_QUALITY_OPTIONS.find((option) => option.value === params.quality)?.label || params.quality;
-    const formatLabel = IMAGE_START_FORMAT_OPTIONS.find((option) => option.value === params.output_format)?.label || params.output_format.toUpperCase();
-    const summary = `${sizeLabel} · ${qualityLabel} · ${params.n} 张 · ${formatLabel}`;
-    const updateParam = <K extends keyof AiImageTaskParams>(key: K, value: AiImageTaskParams[K]) => {
+    const formatLabel = params.output_format
+        ? IMAGE_START_FORMAT_OPTIONS.find((option) => option.value === params.output_format)?.label || params.output_format.toUpperCase()
+        : '';
+    const transparentBackgroundChecked = params.output_format === 'png' && params.background === 'transparent';
+    const canUseTransparentBackground = params.output_format === 'png';
+    const hasSelectedTheme = selectedThemeName !== NO_PROTOTYPE_THEME_VALUE;
+    const disablePromptOptimizationChecked = hasSelectedTheme || params.disable_prompt_optimization === true;
+    const summary = [
+        params.size && params.size !== 'auto' ? sizeLabel : null,
+        params.quality && params.quality !== 'auto' ? qualityLabel : null,
+        typeof params.n === 'number' ? `${params.n} 张` : null,
+        params.output_format ? formatLabel : null,
+        hasSelectedTheme ? themeLabel : null,
+        transparentBackgroundChecked ? '透明背景' : null,
+    ].filter(Boolean).join(' · ') || '未指定';
+    const updateParam = <K extends keyof ImageStartParams>(key: K, value: ImageStartParams[K]) => {
         onParamsChange({
             ...params,
             [key]: value,
@@ -598,16 +734,20 @@ function ImageStartSettingsPopover({
                                 </SelectContent>
                             </Select>
                         </label>
-                    </div>
 
-                    <div className="grid grid-cols-2 gap-3">
                         <label className="space-y-1.5">
                             <span className="text-xs font-medium text-muted-foreground">图片数量</span>
-                            <Select value={String(params.n)} onValueChange={(value) => updateParam('n', Number(value))}>
+                            <Select
+                                value={typeof params.n === 'number' ? String(params.n) : UNSPECIFIED_START_SETTING_VALUE}
+                                onValueChange={(value) => updateParam('n', value === UNSPECIFIED_START_SETTING_VALUE ? undefined : Number(value))}
+                            >
                                 <SelectTrigger className="h-8 text-xs">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    <SelectItem value={UNSPECIFIED_START_SETTING_VALUE}>
+                                        未指定
+                                    </SelectItem>
                                     {IMAGE_START_COUNT_OPTIONS.map((count) => (
                                         <SelectItem key={count} value={String(count)}>
                                             {count} 张
@@ -619,11 +759,17 @@ function ImageStartSettingsPopover({
 
                         <label className="space-y-1.5">
                             <span className="text-xs font-medium text-muted-foreground">格式</span>
-                            <Select value={params.output_format} onValueChange={(value) => updateParam('output_format', value as AiImageTaskParams['output_format'])}>
+                            <Select
+                                value={params.output_format || UNSPECIFIED_START_SETTING_VALUE}
+                                onValueChange={(value) => updateParam('output_format', value === UNSPECIFIED_START_SETTING_VALUE ? undefined : value as AiImageTaskParams['output_format'])}
+                            >
                                 <SelectTrigger className="h-8 text-xs">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    <SelectItem value={UNSPECIFIED_START_SETTING_VALUE}>
+                                        未指定
+                                    </SelectItem>
                                     {IMAGE_START_FORMAT_OPTIONS.map((option) => (
                                         <SelectItem key={option.value} value={option.value}>
                                             {option.label}
@@ -632,6 +778,43 @@ function ImageStartSettingsPopover({
                                 </SelectContent>
                             </Select>
                         </label>
+
+                        <label className="col-span-2 space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">设计系统</span>
+                            <PrototypeThemeSearchSelect
+                                themes={themes}
+                                value={selectedThemeName}
+                                onValueChange={onThemeChange}
+                            />
+                        </label>
+
+                        <div className="col-span-2 flex items-center gap-6">
+                            <label
+                                className={`inline-flex items-center gap-2 text-xs font-medium ${hasSelectedTheme ? 'text-muted-foreground' : 'text-foreground'}`}
+                                title={hasSelectedTheme ? '已选择设计系统，会自动保持原始提示词以避免改写设计约束。' : '开启后会要求 AI 完整使用输入内容，不主动改写提示词。'}
+                            >
+                                <Switch
+                                    checked={disablePromptOptimizationChecked}
+                                    disabled={hasSelectedTheme}
+                                    onCheckedChange={(checked) => updateParam('disable_prompt_optimization', checked === true)}
+                                    aria-label="禁止优化提示词"
+                                />
+                                <span>禁止优化提示词</span>
+                            </label>
+
+                            <label
+                                className={`inline-flex items-center gap-2 text-xs font-medium ${canUseTransparentBackground ? 'text-foreground' : 'text-muted-foreground'}`}
+                                title={canUseTransparentBackground ? '生成 PNG 透明背景图片。' : '透明背景仅支持 PNG 格式。'}
+                            >
+                                <Switch
+                                    checked={transparentBackgroundChecked}
+                                    disabled={!canUseTransparentBackground}
+                                    onCheckedChange={(checked) => updateParam('background', checked === true ? 'transparent' : 'auto')}
+                                    aria-label="透明背景"
+                                />
+                                <span>透明背景</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </PopoverContent>
@@ -644,26 +827,38 @@ function PrototypePlaceholderGuide({
     activeProjectId,
     assistantProjectPath,
     preferredIDE,
+    preferredPromptClient,
     ideAvailability,
     agentAvailability,
+    assistantVisible,
+    aiPanelMode,
     onOpenProjectInIDE,
     onPreferredIDEChange,
+    onExecutePrompt,
     onOpenAISettings,
     themes,
     defaultThemeName,
+    onOpenPrototypeCreateDialog,
+    onRefreshPrototypes,
     onSubmitPrototypeStartRequest,
 }: {
     item: ItemData;
     activeProjectId?: string | null;
     assistantProjectPath?: string;
     preferredIDE?: MainIDEPreference;
+    preferredPromptClient?: PromptClientPreference;
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
+    assistantVisible?: boolean;
+    aiPanelMode?: 'general-ai' | 'image-ai' | null;
     onOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     onOpenAISettings?: () => void;
     themes?: ThemeResourceItem[];
     defaultThemeName?: string | null;
+    onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;
+    onRefreshPrototypes?: () => Promise<ItemData[]>;
     onSubmitPrototypeStartRequest?: (request: CanvasAiGenerationRequest) => void | Promise<void>;
 }) {
     const [activeScene, setActiveScene] = useState<CanvasAiScene>('page');
@@ -672,8 +867,12 @@ function PrototypePlaceholderGuide({
     const activeQuickPrompts = getCanvasAiPrototypeStartQuickPrompts(activeScene);
     const activeStartSystemPrompt = getCanvasAiPrototypeStartSystemPrompt(activeScene);
     const [placeholder, setPlaceholder] = useState(() => pickCanvasAiPrototypeStartPlaceholder(activeScene));
-    const [prototypeGenerationCount, setPrototypeGenerationCount] = useState(1);
-    const [imageStartParams, setImageStartParams] = useState<AiImageTaskParams>(DEFAULT_IMAGE_START_PARAMS);
+    const [prototypeGenerationCount, setPrototypeGenerationCount] = useState<number | undefined>(undefined);
+    const [imageStartParams, setImageStartParams] = useState<ImageStartParams>(DEFAULT_IMAGE_START_PARAMS);
+    const [templateCases, setTemplateCases] = useState<TemplateLibraryCardItem[]>([]);
+    const [templateCasesLoading, setTemplateCasesLoading] = useState(false);
+    const [templateCasesError, setTemplateCasesError] = useState('');
+    const [templateImportingId, setTemplateImportingId] = useState('');
     const [selectedThemeName, setSelectedThemeName] = useState(() => resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
     const previousDefaultThemeNameRef = useRef(defaultThemeName);
     const userSelectedThemeRef = useRef(false);
@@ -698,6 +897,12 @@ function PrototypePlaceholderGuide({
         themes?.find((theme) => theme.name === selectedThemeName) || null
     ), [selectedThemeName, themes]);
     const themeLabel = selectedTheme?.displayName || selectedTheme?.name || '无设计系统';
+    const effectiveImageStartParams = useMemo<ImageStartParams>(() => ({
+        ...imageStartParams,
+        themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : selectedTheme?.name || '',
+        disable_prompt_optimization: imageStartParams.disable_prompt_optimization === true || selectedThemeName !== NO_PROTOTYPE_THEME_VALUE,
+        background: imageStartParams.output_format === 'png' ? imageStartParams.background : 'auto',
+    }), [imageStartParams, selectedTheme?.name, selectedThemeName]);
 
     useEffect(() => {
         setPlaceholder(pickCanvasAiPrototypeStartPlaceholder(activeScene));
@@ -715,98 +920,302 @@ function PrototypePlaceholderGuide({
         previousDefaultThemeNameRef.current = defaultThemeName;
     }, [defaultThemeName, themes]);
 
+    useEffect(() => {
+        let cancelled = false;
+        const cached = readPlaceholderTemplateLibraryCache();
+        if (cached) {
+            setTemplateCases(cached.templates.slice(0, PLACEHOLDER_TEMPLATE_CASE_LIMIT));
+        }
+        if (isPlaceholderTemplateLibraryCacheFresh(cached)) {
+            return () => {
+                cancelled = true;
+            };
+        }
+
+        setTemplateCasesLoading(!cached);
+        setTemplateCasesError('');
+        fetch('/api/template-library')
+            .then(async (response) => {
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || result?.ok === false) {
+                    throw new Error(result?.error || '模板库读取失败');
+                }
+                const templates = normalizeTemplateCases(result?.templates);
+                if (cancelled) return;
+                writePlaceholderTemplateLibraryCache(templates);
+                setTemplateCases(templates.slice(0, PLACEHOLDER_TEMPLATE_CASE_LIMIT));
+                setTemplateCasesError('');
+            })
+            .catch((error: any) => {
+                if (cancelled) return;
+                if (!cached) {
+                    setTemplateCasesError(error?.message || '模板案例加载失败');
+                }
+            })
+            .finally(() => {
+                if (!cancelled) {
+                    setTemplateCasesLoading(false);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const toPromptTemplateItem = (template: TemplateLibraryCardItem): TemplateLibraryPromptItem => ({
+        id: template.id,
+        title: template.title,
+        slug: template.slug || template.id,
+        sourcePath: template.sourcePath,
+        ...(template.sourceUrl ? { sourceUrl: template.sourceUrl } : {}),
+        coverPath: template.coverPath || '',
+        description: template.description,
+        extraDependencies: template.extraDependencies || [],
+    });
+
+    const handlePreviewTemplateCase = (template: TemplateLibraryCardItem) => {
+        const previewUrl = String(template.previewUrl || '').trim();
+        if (!previewUrl) {
+            toast.warning('该模板暂不支持在线预览');
+            return;
+        }
+        window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    };
+
+    const handleDirectTemplateImport = async (template: TemplateLibraryCardItem) => {
+        if (!template.canDirectImport) {
+            toast.warning(template.directImportDisabledReason || '该模板暂不支持直接导入');
+            return;
+        }
+        setTemplateImportingId(template.id);
+        try {
+            const response = await fetch('/api/template-library/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ templateId: template.id, targetPrototypeName: item.name }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result?.success) {
+                throw new Error(result?.error || '直接导入失败');
+            }
+            toast.success('模板已导入');
+            void onRefreshPrototypes?.();
+        } catch (error: any) {
+            toast.error(getUserFriendlyUploadErrorMessage(error, '直接导入失败，请稍后重试'));
+        } finally {
+            setTemplateImportingId('');
+        }
+    };
+
+    const renderTemplateCaseCard = (template: TemplateLibraryCardItem) => {
+        const importing = templateImportingId === template.id;
+        const disabledReason = template.directImportDisabledReason || (!template.canDirectImport ? '直接导入不可用' : '');
+        const directDisabled = Boolean(disabledReason) || !template.canDirectImport || Boolean(templateImportingId);
+        const directImportTooltip = disabledReason
+            ? '直接导入不可用，请复制提示词让 AI 完成导入'
+            : templateImportingId && !importing ? '已有模板正在导入，请稍候' : '';
+        return (
+            <TemplateLibraryCard
+                key={template.id}
+                template={template}
+                compact
+                importing={importing}
+                directImportDisabled={directDisabled}
+                directImportTooltip={directImportTooltip}
+                onPreview={handlePreviewTemplateCase}
+                renderCopyPromptAction={(template) => (
+                    <PromptActionButton
+                        type="borderless"
+                        preferredClient={preferredPromptClient ?? null}
+                        preferredIDE={preferredIDE ?? null}
+                        ideAvailability={ideAvailability}
+                        assistantOpen={assistantVisible === true && aiPanelMode === 'general-ai'}
+                        scene="placeholder-template-import"
+                        buildPrompt={() => generateTemplateImportPrompt({
+                            template: toPromptTemplateItem(template),
+                            repo: 'lintendo/Make-Template',
+                            targetPrototypeName: item.name,
+                        })}
+                        getTargetPath={() => prototypeIndexPath}
+                        onExecutePrompt={onExecutePrompt}
+                        copyLabel="复制提示词"
+                        copySuccessMessage="提示词已复制到剪贴板"
+                        executeSuccessMessage="已发送到 AI 侧栏"
+                        fallbackMessage="AI 执行失败，已回退为复制提示词"
+                        disabled={Boolean(templateImportingId)}
+                    />
+                )}
+                onDirectImport={(template) => void handleDirectTemplateImport(template)}
+            />
+        );
+    };
+
     return (
-        <div className="flex h-full w-full items-center justify-center bg-[#f7f9fb] px-6 py-12 text-center">
-            <div className="flex min-h-full w-full max-w-[960px] flex-col items-center justify-center">
-                <div className="w-full">
-                    <h1 className="text-[28px] font-semibold leading-tight text-slate-950 sm:text-[34px]">
-                        我们先从哪里开始呢?
-                    </h1>
-                    <div className="mt-5 flex justify-center">
-                        <Segmented
-                            value={activeScene}
-                            options={CANVAS_AI_SCENE_OPTIONS.map((option) => ({ label: option.label, value: option.value }))}
-                            onChange={(value) => setActiveScene(value as CanvasAiScene)}
+        <div className="h-full w-full overflow-auto bg-[#f7f9fb] px-6 py-10 text-center">
+            <div className="flex min-h-[76vh] w-full items-center justify-center">
+                <div className="flex min-h-full w-full max-w-[960px] flex-col items-center justify-center">
+                    <div className="w-full">
+                        <h1 className="text-[28px] font-semibold leading-tight text-slate-950 sm:text-[34px]">
+                            我们先从哪里开始呢?
+                        </h1>
+                        <div className="mt-5 flex justify-center">
+                            <Segmented
+                                value={activeScene}
+                                options={CANVAS_AI_SCENE_OPTIONS.map((option) => ({ label: option.label, value: option.value }))}
+                                onChange={(value) => setActiveScene(value as CanvasAiScene)}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="mt-8 w-full">
+                        <CanvasGenerationDisplayComposer
+                            placeholder={placeholder || activeStartPlaceholders[0] || activeSceneDefinition.placeholders[0] || '描述你想创建的内容'}
+                            ariaLabel="原型起始页 AI 输入"
+                            quickPrompts={activeQuickPrompts}
+                            showSelectors
+                            workspacePath={assistantProjectPath}
+                            draftStorageKey={placeholderStartComposerDraftStorageKey}
+                            onOpenAISettings={onOpenAISettings}
+                            onSubmit={(prompt, selection) => {
+                                const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(prompt, activeStartSystemPrompt);
+                                const prototypeStartSettings = {
+                                    count: prototypeGenerationCount,
+                                    themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : selectedTheme?.name || '',
+                                };
+                                const submittedPrompt = activeScene === 'page'
+                                    ? appendPrototypeStartPromptSettings({
+                                        prompt: promptWithStartSystemPrompt,
+                                        settings: prototypeStartSettings,
+                                    })
+                                    : activeScene === 'design'
+                                        ? appendImageStartPromptSettings({
+                                            prompt: promptWithStartSystemPrompt,
+                                            settings: effectiveImageStartParams,
+                                        })
+                                        : promptWithStartSystemPrompt;
+                                return onSubmitPrototypeStartRequest?.({
+                                    scene: activeScene,
+                                    prompt: submittedPrompt,
+                                    source: 'placeholder-start',
+                                    sceneSettings: activeScene === 'design' ? effectiveImageStartParams : undefined,
+                                    provider: selection?.provider,
+                                    model: selection?.model,
+                                    mode: selection?.mode,
+                                    thought: selection?.thought,
+                                    contextBundle: selection?.contextBundle,
+                                    localContextRefs: activeScene === 'page' ? [] : [prototypeLocalContextRef],
+                                });
+                            }}
+                            postSelectorActions={
+                                activeScene === 'page' ? (
+                                    <PrototypeStartSettingsPopover
+                                        count={prototypeGenerationCount}
+                                        selectedThemeName={selectedThemeName}
+                                        themeLabel={themeLabel}
+                                        themes={themes}
+                                        onCountChange={setPrototypeGenerationCount}
+                                        onThemeChange={(themeName) => {
+                                            userSelectedThemeRef.current = true;
+                                            setSelectedThemeName(themeName);
+                                        }}
+                                    />
+                                ) : activeScene === 'design' ? (
+                                    <ImageStartSettingsPopover
+                                        params={imageStartParams}
+                                        selectedThemeName={selectedThemeName}
+                                        themeLabel={themeLabel}
+                                        themes={themes}
+                                        onParamsChange={setImageStartParams}
+                                        onThemeChange={(themeName) => {
+                                            userSelectedThemeRef.current = true;
+                                            setSelectedThemeName(themeName);
+                                        }}
+                                    />
+                                ) : null
+                            }
                         />
                     </div>
-                </div>
 
-                <div className="mt-8 w-full">
-                    <CanvasGenerationDisplayComposer
-                        placeholder={placeholder || activeStartPlaceholders[0] || activeSceneDefinition.placeholders[0] || '描述你想创建的内容'}
-                        ariaLabel="原型起始页 AI 输入"
-                        quickPrompts={activeQuickPrompts}
-                        showSelectors
-                        workspacePath={assistantProjectPath}
-                        draftStorageKey={placeholderStartComposerDraftStorageKey}
-                        onOpenAISettings={onOpenAISettings}
-                        onSubmit={(prompt, selection) => {
-                            const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(prompt, activeStartSystemPrompt);
-                            const prototypeStartSettings = {
-                                count: prototypeGenerationCount,
-                                themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : selectedTheme?.name || '',
-                            };
-                            const submittedPrompt = activeScene === 'page'
-                                ? appendPrototypeStartPromptSettings({
-                                    prompt: promptWithStartSystemPrompt,
-                                    settings: prototypeStartSettings,
-                                })
-                                : activeScene === 'design'
-                                    ? appendImageStartPromptSettings({
-                                        prompt: promptWithStartSystemPrompt,
-                                        settings: imageStartParams,
-                                    })
-                                    : promptWithStartSystemPrompt;
-                            return onSubmitPrototypeStartRequest?.({
-                                scene: activeScene,
-                                prompt: submittedPrompt,
-                                source: 'placeholder-start',
-                                sceneSettings: activeScene === 'design' ? imageStartParams : undefined,
-                                provider: selection?.provider,
-                                model: selection?.model,
-                                mode: selection?.mode,
-                                thought: selection?.thought,
-                                contextBundle: selection?.contextBundle,
-                                localContextRefs: activeScene === 'page' ? [] : [prototypeLocalContextRef],
-                            });
-                        }}
-                        postSelectorActions={
-                            activeScene === 'page' ? (
-                                <PrototypeStartSettingsPopover
-                                    count={prototypeGenerationCount}
-                                    selectedThemeName={selectedThemeName}
-                                    themeLabel={themeLabel}
-                                    themes={themes}
-                                    onCountChange={setPrototypeGenerationCount}
-                                    onThemeChange={(themeName) => {
-                                        userSelectedThemeRef.current = true;
-                                        setSelectedThemeName(themeName);
-                                    }}
-                                />
-                            ) : activeScene === 'design' ? (
-                                <ImageStartSettingsPopover
-                                    params={imageStartParams}
-                                    onParamsChange={setImageStartParams}
-                                />
-                            ) : null
-                        }
-                    />
+                    {shouldShowInlineAppList ? (
+                        <div className="w-full pt-24">
+                            <OpenInDropdown
+                                variant="inline-app-list"
+                                handleOpenProjectInIDE={onOpenProjectInIDE!}
+                                preferredIDE={preferredIDE ?? null}
+                                activeProjectId={activeProjectId}
+                                targetPath={prototypeIndexPath}
+                                ideAvailability={ideAvailability}
+                                agentAvailability={agentAvailability}
+                                onPreferredIDEChange={onPreferredIDEChange}
+                            />
+                        </div>
+                    ) : null}
                 </div>
+            </div>
 
-                {shouldShowInlineAppList ? (
-                    <div className="w-full pt-24">
-                        <OpenInDropdown
-                            variant="inline-app-list"
-                            handleOpenProjectInIDE={onOpenProjectInIDE!}
-                            preferredIDE={preferredIDE ?? null}
-                            activeProjectId={activeProjectId}
-                            targetPath={prototypeIndexPath}
-                            ideAvailability={ideAvailability}
-                            agentAvailability={agentAvailability}
-                            onPreferredIDEChange={onPreferredIDEChange}
-                        />
+            <div className="mx-auto w-full max-w-[1080px] pt-8 text-left">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                        <h2 className="text-sm font-semibold text-slate-900">原型案例</h2>
+                        {templateCasesLoading ? (
+                            <span className="text-[12px] text-slate-500">加载中...</span>
+                        ) : null}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-2 text-[12px]">
+                        <TooltipProvider>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
+                                        onClick={() => onOpenPrototypeCreateDialog?.({ initialTab: 'onlineImport', targetPrototypeName: item.name })}
+                                    >
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                        更多模板
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">打开在线模板库</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
+                                        onClick={() => onOpenPrototypeCreateDialog?.({ initialTab: 'upload', targetPrototypeName: item.name })}
+                                    >
+                                        <UploadCloud className="h-3.5 w-3.5" />
+                                        导入原型
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">Axhub Make / Axure / V0 / aistudio / Stitch / Figma Make</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <span className="inline-flex h-7 cursor-default items-center gap-1.5 rounded-md px-2 text-xs text-slate-600">
+                                        <Globe className="h-3.5 w-3.5" />
+                                        导入任意网页
+                                    </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">使用 Chrome 扩展可以采集任意网页</TooltipContent>
+                            </Tooltip>
+                        </TooltipProvider>
+                    </div>
+                </div>
+                {templateCases.length > 0 ? (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {templateCases.map(renderTemplateCaseCard)}
+                    </div>
+                ) : templateCasesError ? (
+                    <div className="rounded-md border border-dashed bg-white/70 p-4 text-center text-[12px] text-slate-500">
+                        暂时无法加载原型案例
                     </div>
                 ) : null}
+
             </div>
         </div>
     );
@@ -867,6 +1276,7 @@ export default function ContentArea({
     excalidrawPropertyPanelPosition,
     setExcalidrawPropertyPanelPosition,
     bridgeConnected,
+    assistantVisible,
     onAddToContext,
     onAnnotationsChange,
     onOpenCanvasInIDE,
@@ -878,8 +1288,12 @@ export default function ContentArea({
     ideAvailability,
     agentAvailability,
     webAgentPanelOpen,
+    aiPanelMode,
     onOpenProjectInIDE,
     onOpenGenieWebAgent,
+    onOpenImageAiPanel,
+    onExecutePrompt,
+    onCloseAiPanel,
     onCloseWebAgentPanel,
     onPreferredIDEChange,
     onOpenAISettings,
@@ -888,6 +1302,7 @@ export default function ContentArea({
     prototypes,
     themes,
     defaultThemeName,
+    onOpenPrototypeCreateDialog,
     onRefreshPrototypes,
     onSubmitCanvasAssistantPrompt,
     onAddCanvasScreenshotToAI,
@@ -1423,7 +1838,7 @@ export default function ContentArea({
 
         if (!canPreviewInIframe) {
             const ext = selectedName.includes('.') ? selectedName.split('.').pop()?.toLowerCase() || '' : '';
-            const fileSize = (selectedMarkdownItem as any).fileSize;
+            const fileSize = selectedMarkdownItem.fileSize;
             const formattedSize = typeof fileSize === 'number'
                 ? fileSize < 1024 ? `${fileSize} B`
                 : fileSize < 1048576 ? `${(fileSize / 1024).toFixed(1)} KB`
@@ -1453,7 +1868,10 @@ export default function ContentArea({
                                 fetch('/api/docs/open-system', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ docName: selectedName }),
+                                    body: JSON.stringify({
+                                        docName: selectedName,
+                                        type: contentMode === 'template' ? 'templates' : 'docs',
+                                    }),
                                 }).catch(() => {});
                             }}
                         >
@@ -1559,6 +1977,7 @@ export default function ContentArea({
                         <ExcalidrawCanvas
                             canvasName={selectedCanvas.name}
                             canvasFilePath={selectedStandaloneCanvasFilePath}
+                            activeProjectId={activeProjectId}
                             isDarkMode={_isDarkMode}
                             collapsed={collapsed}
                             setCollapsed={setCollapsed}
@@ -1578,6 +1997,9 @@ export default function ContentArea({
                             onOpenProjectInIDE={onOpenProjectInIDE}
                             onOpenGenieWebAgent={onOpenGenieWebAgent}
                             webAgentPanelOpen={webAgentPanelOpen}
+                            aiPanelMode={aiPanelMode}
+                            onOpenImageAiPanel={onOpenImageAiPanel}
+                            onCloseAiPanel={onCloseAiPanel}
                             onCloseWebAgentPanel={onCloseWebAgentPanel}
                             onPreferredIDEChange={onPreferredIDEChange}
                             onOpenAISettings={onOpenAISettings}
@@ -1610,13 +2032,19 @@ export default function ContentArea({
                         item={selectedItem}
                         activeProjectId={activeProjectId}
                         preferredIDE={preferredIDE}
+                        preferredPromptClient={preferredPromptClient}
                         ideAvailability={ideAvailability}
                         agentAvailability={agentAvailability}
+                        assistantVisible={assistantVisible}
+                        aiPanelMode={aiPanelMode}
                         assistantProjectPath={assistantProjectPath}
                         onOpenProjectInIDE={onOpenProjectInIDE}
                         onPreferredIDEChange={onPreferredIDEChange}
+                        onExecutePrompt={onExecutePrompt}
                         themes={themes}
                         defaultThemeName={defaultThemeName}
+                        onOpenPrototypeCreateDialog={onOpenPrototypeCreateDialog}
+                        onRefreshPrototypes={onRefreshPrototypes}
                         onSubmitPrototypeStartRequest={handleSubmitPrototypeStartRequest}
                         onOpenAISettings={onOpenAISettings}
                     />
@@ -1627,6 +2055,7 @@ export default function ContentArea({
                                 <ExcalidrawCanvas
                                     canvasName={selectedPrototypeCanvasName}
                                     canvasFilePath={selectedPrototypeCanvasFilePath}
+                                    activeProjectId={activeProjectId}
                                     isDarkMode={_isDarkMode}
                                     collapsed={collapsed}
                                     setCollapsed={setCollapsed}
@@ -1646,6 +2075,9 @@ export default function ContentArea({
                                     onOpenProjectInIDE={onOpenProjectInIDE}
                                     onOpenGenieWebAgent={onOpenGenieWebAgent}
                                     webAgentPanelOpen={webAgentPanelOpen}
+                                    aiPanelMode={aiPanelMode}
+                                    onOpenImageAiPanel={onOpenImageAiPanel}
+                                    onCloseAiPanel={onCloseAiPanel}
                                     onCloseWebAgentPanel={onCloseWebAgentPanel}
                                     onPreferredIDEChange={onPreferredIDEChange}
                                     onOpenAISettings={onOpenAISettings}

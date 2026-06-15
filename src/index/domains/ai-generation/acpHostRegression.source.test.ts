@@ -386,6 +386,10 @@ describe('ACP host frontend regression script source', () => {
     expect(runner).toContain('waitForPersistedCanvasArtifactElements');
     expect(runner).toContain('real ACP persisted canvas artifact elements');
     expect(runner).toContain("new URL(`/api/canvas/${encodeCanvasApiPath(`prototypes/${prototypeName}/canvas.excalidraw`)}`, baseUrl)");
+    expect(runner).toContain('function appendProjectIdSearchParam(url, projectId)');
+    expect(runner).toContain('appendProjectIdSearchParam(url, projectId);');
+    expect(runner).toContain('projectId,');
+    expect(runner).toContain('persistedCanvas = await waitForPersistedCanvasArtifactElements(baseUrl, canvasPrototype, projectId, requiredKinds);');
     expect(runner).toContain("pathname.startsWith('/api/canvas')");
     expect(runner).toContain('diagnostics.canvasSaveRequests');
     expect(runner).toContain('persistedCanvas');
