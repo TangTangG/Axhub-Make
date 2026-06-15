@@ -17,6 +17,7 @@
  */
 
 import { WEB_EDITOR_V2_DRAG_THRESHOLD_PX } from '../constants';
+import { getAxhubAnnotationShadowHitElementAtPoint } from '../utils/annotation-shadow-hit-test';
 import { Disposer } from '../utils/disposables';
 
 // =============================================================================
@@ -501,7 +502,8 @@ export function createEventController(options: EventControllerOptions): EventCon
       return null;
     }
 
-    const element = document.elementFromPoint(clientX, clientY);
+    const element = getAxhubAnnotationShadowHitElementAtPoint(clientX, clientY)
+      ?? document.elementFromPoint(clientX, clientY);
     if (!element) return null;
 
     // Skip if element is part of the editor overlay

@@ -189,6 +189,14 @@ function encodeCanvasApiPath(canvasName) {
   return String(canvasName || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
 }
 
+function appendProjectIdSearchParam(url, projectId) {
+  const normalizedProjectId = String(projectId || '').trim();
+  if (normalizedProjectId) {
+    url.searchParams.set('projectId', normalizedProjectId);
+  }
+  return url;
+}
+
 async function waitForHttpOk(url, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
@@ -1791,6 +1799,7 @@ async function waitForRealAcpChatRequest(diagnostics, acpOrigin, timeoutMs = 45_
 
 async function waitForRealAcpCanvasActiveWrite({
   baseUrl,
+  projectId,
   prototypeName,
   diagnostics,
   requiredKinds = REQUIRED_ARTIFACT_KINDS,
@@ -1804,6 +1813,7 @@ async function waitForRealAcpCanvasActiveWrite({
 
   while (Date.now() < deadline) {
     const url = new URL(`/api/canvas/${encodeCanvasApiPath(`prototypes/${prototypeName}/canvas.excalidraw`)}`, baseUrl);
+    appendProjectIdSearchParam(url, projectId);
     latest = await fetchJson(url).catch((error) => ({
       error: error?.message || String(error),
     }));
@@ -1934,12 +1944,13 @@ function collectPersistedCanvasGeneratedElements(canvasDocument) {
     }));
 }
 
-async function waitForPersistedCanvasArtifactElements(baseUrl, prototypeName, requiredKinds = REQUIRED_ARTIFACT_KINDS, timeoutMs = 90_000) {
+async function waitForPersistedCanvasArtifactElements(baseUrl, prototypeName, projectId, requiredKinds = REQUIRED_ARTIFACT_KINDS, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
   let latest = null;
   let latestCoverage = null;
   while (Date.now() < deadline) {
     const url = new URL(`/api/canvas/${encodeCanvasApiPath(`prototypes/${prototypeName}/canvas.excalidraw`)}`, baseUrl);
+    appendProjectIdSearchParam(url, projectId);
     latest = await fetchJson(url).catch((error) => ({
       error: error?.message || String(error),
     }));
@@ -2294,6 +2305,7 @@ async function main() {
     activeCanvasWriteResult = await waitForRealAcpCanvasActiveWrite({
       diagnostics,
       baseUrl,
+      projectId,
       prototypeName: canvasPrototype,
       requiredKinds,
     });
@@ -2324,7 +2336,7 @@ async function main() {
     });
     await capture(page, frames, frameDir, '6. AI 主动写入 canvas.excalidraw 后，prototype / image / drawio / document 四类真实产物均已落入画布');
 
-    persistedCanvas = await waitForPersistedCanvasArtifactElements(baseUrl, canvasPrototype, requiredKinds);
+    persistedCanvas = await waitForPersistedCanvasArtifactElements(baseUrl, canvasPrototype, projectId, requiredKinds);
     await refreshExternalDiagnostics();
     await capture(page, frames, frameDir, '7. canvas.excalidraw 已持久化四类真实产物元素，重开画布仍可显示');
 

@@ -62,7 +62,7 @@ export const DEFAULT_PROTOTYPE_PLACEHOLDER_GUIDE: PrototypePlaceholderGuide = {
     description: '告诉 AI 你想做什么：目标用户、使用场景、页面内容和参考风格。',
     steps: [],
     tips: [
-        '模型不要用 auto，推荐：Claude Opus 4.7、Gemini 3.1 Pro、GPT-5.5、Kimi K2.6、GLM-5.1。',
+        '模型不要用 auto，推荐：Claude Opus 4.8、Gemini 3.1 Pro、GPT-5.5、Kimi K2.7、GLM-5.2。',
         '一个任务一个对话，避免多个需求互相干扰。',
         '多用图片和语音，截图、草图和参考页面更清楚。',
         '如果已有视觉规范，建议先创建设计系统。',
@@ -173,6 +173,10 @@ function pickString(value: unknown): string {
 
 function pickOptionalString(value: unknown): string | null {
     return typeof value === 'string' ? value.trim() : null;
+}
+
+function pickNonNegativeNumber(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 const PAGE_ID_RE = /^[a-z0-9-]+$/u;
@@ -417,6 +421,7 @@ export function normalizeProjectDocResource(
 
     const displayName = pickString(resource.title) || pickString(resource.displayName) || pickString(resource.name) || name;
     const markdownPath = pickString(resource.path);
+    const fileSize = pickNonNegativeNumber(resource.fileSize);
     const contentEndpoint = buildDocContentEndpoint(projectId, name);
     const isMarkdown = [
         name,
@@ -445,6 +450,7 @@ export function normalizeProjectDocResource(
         absoluteFilePath: markdownPath || undefined,
         projectId: projectId || undefined,
         resourceId: name,
+        ...(fileSize !== undefined ? { fileSize } : {}),
     };
 }
 

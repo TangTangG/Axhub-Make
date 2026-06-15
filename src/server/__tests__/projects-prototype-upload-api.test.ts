@@ -98,6 +98,36 @@ function writeAllConverterScripts(projectRoot: string): void {
   });
 }
 
+function writeAxureHtmlConverterScript(projectRoot: string): void {
+  const scriptsDir = path.join(projectRoot, 'scripts');
+  fs.mkdirSync(scriptsDir, { recursive: true });
+  fs.writeFileSync(path.join(scriptsDir, 'axure-html-converter.mjs'), [
+    '#!/usr/bin/env node',
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    'const [, , inputDir, outputName, ...args] = process.argv;',
+    "const projectRootIndex = args.indexOf('--project-root');",
+    "const outputBaseDirIndex = args.indexOf('--output-base-dir');",
+    "const projectRoot = projectRootIndex >= 0 ? args[projectRootIndex + 1] : process.cwd();",
+    "const outputBaseDir = outputBaseDirIndex >= 0 ? args[outputBaseDirIndex + 1] : path.join(projectRoot, 'content/prototypes');",
+    'const outputDir = path.join(outputBaseDir, outputName);',
+    "fs.rmSync(outputDir, { recursive: true, force: true });",
+    "fs.mkdirSync(path.join(outputDir, '.spec'), { recursive: true });",
+    "fs.cpSync(inputDir, path.join(outputDir, 'source-snapshot'), { recursive: true });",
+    "fs.writeFileSync(path.join(outputDir, 'index.tsx'), '/**\\n * @name Axure Demo\\n */\\nexport default function AxureDemo() { return null; }\\n', 'utf8');",
+    "fs.writeFileSync(path.join(outputDir, '.spec', 'axure-import-report.json'), JSON.stringify({ source: 'axure_html', pageCount: 2, assetCount: 1, warnings: ['Unsupported action: wait'] }, null, 2), 'utf8');",
+    'console.log(JSON.stringify({',
+    '  success: true,',
+    '  outputDir,',
+    '  requiresAi: false,',
+    '  pages: [{ id: "page-001", title: "首页" }, { id: "detail", title: "详情" }],',
+    '  defaultPageId: "page-001",',
+    '  warnings: ["Unsupported action: wait"],',
+    '}));',
+    '',
+  ].join('\n'), 'utf8');
+}
+
 function appendFolderFile(form: FormData, relativePath: string, content: string): void {
   form.append('files', new File([content], path.basename(relativePath)));
   form.append('relativePaths', relativePath);
@@ -174,6 +204,45 @@ function readMetadata(projectRoot: string): any {
   return JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
 }
 
+function writePlaceholderPrototype(projectRoot: string, prototypeName = 'untitled'): string {
+  const placeholderDir = path.join(projectRoot, 'content/prototypes', prototypeName);
+  fs.mkdirSync(placeholderDir, { recursive: true });
+  fs.writeFileSync(path.join(placeholderDir, 'index.tsx'), 'old placeholder\n', 'utf8');
+  fs.writeFileSync(path.join(placeholderDir, 'old.css'), 'old style\n', 'utf8');
+  const metadata = readMetadata(projectRoot);
+  writeProjectMetadata(projectRoot, {
+    ...metadata,
+    resources: {
+      ...metadata.resources,
+      prototypes: [
+        {
+          id: prototypeName,
+          name: prototypeName,
+          title: '未命名原型',
+          clientUrl: `http://localhost:3000/prototypes/${prototypeName}`,
+          description: 'Placeholder prototype',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          placeholder: true,
+          filePath: `content/prototypes/${prototypeName}/index.tsx`,
+          absoluteFilePath: path.join(placeholderDir, 'index.tsx'),
+        },
+      ],
+    },
+    navigation: { prototypes: [prototypeName], docs: [] },
+  });
+  return placeholderDir;
+}
+
+async function registerAndActivateProject(
+  origin: string,
+  projectRoot: string,
+  projectId: string,
+  projectName = projectId,
+): Promise<void> {
+  await registerProject(origin, projectRoot, projectId, projectName);
+  await setActiveProject(origin, projectId);
+}
+
 
 describe('make-server project prototype upload APIs', () => {
   it('exposes prototype upload handling from its domain module', () => {
@@ -198,6 +267,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'prototype-upload-disabled', 'Prototype Upload Disabled');
+
       const resources = await fetch(`${server.origin}/api/projects/prototype-upload-disabled/resources`)
         .then((response) => response.json());
       expect(resources.capabilities.resourceWrites.prototypeUpload).toBe(false);
@@ -249,6 +320,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'prototype-upload-client', 'Prototype Upload Client');
+
       const form = new FormData();
       form.append('uploadType', 'make');
       form.append('targetType', 'prototypes');
@@ -458,6 +531,41 @@ describe('make-server project prototype upload APIs', () => {
     }
   });
 
+  it('creates placeholder prototypes in standard make clients when metadata omits write targets', async () => {
+    const projectRoot = createTempRoot();
+    fs.mkdirSync(path.join(projectRoot, 'src/prototypes'), { recursive: true });
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'standard-client-create', name: 'Standard Client Create' },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'standard-client-create', 'Standard Client Create');
+      await setActiveProject(server.origin, 'standard-client-create');
+
+      const create = await fetch(`${server.origin}/api/prototypes/create-placeholder`, {
+        method: 'POST',
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(create).toMatchObject({
+        status: 201,
+        body: {
+          success: true,
+          projectId: 'standard-client-create',
+          name: 'untitled',
+          path: 'prototypes/untitled',
+          filePath: 'src/prototypes/untitled/index.tsx',
+          clientUrl: `${server.origin}/prototypes/untitled`,
+        },
+      });
+      expect(fs.existsSync(path.join(projectRoot, 'src/prototypes/untitled/index.tsx'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src/prototypes/untitled/style.css'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src/prototypes/untitled/canvas.excalidraw'))).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('moves placeholder prototypes into a client waiting state before generation starts', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
@@ -562,6 +670,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'prototype-upload-unsafe', 'Prototype Upload Unsafe');
+
       const form = new FormData();
       form.append('uploadType', 'make');
       form.append('targetType', 'prototypes');
@@ -611,6 +721,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'prototype-zip-client', 'Prototype Zip Client');
+
       const form = new FormData();
       form.append('uploadType', 'make');
       form.append('targetType', 'prototypes');
@@ -632,6 +744,69 @@ describe('make-server project prototype upload APIs', () => {
       });
       expect(fs.readFileSync(path.join(projectRoot, 'content/prototypes/zip-demo/index.tsx'), 'utf8'))
         .toContain('ZipDemo');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('renames a targeted placeholder prototype to the uploaded Make ZIP filename', async () => {
+    const serverRoot = createTempRoot('axhub-make-server-root-');
+    writeProjectMetadata(serverRoot, {
+      project: { id: 'server-root', name: 'Server Root' },
+    });
+    const projectRoot = createTempRoot();
+    const sourceRoot = createTempRoot('axhub-make-targeted-upload-zip-source-');
+    fs.mkdirSync(path.join(sourceRoot, 'Internal Root'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'Internal Root', 'index.tsx'), 'export default function SalesDeck() { return null; }\n', 'utf8');
+    const zipPath = path.join(createTempRoot('axhub-make-targeted-upload-zip-file-'), 'Sales Deck @2026!.zip');
+    createZipFromDirectory(sourceRoot, zipPath);
+
+    writeUploadEnabledProject(projectRoot, 'targeted-make-zip-client');
+    const placeholderDir = writePlaceholderPrototype(projectRoot);
+    const server = await startTestServer(serverRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'targeted-make-zip-client', 'Targeted Make ZIP Client');
+      await setActiveProject(server.origin, 'targeted-make-zip-client');
+
+      const form = new FormData();
+      form.append('projectId', 'targeted-make-zip-client');
+      form.append('uploadType', 'make');
+      form.append('targetType', 'prototypes');
+      form.append('uploadMode', 'zip');
+      form.append('targetPrototypeName', 'untitled');
+      form.append('file', new File([fs.readFileSync(zipPath)], 'Sales Deck @2026!.zip', { type: 'application/zip' }));
+      const upload = await fetch(`${server.origin}/api/upload`, {
+        method: 'POST',
+        body: form,
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(upload).toMatchObject({
+        status: 200,
+        body: {
+          success: true,
+          projectId: 'targeted-make-zip-client',
+          folderName: 'sales-deck-2026',
+          path: 'prototypes/sales-deck-2026',
+          clientUrl: `${server.origin}/prototypes/sales-deck-2026`,
+        },
+      });
+      expect(fs.existsSync(placeholderDir)).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'content/prototypes/sales-deck-2026/index.tsx'), 'utf8'))
+        .toContain('SalesDeck');
+
+      const metadata = readMetadata(projectRoot);
+      expect(metadata.resources.prototypes).toEqual([
+        expect.objectContaining({
+          id: 'sales-deck-2026',
+          name: 'sales-deck-2026',
+          filePath: 'content/prototypes/sales-deck-2026/index.tsx',
+          clientUrl: `${server.origin}/prototypes/sales-deck-2026`,
+        }),
+      ]);
+      expect(metadata.resources.prototypes[0]).not.toHaveProperty('placeholder', true);
+      expect(metadata.resources.prototypes[0]).not.toHaveProperty('placeholderGuide');
+      expect(metadata.navigation.prototypes).toEqual(['sales-deck-2026']);
     } finally {
       await server.close();
     }
@@ -665,6 +840,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'theme-zip-client', 'Theme Zip Client');
+
       const form = new FormData();
       form.append('uploadType', 'local_axure');
       form.append('targetType', 'themes');
@@ -734,6 +911,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'theme-make-zip-client', 'Theme Make Zip Client');
+
       const form = new FormData();
       form.append('uploadType', 'make_zip');
       form.append('targetType', 'themes');
@@ -792,6 +971,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'theme-upload-disabled', 'Theme Upload Disabled');
+
       const resources = await fetch(`${server.origin}/api/projects/theme-upload-disabled/resources`)
         .then((response) => response.json());
       expect(resources.capabilities.resourceWrites.themeImport).toBe(false);
@@ -842,6 +1023,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'theme-zip-unsafe', 'Theme Zip Unsafe');
+
       const form = new FormData();
       form.append('uploadType', 'local_axure');
       form.append('targetType', 'themes');
@@ -882,6 +1065,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'screenshot-upload-client', 'Screenshot Upload Client');
+
       const form = new FormData();
       form.append('batchId', '../unsafe batch');
       form.append('targetType', 'prototypes');
@@ -918,6 +1103,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'figma-converter-client');
+
       const form = new FormData();
       form.append('uploadType', 'figma_make');
       form.append('targetType', 'prototypes');
@@ -968,6 +1155,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'v0-converter-client');
+
       const form = new FormData();
       form.append('uploadType', 'v0');
       form.append('targetType', 'prototypes');
@@ -997,6 +1186,174 @@ describe('make-server project prototype upload APIs', () => {
     }
   });
 
+  it('overwrites the current placeholder directory for converter uploads with targetPrototypeName', async () => {
+    const serverRoot = createTempRoot('axhub-make-server-root-');
+    writeProjectMetadata(serverRoot, {
+      project: { id: 'server-root', name: 'Server Root' },
+    });
+    const projectRoot = createTempRoot();
+    writeUploadEnabledProject(projectRoot, 'targeted-converter-client');
+    const scriptsDir = path.join(projectRoot, 'scripts');
+    fs.mkdirSync(scriptsDir, { recursive: true });
+    fs.writeFileSync(path.join(scriptsDir, 'v0-converter.mjs'), [
+      '#!/usr/bin/env node',
+      "import fs from 'node:fs';",
+      "import path from 'node:path';",
+      'const [, , inputDir, outputName, ...args] = process.argv;',
+      "const projectRootIndex = args.indexOf('--project-root');",
+      "const outputBaseDirIndex = args.indexOf('--output-base-dir');",
+      "const projectRoot = projectRootIndex >= 0 ? args[projectRootIndex + 1] : process.cwd();",
+      "const outputBaseDir = outputBaseDirIndex >= 0 ? args[outputBaseDirIndex + 1] : path.join(projectRoot, 'content/prototypes');",
+      'const outputDir = path.join(outputBaseDir, outputName);',
+      "fs.mkdirSync(outputDir, { recursive: true });",
+      "fs.cpSync(inputDir, outputDir, { recursive: true });",
+      "fs.writeFileSync(path.join(outputDir, 'index.tsx'), 'export default function Imported() { return null; }\\n', 'utf8');",
+      "fs.writeFileSync(path.join(outputDir, '.v0-tasks.md'), '# tasks\\n', 'utf8');",
+      'console.log(JSON.stringify({',
+      '  success: true,',
+      "  tasksFile: path.relative(projectRoot, path.join(outputDir, '.v0-tasks.md')).split(path.sep).join('/'),",
+      '}));',
+      '',
+    ].join('\n'), 'utf8');
+    const placeholderDir = path.join(projectRoot, 'content/prototypes/untitled');
+    fs.mkdirSync(placeholderDir, { recursive: true });
+    fs.writeFileSync(path.join(placeholderDir, 'index.tsx'), 'old placeholder\n', 'utf8');
+    fs.writeFileSync(path.join(placeholderDir, 'old.css'), 'old style\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      ...readMetadata(projectRoot),
+      resources: {
+        ...readMetadata(projectRoot).resources,
+        prototypes: [
+          {
+            id: 'untitled',
+            name: 'untitled',
+            title: '未命名原型',
+            clientUrl: 'http://localhost:3000/prototypes/untitled',
+            description: 'Placeholder prototype',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            placeholder: true,
+            filePath: 'content/prototypes/untitled/index.tsx',
+            absoluteFilePath: path.join(placeholderDir, 'index.tsx'),
+          },
+        ],
+      },
+      navigation: { prototypes: ['untitled'], docs: [] },
+    });
+    const server = await startTestServer(serverRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'targeted-converter-client', 'Targeted Converter Client');
+      await setActiveProject(server.origin, 'targeted-converter-client');
+
+      const form = new FormData();
+      form.append('projectId', 'targeted-converter-client');
+      form.append('uploadType', 'v0');
+      form.append('targetType', 'prototypes');
+      form.append('uploadMode', 'folder');
+      form.append('targetPrototypeName', 'untitled');
+      form.append('folderName', 'V0 Demo');
+      appendFolderFile(form, 'V0 Demo/app/page.tsx', 'export default function Page() { return <div>V0</div>; }\n');
+
+      const upload = await fetch(`${server.origin}/api/upload`, {
+        method: 'POST',
+        body: form,
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(upload.status).toBe(200);
+      expect(upload.body).toMatchObject({
+        success: true,
+        projectId: 'targeted-converter-client',
+        uploadType: 'v0',
+        folderName: 'untitled',
+        path: 'prototypes/untitled',
+        tasksFile: 'content/prototypes/untitled/.v0-tasks.md',
+      });
+      expect(upload.body.prompt).toContain('必须覆盖当前占位原型 `prototypes/untitled`');
+      expect(fs.existsSync(path.join(placeholderDir, 'old.css'))).toBe(false);
+      expect(fs.existsSync(path.join(placeholderDir, 'app/page.tsx'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/v0-demo'))).toBe(false);
+
+      const metadata = readMetadata(projectRoot);
+      expect(metadata.resources.prototypes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'untitled',
+          name: 'untitled',
+          filePath: 'content/prototypes/untitled/index.tsx',
+          clientUrl: `${server.origin}/prototypes/untitled`,
+        }),
+      ]));
+      expect(metadata.resources.prototypes[0]).not.toHaveProperty('placeholder', true);
+      expect(metadata.resources.prototypes[0]).not.toHaveProperty('placeholderGuide');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('renames a targeted placeholder prototype to the uploaded converter ZIP filename', async () => {
+    const serverRoot = createTempRoot('axhub-make-server-root-');
+    writeProjectMetadata(serverRoot, {
+      project: { id: 'server-root', name: 'Server Root' },
+    });
+    const projectRoot = createTempRoot();
+    writeUploadEnabledProject(projectRoot, 'targeted-converter-zip-client');
+    writeAllConverterScripts(projectRoot);
+    const sourceRoot = createTempRoot('axhub-make-targeted-converter-zip-source-');
+    fs.mkdirSync(path.join(sourceRoot, 'Internal V0 Project', 'app'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'Internal V0 Project', 'app', 'page.tsx'), 'export default function Page() { return <div>V0</div>; }\n', 'utf8');
+    const zipPath = path.join(createTempRoot('axhub-make-targeted-converter-zip-file-'), 'V0 Import @2026!.zip');
+    createZipFromDirectory(sourceRoot, zipPath);
+    const placeholderDir = writePlaceholderPrototype(projectRoot);
+    const server = await startTestServer(serverRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'targeted-converter-zip-client', 'Targeted Converter ZIP Client');
+      await setActiveProject(server.origin, 'targeted-converter-zip-client');
+
+      const form = new FormData();
+      form.append('projectId', 'targeted-converter-zip-client');
+      form.append('uploadType', 'v0');
+      form.append('targetType', 'prototypes');
+      form.append('uploadMode', 'zip');
+      form.append('targetPrototypeName', 'untitled');
+      form.append('file', new File([fs.readFileSync(zipPath)], 'V0 Import @2026!.zip', { type: 'application/zip' }));
+
+      const upload = await fetch(`${server.origin}/api/upload`, {
+        method: 'POST',
+        body: form,
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(upload.status).toBe(200);
+      expect(upload.body).toMatchObject({
+        success: true,
+        projectId: 'targeted-converter-zip-client',
+        uploadType: 'v0',
+        folderName: 'v0-import-2026',
+        path: 'prototypes/v0-import-2026',
+        tasksFile: 'content/prototypes/v0-import-2026/.v0-tasks.md',
+      });
+      expect(upload.body.prompt).toContain('必须覆盖当前占位原型 `prototypes/untitled` 并将目录重命名为 `prototypes/v0-import-2026`');
+      expect(upload.body.prompt).not.toContain('不要改用上传压缩包');
+      expect(fs.existsSync(placeholderDir)).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/v0-import-2026/app/page.tsx'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/internal-v0-project'))).toBe(false);
+
+      const metadata = readMetadata(projectRoot);
+      expect(metadata.resources.prototypes).toEqual([
+        expect.objectContaining({
+          id: 'v0-import-2026',
+          name: 'v0-import-2026',
+          filePath: 'content/prototypes/v0-import-2026/index.tsx',
+          clientUrl: `${server.origin}/prototypes/v0-import-2026`,
+        }),
+      ]);
+      expect(metadata.resources.prototypes[0]).not.toHaveProperty('placeholder', true);
+      expect(metadata.resources.prototypes[0]).not.toHaveProperty('placeholderGuide');
+      expect(metadata.navigation.prototypes).toEqual(['v0-import-2026']);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('preprocesses Google AIStudio folder uploads into prototype projects with AI prompts', async () => {
     const projectRoot = createTempRoot();
     writeUploadEnabledProject(projectRoot, 'aistudio-converter-client');
@@ -1004,6 +1361,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'aistudio-converter-client');
+
       const form = new FormData();
       form.append('uploadType', 'google_aistudio');
       form.append('targetType', 'prototypes');
@@ -1048,6 +1407,8 @@ describe('make-server project prototype upload APIs', () => {
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'stitch-converter-client');
+
       const form = new FormData();
       form.append('uploadType', 'google_stitch');
       form.append('targetType', 'prototypes');
@@ -1077,12 +1438,146 @@ describe('make-server project prototype upload APIs', () => {
     }
   });
 
+  it('converts Axure HTML zip uploads directly and persists route metadata without AI handoff', async () => {
+    const serverRoot = createTempRoot('axhub-make-server-root-');
+    writeProjectMetadata(serverRoot, {
+      project: { id: 'server-root', name: 'Server Root' },
+    });
+    const projectRoot = createTempRoot();
+    writeUploadEnabledProject(projectRoot, 'axure-html-client');
+    writeAxureHtmlConverterScript(projectRoot);
+    const sourceRoot = createTempRoot('axhub-make-axure-html-source-');
+    fs.mkdirSync(path.join(sourceRoot, 'Axure Demo', 'data'), { recursive: true });
+    fs.mkdirSync(path.join(sourceRoot, 'Axure Demo', 'files', '首页'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'Axure Demo', 'data', 'document.js'), '$axure.loadDocument(function(){ return {}; });\n', 'utf8');
+    fs.writeFileSync(path.join(sourceRoot, 'Axure Demo', 'files', '首页', 'data.js'), '$axure.loadCurrentPage(function(){ return {}; });\n', 'utf8');
+    const zipPath = path.join(createTempRoot('axhub-make-axure-html-zip-'), 'axure-demo.zip');
+    createZipFromDirectory(sourceRoot, zipPath);
+    const server = await startTestServer(serverRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'axure-html-client', 'Axure HTML Client');
+      await setActiveProject(server.origin, 'axure-html-client');
+
+      const form = new FormData();
+      form.append('uploadType', 'axure_html');
+      form.append('targetType', 'prototypes');
+      form.append('uploadMode', 'zip');
+      form.append('file', new File([fs.readFileSync(zipPath)], 'axure-demo.zip', { type: 'application/zip' }));
+
+      const upload = await fetch(`${server.origin}/api/upload`, {
+        method: 'POST',
+        body: form,
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(upload.status).toBe(200);
+      expect(upload.body).toMatchObject({
+        success: true,
+        projectId: 'axure-html-client',
+        uploadType: 'axure_html',
+        folderName: 'axure-demo',
+        path: 'prototypes/axure-demo',
+        clientUrl: `${server.origin}/prototypes/axure-demo`,
+        requiresAi: false,
+        pages: [
+          { id: 'page-001', title: '首页' },
+          { id: 'detail', title: '详情' },
+        ],
+        defaultPageId: 'page-001',
+        warnings: ['Unsupported action: wait'],
+      });
+      expect(upload.body.prompt).toBeUndefined();
+      expect(upload.body.message).toContain('Axure HTML');
+
+      const metadata = readMetadata(projectRoot);
+      expect(metadata.resources.prototypes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'axure-demo',
+          title: 'Axure Demo',
+          filePath: 'content/prototypes/axure-demo/index.tsx',
+          clientUrl: `${server.origin}/prototypes/axure-demo`,
+          pages: [
+            { id: 'page-001', title: '首页' },
+            { id: 'detail', title: '详情' },
+          ],
+          defaultPageId: 'page-001',
+          importReport: expect.objectContaining({
+            source: 'axure_html',
+            warnings: ['Unsupported action: wait'],
+          }),
+        }),
+      ]));
+      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/axure-demo/source-snapshot/data/document.js'))).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('uses multipart projectId for Axure HTML uploads instead of the active project fallback', async () => {
+    const serverRoot = createTempRoot('axhub-make-server-root-');
+    writeProjectMetadata(serverRoot, {
+      project: { id: 'server-root', name: 'Server Root' },
+    });
+    const activeProjectRoot = createTempRoot('axhub-make-active-project-');
+    writeUploadEnabledProject(activeProjectRoot, 'active-upload-client');
+    const targetProjectRoot = createTempRoot('axhub-make-target-project-');
+    writeUploadEnabledProject(targetProjectRoot, 'target-upload-client');
+    writeAxureHtmlConverterScript(targetProjectRoot);
+    const sourceRoot = createTempRoot('axhub-make-axure-html-projectid-source-');
+    fs.mkdirSync(path.join(sourceRoot, 'Axure Demo', 'data'), { recursive: true });
+    fs.mkdirSync(path.join(sourceRoot, 'Axure Demo', 'files', '首页'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'Axure Demo', 'data', 'document.js'), '$axure.loadDocument(function(){ return {}; });\n', 'utf8');
+    fs.writeFileSync(path.join(sourceRoot, 'Axure Demo', 'files', '首页', 'data.js'), '$axure.loadCurrentPage(function(){ return {}; });\n', 'utf8');
+    const zipPath = path.join(createTempRoot('axhub-make-axure-html-projectid-zip-'), 'axure-demo.zip');
+    createZipFromDirectory(sourceRoot, zipPath);
+    const server = await startTestServer(serverRoot);
+
+    try {
+      await registerProject(server.origin, activeProjectRoot, 'active-upload-client', 'Active Upload Client');
+      await registerProject(server.origin, targetProjectRoot, 'target-upload-client', 'Target Upload Client');
+      await setActiveProject(server.origin, 'active-upload-client');
+
+      const form = new FormData();
+      form.append('projectId', 'target-upload-client');
+      form.append('uploadType', 'axure_html');
+      form.append('targetType', 'prototypes');
+      form.append('uploadMode', 'zip');
+      form.append('file', new File([fs.readFileSync(zipPath)], 'axure-demo.zip', { type: 'application/zip' }));
+
+      const upload = await fetch(`${server.origin}/api/upload`, {
+        method: 'POST',
+        body: form,
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(upload.status).toBe(200);
+      expect(upload.body).toMatchObject({
+        success: true,
+        projectId: 'target-upload-client',
+        uploadType: 'axure_html',
+        folderName: 'axure-demo',
+      });
+
+      const activeMetadata = readMetadata(activeProjectRoot);
+      const targetMetadata = readMetadata(targetProjectRoot);
+      expect(activeMetadata.resources.prototypes).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'axure-demo' }),
+      ]));
+      expect(targetMetadata.resources.prototypes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'axure-demo' }),
+      ]));
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects Figma Make folder uploads before writing files', async () => {
     const projectRoot = createTempRoot();
     writeUploadEnabledProject(projectRoot, 'figma-folder-reject-client');
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerAndActivateProject(server.origin, projectRoot, 'figma-folder-reject-client');
+
       const form = new FormData();
       form.append('uploadType', 'figma_make');
       form.append('targetType', 'prototypes');
@@ -1104,12 +1599,15 @@ describe('make-server project prototype upload APIs', () => {
     }
   });
 
-  it('reports a clear error when the client project is missing a converter script', async () => {
+  it('uses the bundled server converter when the client project is missing a converter script', async () => {
     const projectRoot = createTempRoot();
-    writeUploadEnabledProject(projectRoot, 'missing-converter-client');
+    writeUploadEnabledProject(projectRoot, 'bundled-converter-client');
     const server = await startTestServer(projectRoot);
 
     try {
+      await registerProject(server.origin, projectRoot, 'bundled-converter-client', 'Bundled Converter Client');
+      await setActiveProject(server.origin, 'bundled-converter-client');
+
       const form = new FormData();
       form.append('uploadType', 'v0');
       form.append('targetType', 'prototypes');
@@ -1122,9 +1620,18 @@ describe('make-server project prototype upload APIs', () => {
         body: form,
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
 
-      expect(upload.status).toBe(400);
-      expect(upload.body.error).toContain('当前客户端项目缺少转换脚本：scripts/v0-converter.mjs');
-      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/v0-demo'))).toBe(false);
+      expect(upload.status).toBe(200);
+      expect(upload.body).toMatchObject({
+        success: true,
+        projectId: 'bundled-converter-client',
+        uploadType: 'v0',
+        folderName: 'v0-demo',
+        path: 'prototypes/v0-demo',
+        tasksFile: 'content/prototypes/v0-demo/.v0-tasks.md',
+      });
+      expect(upload.body.prompt).toContain('V0 项目已上传并预处理完成');
+      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/v0-demo/index.tsx'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/v0-demo/.v0-tasks.md'))).toBe(true);
     } finally {
       await server.close();
     }

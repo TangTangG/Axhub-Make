@@ -87,10 +87,13 @@ describe('CanvasAiGenerationTool source', () => {
     expect(source).toContain('defaultThemeName?: string | null;');
     expect(source).toContain('defaultThemeName,');
     expect(source).toContain('defaultThemeName={defaultThemeName}');
-    expect(source).toContain('onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;');
+    expect(source).toContain('export interface CanvasAiGenerationResult {');
+    expect(source).toContain('artifacts?: GenerationArtifactRecord[];');
+    expect(source).toContain('onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;');
     expect(source).toContain('const submitCanvasAssistantPrompt = useCallback(async (');
     expect(source).toContain('request: CanvasAiSubmitRequest,');
     expect(source).toContain('const submitted = await onSubmitCanvasAssistantPrompt({');
+    expect(source).toContain("const submittedOk = typeof submitted === 'object' && submitted !== null");
     expect(source).toContain('generatorId,');
     expect(source).toContain('canvasFilePath,');
     expect(source).toContain('localContextRefs,');
@@ -223,6 +226,9 @@ describe('CanvasAiGenerationTool source', () => {
     expect(source).toContain('contextBundle: request.contextBundle');
     expect(source).toContain('prompt: appendCanvasGenerationPromptSettings({');
     expect(source).toContain('settings: options.sceneSettings ?? request.sceneSettings');
+    expect(source).toContain('canvasContext: {');
+    expect(source).toContain('canvasName: canvasFilePath');
+    expect(source).toContain('generatorElementId: generatorId');
     expect(source).not.toContain('sceneSettings: detail.sceneSettings');
     expect(source).not.toContain('sceneSettings: options.sceneSettings ?? request.sceneSettings');
     expect(source).toContain('const submitted = await onSubmitCanvasAssistantPrompt({');
@@ -265,6 +271,8 @@ describe('CanvasAiGenerationTool source', () => {
     expect(submitSegment).toContain('mode: request.mode,');
     expect(submitSegment).toContain('thought: request.thought,');
     expect(submitSegment).toContain('contextBundle: request.contextBundle,');
+    expect(submitSegment).toContain('canvasContext: {');
+    expect(submitSegment).toContain('generatorElementId: generatorId');
     expect(autoStartSegment).toContain('source: request.source,');
     expect(autoStartSegment).toContain('provider: request.provider || \'\',');
     expect(autoStartSegment).toContain('model: request.model ?? null,');
@@ -273,6 +281,53 @@ describe('CanvasAiGenerationTool source', () => {
     expect(autoStartSegment).toContain('contextBundle: request.contextBundle ?? null,');
     expect(source).not.toContain('runAiStream({');
     expect(source).not.toContain('dispatchAssistantArtifactsChanged');
+  });
+
+  it('passes explicit scene snapshots to persistence after programmatic generator mutations', () => {
+    const source = readToolSource();
+    const insertSegment = source.slice(
+      source.indexOf('const insertGenerator = useCallback'),
+      source.indexOf('const refreshCanvasOverlayRevision = useCallback'),
+    );
+    const sceneSwitchSegment = source.slice(
+      source.indexOf('const updateSelectedGeneratorScene = useCallback'),
+      source.indexOf('const insertGenerator = useCallback'),
+    );
+    const deleteSegment = source.slice(
+      source.indexOf('const handleComposerKeyDown = (event: KeyboardEvent) => {'),
+      source.indexOf('document.addEventListener(\'keydown\', handleComposerKeyDown, true);'),
+    );
+
+    expect(source).toContain('interface CanvasAiGenerationSceneSnapshot');
+    expect(source).toContain('onSceneMutated?: (snapshot?: CanvasAiGenerationSceneSnapshot) => void;');
+    expect(insertSegment).toContain('const currentElements = excalidrawAPI.getSceneElements();');
+    expect(insertSegment).toContain('const nextElements = [...currentElements, generator];');
+    expect(insertSegment).toContain('const nextAppState = {');
+    expect(insertSegment).toContain('excalidrawAPI.updateScene({');
+    expect(insertSegment).toContain('elements: nextElements,');
+    expect(insertSegment).toContain('appState: nextAppState,');
+    expect(insertSegment).toContain('onSceneMutated?.({ elements: nextElements, appState: nextAppState });');
+    expect(insertSegment).not.toContain('onSceneMutated?.();');
+    expect(sceneSwitchSegment).toContain('onSceneMutated?.({ elements, appState: excalidrawAPI.getAppState() });');
+    expect(deleteSegment).toContain('const nextAppState = {');
+    expect(deleteSegment).toContain('onSceneMutated?.({ elements, appState: nextAppState });');
+  });
+
+  it('does not recreate the AI placeholder file on every selection refresh frame', () => {
+    const source = readToolSource();
+    const ensureSegment = source.slice(
+      source.indexOf('const ensurePlaceholderFile = useCallback'),
+      source.indexOf('const updateSelectedGeneratorScene = useCallback'),
+    );
+    const refreshSelectionSegment = source.slice(
+      source.indexOf('const refreshSelection = useCallback'),
+      source.indexOf('useEffect(() => {\n    let raf = 0;'),
+    );
+
+    expect(ensureSegment).toContain('const files = excalidrawAPI.getFiles?.() || {};');
+    expect(ensureSegment).toContain('if (!files[CANVAS_AI_GENERATION_PLACEHOLDER_FILE_ID]) {');
+    expect(refreshSelectionSegment).toContain('ensurePlaceholderFile();');
+    expect(refreshSelectionSegment).not.toContain('refreshPlaceholderFile(excalidrawAPI);');
   });
 
   it('uses subdued canvas scene switch styling instead of a black primary active state', () => {

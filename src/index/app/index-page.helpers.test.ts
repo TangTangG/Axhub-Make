@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    buildAssistantAutoOpenPanelModeStorageKey,
     buildAssistantAutoOpenDismissedStorageKey,
     getAssistantAutoOpenDismissed,
+    getAssistantAutoOpenPanelMode,
     isMarkdownEditableResource,
     normalizeDocItem,
     normalizeDocsItems,
@@ -10,6 +12,7 @@ import {
     replaceSidebarItemTitle,
     resolveMobileItemOpenUrl,
     setAssistantAutoOpenDismissed,
+    setAssistantAutoOpenPanelMode,
 } from './index-page.helpers';
 
 describe('index page helpers', () => {
@@ -38,6 +41,32 @@ describe('index page helpers', () => {
 
         expect(getAssistantAutoOpenDismissed(guideKey, fakeStorage)).toBe(true);
         expect(getAssistantAutoOpenDismissed(otherPrototypeKey, fakeStorage)).toBe(true);
+    });
+
+    it('stores the last assistant panel mode project-wide for auto restore', () => {
+        const storage = new Map<string, string>();
+        const fakeStorage = {
+            getItem: (key: string) => storage.get(key) ?? null,
+            setItem: (key: string, value: string) => {
+                storage.set(key, value);
+            },
+        };
+        const guideKey = buildAssistantAutoOpenPanelModeStorageKey('make-project', 'src/prototypes/beginner-guide/index.tsx');
+        const otherPrototypeKey = buildAssistantAutoOpenPanelModeStorageKey('make-project', 'src/prototypes/other/index.tsx');
+        const otherProjectKey = buildAssistantAutoOpenPanelModeStorageKey('other-project', 'src/prototypes/beginner-guide/index.tsx');
+
+        expect(getAssistantAutoOpenPanelMode(guideKey, fakeStorage)).toBe('general-ai');
+
+        setAssistantAutoOpenPanelMode(guideKey, 'image-ai', fakeStorage);
+
+        expect(getAssistantAutoOpenPanelMode(guideKey, fakeStorage)).toBe('image-ai');
+        expect(getAssistantAutoOpenPanelMode(otherPrototypeKey, fakeStorage)).toBe('image-ai');
+        expect(getAssistantAutoOpenPanelMode(otherProjectKey, fakeStorage)).toBe('general-ai');
+
+        setAssistantAutoOpenPanelMode(guideKey, 'general-ai', fakeStorage);
+
+        expect(getAssistantAutoOpenPanelMode(guideKey, fakeStorage)).toBe('general-ai');
+        expect(getAssistantAutoOpenPanelMode(otherPrototypeKey, fakeStorage)).toBe('general-ai');
     });
 
     it('opens metadata clientUrl values directly from the mobile prototype list', () => {
@@ -117,12 +146,14 @@ describe('index page helpers', () => {
                 name: '素材/image-2.png',
                 displayName: '素材/image-2',
                 absoluteFilePath: '/workspace/content/docs/素材/image-2.png',
+                fileSize: 22937,
             },
         ], 'make-project');
 
         expect(image.specUrl).toBe('/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project');
         expect(image.previewUrl).toBe('/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project');
         expect(image.absoluteFilePath).toBe('/workspace/content/docs/素材/image-2.png');
+        expect(image.fileSize).toBe(22937);
     });
 
     it('recognizes editable Markdown resources even when the display name has no .md extension', () => {

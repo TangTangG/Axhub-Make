@@ -21,12 +21,10 @@ src/prototypes/<prototype-name>/canvas-assets/
 3. 只有元素引用了持久化截图或图片文件时，才读取 `canvas-assets/`。
 4. 不使用 `axhub-make canvas` CLI；画布内容读取和修改仍以 `.excalidraw` 文件为准。
 
-## 参考文档
+## 参考文档分流
 
-- 文件路径、读写规则和关系检查：`references/canvas-read-write.md`
-- Axhub 专属节点和 `customData` 字段：`references/axhub-nodes.md`
-- Excalidraw 图形结构与布局基础：`references/excalidraw-basics.md`
-- JSON 元素结构模板：`references/element-templates.md`
+- 读写画布文件本身仍不清楚时，才读 `references/canvas-read-write.md`。
+- 遇到 Axhub 专属节点或不确定 `customData` 字段含义时，才读 `references/axhub-nodes.md`。
 
 ## 默认规则
 
@@ -37,6 +35,7 @@ src/prototypes/<prototype-name>/canvas-assets/
 - 结构性改动后检查绑定、容器、分组和 Frame 引用。
 - 除非用户需求要求修改，否则保留已有 Axhub `customData`。
 - 用户要求在草稿或画布上生成流程图、关系图或 Drawio 图时，先使用 `$drawio` 生成可编辑 Draw.io 图，再把结果创建或更新为当前原型 `canvas.excalidraw` 里的 Drawio 图片节点；不要只生成独立文档。
+- 只有明确不使用 Draw.io，或需要普通 Excalidraw 图形、连线、分组、Frame、布局时，才读 `references/excalidraw-basics.md`。
 - 创建或替换 prototype 预览节点时，画布上的节点尺寸与网页内部视口要分开处理：节点可以用较小可视尺寸避免占满画布，但网页仍按真实浏览器尺寸设计，通过 `customData.embedContentScale` 缩放显示。
 
 ## 回复要求

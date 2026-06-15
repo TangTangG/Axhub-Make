@@ -58,7 +58,7 @@ describe('IndexPage source', () => {
     expect(assistantControllerCall).toContain('assistantImageGenerationConfig: preferences.assistantImageGenerationConfig,');
   });
 
-  it('passes active project id into resource actions for docs writes', () => {
+  it('passes project and pending selection context into resource actions', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const resourceActionsCall = source.slice(
       source.indexOf('const resources = useIndexPageResourceActions'),
@@ -66,6 +66,7 @@ describe('IndexPage source', () => {
     );
 
     expect(resourceActionsCall).toContain('activeProjectId: workspace.activeProjectId,');
+    expect(resourceActionsCall).toContain('setPendingReturnTarget,');
   });
 
   it('initializes preferences before passing preference values into preview actions', () => {
@@ -273,6 +274,11 @@ describe('IndexPage source', () => {
     expect(submitSource).toContain('mode: request.mode');
     expect(submitSource).toContain('thought: request.thought');
     expect(submitSource).toContain('contextBundle: request.contextBundle');
+    expect(submitSource).toContain('canvasContext: {');
+    expect(submitSource).toContain('canvasFilePath: request.canvasFilePath');
+    expect(submitSource).toContain('canvasName: currentFilePath');
+    expect(submitSource).toContain('generatorElementId: request.generatorId');
+    expect(submitSource).toContain('source: request.source || \'canvas-node\'');
     expect(submitSource).not.toContain('sceneSettings: request.sceneSettings');
     expect(submitSource).toContain('buildCanvasAssistantContext(request)');
     expect(submitSource).toContain('const handleSubmitCanvasAssistantPrompt = useCallback');
@@ -310,8 +316,25 @@ describe('IndexPage source', () => {
 
     expect(submitSource).toContain('buildCanvasAssistantContext(request)');
     expect(submitSource).toContain('request.prompt');
-    expect(submitSource).toContain('{ forceNewThread: true }');
+    expect(submitSource).toContain('forceNewThread: true,');
     expect(submitSource).not.toContain('forceNewAssistantThread');
+  });
+
+  it('returns visible ACP output artifacts from canvas generation submissions', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const submitSource = source.slice(
+      source.indexOf('const handleSubmitCanvasAssistantPrompt = useCallback'),
+      source.indexOf('const switchProjectWithReturnTarget', source.indexOf('const handleSubmitCanvasAssistantPrompt = useCallback')),
+    );
+
+    expect(source).toContain("import { mapAcpOutputArtifactsToGenerationArtifacts } from '../domains/ai-generation/acpOutputArtifacts';");
+    expect(submitSource).toContain('const result = await handleSubmitAnnotationAssistantPrompt(');
+    expect(submitSource).toContain('waitUntil: \'started\',');
+    expect(submitSource).toContain('collectArtifacts: true,');
+    expect(submitSource).toContain('ignoredArtifactPaths: request.canvasFilePath ? [request.canvasFilePath] : [],');
+    expect(submitSource).toContain('const artifacts = mapAcpOutputArtifactsToGenerationArtifacts(result.artifacts || [], {');
+    expect(submitSource).toContain('threadId: result.threadId,');
+    expect(submitSource).toContain('return { ok: true, artifacts };');
   });
 
   it('shows a short startup warning when the Make state directory is not writable', () => {
@@ -428,18 +451,26 @@ describe('IndexPage source', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
 
     expect(source).toContain('buildAssistantAutoOpenDismissedStorageKey');
+    expect(source).toContain('buildAssistantAutoOpenPanelModeStorageKey');
     expect(source).toContain('getAssistantAutoOpenDismissed');
+    expect(source).toContain('getAssistantAutoOpenPanelMode');
     expect(source).toContain('setAssistantAutoOpenDismissed');
+    expect(source).toContain('setAssistantAutoOpenPanelMode');
     expect(source).toContain("import type { GenieProvider } from '@/common/genie/types';");
     expect(source).toMatch(/import\s+\{[^}]*getAssistantContextCurrentFilePath[^}]*\}\s+from '..\/utils\/genieContext';/s);
     expect(source).toContain("const onlineOpenAutoTriggeredRef = useRef('');");
+    expect(source).toContain("const onlineOpenAutoRestorePendingRef = useRef('');");
     expect(source).toContain('const assistantCurrentFilePath = getAssistantContextCurrentFilePath(assistantController.assistantContextV1);');
     expect(source).toContain('const assistantAutoOpenTargetPath = assistantCurrentFilePath');
     expect(source).toContain('const assistantAutoOpenDismissedStorageKey = useMemo(() => (');
     expect(source).toContain('buildAssistantAutoOpenDismissedStorageKey(assistantAutoOpenProjectScope)');
+    expect(source).toContain('const assistantAutoOpenPanelModeStorageKey = useMemo(() => (');
+    expect(source).toContain('buildAssistantAutoOpenPanelModeStorageKey(assistantAutoOpenProjectScope)');
     expect(source).toContain('const handleOpenGenieWebAgent = useCallback((targetPath?: string, provider?: GenieProvider) => {');
     expect(source).toContain('setAssistantAutoOpenDismissed(buildAssistantAutoOpenKeyForTarget(targetPath), false);');
+    expect(source).toContain("setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');");
     expect(source).toContain('setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);');
+    expect(source).toContain("setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'image-ai');");
     expect(source.indexOf('setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);'))
       .toBeLessThan(source.indexOf('return assistantController.openAssistantWithContextAndSubmitPrompt(context, prompt'));
     expect(source).toContain('const handleCloseWebAgentPanel = useCallback(() => {');
@@ -447,27 +478,32 @@ describe('IndexPage source', () => {
     expect(source).toContain('if (!preferences.initialPreferencesLoaded || !assistantAutoOpenTargetPath) {');
     expect(source).toContain('if (!assistantAutoOpenTargetPath) {');
     expect(source).toContain('if (getAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey)) {');
-    expect(source).toContain('onlineOpenAutoTriggeredRef.current = autoOpenTargetKey;');
-    expect(source).toContain('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);');
+    expect(source).toContain('onlineOpenAutoRestorePendingRef.current = autoOpenTargetKey;');
+    expect(source).toContain('const rememberedAiPanelMode = getAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey);');
+    expect(source).toContain('restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode)');
     expect(source).toContain('onCloseWebAgentPanel: handleCloseWebAgentPanel,');
     expect(source).toContain('assistantAutoOpenDismissedStorageKey,');
+    expect(source).toContain('assistantAutoOpenPanelModeStorageKey,');
     expect(source).toContain('preferences.initialPreferencesLoaded,');
     expect(source).not.toContain('parseOpenMethod(preferences.preferredIDE)');
     expect(source).not.toContain('resolveCachedOnlineOpenProvider');
 
     const autoOpenEffectStart = source.indexOf('if (!preferences.initialPreferencesLoaded || !assistantAutoOpenTargetPath) {');
-    const autoOpenEffectEnd = source.indexOf('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);', autoOpenEffectStart);
+    const autoOpenEffectEnd = source.indexOf('restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode)', autoOpenEffectStart);
     const autoOpenEffectSource = source.slice(autoOpenEffectStart, autoOpenEffectEnd);
 
     expect(autoOpenEffectSource.indexOf('const autoOpenTargetKey = assistantAutoOpenTargetPath;'))
       .toBeLessThan(autoOpenEffectSource.indexOf('if (getAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey)) {'));
     expect(autoOpenEffectSource.indexOf('if (onlineOpenAutoTriggeredRef.current === autoOpenTargetKey) {'))
       .toBeLessThan(autoOpenEffectSource.indexOf('if (getAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey)) {'));
+    expect(autoOpenEffectSource.indexOf('if (onlineOpenAutoRestorePendingRef.current === autoOpenTargetKey) {'))
+      .toBeLessThan(autoOpenEffectSource.indexOf('if (getAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey)) {'));
     expect(autoOpenEffectSource.indexOf('if (getAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey)) {'))
-      .toBeLessThan(autoOpenEffectSource.indexOf('onlineOpenAutoTriggeredRef.current = autoOpenTargetKey;'));
+      .toBeLessThan(autoOpenEffectSource.indexOf('onlineOpenAutoRestorePendingRef.current = autoOpenTargetKey;'));
+    expect(autoOpenEffectSource).toContain('const rememberedAiPanelMode = getAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey);');
   });
 
-  it('keys assistant auto-open attempts by target path without retrying failed automatic starts', () => {
+  it('dedupes in-flight assistant auto-restore attempts while retrying later after failures', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const autoOpenEffectStart = source.indexOf('if (!preferences.initialPreferencesLoaded || !assistantAutoOpenTargetPath) {');
     const autoOpenEffectEnd = source.indexOf('}, [', autoOpenEffectStart);
@@ -476,17 +512,24 @@ describe('IndexPage source', () => {
     expect(autoOpenEffectStart).toBeGreaterThan(-1);
     expect(autoOpenEffectEnd).toBeGreaterThan(autoOpenEffectStart);
     expect(source).toContain("const onlineOpenAutoTriggeredRef = useRef('');");
+    expect(source).toContain("const onlineOpenAutoRestorePendingRef = useRef('');");
     expect(autoOpenEffectSource).toContain('const autoOpenTargetKey = assistantAutoOpenTargetPath;');
     expect(autoOpenEffectSource).toContain('if (onlineOpenAutoTriggeredRef.current === autoOpenTargetKey) {');
+    expect(autoOpenEffectSource).toContain('if (onlineOpenAutoRestorePendingRef.current === autoOpenTargetKey) {');
+    expect(autoOpenEffectSource).toContain('onlineOpenAutoRestorePendingRef.current = autoOpenTargetKey;');
+    expect(autoOpenEffectSource).toContain('Promise.resolve(restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode))');
+    expect(autoOpenEffectSource).toContain('then((opened) => {');
+    expect(autoOpenEffectSource).toContain('if (opened) {');
     expect(autoOpenEffectSource).toContain('onlineOpenAutoTriggeredRef.current = autoOpenTargetKey;');
-    expect(autoOpenEffectSource).toContain('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);');
-    expect(autoOpenEffectSource).not.toContain('onlineOpenAutoTriggeredRef.current = \'\';');
+    expect(autoOpenEffectSource).toContain('finally(() => {');
+    expect(autoOpenEffectSource).toContain('if (onlineOpenAutoRestorePendingRef.current === autoOpenTargetKey) {');
+    expect(autoOpenEffectSource).toContain("onlineOpenAutoRestorePendingRef.current = '';");
   });
 
   it('keeps the assistant panel closed on the prototype placeholder start page', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const autoOpenEffectStart = source.indexOf('if (!preferences.initialPreferencesLoaded || !assistantAutoOpenTargetPath) {');
-    const autoOpenEffectEnd = source.indexOf('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);', autoOpenEffectStart);
+    const autoOpenEffectEnd = source.indexOf('restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode)', autoOpenEffectStart);
     const autoOpenEffectSource = source.slice(autoOpenEffectStart, autoOpenEffectEnd);
     const autoCloseEffectStart = source.indexOf('if (!prototypePlaceholderAutoCloseKey) {');
     const autoCloseEffectEnd = source.indexOf('}, [', autoCloseEffectStart);
@@ -523,7 +566,8 @@ describe('IndexPage source', () => {
     expect(restoreHiddenEffectSource).toContain('if (assistantController.assistantVisible) {');
     expect(restoreHiddenEffectSource).toContain('if (!assistantAutoOpenTargetPath) {');
     expect(restoreHiddenEffectSource).toContain('if (getAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey)) {');
-    expect(restoreHiddenEffectSource).toContain('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);');
+    expect(restoreHiddenEffectSource).toContain('const rememberedAiPanelMode = getAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey);');
+    expect(restoreHiddenEffectSource).toContain('restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode);');
     expect(restoreHiddenEffectSource).not.toContain('onlineOpenAutoTriggeredRef.current');
   });
 
@@ -535,16 +579,16 @@ describe('IndexPage source', () => {
     const projectScopeEffectSource = source.slice(projectScopeEffectStart, autoOpenEffectStart);
     const autoOpenEffectSource = source.slice(
       autoOpenEffectStart,
-      source.indexOf('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);', autoOpenEffectStart),
+      source.indexOf('restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode)', autoOpenEffectStart),
     );
     const restoreHiddenEffectSource = source.slice(
       restoreHiddenEffectStart,
-      source.indexOf('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);', restoreHiddenEffectStart),
+      source.indexOf('restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode);', restoreHiddenEffectStart),
     );
     const waitingEffectStart = source.indexOf('if (!prototypeWaitingGenerationActive) {');
     const waitingEffectSource = source.slice(
       waitingEffectStart,
-      source.indexOf('void assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);', waitingEffectStart),
+      source.indexOf("void restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');", waitingEffectStart),
     );
 
     expect(projectScopeEffectStart).toBeGreaterThan(-1);
@@ -553,13 +597,13 @@ describe('IndexPage source', () => {
     expect(projectScopeEffectSource).toContain('assistantAutoOpenSuppressedProjectScopeRef.current = nextScope;');
     expect(autoOpenEffectSource).toContain('if (assistantAutoOpenSuppressedProjectScopeRef.current === assistantAutoOpenProjectScope) {');
     expect(restoreHiddenEffectSource).toContain('if (assistantAutoOpenSuppressedProjectScopeRef.current === assistantAutoOpenProjectScope) {');
-    expect(waitingEffectSource).toContain('if (assistantAutoOpenSuppressedProjectScopeRef.current === assistantAutoOpenProjectScope) {');
+    expect(waitingEffectSource).not.toContain('if (assistantAutoOpenSuppressedProjectScopeRef.current === assistantAutoOpenProjectScope) {');
   });
 
   it('opens the assistant panel for waiting prototype previews with the active target path', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const autoOpenEffectStart = source.indexOf('if (!preferences.initialPreferencesLoaded || !assistantAutoOpenTargetPath) {');
-    const autoOpenEffectEnd = source.indexOf('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);', autoOpenEffectStart);
+    const autoOpenEffectEnd = source.indexOf('restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode)', autoOpenEffectStart);
     const autoOpenEffectSource = source.slice(autoOpenEffectStart, autoOpenEffectEnd);
     const waitingEffectStart = source.indexOf('if (!prototypeWaitingGenerationActive) {');
     const waitingEffectEnd = source.indexOf('}, [', waitingEffectStart);
@@ -582,7 +626,26 @@ describe('IndexPage source', () => {
     expect(waitingEffectSource).toContain('if (!assistantAutoOpenTargetPath) {');
     expect(waitingEffectSource.indexOf('if (!assistantAutoOpenTargetPath) {'))
       .toBeLessThan(waitingEffectSource.indexOf('openedPrototypeWaitingGenerationKeyRef.current = waitingGenerationAutoOpenKey;'));
-    expect(source).toContain('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);');
+    expect(source).toContain("restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');");
+  });
+
+  it('remembers forced waiting prototype assistant opens as the latest auto-open state', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const waitingEffectStart = source.indexOf('if (!prototypeWaitingGenerationActive) {');
+    const waitingEffectEnd = source.indexOf('}, [', waitingEffectStart);
+    const waitingEffectSource = source.slice(waitingEffectStart, waitingEffectEnd);
+
+    expect(waitingEffectStart).toBeGreaterThan(-1);
+    expect(waitingEffectEnd).toBeGreaterThan(waitingEffectStart);
+    expect(waitingEffectSource).toContain("assistantAutoOpenSuppressedProjectScopeRef.current = '';");
+    expect(waitingEffectSource).toContain('setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);');
+    expect(waitingEffectSource).toContain("setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');");
+    expect(waitingEffectSource.indexOf("assistantAutoOpenSuppressedProjectScopeRef.current = '';"))
+      .toBeLessThan(waitingEffectSource.indexOf("void restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');"));
+    expect(waitingEffectSource.indexOf('setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);'))
+      .toBeLessThan(waitingEffectSource.indexOf("void restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');"));
+    expect(waitingEffectSource.indexOf("setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');"))
+      .toBeLessThan(waitingEffectSource.indexOf("void restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');"));
   });
 
   it('does not retry failed automatic assistant starts for waiting prototype previews', () => {
@@ -595,7 +658,7 @@ describe('IndexPage source', () => {
     expect(waitingEffectEnd).toBeGreaterThan(waitingEffectStart);
     expect(waitingEffectSource).toContain('const waitingGenerationAutoOpenKey = prototypeWaitingGenerationAutoOpenKey;');
     expect(waitingEffectSource).toContain('openedPrototypeWaitingGenerationKeyRef.current = waitingGenerationAutoOpenKey;');
-    expect(waitingEffectSource).toContain('assistantController.restoreAssistantPanel(assistantAutoOpenTargetPath);');
+    expect(waitingEffectSource).toContain("restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');");
     expect(waitingEffectSource).not.toContain('then((opened) => {');
     expect(waitingEffectSource).not.toContain('if (!opened && openedPrototypeWaitingGenerationKeyRef.current === waitingGenerationAutoOpenKey) {');
   });

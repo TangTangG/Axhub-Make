@@ -48,13 +48,26 @@ import type { GenieProvider } from '@/common/genie/types';
 
 type AssistantTriggerSource = 'button' | 'event';
 type AssistantRuntimeState = Awaited<ReturnType<typeof apiService.getAssistantRuntime>>;
+export type AssistantAiPanelMode = 'general-ai' | 'image-ai' | 'external' | null;
 type EnsureAssistantOpenOptions = {
     loadingText?: string | false;
     suppressResourceThreadBinding?: boolean;
     openSettingsOnFailure?: boolean;
+    panelMode?: AssistantAiPanelMode;
 };
 type OpenAssistantSubmitOptions = {
     forceNewThread?: boolean;
+    waitUntil?: 'started' | 'finished';
+    collectArtifacts?: boolean;
+    artifactSource?: 'auto' | 'provider' | 'runtime';
+    ignoredArtifactPaths?: string[];
+};
+type OpenAssistantSubmitResult = {
+    ok: boolean;
+    threadId?: string;
+    artifacts?: unknown[];
+    workspaceArtifacts?: unknown[];
+    imageGenerationRecords?: unknown[];
 };
 type AcpNavigationChangedMessage = {
     href: string;
@@ -147,6 +160,67 @@ function waitForAssistantPanelPaint(): Promise<void> {
             window.requestAnimationFrame(() => resolve());
         });
     });
+}
+
+function normalizeAcpArtifactPath(value: unknown): string {
+    return String(value || '').trim().replace(/\\/g, '/').replace(/^\/+/u, '');
+}
+
+function getAcpArtifactPath(artifact: unknown): string {
+    if (!artifact || typeof artifact !== 'object') {
+        return '';
+    }
+    const record = artifact as { path?: unknown; target?: unknown; title?: unknown };
+    const target = record.target && typeof record.target === 'object'
+        ? record.target as { path?: unknown }
+        : {};
+    return normalizeAcpArtifactPath(record.path || target.path || record.title);
+}
+
+async function waitForAcpArtifacts(
+    readArtifacts: () => Promise<{
+        artifacts?: unknown[];
+        workspaceArtifacts?: unknown[];
+        imageGenerationRecords?: unknown[];
+    }>,
+    options: {
+        timeoutMs?: number;
+        intervalMs?: number;
+        ignoredArtifactPaths?: string[];
+    } = {},
+) {
+    const timeoutMs = options.timeoutMs ?? 420_000;
+    const intervalMs = options.intervalMs ?? 3000;
+    const ignoredPaths = new Set((options.ignoredArtifactPaths || [])
+        .map(normalizeAcpArtifactPath)
+        .filter(Boolean));
+    const filterArtifacts = (artifacts?: unknown[]) => {
+        const list = Array.isArray(artifacts) ? artifacts : [];
+        if (!ignoredPaths.size) {
+            return list;
+        }
+        return list.filter((artifact) => !ignoredPaths.has(getAcpArtifactPath(artifact)));
+    };
+    const startedAt = Date.now();
+    let latest = await readArtifacts();
+    while (Date.now() - startedAt < timeoutMs) {
+        const artifacts = filterArtifacts(latest.artifacts);
+        const workspaceArtifacts = filterArtifacts(latest.workspaceArtifacts);
+        if (artifacts.length || workspaceArtifacts.length || latest.imageGenerationRecords?.length) {
+            return {
+                ...latest,
+                artifacts,
+                workspaceArtifacts,
+            };
+        }
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        latest = await readArtifacts();
+    }
+    return {
+        ...latest,
+        artifacts: filterArtifacts(latest.artifacts),
+        workspaceArtifacts: filterArtifacts(latest.workspaceArtifacts),
+    };
 }
 
 function isUntitledPrototypeName(value: string): boolean {
@@ -252,7 +326,16 @@ export function useAssistantPanelController({
     const DEFAULT_ASSISTANT_INSTALL_CMD = 'npx -y @axhub/acp --port 32123';
     const DEFAULT_ASSISTANT_PANEL_WIDTH = 320;
     const MIN_ASSISTANT_PANEL_WIDTH = 320;
-    const MAX_ASSISTANT_PANEL_WIDTH = 640;
+    const ASSISTANT_PANEL_MAX_VIEWPORT_RATIO = 0.5;
+    function getAssistantPanelMaxWidth(): number {
+        return Math.max(
+            MIN_ASSISTANT_PANEL_WIDTH,
+            Math.round(window.innerWidth * ASSISTANT_PANEL_MAX_VIEWPORT_RATIO),
+        );
+    }
+    function clampAssistantPanelWidth(width: number): number {
+        return Math.min(Math.max(width, MIN_ASSISTANT_PANEL_WIDTH), getAssistantPanelMaxWidth());
+    }
     const projectId = activeProjectId?.trim() || undefined;
     const DEFAULT_ASSISTANT_RUNTIME_STATE: AssistantRuntimeState = {
         webBaseUrl: DEFAULT_ASSISTANT_WEB_BASE_URL,
@@ -274,16 +357,20 @@ export function useAssistantPanelController({
 
     const [assistantVisible, setAssistantVisible] = useState(false);
     const [assistantPanelMounted, setAssistantPanelMounted] = useState(false);
-    const [assistantPanelWidth, setAssistantPanelWidth] = useState<number>(() => {
+    const [assistantPanelMaxWidth, setAssistantPanelMaxWidth] = useState(getAssistantPanelMaxWidth);
+    const [assistantPanelWidth, setAssistantPanelWidthValue] = useState<number>(() => {
         const saved = localStorage.getItem(STORAGE_KEY_ASSISTANT_WIDTH);
         const parsed = saved ? Number(saved) : Number.NaN;
         if (Number.isFinite(parsed) && parsed >= MIN_ASSISTANT_PANEL_WIDTH) {
-            return Math.min(parsed, MAX_ASSISTANT_PANEL_WIDTH);
+            return clampAssistantPanelWidth(parsed);
         }
-        return DEFAULT_ASSISTANT_PANEL_WIDTH;
+        return clampAssistantPanelWidth(DEFAULT_ASSISTANT_PANEL_WIDTH);
     });
+    const setAssistantPanelWidth = useCallback((nextWidth: number) => {
+        setAssistantPanelWidthValue(clampAssistantPanelWidth(nextWidth));
+    }, []);
     const [assistantIframeOverrideUrl, setAssistantIframeOverrideUrl] = useState<string | null>(null);
-    const [assistantPanelMode, setAssistantPanelMode] = useState<'assistant' | 'external'>('assistant');
+    const [assistantPanelMode, setAssistantPanelMode] = useState<AssistantAiPanelMode>('general-ai');
     const [assistantExternalContext, setAssistantExternalContext] = useState<AssistantContextV1 | null>(null);
     const assistantCurrentFilePathRef = useRef('');
     const assistantContextCommentsSignatureRef = useRef('');
@@ -317,12 +404,22 @@ export function useAssistantPanelController({
         return url.toString();
     }, []);
 
+    const buildImagePlaygroundUrlForRuntime = useCallback((runtime?: AssistantRuntimeState | null) => {
+        const webBaseUrl = (runtime?.webBaseUrl || DEFAULT_ASSISTANT_WEB_BASE_URL).replace(/\/+$/g, '');
+        const url = new URL(`${webBaseUrl}/image-playground`);
+        const projectPath = runtime?.projectPath || '';
+        if (projectPath) {
+            url.searchParams.set('cwd', projectPath);
+        }
+        return url.toString();
+    }, []);
+
     const assistantIframeUrl = useMemo(() => (
         buildAssistantIframeUrlForRuntime(assistantRuntime)
     ), [assistantRuntime, buildAssistantIframeUrlForRuntime]);
 
     const assistantIframeSrc = assistantIframeOverrideUrl || assistantIframeUrl;
-    const assistantSupportsAcpContext = assistantPanelMode === 'assistant';
+    const assistantSupportsAcpContext = assistantPanelMode === 'general-ai';
     const assistantContextAppendAvailable = assistantSupportsAcpContext && assistantVisible;
 
     useEffect(() => {
@@ -361,6 +458,7 @@ export function useAssistantPanelController({
         addImageAttachmentWithRetry,
         appendComposerTextWithRetry,
         submitPromptWithRetry,
+        queryArtifactsWithRetry,
         waitForReady: waitForAssistantIframeReady,
     } = useAssistantBridge(assistantIframeSrc, assistantBridgeOptions);
 
@@ -438,6 +536,18 @@ export function useAssistantPanelController({
         localStorage.setItem(STORAGE_KEY_ASSISTANT_WIDTH, String(Math.round(assistantPanelWidth)));
     }, [assistantPanelWidth]);
 
+    useEffect(() => {
+        const handleWindowResize = () => {
+            setAssistantPanelMaxWidth(getAssistantPanelMaxWidth());
+            setAssistantPanelWidthValue((currentWidth) => clampAssistantPanelWidth(currentWidth));
+        };
+
+        window.addEventListener('resize', handleWindowResize);
+        return () => {
+            window.removeEventListener('resize', handleWindowResize);
+        };
+    }, []);
+
     const syncAssistantContextToTargets = useCallback((
         context: AssistantContextV1,
         mode: 'replace' | 'append' = 'replace',
@@ -488,34 +598,6 @@ export function useAssistantPanelController({
         assistantSupportsAcpContext,
         assistantVisible,
         postAssistantImageGenerationConfigToIframeWithRetry,
-    ]);
-
-    const syncAssistantCanvasMcpConfigToIframe = useCallback((options: { requireLoaded?: boolean } = {}) => {
-        const requireLoaded = options.requireLoaded !== false;
-        if (
-            !assistantSupportsAcpContext
-            || !assistantVisible
-            || (requireLoaded && !assistantIframeLoaded)
-            || !assistantIframeRef.current?.contentWindow
-        ) {
-            return;
-        }
-
-        const canvasMcpConfig = getAssistantCanvasMcpRuntimeConfig(assistantContextV1);
-        const canvasMcpConfigSignature = getAcpCanvasMcpConfigSignature(canvasMcpConfig);
-        if (assistantCanvasMcpConfigSyncSignatureRef.current === canvasMcpConfigSignature) {
-            return;
-        }
-
-        assistantCanvasMcpConfigSyncSignatureRef.current = canvasMcpConfigSignature;
-        postAssistantCanvasMcpConfigToIframeWithRetry(canvasMcpConfig);
-    }, [
-        assistantContextV1,
-        assistantIframeLoaded,
-        assistantIframeRef,
-        assistantSupportsAcpContext,
-        assistantVisible,
-        postAssistantCanvasMcpConfigToIframeWithRetry,
     ]);
 
     const postAssistantContextToWindowWithRetry = useCallback((
@@ -608,6 +690,34 @@ export function useAssistantPanelController({
     const assistantContextV1 = useMemo<AssistantContextV1>(() => (
         mergeAssistantContextForActiveFile(assistantBaseContextV1, assistantExternalContext)
     ), [assistantBaseContextV1, assistantExternalContext]);
+
+    const syncAssistantCanvasMcpConfigToIframe = useCallback((options: { requireLoaded?: boolean } = {}) => {
+        const requireLoaded = options.requireLoaded !== false;
+        if (
+            !assistantSupportsAcpContext
+            || !assistantVisible
+            || (requireLoaded && !assistantIframeLoaded)
+            || !assistantIframeRef.current?.contentWindow
+        ) {
+            return;
+        }
+
+        const canvasMcpConfig = getAssistantCanvasMcpRuntimeConfig(assistantContextV1);
+        const canvasMcpConfigSignature = getAcpCanvasMcpConfigSignature(canvasMcpConfig);
+        if (assistantCanvasMcpConfigSyncSignatureRef.current === canvasMcpConfigSignature) {
+            return;
+        }
+
+        assistantCanvasMcpConfigSyncSignatureRef.current = canvasMcpConfigSignature;
+        postAssistantCanvasMcpConfigToIframeWithRetry(canvasMcpConfig);
+    }, [
+        assistantContextV1,
+        assistantIframeLoaded,
+        assistantIframeRef,
+        assistantSupportsAcpContext,
+        assistantVisible,
+        postAssistantCanvasMcpConfigToIframeWithRetry,
+    ]);
 
     useEffect(() => {
         if (assistantResourceThreadBindingSuppressedRef.current) {
@@ -831,7 +941,7 @@ export function useAssistantPanelController({
         targetUrl?: string,
         targetPath?: string,
         runtimeOverride?: AssistantRuntimeState | null,
-        options: Pick<EnsureAssistantOpenOptions, 'suppressResourceThreadBinding'> = {},
+        options: Pick<EnsureAssistantOpenOptions, 'suppressResourceThreadBinding' | 'panelMode'> = {},
     ) => {
         assistantResourceThreadBindingSuppressedRef.current = options.suppressResourceThreadBinding === true;
         const resolvedAssistantUrl = resolveAssistantUrl(targetUrl, targetPath, runtimeOverride);
@@ -839,17 +949,18 @@ export function useAssistantPanelController({
             ? ''
             : resolvedAssistantUrl.resourceThreadStoragePath;
         const nextUrl = resolvedAssistantUrl.url;
+        const nextPanelMode = options.panelMode || assistantPanelMode || 'general-ai';
         assistantIframeCurrentUrlRef.current = nextUrl;
         latestAssistantNavigationThreadIdRef.current = resolveAcpNavigationThreadId(nextUrl);
 
         flushSync(() => {
-            setAssistantPanelMode('assistant');
+            setAssistantPanelMode(nextPanelMode);
             setAssistantPanelMounted(true);
             setAssistantVisible(true);
             setAssistantIframeLoaded(false);
             setAssistantIframeOverrideUrl(nextUrl);
         });
-    }, [resolveAssistantUrl, setAssistantIframeLoaded]);
+    }, [assistantPanelMode, resolveAssistantUrl, setAssistantIframeLoaded]);
 
     const openRawUrlInAssistantPanel = useCallback((url: string) => {
         const nextUrl = String(url || '').trim();
@@ -967,11 +1078,15 @@ export function useAssistantPanelController({
             const resolvedRuntime = await waitForAssistantRuntimeReady(runtime);
 
             if (resolvedRuntime.health.status === 'ready') {
+                const resolvedTargetUrl = options.panelMode === 'image-ai'
+                    ? buildImagePlaygroundUrlForRuntime(resolvedRuntime)
+                    : targetUrl;
                 if (openTarget === 'window') {
-                    openAssistantInNewWindowWithUrl(targetUrl, targetPath, resolvedRuntime, contextOverride);
+                    openAssistantInNewWindowWithUrl(resolvedTargetUrl, targetPath, resolvedRuntime, contextOverride);
                 } else {
-                    openAssistantWithUrl(targetUrl, targetPath, resolvedRuntime, {
+                    openAssistantWithUrl(resolvedTargetUrl, targetPath, resolvedRuntime, {
                         suppressResourceThreadBinding: options.suppressResourceThreadBinding,
+                        panelMode: options.panelMode,
                     });
                 }
                 return true;
@@ -1004,6 +1119,7 @@ export function useAssistantPanelController({
     }, [
         assistantChecking,
         assistantRuntime,
+        buildImagePlaygroundUrlForRuntime,
         messageApi,
         openAssistantInNewWindowWithUrl,
         openAssistantWithUrl,
@@ -1043,6 +1159,7 @@ export function useAssistantPanelController({
         }
 
         void ensureAssistantReadyThenOpen('event', undefined, getAssistantContextCurrentFilePath(assistantContextV1), 'iframe', null, {
+            panelMode: 'general-ai',
             loadingText: false,
             openSettingsOnFailure: false,
         });
@@ -1173,6 +1290,10 @@ export function useAssistantPanelController({
             undefined,
             getAssistantContextCurrentFilePath(assistantContextV1),
             'iframe',
+            null,
+            {
+                panelMode: 'general-ai',
+            },
         );
     }, [
         assistantContextV1,
@@ -1182,29 +1303,63 @@ export function useAssistantPanelController({
     ]);
 
     const handleOpenGenieWebAgent = useCallback((targetPath?: string, _provider?: GenieProvider) => {
-        void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe');
+        void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe', null, {
+            panelMode: 'general-ai',
+        });
     }, [ensureAssistantReadyThenOpen]);
+
+    const openImageAiPanel = useCallback(() => {
+        void ensureAssistantReadyThenOpen('button', undefined, undefined, 'iframe', null, {
+            panelMode: 'image-ai',
+            suppressResourceThreadBinding: true,
+        });
+    }, [
+        ensureAssistantReadyThenOpen,
+    ]);
 
     const hideAssistantPanelTemporarily = useCallback(() => {
         setAssistantVisible(false);
     }, []);
 
-    const restoreAssistantPanel = useCallback((targetPath?: string) => {
-        if (assistantVisible) {
-            return true;
-        }
+    const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {
+        const restoreMode = panelMode === 'image-ai' || panelMode === 'general-ai'
+            ? panelMode
+            : 'general-ai';
         if (assistantPanelMounted) {
+            const nextTargetUrl = restoreMode === 'image-ai'
+                ? buildImagePlaygroundUrlForRuntime(assistantRuntime)
+                : buildAssistantIframeUrlForRuntime(assistantRuntime);
+            const shouldReloadForRestoreMode = restoreMode !== assistantPanelMode
+                || (restoreMode === 'image-ai' && assistantIframeOverrideUrl !== nextTargetUrl);
+            if (shouldReloadForRestoreMode) {
+                openAssistantWithUrl(nextTargetUrl, targetPath, assistantRuntime, {
+                    panelMode: restoreMode,
+                    suppressResourceThreadBinding: restoreMode === 'image-ai',
+                });
+                return true;
+            }
+            if (assistantVisible) {
+                return true;
+            }
             setAssistantVisible(true);
             return true;
         }
         return ensureAssistantReadyThenOpen('event', undefined, targetPath, 'iframe', null, {
+            panelMode: restoreMode,
             loadingText: false,
             openSettingsOnFailure: false,
+            suppressResourceThreadBinding: restoreMode === 'image-ai',
         });
     }, [
         assistantPanelMounted,
+        assistantPanelMode,
+        assistantIframeOverrideUrl,
+        assistantRuntime,
         assistantVisible,
+        buildAssistantIframeUrlForRuntime,
+        buildImagePlaygroundUrlForRuntime,
         ensureAssistantReadyThenOpen,
+        openAssistantWithUrl,
     ]);
 
     useEffect(() => {
@@ -1216,7 +1371,9 @@ export function useAssistantPanelController({
                 return;
             }
 
-            void ensureAssistantReadyThenOpen('event', targetUrl, detail?.targetPath);
+            void ensureAssistantReadyThenOpen('event', targetUrl, detail?.targetPath, 'iframe', null, {
+                panelMode: 'general-ai',
+            });
             customEvent.preventDefault();
         };
 
@@ -1252,7 +1409,9 @@ export function useAssistantPanelController({
     ]);
 
     const handleOpenAssistantInNewWindowNoContext = useCallback(() => {
-        void ensureAssistantReadyThenOpen('button', assistantIframeUrl, undefined, 'window');
+        void ensureAssistantReadyThenOpen('button', assistantIframeUrl, undefined, 'window', null, {
+            panelMode: 'general-ai',
+        });
     }, [assistantIframeUrl, ensureAssistantReadyThenOpen]);
 
     const handleOpenAssistantWithItemContext = useCallback((item: ItemData) => {
@@ -1267,9 +1426,13 @@ export function useAssistantPanelController({
         try {
             const url = new URL(assistantIframeUrl);
             removeLegacyAssistantOpenParams(url);
-            void ensureAssistantReadyThenOpen('button', url.toString(), undefined, 'window', itemContext);
+            void ensureAssistantReadyThenOpen('button', url.toString(), undefined, 'window', itemContext, {
+                panelMode: 'general-ai',
+            });
         } catch {
-            void ensureAssistantReadyThenOpen('button', assistantIframeUrl, targetPath, 'window', itemContext);
+            void ensureAssistantReadyThenOpen('button', assistantIframeUrl, targetPath, 'window', itemContext, {
+                panelMode: 'general-ai',
+            });
         }
     }, [assistantIframeUrl, buildAssistantContextForItem, ensureAssistantReadyThenOpen]);
 
@@ -1279,7 +1442,9 @@ export function useAssistantPanelController({
             latestAssistantSyncContextRef.current = context;
         }
         const targetPath = context ? getAssistantContextCurrentFilePath(context) : undefined;
-        return ensureAssistantReadyThenOpen('button', assistantIframeUrl, targetPath, 'iframe', context);
+        return ensureAssistantReadyThenOpen('button', assistantIframeUrl, targetPath, 'iframe', context, {
+            panelMode: 'general-ai',
+        });
     }, [assistantIframeUrl, ensureAssistantReadyThenOpen]);
 
     const openAssistantWithContextAndSubmitPrompt = useCallback(async (
@@ -1334,6 +1499,7 @@ export function useAssistantPanelController({
             const opened = panelAlreadyOpen
                 ? true
                 : await ensureAssistantReadyThenOpen('button', assistantOpenUrl, targetPath, 'iframe', context, {
+                    panelMode: 'general-ai',
                     loadingText: false,
                     suppressResourceThreadBinding: shouldForceNewThread,
                 });
@@ -1355,8 +1521,33 @@ export function useAssistantPanelController({
             }
 
             closeLoading();
-            await submitPromptWithRetry(text, { newThread: shouldForceNewThread });
-            return true;
+            const artifactSinceMs = Date.now();
+            const submitResult = await submitPromptWithRetry(text, {
+                newThread: shouldForceNewThread,
+                waitUntil: options.collectArtifacts === true ? 'started' : options.waitUntil || 'started',
+            });
+            if (options.collectArtifacts === true && submitResult.threadId) {
+                const artifactResult = await waitForAcpArtifacts(() => queryArtifactsWithRetry({
+                    threadId: submitResult.threadId,
+                    workspacePath: assistantRuntime?.projectPath || undefined,
+                    source: options.artifactSource || 'auto',
+                    format: 'ai-sdk/v6',
+                    sinceMs: artifactSinceMs,
+                }), {
+                    ignoredArtifactPaths: options.ignoredArtifactPaths,
+                });
+                return {
+                    ok: true,
+                    threadId: submitResult.threadId,
+                    artifacts: artifactResult.artifacts || [],
+                    workspaceArtifacts: artifactResult.workspaceArtifacts,
+                    imageGenerationRecords: artifactResult.imageGenerationRecords,
+                } satisfies OpenAssistantSubmitResult;
+            }
+            return {
+                ok: true,
+                threadId: submitResult.threadId,
+            } satisfies OpenAssistantSubmitResult;
         } catch (error: any) {
             messageApi.error(error?.message || '提交 AI 助手对话失败');
             return false;
@@ -1383,6 +1574,7 @@ export function useAssistantPanelController({
         handleAssistantActiveThreadChange,
         messageApi,
         postAssistantContextToIframeWithRetry,
+        queryArtifactsWithRetry,
         submitPromptWithRetry,
         syncAssistantContextToTargets,
         waitForAssistantIframeReady,
@@ -1463,14 +1655,18 @@ export function useAssistantPanelController({
         syncAssistantImageGenerationConfigToIframe,
     ]);
 
+    const visibleAiPanelMode = assistantPanelMode === 'general-ai' || assistantPanelMode === 'image-ai'
+        ? assistantPanelMode
+        : null;
+
     return {
         assistantVisible,
         assistantContextAppendAvailable,
         assistantPanelMounted,
         assistantPanelWidth,
         setAssistantPanelWidth,
-        assistantPanelMinWidth: MIN_ASSISTANT_PANEL_WIDTH,
-        assistantPanelMaxWidth: MAX_ASSISTANT_PANEL_WIDTH,
+        assistantPanelMinWidth: Math.min(MIN_ASSISTANT_PANEL_WIDTH, assistantPanelMaxWidth),
+        assistantPanelMaxWidth,
         assistantIframeRef,
         assistantIframeSrc,
         handleAssistantIframeLoad,
@@ -1485,6 +1681,7 @@ export function useAssistantPanelController({
         appendComposerText,
         handleToggleAssistant,
         handleOpenGenieWebAgent,
+        openImageAiPanel,
         hideAssistantPanelTemporarily,
         restoreAssistantPanel,
         openRawUrlInAssistantPanel,
@@ -1495,5 +1692,6 @@ export function useAssistantPanelController({
         openAssistantWithContext,
         openAssistantWithContextAndSubmitPrompt,
         handleCopyProjectDirectory: handleCopyProjectDirectoryForMobile,
+        aiPanelMode: assistantVisible ? visibleAiPanelMode : null,
     };
 }

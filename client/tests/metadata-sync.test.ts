@@ -90,6 +90,13 @@ describe('make-project metadata sync', () => {
     expect(ignoreRules).not.toContain('!.axhub/make/project.json');
   });
 
+  it('keeps the reusable client sidebar seed free of resource README entries', () => {
+    const sidebarTree = JSON.parse(fs.readFileSync(path.join(makeProjectRoot, '.axhub/make/sidebar-tree.json'), 'utf8'));
+
+    expect(sidebarTree.docs).toEqual([]);
+    expect(JSON.stringify(sidebarTree)).not.toContain('README.md');
+  });
+
   it('writes portable metadata by default for the publishing repository', () => {
     const projectRoot = createFixtureProject();
 
@@ -334,6 +341,7 @@ export default function EditedPrototype() {
       clientOrigin: 'http://localhost:51720',
     });
     const annotationDemo = metadata.resources.prototypes.find((item: any) => item.id === 'annotation-demo');
+    const touchAndTalkDemo = metadata.resources.prototypes.find((item: any) => item.id === 'touch-and-talk-annotation-demo');
 
     expect(metadata.resources.prototypes.map((item: any) => item.id)).toEqual([
       'annotation-demo',
@@ -349,6 +357,17 @@ export default function EditedPrototype() {
         { id: 'generate-annotation', title: '生成标注' },
       ],
       defaultPageId: 'prototype-as-prd',
+    });
+    expect(touchAndTalkDemo).toMatchObject({
+      pages: [
+        { id: 'cover', title: 'Touch And Talk' },
+        { id: 'quick-flow', title: '快速批注' },
+        { id: 'voice-annotation', title: '语音批注' },
+        { id: 'common-tips', title: '常用技巧' },
+        { id: 'quick-execute', title: '快速执行' },
+        { id: 'more-scenarios', title: '更多场景' },
+      ],
+      defaultPageId: 'cover',
     });
     expect(metadata.resources.prototypes.some((item: any) => item.id === 'jdfinance')).toBe(false);
     expect(metadata.resources.prototypes.some((item: any) => item.pages?.some((page: any) => /^page-\d+$/u.test(page.id)))).toBe(false);

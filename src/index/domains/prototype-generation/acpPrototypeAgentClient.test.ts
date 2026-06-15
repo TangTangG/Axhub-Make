@@ -52,7 +52,7 @@ describe('ACP prototype agent client', () => {
       },
     });
 
-    expect(prompt.split('\n')).toHaveLength(28);
+    expect(prompt.split('\n')).toHaveLength(29);
     expect(prompt).toContain('做一个 CRM 工作台');
     expect(prompt).toContain('只在当前 prototype 中新增/更新页面');
     expect(prompt).toContain('src/prototypes/dashboard/');
@@ -93,12 +93,26 @@ describe('ACP prototype agent client', () => {
     expect(prompt).toContain('captureScreenshotOnMount');
     expect(prompt).toContain('保留画布既有元素、files、appState');
     expect(prompt).not.toContain('完成后的刷新');
-    expect(prompt).not.toContain('暂时不要执行 `axhub-make canvas refresh');
-    expect(prompt).not.toContain('不执行 `axhub-make canvas refresh');
+    expect(prompt).not.toContain('暂时不要在结尾再执行刷新');
+    expect(prompt).not.toContain('不在结尾执行刷新');
     expect(prompt).not.toContain('宿主应用会负责后续刷新');
-    expect(prompt).not.toContain('最后执行 `axhub-make canvas refresh');
+    expect(prompt).not.toContain('最后再执行刷新');
     expect(prompt).toContain('最终消息：已完成');
     expect(prompt).not.toContain('/api/prompt/execute');
+  });
+
+  it('omits unspecified prototype count and design system from the agent prompt', () => {
+    const prompt = buildPrototypeGenerationPrompt({
+      prompt: '做一个默认原型',
+      canvasFilePath: 'src/prototypes/untitled/canvas.excalidraw',
+      generatorElementId: 'generator-1',
+      settings: {},
+    });
+
+    expect(prompt).toContain('做一个默认原型');
+    expect(prompt).toContain('原型生成范围：');
+    expect(prompt).not.toContain('数量：1');
+    expect(prompt).not.toContain('设计系统：未指定');
   });
 
   it('runs the prototype prompt through the unified AI runs API instead of a websocket agent', async () => {

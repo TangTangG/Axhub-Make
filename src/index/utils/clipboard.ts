@@ -48,6 +48,33 @@ function normalizeClipboardError(error: unknown): Error {
     return new Error('复制失败，请稍后重试。');
 }
 
+function dataUrlToBlob(dataUrl: string): Blob {
+    const match = String(dataUrl || '').trim().match(/^data:([^;,]+)((?:;[^,]*)?),(.*)$/s);
+    const mimeType = String(match?.[1] || '').trim().toLowerCase();
+    const params = String(match?.[2] || '');
+    const isBase64 = /(?:^|;)base64(?:;|$)/i.test(params);
+    const payload = match?.[3] || '';
+
+    if (!mimeType.startsWith('image/')) {
+        throw new Error('图片数据无效，无法复制到剪贴板。');
+    }
+
+    try {
+        if (isBase64) {
+            const binary = atob(payload);
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index += 1) {
+                bytes[index] = binary.charCodeAt(index);
+            }
+            return new Blob([bytes], { type: mimeType });
+        }
+
+        return new Blob([decodeURIComponent(payload)], { type: mimeType });
+    } catch {
+        throw new Error('图片数据无效，无法复制到剪贴板。');
+    }
+}
+
 function encodeUtf8ToBase64(text: string): string {
     const bytes = new TextEncoder().encode(text);
     let binary = '';
@@ -116,6 +143,24 @@ export async function copyToClipboard(text: string): Promise<void> {
 
     try {
         await navigator.clipboard.writeText(text);
+    } catch (error) {
+        throw normalizeClipboardError(error);
+    }
+}
+
+export async function copyImageDataUrlToClipboard(dataUrl: string): Promise<void> {
+    if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.write !== 'function' || typeof ClipboardItem === 'undefined') {
+        throw new Error(
+            appendLanClipboardHint('当前环境不支持复制图片，请使用支持 ClipboardItem 的 Chromium 浏览器后重试。'),
+        );
+    }
+
+    const blob = dataUrlToBlob(dataUrl);
+
+    try {
+        await navigator.clipboard.write([
+            new ClipboardItem({ [blob.type]: blob }),
+        ]);
     } catch (error) {
         throw normalizeClipboardError(error);
     }

@@ -1,6 +1,6 @@
 {
   "name": "@axhub/make",
-  "version": "0.6.0-beta.2",
+  "version": "0.6.1",
   "description": "Axhub Make management server and admin UI",
   "private": true,
   "type": "module",
@@ -12,9 +12,11 @@
   "files": [
     "bin",
     "src/server/**/*.ts",
+    "src/server/converters/*-converter.mjs",
     "!src/server/**/*.test.ts",
     "!src/server/**/*.test.tsx",
     "!src/server/**/__tests__",
+    "!src/server/**/__tests__/**",
     "client/vite-plugins/utils/moduleSpecifierQuery.ts",
     "dist/admin",
     "vendor/axhub-export-core/dist/**",

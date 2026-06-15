@@ -52,4 +52,18 @@ describe('generateTemplateImportPrompt', () => {
         expect(prompt).toContain('安装缺失依赖');
         expect(prompt).toContain('验证项目构建/运行');
     });
+
+    it('targets the current placeholder prototype when targetPrototypeName is provided', () => {
+        const prompt = generateTemplateImportPrompt({
+            template: TEMPLATE,
+            repo: 'lintendo/Make-Template',
+            targetPrototypeName: 'untitled',
+        });
+
+        expect(prompt).toContain('<prototypes>/untitled');
+        expect(prompt).toContain('src/prototypes/untitled');
+        expect(prompt).toContain('必须覆盖当前占位原型目录');
+        expect(prompt).toContain('不要创建新的原型目录');
+        expect(prompt).not.toContain('<prototypes>/ref-antd');
+    });
 });

@@ -605,7 +605,7 @@ export default function CanvasPrototypeGenerationTool({
       return { ok: false, text: '请先选择原型生成占位', error: '请先选择原型生成占位' };
     }
 
-    const settings = request.sceneSettings || { count: 1, themeName: '' };
+    const settings = request.sceneSettings || { themeName: '' };
     const referenceImages = request.referenceImages;
     const prompt = request.prompt;
     const beforePrototypeNames = normalizePrototypeNames(prototypes);
@@ -627,7 +627,7 @@ export default function CanvasPrototypeGenerationTool({
       knownPrototypes: prototypes,
       ...(referenceImages.length ? { referenceImages } : {}),
       settings: {
-        count: settings.count,
+        count: typeof settings.count === 'number' ? settings.count : undefined,
         theme: selectedTheme
           ? { name: selectedTheme.name, displayName: selectedTheme.displayName }
           : null,

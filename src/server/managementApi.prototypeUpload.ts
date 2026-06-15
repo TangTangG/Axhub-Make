@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   isPathInside,
@@ -32,7 +33,7 @@ interface MultipartPart {
   data: Buffer;
 }
 
-type PrototypeConverterUploadType = 'google_stitch' | 'figma_make' | 'v0' | 'google_aistudio';
+type PrototypeConverterUploadType = 'google_stitch' | 'figma_make' | 'v0' | 'google_aistudio' | 'axure_html';
 type ResourceWriteCapability = keyof ProjectMetadata['capabilities']['resourceWrites'];
 
 interface PrototypeUploadApiHandlers {
@@ -66,6 +67,9 @@ interface PrototypeUploadApiHandlers {
 }
 
 const IGNORED_UPLOAD_ENTRIES = new Set(['__MACOSX', '.DS_Store']);
+const SERVER_MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const BUNDLED_CONVERTER_SCRIPT_DIR = path.join(SERVER_MODULE_DIR, 'converters');
+
 function getMultipartTextField(parts: MultipartPart[], name: string): string {
   return parts.find((part) => part.name === name && !part.filename)?.data.toString('utf8').trim() || '';
 }
@@ -82,11 +86,17 @@ function getDisplayName(filePath: string, fallback: string): string {
   }
   const source = fs.readFileSync(filePath, 'utf8');
   const match = source.match(/displayName\s*[:=]\s*['"`]([^'"`]+)['"`]/u);
-  return match?.[1] || fallback;
+  const nameCommentMatch = source.match(/@name\s+([^\r\n*]+)/u);
+  return match?.[1] || nameCommentMatch?.[1]?.trim() || fallback;
 }
 
 function prependUnique(values: string[], value: string): string[] {
-  return [value, ...values.filter((item) => item !== value)];
+  return prependUniqueExcluding(values, value);
+}
+
+function prependUniqueExcluding(values: string[], value: string, excludedValues: string[] = []): string[] {
+  const excluded = new Set([value, ...excludedValues.filter(Boolean)]);
+  return [value, ...values.filter((item) => !excluded.has(item))];
 }
 
 function createProjectRelativePath(projectRoot: string, absolutePath: string): string {
@@ -108,38 +118,104 @@ function updatePrototypeMetadataAfterUpload(
     indexPath: string;
     clientUrl: string;
     placeholder?: boolean;
+    pages?: ProjectMetadata['resources']['prototypes'][number]['pages'];
+    defaultPageId?: string;
+    importReport?: Record<string, unknown>;
+    replacedPrototypeName?: string;
   },
 ): void {
   const current = context.metadataStore.getMetadata();
   const filePath = createProjectRelativePath(context.project.root, params.indexPath);
+  const replacedPrototypeName = String(params.replacedPrototypeName || '').trim();
+  const existing = current.resources.prototypes.find((prototype) => (
+    prototype.id === params.id || prototype.name === params.id
+    || (Boolean(replacedPrototypeName) && (prototype.id === replacedPrototypeName || prototype.name === replacedPrototypeName))
+  ));
+  const nextPrototype: ProjectMetadata['resources']['prototypes'][number] = {
+    ...(existing || {}),
+    id: params.id,
+    name: params.id,
+    title: params.title,
+    clientUrl: params.clientUrl,
+    previewMode: 'clientRuntime',
+    description: params.placeholder ? existing?.description || '' : '',
+    updatedAt: new Date().toISOString(),
+    filePath,
+    absoluteFilePath: params.indexPath,
+    ...(params.pages && params.pages.length > 0 ? {
+      pages: params.pages,
+      defaultPageId: params.defaultPageId || params.pages[0]?.id,
+    } : {}),
+    ...(params.importReport ? { importReport: params.importReport } : {}),
+    ...(params.placeholder ? {
+      placeholder: true,
+      placeholderGuide: PROTOTYPE_PLACEHOLDER_GUIDE,
+    } : {
+      placeholder: false,
+    }),
+  };
+  const prototypeWithoutPlaceholderGuide = params.placeholder
+    ? nextPrototype
+    : (() => {
+      const {
+        placeholderGuide: _placeholderGuide,
+        ...rest
+      } = nextPrototype;
+      return rest;
+    })();
   saveMetadataWithResourceOrder(context, {
     ...current,
     resources: {
       ...current.resources,
       prototypes: [
-        {
-          id: params.id,
-          name: params.id,
-          title: params.title,
-          clientUrl: params.clientUrl,
-          previewMode: 'clientRuntime',
-          description: '',
-          updatedAt: new Date().toISOString(),
-          filePath,
-          absoluteFilePath: params.indexPath,
-          ...(params.placeholder ? {
-            placeholder: true,
-            placeholderGuide: PROTOTYPE_PLACEHOLDER_GUIDE,
-          } : {}),
-        },
-        ...current.resources.prototypes.filter((prototype) => prototype.id !== params.id && prototype.name !== params.id),
+        prototypeWithoutPlaceholderGuide,
+        ...current.resources.prototypes.filter((prototype) => (
+          prototype.id !== params.id
+          && prototype.name !== params.id
+          && (!replacedPrototypeName || (prototype.id !== replacedPrototypeName && prototype.name !== replacedPrototypeName))
+        )),
       ],
     },
     navigation: {
       ...current.navigation,
-      prototypes: prependUnique(current.navigation.prototypes, params.id),
+      prototypes: prependUniqueExcluding(current.navigation.prototypes, params.id, replacedPrototypeName ? [replacedPrototypeName] : []),
     },
   });
+}
+
+function resolveUploadTargetPrototypeName(
+  context: PrototypeUploadProjectContext,
+  targetBaseDir: string,
+  rawTargetPrototypeName: string,
+): string | undefined {
+  const targetPrototypeName = rawTargetPrototypeName.trim();
+  if (!targetPrototypeName) return undefined;
+  if (targetPrototypeName.includes('/') || targetPrototypeName.includes('\\') || targetPrototypeName.includes('\0')) {
+    throw new Error('targetPrototypeName 不合法');
+  }
+  const existing = context.metadata.resources.prototypes.find((prototype) => (
+    prototype.id === targetPrototypeName || prototype.name === targetPrototypeName
+  ));
+  if (!existing) {
+    throw new Error(`原型不存在：${targetPrototypeName}`);
+  }
+  const targetDir = path.resolve(targetBaseDir, targetPrototypeName);
+  if (targetDir === path.resolve(targetBaseDir) || !isPathInside(targetBaseDir, targetDir)) {
+    throw new Error('targetPrototypeName 不安全');
+  }
+  if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+    throw new Error(`原型目录不存在：${targetPrototypeName}`);
+  }
+  return targetPrototypeName;
+}
+
+function appendTargetPrototypeOverwriteInstruction(prompt: string, targetPrototypeName?: string, folderName?: string): string {
+  if (!targetPrototypeName) return prompt;
+  const renamedFolderName = String(folderName || '').trim();
+  if (renamedFolderName && renamedFolderName !== targetPrototypeName) {
+    return `${prompt}\n\n**目标原型覆盖要求**：本次导入必须覆盖当前占位原型 \`prototypes/${targetPrototypeName}\` 并将目录重命名为 \`prototypes/${renamedFolderName}\`（来自上传 ZIP 文件名，已清理特殊字符），不要保留原 \`prototypes/${targetPrototypeName}\` 目录，不要改用压缩包内部根目录名。`;
+  }
+  return `${prompt}\n\n**目标原型覆盖要求**：本次导入必须覆盖当前占位原型 \`prototypes/${targetPrototypeName}\`，不要创建新的原型目录，不要改用上传压缩包或转换产物自带的目录名。`;
 }
 
 function updatePrototypeMetadataForGenerationStart(
@@ -273,6 +349,18 @@ function sanitizeFolderName(name: string): string {
 
 function buildUploadFolderName(candidate: string, fallbackPrefix = 'upload'): string {
   return truncateName(sanitizeFolderName(candidate), 60) || `${fallbackPrefix}-${Date.now()}`;
+}
+
+function getTargetedZipFolderName(
+  targetPrototypeName: string | undefined,
+  uploadMode: string,
+  zipBaseName: string,
+  fallbackPrefix: string,
+): string | undefined {
+  if (!targetPrototypeName) return undefined;
+  return uploadMode === 'zip'
+    ? buildUploadFolderName(zipBaseName, fallbackPrefix)
+    : targetPrototypeName;
 }
 
 function buildUploadBatchId(candidate: string, fallbackPrefix = 'batch'): string {
@@ -570,12 +658,13 @@ function moveExtractedUploadToTarget(
   tempDir: string,
   targetBaseDir: string,
   fallbackName: string,
+  forcedFolderName?: string,
 ): { targetDir: string; folderName: string } {
   const inferred = inferDirectoryRootFolder(tempDir);
   if (inferred.entryCount === 0) {
     throw new Error('上传内容为空');
   }
-  const folderName = buildUploadFolderName(inferred.hasRootFolder ? inferred.rootFolderName : fallbackName);
+  const folderName = forcedFolderName || buildUploadFolderName(inferred.hasRootFolder ? inferred.rootFolderName : fallbackName);
   const targetDir = path.resolve(targetBaseDir, folderName);
   if (targetDir === path.resolve(targetBaseDir) || !isPathInside(targetBaseDir, targetDir)) {
     throw new Error('目标目录不安全，已阻止写入');
@@ -589,6 +678,18 @@ function moveExtractedUploadToTarget(
     moveDirectoryWithFallback(tempDir, targetDir);
   }
   return { targetDir, folderName };
+}
+
+function removeReplacedPrototypeDirectory(targetBaseDir: string, replacedPrototypeName: string | undefined, folderName: string): void {
+  const normalizedName = String(replacedPrototypeName || '').trim();
+  if (!normalizedName || normalizedName === folderName) {
+    return;
+  }
+  const replacedDir = path.resolve(targetBaseDir, normalizedName);
+  if (replacedDir === path.resolve(targetBaseDir) || !isPathInside(targetBaseDir, replacedDir)) {
+    throw new Error('被替换原型目录不安全，已阻止清理');
+  }
+  fs.rmSync(replacedDir, { recursive: true, force: true });
 }
 
 async function handlePrototypeMakeUpload(
@@ -608,6 +709,8 @@ async function handlePrototypeMakeUpload(
   const tempDir = path.join(tempRoot, `make-${Date.now()}-${randomUUID()}`);
   let fallbackName = getMultipartTextField(parts, 'folderName') || 'prototype';
   try {
+    const targetPrototypeName = resolveUploadTargetPrototypeName(context, targetBaseDir, getMultipartTextField(parts, 'targetPrototypeName'));
+    let forcedFolderName = targetPrototypeName;
     fs.mkdirSync(tempDir, { recursive: true });
     if (uploadMode === 'folder') {
       const folderResult = writeFolderUploadToTemp(parts, tempDir);
@@ -618,6 +721,7 @@ async function handlePrototypeMakeUpload(
         throw new Error('Missing file');
       }
       fallbackName = path.basename(filePart.filename, path.extname(filePart.filename));
+      forcedFolderName = getTargetedZipFolderName(targetPrototypeName, uploadMode, fallbackName, 'prototype');
       const tempZipPath = path.join(tempRoot, `${randomUUID()}.zip`);
       fs.mkdirSync(tempRoot, { recursive: true });
       fs.writeFileSync(tempZipPath, filePart.data);
@@ -627,7 +731,8 @@ async function handlePrototypeMakeUpload(
         fs.rmSync(tempZipPath, { force: true });
       }
     }
-    const { targetDir, folderName } = moveExtractedUploadToTarget(tempDir, targetBaseDir, fallbackName);
+    const { targetDir, folderName } = moveExtractedUploadToTarget(tempDir, targetBaseDir, fallbackName, forcedFolderName);
+    removeReplacedPrototypeDirectory(targetBaseDir, targetPrototypeName, folderName);
     const indexPath = path.join(targetDir, 'index.tsx');
     const clientUrl = resolvePrototypeClientUrl(options, context, folderName);
     updatePrototypeMetadataAfterUpload(context, {
@@ -636,6 +741,7 @@ async function handlePrototypeMakeUpload(
       folderPath: targetDir,
       indexPath,
       clientUrl,
+      replacedPrototypeName: targetPrototypeName,
     });
     sendJson(res, {
       success: true,
@@ -729,7 +835,7 @@ async function handleThemeZipUpload(
 }
 
 function isPrototypeConverterUploadType(value: string): value is PrototypeConverterUploadType {
-  return value === 'google_stitch' || value === 'figma_make' || value === 'v0' || value === 'google_aistudio';
+  return value === 'google_stitch' || value === 'figma_make' || value === 'v0' || value === 'google_aistudio' || value === 'axure_html';
 }
 
 function getConverterConfig(uploadType: PrototypeConverterUploadType): {
@@ -742,6 +848,13 @@ function getConverterConfig(uploadType: PrototypeConverterUploadType): {
     return {
       label: 'Google Stitch',
       scriptFile: 'stitch-converter.mjs',
+      tasksFileName: '',
+    };
+  }
+  if (uploadType === 'axure_html') {
+    return {
+      label: 'Axure HTML',
+      scriptFile: 'axure-html-converter.mjs',
       tasksFileName: '',
     };
   }
@@ -777,15 +890,46 @@ function parseJsonLastLine<T>(stdout: string, fallback: T): T {
   }
 }
 
+function normalizePrototypeRoutePages(value: unknown): { id: string; title: string }[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    .map((item) => {
+      const id = typeof item.id === 'string' ? item.id.trim() : '';
+      const title = typeof item.title === 'string' ? item.title.trim() : '';
+      return /^[a-z0-9-]+$/u.test(id) && title ? { id, title } : null;
+    })
+    .filter((item): item is { id: string; title: string } => Boolean(item));
+}
+
+function normalizeWarnings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => typeof item === 'string' ? item.trim() : '').filter(Boolean)
+    : [];
+}
+
 function resolveProjectConverterScriptPath(context: PrototypeUploadProjectContext, scriptFile: string): string {
-  const scriptPath = path.join(context.project.root, 'scripts', scriptFile);
-  if (!isPathInside(context.project.root, scriptPath)) {
+  if (path.basename(scriptFile) !== scriptFile || scriptFile.includes('\0')) {
     throw new Error('转换脚本路径不安全，已阻止执行');
   }
-  if (!fs.existsSync(scriptPath)) {
-    throw new Error(`当前客户端项目缺少转换脚本：scripts/${scriptFile}`);
+  const projectScriptPath = path.join(context.project.root, 'scripts', scriptFile);
+  if (!isPathInside(context.project.root, projectScriptPath)) {
+    throw new Error('转换脚本路径不安全，已阻止执行');
   }
-  return scriptPath;
+  if (fs.existsSync(projectScriptPath)) {
+    return projectScriptPath;
+  }
+
+  const bundledScriptPath = path.join(BUNDLED_CONVERTER_SCRIPT_DIR, scriptFile);
+  if (!isPathInside(BUNDLED_CONVERTER_SCRIPT_DIR, bundledScriptPath)) {
+    throw new Error('内置转换脚本路径不安全，已阻止执行');
+  }
+  if (!fs.existsSync(bundledScriptPath)) {
+    throw new Error(`服务端缺少内置转换脚本：converters/${scriptFile}`);
+  }
+  return bundledScriptPath;
 }
 
 async function preparePrototypeConverterInput(
@@ -793,11 +937,12 @@ async function preparePrototypeConverterInput(
   parts: MultipartPart[],
   uploadType: PrototypeConverterUploadType,
   uploadMode: string,
-): Promise<{ inputDir: string; cleanupDir: string; fallbackName: string }> {
+): Promise<{ inputDir: string; cleanupDir: string; fallbackName: string; zipFolderName?: string }> {
   const tempRoot = path.join(context.project.root, 'temp', 'uploads');
   const tempDir = path.join(tempRoot, `${uploadType}-${Date.now()}-${randomUUID()}`);
   fs.mkdirSync(tempDir, { recursive: true });
   let fallbackName = getMultipartTextField(parts, 'folderName') || uploadType;
+  let zipFolderName = '';
 
   if (uploadMode === 'folder') {
     const folderResult = writeFolderUploadToTemp(parts, tempDir);
@@ -808,6 +953,7 @@ async function preparePrototypeConverterInput(
       throw new Error('Missing file');
     }
     fallbackName = path.basename(filePart.filename, path.extname(filePart.filename));
+    zipFolderName = buildUploadFolderName(fallbackName, uploadType);
     const tempZipPath = path.join(tempRoot, `${randomUUID()}.zip`);
     fs.mkdirSync(tempRoot, { recursive: true });
     fs.writeFileSync(tempZipPath, filePart.data);
@@ -828,6 +974,7 @@ async function preparePrototypeConverterInput(
     inputDir,
     cleanupDir: tempDir,
     fallbackName: buildUploadFolderName(inputName, uploadType),
+    ...(zipFolderName ? { zipFolderName } : {}),
   };
 }
 
@@ -852,15 +999,22 @@ async function handlePrototypeConverterUpload(
     return;
   }
 
-  let prepared: { inputDir: string; cleanupDir: string; fallbackName: string } | null = null;
+  let prepared: { inputDir: string; cleanupDir: string; fallbackName: string; zipFolderName?: string } | null = null;
   let outputDir = '';
   try {
     prepared = await preparePrototypeConverterInput(context, parts, uploadType, uploadMode);
-    const folderName = buildUploadFolderName(prepared.fallbackName, uploadType);
+    const targetPrototypeName = resolveUploadTargetPrototypeName(context, targetBaseDir, getMultipartTextField(parts, 'targetPrototypeName'));
+    const folderName = targetPrototypeName
+      ? uploadMode === 'zip'
+        ? prepared.zipFolderName || buildUploadFolderName(prepared.fallbackName, uploadType)
+        : targetPrototypeName
+      : buildUploadFolderName(prepared.fallbackName, uploadType);
     outputDir = path.join(targetBaseDir, folderName);
     if (!isPathInside(targetBaseDir, outputDir)) {
       throw new Error('目标目录不安全，已阻止写入');
     }
+    fs.rmSync(outputDir, { recursive: true, force: true });
+    fs.mkdirSync(targetBaseDir, { recursive: true });
 
     const scriptPath = resolveProjectConverterScriptPath(context, config.scriptFile);
     const commandResult = await execFilePromise(process.execPath, [
@@ -878,13 +1032,51 @@ async function handlePrototypeConverterUpload(
     const parsed = parseJsonLastLine<Record<string, any>>(commandResult.stdout, {});
     const indexPath = path.join(outputDir, 'index.tsx');
     const clientUrl = resolvePrototypeClientUrl(options, context, folderName);
+    const pages = normalizePrototypeRoutePages(parsed.pages);
+    const defaultPageId = typeof parsed.defaultPageId === 'string' && pages.some((page) => page.id === parsed.defaultPageId)
+      ? parsed.defaultPageId
+      : pages[0]?.id;
+    const warnings = normalizeWarnings(parsed.warnings);
+    const importReport = uploadType === 'axure_html'
+      ? {
+        source: 'axure_html',
+        pageCount: pages.length,
+        warningCount: warnings.length,
+        warnings,
+        ...(typeof parsed.reportFile === 'string' && parsed.reportFile ? { reportFile: parsed.reportFile } : {}),
+      }
+      : undefined;
+    removeReplacedPrototypeDirectory(targetBaseDir, targetPrototypeName, folderName);
     updatePrototypeMetadataAfterUpload(context, {
       id: folderName,
       title: getDisplayName(indexPath, folderName),
       folderPath: outputDir,
       indexPath,
       clientUrl,
+      ...(pages.length > 0 ? { pages, defaultPageId } : {}),
+      ...(importReport ? { importReport } : {}),
+      replacedPrototypeName: targetPrototypeName,
     });
+
+    if (uploadType === 'axure_html') {
+      sendJson(res, {
+        success: true,
+        projectId: context.project.id,
+        uploadType,
+        message: warnings.length > 0
+          ? 'Axure HTML 原型已转换完成，部分高级交互已降级。'
+          : 'Axure HTML 原型已转换完成。',
+        folderName,
+        path: `prototypes/${folderName}`,
+        clientUrl,
+        requiresAi: false,
+        pages,
+        defaultPageId,
+        warnings,
+        ...(importReport ? { importReport } : {}),
+      });
+      return;
+    }
 
     if (uploadType === 'google_stitch') {
       const requiresAi = parsed.requiresAi === true;
@@ -899,7 +1091,7 @@ async function handlePrototypeConverterUpload(
         path: `prototypes/${folderName}`,
         clientUrl,
         requiresAi,
-        prompt: typeof parsed.prompt === 'string' ? parsed.prompt : undefined,
+        prompt: typeof parsed.prompt === 'string' ? appendTargetPrototypeOverwriteInstruction(parsed.prompt, targetPrototypeName, folderName) : undefined,
         reasons: Array.isArray(parsed.reasons) ? parsed.reasons : [],
         hint: requiresAi ? '复制提示词后，可继续完善交互与动态内容' : '如果页面无法预览，让 AI 处理即可',
       });
@@ -909,7 +1101,7 @@ async function handlePrototypeConverterUpload(
     const tasksFile = typeof parsed.tasksFile === 'string' && parsed.tasksFile
       ? parsed.tasksFile
       : createProjectRelativePath(context.project.root, path.join(outputDir, config.tasksFileName));
-    const prompt = `${config.label} 项目已上传并预处理完成。\n\n请先在仓库中读取以下转换任务清单：\n- ${tasksFile}\n\n然后根据该任务清单和项目 rules，完成具体的转换工作。`;
+    const prompt = appendTargetPrototypeOverwriteInstruction(`${config.label} 项目已上传并预处理完成。\n\n请先在仓库中读取以下转换任务清单：\n- ${tasksFile}\n\n然后根据该任务清单和项目 rules，完成具体的转换工作。`, targetPrototypeName, folderName);
     sendJson(res, {
       success: true,
       projectId: context.project.id,

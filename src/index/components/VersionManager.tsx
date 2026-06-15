@@ -24,6 +24,8 @@ interface VersionManagerProps {
     preferredPromptClient: PromptClientPreference;
     preferredIDE: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
+    assistantOpen?: boolean;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
 }
 
 interface CommitItem {
@@ -41,6 +43,8 @@ export default function VersionManager({
     preferredPromptClient,
     preferredIDE,
     ideAvailability,
+    assistantOpen,
+    onExecutePrompt,
 }: VersionManagerProps) {
     const appDialog = useAppDialog();
     const [commits, setCommits] = useState<CommitItem[]>([]);
@@ -325,9 +329,11 @@ export default function VersionManager({
                                                 preferredClient={preferredPromptClient}
                                                 preferredIDE={preferredIDE}
                                                 ideAvailability={ideAvailability}
+                                                assistantOpen={assistantOpen}
+                                                onExecutePrompt={onExecutePrompt}
                                                 scene={`version-commit-${activeTab}`}
                                                 buildPrompt={buildAICommitPrompt}
-                                                 getIdeTargetPath={() => {
+                                                getTargetPath={() => {
                                                      if (!item) return null;
                                                      const path = getGitTargetPath(item);
                                                      return path || null;

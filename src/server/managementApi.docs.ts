@@ -8,9 +8,10 @@ import {
   type RegisteredProject,
 } from './projectCore/index.ts';
 
-import { readJsonBody, sendFile, sendJson } from './http.ts';
+import { getRequestUrl, readJsonBody, sendFile, sendJson } from './http.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { openPathInSystem } from './managementApi.workspace.ts';
+import { sendUnsupportedFilePreview } from './unsupportedFilePreview.ts';
 
 interface DocsProjectContext {
   project: RegisteredProject;
@@ -157,8 +158,6 @@ function removeDocMetadata(context: DocsProjectContext, id: string, handlers: Do
     },
   });
 }
-
-const TEXT_EXTENSIONS = new Set(['.md', '.csv', '.json', '.yaml', '.yml', '.txt', '.html', '.htm', '.xml', '.svg']);
 
 function isIgnoredResourceRelativePath(relativePath: string): boolean {
   const normalized = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -373,8 +372,14 @@ export function handleProjectDocsApi(
         sendJson(res, { error: 'Missing docName' }, { status: 400 });
         return;
       }
-      const docPath = path.resolve(docsDir, docName);
-      if (!isPathInside(docsDir, docPath)) {
+      const resourceType = String(body?.type || 'docs').trim();
+      if (resourceType !== 'docs' && resourceType !== 'templates') {
+        sendJson(res, { error: 'Invalid resource type, expected docs|templates' }, { status: 400 });
+        return;
+      }
+      const baseDir = resourceType === 'templates' ? templatesDir : docsDir;
+      const docPath = path.resolve(baseDir, docName);
+      if (!isPathInside(baseDir, docPath)) {
         sendJson(res, { error: 'Forbidden' }, { status: 403 });
         return;
       }
@@ -588,6 +593,20 @@ export function handleProjectDocsApi(
       return true;
     }
     if (req.method === 'GET') {
+      const projectId = getRequestUrl(req).searchParams.get('projectId')?.trim() || '';
+      const openEndpoint = projectId
+        ? `/api/docs/open-system?projectId=${encodeURIComponent(projectId)}`
+        : '/api/docs/open-system';
+      if (sendUnsupportedFilePreview({
+        req,
+        res,
+        docName: templateName,
+        filePath: templatePath,
+        openEndpoint,
+        resourceType: 'templates',
+      })) {
+        return true;
+      }
       if (!sendFile(res, templatePath)) {
         sendJson(res, { error: 'Template not found' }, { status: 404 });
       }
@@ -702,6 +721,20 @@ export function handleProjectDocsApi(
       return true;
     }
     if (req.method === 'GET') {
+      const projectId = getRequestUrl(req).searchParams.get('projectId')?.trim() || '';
+      const openEndpoint = projectId
+        ? `/api/docs/open-system?projectId=${encodeURIComponent(projectId)}`
+        : '/api/docs/open-system';
+      if (sendUnsupportedFilePreview({
+        req,
+        res,
+        docName,
+        filePath: docPath,
+        openEndpoint,
+        resourceType: 'docs',
+      })) {
+        return true;
+      }
       if (!sendFile(res, docPath)) {
         sendJson(res, { error: 'Document not found' }, { status: 404 });
       }

@@ -253,23 +253,12 @@ describe('make-server CLI args', () => {
     expect(startDiagnosticLogMock).toHaveBeenCalledWith(logFile);
   });
 
-  it('does not expose the removed canvas CLI subcommand', async () => {
-    const originalExitCode = process.exitCode;
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    process.exitCode = undefined;
+  it('rejects canvas as a removed CLI command without starting the server', async () => {
+    expect(() => parseCliArgs(['canvas'])).toThrow(/Unknown command: canvas/);
 
-    try {
-      await runCli(['canvas']);
-
-      expect(errorSpy).toHaveBeenCalledWith(
-        'The axhub-make canvas CLI has been removed. Read and write canvas .excalidraw files directly.',
-      );
-      expect(startMakeServerMock).not.toHaveBeenCalled();
-      expect(spawnMock).not.toHaveBeenCalled();
-      expect(process.exitCode).toBe(1);
-    } finally {
-      process.exitCode = originalExitCode;
-    }
+    await expect(runCli(['canvas'])).rejects.toThrow(/Unknown command: canvas/);
+    expect(startMakeServerMock).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it('prints a friendly hint with the visit URL when the server port is occupied', async () => {

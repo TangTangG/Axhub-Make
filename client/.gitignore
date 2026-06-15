@@ -75,6 +75,10 @@ logs/
 *.tmp
 *.temp
 .cache/
+.drawio-tmp/
+
+# Runtime review/comment artifacts are project-local by default.
+src/prototypes/**/.spec/prototype-comments.json
 
 # Coverage reports
 coverage/

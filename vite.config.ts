@@ -254,6 +254,28 @@ function portReleaseBeforeListenPlugin(): Plugin {
   };
 }
 
+function adminRootDevEntryRedirectPlugin(): Plugin {
+  return {
+    name: 'axhub-admin-root-dev-entry-redirect',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url) {
+          const requestUrl = new URL(req.url, 'http://localhost');
+          if (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html') {
+            const query = requestUrl.search;
+            res.statusCode = 302;
+            res.setHeader('Location', `/src/index/index.html${query}`);
+            res.end();
+            return;
+          }
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   css: {
     preprocessorOptions: {
@@ -263,6 +285,7 @@ export default defineConfig({
   },
   plugins: [
     portReleaseBeforeListenPlugin(),
+    adminRootDevEntryRedirectPlugin(),
     excalidrawDevCjsInteropPlugin(),
     excalidrawSiblingsPlugin(),
     canvasHotUpdateFilterPlugin(),

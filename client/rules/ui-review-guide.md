@@ -4,20 +4,14 @@
 
 ## 审查入口
 
-优先使用官方 Impeccable 技能的 critique 流程：
+当用户说「UI review」「审查这个页面」「检查设计质量」「帮我挑一下 UI 问题」时，读取本规则并输出 Markdown 评审结论。
 
-```text
-/impeccable critique <target>
-```
+需要参考 Impeccable 的 UI critique 方法时，只在本次评审中按需读取以下文件：
 
-`<target>` 应明确到原型或页面，例如：
+- `rules/references/impeccable/SKILL.md`
+- `rules/references/impeccable/reference/critique.md`
 
-```text
-/impeccable critique src/prototypes/beginner-guide
-/impeccable critique beginner-guide/install-agent
-```
-
-如果用户说「UI review」「审查这个页面」「检查设计质量」「帮我挑一下 UI 问题」，按本规则约束 `/impeccable critique` 的产物，不另起一套审查流程。
+`rules/references/impeccable/` 是第三方技能的完整归档参考，不是默认项目技能。不要调用 `/impeccable critique`，不要运行原技能的上下文注入流程，也不要因为缺少 `PRODUCT.md` 中断评审。
 
 ## 审查依据
 
@@ -38,23 +32,24 @@
 
 这些文件可以作为证据或实现参考，但不能替代 `DESIGN.md` 的规范地位。
 
-## Impeccable 使用约束
+## Impeccable 参考约束
 
-使用 `/impeccable critique` 时，必须在执行前附加或内化以下约束：
+读取 Impeccable 参考流程时，必须以内化方式覆盖以下 Axhub 约束：
 
 ```text
-Use /impeccable critique as the review method, but follow Axhub rules:
+Use the copied Impeccable critique reference as the review method, but follow Axhub rules:
 1. Use only the selected DESIGN.md as the design basis.
 2. Ignore PRODUCT.md and all other design files as normative criteria.
 3. If no DESIGN.md is available, stop and ask for one.
-4. Do not write .impeccable critique artifacts as the deliverable.
+4. Do not call /impeccable commands or run Impeccable context injection scripts.
 5. Produce a Markdown report, not JSON.
 6. Write the result to the target prototype .spec directory.
 7. Include sections in order: 总体点评, P0-P3 优先级问题, 核心元件.
 8. Priorities must contain at most 5 P0-P3 findings.
+9. Do not write .impeccable critique artifacts as the deliverable.
 ```
 
-如果 Impeccable 的原始流程要求 `PRODUCT.md`、`.impeccable/critique` 或额外上下文，与本规则冲突时，以本规则为准。
+如果 Impeccable 的原始流程要求 `PRODUCT.md`、`.impeccable/critique`、`.agents/skills/impeccable/` 或额外上下文注入，与本规则冲突时，以本规则为准。
 
 ## 推荐审查流程
 
@@ -68,14 +63,14 @@ Use /impeccable critique as the review method, but follow Axhub rules:
    - 用户指定路径时，只读取该 `DESIGN.md`
    - 未指定且项目默认不存在时，停止
 
-3. **执行 Impeccable critique**
+3. **参考 Impeccable critique**
    - 读取目标源码和本地样式
    - 有预览环境时检查桌面和移动端
    - 可用浏览器时保留截图证据
-   - 允许使用 Impeccable detector 作为辅助证据，但不要让 detector 输出先污染设计判断
+   - 允许使用 `rules/references/impeccable/scripts/detect.mjs` 作为辅助证据，但不要让 detector 输出先污染设计判断
 
 4. **综合结论**
-   - 不直接拼接 Impeccable 原报告
+   - 不直接拼接 Impeccable 原报告或归档原文
    - 按 Axhub Markdown 模板重组
    - P0-P3 问题最多 5 条
    - 必须包含核心元件或关键 UI 区块点评

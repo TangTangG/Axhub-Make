@@ -149,6 +149,7 @@ body.dark .excalidraw,
     --editor-container-padding: 0.5rem;
     --color-gray-20: #ebebeb;
     --axhub-canvas-top-right-capsule-width: 73px;
+    --axhub-canvas-mobile-top-control-offset: 0.25rem;
     --color-surface-high: #e9e9ee;
     --color-surface-mid: #f2f2f7;
     --color-surface-low: #ececf4;
@@ -223,6 +224,10 @@ body.dark .excalidraw,
     height: var(--default-icon-size, 1rem);
 }
 
+.excalidraw.excalidraw--mobile .axhub-canvas-sidebar-toggle-anchor {
+    top: calc(var(--editor-container-padding, 0.5rem) + var(--axhub-canvas-mobile-top-control-offset, 0.25rem));
+}
+
 .axhub-canvas-top-right-capsule {
     position: absolute;
     top: var(--editor-container-padding, 1rem);
@@ -238,6 +243,10 @@ body.dark .excalidraw,
     background-color: var(--color-surface-low);
     color: var(--color-on-surface);
     pointer-events: var(--ui-pointerEvents, auto);
+}
+
+.excalidraw.excalidraw--mobile ~ .axhub-canvas-top-right-capsule {
+    top: calc(var(--editor-container-padding, 0.5rem) + var(--axhub-canvas-mobile-top-control-offset, 0.25rem));
 }
 
 .excalidraw.theme--dark .axhub-canvas-top-right-capsule,

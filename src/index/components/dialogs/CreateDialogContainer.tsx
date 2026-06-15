@@ -13,21 +13,16 @@ export default function CreateDialogContainer({ state, actions }: CreateDialogCo
             visible={state.visible}
             onClose={actions.onClose}
             activeTab={state.activeTab}
+            activeProjectId={state.activeProjectId}
             initialTab={state.initialTab}
-            selectedDocs={state.selectedDocs}
-            setSelectedDocs={actions.setSelectedDocs}
-            availableDocs={state.availableDocs}
-            selectedThemes={state.selectedThemes}
-            setSelectedThemes={actions.setSelectedThemes}
-            availableThemes={state.availableThemes}
-            selectedDataAssets={state.selectedDataAssets}
-            setSelectedDataAssets={actions.setSelectedDataAssets}
-            availableDataAssets={state.availableDataAssets}
+            initialUploadType={state.initialUploadType}
+            targetPrototypeName={state.targetPrototypeName}
             resourceWriteCapabilities={state.resourceWriteCapabilities}
             preferredPromptClient={state.preferredPromptClient}
             preferredIDE={state.preferredIDE}
             ideAvailability={state.ideAvailability}
-            buildCreatePrompt={actions.buildCreatePrompt}
+            assistantOpen={state.assistantOpen}
+            onExecutePrompt={actions.onExecutePrompt}
             onAfterCreatePromptAction={actions.onAfterCreatePromptAction}
             onUploadSuccess={actions.onUploadSuccess}
         />

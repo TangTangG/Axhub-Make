@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { blake3 } from '@noble/hashes/blake3';
 import { bytesToHex } from '@noble/hashes/utils';
+import { unzipSync } from 'fflate';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -301,6 +302,88 @@ describe('cloud publishing API', () => {
     expect(files.find((file) => file.path === 'index.js')).toMatchObject({
       contentType: 'application/javascript; charset=utf-8',
     });
+  });
+
+  it('includes media files from the declared project media write target', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeFile(path.join(projectRoot, 'src/resources/assets/banner/city.jpg'), 'CITY-BANNER');
+    vi.mocked(buildOnDemand).mockResolvedValueOnce({
+      jsCode: 'var UserComponent = function Home(){return "/api/media/file/banner/city.jpg";};',
+      cssText: '.hero{background-image:url("/api/media/file/banner/city.jpg")}',
+    });
+
+    const files = await buildExportHtmlStaticFiles({
+      projectRoot,
+      sourceFile: path.join(projectRoot, 'src/prototypes/home/index.tsx'),
+      entryName: 'home',
+      displayName: 'Home',
+      group: 'prototypes',
+      mediaRoot: path.join(projectRoot, 'src/resources/assets'),
+    });
+
+    const banner = files.find((file) => file.path === 'media/banner/city.jpg');
+    const indexJs = files.find((file) => file.path === 'index.js')?.body.toString('utf8') || '';
+    const indexHtml = files.find((file) => file.path === 'index.html')?.body.toString('utf8') || '';
+    expect(banner).toMatchObject({
+      contentType: 'image/jpeg',
+    });
+    expect(banner?.body.toString('utf8')).toBe('CITY-BANNER');
+    expect(indexJs).toContain('./media/banner/city.jpg');
+    expect(indexHtml).toContain('url("./media/banner/city.jpg")');
+    expect(files.map((file) => file.path)).not.toContain('media/logo.txt');
+  });
+
+  it('uses the declared media write target when streaming HTML export ZIPs', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    const metadataPath = getProjectMetadataPath(projectRoot);
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    metadata.resourceWriteTargets.media = {
+      type: 'project-relative-path',
+      path: 'src/resources/assets',
+    };
+    writeJson(metadataPath, metadata);
+    writeFile(path.join(projectRoot, 'src/resources/assets/banner/city.jpg'), 'CITY-BANNER');
+    vi.mocked(buildOnDemand).mockResolvedValueOnce({
+      jsCode: 'var UserComponent = function Home(){return "/api/media/file/banner/city.jpg";};',
+      cssText: '.hero{background-image:url("/api/media/file/banner/city.jpg")}',
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/export-html?path=${encodeURIComponent('prototypes/home')}`);
+      const body = new Uint8Array(await response.arrayBuffer());
+      const entries = unzipSync(body);
+      const paths = Object.keys(entries).sort();
+
+      expect(response.status).toBe(200);
+      expect(paths).toEqual(expect.arrayContaining([
+        'index.html',
+        'index.js',
+        'media/banner/city.jpg',
+      ]));
+      expect(paths).not.toContain('media/logo.txt');
+      expect(Buffer.from(entries['media/banner/city.jpg']).toString('utf8')).toBe('CITY-BANNER');
+      expect(Buffer.from(entries['index.js']).toString('utf8')).toContain('./media/banner/city.jpg');
+      expect(Buffer.from(entries['index.html']).toString('utf8')).toContain('url("./media/banner/city.jpg")');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects media export roots outside the project root', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+
+    await expect(buildExportHtmlStaticFiles({
+      projectRoot,
+      sourceFile: path.join(projectRoot, 'src/prototypes/home/index.tsx'),
+      entryName: 'home',
+      displayName: 'Home',
+      group: 'prototypes',
+      mediaRoot: path.join(projectRoot, '..', 'outside-media'),
+    })).rejects.toThrow('媒体资源目录不在项目根目录内');
   });
 
   it('can include source files while excluding canvas and spec resources', async () => {

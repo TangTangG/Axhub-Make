@@ -1,6 +1,6 @@
 # Axhub Make Client
 
-Axhub Make Client 是 Axhub Make 的官方项目客户端，用来承载可运行的原型、主题和项目资料。它让原型不只是静态截图，而是可以在本地预览、迭代、导出和接入管理端的真实前端项目。
+Axhub Make Client 是 Axhub Make 的官方项目客户端，用来承载可运行的原型、主题和项目资料。这里的「原型」不是传统线框图，而是接近生产级页面的真实前端实现，可在本地预览、迭代、导出并接入管理端。
 
 ## What It Provides
 
@@ -8,6 +8,10 @@ Axhub Make Client 是 Axhub Make 的官方项目客户端，用来承载可运�
 - 可复用的主题与设计规范
 - 项目资料、素材和文档资源
 - 面向 Axhub Make 管理端的预览、设计决策与导出入口
+
+## Prototype Definition
+
+`src/prototypes/` 下的原型默认按正式产品界面处理：需要真实内容、完整视觉层级、可运行交互和接近生产环境的体验。只有明确要求低保真、线框图、占位图或草稿时，才按传统 prototype/wireframe 的方式表达。
 
 ## Project Resources
 

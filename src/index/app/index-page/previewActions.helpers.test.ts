@@ -4,6 +4,7 @@ import * as helpers from './previewActions.helpers';
 import {
   buildCombinedPrototypePrompt,
   buildProjectPrototypeIframeUrl,
+  buildProjectPrototypeScreenshotIframeUrl,
   createDefaultHostToolbarState,
   getClientUrlOrigin,
   resolveCurrentPublishResourcePath,
@@ -116,6 +117,27 @@ describe('previewActions.helpers', () => {
     expect(url.searchParams.get('variant')).toBe('dark');
     expect(url.searchParams.get('genieToolbar')).toBe('host');
     expect(url.hash).toBe('#page=more-scenarios');
+  });
+
+  it('builds same-origin prototype screenshot iframe URLs from runtime-origin previews', () => {
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://localhost:53817',
+      },
+      __RUNTIME_ORIGIN__: 'http://localhost:51723',
+    });
+
+    const url = new URL(buildProjectPrototypeScreenshotIframeUrl({
+      name: 'touch-and-talk-annotation-demo',
+      displayName: '批注演示',
+      clientUrl: 'http://localhost:51723/prototypes/touch-and-talk-annotation-demo?genieToolbar=host',
+      previewUrl: 'http://localhost:51723/prototypes/touch-and-talk-annotation-demo',
+    }, 'cover'));
+
+    expect(url.origin).toBe('http://localhost:53817');
+    expect(url.pathname).toBe('/prototypes/touch-and-talk-annotation-demo');
+    expect(url.searchParams.get('genieToolbar')).toBeNull();
+    expect(url.hash).toBe('#page=cover');
   });
 
   it('keeps unrelated absolute prototype origins unchanged even when the injected runtime origin is different', () => {

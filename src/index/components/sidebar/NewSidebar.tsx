@@ -72,14 +72,16 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         handleDeleteCanvasItem,
         handleCopyCanvasPath,
         onCreateFolder,
-        onGenerateThemeFromPrototype,
         handleDownloadItemSource,
         handleDownloadThemeZip,
         preferredIDE,
         ideAvailability,
         agentAvailability,
         onOpenGenieWebAgent,
+        onOpenImageAiPanel,
         onOpenWebAgentInPanel,
+        onExecutePrompt,
+        onCloseAiPanel,
         onCloseWebAgentPanel,
         onSettingsClick,
         onOpenAISettings,
@@ -96,6 +98,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         onProjectStop,
         onAddProject,
         onCreateBlankMakeProject,
+        onCopyMakeProject,
         onRefreshProjects,
         handleOpenProjectInIDE,
         onPreferredIDEChange,
@@ -105,6 +108,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         onSidebarTreeChange,
         onSidebarTreePersist,
         webAgentPanelOpen,
+        aiPanelMode,
     } = resolveNewSidebarProps(rawProps);
 
     const handleSidebarTabChange = (tab: SidebarTab) => {
@@ -235,6 +239,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 onProjectStop={onProjectStop}
                 onAddProject={onAddProject}
                 onCreateBlankMakeProject={onCreateBlankMakeProject}
+                onCopyMakeProject={onCopyMakeProject}
                 onRefreshProjects={onRefreshProjects}
                 tree={sidebarTrees[currentTreeTab] || []}
                 onTreeChange={(nextTree) => onSidebarTreeChange(currentTreeTab, nextTree)}
@@ -265,12 +270,10 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 onSearch={setSearchText}
                 searchText={searchText}
                 onCreateFile={onCreatePlaceholderPrototype}
-                onImportPrototype={() => onOpenCreateDialog('upload')}
                 onImportTheme={onImportTheme}
                 onUploadedResourceFiles={onUploadedResourceFiles}
                 onCreateCanvasFile={onCreateCanvasFile}
                 onCreateFolder={onCreateFolder}
-                onGenerateThemeFromPrototype={onGenerateThemeFromPrototype}
                 handleDownloadItemSource={handleDownloadItemSource}
                 handleDownloadThemeZip={(theme) => {
                     const themeItem = themes.find((item) => item.name === theme.name) || theme as ThemeResourceItem;
@@ -282,8 +285,12 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 ideAvailability={ideAvailability}
                 agentAvailability={agentAvailability}
                 onOpenGenieWebAgent={onOpenGenieWebAgent}
+                onOpenImageAiPanel={onOpenImageAiPanel}
                 onOpenWebAgentInPanel={onOpenWebAgentInPanel}
+                onExecutePrompt={onExecutePrompt}
                 webAgentPanelOpen={webAgentPanelOpen}
+                aiPanelMode={aiPanelMode}
+                onCloseAiPanel={onCloseAiPanel}
                 onCloseWebAgentPanel={onCloseWebAgentPanel}
                 onPreferredIDEChange={onPreferredIDEChange}
                 onOpenAISettings={onOpenAISettings}

@@ -115,7 +115,8 @@ function toResourceNodeTitle(relativePath: string): string {
 function isIgnoredResourceRelativePath(relativePath: string): boolean {
   const normalized = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
   if (!normalized) return true;
-  if (normalized.toLowerCase() === 'readme.md') return true;
+  const lower = normalized.toLowerCase();
+  if (lower === 'readme' || lower === 'readme.md') return true;
   return normalized.split('/').some((segment) => segment.startsWith('.'));
 }
 
@@ -789,6 +790,7 @@ function collectDocItemKeys(projectRoot: string): Set<string> {
       const absolutePath = path.join(currentDir, entry.name);
       const rel = normalizePath(path.relative(docsDir, absolutePath));
       if (rel.startsWith('templates/') || rel === 'templates') continue;
+      if (isIgnoredResourceRelativePath(rel)) continue;
       if (entry.isDirectory()) {
         walk(absolutePath);
         continue;
@@ -809,6 +811,7 @@ function collectMetadataDocItemKeys(metadata: ProjectMetadata): Set<string> {
       .map((value) => String(value || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''))
       .filter(Boolean);
     for (const candidate of candidates) {
+      if (isIgnoredResourceRelativePath(candidate)) continue;
       keys.add(`docs/${candidate}`);
     }
   }

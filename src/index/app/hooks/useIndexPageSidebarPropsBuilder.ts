@@ -6,6 +6,8 @@ import type { GenieProvider } from '@/common/genie/types';
 import type { SettingsDialogInitialTab } from '../../components/SettingsDialog';
 import type { ItemData, TabType, ViewMode } from '../../types';
 import type {
+    CreateDialogTab,
+    AiPanelMode,
     NewSidebarGroupedProps,
     ResourceSection,
     SidebarTab,
@@ -37,6 +39,7 @@ interface UseIndexPageSidebarPropsBuilderParams {
         isDarkMode: boolean;
         sidebarTrees: any;
         webAgentPanelOpen?: boolean;
+        aiPanelMode?: AiPanelMode;
         selectedDoc: ItemData | null;
         selectedResourceFolder?: any;
         selectedCanvas: any;
@@ -64,15 +67,23 @@ interface UseIndexPageSidebarPropsBuilderParams {
             folderName: string;
             projectName?: string;
         }) => Promise<unknown>;
+        copyMakeProject: (params: {
+            parentRoot: string;
+            folderName: string;
+            projectName?: string;
+        }) => Promise<unknown>;
         loadProjects: () => void | Promise<void>;
         setCreateDialogVisible: Dispatch<SetStateAction<boolean>>;
-        setInitialCreateDialogTab: Dispatch<SetStateAction<'ai' | 'create' | 'upload'>>;
+        setInitialCreateDialogTab: Dispatch<SetStateAction<CreateDialogTab>>;
         handleTabChange: (tab: TabType) => void;
         handleMenuClick: (params: { key: string; pageId?: string | null }) => void | Promise<void>;
         setSelectedPrototypePageId?: Dispatch<SetStateAction<string | null>>;
         handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
         handleOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+        handleOpenImageAiPanel?: () => void | Promise<void>;
         handleOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
+        onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
+        onCloseAiPanel?: () => void;
         onCloseWebAgentPanel?: () => void;
         handleOpenSelectedDocInIDE: (itemOverride?: ItemData | null, kindOverride?: 'doc' | 'template') => Promise<void>;
         handleCopyItemPath: (item: ItemData) => Promise<void>;
@@ -122,6 +133,7 @@ export function useIndexPageSidebarPropsBuilder({
             isDarkMode: state.isDarkMode,
             sidebarTrees: state.sidebarTrees,
             webAgentPanelOpen: state.webAgentPanelOpen,
+            aiPanelMode: state.aiPanelMode,
         },
         actions: {
             handleTabChange: deps.handleTabChange,
@@ -167,7 +179,7 @@ export function useIndexPageSidebarPropsBuilder({
             handleDeleteDocItem: (item) => { void deps.resources.handleDeleteDocItem(item); },
             handleCopyDocPath: (item) => { void deps.resources.handleCopyDocPath(item); },
             handleDocVersionManagement: deps.resources.handleDocVersionManagement,
-            onOpenCreateDialog: (initialTab = 'ai') => {
+            onOpenCreateDialog: (initialTab = 'onlineImport') => {
                 if (state.sidebarTab === 'prototype') {
                     deps.setActiveTab('prototypes');
                 }
@@ -183,7 +195,6 @@ export function useIndexPageSidebarPropsBuilder({
             handleDeleteCanvasItem: deps.resources.handleDeleteCanvasItem,
             handleCopyCanvasPath: deps.resources.handleCopyCanvasPath,
             onCreateFolder: deps.resources.handleCreateFolder,
-            onGenerateThemeFromPrototype: deps.resources.handleGenerateThemeFromPrototype,
             onSettingsClick: () => deps.openSettingsDialog('project'),
             onToggleTheme: () => deps.setIsDarkMode(!state.isDarkMode),
             onTitleChange: deps.resources.handleProjectTitleChange,
@@ -202,13 +213,21 @@ export function useIndexPageSidebarPropsBuilder({
                 resetToPrototypeStartView();
                 return result;
             },
+            onCopyMakeProject: async (params) => {
+                const result = await deps.copyMakeProject(params);
+                resetToPrototypeStartView();
+                return result;
+            },
             onRefreshProjects: deps.loadProjects,
             onSidebarTreeChange: deps.resources.handleSidebarTreeChange,
             onSidebarTreePersist: deps.resources.handleSidebarTreePersist,
             handleVersionManagement: deps.resources.handleVersionManagement,
             handleOpenProjectInIDE: deps.handleOpenProjectInIDE,
             onOpenGenieWebAgent: deps.handleOpenGenieWebAgent,
+            onOpenImageAiPanel: deps.handleOpenImageAiPanel,
             onOpenWebAgentInPanel: deps.handleOpenWebAgentInPanel,
+            onExecutePrompt: deps.onExecutePrompt,
+            onCloseAiPanel: deps.onCloseAiPanel,
             onCloseWebAgentPanel: deps.onCloseWebAgentPanel,
             onOpenAISettings: () => deps.openSettingsDialog('ai'),
         },

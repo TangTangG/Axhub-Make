@@ -56,7 +56,7 @@ vi.mock('../localCommand.ts', async (importActual) => {
 });
 
 const { commandExists, runLocalCommand } = await import('../localCommand.ts');
-const { resolveAssistantMakeCorsOrigins } = await import('../assistantRuntime.ts');
+const { resolveAssistantMakeCorsOrigins, resolveAssistantRuntime } = await import('../assistantRuntime.ts');
 const { startMakeServer } = await import('../index');
 const { handleAssistantPromptIde } = await import('../managementApi.assistantIde.ts');
 
@@ -1166,6 +1166,74 @@ describe('make-server assistant runtime API', () => {
       expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
     } finally {
       await server.close();
+    }
+  });
+
+  it('waits up to 120 seconds for slow npx cold starts before reporting ACP UI unavailable', async () => {
+    vi.useFakeTimers();
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    const makeOrigin = 'http://localhost:53123';
+    const realFetch = globalThis.fetch.bind(globalThis);
+    childProcessMock.spawnSync.mockReturnValue({ stdout: '', stderr: '', status: 0 });
+    let endpointProbeCount = 0;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
+      const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
+      if (!requestUrl.startsWith('http://localhost:32123')) {
+        return realFetch(input, init);
+      }
+      const method = String(init?.method || 'GET').toUpperCase();
+      const headers = {
+        'access-control-allow-origin': makeOrigin,
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+      };
+      endpointProbeCount += 1;
+      const ready = endpointProbeCount >= 42;
+
+      if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+        return Promise.resolve(new Response('', { status: 404, headers }));
+      }
+      if (!ready) {
+        return Promise.reject(new TypeError('fetch failed'));
+      }
+      if (requestUrl === 'http://localhost:32123/') {
+        return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
+      }
+      if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+        return Promise.resolve(new Response(null, { status: 204, headers }));
+      }
+      if (requestUrl === 'http://localhost:32123/api/chat') {
+        return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', ...headers },
+        }));
+      }
+      return Promise.resolve(new Response('', { status: 404, headers }));
+    });
+
+    try {
+      const runtimePromise = resolveAssistantRuntime({
+        projectPath: projectRoot,
+        autoStart: true,
+        makeOrigin,
+      });
+
+      await vi.advanceTimersByTimeAsync(12_000);
+      const runtime = await runtimePromise;
+
+      expect(runtime.health.status).toBe('ready');
+      expect(runtime.health.commandSource).toBe('acp-ui');
+      expect(endpointProbeCount).toBeGreaterThanOrEqual(24);
+      expectAcpUiSpawn({
+        command: 'npx',
+        port: '32123',
+        cwd: projectRoot,
+        makeOrigin,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      vi.useRealTimers();
     }
   });
 

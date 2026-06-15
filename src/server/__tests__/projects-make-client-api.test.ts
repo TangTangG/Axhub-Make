@@ -31,6 +31,7 @@ import {
   slugifyMakeClientFolderName,
   suggestMakeClientFolderName,
 } from '../makeClientProject.ts';
+import { DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION } from '../../common/makeClientTemplate.ts';
 
 const TEMPLATE_SOURCE_URL = 'https://github.com/lintendo/Axhub-Make/tree/main/client';
 
@@ -80,7 +81,7 @@ import { runLocalCommand } from '../localCommand.ts';
 
 const runLocalCommandMock = vi.mocked(runLocalCommand);
 
-const DEFAULT_TEMPLATE_VERSION = '0.1.6';
+const DEFAULT_TEMPLATE_VERSION = DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION;
 const TEMPLATE_ZIP_URL = `https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v${DEFAULT_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
 const TEMPLATE_MIRROR_ZIP_URL = `https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v${DEFAULT_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
 const TEMPLATE_MIRROR_SOURCE_URL = 'https://gitee.com/axhub/Axhub-Make/tree/main/client';
@@ -172,6 +173,15 @@ function writeInstalledMakeClientDependencies(projectRoot: string) {
   fs.mkdirSync(path.join(viteRoot, 'bin'), { recursive: true });
   fs.writeFileSync(path.join(viteRoot, 'package.json'), JSON.stringify({ bin: { vite: 'bin/vite.js' } }), 'utf8');
   fs.writeFileSync(path.join(viteRoot, 'bin', 'vite.js'), '#!/usr/bin/env node\n', 'utf8');
+}
+
+function writeInvalidMakeClientDependencies(projectRoot: string) {
+  const binDir = path.join(projectRoot, 'node_modules', '.bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(binDir, process.platform === 'win32' ? 'vite.cmd' : 'vite'), '', 'utf8');
+  const viteRoot = path.join(projectRoot, 'node_modules', 'vite');
+  fs.mkdirSync(viteRoot, { recursive: true });
+  fs.writeFileSync(path.join(viteRoot, 'package.json'), JSON.stringify({ bin: { vite: 'bin/missing.js' } }), 'utf8');
 }
 
 function writeMakeClientMetadata(projectRoot: string, id = 'make-client-a', name = 'Make Client A') {
@@ -2344,6 +2354,251 @@ describe('make-server make client project APIs', () => {
       );
       expect(fs.existsSync(getRuntimeServerInfoPath(targetRoot))).toBe(true);
       expect(fs.existsSync(getProjectMetadataPath(targetRoot))).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('copies a make client project, rewrites identity, reuses copied node_modules, and starts dev', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const sourceRoot = createTempRoot('axhub-make-client-copy-source-');
+    const parentRoot = createTempRoot('axhub-make-copy-parent-');
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    writeMakeClientMarker(sourceRoot, 'source-client', 'Source Client');
+    writeMakeClientPackage(sourceRoot);
+    writeInstalledMakeClientDependencies(sourceRoot);
+    writeProjectMetadata(sourceRoot, {
+      project: { id: 'source-client', name: 'Source Client' },
+      resources: {
+        prototypes: [],
+        docs: [
+          {
+            id: 'spec',
+            name: 'spec',
+            title: 'Spec',
+            path: path.join(sourceRoot, 'docs', 'spec.md'),
+          },
+        ],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+    }, { makeClientMarker: false });
+    fs.mkdirSync(path.join(sourceRoot, 'src', 'prototypes', 'source'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'src', 'prototypes', 'source', 'index.tsx'), 'export default function Source() { return null; }\n', 'utf8');
+    fs.mkdirSync(path.join(sourceRoot, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, '.git', 'config'), '[core]\n', 'utf8');
+    fs.mkdirSync(path.join(sourceRoot, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'dist', 'bundle.js'), 'console.log("dist");\n', 'utf8');
+    fs.mkdirSync(path.join(sourceRoot, '.vite'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, '.vite', 'cache.json'), '{}\n', 'utf8');
+    fs.mkdirSync(path.join(sourceRoot, '.cache'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, '.cache', 'cache.json'), '{}\n', 'utf8');
+    fs.mkdirSync(path.join(sourceRoot, '.local'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, '.local', 'note.txt'), 'local\n', 'utf8');
+    fs.mkdirSync(path.join(sourceRoot, 'coverage'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'coverage', 'coverage.json'), '{}\n', 'utf8');
+    fs.mkdirSync(path.join(sourceRoot, 'tmp'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'tmp', 'scratch.txt'), 'scratch\n', 'utf8');
+    fs.mkdirSync(path.join(sourceRoot, 'temp'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'temp', 'scratch.txt'), 'scratch\n', 'utf8');
+    writeServerInfo(sourceRoot, 'runtime', {
+      pid: process.pid,
+      port: 51720,
+      host: 'localhost',
+      origin: 'http://localhost:51720',
+      projectRoot: sourceRoot,
+      startedAt: new Date().toISOString(),
+    });
+    fs.writeFileSync(path.join(sourceRoot, '.axhub', 'make', '.admin-server-info.json'), '{}\n', 'utf8');
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51741,
+        host: 'localhost',
+        origin: 'http://localhost:51741',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+    const server = await startTestServer(defaultRoot, registryHome);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: sourceRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const response = await fetch(`${server.origin}/api/projects/source-client/make-client/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRoot,
+          folderName: 'copied-client',
+          projectName: 'Copied Client',
+        }),
+      });
+      const body = await response.json();
+      const targetRoot = path.join(parentRoot, 'copied-client');
+
+      expect(response.status).toBe(201);
+      expect(body).toMatchObject({
+        success: true,
+        phase: 'ready',
+        copiedDependencies: true,
+        installMethod: 'skipped',
+        project: {
+          id: 'copied-client',
+          name: 'Copied Client',
+          root: targetRoot,
+        },
+        runtime: {
+          origin: 'http://localhost:51741',
+        },
+      });
+      expect(fs.existsSync(path.join(targetRoot, 'src', 'prototypes', 'source', 'index.tsx'))).toBe(true);
+      expect(fs.existsSync(path.join(targetRoot, 'node_modules', 'vite', 'bin', 'vite.js'))).toBe(true);
+      expect(fs.existsSync(path.join(targetRoot, '.git'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, 'dist'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, '.vite'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, '.cache'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, '.local'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, 'coverage'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, 'tmp'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, 'temp'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, '.axhub', 'make', '.dev-server-info.json'))).toBe(true);
+      expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(targetRoot), 'utf8'))).toMatchObject({
+        repository: TEMPLATE_SOURCE_URL,
+        project: {
+          id: 'copied-client',
+          name: 'Copied Client',
+        },
+      });
+      expect(JSON.parse(fs.readFileSync(getProjectMetadataPath(targetRoot), 'utf8'))).toMatchObject({
+        project: {
+          id: 'copied-client',
+          name: 'Copied Client',
+        },
+        resources: {
+          docs: [
+            expect.objectContaining({
+              path: path.join(targetRoot, 'docs', 'spec.md'),
+            }),
+          ],
+        },
+      });
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install', '--include=dev'],
+        expect.objectContaining({ cwd: targetRoot }),
+      );
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith(
+        'pnpm',
+        ['install', '--prod=false'],
+        expect.objectContaining({ cwd: targetRoot }),
+      );
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [path.join(targetRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
+        expect.objectContaining({ cwd: targetRoot }),
+      );
+      const projectsBody = await fetch(`${server.origin}/api/projects`).then((projectsResponse) => projectsResponse.json());
+      expect(projectsBody.activeProjectId).toBe('copied-client');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('deletes invalid copied node_modules and falls back to installing dependencies', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot);
+    const sourceRoot = createTempRoot('axhub-make-client-copy-invalid-deps-source-');
+    const parentRoot = createTempRoot('axhub-make-copy-invalid-deps-parent-');
+    writeMakeClientMarker(sourceRoot, 'invalid-deps-source', 'Invalid Deps Source');
+    writeMakeClientPackage(sourceRoot);
+    writeInvalidMakeClientDependencies(sourceRoot);
+    writeMakeClientMetadata(sourceRoot, 'invalid-deps-source', 'Invalid Deps Source');
+    childProcessMock.spawn.mockImplementation((_file: string, _args: string[], options: { cwd?: string }) => {
+      const targetRoot = String(options.cwd || '');
+      writeServerInfo(targetRoot, 'runtime', {
+        pid: process.pid,
+        port: 51742,
+        host: 'localhost',
+        origin: 'http://localhost:51742',
+        projectRoot: targetRoot,
+        startedAt: new Date().toISOString(),
+      });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: any[]) => void) => {
+          if (event === 'spawn') {
+            setTimeout(callback, 0);
+          }
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      return child;
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: sourceRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const response = await fetch(`${server.origin}/api/projects/invalid-deps-source/make-client/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentRoot,
+          folderName: 'copy-installed-deps',
+          projectName: 'Copy Installed Deps',
+        }),
+      });
+      const body = await response.json();
+      const targetRoot = path.join(parentRoot, 'copy-installed-deps');
+
+      expect(response.status).toBe(201);
+      expect(body).toMatchObject({
+        success: true,
+        phase: 'ready',
+        copiedDependencies: false,
+        installMethod: 'npm',
+        project: {
+          id: 'copy-installed-deps',
+          name: 'Copy Installed Deps',
+          root: targetRoot,
+        },
+      });
+      expect(fs.existsSync(path.join(targetRoot, 'node_modules', 'vite', 'bin', 'missing.js'))).toBe(false);
+      expect(fs.existsSync(path.join(targetRoot, 'node_modules', 'vite', 'bin', 'vite.js'))).toBe(true);
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['install', '--include=dev'],
+        expect.objectContaining({ cwd: targetRoot }),
+      );
+      expect(childProcessMock.spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [path.join(targetRoot, 'node_modules', 'vite', 'bin', 'vite.js')],
+        expect.objectContaining({ cwd: targetRoot }),
+      );
     } finally {
       await server.close();
     }

@@ -200,4 +200,21 @@ describe('excalidraw compact canvas styles', () => {
         expect(welcomeTitleRule).toContain('display: inline-flex;');
         expect(welcomeTitleIconRule).toContain('color: var(--color-on-surface);');
     });
+
+    it('nudges custom canvas top controls down in Excalidraw mobile mode to align with the native menu trigger', () => {
+        const css = readCompactCss();
+        const scopeRule = readRuleBlock(css, '.axhub-canvas-sidebar-toggle-scope');
+        const mobileSidebarToggleRule = readRuleBlock(
+            css,
+            '.excalidraw.excalidraw--mobile .axhub-canvas-sidebar-toggle-anchor',
+        );
+        const mobileCapsuleRule = readRuleBlock(
+            css,
+            '.excalidraw.excalidraw--mobile ~ .axhub-canvas-top-right-capsule',
+        );
+
+        expect(scopeRule).toContain('--axhub-canvas-mobile-top-control-offset: 0.25rem;');
+        expect(mobileSidebarToggleRule).toContain('top: calc(var(--editor-container-padding, 0.5rem) + var(--axhub-canvas-mobile-top-control-offset, 0.25rem));');
+        expect(mobileCapsuleRule).toContain('top: calc(var(--editor-container-padding, 0.5rem) + var(--axhub-canvas-mobile-top-control-offset, 0.25rem));');
+    });
 });

@@ -19,6 +19,7 @@ export interface ItemData {
     specUrl: string;
     filePath?: string;
     absoluteFilePath?: string;
+    fileSize?: number;
     specFilePath?: string;
     specAbsoluteFilePath?: string;
     specTitle?: string;

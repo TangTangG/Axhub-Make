@@ -75,8 +75,8 @@ const chapters: Chapter[] = [
         id: 'prototype-as-prd',
         title: '原型即 PRD',
         eyebrow: '01 · PRINCIPLE',
-        summary: '我们的核心思想是把可运行原型作为需求主载体，用标注补充边界、原因和决策，让原型本身承担 PRD 的表达与交付价值。',
-        metrics: { wordCount: '约 860 字', readingTime: '约 3 分钟' },
+        summary: '核心思路：把可运行原型作为需求主载体，标注只补充边界、原因和决策，让同一个链接同时承担评审、交付和后续执行上下文。',
+        metrics: { wordCount: '约 420 字', readingTime: '约 1 分钟' },
         icon: FileText,
     },
     {
@@ -117,16 +117,16 @@ const comparisonRows: ComparisonRow[] = [
     {
         dimension: '统一入口',
         prototypeOnly: '页面、标注和补充文档都围绕同一个原型入口展开。',
-        traditional: '交付、评审和阅读分散在原型、PRD、截图和沟通记录里。',
+        traditional: '原型、PRD、截图和沟通记录分散在不同位置。',
     },
     {
         dimension: '生产效率',
-        prototypeOnly: 'AI 生成原型时同步生成标注，后续改页面即可快速更新说明。',
+        prototypeOnly: '生成原型时同步生成第一版标注，后续改页面也能围绕节点继续更新说明。',
         traditional: '页面做一遍，文档再写一遍，变更后还要额外维护同步。',
     },
     {
         dimension: '研发效率',
-        prototypeOnly: '代码多数时候是更好的信息源，下游 AI Agent 能按真实实现理解效果。',
+        prototypeOnly: '可运行代码是更可靠的信息源，下游 Agent 和研发能直接读取结构、状态和交互。',
         traditional: '文字 PRD 需要再翻译成结构、状态和交互，容易产生理解偏差。',
     },
 ];
@@ -285,24 +285,24 @@ function ChapterHeader({ chapter }: { chapter: Chapter }) {
 function PrototypeAsPrdView() {
     return (
         <>
-            <ManuscriptSection title="我们的目的">
+            <ManuscriptSection title="核心判断">
                 <div className="annotation-guide-section-body">
                     <p>
-                        现在 AI 生成的原型已经足够完整，能把界面结构、交互路径、状态变化和数据关系直接表达出来。对下游 Agent 来说，代码化原型就是最好的 PRD：它不是抽象描述，而是可运行、可检查、可继续修改的需求上下文。
+                        现在的 AI 原型已经能承载界面结构、交互路径、状态变化和数据关系。对下游 Agent 和研发来说，可运行的代码化原型比抽象文档更接近真实需求：它能被打开、检查、复用和继续修改。
                     </p>
                     <p>
-                        所以我们以原型为主，用标注补充原因、边界、例外和决策记录，达到替代传统 PRD 的效果。
+                        因此，这一页的主张不是取消说明，而是把说明放回原型现场：原型负责表达事实，标注负责补充原因、边界、例外和决策记录。
                     </p>
                 </div>
             </ManuscriptSection>
-            <ManuscriptSection title="对比">
+            <ManuscriptSection title="方式对比">
                 <div className="annotation-guide-section-body">
                     <table className="annotation-guide-comparison-table" data-annotation-id="prototype-as-prd-table">
                         <thead>
                             <tr>
                                 <th scope="col">维度</th>
-                <th scope="col">原型即 PRD</th>
-                <th scope="col">原型 + PRD</th>
+                                <th scope="col">原型即 PRD</th>
+                                <th scope="col">原型 + PRD</th>
                             </tr>
                         </thead>
                         <tbody>

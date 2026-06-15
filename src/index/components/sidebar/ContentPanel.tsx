@@ -32,7 +32,6 @@ import {
     Sun,
     Trash2,
     Upload,
-    Wand2,
     Loader2,
     LayoutGrid,
     PanelsTopLeft,
@@ -78,6 +77,7 @@ import { buildResourceDeepLinkUrl } from '../../app/index-page/resourceDeepLink'
 import { CANVAS_DROP_MIME } from '../content/canvasDropTypes';
 import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';
 import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';
+import { getClipboardImageFiles } from '../../domains/shared/clipboardImages';
 import { createSidebarTreeItemLookup, resolveSidebarTreeItem } from '../../utils/sidebarTree';
 import { sidebarApi } from '../../services/sidebar.api';
 import { buildItemUrl, buildLANItemUrl } from '../../utils/url';
@@ -106,6 +106,11 @@ interface ContentPanelProps {
         folderName: string;
         projectName?: string;
     }) => Promise<unknown>;
+    onCopyMakeProject: (params: {
+        parentRoot: string;
+        folderName: string;
+        projectName?: string;
+    }) => Promise<unknown>;
     onRefreshProjects: () => void | Promise<void>;
     tree: SidebarTreeNode[];
     onTreeChange: (tree: SidebarTreeNode[]) => void;
@@ -120,11 +125,9 @@ interface ContentPanelProps {
     onSearch: (text: string) => void;
     searchText: string;
     onCreateFile: () => void;
-    onImportPrototype: () => void;
     onImportTheme: () => void;
     onUploadedResourceFiles?: (files: UploadedResourceFile[]) => void | Promise<void>;
     onCreateCanvasFile: () => void;
-    onGenerateThemeFromPrototype?: (item: ItemData) => void;
     handleDownloadItemSource: (item: ItemData) => void | Promise<void>;
     handleDownloadThemeZip: (item: ThemeResourceItem) => void | Promise<void>;
     onCreateFolder: (tab: SidebarTreeTab) => Promise<{ createdFolderId: string } | null>;
@@ -134,8 +137,12 @@ interface ContentPanelProps {
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
     onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenImageAiPanel?: () => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     webAgentPanelOpen?: boolean;
+    aiPanelMode?: 'general-ai' | 'image-ai' | null;
+    onCloseAiPanel?: () => void;
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
     onOpenAISettings?: () => void;
@@ -153,7 +160,7 @@ interface ContentPanelProps {
 }
 
 type DropPlacement = 'before' | 'inside' | 'after';
-type ProjectSetupMode = 'menu' | 'blank';
+type ProjectSetupMode = 'menu' | 'blank' | 'copy';
 type CanvasDropPreviewKind = 'web' | 'doc' | 'image' | 'none';
 const SIDEBAR_TREE_DRAG_MIME = 'application/x-axhub-sidebar-tree-node';
 const SIDEBAR_TITLE_MAX_LENGTH = 40;
@@ -165,8 +172,11 @@ const MAKE_CLIENT_SETUP_PHASES = [
     { key: 'dev', label: '启动客户端' },
 ] as const;
 const MAKE_CLIENT_SETUP_PENDING_LABEL = '创建并启动项目';
-const MAKE_CLIENT_SETUP_PENDING_DESCRIPTION = '正在下载模板、安装依赖并启动客户端，可能需要几分钟';
+const MAKE_CLIENT_SETUP_PENDING_DESCRIPTION = '首次新建会下载模板、安装依赖并启动客户端，可能需要几分钟；后续建议复制已有项目，会快很多';
+const MAKE_CLIENT_COPY_PENDING_LABEL = '复制并启动项目';
+const MAKE_CLIENT_COPY_PENDING_DESCRIPTION = '正在复制项目并启动客户端，可能需要几分钟';
 const MAKE_CLIENT_SETUP_FAILED_LABEL = '创建项目失败';
+const MAKE_CLIENT_COPY_FAILED_LABEL = '复制项目失败';
 const MAKE_CLIENT_SETUP_FAILED_DESCRIPTION = '可以复制给 AI 处理';
 const MAKE_STATE_DIR_NOT_WRITABLE = 'MAKE_STATE_DIR_NOT_WRITABLE';
 const DEFAULT_MAKE_CLIENT_PROJECT_NAME = '新建 Make 项目';
@@ -376,62 +386,6 @@ function resolveCanvasDropPreviewKind(fields: unknown[], fallback: CanvasDropPre
 
 function isSidebarTreeDragEvent(event: React.DragEvent<HTMLElement>): boolean {
     return Array.from(event.dataTransfer?.types || []).includes(SIDEBAR_TREE_DRAG_MIME);
-}
-
-function getImageExtensionFromMime(mimeType: string): string {
-    const normalized = String(mimeType || '').toLowerCase();
-    if (normalized === 'image/jpeg' || normalized === 'image/jpg') return '.jpg';
-    if (normalized === 'image/webp') return '.webp';
-    if (normalized === 'image/gif') return '.gif';
-    return '.png';
-}
-
-function formatPastedImageTimestamp(date: Date): string {
-    const pad = (value: number) => String(value).padStart(2, '0');
-    return [
-        date.getFullYear(),
-        pad(date.getMonth() + 1),
-        pad(date.getDate()),
-        '-',
-        pad(date.getHours()),
-        pad(date.getMinutes()),
-        pad(date.getSeconds()),
-    ].join('');
-}
-
-function getPastedImageFileName(blob: Blob): string {
-    const extension = getImageExtensionFromMime(blob.type);
-    const originalName = blob instanceof globalThis.File ? String(blob.name || '').trim() : '';
-    const baseName = originalName.replace(/\.[^./\\]+$/u, '').trim();
-    if (baseName) {
-        return `${baseName}${extension}`;
-    }
-    const timestamp = formatPastedImageTimestamp(new Date());
-    return `${timestamp}${extension}`;
-}
-
-function createPastedImageFile(blob: Blob): File {
-    return new globalThis.File([blob], getPastedImageFileName(blob), {
-        type: blob.type || 'image/png',
-    });
-}
-
-function getClipboardImageFiles(event: ClipboardEvent): File[] {
-    const clipboardData = event.clipboardData;
-    if (!clipboardData) return [];
-
-    const itemFiles = Array.from(clipboardData.items || [])
-        .filter((item) => String(item.type || '').startsWith('image/'))
-        .map((item) => item.getAsFile())
-        .filter((file): file is File => Boolean(file))
-        .map((file) => createPastedImageFile(file));
-    if (itemFiles.length > 0) {
-        return itemFiles;
-    }
-
-    return Array.from(clipboardData.files || [])
-        .filter((file) => String(file.type || '').startsWith('image/'))
-        .map((file) => createPastedImageFile(file));
 }
 
 function isDocumentPasteBlockedTarget(target: EventTarget | null): boolean {
@@ -1070,9 +1024,12 @@ function FolderBrowserDialog({
 interface ProjectSetupDialogProps {
     open: boolean;
     forceBlankProjectCreation?: boolean;
+    initialMode?: 'menu' | 'copy';
     dismissDisabled?: boolean;
+    hasActiveProject?: boolean;
     addingProject: boolean;
     creatingBlankProject: boolean;
+    copyingProject: boolean;
     onOpenChange: (open: boolean) => void;
     onSetupComplete: () => void;
     onAddProject: (root: string) => boolean | void | Promise<boolean | void>;
@@ -1081,20 +1038,33 @@ interface ProjectSetupDialogProps {
         folderName: string;
         projectName?: string;
     }) => Promise<unknown>;
+    onCopyProject: (params: {
+        parentRoot: string;
+        folderName: string;
+        projectName?: string;
+    }) => Promise<unknown>;
+    assistantOpen?: boolean;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
 }
 
 function ProjectSetupDialog({
     open,
     forceBlankProjectCreation,
+    initialMode = 'menu',
     dismissDisabled,
+    hasActiveProject,
     addingProject,
     creatingBlankProject,
+    copyingProject,
     onOpenChange,
     onSetupComplete,
     onAddProject,
     onCreateBlankProject,
+    onCopyProject,
+    assistantOpen,
+    onExecutePrompt,
 }: ProjectSetupDialogProps) {
-    const [setupMode, setSetupMode] = useState<ProjectSetupMode>(forceBlankProjectCreation ? 'blank' : 'menu');
+    const [setupMode, setSetupMode] = useState<ProjectSetupMode>(forceBlankProjectCreation ? 'blank' : initialMode);
     const [parentRoot, setParentRoot] = useState(readStoredMakeClientParentRoot);
     const [projectName, setProjectName] = useState(DEFAULT_MAKE_CLIENT_PROJECT_NAME);
     const [folderName, setFolderName] = useState('make-project');
@@ -1152,6 +1122,7 @@ function ProjectSetupDialog({
     useEffect(() => {
         if (open) {
             allowCloseRef.current = false;
+            setSetupMode(forceBlankProjectCreation ? 'blank' : initialMode);
             return;
         }
         setSetupMode('menu');
@@ -1160,7 +1131,7 @@ function ProjectSetupDialog({
         setFailedMessage('');
         setFailedDiagnostic('');
         setFolderBrowserOpen(false);
-    }, [open]);
+    }, [forceBlankProjectCreation, initialMode, open]);
 
     useEffect(() => {
         if (forceBlankProjectCreation) {
@@ -1168,19 +1139,35 @@ function ProjectSetupDialog({
         }
     }, [forceBlankProjectCreation]);
 
-    const busy = addingProject || creatingBlankProject;
+    const busy = addingProject || creatingBlankProject || copyingProject;
     const primaryTemplateDownloadUrl = makeClientTemplatePrimaryDownloadUrl();
     const mirrorTemplateDownloadUrl = makeClientTemplateMirrorDownloadUrl();
 
-    const handleCopyAiCreatePrompt = async () => {
+    const handleRunAiCreatePrompt = async () => {
+        const prompt = buildMakeClientAiCreatePrompt({
+            primaryTemplateDownloadUrl,
+            mirrorTemplateDownloadUrl,
+        });
         try {
-            await copyToClipboard(buildMakeClientAiCreatePrompt({
-                primaryTemplateDownloadUrl,
-                mirrorTemplateDownloadUrl,
-            }));
-            toast.success('已复制 AI 新建提示词');
+            if (assistantOpen && onExecutePrompt) {
+                const executed = await onExecutePrompt(prompt, {
+                    scene: 'make-client-project-setup',
+                    targetPath: null,
+                });
+                if (executed !== false) {
+                    toast.success('已发送到 AI 侧栏');
+                    return;
+                }
+            }
+            await copyToClipboard(prompt);
+            toast.success('提示词已复制');
         } catch (error: any) {
-            toast.error(error?.message || '复制失败');
+            try {
+                await copyToClipboard(prompt);
+                toast.warning('AI 执行失败，已回退为复制提示词');
+            } catch {
+                toast.error(error?.message || '操作失败');
+            }
         }
     };
 
@@ -1260,6 +1247,49 @@ function ProjectSetupDialog({
         }
     };
 
+    const handleCopyMakeProject = async () => {
+        const normalizedParent = parentRoot.trim();
+        const normalizedFolder = folderName.trim();
+        const normalizedProjectName = projectName.trim();
+        if (!normalizedParent) {
+            toast.error('请先选择项目所在位置');
+            return;
+        }
+        if (!normalizedFolder) {
+            toast.error('请填写文件夹名称');
+            return;
+        }
+        setFailedPhase('');
+        setFailedMessage('');
+        setFailedDiagnostic('');
+        setRunningPhase('copying');
+        try {
+            writeStoredMakeClientParentRoot(normalizedParent);
+            await onCopyProject({
+                parentRoot: normalizedParent,
+                folderName: normalizedFolder,
+                projectName: normalizedProjectName,
+            });
+            allowCloseRef.current = true;
+            onSetupComplete();
+            onOpenChange(false);
+        } catch (error: any) {
+            const errorMessage = error?.message || '复制项目失败';
+            setFailedPhase(getProjectSetupErrorPhase(error));
+            setFailedMessage(errorMessage);
+            setFailedDiagnostic(buildMakeClientSetupAiPrompt({
+                parentRoot: normalizedParent,
+                folderName: normalizedFolder,
+                projectName: normalizedProjectName,
+                errorMessage,
+                diagnostic: error?.diagnostic || error,
+            }));
+            toast.error(errorMessage);
+        } finally {
+            setRunningPhase('');
+        }
+    };
+
     const handleCopyFailedDiagnostic = async () => {
         const fallbackDiagnostic = buildMakeClientSetupAiPrompt({
             parentRoot: parentRoot.trim(),
@@ -1280,10 +1310,14 @@ function ProjectSetupDialog({
         }
     };
 
-    const pendingCreate = Boolean(runningPhase || (creatingBlankProject && !failedPhase));
+    const pendingCreate = Boolean(runningPhase || ((creatingBlankProject || copyingProject) && !failedPhase));
+    const pendingLabel = setupMode === 'copy' ? MAKE_CLIENT_COPY_PENDING_LABEL : MAKE_CLIENT_SETUP_PENDING_LABEL;
+    const pendingDescription = setupMode === 'copy' ? MAKE_CLIENT_COPY_PENDING_DESCRIPTION : MAKE_CLIENT_SETUP_PENDING_DESCRIPTION;
     const failedTitle = failedPhase
         ? getProjectSetupPhaseLabel(failedPhase)
-        : MAKE_CLIENT_SETUP_FAILED_LABEL;
+        : setupMode === 'copy'
+            ? MAKE_CLIENT_COPY_FAILED_LABEL
+            : MAKE_CLIENT_SETUP_FAILED_LABEL;
     const renderFailureMessage = () => failedMessage ? (
         <div className="rounded-md border border-border/70 bg-muted/30 p-3">
             <div className="flex items-start gap-2 text-[12px]">
@@ -1305,6 +1339,7 @@ function ProjectSetupDialog({
             </div>
         </div>
     ) : null;
+    const showProjectSetupFooter = setupMode === 'blank' || setupMode === 'copy' || !dismissDisabled;
 
     return (
         <>
@@ -1320,7 +1355,7 @@ function ProjectSetupDialog({
                 <DialogContent className="flex w-[min(92vw,460px)] max-w-[460px] flex-col gap-0 overflow-hidden p-0 text-sm [&>[data-dialog-close]]:hidden">
                     <DialogHeader className="border-b px-4 py-3">
                         <div className="flex items-center gap-2">
-                            {setupMode === 'blank' && !forceBlankProjectCreation ? (
+                            {setupMode !== 'menu' && !forceBlankProjectCreation ? (
                                 <Button
                                     type="button"
                                     variant="ghost"
@@ -1349,22 +1384,39 @@ function ProjectSetupDialog({
                             >
                                 <FolderPlus className="h-4 w-4 shrink-0 text-primary" />
                                 <span className="flex min-w-0 flex-1 flex-col gap-1">
-                                    <span className="text-[13px] font-medium">快速新建项目</span>
-                                    <span className="text-[12px] leading-5 text-muted-foreground">从空白一键创建项目，系统会自动准备好基础项目，新手优先使用，不需要自己下载。</span>
+                                    <span className="text-[13px] font-medium">新建项目</span>
+                                    <span className="text-[12px] leading-5 text-muted-foreground">首次会自动下载模板并安装依赖，可能需要几分钟。复制当前项目速度最快。</span>
                                 </span>
                             </button>
                             <button
                                 type="button"
                                 className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 px-3 py-3 text-left transition-colors hover:bg-muted/70 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none disabled:opacity-50"
-                                onClick={() => void handleCopyAiCreatePrompt()}
+                                onClick={() => void handleRunAiCreatePrompt()}
                                 disabled={busy}
                             >
                                 <Bot className="h-4 w-4 shrink-0 text-primary" />
                                 <span className="flex min-w-0 flex-1 flex-col gap-1">
-                                    <span className="text-[13px] font-medium">AI 新建</span>
+                                    <span className="text-[13px] font-medium">AI 执行</span>
                                     <span className="text-[12px] leading-5 text-muted-foreground">复制一段精简提示词，让 AI 先确认目录，再下载客户端、安装依赖并写入配置。</span>
                                 </span>
                             </button>
+                            {hasActiveProject ? (
+                                <button
+                                    type="button"
+                                    className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 px-3 py-3 text-left transition-colors hover:bg-muted/70 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none disabled:opacity-50"
+                                    onClick={() => {
+                                        resetBlankProjectFields();
+                                        setSetupMode('copy');
+                                    }}
+                                    disabled={busy}
+                                >
+                                    <Copy className="h-4 w-4 shrink-0 text-primary" />
+                                    <span className="flex min-w-0 flex-1 flex-col gap-1">
+                                        <span className="text-[13px] font-medium">复制当前项目</span>
+                                        <span className="text-[12px] leading-5 text-muted-foreground">速度最快。从当前可运行项目复制出新项目，优先复用本机依赖，失败时自动重新安装。</span>
+                                    </span>
+                                </button>
+                            ) : null}
                             <div
                                 role="button"
                                 tabIndex={busy ? -1 : 0}
@@ -1472,8 +1524,8 @@ function ProjectSetupDialog({
                                     <div className="flex items-start gap-2 text-[12px]">
                                         <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
                                         <div className="min-w-0 space-y-1">
-                                            <div className="font-medium">{MAKE_CLIENT_SETUP_PENDING_LABEL}</div>
-                                            <div className="leading-5 text-muted-foreground">{MAKE_CLIENT_SETUP_PENDING_DESCRIPTION}</div>
+                                            <div className="font-medium">{pendingLabel}</div>
+                                            <div className="leading-5 text-muted-foreground">{pendingDescription}</div>
                                         </div>
                                     </div>
                                 </div>
@@ -1481,25 +1533,33 @@ function ProjectSetupDialog({
                             {renderFailureMessage()}
                         </div>
                     )}
-                    <DialogFooter className="border-t p-3 sm:justify-between sm:space-x-0">
-                        {!dismissDisabled ? (
-                            <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onOpenChange(false)} disabled={busy}>
-                                取消
-                            </Button>
-                        ) : null}
-                        {setupMode === 'blank' ? (
-                            <Button
-                                type="button"
-                                size="sm"
-                                className="h-8 gap-2"
-                                onClick={() => void handleCreateBlankProject()}
-                                disabled={busy || !parentRoot.trim() || !folderName.trim()}
-                            >
-                                {creatingBlankProject ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}
-                                创建并启动
-                            </Button>
-                        ) : null}
-                    </DialogFooter>
+                    {showProjectSetupFooter ? (
+                        <DialogFooter className="border-t p-3 sm:justify-between sm:space-x-0">
+                            {!dismissDisabled ? (
+                                <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onOpenChange(false)} disabled={busy}>
+                                    取消
+                                </Button>
+                            ) : null}
+                            {setupMode === 'blank' || setupMode === 'copy' ? (
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    className="h-8 gap-2"
+                                    onClick={() => {
+                                        if (setupMode === 'copy') {
+                                            void handleCopyMakeProject();
+                                            return;
+                                        }
+                                        void handleCreateBlankProject();
+                                    }}
+                                    disabled={busy || !parentRoot.trim() || !folderName.trim()}
+                                >
+                                    {creatingBlankProject || copyingProject ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : setupMode === 'copy' ? <Copy className="h-3.5 w-3.5" /> : <FolderPlus className="h-3.5 w-3.5" />}
+                                    {setupMode === 'copy' ? '复制并启动' : '创建并启动'}
+                                </Button>
+                            ) : null}
+                        </DialogFooter>
+                    ) : null}
                 </DialogContent>
             </Dialog>
             <FolderBrowserDialog
@@ -1540,6 +1600,7 @@ export default function ContentPanel({
     onProjectStop,
     onAddProject,
     onCreateBlankMakeProject,
+    onCopyMakeProject,
     onRefreshProjects,
     tree,
     onTreeChange,
@@ -1554,11 +1615,9 @@ export default function ContentPanel({
     onSearch,
     searchText,
     onCreateFile,
-    onImportPrototype,
     onImportTheme,
     onUploadedResourceFiles,
     onCreateCanvasFile,
-    onGenerateThemeFromPrototype,
     handleDownloadItemSource,
     handleDownloadThemeZip,
     onCreateFolder,
@@ -1568,8 +1627,12 @@ export default function ContentPanel({
     ideAvailability,
     agentAvailability,
     onOpenGenieWebAgent,
+    onOpenImageAiPanel,
     onOpenWebAgentInPanel,
+    onExecutePrompt,
     webAgentPanelOpen,
+    aiPanelMode,
+    onCloseAiPanel,
     onCloseWebAgentPanel,
     onPreferredIDEChange,
     onOpenAISettings,
@@ -1598,11 +1661,13 @@ export default function ContentPanel({
     const titleInputRef = useRef<HTMLInputElement>(null);
     const [projectSwitcherMenuOpen, setProjectSwitcherMenuOpen] = useState(false);
     const [projectSetupOpen, setProjectSetupOpen] = useState(Boolean(projectSetupRequired));
+    const [projectSetupInitialMode, setProjectSetupInitialMode] = useState<'menu'>('menu');
     const [switchingProjectId, setSwitchingProjectId] = useState<string | null>(null);
     const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
     const [stoppingProjectId, setStoppingProjectId] = useState<string | null>(null);
     const [isAddingProject, setIsAddingProject] = useState(false);
     const [isCreatingBlankProject, setIsCreatingBlankProject] = useState(false);
+    const [isCopyingProject, setIsCopyingProject] = useState(false);
     const [isSearchExpanded, setIsSearchExpanded] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
@@ -1982,6 +2047,19 @@ export default function ContentPanel({
         }
     };
 
+    const handleCopyMakeProject = async (params: {
+        parentRoot: string;
+        folderName: string;
+        projectName?: string;
+    }) => {
+        setIsCopyingProject(true);
+        try {
+            return await onCopyMakeProject(params);
+        } finally {
+            setIsCopyingProject(false);
+        }
+    };
+
     const toggleSearch = () => {
         setIsSearchExpanded(!isSearchExpanded);
         if (isSearchExpanded) {
@@ -2332,12 +2410,6 @@ export default function ContentPanel({
                     <DropdownMenuItem onClick={() => void Promise.resolve(handleDownloadThemeZip?.(item as ThemeResourceItem))}>
                         <Download className="mr-2 h-4 w-4" />
                         导出 ZIP
-                    </DropdownMenuItem>
-                ) : null}
-                {isPrototypeItem && onGenerateThemeFromPrototype ? (
-                    <DropdownMenuItem onClick={() => onGenerateThemeFromPrototype(item)}>
-                        <Wand2 className="mr-2 h-4 w-4" />
-                        生成设计
                     </DropdownMenuItem>
                 ) : null}
                 {canDownloadPrototypeZip ? (
@@ -2868,8 +2940,11 @@ export default function ContentPanel({
                             ideAvailability={ideAvailability}
                             agentAvailability={agentAvailability}
                             onOpenGenieWebAgent={onOpenGenieWebAgent}
+                            onOpenImageAiPanel={onOpenImageAiPanel}
                             onOpenWebAgentInPanel={onOpenWebAgentInPanel}
                             webAgentPanelOpen={webAgentPanelOpen}
+                            aiPanelMode={aiPanelMode}
+                            onCloseAiPanel={onCloseAiPanel}
                             onCloseWebAgentPanel={onCloseWebAgentPanel}
                             onPreferredIDEChange={onPreferredIDEChange}
                             onOpenAISettings={onOpenAISettings}
@@ -2998,6 +3073,7 @@ export default function ContentPanel({
                                                 disabled={Boolean(switchingProjectId || deletingProjectId || stoppingProjectId)}
                                                 onSelect={(event) => {
                                                     event.preventDefault();
+                                                    setProjectSetupInitialMode('menu');
                                                     setProjectSwitcherMenuOpen(false);
                                                     setProjectSetupOpen(true);
                                                 }}
@@ -3086,22 +3162,6 @@ export default function ContentPanel({
                                         </Button>
                                     </TooltipTrigger>
                                     <TooltipContent>新建原型</TooltipContent>
-                                </Tooltip>
-                            </TooltipProvider>
-                            <TooltipProvider>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-7 w-7"
-                                            onClick={onImportPrototype}
-                                            aria-label="导入原型"
-                                        >
-                                            <Upload className="h-4 w-4" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>导入原型</TooltipContent>
                                 </Tooltip>
                             </TooltipProvider>
                             <TooltipProvider>
@@ -3306,22 +3366,32 @@ export default function ContentPanel({
         </div>
         <ProjectSetupDialog
             open={projectSetupOpen}
+            initialMode={projectSetupInitialMode}
             dismissDisabled={projectSetupRequired}
+            hasActiveProject={Boolean(activeProjectId)}
             addingProject={isAddingProject}
             creatingBlankProject={isCreatingBlankProject}
+            copyingProject={isCopyingProject}
             onOpenChange={(open) => {
                 if (projectSetupRequired && !open) {
                     return;
+                }
+                if (!open) {
+                    setProjectSetupInitialMode('menu');
                 }
                 setProjectSetupOpen(open);
             }}
             onSetupComplete={() => {
                 onTabChange('prototype');
+                setProjectSetupInitialMode('menu');
                 setProjectSetupOpen(false);
                 setProjectSwitcherMenuOpen(false);
             }}
             onAddProject={handleAddProject}
             onCreateBlankProject={handleCreateBlankMakeProject}
+            onCopyProject={handleCopyMakeProject}
+            assistantOpen={webAgentPanelOpen === true && aiPanelMode === 'general-ai'}
+            onExecutePrompt={onExecutePrompt}
         />
         </>
     );

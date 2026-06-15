@@ -109,7 +109,7 @@ const agentOptions: AgentOption[] = [
 
 const modelRecommendations: ModelRecommendation[] = [
     {
-        name: 'Claude Opus 4.7',
+        name: 'Claude Opus 4.8',
         vendor: 'Anthropic',
         feature: '综合能力强，但价格高，适合规划',
     },
@@ -124,7 +124,7 @@ const modelRecommendations: ModelRecommendation[] = [
         feature: 'UI/UX 设计能力优秀，其他一般',
     },
     {
-        name: 'Kimi K2.6',
+        name: 'Kimi K2.7',
         vendor: 'Moonshot',
         feature: '国产平替，UI/UX 设计能力优秀',
     },
@@ -134,7 +134,7 @@ const modelRecommendations: ModelRecommendation[] = [
         feature: '国产平替，性价比高，综合能力强，不支持多模态',
     },
     {
-        name: 'GLM-5.1',
+        name: 'GLM-5.2',
         vendor: '智谱 AI',
         feature: '国产平替，综合能力强，不支持多模态',
     },

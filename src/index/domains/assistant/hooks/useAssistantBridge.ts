@@ -17,6 +17,16 @@ interface AcpChatSubmitResult {
     threadId: string;
 }
 
+export interface AcpThreadArtifactsQueryResult {
+    ok: true;
+    kind: 'artifacts';
+    threadId?: string;
+    artifacts: unknown[];
+    workspaceArtifacts?: unknown[];
+    imageGenerationRecords?: unknown[];
+    messageCount?: number;
+}
+
 type AcpAttachmentAddResult = {
     ok: true;
     name: string;
@@ -34,6 +44,15 @@ interface UseAssistantBridgeOptions {
 
 interface SubmitPromptOptions {
     newThread?: boolean;
+    waitUntil?: 'started' | 'finished';
+}
+
+interface QueryArtifactsOptions {
+    threadId: string;
+    workspacePath?: string;
+    source?: 'auto' | 'provider' | 'runtime';
+    format?: 'ai-sdk/v6' | string;
+    sinceMs?: number;
 }
 
 function createAcpChatRequestId(): string {
@@ -48,7 +67,12 @@ function createAcpComposerRequestId(): string {
     return `acp-composer-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function createAcpArtifactsRequestId(): string {
+    return `acp-artifacts-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 const ACP_CHAT_SUBMIT_TIMEOUT_MS = 30_000;
+const ACP_ARTIFACTS_QUERY_TIMEOUT_MS = 12_000;
 
 export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssistantBridgeOptions) {
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -202,7 +226,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
             requestId,
             payload: {
                 text: prompt,
-                waitUntil: 'started',
+                waitUntil: submitOptions?.waitUntil || 'started',
                 ...(submitOptions?.newThread === true ? { newThread: true } : {}),
             },
         };
@@ -262,6 +286,86 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
             cleanupTimers.push(window.setTimeout(() => fail(new Error('AI 助手响应超时')), ACP_CHAT_SUBMIT_TIMEOUT_MS));
         });
     }, [bridgeOptions, resolveTargetOrigin, waitForReady]);
+
+    const queryArtifactsWithRetry = useCallback(async (query: QueryArtifactsOptions): Promise<AcpThreadArtifactsQueryResult> => {
+        const threadId = String(query.threadId || '').trim();
+        if (!threadId) {
+            throw new Error('缺少 AI 助手线程 ID');
+        }
+        const ready = await waitForReady();
+        const iframe = iframeRef.current;
+        if (!ready || !iframe?.contentWindow) {
+            throw new Error('AI 助手未就绪');
+        }
+
+        const requestId = createAcpArtifactsRequestId();
+        const targetOrigin = resolveTargetOrigin();
+        const request = {
+            type: 'acp.artifacts.get',
+            requestId,
+            payload: {
+                threadId,
+                ...(query.workspacePath ? { workspacePath: query.workspacePath } : {}),
+                source: query.source || 'auto',
+                format: query.format || 'ai-sdk/v6',
+                ...(typeof query.sinceMs === 'number' ? { sinceMs: query.sinceMs } : {}),
+            },
+        };
+
+        return await new Promise<AcpThreadArtifactsQueryResult>((resolve, reject) => {
+            let settled = false;
+            const cleanupTimers: number[] = [];
+            const cleanup = () => {
+                window.removeEventListener('message', handleMessage);
+                cleanupTimers.forEach((timer) => window.clearTimeout(timer));
+            };
+            const finish = (result: AcpThreadArtifactsQueryResult) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                resolve(result);
+            };
+            const fail = (error: Error) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(error);
+            };
+            const handleMessage = (event: MessageEvent) => {
+                if (event.source !== iframe.contentWindow) return;
+                const data = event.data as { type?: unknown; requestId?: unknown; payload?: any };
+                if (!data || data.requestId !== requestId) return;
+                if (data.type === 'acp.query.result' && data.payload?.kind === 'artifacts') {
+                    finish({
+                        ok: true,
+                        kind: 'artifacts',
+                        threadId: String(data.payload?.threadId || threadId),
+                        artifacts: Array.isArray(data.payload?.artifacts) ? data.payload.artifacts : [],
+                        workspaceArtifacts: Array.isArray(data.payload?.workspaceArtifacts) ? data.payload.workspaceArtifacts : [],
+                        imageGenerationRecords: Array.isArray(data.payload?.imageGenerationRecords) ? data.payload.imageGenerationRecords : [],
+                        messageCount: Number(data.payload?.messageCount || 0),
+                    });
+                    return;
+                }
+                if (data.type === 'acp.query.error') {
+                    fail(new Error(String(data.payload?.message || data.payload?.code || 'AI 助手产物查询失败')));
+                }
+            };
+            const postQuery = () => {
+                try {
+                    iframe.contentWindow?.postMessage(request, targetOrigin);
+                } catch (error: any) {
+                    fail(error instanceof Error ? error : new Error(String(error)));
+                }
+            };
+
+            window.addEventListener('message', handleMessage);
+            postQuery();
+            cleanupTimers.push(window.setTimeout(postQuery, 160));
+            cleanupTimers.push(window.setTimeout(postQuery, 520));
+            cleanupTimers.push(window.setTimeout(() => fail(new Error('AI 助手产物查询超时')), ACP_ARTIFACTS_QUERY_TIMEOUT_MS));
+        });
+    }, [resolveTargetOrigin, waitForReady]);
 
     const addImageAttachmentWithRetry = useCallback(async (
         attachment: AssistantImageAttachmentPayload,
@@ -414,6 +518,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         addImageAttachmentWithRetry,
         appendComposerTextWithRetry,
         submitPromptWithRetry,
+        queryArtifactsWithRetry,
         waitForReady,
     };
 }

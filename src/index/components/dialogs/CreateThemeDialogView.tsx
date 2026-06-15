@@ -1,13 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Copy, Download, Globe, Loader2, X } from 'lucide-react';
+import { Download, Globe, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { PromptClientPreference } from '../../types';
 import { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { ResourceWriteCapabilities } from '../../services/projectResources';
 import PromptActionButton from '../PromptActionButton';
-import { Field, FieldLabelWithHint } from '@/components/ui/field';
 import { FileDropzone } from '@/components/ui/file-dropzone';
-import { MultiSelect } from '@/components/ui/multi-select';
 import { Button } from '@/components/ui/button';
 import {
     Sheet,
@@ -18,22 +16,13 @@ import {
 } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import AiCreateGuideContent from './AiCreateGuideContent';
 import {
-    appendThemeImportDocsToPrompt,
     generateThemeLibraryImportPrompt,
     type ThemeLibraryPromptItem,
 } from '../../utils/themePrompts';
-import { copyToClipboard } from '../../utils/clipboard';
 import { getUserFriendlyUploadErrorMessage } from '../../utils/uploadErrors';
 
-interface DocOption {
-    name: string;
-    displayName: string;
-}
-
-type ThemeDialogTab = 'ai' | 'prompt' | 'import';
-type ThemeDialogViewTab = ThemeDialogTab | 'onlineSelect';
+type ThemeDialogTab = 'import' | 'onlineSelect';
 
 const THEME_IMPORT_UPLOAD_TYPE = 'make_zip';
 
@@ -67,41 +56,31 @@ interface CreateThemeDialogProps {
     visible: boolean;
     onClose: () => void;
     initialTab?: ThemeDialogTab;
-    selectedDocs: string[];
-    setSelectedDocs: (docs: string[]) => void;
-    availableDocs: DocOption[];
-    selectedReferencePages?: string[];
-    setSelectedReferencePages?: (pages: string[]) => void;
-    availableReferencePages?: DocOption[];
     resourceWriteCapabilities: ResourceWriteCapabilities;
     preferredPromptClient: PromptClientPreference;
     preferredIDE: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
-    buildCreateThemePrompt: () => Promise<string> | string;
+    assistantOpen?: boolean;
     onAfterCreatePromptAction: () => void;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     onImportSuccess?: () => void | Promise<void>;
 }
 
 export default function CreateThemeDialog({
     visible,
     onClose,
-    initialTab = 'ai',
-    selectedDocs,
-    setSelectedDocs,
-    availableDocs,
-    selectedReferencePages,
-    setSelectedReferencePages,
-    availableReferencePages,
+    initialTab = 'import',
     resourceWriteCapabilities,
     preferredPromptClient,
     preferredIDE,
     ideAvailability,
-    buildCreateThemePrompt,
+    assistantOpen,
     onAfterCreatePromptAction,
+    onExecutePrompt,
     onImportSuccess,
 }: CreateThemeDialogProps) {
     const [sheetPortalContainer, setSheetPortalContainer] = useState<HTMLDivElement | null>(null);
-    const [activeTab, setActiveTab] = useState<ThemeDialogViewTab>('ai');
+    const [activeTab, setActiveTab] = useState<ThemeDialogTab>('import');
     const [uploading, setUploading] = useState(false);
     const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
     const [selectedUploadFiles, setSelectedUploadFiles] = useState<File[]>([]);
@@ -115,16 +94,15 @@ export default function CreateThemeDialog({
     });
     const [themeImportingId, setThemeImportingId] = useState('');
     const canImportTheme = resourceWriteCapabilities.themeImport;
-    const isThemeImportEntry = initialTab === 'import' && canImportTheme;
 
     useEffect(() => {
         if (!visible) return;
-        setActiveTab(isThemeImportEntry ? 'import' : initialTab === 'import' && !canImportTheme ? 'ai' : initialTab);
+        setActiveTab(initialTab === 'import' && canImportTheme ? 'import' : 'onlineSelect');
         setUploading(false);
         setUploadResult(null);
         setSelectedUploadFiles([]);
         setThemeImportingId('');
-    }, [canImportTheme, initialTab, isThemeImportEntry, visible]);
+    }, [canImportTheme, initialTab, visible]);
 
     useEffect(() => {
         if (!visible || activeTab !== 'onlineSelect' || themeLibrary.loaded) {
@@ -213,36 +191,6 @@ export default function CreateThemeDialog({
         }
     }, [onClose, onImportSuccess]);
 
-    const buildImportPrompt = useCallback(() => {
-        const prompt = String(uploadResult?.prompt || '').trim();
-        if (!prompt) {
-            throw new Error('请先上传文件并生成导入结果');
-        }
-
-        return appendThemeImportDocsToPrompt(prompt, THEME_IMPORT_UPLOAD_TYPE);
-    }, [uploadResult]);
-
-    const handleAfterImportPromptAction = useCallback(async () => {
-        try {
-            await onImportSuccess?.();
-        } finally {
-            onAfterCreatePromptAction();
-        }
-    }, [onAfterCreatePromptAction, onImportSuccess]);
-
-    const handleCopyThemeLibraryPrompt = async (designSystem: ThemeLibraryItem) => {
-        try {
-            await copyToClipboard(generateThemeLibraryImportPrompt({
-                designSystem,
-                repo: themeLibrary.repo,
-            }));
-            toast.success('提示词已复制到剪贴板');
-            onAfterCreatePromptAction();
-        } catch (error: any) {
-            toast.error(error?.message || '复制失败，请检查浏览器剪贴板权限');
-        }
-    };
-
     const handleDirectThemeLibraryImport = async (designSystem: ThemeLibraryItem) => {
         if (!designSystem.canDirectImport) {
             toast.warning(designSystem.directImportDisabledReason || '该设计系统暂不支持直接导入');
@@ -269,8 +217,6 @@ export default function CreateThemeDialog({
         }
     };
 
-    const importPromptDisabled = !uploadResult;
-
     return (
         <Sheet open={visible} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
             <SheetContent
@@ -281,60 +227,30 @@ export default function CreateThemeDialog({
                 <Tabs
                     value={activeTab}
                     onValueChange={(value) => {
-                        if (isThemeImportEntry) {
-                            if ((value === 'import' && canImportTheme) || value === 'onlineSelect') {
-                                setActiveTab(value);
-                            }
-                            return;
-                        }
-                        if (value === 'ai' || value === 'prompt' || value === 'import') {
-                            setActiveTab(canImportTheme ? value : value === 'import' ? 'ai' : value);
+                        if (value === 'import' || value === 'onlineSelect') {
+                            setActiveTab(value === 'import' && !canImportTheme ? 'onlineSelect' : value);
                         }
                     }}
                     className="flex h-full flex-col"
                 >
                     <SheetHeader className="border-b px-5 py-3.5">
-                        <SheetTitle className="sr-only">{isThemeImportEntry ? '导入主题' : '新建主题 / 导入主题'}</SheetTitle>
+                        <SheetTitle className="sr-only">导入主题</SheetTitle>
                         <div className="flex items-center justify-between gap-3">
-                            {isThemeImportEntry ? (
-                                <TabsList className="grid h-8 w-full max-w-[240px] grid-cols-2 rounded-lg border border-border/70 bg-muted/50 p-0.5">
-                                    <TabsTrigger
-                                        value="import"
-                                        className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none"
-                                    >
-                                        上传
-                                    </TabsTrigger>
-                                    <TabsTrigger
-                                        value="onlineSelect"
-                                        className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none"
-                                    >
-                                        在线选择
-                                    </TabsTrigger>
-                                </TabsList>
-                            ) : (
-                                <TabsList className={`grid h-8 w-full ${canImportTheme ? 'max-w-[360px] grid-cols-3' : 'max-w-[240px] grid-cols-2'} rounded-lg border border-border/70 bg-muted/50 p-0.5`}>
-                                    <TabsTrigger
-                                        value="ai"
-                                        className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none"
-                                    >
-                                        AI 新建
-                                    </TabsTrigger>
-                                    <TabsTrigger
-                                        value="prompt"
-                                        className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none"
-                                    >
-                                        生成 Prompt
-                                    </TabsTrigger>
-                                    {canImportTheme ? (
-                                        <TabsTrigger
-                                            value="import"
-                                            className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none"
-                                        >
-                                            导入主题
-                                        </TabsTrigger>
-                                    ) : null}
-                                </TabsList>
-                            )}
+                            <TabsList className="grid h-8 w-full max-w-[240px] grid-cols-2 rounded-lg border border-border/70 bg-muted/50 p-0.5">
+                                <TabsTrigger
+                                    value="import"
+                                    disabled={!canImportTheme}
+                                    className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none"
+                                >
+                                    上传
+                                </TabsTrigger>
+                                <TabsTrigger
+                                    value="onlineSelect"
+                                    className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none"
+                                >
+                                    在线选择
+                                </TabsTrigger>
+                            </TabsList>
                             <Button
                                 variant="ghost"
                                 size="icon-sm"
@@ -349,36 +265,6 @@ export default function CreateThemeDialog({
                     </SheetHeader>
 
                     <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4.5">
-                        {activeTab === 'ai' ? <AiCreateGuideContent /> : null}
-
-                        {activeTab === 'prompt' ? (
-                            <>
-                                <Field>
-                                    <FieldLabelWithHint hint="AI 会根据所选文档生成主题，文档可在资产管理中进行管理">文档</FieldLabelWithHint>
-                                    <MultiSelect
-                                        value={selectedDocs}
-                                        onChange={setSelectedDocs}
-                                        placeholder="自动"
-                                        searchPlaceholder="搜索文档..."
-                                        options={availableDocs.map((doc) => ({ value: doc.name, label: doc.displayName }))}
-                                        portalContainer={sheetPortalContainer}
-                                    />
-                                </Field>
-
-                                <Field>
-                                    <FieldLabelWithHint hint="选择参考页面后，AI 会读取并在有能力时截图分析页面来辅助生成主题">参考页面（多选）</FieldLabelWithHint>
-                                    <MultiSelect
-                                        value={selectedReferencePages ?? []}
-                                        onChange={(val) => setSelectedReferencePages?.(val)}
-                                        placeholder="自动"
-                                        searchPlaceholder="搜索参考页面..."
-                                        options={availableReferencePages?.map((page) => ({ value: page.name, label: page.displayName })) || []}
-                                        portalContainer={sheetPortalContainer}
-                                    />
-                                </Field>
-                            </>
-                        ) : null}
-
                         {activeTab === 'import' && canImportTheme ? (
                             <div className="space-y-4">
                                 <FileDropzone
@@ -449,17 +335,26 @@ export default function CreateThemeDialog({
                                                                 <p className="line-clamp-2 text-[12px] leading-5 text-muted-foreground">{designSystem.description}</p>
                                                             </div>
                                                             <div className="flex flex-wrap gap-2">
-                                                                <Button
-                                                                    type="button"
-                                                                    variant="outline"
-                                                                    size="sm"
-                                                                    className="h-7 gap-1.5 px-2.5 text-xs"
-                                                                    onClick={() => void handleCopyThemeLibraryPrompt(designSystem)}
+                                                                <PromptActionButton
+                                                                    type="borderless"
+                                                                    preferredClient={preferredPromptClient}
+                                                                    preferredIDE={preferredIDE}
+                                                                    ideAvailability={ideAvailability}
+                                                                    assistantOpen={assistantOpen}
+                                                                    scene="theme-library-import"
+                                                                    buildPrompt={() => generateThemeLibraryImportPrompt({
+                                                                        designSystem,
+                                                                        repo: themeLibrary.repo,
+                                                                    })}
+                                                                    onExecutePrompt={onExecutePrompt}
+                                                                    onAfterCopy={onAfterCreatePromptAction}
+                                                                    onAfterExecute={onAfterCreatePromptAction}
+                                                                    copyLabel="复制提示词"
+                                                                    copySuccessMessage="提示词已复制到剪贴板"
+                                                                    executeSuccessMessage="已发送到 AI 侧栏"
+                                                                    fallbackMessage="AI 执行失败，已回退为复制提示词"
                                                                     disabled={Boolean(themeImportingId)}
-                                                                >
-                                                                    <Copy className="h-3.5 w-3.5" />
-                                                                    复制提示词
-                                                                </Button>
+                                                                />
                                                                 {designSystem.previewUrl ? (
                                                                     <Button
                                                                         asChild
@@ -512,36 +407,6 @@ export default function CreateThemeDialog({
                         <Button variant="outline" size="sm" onClick={onClose} disabled={uploading || Boolean(themeImportingId)}>
                             取消
                         </Button>
-                        {activeTab === 'prompt' ? (
-                            <PromptActionButton
-                                type="primary"
-                                preferredClient={preferredPromptClient}
-                                preferredIDE={preferredIDE}
-                                ideAvailability={ideAvailability}
-                                scene="create-theme"
-                                buildPrompt={() => buildCreateThemePrompt()}
-                                onAfterCopy={onAfterCreatePromptAction}
-                                copySuccessMessage="复制成功，请返回 IDE 发送给 AI"
-                                executeSuccessMessage="已打开新会话"
-                                fallbackMessage="自动执行失败，已回退为复制 Prompt"
-                            />
-                        ) : activeTab === 'import' && canImportTheme && !isThemeImportEntry ? (
-                            <PromptActionButton
-                                type="primary"
-                                preferredClient={preferredPromptClient}
-                                preferredIDE={preferredIDE}
-                                ideAvailability={ideAvailability}
-                                scene={`theme-import-${THEME_IMPORT_UPLOAD_TYPE}`}
-                                buildPrompt={buildImportPrompt}
-                                onAfterCopy={() => {
-                                    void handleAfterImportPromptAction();
-                                }}
-                                copySuccessMessage="主题导入 Prompt 已复制，请返回 IDE 发送给 AI"
-                                executeSuccessMessage="已打开新会话"
-                                fallbackMessage="自动执行失败，已回退为复制 Prompt"
-                                disabled={importPromptDisabled}
-                            />
-                        ) : null}
                     </SheetFooter>
                 </Tabs>
             </SheetContent>

@@ -111,7 +111,14 @@ const chapters: Chapter[] = [
 ];
 
 const route = defineHashPageRoute(
-    chapters.map((chapter) => ({ id: chapter.id, title: chapter.nav })),
+    [
+        { id: 'cover', title: 'Touch And Talk' },
+        { id: 'quick-flow', title: '快速批注' },
+        { id: 'voice-annotation', title: '语音批注' },
+        { id: 'common-tips', title: '常用技巧' },
+        { id: 'quick-execute', title: '快速执行' },
+        { id: 'more-scenarios', title: '更多场景' },
+    ],
     { defaultPageId: 'cover' },
 );
 

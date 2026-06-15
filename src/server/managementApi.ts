@@ -119,6 +119,7 @@ function createEffectiveProjectCapabilities(context: ProjectRequestContext): Eff
   const hasTarget = (type: 'docs' | 'templates' | 'themes' | 'data' | 'media' | 'prototypes') => (
     Boolean(getDeclaredResourceWriteDir(context, type))
   );
+  const hasPrototypeCreateTarget = Boolean(getPrototypeCreateDir(context));
 
   return {
     ...capabilities,
@@ -128,7 +129,7 @@ function createEffectiveProjectCapabilities(context: ProjectRequestContext): Eff
       make: hasFigmaMakeArtifactCapability(context.project.root, context.metadata),
     },
     resourceWrites: {
-      prototypeCreate: false,
+      prototypeCreate: hasPrototypeCreateTarget,
       prototypeUpload: hasTarget('prototypes'),
       docCreate: hasTarget('docs'),
       docImport: hasTarget('docs'),
@@ -623,6 +624,14 @@ function getTemplatesDir(projectRoot: string): string {
   return path.join(projectRoot, 'src/resources/templates');
 }
 
+function getStandardMakeClientPrototypeDir(context: ProjectRequestContext): string | null {
+  if (!readMakeClientMarker(context.project.root)) {
+    return null;
+  }
+  const prototypesDir = path.join(context.project.root, 'src/prototypes');
+  return isPathInside(context.project.root, prototypesDir) ? prototypesDir : null;
+}
+
 function getDeclaredResourceWriteDir(
   context: ProjectRequestContext,
   type: 'docs' | 'templates' | 'themes' | 'data' | 'media' | 'prototypes',
@@ -636,6 +645,10 @@ function getDeclaredResourceWriteDir(
   } catch {
     return null;
   }
+}
+
+function getPrototypeCreateDir(context: ProjectRequestContext): string | null {
+  return getDeclaredResourceWriteDir(context, 'prototypes') || getStandardMakeClientPrototypeDir(context);
 }
 
 function getDocsDirForContext(context: ProjectRequestContext): string {
@@ -1211,6 +1224,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     resolveSourceFileFromMetadata,
     getAxureArtifactPaths,
     readJsonFile,
+    getDeclaredResourceWriteDir: getDeclaredResourceWriteDir as any,
     sendDisabledCapability,
     buildAttachmentContentDisposition,
   })) {
@@ -1311,6 +1325,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     resolveProjectContext,
     resolveSourceFileFromMetadata,
     findProjectResourceByPath,
+    getDeclaredResourceWriteDir: getDeclaredResourceWriteDir as any,
     readProjectConfig,
     commandExecutor: options.cloudPublishingCommandExecutor,
     sendDisabledCapability,
@@ -1342,7 +1357,9 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
   })) return true;
   if (pathname === '/api/prototypes/create-placeholder' && req.method === 'POST') {
     void handleCreatePlaceholderPrototype(req, res, options, requestContext, {
-      getDeclaredResourceWriteDir: getDeclaredResourceWriteDir as any,
+      getDeclaredResourceWriteDir: ((context, type) => (
+        type === 'prototypes' ? getPrototypeCreateDir(context) : getDeclaredResourceWriteDir(context, type)
+      )) as any,
       hasResourceWriteCapability: hasResourceWriteCapability as any,
       sendDisabledCapability,
       readMultipartParts: readMultipartParts as any,
@@ -1359,7 +1376,9 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
       requestContext,
       safeDecodeURIComponent(startPrototypeGenerationMatch[1] || ''),
       {
-        getDeclaredResourceWriteDir: getDeclaredResourceWriteDir as any,
+        getDeclaredResourceWriteDir: ((context, type) => (
+          type === 'prototypes' ? getPrototypeCreateDir(context) : getDeclaredResourceWriteDir(context, type)
+        )) as any,
         hasResourceWriteCapability: hasResourceWriteCapability as any,
         sendDisabledCapability,
         readMultipartParts: readMultipartParts as any,

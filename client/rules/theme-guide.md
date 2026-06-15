@@ -159,4 +159,4 @@ node scripts/check-app-ready.mjs /themes/[主题名]
 - `READY` 后访问目标页面，检查预览图、色板、字体、圆角、间距、边框、阴影和使用建议是否与 `DESIGN.md` 一致。
 - 若出现 `ERROR`，优先修复入口、资源路径、JSON 结构和 CSS 导入。
 - 若出现 `TIMEOUT`，排查 dev server、依赖安装、构建缓存或长任务。
-- 视觉问题按 `DESIGN.md`、用户要求、`rules/requirements-exploration-guide.md` 的顺序判断，不以自动生成结果为准。
+- 视觉问题按 `DESIGN.md`、用户要求、`rules/requirements-alignment-guide.md` 的顺序判断，不以自动生成结果为准。

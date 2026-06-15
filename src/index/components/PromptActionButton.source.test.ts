@@ -11,13 +11,24 @@ function readFigmaMakeExportDialogSource() {
 }
 
 describe('PromptActionButton source', () => {
-  it('copies the generated prompt without exposing execution or open actions', () => {
+  it('renders a shared copy/execute split dropdown without legacy IDE execution paths', () => {
     const source = readPromptActionButtonSource();
 
     expect(source).toContain('navigator.clipboard.writeText(prompt)');
-    expect(source).not.toContain('DropdownMenu');
-    expect(source).not.toContain('DropdownMenuTrigger');
-    expect(source).not.toContain('ChevronDown');
+    expect(source).toContain('DropdownMenu');
+    expect(source).toContain('DropdownMenuTrigger');
+    expect(source).toContain('DropdownMenuContent');
+    expect(source).toContain('ChevronDown');
+    expect(source).toContain('onExecutePrompt?:');
+    expect(source).toContain('assistantOpen?: boolean;');
+    expect(source).toContain('getTargetPath?: () => string | null;');
+    expect(source).toContain("type?: 'default' | 'primary' | 'borderless';");
+    expect(source).toContain("const isBorderless = type === 'borderless';");
+    expect(source).toContain("'!border-transparent !bg-transparent !shadow-none !text-muted-foreground hover:!bg-accent hover:!text-foreground'");
+    expect(source).toContain('getIdeTargetPath');
+    expect(source).toContain("assistantOpen ? 'execute' : 'copy'");
+    expect(source).toContain("copyLabel = '复制提示词'");
+    expect(source).toContain("executeLabel = 'AI 执行'");
     expect(source).not.toContain('apiService.executePrompt');
     expect(source).not.toContain('openConfiguredIDEBeforeAction');
     expect(source).not.toContain('generateLocalPromptDeeplink');

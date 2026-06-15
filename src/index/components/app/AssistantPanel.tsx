@@ -117,6 +117,7 @@ export default function AssistantPanel({
                 ref={iframeRef}
                 src={iframeSrc}
                 title="ACP UI"
+                allow="clipboard-write"
                 onLoad={onLoad}
                 style={{ border: 'none', width: '100%', height: '100%' }}
             />

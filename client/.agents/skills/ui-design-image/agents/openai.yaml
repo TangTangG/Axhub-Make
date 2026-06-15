@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI 设计图片"
+  short_description: "生成整页设计图、高保真原型视觉、UI 素材、图标、占位图或视觉参考图时，优先使用图片 MCP 与 Make 图片配置"
+  default_prompt: "使用 $ui-design-image 为当前项目生成 UI 设计图片或素材。"

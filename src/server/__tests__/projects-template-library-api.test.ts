@@ -444,6 +444,141 @@ describe('make-server project template library APIs', () => {
     }
   });
 
+  it('overwrites the current placeholder prototype when targetPrototypeName is provided', async () => {
+    const projectRoot = createTempRoot();
+    writeTemplateEnabledProject(projectRoot, 'template-overwrite-client');
+    const placeholderDir = path.join(projectRoot, 'content/prototypes/untitled');
+    fs.mkdirSync(placeholderDir, { recursive: true });
+    fs.writeFileSync(path.join(placeholderDir, 'index.tsx'), 'old placeholder\n', 'utf8');
+    fs.writeFileSync(path.join(placeholderDir, 'old.css'), 'old style\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      ...readMetadata(projectRoot),
+      resources: {
+        ...readMetadata(projectRoot).resources,
+        prototypes: [
+          {
+            id: 'untitled',
+            name: 'untitled',
+            title: '未命名原型',
+            clientUrl: 'http://localhost:3000/prototypes/untitled',
+            description: 'Placeholder prototype',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            placeholder: true,
+            filePath: 'content/prototypes/untitled/index.tsx',
+            absoluteFilePath: path.join(placeholderDir, 'index.tsx'),
+          },
+        ],
+      },
+      navigation: { prototypes: ['untitled'], docs: [] },
+    });
+    const tarballPath = createTemplateTarball({
+      'templates/ref-free/index.tsx': [
+        '/**',
+        ' * @name Remote Free',
+        ' */',
+        'export default function RemoteFree() { return <div>Remote</div>; }',
+        '',
+      ].join('\n'),
+      'templates/ref-free/style.css': '.remote-free { color: red; }\n',
+    });
+    mockGitHubResponses({ tarballPath });
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-overwrite-client');
+
+    try {
+      const imported = await fetchJson(`${server.origin}/api/template-library/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId: 'ref-free', targetPrototypeName: 'untitled' }),
+      });
+
+      expect(imported).toMatchObject({
+        status: 200,
+        body: {
+          success: true,
+          projectId: 'template-overwrite-client',
+          templateId: 'ref-free',
+          folderName: 'untitled',
+          path: 'prototypes/untitled',
+          filePath: 'content/prototypes/untitled/index.tsx',
+          absoluteFilePath: path.join(placeholderDir, 'index.tsx'),
+          clientUrl: `${server.origin}/prototypes/untitled`,
+        },
+      });
+      expect(fs.readFileSync(path.join(placeholderDir, 'index.tsx'), 'utf8')).toContain('RemoteFree');
+      expect(fs.readFileSync(path.join(placeholderDir, 'style.css'), 'utf8')).toBe('.remote-free { color: red; }\n');
+      expect(fs.existsSync(path.join(placeholderDir, 'old.css'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/ref-free'))).toBe(false);
+
+      const metadata = readMetadata(projectRoot);
+      expect(metadata.resources.prototypes).toEqual([
+        expect.objectContaining({
+          id: 'untitled',
+          name: 'untitled',
+          title: 'Remote Free',
+          description: 'Dependency-free remote template',
+          filePath: 'content/prototypes/untitled/index.tsx',
+          absoluteFilePath: path.join(placeholderDir, 'index.tsx'),
+          clientUrl: `${server.origin}/prototypes/untitled`,
+        }),
+      ]);
+      expect(metadata.resources.prototypes[0]).not.toHaveProperty('placeholder', true);
+      expect(metadata.navigation.prototypes).toEqual(['untitled']);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.each([
+    ['unsafe traversal', '../outside'],
+    ['unknown prototype', 'missing-placeholder'],
+  ])('rejects targetPrototypeName for %s', async (_label, targetPrototypeName) => {
+    const projectRoot = createTempRoot();
+    writeTemplateEnabledProject(projectRoot, 'template-invalid-target-client');
+    const placeholderDir = path.join(projectRoot, 'content/prototypes/untitled');
+    fs.mkdirSync(placeholderDir, { recursive: true });
+    fs.writeFileSync(path.join(placeholderDir, 'index.tsx'), 'old placeholder\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      ...readMetadata(projectRoot),
+      resources: {
+        ...readMetadata(projectRoot).resources,
+        prototypes: [
+          {
+            id: 'untitled',
+            name: 'untitled',
+            title: '未命名原型',
+            clientUrl: 'http://localhost:3000/prototypes/untitled',
+            description: 'Placeholder prototype',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            placeholder: true,
+            filePath: 'content/prototypes/untitled/index.tsx',
+            absoluteFilePath: path.join(placeholderDir, 'index.tsx'),
+          },
+        ],
+      },
+      navigation: { prototypes: ['untitled'], docs: [] },
+    });
+    const tarballPath = createTemplateTarball({
+      'templates/ref-free/index.tsx': 'export default function RemoteFree() { return null; }\n',
+    });
+    mockGitHubResponses({ tarballPath });
+    const server = await startTemplateLibraryTestServer(projectRoot, 'template-invalid-target-client');
+
+    try {
+      const imported = await fetchJson(`${server.origin}/api/template-library/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId: 'ref-free', targetPrototypeName }),
+      });
+
+      expect(imported.status).toBe(400);
+      expect(imported.body.code).toMatch(/TEMPLATE_LIBRARY_(TARGET_PROTOTYPE_INVALID|TARGET_PROTOTYPE_NOT_FOUND)/);
+      expect(fs.readFileSync(path.join(placeholderDir, 'index.tsx'), 'utf8')).toBe('old placeholder\n');
+      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/ref-free'))).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('keeps direct import clientUrl local when the remote template has previewUrl', async () => {
     const projectRoot = createTempRoot();
     writeTemplateEnabledProject(projectRoot, 'template-preview-import-client');

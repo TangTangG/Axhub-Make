@@ -36,6 +36,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import PromptActionButton from '../PromptActionButton';
 
 const AXURE_API_LIST_ORDER: Array<{ key: AxureApiListKey; title: string }> = [
     { key: 'eventList', title: 'eventList 事件列表' },
@@ -85,6 +86,8 @@ interface ExportModalProps {
     preferredPromptClient: PromptClientPreference;
     preferredIDE: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
+    assistantOpen?: boolean;
+    onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     initialReviewResult?: ReviewResult | null;
     onInitialReviewHandled?: () => void;
 }
@@ -111,7 +114,9 @@ export default function ExportModal({
     exportAvailability,
     preferredPromptClient,
     preferredIDE,
-    ideAvailability: _ideAvailability,
+    ideAvailability,
+    assistantOpen,
+    onExecutePrompt,
     initialReviewResult,
     onInitialReviewHandled,
 }: ExportModalProps) {
@@ -311,23 +316,15 @@ export default function ExportModal({
         }
     };
 
-    const handleCopyAxureApiPrompt = async () => {
+    const buildAxureApiPrompt = () => {
         if (!itemName) {
-            toast.warning('请先选择一个条目');
-            return;
+            throw new Error('请先选择一个条目');
         }
 
-        const prompt = buildAxureApiUpdatePrompt({
+        return buildAxureApiUpdatePrompt({
             activeTab,
             itemName,
         });
-
-        try {
-            await navigator.clipboard.writeText(prompt);
-            toast.success('Prompt 已复制到剪贴板');
-        } catch {
-            toast.error('复制 Prompt 失败，请检查浏览器剪贴板权限');
-        }
     };
 
     const renderEventActionVarTable = (
@@ -705,15 +702,22 @@ export default function ExportModal({
                                                 <RefreshCw className={`h-4 w-4 ${isLoadingAxureApi ? 'animate-spin' : ''}`} />
                                                 刷新
                                             </Button>
-                                            <Button
-                                                variant="brand"
-                                                size="sm"
-                                                onClick={() => void handleCopyAxureApiPrompt()}
+                                            <PromptActionButton
+                                                type="primary"
+                                                preferredClient={preferredPromptClient}
+                                                preferredIDE={preferredIDE}
+                                                ideAvailability={ideAvailability}
+                                                assistantOpen={assistantOpen}
+                                                scene="axure-api-update"
+                                                buildPrompt={buildAxureApiPrompt}
+                                                getTargetPath={() => sourceTargetPath || null}
+                                                onExecutePrompt={onExecutePrompt}
+                                                copyLabel="复制 Prompt"
+                                                copySuccessMessage="Prompt 已复制到剪贴板"
+                                                executeSuccessMessage="已发送到 AI 侧栏"
+                                                fallbackMessage="AI 执行失败，已回退为复制 Prompt"
                                                 disabled={!itemName || Boolean(axureSourceDisabledReason)}
-                                            >
-                                                <Copy className="h-4 w-4" />
-                                                复制 Prompt
-                                            </Button>
+                                            />
                                         </div>
                                     </div>
                                 </div>

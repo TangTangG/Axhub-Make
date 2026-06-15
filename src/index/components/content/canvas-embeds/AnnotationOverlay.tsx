@@ -42,6 +42,10 @@ interface AnnotationOverlayProps {
     onAddNodesToAI?: (elements: CanvasElementContextInfo[]) => void;
     /** Callback when user adds the selected original image file to AI. */
     onAddImageToAI?: (elements: CanvasElementContextInfo[], promptText?: string) => void | Promise<void>;
+    /** Callback when user copies the selected original image file to the system clipboard. */
+    onCopyImageToClipboard?: (elements: CanvasElementContextInfo[]) => void | Promise<void>;
+    /** Callback when user runs local transparent-background processing on a selected image. */
+    onMakeImageBackgroundTransparent?: (elements: CanvasElementContextInfo[]) => void | Promise<void>;
     /** Callback when the set of annotated elements changes. */
     onAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
 }
@@ -284,6 +288,8 @@ export default function AnnotationOverlay({
     onAddScreenshotToAI,
     onAddNodesToAI,
     onAddImageToAI,
+    onCopyImageToClipboard,
+    onMakeImageBackgroundTransparent,
     onAnnotationsChange,
 }: AnnotationOverlayProps) {
     const [badges, setBadges] = useState<AnnotatedBadgeInfo[]>([]);
@@ -472,6 +478,16 @@ export default function AnnotationOverlay({
             if (fit.popoverTop !== menuRect.top) {
                 popoverEl.style.top = `${fit.popoverTop - menuTopOffset}px`;
             }
+        };
+
+        const closeContextMenuAfterAction = (sourceEl: Element) => {
+            const outsideTarget = containerRef.current || document.body;
+            outsideTarget.dispatchEvent(new PointerEvent('pointerdown', {
+                bubbles: true,
+                cancelable: true,
+                pointerType: 'mouse',
+            }));
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         };
 
         const collectSelectedElementInfos = (): CanvasElementContextInfo[] => {
@@ -762,6 +778,48 @@ export default function AnnotationOverlay({
                 }
             }
 
+            // ── Local image tools (no AI bridge required) ──
+            if (onCopyImageToClipboard && imageContextMenuState.showCopyOriginalImage) {
+                const copyLi = document.createElement('li');
+                copyLi.setAttribute('data-axhub-annotation-item', 'copy-original-image');
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'context-menu-item';
+                copyBtn.type = 'button';
+                const copyLabel = document.createElement('span');
+                copyLabel.className = 'context-menu-item__label';
+                copyLabel.textContent = '复制图片';
+                copyBtn.appendChild(copyLabel);
+                copyLi.appendChild(copyBtn);
+                copyBtn.addEventListener('click', async () => {
+                    const infos = collectSelectedElementInfos();
+                    if (infos.length > 0) {
+                        await onCopyImageToClipboard(infos);
+                        closeContextMenuAfterAction(copyBtn);
+                    }
+                });
+                topItems.push(copyLi);
+            }
+            if (onMakeImageBackgroundTransparent && imageContextMenuState.showBackgroundToTransparent) {
+                const transparentLi = document.createElement('li');
+                transparentLi.setAttribute('data-axhub-annotation-item', 'background-to-transparent');
+                const transparentBtn = document.createElement('button');
+                transparentBtn.className = 'context-menu-item';
+                transparentBtn.type = 'button';
+                const transparentLabel = document.createElement('span');
+                transparentLabel.className = 'context-menu-item__label';
+                transparentLabel.textContent = '背景转透明';
+                transparentBtn.appendChild(transparentLabel);
+                transparentLi.appendChild(transparentBtn);
+                transparentBtn.addEventListener('click', () => {
+                    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                    const infos = collectSelectedElementInfos();
+                    if (infos.length > 0) {
+                        void onMakeImageBackgroundTransparent(infos);
+                    }
+                });
+                topItems.push(transparentLi);
+            }
+
             // ── "合并文本" item (visible only for mergeable text selections) ──
             if (mergeTextUpdate) {
                 const mergeLi = document.createElement('li');
@@ -882,7 +940,7 @@ export default function AnnotationOverlay({
             observer.disconnect();
             window.removeEventListener('resize', handleWindowResize);
         };
-    }, [excalidrawAPI, containerRef, openPopover, setAnnotation, bridgeConnected, onAddScreenshotToAI, onAddNodesToAI, onAddImageToAI]);
+    }, [excalidrawAPI, containerRef, openPopover, setAnnotation, bridgeConnected, onAddScreenshotToAI, onAddNodesToAI, onAddImageToAI, onCopyImageToClipboard, onMakeImageBackgroundTransparent]);
 
     /* ── Close popover on outside click ───────────────────────────── */
     useEffect(() => {

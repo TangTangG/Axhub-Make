@@ -41,6 +41,7 @@ interface ResolvePrototypeAutoSelectionDecisionParams {
     hasExplicitSelection: boolean;
     items: ItemData[];
     lastCanvasItem: ItemData | null;
+    pendingReturnTarget?: PendingReturnTarget | null;
     selectedItem: ItemData | null;
     sidebarTab: SidebarTab;
     sidebarTrees: Record<'prototypes' | 'docs' | 'canvas', SidebarTreeNode[]>;
@@ -75,6 +76,7 @@ export function resolvePrototypeAutoSelectionDecision({
     hasExplicitSelection,
     items,
     lastCanvasItem,
+    pendingReturnTarget = null,
     selectedItem,
     sidebarTab,
     sidebarTrees,
@@ -92,6 +94,19 @@ export function resolvePrototypeAutoSelectionDecision({
     const currentItem = selectedItem ? itemMap.get(`prototypes/${selectedItem.name}`) ?? null : null;
     const currentCanvasItem = currentItem
         ?? (lastCanvasItem ? itemMap.get(`prototypes/${lastCanvasItem.name}`) ?? null : null);
+
+    if (
+        !currentItem
+        && pendingReturnTarget?.sidebarTab === 'prototype'
+        && pendingReturnTarget.resourceId
+        && selectedItem?.name === pendingReturnTarget.resourceId
+    ) {
+        return {
+            kind: 'keep',
+            markExplicitSelection: hasExplicitSelection,
+            nextCanvasItem: viewMode === 'canvas' ? selectedItem : lastCanvasItem,
+        };
+    }
 
     if (isBrowsingResourceSidebarInPrototypeCanvas({ sidebarTab, viewMode }) && currentCanvasItem) {
         const nextCanvasItem = currentCanvasItem;
@@ -299,6 +314,7 @@ export function useIndexPageSelectionSync({
             hasExplicitSelection: hasExplicitSelectionRef.current,
             items,
             lastCanvasItem: lastPrototypeCanvasItemRef.current,
+            pendingReturnTarget,
             selectedItem,
             sidebarTab,
             sidebarTrees,

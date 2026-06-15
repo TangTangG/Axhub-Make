@@ -1,11 +1,11 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const MODEL_RECOMMENDATIONS = [
-    { model: 'Claude Opus 4.7', feature: '综合能力强，适合规划' },
+    { model: 'Claude Opus 4.8', feature: '综合能力强，适合规划' },
     { model: 'Gemini 3.1 Pro', feature: 'UI/UX 设计能力优秀' },
     { model: 'GPT-5.5', feature: '适合处理复杂问题和任务' },
-    { model: 'Kimi K2.6', feature: '国产平替，UI/UX 设计能力优秀' },
-    { model: 'GLM-5.1', feature: '国产平替，综合能力强' },
+    { model: 'Kimi K2.7', feature: '国产平替，UI/UX 设计能力优秀' },
+    { model: 'GLM-5.2', feature: '国产平替，综合能力强' },
 ];
 
 export default function AiCreateGuideContent() {

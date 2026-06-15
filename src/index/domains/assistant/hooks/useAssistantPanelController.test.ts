@@ -59,11 +59,20 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain('const projectId = activeProjectId?.trim() || undefined;');
     expect(source).toContain('projectId,');
     expect(source).toContain('const buildAssistantIframeUrlForRuntime = useCallback((');
+    expect(source).toContain('const buildImagePlaygroundUrlForRuntime = useCallback((');
     expect(source).toContain("url.searchParams.set('cwd', projectPath);");
+    expect(source).toContain("const url = new URL(`${webBaseUrl}/image-playground`);");
+    expect(source).toContain("const resolvedTargetUrl = options.panelMode === 'image-ai'");
+    expect(source).toContain('? buildImagePlaygroundUrlForRuntime(resolvedRuntime)');
     expect(source).toContain('const runtimeForUrl = runtimeOverride || assistantRuntime;');
     expect(source).toContain('const sourceUrl = targetUrl || buildAssistantIframeUrlForRuntime(runtimeForUrl);');
     expect(source).toContain('const handleOpenGenieWebAgent = useCallback((targetPath?: string, _provider?: GenieProvider) => {');
-    expect(source).toContain("void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe');");
+    expect(source).toContain("void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe', null, {");
+    expect(source).toContain("panelMode: 'general-ai',");
+    expect(source).toContain("const openImageAiPanel = useCallback(() => {");
+    expect(source).toContain("void ensureAssistantReadyThenOpen('button', undefined, undefined, 'iframe', null, {");
+    expect(source).toContain("panelMode: 'image-ai',");
+    expect(source).toContain('suppressResourceThreadBinding: true,');
     expect(source).toContain('apiService.getAssistantRuntime({ autoStart: true, projectId })');
     expect(source).toContain('refreshRuntime({ autoStart: false })');
     expect(source).not.toContain('buildAssistantIframeUrlForRuntime(assistantRuntime, provider)');
@@ -71,8 +80,25 @@ describe('useAssistantPanelController source', () => {
     expect(source).not.toContain("url.searchParams.set('provider'");
     expect(source).not.toContain("url.searchParams.set('context'");
     expect(source).not.toContain("url.searchParams.set('prompt'");
-    expect(source).toContain('openAssistantInNewWindowWithUrl(targetUrl, targetPath, resolvedRuntime, contextOverride);');
-    expect(source).toContain('openAssistantWithUrl(targetUrl, targetPath, resolvedRuntime, {');
+    expect(source).toContain('openAssistantInNewWindowWithUrl(resolvedTargetUrl, targetPath, resolvedRuntime, contextOverride);');
+    expect(source).toContain('openAssistantWithUrl(resolvedTargetUrl, targetPath, resolvedRuntime, {');
+  });
+
+  it('caps the embedded assistant sidebar at half of the viewport width', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+
+    expect(source).toContain('const ASSISTANT_PANEL_MAX_VIEWPORT_RATIO = 0.5;');
+    expect(source).toContain('function getAssistantPanelMaxWidth(): number');
+    expect(source).toContain('window.innerWidth * ASSISTANT_PANEL_MAX_VIEWPORT_RATIO');
+    expect(source).toContain('function clampAssistantPanelWidth(width: number): number');
+    expect(source).toContain('Math.min(Math.max(width, MIN_ASSISTANT_PANEL_WIDTH), getAssistantPanelMaxWidth())');
+    expect(source).toContain('const [assistantPanelMaxWidth, setAssistantPanelMaxWidth] = useState(getAssistantPanelMaxWidth);');
+    expect(source).toContain('return clampAssistantPanelWidth(parsed);');
+    expect(source).toContain('setAssistantPanelWidthValue((currentWidth) => clampAssistantPanelWidth(currentWidth));');
+    expect(source).toContain('const setAssistantPanelWidth = useCallback((nextWidth: number) => {');
+    expect(source).toContain('setAssistantPanelWidthValue(clampAssistantPanelWidth(nextWidth));');
+    expect(source).toContain('assistantPanelMinWidth: Math.min(MIN_ASSISTANT_PANEL_WIDTH, assistantPanelMaxWidth),');
+    expect(source).toContain('assistantPanelMaxWidth,');
   });
 
   it('keys assistant runtime probing by active project id so cached cwd cannot cross projects', () => {
@@ -97,6 +123,7 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain('previousAssistantProjectIdRef.current = nextProjectId;');
     expect(source).toContain("setAssistantIframeOverrideUrl(null);");
     expect(source).toContain("void ensureAssistantReadyThenOpen('event', undefined, getAssistantContextCurrentFilePath(assistantContextV1), 'iframe', null, {");
+    expect(source).toContain("panelMode: 'general-ai',");
     expect(source).toContain('loadingText: false,');
     expect(source).toContain('openSettingsOnFailure: false,');
   });
@@ -108,8 +135,8 @@ describe('useAssistantPanelController source', () => {
       source.indexOf('const syncAssistantCanvasComments = useCallback(('),
     );
     const restoreSource = source.slice(
-      source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string) => {'),
-      source.indexOf('useEffect(() => {\n        const handleOpenAssistantUrl', source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string) => {')),
+      source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {'),
+      source.indexOf('useEffect(() => {\n        const handleOpenAssistantUrl', source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {')),
     );
 
     expect(source).toContain('openSettingsOnFailure?: boolean;');
@@ -118,6 +145,7 @@ describe('useAssistantPanelController source', () => {
     expect(ensureSource).toContain("openAISettingsForAssistantRuntime(resolvedRuntime, resolvedRuntime.health.message || '本地 ACP 服务未链接');");
     expect(ensureSource).toContain("openAISettingsForAssistantRuntime(runtime, error?.message || '检测 AI 助手状态失败');");
     expect(restoreSource).toContain("return ensureAssistantReadyThenOpen('event', undefined, targetPath, 'iframe', null, {");
+    expect(restoreSource).toContain('panelMode: restoreMode,');
     expect(restoreSource).toContain('loadingText: false,');
     expect(restoreSource).toContain('openSettingsOnFailure: false,');
   });
@@ -170,9 +198,10 @@ describe('useAssistantPanelController source', () => {
     expect(bridgeSource).toContain("'acp.chat.submit'");
     expect(bridgeSource).toContain('interface SubmitPromptOptions {');
     expect(bridgeSource).toContain('newThread?: boolean;');
+    expect(bridgeSource).toContain("waitUntil?: 'started' | 'finished';");
     expect(bridgeSource).toContain("payload: {");
     expect(bridgeSource).toContain("text: prompt,");
-    expect(bridgeSource).toContain("waitUntil: 'started',");
+    expect(bridgeSource).toContain("waitUntil: submitOptions?.waitUntil || 'started',");
     expect(bridgeSource).toContain("...(submitOptions?.newThread === true ? { newThread: true } : {}),");
     expect(bridgeSource).toContain('const ACP_CHAT_SUBMIT_TIMEOUT_MS = 30_000;');
     expect(bridgeSource).toContain("'acp.chat.result'");
@@ -186,6 +215,35 @@ describe('useAssistantPanelController source', () => {
     expect(bridgeSource).not.toContain('syncPrompt');
     expect(controllerSource).not.toContain("url.searchParams.set('prompt'");
     expect(controllerSource).not.toContain('postAssistantPromptToIframe');
+  });
+
+  it('can wait for visible canvas assistant runs and query their ACP artifacts', () => {
+    const bridgeSource = readFileSync(resolve(__dirname, './useAssistantBridge.ts'), 'utf8');
+    const controllerSource = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+
+    expect(bridgeSource).toContain('export interface AcpThreadArtifactsQueryResult');
+    expect(bridgeSource).toContain('queryArtifactsWithRetry');
+    expect(bridgeSource).toContain("type: 'acp.artifacts.get'");
+    expect(bridgeSource).toContain("source: query.source || 'auto'");
+    expect(bridgeSource).toContain("format: query.format || 'ai-sdk/v6'");
+    expect(controllerSource).toContain('type OpenAssistantSubmitResult = {');
+    expect(controllerSource).toContain('artifacts?: unknown[];');
+    expect(controllerSource).toContain('waitUntil?: \'started\' | \'finished\';');
+    expect(controllerSource).toContain('ignoredArtifactPaths?: string[];');
+    expect(controllerSource).toContain('function getAcpArtifactPath(artifact: unknown): string');
+    expect(controllerSource).toContain('async function waitForAcpArtifacts(');
+    expect(controllerSource).toContain('const timeoutMs = options.timeoutMs ?? 420_000;');
+    expect(controllerSource).toContain('const ignoredPaths = new Set((options.ignoredArtifactPaths || [])');
+    expect(controllerSource).toContain('const artifacts = filterArtifacts(latest.artifacts);');
+    expect(controllerSource).toContain('if (artifacts.length || workspaceArtifacts.length || latest.imageGenerationRecords?.length) {');
+    expect(controllerSource).toContain('const submitResult = await submitPromptWithRetry(text, {');
+    expect(controllerSource).toContain('waitUntil: options.collectArtifacts === true ? \'started\' : options.waitUntil || \'started\',');
+    expect(controllerSource).toContain("if (options.collectArtifacts === true && submitResult.threadId) {");
+    expect(controllerSource).toContain('const artifactSinceMs = Date.now();');
+    expect(controllerSource).toContain('await waitForAcpArtifacts(() => queryArtifactsWithRetry({');
+    expect(controllerSource).toContain('threadId: submitResult.threadId,');
+    expect(controllerSource).toContain('sinceMs: artifactSinceMs,');
+    expect(controllerSource).toContain('ignoredArtifactPaths: options.ignoredArtifactPaths,');
   });
 
   it('does not show startup loading when submitting into an already open assistant panel', () => {
@@ -204,7 +262,9 @@ describe('useAssistantPanelController source', () => {
     expect(submitSource).toContain('const closeLoading = () => {');
     expect(submitSource).toContain('const opened = panelAlreadyOpen');
     expect(submitSource).toContain('const ready = panelAlreadyOpen');
-    expect(submitSource).toContain('closeLoading();\n            await submitPromptWithRetry(text, { newThread: shouldForceNewThread });');
+    expect(submitSource).toContain('closeLoading();\n            const artifactSinceMs = Date.now();\n            const submitResult = await submitPromptWithRetry(text, {');
+    expect(submitSource).toContain('newThread: shouldForceNewThread,');
+    expect(submitSource).toContain("waitUntil: options.collectArtifacts === true ? 'started' : options.waitUntil || 'started',");
     expect(submitSource).not.toContain('const panelAlreadyOpen = !shouldForceNewThread');
     expect(submitSource).not.toContain('const alreadyReady = assistantSupportsAcpContext');
   });
@@ -234,7 +294,9 @@ describe('useAssistantPanelController source', () => {
     expect(submitSource).toContain('if (shouldForceNewThread) {\n                latestAssistantResourcePathRef.current = \'\';\n            }');
     expect(submitSource).toContain('else if (targetPath) {\n                latestAssistantResourcePathRef.current = targetPath;\n            }');
     expect(submitSource).toContain("await ensureAssistantReadyThenOpen('button', assistantOpenUrl, targetPath, 'iframe', context, {");
-    expect(submitSource).toContain('await submitPromptWithRetry(text, { newThread: shouldForceNewThread });');
+    expect(submitSource).toContain('const submitResult = await submitPromptWithRetry(text, {');
+    expect(submitSource).toContain('newThread: shouldForceNewThread,');
+    expect(submitSource).toContain("waitUntil: options.collectArtifacts === true ? 'started' : options.waitUntil || 'started',");
     expect(submitSource).toContain('if (shouldForceNewThread) {\n                assistantResourceThreadBindingSuppressedRef.current = false;');
     expect(submitSource).toContain('latestAssistantResourcePathRef.current = context ? getAssistantContextCurrentFilePath(context) : getAssistantContextCurrentFilePath(assistantContextV1);');
   });
@@ -251,7 +313,47 @@ describe('useAssistantPanelController source', () => {
     expect(toggleSource).not.toContain('setAssistantPanelMounted(false);');
     expect(toggleSource).not.toContain('setAssistantIframeLoaded(false);');
     expect(toggleSource).not.toContain('setAssistantIframeOverrideUrl(null);');
-    expect(toggleSource).not.toContain("setAssistantPanelMode('assistant');");
+    expect(toggleSource).not.toContain("setAssistantPanelMode('general-ai');");
+  });
+
+  it('tracks mutually exclusive general and image AI panel modes in the shared iframe', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+
+    expect(source).toContain("export type AssistantAiPanelMode = 'general-ai' | 'image-ai' | 'external' | null;");
+    expect(source).toContain("const [assistantPanelMode, setAssistantPanelMode] = useState<AssistantAiPanelMode>('general-ai');");
+    expect(source).toContain("const assistantSupportsAcpContext = assistantPanelMode === 'general-ai';");
+    expect(source).toContain("panelMode?: AssistantAiPanelMode;");
+    expect(source).toContain("const nextPanelMode = options.panelMode || assistantPanelMode || 'general-ai';");
+    expect(source).toContain('setAssistantPanelMode(nextPanelMode);');
+    expect(source).toContain("setAssistantPanelMode('external');");
+    expect(source).toContain("const visibleAiPanelMode = assistantPanelMode === 'general-ai' || assistantPanelMode === 'image-ai'");
+    expect(source).toContain('aiPanelMode: assistantVisible ? visibleAiPanelMode : null,');
+    expect(source).toContain('openImageAiPanel,');
+  });
+
+  it('restores a hidden mounted assistant with the remembered panel mode and matching iframe url', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+    const restoreSource = source.slice(
+      source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {'),
+      source.indexOf('useEffect(() => {\n        const handleOpenAssistantUrl', source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {')),
+    );
+
+    expect(restoreSource).toContain("const restoreMode = panelMode === 'image-ai' || panelMode === 'general-ai'");
+    expect(restoreSource).toContain('if (assistantPanelMounted) {');
+    expect(restoreSource).toContain("const nextTargetUrl = restoreMode === 'image-ai'");
+    expect(restoreSource).toContain('? buildImagePlaygroundUrlForRuntime(assistantRuntime)');
+    expect(restoreSource).toContain(': buildAssistantIframeUrlForRuntime(assistantRuntime);');
+    expect(restoreSource).toContain('const shouldReloadForRestoreMode = restoreMode !== assistantPanelMode');
+    expect(restoreSource).toContain("|| (restoreMode === 'image-ai' && assistantIframeOverrideUrl !== nextTargetUrl);");
+    expect(restoreSource).toContain('if (shouldReloadForRestoreMode) {');
+    expect(restoreSource).toContain('openAssistantWithUrl(nextTargetUrl, targetPath, assistantRuntime, {');
+    expect(restoreSource).toContain('panelMode: restoreMode,');
+    expect(restoreSource).toContain("suppressResourceThreadBinding: restoreMode === 'image-ai',");
+    expect(restoreSource.indexOf('if (shouldReloadForRestoreMode) {'))
+      .toBeLessThan(restoreSource.indexOf('if (assistantVisible) {'));
+    expect(restoreSource).toContain('setAssistantVisible(true);');
+    expect(restoreSource).toContain('return true;');
+    expect(restoreSource).toContain('panelMode: restoreMode,');
   });
 
   it('adds context items and image attachments through ACP postMessage protocols', () => {
@@ -325,6 +427,8 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain('syncCanvasMcpConfigWithRetry: postAssistantCanvasMcpConfigToIframeWithRetry,');
     expect(controllerSource).toContain('function isAssistantCanvasMcpContext(context: AssistantContextV1): boolean');
     expect(controllerSource).toContain('getAssistantCanvasMcpRuntimeConfig(assistantContextV1)');
+    expect(controllerSource.indexOf('const assistantContextV1 = useMemo<AssistantContextV1>'))
+      .toBeLessThan(controllerSource.indexOf('const syncAssistantCanvasMcpConfigToIframe = useCallback'));
     expect(controllerSource).toContain('const canvasMcpConfigSignature = getAcpCanvasMcpConfigSignature(canvasMcpConfig);');
     expect(controllerSource).toContain('postAssistantCanvasMcpConfigToIframeWithRetry(canvasMcpConfig);');
     expect(controllerSource).toContain('syncAssistantCanvasMcpConfigToIframe();');
@@ -342,7 +446,7 @@ describe('useAssistantPanelController source', () => {
     expect(bridgeSource).not.toContain('createAssistantArtifactDedupe');
     expect(bridgeSource).not.toContain("'acp.messages.changed'");
     expect(bridgeSource).not.toContain("'thread.idle'");
-    expect(bridgeSource).not.toContain("'acp.artifacts.get'");
+    expect(bridgeSource).toContain("'acp.artifacts.get'");
   });
 
   it('notifies the host when ACP reports the active thread', () => {
@@ -355,7 +459,7 @@ describe('useAssistantPanelController source', () => {
     expect(bridgeSource).not.toContain('snapshotThreadId');
   });
 
-  it('does not expose ACP artifact query plumbing after canvas history removal', () => {
+  it('does not expose ACP artifact query plumbing as a shared canvas history API after canvas history removal', () => {
     const bridgeSource = readFileSync(resolve(__dirname, './useAssistantBridge.ts'), 'utf8');
     const controllerSource = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
@@ -363,6 +467,8 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).not.toContain('getArtifacts: getAssistantArtifactsFromIframe,');
     expect(controllerSource).not.toContain('const getAssistantArtifacts = useCallback((');
     expect(controllerSource).not.toContain('getAssistantArtifacts,');
+    expect(controllerSource).toContain('queryArtifactsWithRetry');
+    expect(controllerSource).toContain("if (options.collectArtifacts === true && submitResult.threadId) {");
   });
 
   it('does not expose Web Editor Genie request handling for ACP UI', () => {
@@ -416,7 +522,8 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain('postAssistantContextToWindowWithRetry(childWindow, nextUrl, contextOverride);');
     expect(source).toContain("const childWindow = window.open(nextUrl, '_blank', windowFeatures);");
     expect(source).toContain("const windowFeatures = contextOverride ? undefined : 'noopener,noreferrer';");
-    expect(itemContextSource).toContain("void ensureAssistantReadyThenOpen('button', url.toString(), undefined, 'window', itemContext);");
+    expect(itemContextSource).toContain("void ensureAssistantReadyThenOpen('button', url.toString(), undefined, 'window', itemContext, {");
+    expect(itemContextSource).toContain("panelMode: 'general-ai',");
     expect(itemContextSource).not.toContain("searchParams.set('targetPath'");
     expect(itemContextSource).not.toContain("url.searchParams.set('context'");
     expect(itemContextSource).not.toContain('JSON.stringify');
@@ -425,14 +532,17 @@ describe('useAssistantPanelController source', () => {
   it('can restore the assistant panel after a page refresh without submitting a prompt', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
     const restoreSource = source.slice(
-      source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string) => {'),
-      source.indexOf('useEffect(() => {', source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string) => {')),
+      source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {'),
+      source.indexOf('useEffect(() => {', source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {')),
     );
 
-    expect(source).toContain('const restoreAssistantPanel = useCallback((targetPath?: string) => {');
+    expect(source).toContain('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {');
+    expect(restoreSource).toContain('if (assistantPanelMounted) {');
+    expect(restoreSource).toContain('if (shouldReloadForRestoreMode) {');
     expect(restoreSource).toContain('if (assistantVisible) {');
     expect(restoreSource).toContain('return true;');
-    expect(restoreSource).toContain('if (assistantPanelMounted) {');
+    expect(restoreSource.indexOf('if (shouldReloadForRestoreMode) {'))
+      .toBeLessThan(restoreSource.indexOf('if (assistantVisible) {'));
     expect(restoreSource).toContain('setAssistantVisible(true);');
     expect(source).toContain("return ensureAssistantReadyThenOpen('event', undefined, targetPath, 'iframe', null, {");
     expect(source).toContain("loadingText: false,");
@@ -443,7 +553,7 @@ describe('useAssistantPanelController source', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
     const temporaryHideSource = source.slice(
       source.indexOf('const hideAssistantPanelTemporarily = useCallback(() => {'),
-      source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string) => {'),
+      source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {'),
     );
 
     expect(source).toContain('const hideAssistantPanelTemporarily = useCallback(() => {');

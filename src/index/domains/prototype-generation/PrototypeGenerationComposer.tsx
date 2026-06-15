@@ -31,7 +31,7 @@ import { pickCanvasAiScenePlaceholder } from '../ai-generation/canvasAiSceneRegi
 import { PrototypeThemeSearchSelect } from './PrototypeThemeSearchSelect';
 
 export interface PrototypeGenerationComposerSettings {
-  count: number;
+  count?: number;
   themeName: string;
 }
 
@@ -54,6 +54,7 @@ export interface PrototypeGenerationComposerProps {
 }
 
 const COUNT_OPTIONS = [1, 2, 3, 4];
+const UNSPECIFIED_PROTOTYPE_SETTING_VALUE = '__unspecified__';
 const PROTOTYPE_SETTINGS_SELECT_CONTENT_STYLE = { zIndex: 1400 } satisfies CSSProperties;
 
 export default function PrototypeGenerationComposer({
@@ -70,7 +71,7 @@ export default function PrototypeGenerationComposer({
   themes,
   onSubmitPrompt,
 }: PrototypeGenerationComposerProps) {
-  const [generationCount, setGenerationCount] = useState(1);
+  const [generationCount, setGenerationCount] = useState<number | undefined>(undefined);
   const [placeholder] = useState(() => pickCanvasAiScenePlaceholder('page'));
   const [selectedThemeName, setSelectedThemeName] = useState(() => resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
   const [submitting, setSubmitting] = useState(false);
@@ -93,7 +94,12 @@ export default function PrototypeGenerationComposer({
     themes?.find((theme) => theme.name === selectedThemeName) || null
   ), [selectedThemeName, themes]);
   const themeLabel = selectedTheme?.displayName || selectedTheme?.name || '无设计系统';
-  const countLabel = `${generationCount} 个`;
+  const hasGenerationCount = typeof generationCount === 'number';
+  const hasSelectedTheme = selectedThemeName !== NO_PROTOTYPE_THEME_VALUE;
+  const settingsSummary = [
+    hasGenerationCount ? `${generationCount} 个` : null,
+    hasSelectedTheme ? themeLabel : null,
+  ].filter(Boolean).join(' · ') || '未指定';
 
   const handleSubmitPrompt = useCallback(async (request: CanvasAiSubmitRequest) => {
     const message = request.message;
@@ -163,7 +169,7 @@ export default function PrototypeGenerationComposer({
                 data-axhub-prototype-composer-settings-summary
                 className="ax-ai-image-settings-summary"
               >
-                {countLabel} · {themeLabel}
+                {settingsSummary}
               </span>
               <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
             </button>
@@ -172,17 +178,23 @@ export default function PrototypeGenerationComposer({
             <div className="space-y-3">
               <div className="space-y-1">
                 <div className="text-sm font-medium text-foreground">原型设置</div>
-                <div className="text-xs text-muted-foreground">{countLabel} · {themeLabel}</div>
+                <div className="text-xs text-muted-foreground">{settingsSummary}</div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="space-y-1.5">
                   <span className="text-xs font-medium text-muted-foreground">生成数量</span>
-                  <Select value={String(generationCount)} onValueChange={(value) => setGenerationCount(Number(value))}>
+                  <Select
+                    value={hasGenerationCount ? String(generationCount) : UNSPECIFIED_PROTOTYPE_SETTING_VALUE}
+                    onValueChange={(value) => setGenerationCount(value === UNSPECIFIED_PROTOTYPE_SETTING_VALUE ? undefined : Number(value))}
+                  >
                     <SelectTrigger className="h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent style={PROTOTYPE_SETTINGS_SELECT_CONTENT_STYLE}>
+                      <SelectItem value={UNSPECIFIED_PROTOTYPE_SETTING_VALUE}>
+                        未指定
+                      </SelectItem>
                       {COUNT_OPTIONS.map((count) => (
                         <SelectItem key={count} value={String(count)}>
                           {count} 个

@@ -15,4 +15,12 @@ describe('IndexDialogs source', () => {
         expect(source).not.toContain("React.lazy(() => import('../dialogs/CreateDialogContainer'))");
         expect(source).not.toContain("React.lazy(() => import('../dialogs/CreateThemeDialogContainer'))");
     });
+
+    it('forwards direct import target options into the create dialog container', () => {
+        const source = readIndexDialogsSource();
+
+        expect(source).toContain('activeProjectId: createDialog.activeProjectId');
+        expect(source).toContain('initialUploadType: createDialog.initialUploadType');
+        expect(source).toContain('targetPrototypeName: createDialog.targetPrototypeName');
+    });
 });

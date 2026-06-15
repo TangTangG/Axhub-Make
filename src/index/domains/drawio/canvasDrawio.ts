@@ -52,6 +52,11 @@ function decodeBase64(value: string): string {
   return (globalThis as any).Buffer.from(value, 'base64').toString('utf8');
 }
 
+function decodeBase64Binary(value: string): string {
+  if (typeof atob === 'function') return atob(value);
+  return (globalThis as any).Buffer.from(value, 'base64').toString('binary');
+}
+
 function escapeXmlAttribute(value: string): string {
   return value
     .replace(/&/gu, '&amp;')
@@ -74,12 +79,45 @@ function extractMxfileXml(value: string): string | null {
   return directMatch?.[0] || null;
 }
 
+function extractMxGraphModelXml(value: string): string | null {
+  const graphModelMatch = value.match(/<mxGraphModel\b[\s\S]*?<\/mxGraphModel>/u);
+  return graphModelMatch?.[0] || null;
+}
+
+function wrapMxGraphModelXml(graphModelXml: string): string {
+  return `<mxfile host="embed.diagrams.net"><diagram id="axhub-drawio-generated" name="Page-1">${graphModelXml}</diagram></mxfile>`;
+}
+
+function normalizeDrawioXml(value: string): string | null {
+  const mxfileXml = extractMxfileXml(value);
+  if (mxfileXml) return mxfileXml;
+  const graphModelXml = extractMxGraphModelXml(value);
+  return graphModelXml ? wrapMxGraphModelXml(graphModelXml) : null;
+}
+
+function hasEditableDiagramSource(xml: string): boolean {
+  if (/<mxGraphModel\b[\s\S]*?<\/mxGraphModel>/u.test(xml)) return true;
+  const diagramMatches = xml.matchAll(/<diagram\b[^>]*>([\s\S]*?)<\/diagram>/gu);
+  for (const match of diagramMatches) {
+    const payload = (match[1] || '').trim();
+    if (!payload) continue;
+    if (/<mxGraphModel\b[\s\S]*?<\/mxGraphModel>/u.test(payload)) return true;
+    try {
+      decodeBase64Binary(payload);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 function decodeEmbeddedDrawioXml(value: string): string | null {
   const unescapedValue = unescapeXmlAttribute(value.trim());
-  const directXml = extractMxfileXml(unescapedValue);
+  const directXml = normalizeDrawioXml(unescapedValue);
   if (directXml) return directXml;
   try {
-    return extractMxfileXml(decodeBase64(unescapedValue));
+    return normalizeDrawioXml(decodeBase64(unescapedValue));
   } catch {
     return null;
   }
@@ -222,7 +260,13 @@ export function extractDrawioSvgDimensionsFromDataUrl(dataURL: string): DrawioSv
 }
 
 export function isDrawioElement(element: any): boolean {
-  return element?.type === 'image' && element?.customData?.type === DRAWIO_CUSTOM_TYPE;
+  if (element?.type !== 'image') return false;
+  const customData = element?.customData || {};
+  return (
+    customData.type === DRAWIO_CUSTOM_TYPE
+    || customData.previewKind === DRAWIO_PREVIEW_KIND
+    || customData.aiArtifact?.kind === 'drawio'
+  );
 }
 
 export function extractDrawioXmlFromImageFile(file: any): string {
@@ -243,9 +287,32 @@ export function extractDrawioXmlFromImageFile(file: any): string {
     const metadataXml = decodeEmbeddedDrawioXml(metadataMatch[2]);
     if (metadataXml) return metadataXml;
   }
-  const directXml = extractMxfileXml(svg);
+  const directXml = normalizeDrawioXml(svg);
   if (directXml) return directXml;
   return DRAWIO_DEFAULT_XML;
+}
+
+export function extractEditableDrawioXmlFromImageFile(file: any): string | null {
+  const svg = readDataUrlText(String(file?.dataURL || file?.dataUrl || ''));
+  if (!svg) return null;
+  const contentMatch = svg.match(/\scontent=(["'])([\s\S]*?)\1/u);
+  if (contentMatch?.[2]) {
+    const content = decodeEmbeddedDrawioXml(contentMatch[2]);
+    if (content && hasEditableDiagramSource(content)) return content;
+  }
+  const dataDrawioMatch = svg.match(/\sdata-drawio=(["'])([\s\S]*?)\1/u);
+  if (dataDrawioMatch?.[2]) {
+    const dataDrawioXml = decodeEmbeddedDrawioXml(dataDrawioMatch[2]);
+    if (dataDrawioXml && hasEditableDiagramSource(dataDrawioXml)) return dataDrawioXml;
+  }
+  const metadataMatch = svg.match(/<metadata\b[^>]*\bid=(["'])drawio-source\1[^>]*>([\s\S]*?)<\/metadata>/u);
+  if (metadataMatch?.[2]) {
+    const metadataXml = decodeEmbeddedDrawioXml(metadataMatch[2]);
+    if (metadataXml && hasEditableDiagramSource(metadataXml)) return metadataXml;
+  }
+  const directXml = normalizeDrawioXml(svg);
+  if (directXml && hasEditableDiagramSource(directXml)) return directXml;
+  return null;
 }
 
 export function updateDrawioElementFile(element: any, fileId: string, options: UpdateDrawioElementFileOptions = {}) {

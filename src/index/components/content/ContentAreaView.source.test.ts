@@ -42,6 +42,8 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain('if (prevProps.resetKey !== this.props.resetKey && this.state.hasError)');
     expect(source).toContain('画布加载失败');
     expect(source).toContain('请刷新页面，或切换到其他画布后再回来重试。');
+    expect(source).toContain("import { lazyWithRetry } from '../../utils/lazyWithRetry';");
+    expect(source).toContain("const ExcalidrawCanvas = React.lazy(() => lazyWithRetry(() => import('./ExcalidrawCanvas')));");
     expect(source).not.toContain('草稿加载失败');
     expect(source).not.toContain('请刷新页面，或切换到其他草稿后再回来重试。');
     expect(standaloneCanvasBranch).toContain('<CanvasErrorBoundary resetKey={selectedCanvas.name}>');
@@ -74,6 +76,23 @@ describe('ContentAreaView review zoom source', () => {
     expect(propsSegment).toContain('defaultThemeName,');
     expect(source).toContain('themes={themes}');
     expect(source).toContain('defaultThemeName={defaultThemeName}');
+  });
+
+  it('forwards the active project id into both canvas render paths', () => {
+    const source = readContentAreaViewSource();
+    const standaloneCanvasBranch = getSourceSegment(
+      source,
+      "if (contentMode === 'canvas') {",
+      '    return (\n        <div\n            ref={containerRef}',
+    );
+    const prototypeCanvasBranch = getSourceSegment(
+      source,
+      ") : viewMode === 'canvas' ? (",
+      ") : (",
+    );
+
+    expect(standaloneCanvasBranch).toContain('activeProjectId={activeProjectId}');
+    expect(prototypeCanvasBranch).toContain('activeProjectId={activeProjectId}');
   });
 
   it('shows a copyable AI prompt action for make client startup failures in both empty states', () => {
@@ -130,8 +149,9 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain('CanvasGenerationDisplayComposer');
     expect(source).toContain('PrototypeStartSettingsPopover');
     expect(placeholderGuideSegment).toContain('我们先从哪里开始呢?');
-    expect(placeholderGuideSegment).toContain('px-6 py-12');
+    expect(placeholderGuideSegment).toContain('px-6 py-10');
     expect(placeholderGuideSegment).toContain('max-w-[960px]');
+    expect(placeholderGuideSegment).toContain('max-w-[1080px]');
     expect(placeholderGuideSegment).toContain('mt-8 w-full');
     expect(placeholderGuideSegment).toContain('<Segmented');
     expect(placeholderGuideSegment).toContain('assistantProjectPath?: string;');
@@ -182,7 +202,10 @@ describe('ContentAreaView review zoom source', () => {
     expect(placeholderGuideSegment).toContain('themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? \'\' : selectedTheme?.name || \'\'');
     expect(placeholderGuideSegment).toContain(": activeScene === 'design'");
     expect(placeholderGuideSegment).toContain('imageStartParams');
-    expect(placeholderGuideSegment).toContain('settings: imageStartParams');
+    expect(placeholderGuideSegment).toContain('const effectiveImageStartParams = useMemo<ImageStartParams>(() => ({');
+    expect(placeholderGuideSegment).toContain("background: imageStartParams.output_format === 'png' ? imageStartParams.background : 'auto'");
+    expect(placeholderGuideSegment).toContain('settings: effectiveImageStartParams');
+    expect(placeholderGuideSegment).toContain('sceneSettings: activeScene === \'design\' ? effectiveImageStartParams : undefined');
     expect(placeholderGuideSegment).toContain('provider: selection?.provider');
     expect(placeholderGuideSegment).toContain('model: selection?.model');
     expect(placeholderGuideSegment).toContain('mode: selection?.mode');
@@ -206,6 +229,170 @@ describe('ContentAreaView review zoom source', () => {
     expect(placeholderGuideSegment).toContain('targetPath={prototypeIndexPath}');
   });
 
+  it('keeps placeholder generation settings unspecified until the user picks values', () => {
+    const source = readContentAreaViewSource();
+    const prototypeSettingsSegment = getSourceSegment(
+      source,
+      'function PrototypeStartSettingsPopover({',
+      'function ImageStartSettingsPopover({',
+    );
+    const imageSettingsSegment = getSourceSegment(
+      source,
+      'function ImageStartSettingsPopover({',
+      'function PrototypePlaceholderGuide({',
+    );
+    const placeholderGuideSegment = getSourceSegment(
+      source,
+      'function PrototypePlaceholderGuide({',
+      'export default function ContentArea({',
+    );
+
+    expect(source).toContain("const UNSPECIFIED_START_SETTING_VALUE = '__unspecified__';");
+    expect(source).toContain('type ImageStartParams = Omit<AiImageTaskParams');
+    expect(source).toContain('output_format: undefined');
+    expect(source).toContain('n: undefined');
+    expect(placeholderGuideSegment).toContain('useState<number | undefined>(undefined)');
+    expect(placeholderGuideSegment).toContain('useState<ImageStartParams>(DEFAULT_IMAGE_START_PARAMS)');
+    expect(prototypeSettingsSegment).toContain("const summary = summaryItems.join(' · ') || '未指定';");
+    expect(prototypeSettingsSegment).toContain('<SelectItem value={UNSPECIFIED_START_SETTING_VALUE}>');
+    expect(prototypeSettingsSegment).toContain('未指定');
+    expect(prototypeSettingsSegment).toContain('value === UNSPECIFIED_START_SETTING_VALUE ? undefined : Number(value)');
+    expect(imageSettingsSegment).toContain("].filter(Boolean).join(' · ') || '未指定';");
+    expect(imageSettingsSegment).toContain('value={typeof params.n === \'number\' ? String(params.n) : UNSPECIFIED_START_SETTING_VALUE}');
+    expect(imageSettingsSegment).toContain("updateParam('n', value === UNSPECIFIED_START_SETTING_VALUE ? undefined : Number(value))");
+    expect(imageSettingsSegment).toContain('value={params.output_format || UNSPECIFIED_START_SETTING_VALUE}');
+    expect(imageSettingsSegment).toContain("updateParam('output_format', value === UNSPECIFIED_START_SETTING_VALUE ? undefined : value as AiImageTaskParams['output_format'])");
+  });
+
+  it('loads placeholder template cases from a local two-hour cache and limits the homepage list to nine', () => {
+    const source = readContentAreaViewSource();
+    const placeholderGuideSegment = getSourceSegment(
+      source,
+      'function PrototypePlaceholderGuide({',
+      'export default function ContentArea({',
+    );
+
+    expect(source).toContain("PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_KEY = 'axhub:placeholder-template-library:v1'");
+    expect(source).toContain('PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_TTL_MS = 2 * 60 * 60 * 1000');
+    expect(source).toContain('readPlaceholderTemplateLibraryCache');
+    expect(source).toContain('writePlaceholderTemplateLibraryCache');
+    expect(source).toContain("fetch('/api/template-library')");
+    expect(placeholderGuideSegment).toContain('setTemplateCases(cached.templates.slice(0, PLACEHOLDER_TEMPLATE_CASE_LIMIT))');
+    expect(placeholderGuideSegment).toContain('setTemplateCases(templates.slice(0, PLACEHOLDER_TEMPLATE_CASE_LIMIT))');
+    expect(source).toContain('PLACEHOLDER_TEMPLATE_CASE_LIMIT = 9');
+    expect(placeholderGuideSegment).toContain('原型案例');
+    expect(placeholderGuideSegment).toContain('grid-cols-1');
+    expect(placeholderGuideSegment).toContain('lg:grid-cols-3');
+    expect(placeholderGuideSegment).toContain('min-h-[76vh]');
+    expect(placeholderGuideSegment).toContain('pt-8');
+  });
+
+  it('adds placeholder header actions that open drawers or show hover-only guidance', () => {
+    const source = readContentAreaViewSource();
+    const propsSegment = getSourceSegment(
+      source,
+      'interface ContentAreaProps {',
+      'function ProjectContentEmptyState',
+    );
+    const placeholderGuideSegment = getSourceSegment(
+      source,
+      'function PrototypePlaceholderGuide({',
+      'export default function ContentArea({',
+    );
+
+    expect(propsSegment).toContain('onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;');
+    expect(placeholderGuideSegment).toContain('onOpenPrototypeCreateDialog');
+    expect(placeholderGuideSegment).toContain('handlePreviewTemplateCase');
+    expect(placeholderGuideSegment).toContain('renderCopyPromptAction={(template) => (');
+    expect(placeholderGuideSegment).toContain('<PromptActionButton');
+    expect(placeholderGuideSegment).toContain('type="borderless"');
+    expect(placeholderGuideSegment).toContain('onExecutePrompt={onExecutePrompt}');
+    expect(placeholderGuideSegment).toContain('handleDirectTemplateImport');
+    expect(placeholderGuideSegment).toContain('targetPrototypeName: item.name');
+    expect(placeholderGuideSegment).toContain('void onRefreshPrototypes?.();');
+    expect(placeholderGuideSegment).toContain("onOpenPrototypeCreateDialog?.({ initialTab: 'onlineImport', targetPrototypeName: item.name })");
+    expect(placeholderGuideSegment).toContain("onOpenPrototypeCreateDialog?.({ initialTab: 'upload', targetPrototypeName: item.name })");
+    expect(placeholderGuideSegment).toContain('onPreview={handlePreviewTemplateCase}');
+    expect(placeholderGuideSegment).not.toContain('onCopyPrompt={(template) => void handleCopyTemplatePrompt(template)}');
+    expect(placeholderGuideSegment).toContain('onDirectImport={(template) => void handleDirectTemplateImport(template)}');
+    expect(placeholderGuideSegment).toContain('renderTemplateCaseCard');
+    expect(placeholderGuideSegment).toContain('更多模板');
+    expect(placeholderGuideSegment).not.toContain('更多模型');
+    expect(placeholderGuideSegment).toContain('导入原型');
+    expect(placeholderGuideSegment).toContain('导入任意网页');
+    expect(placeholderGuideSegment).toContain('Axhub Make / Axure / V0 / aistudio / Stitch / Figma Make');
+    expect(placeholderGuideSegment).toContain('使用 Chrome 扩展可以采集任意网页');
+    expect(placeholderGuideSegment).toContain('cursor-default');
+    expect(placeholderGuideSegment).toContain('ExternalLink');
+    expect(placeholderGuideSegment).toContain('UploadCloud');
+    expect(placeholderGuideSegment).toContain('Globe');
+    expect(placeholderGuideSegment).not.toContain('hover:underline');
+  });
+
+  it('adds a PNG-only transparent background switch to image start settings', () => {
+    const source = readContentAreaViewSource();
+    const imageSettingsSegment = getSourceSegment(
+      source,
+      'function ImageStartSettingsPopover({',
+      'function PrototypePlaceholderGuide({',
+    );
+
+    expect(source).toContain("import { Switch } from '@/components/ui/switch';");
+    expect(source).toContain("background: 'auto'");
+    expect(imageSettingsSegment).toContain("const transparentBackgroundChecked = params.output_format === 'png' && params.background === 'transparent';");
+    expect(imageSettingsSegment).toContain("transparentBackgroundChecked ? '透明背景' : null,");
+    expect(imageSettingsSegment).toContain('aria-label="透明背景"');
+    expect(imageSettingsSegment).toContain('透明背景');
+    expect(imageSettingsSegment).toContain("onCheckedChange={(checked) => updateParam('background', checked === true ? 'transparent' : 'auto')}");
+    expect(imageSettingsSegment).toContain("disabled={!canUseTransparentBackground}");
+    expect(imageSettingsSegment).not.toContain('<span className="text-xs font-medium text-muted-foreground">审核</span>');
+    expect(imageSettingsSegment).not.toContain('moderation');
+  });
+
+  it('keeps design system and prompt optimization controls in image start settings', () => {
+    const source = readContentAreaViewSource();
+    const imageSettingsSegment = getSourceSegment(
+      source,
+      'function ImageStartSettingsPopover({',
+      'function PrototypePlaceholderGuide({',
+    );
+    const placeholderGuideSegment = getSourceSegment(
+      source,
+      'function PrototypePlaceholderGuide({',
+      'export default function ContentArea({',
+    );
+
+    expect(imageSettingsSegment).toContain('selectedThemeName,');
+    expect(imageSettingsSegment).toContain('themeLabel,');
+    expect(imageSettingsSegment).toContain('themes,');
+    expect(imageSettingsSegment).toContain('onThemeChange,');
+    expect(imageSettingsSegment).toContain("const hasSelectedTheme = selectedThemeName !== NO_PROTOTYPE_THEME_VALUE;");
+    expect(imageSettingsSegment).toContain("hasSelectedTheme ? themeLabel : null,");
+    expect(imageSettingsSegment).toContain('设计系统');
+    expect(imageSettingsSegment).toContain('<PrototypeThemeSearchSelect');
+    expect(imageSettingsSegment).toContain('themes={themes}');
+    expect(imageSettingsSegment).toContain('value={selectedThemeName}');
+    expect(imageSettingsSegment).toContain('onValueChange={onThemeChange}');
+    expect(imageSettingsSegment).toContain("const disablePromptOptimizationChecked = hasSelectedTheme || params.disable_prompt_optimization === true;");
+    expect(imageSettingsSegment).toContain('aria-label="禁止优化提示词"');
+    expect(imageSettingsSegment).toContain('禁止优化提示词');
+    expect(imageSettingsSegment).toContain("onCheckedChange={(checked) => updateParam('disable_prompt_optimization', checked === true)}");
+    expect(imageSettingsSegment).toContain('disabled={hasSelectedTheme}');
+    expect(imageSettingsSegment).toContain('className="grid grid-cols-2 gap-3"');
+    expect(imageSettingsSegment).toContain('className="col-span-2 space-y-1.5"');
+    expect(imageSettingsSegment).toContain('className="col-span-2 flex items-center gap-6"');
+    expect(imageSettingsSegment).toContain('className={`inline-flex items-center gap-2 text-xs font-medium');
+    expect(imageSettingsSegment).not.toContain('className="space-y-2 pt-1"');
+    expect(imageSettingsSegment).not.toContain('rounded-md border border-border/60 bg-muted/20 p-2');
+    expect(imageSettingsSegment).not.toContain('justify-between gap-3 rounded-sm px-1.5');
+    expect(placeholderGuideSegment).toContain('themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? \'\' : selectedTheme?.name || \'\'');
+    expect(placeholderGuideSegment).toContain('disable_prompt_optimization: imageStartParams.disable_prompt_optimization === true || selectedThemeName !== NO_PROTOTYPE_THEME_VALUE');
+    expect(placeholderGuideSegment).toContain('selectedThemeName={selectedThemeName}');
+    expect(placeholderGuideSegment).toContain('themeLabel={themeLabel}');
+    expect(placeholderGuideSegment).toContain('themes={themes}');
+    expect(placeholderGuideSegment).toContain('onThemeChange={(themeName) => {');
+  });
+
   it('uses ACP selector-sized icons for prototype start settings triggers only', () => {
     const source = readContentAreaViewSource();
 
@@ -224,6 +411,61 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain('value={selectedThemeName}');
     expect(source).toContain('onValueChange={onThemeChange}');
     expect(source).not.toContain('<span className="text-xs font-medium text-muted-foreground">设计系统</span>\n                            <Select value={selectedThemeName}');
+  });
+
+  it('keeps unsupported resource fallback metadata and open action aligned across docs and templates', () => {
+    const source = readContentAreaViewSource();
+    const unsupportedFallbackSegment = getSourceSegment(
+      source,
+      'if (!canPreviewInIframe) {',
+      '        return (\n            <div className="h-full min-h-0 bg-background">',
+    );
+
+    expect(unsupportedFallbackSegment).toContain('const fileSize = selectedMarkdownItem.fileSize;');
+    expect(unsupportedFallbackSegment).toContain("type: contentMode === 'template' ? 'templates' : 'docs'");
+    expect(unsupportedFallbackSegment).not.toContain('const fileSize = (selectedMarkdownItem as any).fileSize;');
+  });
+
+  it('passes prompt action context into placeholder template prompt cards', () => {
+    const source = readContentAreaViewSource();
+    const placeholderGuideSegment = getSourceSegment(
+      source,
+      'function PrototypePlaceholderGuide({',
+      'export default function ContentArea({',
+    );
+    const placeholderRenderSegment = getSourceSegment(
+      source,
+      '<PrototypePlaceholderGuide',
+      ') : viewMode === \'canvas\' ? (',
+    );
+    const contentAreaPropsSegment = getSourceSegment(
+      source,
+      'export default function ContentArea({',
+      '}: ContentAreaProps)',
+    );
+
+    expect(contentAreaPropsSegment).toContain('assistantVisible,');
+    expect(contentAreaPropsSegment).toContain('preferredPromptClient,');
+    expect(contentAreaPropsSegment).toContain('aiPanelMode,');
+    expect(contentAreaPropsSegment).toContain('onExecutePrompt,');
+    expect(placeholderGuideSegment).toContain('preferredPromptClient,');
+    expect(placeholderGuideSegment).toContain('assistantVisible,');
+    expect(placeholderGuideSegment).toContain('aiPanelMode,');
+    expect(placeholderGuideSegment).toContain('onExecutePrompt,');
+    expect(placeholderGuideSegment).toContain('onRefreshPrototypes,');
+    expect(placeholderGuideSegment).toContain('preferredPromptClient?: PromptClientPreference;');
+    expect(placeholderGuideSegment).toContain("aiPanelMode?: 'general-ai' | 'image-ai' | null;");
+    expect(placeholderGuideSegment).toContain('onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;');
+    expect(placeholderGuideSegment).toContain('onRefreshPrototypes?: () => Promise<ItemData[]>;');
+    expect(placeholderGuideSegment).toContain('preferredClient={preferredPromptClient ?? null}');
+    expect(placeholderGuideSegment).toContain("assistantOpen={assistantVisible === true && aiPanelMode === 'general-ai'}");
+    expect(placeholderGuideSegment).toContain('onExecutePrompt={onExecutePrompt}');
+    expect(placeholderGuideSegment).toContain('void onRefreshPrototypes?.();');
+    expect(placeholderRenderSegment).toContain('preferredPromptClient={preferredPromptClient}');
+    expect(placeholderRenderSegment).toContain('assistantVisible={assistantVisible}');
+    expect(placeholderRenderSegment).toContain('aiPanelMode={aiPanelMode}');
+    expect(placeholderRenderSegment).toContain('onExecutePrompt={onExecutePrompt}');
+    expect(placeholderRenderSegment).toContain('onRefreshPrototypes={onRefreshPrototypes}');
   });
 
   it('uses the project default design for prototype start settings until the user picks one', () => {
@@ -256,7 +498,7 @@ describe('ContentAreaView review zoom source', () => {
     );
 
     expect(source).toContain('CanvasAiGenerationRequest');
-    expect(source).toContain('onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;');
+    expect(source).toContain('onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;');
     expect(source).toContain('const handleSubmitPrototypeStartRequest = async (request: CanvasAiGenerationRequest) => {');
     expect(submitHandlerSegment).toContain("if (request.scene === 'page' && selectedItem?.name)");
     expect(submitHandlerSegment).not.toContain("if ((request.scene === 'page' || request.scene === 'design') && selectedItem?.name)");
@@ -396,7 +638,7 @@ describe('ContentAreaView review zoom source', () => {
       ") : previewLayout.single.kind === 'desktop' ? (",
     );
 
-    expect(source).toContain("import { ChevronDown, Copy, ExternalLink, FileIcon, ImageIcon, Monitor, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone } from 'lucide-react';");
+    expect(source).toContain("import { ChevronDown, Copy, ExternalLink, FileIcon, Globe, ImageIcon, Monitor, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone, UploadCloud } from 'lucide-react';");
     expect(source).toContain('quickEditActive?: boolean;');
     expect(source).toContain("onRunPrototypePanePromptAction?: (pane: 'primary' | 'secondary', action: 'copy-prompt' | 'send-to-genie') => void | Promise<boolean>;");
     expect(source).toContain('const renderSplitPromptActions = (pane:');

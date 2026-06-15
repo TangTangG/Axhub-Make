@@ -2,16 +2,21 @@ import React from 'react';
 import { Copy, Download, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 export interface TemplateLibraryCardItem {
     id: string;
     title: string;
+    slug?: string;
     sourcePath: string;
+    sourceUrl?: string;
+    coverPath?: string;
     coverUrl: string;
     description: string;
     author?: string;
     authorUrl?: string;
     previewUrl?: string;
+    extraDependencies?: string[];
     canDirectImport?: boolean;
     directImportDisabledReason?: string;
 }
@@ -24,6 +29,7 @@ interface TemplateLibraryCardProps {
     compact?: boolean;
     onPreview?: (template: TemplateLibraryCardItem) => void;
     onCopyPrompt?: (template: TemplateLibraryCardItem) => void;
+    renderCopyPromptAction?: (template: TemplateLibraryCardItem) => React.ReactNode;
     onDirectImport?: (template: TemplateLibraryCardItem) => void;
 }
 
@@ -35,12 +41,20 @@ export default function TemplateLibraryCard({
     compact = false,
     onPreview,
     onCopyPrompt,
+    renderCopyPromptAction,
     onDirectImport,
 }: TemplateLibraryCardProps) {
+    const [coverLoadFailed, setCoverLoadFailed] = React.useState(false);
     const authorLabel = String(template.author || '').trim();
     const previewHint = template.previewUrl ? '点击打开在线预览' : '该模板暂不支持在线预览';
-    const canCopyPrompt = Boolean(onCopyPrompt);
+    const canCopyPrompt = Boolean(onCopyPrompt || renderCopyPromptAction);
     const canDirectImport = Boolean(onDirectImport);
+    const metaTitle = authorLabel ? `作者：${authorLabel}` : template.sourcePath;
+    const shouldRenderCoverImage = Boolean(template.coverUrl) && !coverLoadFailed;
+
+    React.useEffect(() => {
+        setCoverLoadFailed(false);
+    }, [template.coverUrl]);
 
     return (
         <div
@@ -48,7 +62,7 @@ export default function TemplateLibraryCard({
             tabIndex={0}
             title={previewHint}
             aria-label={`${template.title}，${previewHint}`}
-            className="overflow-hidden rounded-md border bg-background text-left transition hover:border-foreground/25 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="cursor-pointer overflow-hidden rounded-md border bg-background text-left transition hover:border-foreground/25 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             onClick={() => onPreview?.(template)}
             onKeyDown={(event) => {
                 if (event.currentTarget !== event.target) {
@@ -61,19 +75,24 @@ export default function TemplateLibraryCard({
             }}
         >
             <div className={compact ? 'grid grid-cols-1 gap-3 p-3' : 'grid grid-cols-[160px_minmax(0,1fr)] gap-4 p-3'}>
-                <div className={compact ? 'aspect-[10/7] overflow-hidden rounded border bg-muted' : 'h-[112px] overflow-hidden rounded border bg-muted'}>
-                    <img
-                        src={template.coverUrl}
-                        alt={template.title}
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                    />
+                <div className={compact ? 'aspect-[10/7] overflow-hidden rounded border bg-[#edf1f5]' : 'h-[112px] overflow-hidden rounded border bg-[#edf1f5]'}>
+                    {shouldRenderCoverImage ? (
+                        <img
+                            src={template.coverUrl}
+                            alt={template.title}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            onError={() => setCoverLoadFailed(true)}
+                        />
+                    ) : null}
                 </div>
                 <div className="grid min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
                     <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                            <div className="truncate text-sm font-medium">{template.title}</div>
-                            <div className="mt-1 truncate text-[12px] text-muted-foreground">
+                            <div className={cn('truncate font-medium text-foreground', compact ? 'text-[15px]' : 'text-sm')} title={template.title}>
+                                {template.title}
+                            </div>
+                            <div className="mt-1 min-w-0 truncate text-[12px] text-muted-foreground" title={metaTitle}>
                                 {authorLabel ? (
                                     template.authorUrl ? (
                                         <a
@@ -82,6 +101,7 @@ export default function TemplateLibraryCard({
                                             rel="noreferrer"
                                             className="hover:text-foreground hover:underline"
                                             onClick={(event) => event.stopPropagation()}
+                                            onKeyDown={(event) => event.stopPropagation()}
                                         >
                                             作者：{authorLabel}
                                         </a>
@@ -94,19 +114,26 @@ export default function TemplateLibraryCard({
                             </div>
                         </div>
                     </div>
-                    <p className="line-clamp-2 break-words text-[12px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">{template.description}</p>
+                    <p className={cn(
+                        'break-words text-[12px] leading-5 text-muted-foreground [overflow-wrap:anywhere]',
+                        compact ? 'line-clamp-2 min-h-10' : 'line-clamp-2',
+                    )} title={template.description}>
+                        {template.description}
+                    </p>
                     {(canCopyPrompt || canDirectImport) ? (
                         <div
-                            className="flex flex-wrap gap-1.5"
+                            className="flex min-w-0 flex-wrap gap-1.5"
                             onClick={(event) => event.stopPropagation()}
                             onKeyDown={(event) => event.stopPropagation()}
                         >
-                            {canCopyPrompt ? (
+                            {renderCopyPromptAction ? (
+                                renderCopyPromptAction(template)
+                            ) : canCopyPrompt ? (
                                 <Button
                                     type="button"
                                     variant="ghost"
                                     size="sm"
-                                    className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                    className="h-7 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
                                     onClick={(event) => {
                                         event.stopPropagation();
                                         onCopyPrompt?.(template);
@@ -126,7 +153,7 @@ export default function TemplateLibraryCard({
                                                     type="button"
                                                     variant="ghost"
                                                     size="sm"
-                                                    className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                                    className="h-7 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
                                                     onClick={(event) => {
                                                         event.stopPropagation();
                                                         onDirectImport?.(template);

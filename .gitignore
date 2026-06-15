@@ -13,6 +13,8 @@ admin/
 **/admin/
 coverage/
 **/coverage/
+test-results/
+**/test-results/
 *.tsbuildinfo
 vite.config.*.timestamp-*
 

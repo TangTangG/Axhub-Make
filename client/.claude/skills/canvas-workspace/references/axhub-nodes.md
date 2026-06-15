@@ -9,7 +9,7 @@ Axhub 画布节点本质上是标准 Excalidraw 元素，Axhub 扩展信息存�
 | `customData.title` | 面向用户的节点标题 |
 | `customData.previewUrl` | 预览模式中渲染的 URL |
 | `customData.openUrl` | 节点操作中打开的 URL |
-| `customData.previewKind` | 渲染类型，例如 `web`、`doc`、`image`、`none`、`prototype-generator` |
+| `customData.previewKind` | 渲染类型，例如 `web`、`doc`、`image`、`none` |
 | `customData.resourceType` | 资源类型：`prototype`、`doc` 或 `theme` |
 | `customData.resourceId` | 项目 metadata 中的资源 id 或名称 |
 | `customData.embedViewMode` | `link` 表示紧凑链接卡片，`preview` 表示渲染嵌入预览 |
@@ -44,16 +44,6 @@ Axhub 画布节点本质上是标准 Excalidraw 元素，Axhub 扩展信息存�
 }
 ```
 
-由 AI 原型生成能力产出的原型节点还可能包含：
-
-```json
-{
-  "generatedBy": "axhub-prototype-generator",
-  "sourceTaskId": "<task-id>",
-  "prompt": "<prompt>"
-}
-```
-
 ### 文档节点
 
 通过 `customData.type: "axhub-doc"` 或 `customData.resourceType: "doc"` 识别。
@@ -81,70 +71,6 @@ Axhub 画布节点本质上是标准 Excalidraw 元素，Axhub 扩展信息存�
 通过 `customData.resourceType: "theme"` 或 `customData.type: "axhub-theme"` 识别。
 
 主题节点与原型/文档节点使用相同的 `embeddable` 结构，`resourceType` 为 `theme`，`previewKind` 通常为 `web` 或 `none`。
-
-## AI 生成节点
-
-当前画布不暴露 AI 图片节点；需要图片时使用普通 Excalidraw 图片元素（`type: "image"`），图片数据保存在 `files[fileId]`。AI 原型生成节点仍是图片占位元素。
-
-<!--
-已暂时停用：AI 图片节点。
-
-### AI 图片生成节点
-
-```json
-{
-  "type": "image",
-  "fileId": "axhub-ai-image-placeholder-v2",
-  "customData": {
-    "type": "axhub-ai-image-generator",
-    "title": "AI 生成图片",
-    "previewKind": "ai-image-generator"
-  }
-}
-```
-
-### AI 图片结果节点
-
-```json
-{
-  "type": "image",
-  "fileId": "<image-id>",
-  "customData": {
-    "type": "axhub-ai-image",
-    "generatedBy": "axhub-ai-image",
-    "sourceTaskId": "<task-id>",
-    "prompt": "<prompt>",
-    "previewKind": "image"
-  }
-}
-```
-
-多张生成图片可能共享同一个 `groupIds` 值。
--->
-
-### AI 原型生成节点
-
-```json
-{
-  "type": "image",
-  "fileId": "axhub-prototype-generator-placeholder-v1",
-  "customData": {
-    "type": "axhub-prototype-generator",
-    "title": "AI 生成原型",
-    "previewKind": "prototype-generator"
-  }
-}
-```
-
-生成完成后，占位节点会被替换为原型嵌入节点，并带有 `generatedBy: "axhub-prototype-generator"`。
-
-AI 生成原型替换节点的推荐尺寸：
-
-- 不要把网页内部布局做小；页面代码仍按正常浏览器视口设计。
-- `previewUrl`、`openUrl`、`link` 使用客户端原型运行时地址，例如 `/prototypes/<prototypeId>` 或带 hash/page 的同源 runtime URL；不要使用 Make 管理端首页 deep link，例如 `/?p=...` 或 `/?resourceType=prototype...`。
-- 为了避免画布被完整桌面尺寸占满，推荐生成节点可视尺寸为 `720 x 450`。
-- 同时设置 `customData.embedSizePreset: "desktop"`、`customData.embedContentScale: 0.5`、`customData.storedPreviewSize: { "width": 720, "height": 450 }`。这样画布显示为 720x450，iframe 与截图按 1440x900 视口渲染。
-- 新生成的 prototype embeddable 可设置 `customData.captureScreenshotOnMount: true`，让宿主首次渲染后自动捕获预览截图。截图成功后宿主会清除此字段并写入 `screenshotUrl`，不要手写 `screenshotUrl`。
 
 ## Drawio 节点
 

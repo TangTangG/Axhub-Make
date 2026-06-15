@@ -7,6 +7,26 @@ function readDialogSource() {
 }
 
 describe('CreateThemeDialogView theme import upload source', () => {
+    it('only exposes theme import tabs and removes legacy theme prompt creation UI', () => {
+        const source = readDialogSource();
+
+        expect(source).toContain("type ThemeDialogTab = 'import' | 'onlineSelect';");
+        expect(source).toContain("initialTab?: ThemeDialogTab;");
+        expect(source).toContain("initialTab = 'import'");
+        expect(source).toContain("useState<ThemeDialogTab>('import')");
+        expect(source).toContain("value === 'import' || value === 'onlineSelect'");
+        expect(source).not.toContain("value === 'ai'");
+        expect(source).not.toContain("value === 'prompt'");
+        expect(source).not.toContain('AiCreateGuideContent');
+        expect(source).not.toContain('MultiSelect');
+        expect(source).not.toContain('selectedDocs');
+        expect(source).not.toContain('selectedReferencePages');
+        expect(source).not.toContain('buildCreateThemePrompt');
+        expect(source).not.toContain('AI 新建');
+        expect(source).not.toContain('生成 Prompt');
+        expect(source).not.toContain('新建主题 / 导入主题');
+    });
+
     it('includes optional previewUrl in online theme library item type', () => {
         const source = readDialogSource();
         const typeMatch = source.match(/interface ThemeLibraryItem[\s\S]*?\n}/);
@@ -57,6 +77,7 @@ describe('CreateThemeDialogView theme import upload source', () => {
         expect(source).toContain('const directImportTooltip = disabledReason');
         expect(source).toContain('已有设计系统正在导入，请稍候');
         expect(source).toContain('<TooltipProvider>');
+        expect(source).toContain('type="borderless"');
         expect(source).not.toContain("title={disabledReason || undefined}");
         expect(source).not.toContain('需 AI 处理');
     });

@@ -29,19 +29,19 @@ describe('annotation demo prototype', () => {
     expect(indexSource).toContain('annotation-guide-content-inner');
     expect(indexSource).toContain('annotation-guide-footer');
     expect(indexSource).toContain('原型即 PRD');
-    expect(indexSource).toContain('我们的目的');
+    expect(indexSource).toContain('核心判断');
     expect(indexSource).toContain('原型 + PRD');
     expect(indexSource).toContain('annotation-guide-section-body');
     expect(indexSource).toContain('annotation-guide-comparison-table');
     expect(indexSource).toContain('字数');
     expect(indexSource).toContain('阅读时长');
-    expect(indexSource).toContain("metrics: { wordCount: '约 860 字', readingTime: '约 3 分钟' }");
+    expect(indexSource).toContain("metrics: { wordCount: '约 420 字', readingTime: '约 1 分钟' }");
     expect(indexSource).toContain("metrics: { wordCount: '约 620 字', readingTime: '约 2 分钟' }");
     expect(indexSource).not.toContain('const chapterMetrics =');
     expect(indexSource).toContain([
       '<th scope="col">维度</th>',
-      '                <th scope="col">原型即 PRD</th>',
-      '                <th scope="col">原型 + PRD</th>',
+      '                                <th scope="col">原型即 PRD</th>',
+      '                                <th scope="col">原型 + PRD</th>',
     ].join('\n'));
     expect(indexSource).toContain('<th scope="col">原型即 PRD</th>');
     expect(indexSource).toContain('<td className="annotation-guide-comparison-prototype">{row.prototypeOnly}</td>');

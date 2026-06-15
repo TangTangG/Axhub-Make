@@ -403,7 +403,7 @@ describe('genieContext helpers', () => {
     ]);
   });
 
-  it('builds stable assistant comments from canvas annotations and filters empty notes', () => {
+  it('builds stable assistant comments from annotated canvas elements and filters empty notes', () => {
     const comments = buildAssistantCanvasCommentsExtension([
       {
         elementId: 'el-1',

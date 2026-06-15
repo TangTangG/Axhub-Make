@@ -65,6 +65,40 @@ describe('UiReviewPanel source', () => {
     expect(promptSource).toContain("fallbackPath: `src/prototypes/<prototype-id>/.spec/${PROTOTYPE_REVIEW_FILE_NAME}`");
     expect(promptSource).toContain('rules/ui-review-guide.md');
     expect(promptSource).toContain('rules/prototype-review-guide.md');
+    expect(promptSource).toContain('按 rules/ui-review-guide.md 的 Impeccable 参考流程做评审，不要调用 /impeccable 命令。');
+    expect(promptSource).toContain('按 rules/prototype-review-guide.md 的需求评审流程做评审，不要引用 Impeccable。');
     expect(promptSource).toContain('输出 Markdown，不要输出 JSON，不要写 .impeccable 产物作为交付。');
+    expect(promptSource).not.toContain('使用 /impeccable critique 的评审方法');
+  });
+
+  it('keeps the header copy entry as an icon button and uses the shared prompt action in the empty state', () => {
+    const source = readUiReviewPanelSource();
+    const headerSource = source.slice(
+      source.indexOf('className="flex shrink-0 items-center gap-1"'),
+      source.indexOf('aria-label="页面缩放模式"'),
+    );
+    const emptyStateSource = source.slice(
+      source.indexOf('暂无评审内容'),
+      source.indexOf('</div>\n                    </div>', source.indexOf('暂无评审内容')),
+    );
+
+    expect(source).toContain("import PromptActionButton from '../PromptActionButton';");
+    expect(source).toContain('reviewPrompt: string;');
+    expect(source).toContain('reviewDocumentPath?: string;');
+    expect(source).toContain('assistantOpen?: boolean;');
+    expect(source).toContain('onExecutePrompt?:');
+    expect(headerSource).toContain('variant="ghost"');
+    expect(headerSource).toContain('size="icon-xs"');
+    expect(headerSource).toContain('aria-label="复制提示词"');
+    expect(headerSource).toContain('title="复制提示词"');
+    expect(headerSource).toContain('onClick={() => { void onCopyPrompt?.(); }}');
+    expect(headerSource).not.toContain('<PromptActionButton');
+    expect(emptyStateSource).toContain('<PromptActionButton');
+    expect(emptyStateSource).toContain('type="primary"');
+    expect(emptyStateSource).toContain('scene={`prototype-review-${activeKind}`}');
+    expect(emptyStateSource).toContain('buildPrompt={() => reviewPrompt}');
+    expect(emptyStateSource).toContain('getTargetPath={() => reviewDocumentPath || null}');
+    expect(emptyStateSource).toContain('assistantOpen={assistantOpen}');
+    expect(emptyStateSource).toContain('onExecutePrompt={onExecutePrompt}');
   });
 });

@@ -38,6 +38,18 @@ const DESIGN_QUICK_PROMPTS = [
     description: '保留布局，把图标和图片转为灰色占位',
     prompt: '把该 UI 设计稿中的图标和图片替换为同尺寸灰色占位图，保留文字、布局和其它视觉信息，不要整张图片变灰，使用工具生成一张新图片',
   },
+  {
+    id: 'generate-prototype',
+    label: '生成原型',
+    description: '按图片还原成可运行原型页面',
+    prompt: '还原这张图片为原型页面，保留布局、文字、视觉层级和主要交互。',
+  },
+  {
+    id: 'generate-responsive',
+    label: '生成响应式',
+    description: '补齐另外两个端的 UI 图片',
+    prompt: '识别当前图片所属端，在 PC、平板、手机中补齐另外两个端的 UI 设计图，保持风格一致并生成新图片。',
+  },
 ] as const satisfies readonly CanvasAiQuickPrompt[];
 
 const DOCUMENT_QUICK_PROMPTS = [
@@ -152,10 +164,10 @@ export function getCanvasAiPrototypeStartQuickPrompts(scene: CanvasAiScene | Leg
 export function getCanvasAiPrototypeStartSystemPrompt(scene: CanvasAiScene | LegacyCanvasAiSceneAlias): string {
   const normalizedScene = getCanvasAiSceneDefinition(scene).id;
   if (normalizedScene === 'design') {
-    return '请生成图片。';
+    return '使用内置工具生成图片；若无相关工具，请停止并告知用户。生成后请将结果更新到当前画布。';
   }
   if (normalizedScene === 'document') {
-    return '请生成 Markdown .md 文档或 Draw.io .drawio.svg 图表。';
+    return '请将结果更新到当前画布。';
   }
   return '请生成原型页面。';
 }

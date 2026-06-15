@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { copyToClipboard, writeFigmaOfficialClipboardPayload } from './clipboard';
+import { copyImageDataUrlToClipboard, copyToClipboard, writeFigmaOfficialClipboardPayload } from './clipboard';
 
 const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
 const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -164,5 +164,48 @@ describe('copyToClipboard', () => {
         expect(documentMock.execCommand).toHaveBeenCalledWith('copy');
         expect(clipboardData.get('text/html')).toContain('<!--(figh2d)');
         expect(clipboardData.get('text/plain')).toBe('{"title":"首页"}');
+    });
+});
+
+describe('copyImageDataUrlToClipboard', () => {
+    it('writes the original image data URL as an image clipboard item', async () => {
+        const write = vi.fn().mockResolvedValue(undefined);
+        mockClipboardItem();
+        mockClipboardEnvironment({ write });
+
+        await copyImageDataUrlToClipboard('data:image/png;base64,aGVsbG8=');
+
+        expect(write).toHaveBeenCalledTimes(1);
+        const [items] = write.mock.calls[0];
+        expect(items).toHaveLength(1);
+        const clipboardItem = items[0] as { data: Record<string, Blob> };
+        expect(Object.keys(clipboardItem.data)).toEqual(['image/png']);
+        const blob = clipboardItem.data['image/png'];
+        expect(blob.type).toBe('image/png');
+        expect(await blob.text()).toBe('hello');
+    });
+
+    it('rejects non-image data URLs before writing to the clipboard', async () => {
+        const write = vi.fn().mockResolvedValue(undefined);
+        mockClipboardItem();
+        mockClipboardEnvironment({ write });
+
+        await expect(copyImageDataUrlToClipboard('data:text/plain;base64,aGVsbG8=')).rejects.toThrow(/图片数据/);
+
+        expect(write).not.toHaveBeenCalled();
+    });
+
+    it('keeps image data URL parameters such as SVG charset while copying', async () => {
+        const write = vi.fn().mockResolvedValue(undefined);
+        mockClipboardItem();
+        mockClipboardEnvironment({ write });
+
+        await copyImageDataUrlToClipboard('data:image/svg+xml;charset=utf-8,%3Csvg%2F%3E');
+
+        const [items] = write.mock.calls[0];
+        const clipboardItem = items[0] as { data: Record<string, Blob> };
+        const blob = clipboardItem.data['image/svg+xml'];
+        expect(blob.type).toBe('image/svg+xml');
+        expect(await blob.text()).toBe('<svg/>');
     });
 });

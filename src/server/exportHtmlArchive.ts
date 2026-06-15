@@ -321,6 +321,7 @@ export interface ExportHtmlOptions {
   displayName: string;
   group: string;
   includeSource?: boolean;
+  mediaRoot?: string;
 }
 
 export interface ExportHtmlStaticFile {
@@ -472,16 +473,53 @@ function collectSourceStaticFiles(projectRoot: string, sourceFile: string): Expo
     });
 }
 
+function resolveMediaExportDir(projectRoot: string, mediaRoot?: string): string {
+  const resolvedProjectRoot = path.resolve(projectRoot);
+  const mediaDir = mediaRoot ? path.resolve(mediaRoot) : path.join(resolvedProjectRoot, 'src', 'media');
+  if (!isPathInside(resolvedProjectRoot, mediaDir)) {
+    throw new Error('媒体资源目录不在项目根目录内，无法导出媒体资源');
+  }
+  return mediaDir;
+}
+
+function toOfflineMediaPath(mediaPath: string): string {
+  const normalizedPath = mediaPath
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => {
+      try {
+        return encodeURIComponent(decodeURIComponent(segment));
+      } catch {
+        return encodeURIComponent(segment);
+      }
+    })
+    .join('/');
+  return normalizedPath ? `./media/${normalizedPath}` : './media';
+}
+
+function rewriteMediaUrlsForOffline(text: string): string {
+  return text
+    .replace(/(^|["'(\s=])\/api\/media\/file\/([^\s"'`)<>()]+)/gu, (_match, prefix: string, mediaPath: string) => (
+      `${prefix}${toOfflineMediaPath(mediaPath)}`
+    ))
+    .replace(/(^|["'(\s=])\/media\/([^\s"'`)<>()]+)/gu, (_match, prefix: string, mediaPath: string) => (
+      `${prefix}${toOfflineMediaPath(mediaPath)}`
+    ));
+}
+
 export async function buildExportHtmlStaticFiles(options: ExportHtmlOptions): Promise<ExportHtmlStaticFile[]> {
   const { projectRoot, sourceFile, displayName, entryName, group } = options;
   console.log(`\n📦 [导出 HTML] 开始构建: ${entryName}`);
 
   const buildResult = await buildOnDemand(projectRoot, sourceFile);
-  console.log(`[导出 HTML] 构建完成，JS ${buildResult.jsCode.length} bytes, CSS ${buildResult.cssText.length} bytes`);
+  const jsCode = rewriteMediaUrlsForOffline(buildResult.jsCode || '');
+  const builtCssText = rewriteMediaUrlsForOffline(buildResult.cssText || '');
+  console.log(`[导出 HTML] 构建完成，JS ${jsCode.length} bytes, CSS ${builtCssText.length} bytes`);
 
   const reactUmdPath = resolveNodeModuleFile(projectRoot, path.join('react', 'umd', OFFLINE_REACT_FILE));
   const reactDomUmdPath = resolveNodeModuleFile(projectRoot, path.join('react-dom', 'umd', OFFLINE_REACT_DOM_FILE));
-  const extractedCss = extractLargeCssDataUris(buildResult.cssText || '');
+  const extractedCss = extractLargeCssDataUris(builtCssText);
   const cssText = extractedCss.cssText;
   const shouldExternalizeCss = Buffer.byteLength(cssText, 'utf8') > INLINE_HTML_CSS_MAX_BYTES;
 
@@ -498,7 +536,7 @@ export async function buildExportHtmlStaticFiles(options: ExportHtmlOptions): Pr
 
   const files: ExportHtmlStaticFile[] = [
     toStaticFile('index.html', 'text/html; charset=utf-8', htmlContent),
-    toStaticFile('index.js', 'application/javascript; charset=utf-8', buildResult.jsCode),
+    toStaticFile('index.js', 'application/javascript; charset=utf-8', jsCode),
     toStaticFile(`assets/${OFFLINE_REACT_FILE}`, 'application/javascript; charset=utf-8', fs.readFileSync(reactUmdPath)),
     toStaticFile(`assets/${OFFLINE_REACT_DOM_FILE}`, 'application/javascript; charset=utf-8', fs.readFileSync(reactDomUmdPath)),
     toStaticFile(`assets/${OFFLINE_BOOTSTRAP_FILE}`, 'application/javascript; charset=utf-8', getOfflineBootstrapScript()),
@@ -508,7 +546,7 @@ export async function buildExportHtmlStaticFiles(options: ExportHtmlOptions): Pr
   }
   files.push(...extractedCss.files);
 
-  const mediaDir = path.join(projectRoot, 'src', 'media');
+  const mediaDir = resolveMediaExportDir(projectRoot, options.mediaRoot);
   for (const relativePath of listFilesRecursive(mediaDir)) {
     const normalizedPath = relativePath.split(path.sep).join('/');
     files.push(toStaticFile(`media/${normalizedPath}`, getContentType(normalizedPath), fs.readFileSync(path.join(mediaDir, relativePath))));

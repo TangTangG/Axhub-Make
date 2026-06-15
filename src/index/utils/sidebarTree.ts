@@ -21,6 +21,16 @@ function stripFinalPathExtension(value: string): string {
     return value.replace(/\/?$/u, '').replace(/\.[^./]+$/u, '');
 }
 
+function getDocsResourcePath(value: string): string {
+    const normalized = normalizeTreeKey(value);
+    return normalized.startsWith('docs/') ? normalized.slice('docs/'.length) : normalized;
+}
+
+function isIgnoredDocsResourcePath(value: string): boolean {
+    const normalized = getDocsResourcePath(value).toLowerCase();
+    return !normalized || normalized === 'readme' || normalized === 'readme.md';
+}
+
 function toGeneratedTitle(value: string): string {
     const name = value.split('/').pop() || value;
     return name
@@ -102,6 +112,9 @@ export function createSidebarTreeItemLookup(tab: SidebarTreeTab, items: ItemData
         if (!itemName) {
             continue;
         }
+        if (tab === 'docs' && isIgnoredDocsResourcePath(itemName)) {
+            continue;
+        }
         const canonicalKey = `${tab}/${itemName}`;
         const entry = { item, canonicalKey };
         addLookupEntry(lookup, canonicalKey, entry);
@@ -133,7 +146,7 @@ function buildDocsFileUrl(name: string): string {
 
 function createFallbackFilesystemDocItem(node: SidebarTreeNode, itemKey: string): ItemData | null {
     const nodePath = normalizeTreeKey(node.path || getItemNameFromKey('docs', itemKey));
-    if (!nodePath) {
+    if (isIgnoredDocsResourcePath(nodePath)) {
         return null;
     }
     const previewUrl = buildDocsFileUrl(nodePath);
@@ -217,7 +230,7 @@ export function removeDocsSidebarTreeItem(tree: SidebarTreeNode[], itemName: str
 
 function createFilesystemDocNode(node: SidebarTreeNode, itemKey: string, title: string): SidebarTreeNode | null {
     const nodePath = normalizeTreeKey(node.path || getItemNameFromKey('docs', itemKey));
-    if (!nodePath) {
+    if (isIgnoredDocsResourcePath(nodePath)) {
         return null;
     }
 
@@ -302,11 +315,13 @@ function isConsumedItem(tab: SidebarTreeTab, itemKey: string, consumedKeys: Set<
 }
 
 export function buildDefaultTree(tab: SidebarTreeTab, items: ItemData[]): SidebarTreeNode[] {
-    return items.map((item) => createItemNode(tab, item));
+    return items
+        .filter((item) => tab !== 'docs' || !isIgnoredDocsResourcePath(item.name))
+        .map((item) => createItemNode(tab, item));
 }
 
 export function sanitizeSidebarTree(tab: SidebarTreeTab, tree: SidebarTreeNode[], items: ItemData[]): SidebarTreeNode[] {
-    if (items.length === 0 && tree.length > 0) {
+    if (tab !== 'docs' && items.length === 0 && tree.length > 0) {
         return tree;
     }
 
@@ -377,6 +392,7 @@ export function sanitizeSidebarTree(tab: SidebarTreeTab, tree: SidebarTreeNode[]
     }
 
     const missingNodes = items
+        .filter((item) => tab !== 'docs' || !isIgnoredDocsResourcePath(item.name))
         .filter((item) => !isConsumedItem(tab, `${tab}/${normalizeTreeKey(item.name)}`, consumedKeys))
         .map((item) => createItemNode(tab, item));
 

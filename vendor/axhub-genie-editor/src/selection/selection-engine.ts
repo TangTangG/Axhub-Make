@@ -17,6 +17,7 @@
  */
 
 import { Disposer } from '../utils/disposables';
+import { getAxhubAnnotationShadowHitElementsAtPoint } from '../utils/annotation-shadow-hit-test';
 
 // =============================================================================
 // Types
@@ -205,6 +206,9 @@ function getParentElementOrHost(element: Element): Element | null {
  */
 function getHitElementsAtPoint(x: number, y: number): Element[] {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+
+  const annotationHit = getAxhubAnnotationShadowHitElementsAtPoint(x, y);
+  if (annotationHit.length > 0) return annotationHit;
 
   try {
     if (typeof document.elementsFromPoint === 'function') {
@@ -560,7 +564,9 @@ export function createSelectionEngine(options: SelectionEngineOptions): Selectio
    * Get all scored candidates at a point
    */
   function getCandidatesAtPoint(x: number, y: number): SelectionCandidate[] {
-    const hit = getHitElementsAtPoint(x, y);
+    const annotationHit = getAxhubAnnotationShadowHitElementsAtPoint(x, y);
+    const isAnnotationShadowHit = annotationHit.length > 0;
+    const hit = isAnnotationShadowHit ? annotationHit : getHitElementsAtPoint(x, y);
     if (hit.length === 0) return [];
 
     // Collect candidates with metadata
@@ -581,6 +587,7 @@ export function createSelectionEngine(options: SelectionEngineOptions): Selectio
     for (let i = 0; i < limit; i++) {
       const el = hit[i];
       addCandidate(el, { hitOrder: i, depthFromHit: 0 });
+      if (isAnnotationShadowHit) continue;
 
       // Traverse ancestors
       let current: Element | null = el;
@@ -762,6 +769,13 @@ export function createSelectionEngine(options: SelectionEngineOptions): Selectio
   function findBestTargetFromEvent(event: Event, modifiers: Modifiers): Element | null {
     const pathElements = getComposedPathElements(event);
     const point = extractClientPoint(event);
+    const annotationHitElements = point
+      ? getAxhubAnnotationShadowHitElementsAtPoint(point.x, point.y)
+      : [];
+
+    if (annotationHitElements.length > 0 && point) {
+      return findBestTarget(point.x, point.y, modifiers);
+    }
 
     // Ctrl/Cmd + Click: drill-in to innermost visible element
     // Takes precedence over Alt (if both pressed, drill-in wins)

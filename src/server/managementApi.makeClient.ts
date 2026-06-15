@@ -13,6 +13,7 @@ import { readJsonBody, sendJson } from './http.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import {
   applyMakeClientUpdate,
+  copyMakeClientProject,
   createBlankMakeClientProject,
   ensureMakeClientDevServer,
   getMakeClientUpdateStatus,
@@ -176,6 +177,53 @@ export function handleMakeClientProjectApi(
   }
 
   const { projectId, rest, project } = projectRoute;
+
+  if (rest === 'make-client/copy' && req.method === 'POST') {
+    readJsonBody(req).then(async (body) => {
+      const parentRoot = String(body?.parentRoot || '').trim();
+      const folderName = String(body?.folderName || '').trim();
+      if (!parentRoot || !folderName) {
+        sendJson(res, {
+          error: 'Missing parentRoot or folderName',
+          code: 'INVALID_MAKE_PROJECT_FOLDER_NAME',
+        }, { status: 400 });
+        return;
+      }
+      const result = await copyMakeClientProject({
+        sourceProjectRoot: project.root,
+        parentRoot,
+        folderName,
+        projectName: typeof body?.projectName === 'string' ? body.projectName : undefined,
+      }, {
+        adminServerInfo: options.serverInfo,
+        serverInfoHomeDir: options.serverInfoHomeDir,
+        diagnosticLog: options.diagnosticLog,
+      });
+      const copiedProject = handlers.addOrUpdateMakeClientRegistryProject({
+        id: result.marker.project.id,
+        name: result.marker.project.name,
+        root: result.projectRoot,
+        metadataPath: getProjectMetadataPath(result.projectRoot),
+      });
+      registry.setActiveProject(copiedProject.id);
+      sendJson(res, {
+        success: true,
+        phase: 'ready',
+        project: handlers.toProjectEntry(copiedProject),
+        marker: result.marker,
+        runtime: result.dev.runtime,
+        progress: result.progress,
+        copiedDependencies: result.copiedDependencies,
+        installMethod: result.installMethod,
+      }, { status: 201 });
+    }).catch((error: any) => {
+      sendJson(res, makeClientErrorPayload(error, {
+        projectId,
+        sourceProjectRoot: project.root,
+      }), { status: Number(error?.status || 500) });
+    });
+    return true;
+  }
 
   if (rest === 'make-client/update/status' && req.method === 'GET') {
     getMakeClientUpdateStatus(projectId, project.root)

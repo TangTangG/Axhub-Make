@@ -9,6 +9,7 @@ import { unzipSync } from 'fflate';
 import {
   DEFAULT_MAKE_CLIENT_REPOSITORY,
   fetchHealth,
+  getProjectMetadataPath,
   getRuntimeServerInfoPath,
   isMakeStateWritePermissionError,
   isProcessAlive,
@@ -85,6 +86,12 @@ export interface MakeClientDevResult {
   reused: boolean;
   phase: MakeClientPhase;
   runtime: AxhubServerInfo;
+}
+
+type MakeClientDependencyInstallMethod = 'skipped' | 'pnpm' | 'npm';
+
+interface MakeClientDevInternalResult extends MakeClientDevResult {
+  installMethod: MakeClientDependencyInstallMethod;
 }
 
 export interface MakeClientDevStatus {
@@ -238,6 +245,21 @@ const TEMPLATE_COPY_ALLOWED_AXHUB_MAKE_FILES = new Set([
   '.axhub/make/axhub.config.json',
   '.axhub/make/README.md',
   '.axhub/make/sidebar-tree.json',
+]);
+const PROJECT_COPY_IGNORED_NAMES = new Set([
+  '.git',
+  'dist',
+  '.vite',
+  '.cache',
+  '.local',
+  'coverage',
+  'tmp',
+  'temp',
+]);
+const PROJECT_COPY_IGNORED_FILES = new Set([
+  '.DS_Store',
+  '.admin-server-info.json',
+  '.dev-server-info.json',
 ]);
 
 export interface MakeClientTemplateSource {
@@ -459,6 +481,106 @@ function copyMakeClientTemplateDirectory(sourceRoot: string, targetRoot: string)
       { status: 500, phase: 'template', details: { templateRoot: sourceRoot, targetRoot } },
     );
   }
+}
+
+function shouldSkipProjectCopyEntry(entryName: string): boolean {
+  return entryName === 'node_modules'
+    || PROJECT_COPY_IGNORED_NAMES.has(entryName)
+    || PROJECT_COPY_IGNORED_FILES.has(entryName)
+    || entryName.endsWith('.tsbuildinfo');
+}
+
+function copyFileSystemEntry(sourcePath: string, targetPath: string): void {
+  fs.cpSync(sourcePath, targetPath, {
+    recursive: true,
+    force: false,
+    errorOnExist: true,
+    dereference: false,
+  });
+}
+
+function copyMakeClientProjectDirectory(sourceRoot: string, targetRoot: string): { copiedNodeModules: boolean } {
+  fs.mkdirSync(targetRoot, { recursive: true });
+  for (const entry of fs.readdirSync(sourceRoot, { withFileTypes: true })) {
+    if (shouldSkipProjectCopyEntry(entry.name)) {
+      continue;
+    }
+    copyFileSystemEntry(path.join(sourceRoot, entry.name), path.join(targetRoot, entry.name));
+  }
+
+  const sourceNodeModules = path.join(sourceRoot, 'node_modules');
+  const targetNodeModules = path.join(targetRoot, 'node_modules');
+  if (!hasInstalledMakeClientDependencies(sourceRoot) || !fs.existsSync(sourceNodeModules)) {
+    return { copiedNodeModules: false };
+  }
+  try {
+    copyFileSystemEntry(sourceNodeModules, targetNodeModules);
+    return { copiedNodeModules: true };
+  } catch {
+    fs.rmSync(targetNodeModules, { recursive: true, force: true });
+    return { copiedNodeModules: false };
+  }
+}
+
+function rewriteCopiedAbsolutePath(value: string, sourceRoot: string, targetRoot: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/iu.test(value)) {
+    return value;
+  }
+  const normalized = value.replace(/\\/gu, path.sep);
+  if (!path.isAbsolute(normalized)) {
+    return value;
+  }
+  const resolved = path.resolve(normalized);
+  if (!isInsideRoot(sourceRoot, resolved)) {
+    return value;
+  }
+  return path.join(targetRoot, path.relative(sourceRoot, resolved));
+}
+
+function rewriteCopiedMetadataValue(value: unknown, sourceRoot: string, targetRoot: string): unknown {
+  if (typeof value === 'string') {
+    return rewriteCopiedAbsolutePath(value, sourceRoot, targetRoot);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteCopiedMetadataValue(item, sourceRoot, targetRoot));
+  }
+  if (value && typeof value === 'object') {
+    const next: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      next[key] = rewriteCopiedMetadataValue(item, sourceRoot, targetRoot);
+    }
+    return next;
+  }
+  return value;
+}
+
+function writeJsonFile(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function rewriteCopiedProjectMetadata(params: {
+  sourceRoot: string;
+  targetRoot: string;
+  projectId: string;
+  projectName: string;
+}): void {
+  const metadataPath = getProjectMetadataPath(params.targetRoot);
+  const rawMetadata = readJsonRecord(metadataPath);
+  const rewritten = rewriteCopiedMetadataValue(rawMetadata, params.sourceRoot, params.targetRoot);
+  const metadata = rewritten && typeof rewritten === 'object' && !Array.isArray(rewritten)
+    ? rewritten as Record<string, unknown>
+    : {};
+  const project = metadata.project && typeof metadata.project === 'object' && !Array.isArray(metadata.project)
+    ? metadata.project as Record<string, unknown>
+    : {};
+  metadata.schemaVersion = 1;
+  metadata.project = {
+    ...project,
+    id: params.projectId,
+    name: params.projectName,
+  };
+  writeJsonFile(metadataPath, metadata);
 }
 
 function templateErrorMessage(error: unknown): string {
@@ -841,7 +963,7 @@ function hasInstalledMakeClientDependencies(projectRoot: string): boolean {
 async function ensureMakeClientDependencies(
   runner: MakeClientCommandRunner,
   projectRoot: string,
-): Promise<'skipped' | 'pnpm' | 'npm'> {
+): Promise<MakeClientDependencyInstallMethod> {
   if (hasInstalledMakeClientDependencies(projectRoot)) {
     return 'skipped';
   }
@@ -877,7 +999,7 @@ async function ensureMakeClientDependencies(
   }
 }
 
-function resolveMakeClientDevCommand(installMethod: 'skipped' | 'pnpm' | 'npm', projectRoot: string): { command: string; args: string[] } {
+function resolveMakeClientDevCommand(installMethod: MakeClientDependencyInstallMethod, projectRoot: string): { command: string; args: string[] } {
   const viteEntrypoint = viteNodeEntrypoint(projectRoot);
   if (fs.existsSync(viteEntrypoint)) {
     return { command: process.execPath, args: [viteEntrypoint] };
@@ -891,7 +1013,7 @@ function resolveMakeClientDevCommand(installMethod: 'skipped' | 'pnpm' | 'npm', 
 
 async function resolveMakeClientDevCommandForProject(
   runner: MakeClientCommandRunner,
-  installMethod: 'skipped' | 'pnpm' | 'npm',
+  installMethod: MakeClientDependencyInstallMethod,
   projectRoot: string,
 ): Promise<{ command: string; args: string[] }> {
   void runner;
@@ -1776,10 +1898,11 @@ export async function stopMakeClientDevServer(
   };
 }
 
-export async function ensureMakeClientDevServer(
+async function ensureMakeClientDevServerInternal(
   projectRoot: string,
   options: MakeClientOrchestrationOptions = {},
-): Promise<MakeClientDevResult> {
+  installDependencies?: (runner: MakeClientCommandRunner, root: string) => Promise<MakeClientDependencyInstallMethod>,
+): Promise<MakeClientDevInternalResult> {
   const root = path.resolve(projectRoot);
   const progressLogger = options.progressLogger || createMakeClientProgressLogger('dev', { projectRoot: root });
   const shouldFinishProgress = !options.progressLogger;
@@ -1795,6 +1918,7 @@ export async function ensureMakeClientDevServer(
         reused: true,
         phase: 'ready' as const,
         runtime: existingRuntime,
+        installMethod: 'skipped' as const,
       };
       if (shouldFinishProgress) progressLogger.finish('success');
       return result;
@@ -1808,13 +1932,15 @@ export async function ensureMakeClientDevServer(
         reused: true,
         phase: 'ready' as const,
         runtime: discoveredRuntime,
+        installMethod: 'skipped' as const,
       };
       if (shouldFinishProgress) progressLogger.finish('success');
       return result;
     }
 
     const runner = options.commandRunner || defaultCommandRunner();
-    const installMethod = await progressLogger.run('install', '安装依赖', () => ensureMakeClientDependencies(runner, root));
+    const dependencyInstaller = installDependencies || ensureMakeClientDependencies;
+    const installMethod = await progressLogger.run('install', '安装依赖', () => dependencyInstaller(runner, root));
     const devCommand = await progressLogger.run('resolve-dev', '解析启动命令', () => resolveMakeClientDevCommandForProject(runner, installMethod, root));
     const runtime = await progressLogger.run('dev', '启动客户端', async () => {
       let child: ReturnType<typeof spawn>;
@@ -1864,11 +1990,144 @@ export async function ensureMakeClientDevServer(
       reused: false,
       phase: 'ready' as const,
       runtime,
+      installMethod,
     };
     if (shouldFinishProgress) progressLogger.finish('success');
     return result;
   } catch (error) {
     if (shouldFinishProgress) progressLogger.finish('failed', error);
+    throw error;
+  }
+}
+
+export async function ensureMakeClientDevServer(
+  projectRoot: string,
+  options: MakeClientOrchestrationOptions = {},
+): Promise<MakeClientDevResult> {
+  const result = await ensureMakeClientDevServerInternal(projectRoot, options);
+  return {
+    success: result.success,
+    reused: result.reused,
+    phase: result.phase,
+    runtime: result.runtime,
+  };
+}
+
+export async function copyMakeClientProject(
+  params: {
+    sourceProjectRoot: string;
+    parentRoot: string;
+    folderName: string;
+    projectName?: string;
+  },
+  options: MakeClientOrchestrationOptions = {},
+): Promise<{
+  projectRoot: string;
+  marker: MakeClientMarker;
+  dev: MakeClientDevResult;
+  progress: MakeClientProgressSnapshot;
+  copiedDependencies: boolean;
+  installMethod: MakeClientDependencyInstallMethod;
+}> {
+  const sourceRoot = path.resolve(params.sourceProjectRoot);
+  const sourceMarker = validateExistingMakeClientProject(sourceRoot);
+  const parentRoot = path.resolve(params.parentRoot);
+  if (!fs.existsSync(parentRoot) || !fs.statSync(parentRoot).isDirectory()) {
+    throw new MakeClientProjectError('INVALID_MAKE_PROJECT_FOLDER_NAME', 'Parent folder does not exist', { status: 400 });
+  }
+  const folderName = assertSafeMakeClientFolderName(params.folderName);
+  const projectRoot = path.join(parentRoot, folderName);
+  if (fs.existsSync(projectRoot)) {
+    throw new MakeClientProjectError('MAKE_PROJECT_TARGET_NOT_EMPTY', 'Target folder already exists', { status: 409 });
+  }
+  if (isInsideRoot(sourceRoot, projectRoot)) {
+    throw new MakeClientProjectError(
+      'INVALID_MAKE_PROJECT_FOLDER_NAME',
+      'Target folder must not be inside the source project',
+      { status: 400 },
+    );
+  }
+
+  const runner = options.commandRunner || defaultCommandRunner();
+  const progressLogger = options.progressLogger || createMakeClientProgressLogger('create', {
+    projectRoot,
+    projectId: folderName,
+  });
+  const shouldFinishProgress = !options.progressLogger;
+  const projectName = typeof params.projectName === 'string'
+    ? params.projectName.trim()
+    : sourceMarker.project.name;
+  let marker: MakeClientMarker = sourceMarker;
+  let copiedProjectFiles = false;
+  let copiedDependencies = false;
+
+  try {
+    progressLogger.runSync('copy-project', '复制项目', () => {
+      copyMakeClientProjectDirectory(sourceRoot, projectRoot);
+      copiedProjectFiles = true;
+    });
+    marker = progressLogger.runSync('write-project', '写入项目', () => {
+      const nextMarker = writeMakeClientMarker(projectRoot, {
+        ...sourceMarker,
+        project: {
+          id: folderName,
+          name: projectName,
+        },
+      });
+      rewriteCopiedProjectMetadata({
+        sourceRoot,
+        targetRoot: projectRoot,
+        projectId: folderName,
+        projectName,
+      });
+      ensureMakeClientScripts(projectRoot);
+      return nextMarker;
+    });
+
+    const installDependenciesForCopy = async (
+      dependencyRunner: MakeClientCommandRunner,
+      root: string,
+    ): Promise<MakeClientDependencyInstallMethod> => {
+      const targetNodeModules = path.join(root, 'node_modules');
+      if (fs.existsSync(targetNodeModules)) {
+        if (fs.existsSync(viteNodeEntrypoint(root))) {
+          copiedDependencies = true;
+          return 'skipped';
+        }
+        fs.rmSync(targetNodeModules, { recursive: true, force: true });
+      }
+      copiedDependencies = false;
+      return ensureMakeClientDependencies(dependencyRunner, root);
+    };
+
+    const internalDev = await ensureMakeClientDevServerInternal(projectRoot, {
+      ...options,
+      commandRunner: runner,
+      progressLogger,
+    }, installDependenciesForCopy);
+    const dev: MakeClientDevResult = {
+      success: internalDev.success,
+      reused: internalDev.reused,
+      phase: internalDev.phase,
+      runtime: internalDev.runtime,
+    };
+    if (shouldFinishProgress) progressLogger.finish('success');
+    return {
+      projectRoot,
+      marker,
+      dev,
+      progress: progressLogger.snapshot(),
+      copiedDependencies,
+      installMethod: internalDev.installMethod,
+    };
+  } catch (error) {
+    if (!copiedProjectFiles) {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+    if (shouldFinishProgress) progressLogger.finish('failed', error);
+    if (error && typeof error === 'object') {
+      Object.assign(error, { progress: progressLogger.snapshot() });
+    }
     throw error;
   }
 }

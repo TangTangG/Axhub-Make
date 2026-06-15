@@ -3296,6 +3296,8 @@ export function useIndexPagePreviewActions(params: any) {
         reviewLoading,
         reviewError,
         reviewPageZoomEnabled,
+        reviewPrompt,
+        reviewDocumentPath,
         quickEditRuntimeStatus,
         hostToolbarState,
         containerRef,

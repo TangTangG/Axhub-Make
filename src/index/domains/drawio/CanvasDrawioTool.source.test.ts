@@ -22,12 +22,14 @@ describe('CanvasDrawioTool source', () => {
     expect(source).toContain('scrollToContent(element.id');
   });
 
-  it('tracks the selected Draw.io node and renders its title label plus icon-only edit button', () => {
+  it('tracks the selected Draw.io node and renders the edit button only for editable XML sources', () => {
     const source = readSource();
 
     expect(source).toContain('isDrawioElement');
+    expect(source).toContain('canEdit: Boolean(extractEditableDrawioXmlFromImageFile(file))');
     expect(source).toContain('CanvasNodeTitleLabel');
     expect(source).toContain("title={selectedInfo.title}");
+    expect(source).toContain('selectedInfo?.canEdit ? (');
     expect(source).toContain('data-axhub-drawio-edit-trigger');
     expect(source).toContain('aria-label="编辑 Draw.io 图表"');
     expect(source).toContain('<Pencil');
@@ -39,11 +41,12 @@ describe('CanvasDrawioTool source', () => {
 
     expect(source).toContain('DRAWIO_EMBED_URL');
     expect(source).toContain('https://embed.diagrams.net/?embed=1&ui=min&proto=json&spin=1&libraries=1&lang=zh');
-    expect(source).toContain('extractDrawioXmlFromImageFile');
+    expect(source).toContain('extractEditableDrawioXmlFromImageFile');
     expect(source).toContain("event.data === 'ready'");
     expect(source).toContain("message.event === 'init'");
     expect(source).toContain("action: 'load'");
     expect(source).toContain('xml: editorXmlRef.current');
+    expect(source).toContain('缺少可编辑源');
     expect(source).toContain('targetWindow = popupWindowRef.current');
     expect(source).toContain('targetWindow.postMessage(JSON.stringify(message), DRAWIO_ORIGIN)');
   });

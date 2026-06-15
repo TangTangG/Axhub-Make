@@ -5,6 +5,7 @@ export const STORAGE_KEY_DARK_MODE = 'axhub-make-dark-mode'; // 与 assets 页�
 export const STORAGE_KEY_PROMPT_CLIENT = 'axhub-admin-prompt-client';
 export const STORAGE_KEY_ASSISTANT_WIDTH = 'axhub:assistant-panel-width';
 export const STORAGE_KEY_ASSISTANT_AUTO_OPEN_DISMISSED = 'axhub:assistant-auto-open-dismissed';
+export const STORAGE_KEY_ASSISTANT_AUTO_OPEN_PANEL_MODE = 'axhub:assistant-auto-open-panel-mode';
 export const ASSISTANT_OPEN_URL_EVENT = 'axhub:open-assistant-url';
 
 export const DEVICES: DeviceConfig[] = [

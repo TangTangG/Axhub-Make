@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import type { PresentationAreaGroupedProps } from '../../types/index-page.types';
+import type { AiPanelMode, PresentationAreaGroupedProps, PrototypeCreateDialogOpenOptions } from '../../types/index-page.types';
 import type { ViewMode } from '../../types';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
 import type { CanvasElementContextInfo } from '../../components/content/canvas-embeds/AnnotationOverlay';
 import type { GenieProvider } from '@/common/genie/types';
-import type { CanvasAiGenerationRequest } from '../../domains/ai-generation/CanvasAiGenerationTool';
+import type { CanvasAiGenerationRequest, CanvasAiGenerationResult } from '../../domains/ai-generation/CanvasAiGenerationTool';
 import type { AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
 import type { SettingsDialogInitialTab } from '../../components/SettingsDialog';
 
@@ -40,11 +40,13 @@ interface UseIndexPagePresentationPropsBuilderParams {
         bridgeConnected?: boolean;
         activeProjectId?: string | null;
         webAgentPanelOpen?: boolean;
+        aiPanelMode?: AiPanelMode;
         assistantApiBaseUrl?: string;
         assistantProjectPath?: string;
         prototypes?: any[];
         themes?: any[];
         defaultThemeName?: string | null;
+        onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;
     };
     preview: any;
     ui?: {
@@ -77,12 +79,15 @@ interface UseIndexPagePresentationPropsBuilderParams {
         onOpenCanvasGenie?: () => void | Promise<void>;
         handleOpenProjectInIDE?: (ideOverride?: any, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
         onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+        onOpenImageAiPanel?: () => void | Promise<void>;
         onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
+        onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
+        onCloseAiPanel?: () => void;
         onCloseWebAgentPanel?: () => void;
         onPreferredIDEChange?: (ide: any) => void;
         openSettingsDialog?: (tab?: SettingsDialogInitialTab) => void;
         onRefreshPrototypes?: () => Promise<any[]>;
-        onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<boolean> | boolean;
+        onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     };
 }
 
@@ -113,6 +118,8 @@ export function useIndexPagePresentationPropsBuilder({
             reviewLoading: preview.reviewLoading,
             reviewError: preview.reviewError,
             reviewPageZoomEnabled: preview.reviewPageZoomEnabled,
+            reviewPrompt: preview.reviewPrompt,
+            reviewDocumentPath: preview.reviewDocumentPath,
             quickEditRuntimeStatus: preview.quickEditRuntimeStatus,
             exportAvailability: preview.exportAvailability,
             editorMode: preview.editorStatus.mode,
@@ -158,11 +165,13 @@ export function useIndexPagePresentationPropsBuilder({
             bridgeConnected: state.bridgeConnected,
             activeProjectId: state.activeProjectId,
             webAgentPanelOpen: state.webAgentPanelOpen,
+            aiPanelMode: state.aiPanelMode,
             assistantApiBaseUrl: state.assistantApiBaseUrl,
             assistantProjectPath: state.assistantProjectPath,
             prototypes: state.prototypes || [],
             themes: state.themes || [],
             defaultThemeName: state.defaultThemeName,
+            onOpenPrototypeCreateDialog: state.onOpenPrototypeCreateDialog,
         },
         actions: {
             setCollapsed: actions.setCollapsed,
@@ -235,7 +244,10 @@ export function useIndexPagePresentationPropsBuilder({
             onOpenCanvasGenie: actions.onOpenCanvasGenie,
             handleOpenProjectInIDE: actions.handleOpenProjectInIDE,
             onOpenGenieWebAgent: actions.onOpenGenieWebAgent,
+            onOpenImageAiPanel: actions.onOpenImageAiPanel,
             onOpenWebAgentInPanel: actions.onOpenWebAgentInPanel,
+            onExecutePrompt: actions.onExecutePrompt,
+            onCloseAiPanel: actions.onCloseAiPanel,
             onCloseWebAgentPanel: actions.onCloseWebAgentPanel,
             onPreferredIDEChange: actions.onPreferredIDEChange,
             onOpenAISettings: actions.openSettingsDialog ? () => actions.openSettingsDialog?.('ai') : undefined,

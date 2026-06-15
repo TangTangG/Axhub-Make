@@ -13,7 +13,7 @@ import {
   createDrawioElement,
   createDrawioFile,
   createDrawioSavedFile,
-  extractDrawioXmlFromImageFile,
+  extractEditableDrawioXmlFromImageFile,
   isDrawioElement,
   updateDrawioElementFile,
 } from './canvasDrawio';
@@ -28,6 +28,7 @@ interface CanvasDrawioToolProps {
 interface SelectedDrawioInfo {
   element: any;
   title: string;
+  canEdit: boolean;
   left: number;
   top: number;
   labelLeft: number;
@@ -135,6 +136,8 @@ export default function CanvasDrawioTool({
       setSelectedInfo(null);
       return;
     }
+    const files = excalidrawAPI.getFiles?.() || {};
+    const file = files[element.fileId];
 
     if (selectedViewportFitRef.current.elementId !== element.id) {
       selectedViewportFitRef.current.elementId = element.id;
@@ -177,6 +180,7 @@ export default function CanvasDrawioTool({
     setSelectedInfo({
       element,
       title: String(element.customData?.title || 'Draw.io 图表'),
+      canEdit: Boolean(extractEditableDrawioXmlFromImageFile(file)),
       left: topRight.x - rect.left + DRAWIO_EDIT_TRIGGER_GAP,
       top: topLeft.y - rect.top,
       labelLeft: topLeft.x - rect.left,
@@ -305,7 +309,12 @@ export default function CanvasDrawioTool({
     if (!isDrawioElement(latestElement)) return;
     const files = excalidrawAPI.getFiles?.() || {};
     const file = files[latestElement.fileId];
-    editorXmlRef.current = extractDrawioXmlFromImageFile(file);
+    const editableXml = extractEditableDrawioXmlFromImageFile(file);
+    if (!editableXml) {
+      toast.error('这个 Draw.io 节点缺少可编辑源，请重新生成 .drawio.svg 后再编辑');
+      return;
+    }
+    editorXmlRef.current = editableXml;
     editorSavedXmlRef.current = editorXmlRef.current;
     editorDirtyRef.current = false;
     const popup = window.open(DRAWIO_EMBED_URL, DRAWIO_WINDOW_TARGET);
@@ -436,7 +445,7 @@ export default function CanvasDrawioTool({
   return (
     <>
       {selectedLabel}
-      {selectedInfo ? (
+      {selectedInfo?.canEdit ? (
         <button
           type="button"
           data-axhub-drawio-edit-trigger

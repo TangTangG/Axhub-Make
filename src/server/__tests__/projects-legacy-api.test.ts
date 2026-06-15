@@ -230,6 +230,55 @@ describe('make-server project legacy compatibility APIs', () => {
     }
   });
 
+  it('shows the unsupported-file preview shell for legacy markdown-file browser navigation to drawio resources', async () => {
+    const projectRoot = createTempRoot();
+    const resourcesDir = path.join(projectRoot, 'src', 'resources');
+    fs.mkdirSync(resourcesDir, { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, 'order-status-flow.drawio'), '<mxfile />\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'legacy-drawio-preview', name: 'Legacy Drawio Preview' },
+      resourceWriteTargets: {
+        docs: { type: 'project-relative-path', path: 'src/resources' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'legacy-drawio-preview', 'Legacy Drawio Preview');
+
+      const response = await fetch(
+        `${server.origin}/api/markdown-file?path=${encodeURIComponent('src/resources/order-status-flow.drawio')}`,
+        {
+          headers: {
+            accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+        },
+      );
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/html');
+      expect(response.headers.get('x-axhub-preview-fallback')).toBe('unsupported-file');
+      expect(html).toContain('order-status-flow');
+      expect(html).toContain('.DRAWIO');
+      expect(html).toContain('用系统应用打开');
+      expect(html).not.toContain('<mxfile');
+
+      const rawResponse = await fetch(`${server.origin}/api/markdown-file?path=${encodeURIComponent('src/resources/order-status-flow.drawio')}&download=1`, {
+        headers: {
+          accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+
+      expect(rawResponse.status).toBe(200);
+      expect(rawResponse.headers.get('content-type')).toBe('application/octet-stream');
+      expect(rawResponse.headers.get('x-axhub-preview-fallback')).toBeNull();
+      expect(await rawResponse.text()).toBe('<mxfile />\n');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('supports legacy spec-doc protocol for standalone Markdown docs through the active project context', async () => {
     const projectRoot = createTempRoot();
     const docsDir = path.join(projectRoot, 'src', 'resources');

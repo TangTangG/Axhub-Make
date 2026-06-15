@@ -276,6 +276,140 @@ describe('make-server project docs APIs', () => {
     }
   });
 
+  it('shows the unsupported-file preview shell for browser navigation to drawio resources', async () => {
+    const projectRoot = createTempRoot();
+    const docsDir = path.join(projectRoot, 'content', 'docs');
+    fs.mkdirSync(docsDir, { recursive: true });
+    fs.writeFileSync(path.join(docsDir, 'order-status-flow.drawio'), '<mxfile />\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'docs-drawio-preview-client', name: 'Docs Drawio Preview Client' },
+      resources: {
+        prototypes: [],
+        docs: [
+          {
+            id: 'order-status-flow.drawio',
+            name: 'order-status-flow.drawio',
+            title: 'order-status-flow',
+            path: path.join(docsDir, 'order-status-flow.drawio'),
+          },
+        ],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: ['order-status-flow.drawio'] },
+      resourceWriteTargets: {
+        docs: { path: 'content/docs' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'docs-drawio-preview-client', 'Docs Drawio Preview Client');
+      await setActiveProject(server.origin, 'docs-drawio-preview-client');
+
+      const response = await fetch(`${server.origin}/api/docs/order-status-flow.drawio`, {
+        headers: {
+          accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/html');
+      expect(response.headers.get('x-axhub-preview-fallback')).toBe('unsupported-file');
+      expect(html).toContain('order-status-flow');
+      expect(html).toContain('.DRAWIO');
+      expect(html).toContain('用系统应用打开');
+      expect(html).toContain('width: 80px;');
+      expect(html).toContain('height: 80px;');
+      expect(html).toContain('font-size: 14px;');
+      expect(html).not.toContain('width: 96px;');
+      expect(html).not.toContain('font-size: 18px;');
+      expect(html).not.toContain('<mxfile');
+
+      const downloadResponse = await fetch(`${server.origin}/api/docs/order-status-flow.drawio?download=1`, {
+        headers: {
+          accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+
+      expect(downloadResponse.status).toBe(200);
+      expect(downloadResponse.headers.get('content-type')).toBe('application/octet-stream');
+      expect(downloadResponse.headers.get('x-axhub-preview-fallback')).toBeNull();
+      expect(await downloadResponse.text()).toBe('<mxfile />\n');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('opens unsupported template resources from the templates directory', async () => {
+    const projectRoot = createTempRoot();
+    const docsDir = path.join(projectRoot, 'content', 'docs');
+    const templatesDir = path.join(projectRoot, 'content', 'templates');
+    fs.mkdirSync(docsDir, { recursive: true });
+    fs.mkdirSync(templatesDir, { recursive: true });
+    fs.writeFileSync(path.join(templatesDir, 'flow.drawio'), '<mxfile />\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'template-drawio-preview-client', name: 'Template Drawio Preview Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [
+          {
+            id: 'flow.drawio',
+            name: 'flow.drawio',
+            title: 'flow',
+            path: path.join(templatesDir, 'flow.drawio'),
+          },
+        ],
+      },
+      navigation: { prototypes: [], docs: [] },
+      resourceWriteTargets: {
+        docs: { path: 'content/docs' },
+        templates: { path: 'content/templates' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'template-drawio-preview-client', 'Template Drawio Preview Client');
+      await setActiveProject(server.origin, 'template-drawio-preview-client');
+
+      const previewResponse = await fetch(`${server.origin}/api/docs/templates/flow.drawio`, {
+        headers: {
+          accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+      const html = await previewResponse.text();
+
+      expect(previewResponse.status).toBe(200);
+      expect(previewResponse.headers.get('x-axhub-preview-fallback')).toBe('unsupported-file');
+      expect(html).toContain('"resourceType":"templates"');
+
+      const openResponse = await fetch(`${server.origin}/api/docs/open-system`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docName: 'flow.drawio', type: 'templates' }),
+      });
+      const openBody = await openResponse.json();
+      const templatePath = path.join(templatesDir, 'flow.drawio');
+      const openCommand = buildSystemOpenCommand(templatePath);
+
+      expect(openResponse.status).toBe(200);
+      expect(openBody).toEqual({ success: true, path: templatePath });
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        openCommand.command,
+        openCommand.args,
+        expect.objectContaining({ timeoutMs: 10000 }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
   it('opens docs through the shared filesystem opener without shell command strings', async () => {
     const projectRoot = createTempRoot();
     const docsDir = path.join(projectRoot, 'content', 'docs');

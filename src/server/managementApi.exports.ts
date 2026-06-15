@@ -40,6 +40,7 @@ interface SourceBackedExportHandlers {
     indexBundlePath: string | null;
   };
   readJsonFile: <T>(filePath: string, fallback: T) => T;
+  getDeclaredResourceWriteDir?: (context: SourceBackedExportContext, type: 'media') => string | null;
   sendDisabledCapability: (
     res: ServerResponse,
     status: number,
@@ -401,6 +402,7 @@ export async function handleSourceBackedExports(
           displayName: String(resource?.title || resource?.name || resource?.id || path.basename(path.dirname(sourceFile))),
           group: targetPath.split('/')[0] || 'prototypes',
           includeSource,
+          mediaRoot: handlers.getDeclaredResourceWriteDir?.(context, 'media') || undefined,
         }, handlers.buildAttachmentContentDisposition);
 
         communicationStore.appendExportRecord({
