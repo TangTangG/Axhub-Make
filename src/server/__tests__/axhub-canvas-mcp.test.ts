@@ -96,6 +96,7 @@ describe('axhub canvas MCP endpoint', () => {
     expect(json.result.tools.map((tool: any) => tool.name)).toEqual([
       'canvas_get_state',
       'canvas_insert_elements',
+      'canvas_insert_mermaid',
       'canvas_refresh',
       'canvas_capture',
       'canvas_update_elements',
@@ -106,6 +107,17 @@ describe('axhub canvas MCP endpoint', () => {
       type: 'object',
       properties: expect.any(Object),
     });
+    const mermaidTool = json.result.tools.find((tool: any) => tool.name === 'canvas_insert_mermaid');
+    expect(mermaidTool).toMatchObject({
+      description: expect.stringContaining('Mermaid'),
+      inputSchema: {
+        type: 'object',
+      },
+    });
+    expect(mermaidTool.inputSchema.properties.mermaidCode.type).toBe('string');
+    expect(mermaidTool.inputSchema.properties.position.oneOf).toEqual(expect.any(Array));
+    expect(mermaidTool.inputSchema.properties.themeVariables.type).toBe('object');
+    expect(mermaidTool.inputSchema.properties.flowchart.type).toBe('object');
   });
 
   it('accepts MCP initialized notifications without a JSON-RPC response body', async () => {
@@ -160,6 +172,51 @@ describe('axhub canvas MCP endpoint', () => {
           payload: {
             canvasName: 'prototypes/home/canvas',
             selectedElementIds: [],
+          },
+        }),
+      }],
+    });
+  });
+
+  it('routes Mermaid insertion tool calls to the canvas bridge', async () => {
+    const sendCommand = vi.fn(async () => ({
+      insertedElementIds: ['node-a', 'node-b'],
+    }));
+
+    const { json } = await callMcp({
+      jsonrpc: '2.0',
+      id: 'call-mermaid',
+      method: 'tools/call',
+      params: {
+        name: 'canvas_insert_mermaid',
+        arguments: {
+          canvasName: 'prototypes/home/canvas',
+          mermaidCode: 'flowchart TD\n  A --> B',
+          position: { x: 120, y: 240 },
+          themeVariables: { fontSize: '20px' },
+          flowchart: { curve: 'linear' },
+        },
+      },
+    }, {
+      headerToken: 'secret-token',
+      bridgeHub: { sendCommand },
+    });
+
+    expect(sendCommand).toHaveBeenCalledWith('canvas_insert_mermaid', {
+      mermaidCode: 'flowchart TD\n  A --> B',
+      position: { x: 120, y: 240 },
+      themeVariables: { fontSize: '20px' },
+      flowchart: { curve: 'linear' },
+    }, {
+      canvasName: 'prototypes/home/canvas',
+    });
+    expect(json.result).toEqual({
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          ok: true,
+          payload: {
+            insertedElementIds: ['node-a', 'node-b'],
           },
         }),
       }],

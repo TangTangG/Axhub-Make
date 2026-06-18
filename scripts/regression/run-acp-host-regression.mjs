@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const DEFAULT_BASE_URL = 'http://127.0.0.1:53817';
-const DEFAULT_ACP_BASE_URL = 'http://127.0.0.1:32123';
+const DEFAULT_ACP_BASE_URL = 'http://127.0.0.1:32124';
 const DEFAULT_PROJECT_ID = 'make-2-2';
 const DEFAULT_CANVAS_PROTOTYPE = 'annotation-demo';
 const DEFAULT_PREVIEW_PROTOTYPE = 'untitled-4';
@@ -50,6 +50,7 @@ function createMockAcpHostPage() {
     <script>
       (() => {
         let context = { items: [], updatedAt: new Date().toISOString() };
+        let runtimeConfig = { messages: [], updatedAt: new Date().toISOString() };
         const supportedEvents = [];
         window.addEventListener('message', (event) => {
           const message = event.data || {};
@@ -65,6 +66,21 @@ function createMockAcpHostPage() {
                 supportedEvents,
                 snapshot: null,
               },
+            }, event.origin);
+            return;
+          }
+          if (message.type === 'acp.runtime.configure' || message.type === 'acp.runtime.clear') {
+            runtimeConfig = {
+              messages: runtimeConfig.messages.concat({
+                type: message.type,
+                payload: message.payload || null,
+              }),
+              updatedAt: new Date().toISOString(),
+            };
+            event.source?.postMessage({
+              type: 'acp.runtime.result',
+              requestId,
+              payload: { ok: true, runtimeConfig },
             }, event.origin);
             return;
           }

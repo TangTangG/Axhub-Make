@@ -73,6 +73,7 @@ import type { DiagnosticLog } from './diagnosticLog.ts';
 
 export interface ManagementApiOptions {
   projectRoot: string;
+  startupProjectRoot?: string;
   adminRoot?: string;
   origin: string;
   runtimeOrigin?: string;
@@ -296,10 +297,19 @@ function getServerConfigStoreForRequest(options: ManagementApiOptions) {
 
 function updateRegisteredProjectTitle(options: ManagementApiOptions, project: RegisteredProject, title: string): RegisteredProject {
   const registry = getProjectRegistryForRequest(options);
+  const registeredProject = registry.getProject(project.id);
   const { identity } = updateProjectIdentityName(project.root, title, {
     metadataPath: project.metadataPath,
     fallback: project,
   });
+  if (!registeredProject) {
+    return registry.addProject({
+      id: identity.id,
+      name: identity.name,
+      root: project.root,
+      metadataPath: project.metadataPath,
+    });
+  }
   return registry.updateProject(project.id, {
     name: identity.name,
     root: project.root,
@@ -322,6 +332,43 @@ function getActiveProjectContext(options: ManagementApiOptions): ProjectRequestC
   if (!metadataStore) {
     return null;
   }
+  return {
+    project,
+    metadataStore,
+    metadata: metadataStore.getMetadata(),
+  };
+}
+
+function createStartupProjectContext(
+  options: ManagementApiOptions,
+  requestedProjectId = '',
+): ProjectRequestContext | null {
+  const startupProjectRoot = options.startupProjectRoot ? path.resolve(options.startupProjectRoot) : '';
+  if (!startupProjectRoot) {
+    return null;
+  }
+  const marker = readMakeClientMarker(startupProjectRoot);
+  const metadataPath = getProjectMetadataPath(startupProjectRoot);
+  if (!marker || !fs.existsSync(metadataPath)) {
+    return null;
+  }
+  const identity = readProjectIdentity(startupProjectRoot, {
+    metadataPath,
+    fallback: marker.project,
+  });
+  if (requestedProjectId && requestedProjectId !== identity.id) {
+    return null;
+  }
+  const metadataStore = createProjectMetadataStore(startupProjectRoot, { metadataPath });
+  const timestamp = new Date().toISOString();
+  const project: RegisteredProject = {
+    id: identity.id,
+    name: identity.name,
+    root: startupProjectRoot,
+    metadataPath,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
   return {
     project,
     metadataStore,
@@ -396,6 +443,22 @@ function resolveProjectContext(
     : mode === 'active-fallback'
       ? registry.getActiveProject()
       : null;
+  let startupContext: ProjectRequestContext | null = null;
+  try {
+    startupContext = !project && mode === 'active-fallback' && !fs.existsSync(registry.getRegistryPath())
+      ? createStartupProjectContext(options, requestedProjectId)
+      : null;
+  } catch (error: any) {
+    sendJson(res, {
+      error: error?.message || 'Project metadata is invalid',
+      code: 'PROJECT_METADATA_INVALID',
+      projectRoot: options.startupProjectRoot,
+    }, { status: 400 });
+    return null;
+  }
+  if (startupContext) {
+    return startupContext;
+  }
 
   if (requestedProjectId && !project) {
     sendJson(res, {
@@ -610,6 +673,7 @@ function handleProjectApi(req: IncomingMessage, res: ServerResponse, options: Ma
     toProjectEntry,
     toProjectIdentity,
     updateRegisteredProjectTitle,
+    getStartupProjectContext: createStartupProjectContext,
     selectLocalProjectRootForKind,
     getExistingMetadataStore,
     createEffectiveProjectCapabilities,

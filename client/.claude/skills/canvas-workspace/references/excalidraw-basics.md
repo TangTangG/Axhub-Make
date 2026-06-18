@@ -1,6 +1,6 @@
 # Excalidraw 基础指导
 
-这份只说明如何把内容组织成 Excalidraw 图，不规定 Axhub 画布流程。先判断图类型，再抽取元素、关系和复杂度，最后生成清晰布局。
+这份只说明如何把内容组织成普通 Excalidraw 图，不规定 Axhub 画布流程。流程图、关系图、架构图等请求先按 `canvas-workspace` 主文档分流；已确定要画成 Excalidraw 元素后，再读本文件。
 
 ## 先判断图类型
 

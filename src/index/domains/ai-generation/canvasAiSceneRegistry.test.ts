@@ -139,18 +139,18 @@ describe('canvas AI scene registry', () => {
         prompt: '使用 $requirements-exploration 对当前需求做探索和完善。我想要讨论的需求是：\n',
       }),
       expect.objectContaining({
-        id: 'drawio-diagram',
+        id: 'diagram',
         label: '流程图和关系图',
       }),
     ]);
-    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).toContain('Draw.io');
     expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).toContain('流程图');
     expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).toContain('关系图');
-    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).toContain('Draw.io .drawio.svg 图表');
-    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).toContain('$drawio');
-    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).not.toContain('$canvas-workspace');
-    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).not.toContain('当前原型草稿画布');
-    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).not.toContain('节点');
+    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).toContain('根据图表类型选择合适的画布呈现方式');
+    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).toContain('更新到当前画布');
+    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).not.toContain('Draw.io');
+    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).not.toContain('Draw.io .drawio.svg 图表');
+    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.id).not.toContain('drawio');
+    expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).not.toContain('$drawio');
     expect(getCanvasAiPrototypeStartQuickPrompts('document')[1]?.prompt).not.toBe('使用 Drawio 生成相关流程图和关系图。');
     expect(getCanvasAiSceneQuickPrompts('document')).toEqual(getCanvasAiPrototypeStartQuickPrompts('document'));
     expect(getCanvasAiPrototypeStartQuickPrompts('document')[0]?.prompt).not.toContain('$requirements-alignment');

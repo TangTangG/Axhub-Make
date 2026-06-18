@@ -500,6 +500,7 @@ function createProjectResourcesPayload(metadata: ProjectMetadata, projectRoot: s
 
 
 type ProjectRegistry = {
+  getRegistryPath: () => string;
   getRegistry: () => {
     activeProjectId?: string | null;
     projects: RegisteredProject[];
@@ -538,6 +539,7 @@ interface ProjectRegistryApiHandlers {
   toProjectEntry: (project: RegisteredProject) => RegisteredProject;
   toProjectIdentity: (project: RegisteredProject) => { id: string; name: string };
   updateRegisteredProjectTitle: (options: ManagementApiOptions, project: RegisteredProject, title: string) => RegisteredProject;
+  getStartupProjectContext?: (options: ManagementApiOptions, projectId?: string) => ProjectRegistryRequestContext | null;
   selectLocalProjectRootForKind: (kind: string) => Promise<string | null>;
   getExistingMetadataStore: (res: ServerResponse, project: RegisteredProject) => ProjectMetadataStore | null;
   createEffectiveProjectCapabilities: (context: ProjectRegistryRequestContext) => EffectiveProjectCapabilities;
@@ -583,6 +585,66 @@ function getDocRelativePath(projectRoot: string, docsDir: string, doc: ProjectMe
     return path.relative(docsDir, resolvedPath).split(path.sep).join('/');
   }
   return String(doc.name || doc.id || '');
+}
+
+function normalizeDocContentRequestPath(value: string): string {
+  const rawValue = String(value || '').trim().replace(/\\/g, '/');
+  if (!rawValue || rawValue.includes('\0') || rawValue.startsWith('/') || path.win32.isAbsolute(rawValue) || path.posix.isAbsolute(rawValue)) {
+    return '';
+  }
+  const segments = rawValue.split('/').filter(Boolean);
+  if (segments.length === 0 || segments.some((segment) => segment === '.' || segment === '..')) {
+    return '';
+  }
+  return segments.join('/');
+}
+
+function resolveDocContentFileByRelativePath(
+  projectRoot: string,
+  metadata: ProjectMetadata,
+  resourceId: string,
+): ProjectMetadata['resources']['docs'][number] | null {
+  const requestedPath = normalizeDocContentRequestPath(resourceId);
+  if (!requestedPath || isIgnoredResourceRelativePath(requestedPath) || requestedPath === 'templates' || requestedPath.startsWith('templates/')) {
+    return null;
+  }
+
+  const docsDir = getDocsResourceRoot(projectRoot, metadata);
+  const candidatePaths = [requestedPath];
+  if (!requestedPath.toLowerCase().endsWith('.md')) {
+    candidatePaths.push(`${requestedPath}.md`);
+  }
+
+  for (const candidatePath of [...new Set(candidatePaths)]) {
+    if (isIgnoredResourceRelativePath(candidatePath) || candidatePath === 'templates' || candidatePath.startsWith('templates/')) {
+      continue;
+    }
+    if (path.extname(candidatePath).toLowerCase() !== '.md') {
+      continue;
+    }
+    const targetPath = path.resolve(docsDir, candidatePath);
+    if (!isPathInside(docsDir, targetPath) || !isPathInside(projectRoot, targetPath)) {
+      continue;
+    }
+    try {
+      if (!fs.statSync(targetPath).isFile()) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    const id = candidatePath.replace(/\.[^.]+$/u, '');
+    return {
+      id,
+      name: id,
+      title: readMarkdownTitle(targetPath) || id,
+      path: targetPath,
+      description: '',
+      updatedAt: readFileUpdatedAt(targetPath),
+    };
+  }
+
+  return null;
 }
 
 function sendProjectMetadataError(
@@ -720,7 +782,11 @@ export function handleProjectRegistryApi(
   }
   const projectId = decodeURIComponent(match[1]);
   const rest = match[2] || '';
-  const project = registry.getProject(projectId);
+  const registryProject = registry.getProject(projectId);
+  const startupContext = !registryProject && !fs.existsSync(registry.getRegistryPath())
+    ? handlers.getStartupProjectContext?.(options, projectId) ?? null
+    : null;
+  const project = registryProject || startupContext?.project || null;
   if (!project) {
     sendJson(res, {
       error: `Project not found: ${projectId}`,
@@ -881,7 +947,8 @@ export function handleProjectRegistryApi(
     if (!metadata) {
       return true;
     }
-    const doc = metadata.resources.docs.find((item) => item.id === resourceId || item.name === resourceId);
+    const doc = metadata.resources.docs.find((item) => item.id === resourceId || item.name === resourceId)
+      || resolveDocContentFileByRelativePath(project.root, metadata, resourceId);
     if (!doc) {
       sendJson(res, { error: 'Doc not found' }, { status: 404 });
       return true;

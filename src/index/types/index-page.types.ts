@@ -382,6 +382,7 @@ export interface PresentationAreaActions {
     getLANUrl: () => string;
     setQrCodeVisible: (visible: boolean) => void;
     handleCopyToFigma: () => void;
+    handleCopyCurrentScreenshot: () => void | Promise<void>;
     handleExportMake: () => void;
     handleExportHtml: (options?: { includeSource?: boolean }) => void;
     handlePublishCloudTarget: (target: CloudPublishTarget) => void | Promise<void>;

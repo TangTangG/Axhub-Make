@@ -185,6 +185,33 @@ describe('useIndexPageSelectionSync source', () => {
     });
   });
 
+  it('switches an implicit fallback selection to the first sidebar prototype after the tree loads', () => {
+    const metadataFirstPrototype = createPrototype('annotation-demo', '标注演示');
+    const sidebarFirstPrototype = createPrototype('beginner-guide', '新手指导');
+    const sidebarTrees = {
+      prototypes: [createItemNode(sidebarFirstPrototype.name), createItemNode(metadataFirstPrototype.name)],
+      docs: [],
+      canvas: [],
+    };
+
+    expect(resolvePrototypeAutoSelectionDecision({
+      activeTab: 'prototypes',
+      hasExplicitSelection: false,
+      items: [metadataFirstPrototype, sidebarFirstPrototype],
+      lastCanvasItem: null,
+      selectedItem: metadataFirstPrototype,
+      sidebarTab: 'prototype',
+      sidebarTrees,
+      viewMode: 'demo',
+    })).toMatchObject({
+      kind: 'select',
+      item: sidebarFirstPrototype,
+      markExplicitSelection: false,
+      resetPageSelection: true,
+      nextCanvasItem: null,
+    });
+  });
+
   it('keeps refreshed selected placeholder prototype metadata instead of auto-selecting the first tree item', () => {
     const firstPrototype = createPrototype('first-prototype');
     const staleSelectedPlaceholder = {
@@ -332,6 +359,50 @@ describe('useIndexPageSelectionSync source', () => {
     })).toMatchObject({
       kind: 'keep',
       markExplicitSelection: false,
+      nextCanvasItem: null,
+    });
+  });
+
+  it('selects waiting prototype metadata after placeholder generation starts', () => {
+    const firstPrototype = createPrototype('first-prototype');
+    const selectedPlaceholder = {
+      ...createPrototype('untitled-7', '未命名'),
+      placeholder: true,
+      placeholderGuide: {
+        kind: 'prototype-empty',
+        title: '这个原型还没有开始创建',
+        description: '告诉 AI 你想做什么：目标用户、使用场景、页面内容和参考风格。',
+        steps: [],
+        tips: [],
+      },
+    };
+    const refreshedWaitingPrototype = {
+      ...createPrototype('untitled-7', '未命名'),
+      clientUrl: '/prototypes/untitled-7',
+      previewUrl: '/prototypes/untitled-7',
+      placeholder: false,
+      generationStatus: 'waiting' as const,
+    };
+    const sidebarTrees = {
+      prototypes: [createItemNode(firstPrototype.name)],
+      docs: [],
+      canvas: [],
+    };
+
+    expect(resolvePrototypeAutoSelectionDecision({
+      activeTab: 'prototypes',
+      hasExplicitSelection: false,
+      items: [firstPrototype, refreshedWaitingPrototype],
+      lastCanvasItem: null,
+      selectedItem: selectedPlaceholder,
+      sidebarTab: 'prototype',
+      sidebarTrees,
+      viewMode: 'demo',
+    })).toMatchObject({
+      kind: 'select',
+      item: refreshedWaitingPrototype,
+      markExplicitSelection: false,
+      resetPageSelection: false,
       nextCanvasItem: null,
     });
   });

@@ -124,6 +124,21 @@ describe('PresentationToolbar cloud publishing source', () => {
     expect(source).toContain('handleOpenCloudPublishSettings');
   });
 
+  it('adds a publish menu action that copies the current preview screenshot', () => {
+    const source = readToolbarSource();
+
+    expect(source).toContain('handleCopyCurrentScreenshot: () => void | Promise<void>;');
+    expect(source).toContain('handleCopyCurrentScreenshot,');
+    expect(source).toContain('onClick={handleCopyCurrentScreenshot}');
+    expect(source).toContain('<ImageIcon className="h-3.5 w-3.5" /> 复制截图');
+    const exportMenuSegment = source.slice(
+      source.indexOf('const exportMenuButton = ('),
+      source.indexOf('</DropdownMenuContent>', source.indexOf('const exportMenuButton = (')),
+    );
+    expect(exportMenuSegment).toContain('复制截图');
+    expect(exportMenuSegment.indexOf('复制截图')).toBeGreaterThan(exportMenuSegment.indexOf('设置'));
+  });
+
   it('keeps the publish menu available when the Genie host toolbar is visible', () => {
     const source = readToolbarSource();
     const segment = source.slice(

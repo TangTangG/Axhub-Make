@@ -40,6 +40,7 @@ vite.config.*.timestamp-*
 **/.axhub/make/artifacts/
 **/.axhub/make/backups/
 **/.axhub/make/edit-history/
+**/src/prototypes/**/.spec/acp/
 
 # Local tools and caches
 .local/

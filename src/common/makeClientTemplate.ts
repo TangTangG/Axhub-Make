@@ -1,5 +1,5 @@
 export const MAKE_CLIENT_TEMPLATE_ZIP_NAME = 'axhub-make-client-template.zip';
-export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.7';
+export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.8';
 export const PRIMARY_MAKE_CLIENT_TEMPLATE_RELEASE_REPOSITORY = 'lintendo/Axhub-Make';
 export const GITEE_MAKE_CLIENT_TEMPLATE_RELEASE_BASE_URL = 'https://gitee.com/axhub/Axhub-Make/releases/download';
 

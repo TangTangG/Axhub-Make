@@ -55,13 +55,19 @@ export type AcpPromptClient =
     | 'acp:cursor'
     | 'acp:codex'
     | 'acp:gemini'
-    | 'acp:opencode';
+    | 'acp:opencode'
+    | 'acp:qoder'
+    | 'acp:codebuddy'
+    | 'acp:reasonix';
 export type GeniePromptClient =
     | 'genie:claude'
     | 'genie:cursor'
     | 'genie:codex'
     | 'genie:gemini'
-    | 'genie:opencode';
+    | 'genie:opencode'
+    | 'genie:qoder'
+    | 'genie:codebuddy'
+    | 'genie:reasonix';
 export type LocalPromptClient = 'local:cursor' | 'local:qoder';
 export type PromptClient = AcpPromptClient | GeniePromptClient | LocalPromptClient;
 export type PromptClientPreference = PromptClient | null;
@@ -69,6 +75,8 @@ export type PromptClientPreference = PromptClient | null;
 export interface AutomationConfig {
     defaultPromptClient?: PromptClientPreference;
     defaultIDE?: MainIDEPreference;
+    annotationPromptClient?: PromptClientPreference;
+    annotationModel?: string | null;
 }
 
 export type ViewMode = 'demo' | 'canvas';

@@ -262,6 +262,9 @@ describe('make-server agent open API', () => {
           '@anthropic-ai/claude-code': '2.4.0',
           '@google/gemini-cli': '0.9.5',
           'opencode-ai': '1.5.0',
+          '@qoder-ai/qodercli': '0.2.16',
+          '@tencent-ai/codebuddy-code': '2.45.0',
+          reasonix: '1.9.1',
         };
         return new Response(JSON.stringify({ version: versions[packageName] }), {
           status: 200,
@@ -276,6 +279,13 @@ describe('make-server agent open API', () => {
         if (command === 'claude') return { command, escapedCommand: 'claude --version', stdout: 'Claude Code 2.3.4 (Claude Code)\n', stderr: '' };
         if (command === 'opencode') throw Object.assign(new Error('command not found'), { code: 'ENOENT' });
         if (command === 'gemini') return { command, escapedCommand: 'gemini --version', stdout: '', stderr: 'gemini 0.9.0\n' };
+        if (command === 'agent') return { command, escapedCommand: 'agent --version', stdout: 'Cursor Agent 0.50.0\n', stderr: '' };
+        if (command === 'qodercli') return { command, escapedCommand: 'qodercli --version', stdout: 'qodercli 0.2.15\n', stderr: '' };
+        if (command === 'codebuddy') return { command, escapedCommand: 'codebuddy --version', stdout: 'CodeBuddy Code 2.44.0\n', stderr: '' };
+        if (command === 'reasonix') throw Object.assign(new Error('unknown flag: --version'), { code: 'EXIT_CODE' });
+      }
+      if (command === 'reasonix' && args[0] === 'version') {
+        return { command, escapedCommand: 'reasonix version', stdout: 'Reasonix CLI v1.8.0\n', stderr: '' };
       }
       return { command, escapedCommand: [command, ...args].join(' '), stdout: '', stderr: '' };
     });
@@ -299,15 +309,24 @@ describe('make-server agent open API', () => {
       expect(body).toMatchObject({
         agents: {
           codex: { status: 'installed', version: '1.2.3' },
+          claude: { status: 'installed', version: '2.3.4' },
           claudecode: { status: 'installed', version: '2.3.4' },
           opencode: { status: 'missing' },
           gemini: { status: 'installed', version: '0.9.0' },
+          cursor: { status: 'installed', version: '0.50.0' },
+          qoder: { status: 'installed', version: '0.2.15' },
+          codebuddy: { status: 'installed', version: '2.44.0' },
+          reasonix: { status: 'installed', version: '1.8.0' },
         },
         latestAgents: {
           codex: { status: 'installed', version: '1.3.0', packageName: '@openai/codex' },
+          claude: { status: 'installed', version: '2.4.0', packageName: '@anthropic-ai/claude-code' },
           claudecode: { status: 'installed', version: '2.4.0', packageName: '@anthropic-ai/claude-code' },
           opencode: { status: 'installed', version: '1.5.0', packageName: 'opencode-ai' },
           gemini: { status: 'installed', version: '0.9.5', packageName: '@google/gemini-cli' },
+          qoder: { status: 'installed', version: '0.2.16', packageName: '@qoder-ai/qodercli' },
+          codebuddy: { status: 'installed', version: '2.45.0', packageName: '@tencent-ai/codebuddy-code' },
+          reasonix: { status: 'installed', version: '1.9.1', packageName: 'reasonix' },
         },
       });
       expect(body.agents.codex.checkedAt).toEqual(expect.any(String));
@@ -316,10 +335,18 @@ describe('make-server agent open API', () => {
       expect(runLocalCommandMock).toHaveBeenCalledWith('claude', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('opencode', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('gemini', ['--version'], expect.any(Object));
+      expect(runLocalCommandMock).toHaveBeenCalledWith('agent', ['--version'], expect.any(Object));
+      expect(runLocalCommandMock).toHaveBeenCalledWith('qodercli', ['--version'], expect.any(Object));
+      expect(runLocalCommandMock).toHaveBeenCalledWith('codebuddy', ['--version'], expect.any(Object));
+      expect(runLocalCommandMock).toHaveBeenCalledWith('reasonix', ['--version'], expect.any(Object));
+      expect(runLocalCommandMock).toHaveBeenCalledWith('reasonix', ['version'], expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40openai%2Fcodex/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40anthropic-ai%2Fclaude-code/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40google%2Fgemini-cli/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/opencode-ai/latest', expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40qoder-ai%2Fqodercli/latest', expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40tencent-ai%2Fcodebuddy-code/latest', expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/reasonix/latest', expect.any(Object));
     } finally {
       await server.close();
     }
@@ -477,6 +504,40 @@ describe('make-server agent open API', () => {
       });
     } finally {
       await server.close();
+    }
+  });
+
+  it('launches Windows CLI agents without routing the command line through start parsing', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    const projectRoot = createTempRoot();
+
+    try {
+      await expect(openCLIAgent({
+        agent: 'claudecode',
+        targetPath: projectRoot,
+        availability: { status: 'installed', path: 'C:\\nvm4w\\nodejs\\claude.cmd' } as any,
+      })).resolves.toMatchObject({
+        success: true,
+        agent: 'claudecode',
+        targetPath: projectRoot,
+      });
+
+      const firstSpawnCall = childProcessMock.spawn.mock.calls[0] as unknown[] | undefined;
+      expect(firstSpawnCall?.[0]).toBe('cmd.exe');
+      expect(firstSpawnCall?.[1]).toEqual([
+        '/d',
+        '/k',
+        `cd /d "${projectRoot}" && "C:\\nvm4w\\nodejs\\claude.cmd"`,
+      ]);
+      expect(firstSpawnCall?.[2]).toMatchObject({
+        cwd: projectRoot,
+        detached: true,
+        shell: false,
+        windowsHide: false,
+      });
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
   });
 

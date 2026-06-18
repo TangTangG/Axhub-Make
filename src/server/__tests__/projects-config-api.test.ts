@@ -123,6 +123,8 @@ describe('make-server project config APIs', () => {
           permission: 'approve-all',
           timeout: 1800,
         },
+        annotationPromptClient: null,
+        annotationModel: null,
       });
       expect(legacyConfig.assistant).toEqual({
         webBaseUrl: 'http://legacy.local',
@@ -175,6 +177,8 @@ describe('make-server project config APIs', () => {
             permission: 'approve-all',
             timeout: 1800,
           },
+          annotationPromptClient: null,
+          annotationModel: null,
         },
         assistant: {
           webBaseUrl: 'http://assistant.local',
@@ -385,6 +389,8 @@ describe('make-server project config APIs', () => {
           permission: 'approve-all',
           timeout: 1800,
         },
+        annotationPromptClient: null,
+        annotationModel: null,
       });
     } finally {
       await server.close();
@@ -429,6 +435,83 @@ describe('make-server project config APIs', () => {
       await saveAndExpectDefaultPromptClient('acp:opencode');
       await saveAndExpectDefaultPromptClient('opencode');
       await saveAndExpectDefaultPromptClient('genie:opencode');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('saves, reads, and bootstraps new ACP providers with annotation AI preferences', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'new-acp-providers-client', name: 'New ACP Providers Client' },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+      projectInfo: { name: 'New ACP Providers Client' },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'new-acp-providers-client', 'New ACP Providers Client');
+
+    async function saveAndExpectDefaultPromptClient(input: string, expected: string) {
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          automation: {
+            defaultPromptClient: input,
+            annotationPromptClient: 'acp:cursor',
+            annotationModel: 'fast-cursor',
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
+      expect(serverConfig.automation.defaultPromptClient).toBe(expected);
+      expect(serverConfig.automation.annotationPromptClient).toBe('acp:cursor');
+      expect(serverConfig.automation.annotationModel).toBe('fast-cursor');
+      expect(serverConfig.automation.acpModels).toBeUndefined();
+
+      const config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(config.automation.defaultPromptClient).toBe(expected);
+      expect(config.automation.annotationPromptClient).toBe('acp:cursor');
+      expect(config.automation.annotationModel).toBe('fast-cursor');
+
+      const bootstrap = await fetch(`${server.origin}/api/config/bootstrap`).then((response) => response.json());
+      expect(bootstrap.automation.defaultPromptClient).toBe(expected);
+      expect(bootstrap.automation.annotationPromptClient).toBe('acp:cursor');
+      expect(bootstrap.automation.annotationModel).toBe('fast-cursor');
+    }
+
+    try {
+      await saveAndExpectDefaultPromptClient('acp:cursor', 'acp:cursor');
+      await saveAndExpectDefaultPromptClient('qoder', 'acp:qoder');
+      await saveAndExpectDefaultPromptClient('codebuddy', 'acp:codebuddy');
+      await saveAndExpectDefaultPromptClient('reasonix', 'acp:reasonix');
+
+      const savedWithoutAnnotationProvider = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          automation: {
+            defaultPromptClient: 'acp:qoder',
+            annotationPromptClient: null,
+            annotationModel: null,
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(savedWithoutAnnotationProvider).toMatchObject({ status: 200, body: { success: true } });
+      const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
+      expect(serverConfig.automation.defaultPromptClient).toBe('acp:qoder');
+      expect(serverConfig.automation.annotationPromptClient).toBeNull();
+      expect(serverConfig.automation.annotationModel).toBeNull();
+
+      const config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(config.automation.annotationPromptClient).toBeNull();
+
+      const bootstrap = await fetch(`${server.origin}/api/config/bootstrap`).then((response) => response.json());
+      expect(bootstrap.automation.annotationPromptClient).toBeNull();
     } finally {
       await server.close();
     }

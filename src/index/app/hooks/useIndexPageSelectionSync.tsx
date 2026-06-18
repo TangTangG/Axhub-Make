@@ -152,8 +152,32 @@ export function resolvePrototypeAutoSelectionDecision({
         };
     }
 
+    const firstTreeItem = findFirstItemFromTree(sidebarTrees[activeTab], itemMap);
+    const fallbackItem = items[0] ?? null;
+    const autoSelectedItem = firstTreeItem ?? fallbackItem;
+
     if (currentItem && selectedItem && currentItem.name === selectedItem.name) {
-        if (selectedItem.placeholder === true && currentItem.placeholder !== true) {
+        if (
+            !hasExplicitSelection
+            && firstTreeItem
+            && firstTreeItem.name !== currentItem.name
+            && selectedItem.placeholder !== true
+            && currentItem.placeholder !== true
+            && currentItem.generationStatus !== 'waiting'
+        ) {
+            return {
+                kind: 'select',
+                item: firstTreeItem,
+                markExplicitSelection: false,
+                resetPageSelection: true,
+                nextCanvasItem,
+            };
+        }
+        if (
+            selectedItem.placeholder === true
+            && currentItem.placeholder !== true
+            && currentItem.generationStatus !== 'waiting'
+        ) {
             return {
                 kind: 'keep',
                 markExplicitSelection: false,
@@ -176,9 +200,6 @@ export function resolvePrototypeAutoSelectionDecision({
         };
     }
 
-    const firstTreeItem = findFirstItemFromTree(sidebarTrees[activeTab], itemMap);
-    const fallbackItem = items[0] ?? null;
-    const autoSelectedItem = firstTreeItem ?? fallbackItem;
     if (!autoSelectedItem) {
         return {
             kind: 'keep',

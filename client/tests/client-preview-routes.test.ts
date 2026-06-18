@@ -561,6 +561,47 @@ describe('client preview routes', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('falls back to the default admin origin when stored admin info is stale for runtime injection', async () => {
+    const projectRoot = createFixtureProject();
+    stubAdminHealth(['http://localhost:53817']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 61847,
+      host: '127.0.0.1',
+      origin: 'http://127.0.0.1:61847',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home?projectId=make-project&genieToolbar=host',
+      headers: {},
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
+    expect(html).toContain('src="http://localhost:53817/assets/dev-template-bootstrap.js"');
+    expect(html).toContain('src="http://localhost:53817/runtime/quick-edit.js"');
+    expect(html).not.toContain('http://127.0.0.1:61847/runtime/quick-edit.js');
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('uses the forwarded admin host instead of stale stored admin info for proxied preview runtime injection', async () => {
     const projectRoot = createFixtureProject();
     stubAdminHealth(['http://localhost:53817']);

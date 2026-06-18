@@ -29,6 +29,7 @@ interface AxhubServerInfo {
 const PREVIEW_TYPES = new Set<ResourceType>(['prototypes', 'themes']);
 const PROTOTYPE_CANVAS_ASSETS_DIR = 'canvas-assets';
 const PREVIEW_LOADER_FILE = '__axhub-preview-loader.js';
+const DEFAULT_ADMIN_ORIGIN = 'http://localhost:53817';
 
 function escapeRegExp(input: string) {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -215,7 +216,7 @@ function normalizePreviewLoaderRoute(url: string): { type: ResourceType; name: s
     }
   });
   const type = parts[0] as ResourceType;
-  if (!PREVIEW_TYPES.has(type) || parts.length < 3 || parts.at(-1) !== PREVIEW_LOADER_FILE) {
+  if (!PREVIEW_TYPES.has(type) || parts.length < 3 || parts[parts.length - 1] !== PREVIEW_LOADER_FILE) {
     return null;
   }
   const nameParts = parts.slice(1, -1);
@@ -707,14 +708,21 @@ function isAdminHealthPayload(data: unknown): boolean {
   return Boolean(data && typeof data === 'object' && (data as { role?: unknown }).role === 'admin');
 }
 
+async function isHealthyAdminOrigin(origin: string | null | undefined): Promise<boolean> {
+  if (!origin) {
+    return false;
+  }
+  const health = await fetchHealth(origin, 600);
+  return isAdminHealthPayload(health) && Boolean(normalizeHealthServerInfo(health)?.origin);
+}
+
 async function resolveAdminServerOrigin(
   projectRoot: string,
   req: { headers?: Record<string, string | string[] | undefined> },
 ): Promise<string | null> {
   const embeddedAdminOrigin = getRequestRefererOrigin(req);
   if (embeddedAdminOrigin) {
-    const health = await fetchHealth(embeddedAdminOrigin, 600);
-    if (isAdminHealthPayload(health) && normalizeHealthServerInfo(health)?.origin) {
+    if (await isHealthyAdminOrigin(embeddedAdminOrigin)) {
       return embeddedAdminOrigin;
     }
   }
@@ -722,13 +730,20 @@ async function resolveAdminServerOrigin(
   const info = readServerInfo(projectRoot, 'admin');
   const requestHostAdminOrigin = createNetworkAdminOriginFromRequestHost(req, info);
   if (requestHostAdminOrigin) {
-    const health = await fetchHealth(requestHostAdminOrigin, 600);
-    if (isAdminHealthPayload(health) && normalizeHealthServerInfo(health)?.origin) {
+    if (await isHealthyAdminOrigin(requestHostAdminOrigin)) {
       return requestHostAdminOrigin;
     }
   }
 
-  return info?.origin || null;
+  if (await isHealthyAdminOrigin(info?.origin)) {
+    return info?.origin || null;
+  }
+
+  if (info?.origin !== DEFAULT_ADMIN_ORIGIN && await isHealthyAdminOrigin(DEFAULT_ADMIN_ORIGIN)) {
+    return DEFAULT_ADMIN_ORIGIN;
+  }
+
+  return null;
 }
 
 export function clientPreviewPlugin(): Plugin {

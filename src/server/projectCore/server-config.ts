@@ -3,7 +3,17 @@ import path from 'node:path';
 
 import { getConfigPath, getGlobalServerConfigPath } from './paths.ts';
 
-export type ServerPromptClientPreference = 'acp:codex' | 'acp:claude' | 'acp:gemini' | 'acp:opencode' | 'manual';
+export type ServerPromptClientPreference =
+  | 'acp:codex'
+  | 'acp:claude'
+  | 'acp:gemini'
+  | 'acp:opencode'
+  | 'acp:cursor'
+  | 'acp:qoder'
+  | 'acp:codebuddy'
+  | 'acp:reasonix'
+  | 'manual';
+export type ServerAnnotationPromptClientPreference = Exclude<ServerPromptClientPreference, 'manual'> | null;
 export type ServerAcpExecutionMode = 'prompt' | 'exec';
 export type ServerAcpPermissionMode = 'approve-all';
 
@@ -57,6 +67,8 @@ export interface MakeServerConfig {
       permission: ServerAcpPermissionMode;
       timeout: number;
     };
+    annotationPromptClient: ServerAnnotationPromptClientPreference;
+    annotationModel: string | null;
   };
   assistant: {
     webBaseUrl: string | null;
@@ -94,6 +106,8 @@ const DEFAULT_SERVER_CONFIG: MakeServerConfig = {
       permission: 'approve-all',
       timeout: 1800,
     },
+    annotationPromptClient: null,
+    annotationModel: null,
   },
   assistant: {
     webBaseUrl: null,
@@ -118,6 +132,10 @@ const PROMPT_CLIENT_VALUES = new Set<ServerPromptClientPreference>([
   'acp:claude',
   'acp:gemini',
   'acp:opencode',
+  'acp:cursor',
+  'acp:qoder',
+  'acp:codebuddy',
+  'acp:reasonix',
   'manual',
 ]);
 
@@ -132,6 +150,14 @@ const LEGACY_PROMPT_CLIENT_VALUES: Record<string, ServerPromptClientPreference> 
   'genie:gemini': 'acp:gemini',
   opencode: 'acp:opencode',
   'genie:opencode': 'acp:opencode',
+  cursor: 'acp:cursor',
+  'genie:cursor': 'acp:cursor',
+  qoder: 'acp:qoder',
+  'genie:qoder': 'acp:qoder',
+  codebuddy: 'acp:codebuddy',
+  'genie:codebuddy': 'acp:codebuddy',
+  reasonix: 'acp:reasonix',
+  'genie:reasonix': 'acp:reasonix',
 };
 
 const IDE_VALUES = new Set<ServerIDEPreference>([
@@ -282,6 +308,30 @@ function normalizePromptClient(value: unknown, fallback: ServerPromptClientPrefe
   return fallback;
 }
 
+function normalizeAnnotationPromptClient(
+  value: unknown,
+  fallback: ServerAnnotationPromptClientPreference,
+): ServerAnnotationPromptClientPreference {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  const legacyValue = LEGACY_PROMPT_CLIENT_VALUES[normalized];
+  if (legacyValue && legacyValue !== 'manual') {
+    return legacyValue;
+  }
+  if (PROMPT_CLIENT_VALUES.has(normalized as ServerPromptClientPreference) && normalized !== 'manual') {
+    return normalized as ServerAnnotationPromptClientPreference;
+  }
+  return fallback;
+}
+
 function normalizeAcpExecutionConfig(
   value: unknown,
   fallback: MakeServerConfig['automation']['acp'],
@@ -416,6 +466,12 @@ function normalizeConfig(input: unknown, fallback: MakeServerConfig = DEFAULT_SE
           fallback.automation.acp,
         )
         : fallback.automation.acp,
+      annotationPromptClient: hasOwn(automation, 'annotationPromptClient')
+        ? normalizeAnnotationPromptClient(automation.annotationPromptClient, fallback.automation.annotationPromptClient)
+        : fallback.automation.annotationPromptClient,
+      annotationModel: hasOwn(automation, 'annotationModel')
+        ? normalizeNullableString(automation.annotationModel)
+        : fallback.automation.annotationModel,
     },
     assistant: {
       webBaseUrl: hasOwn(assistant, 'webBaseUrl')

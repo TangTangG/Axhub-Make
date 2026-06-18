@@ -78,6 +78,7 @@ interface SelectedEmbedInfo {
     /** Current embed display mode */
     viewMode: 'link' | 'preview';
     previewable: boolean;
+    customData?: Record<string, unknown>;
 }
 
 /** Label info for a single embeddable element (selected or not) */
@@ -333,7 +334,8 @@ function selectedEmbedInfoEqual(a: SelectedEmbedInfo | null, b: SelectedEmbedInf
         && a.strokeColor === b.strokeColor
         && a.contentScale === b.contentScale
         && a.viewMode === b.viewMode
-        && a.previewable === b.previewable;
+        && a.previewable === b.previewable
+        && JSON.stringify(a.customData || {}) === JSON.stringify(b.customData || {});
 }
 
 interface EmbedTooltipState {
@@ -379,9 +381,24 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
         elementId: string,
         isSelected: boolean,
         activationMode: 'activate' | 'select-only' = 'select-only',
+        embedInfo?: SelectedEmbedInfo | null,
     ) => {
         window.dispatchEvent(new CustomEvent('axhub:embedSelectionChanged', {
-            detail: { elementId, isSelected, activationMode },
+            detail: {
+                elementId,
+                isSelected,
+                activationMode,
+                ...(isSelected && embedInfo ? {
+                    previewUrl: embedInfo.previewUrl,
+                    openUrl: embedInfo.openUrl,
+                    title: embedInfo.title,
+                    kind: embedInfo.kind,
+                    customData: embedInfo.customData || {},
+                    resourceType: resolveString(embedInfo.customData?.resourceType),
+                    resourceId: resolveString(embedInfo.customData?.resourceId),
+                    previewKind: resolveString(embedInfo.customData?.previewKind),
+                } : {}),
+            },
         }));
     }, []);
 
@@ -786,6 +803,7 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
                             contentScale: normalizeEmbedContentScale(el.customData?.embedContentScale),
                             viewMode,
                             previewable,
+                            customData: el.customData || {},
                         };
                     }
                 }
@@ -830,13 +848,13 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
                     // Selected new
                     if (currentSelectedId) {
                         const activationMode = resolveSelectionActivationMode(currentSelectedId, prevId, pointerIntent);
-                        dispatchEmbedSelectionChanged(currentSelectedId, true, activationMode);
+                        dispatchEmbedSelectionChanged(currentSelectedId, true, activationMode, selectedEmbed);
                     }
                     prevSelectedEmbedIdRef.current = currentSelectedId;
                 } else if (currentSelectedId) {
                     const activationMode = resolveSelectionActivationMode(currentSelectedId, prevId, pointerIntent);
                     if (activationMode === 'activate') {
-                        dispatchEmbedSelectionChanged(currentSelectedId, true, activationMode);
+                        dispatchEmbedSelectionChanged(currentSelectedId, true, activationMode, selectedEmbed);
                         pointerIntentRef.current = null;
                     }
                 }

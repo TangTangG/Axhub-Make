@@ -208,6 +208,7 @@ export function useIndexPagePresentationPropsBuilder({
             getLANUrl: preview.getLANUrl,
             setQrCodeVisible: preview.setQrCodeVisible,
             handleCopyToFigma: preview.handleCopyToFigma,
+            handleCopyCurrentScreenshot: preview.handleCopyCurrentScreenshot,
             handleExportMake: preview.handleExportMake,
             handleExportHtml: preview.handleExportHtml,
             handlePublishCloudTarget: preview.handlePublishCloudTarget,

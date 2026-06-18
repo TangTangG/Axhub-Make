@@ -87,7 +87,7 @@
 </head>
 <body>
   <main>
-    <p>可以通过 npx @axhub/make 启动管理页面。</p>
+    <p>可以通过 npx -y @axhub/make@latest 启动管理页面。</p>
     <div class="actions">
       <button id="start-button" type="button" hidden>启动管理服务</button>
     </div>
@@ -160,7 +160,7 @@
         }
         startButton.disabled = true;
         startButton.textContent = '启动中...';
-        setStatus('正在执行 npx @axhub/make...');
+        setStatus('正在执行 npx -y @axhub/make@latest...');
         try {
           var response = await fetch('/__axhub/make-server/start', { method: 'POST', headers: { accept: 'application/json' } });
           var payload = await response.json();

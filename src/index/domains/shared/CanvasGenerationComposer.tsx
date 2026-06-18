@@ -2,15 +2,17 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './canvas-generation-acp-scope.css';
 import {
   AssistantRuntimeProvider,
+  ComposerPrimitive,
   useAui,
   useAuiState,
+  type Attachment,
   type AttachmentAdapter,
   type ThreadMessage,
 } from '@assistant-ui/react';
 import { useChatRuntime } from '@assistant-ui/react-ai-sdk';
 import { AcpUiProvider, useAcpUiRuntimeContext } from '@axhub/acp/react';
-import { AcpComposerSelectors, Composer } from '@axhub/acp/ui';
-import { ACP_CAPABILITY_REFRESH_EVENT, configureAcpUiRuntime } from '@axhub/acp/runtime';
+import { AcpComposerSelectors, ComposerAttachments } from '@axhub/acp/ui';
+import { ACP_CAPABILITY_REFRESH_EVENT, acpApiClient, configureAcpUiRuntime } from '@axhub/acp/runtime';
 import type { ContextBundleV2, ContextItem } from '@axhub/acp/runtime';
 import type {
   ChatTransport,
@@ -18,14 +20,16 @@ import type {
   UIMessage,
   UIMessageChunk,
 } from 'ai';
-import { ArrowUp, ChevronDown, Plus, Settings2, Sparkles } from 'lucide-react';
+import { ArrowUp, ChevronDown, PlusIcon, Settings2, Sparkles, Square } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { apiService } from '../../services/index.api';
 import { shouldUseCanvasReferencePaste } from './canvasReferenceClipboard';
 import type { CanvasLocalContextRef } from '../ai-image/canvasReferenceImages';
@@ -209,10 +213,6 @@ async function readFileAsDataUrl(file: File): Promise<string> {
   return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
 }
 
-async function readFilesAsDataUrls(files: File[]): Promise<string[]> {
-  return Promise.all(files.map((file) => readFileAsDataUrl(file)));
-}
-
 export const canvasReferenceImageAttachmentAdapter: AttachmentAdapter = {
   accept: 'image/*',
   async add({ file }) {
@@ -241,6 +241,33 @@ export const canvasReferenceImageAttachmentAdapter: AttachmentAdapter = {
     // Local canvas reference attachments do not need cleanup.
   },
 };
+
+function extractImageDataUrlsFromAttachmentContent(attachment: Attachment): string[] {
+  return attachment.content?.flatMap((part) => {
+    if (part.type === 'image' && typeof part.image === 'string') {
+      return [part.image];
+    }
+    if (part.type === 'file' && typeof part.data === 'string' && part.mimeType?.startsWith('image/')) {
+      return [part.data];
+    }
+    return [];
+  }) ?? [];
+}
+
+async function resolveComposerAttachmentReferenceImages(attachments: readonly Attachment[]): Promise<string[]> {
+  const images = await Promise.all(attachments.map(async (attachment) => {
+    const contentImages = extractImageDataUrlsFromAttachmentContent(attachment);
+    if (contentImages.length > 0) {
+      return contentImages;
+    }
+    if (attachment.status.type === 'complete') {
+      return [];
+    }
+    const completedAttachment = await canvasReferenceImageAttachmentAdapter.send(attachment);
+    return extractImageDataUrlsFromAttachmentContent(completedAttachment);
+  }));
+  return images.flat();
+}
 
 function isTextPart(part: UIMessage['parts'][number]): part is { type: 'text'; text: string } {
   return part.type === 'text' && typeof part.text === 'string';
@@ -533,6 +560,101 @@ function CanvasGenerationDisplayQuickPromptsButton({
   );
 }
 
+function CanvasComposerAddAttachmentButton({
+  label,
+}: {
+  label: string;
+}) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <ComposerPrimitive.AddAttachment asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="aui-composer-add-attachment size-8 rounded-full p-1 font-semibold text-xs hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30"
+              aria-label={label}
+            >
+              <PlusIcon className="aui-attachment-add-icon size-5 stroke-[1.5px]" />
+            </Button>
+          </ComposerPrimitive.AddAttachment>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function useCancelCanvasActiveChatRun() {
+  const { provider, workspacePath } = useAcpUiRuntimeContext();
+  const remoteId = useAuiState((state) => state.threadListItem.remoteId);
+  const mainThreadId = useAuiState((state) => state.threads.mainThreadId);
+  const threadId = remoteId ?? mainThreadId;
+  return useCallback(() => {
+    void acpApiClient.cancelChat({
+      threadId,
+      provider,
+      workspacePath,
+    });
+  }, [provider, threadId, workspacePath]);
+}
+
+function CanvasComposerSubmitButton({
+  label,
+}: {
+  label: string;
+}) {
+  const threadIsRunning = useAuiState((state) => state.thread.isRunning);
+  const cancelActiveChatRun = useCancelCanvasActiveChatRun();
+
+  if (threadIsRunning) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <ComposerPrimitive.Cancel asChild>
+              <Button
+                type="button"
+                variant="default"
+                size="icon"
+                className="aui-composer-cancel size-8 rounded-full"
+                aria-label="停止生成"
+                onClick={cancelActiveChatRun}
+              >
+                <Square className="aui-composer-cancel-icon size-3 fill-current" />
+              </Button>
+            </ComposerPrimitive.Cancel>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">停止生成</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <ComposerPrimitive.Send asChild>
+            <Button
+              type="button"
+              variant="default"
+              size="icon"
+              className="aui-composer-send size-8 rounded-full"
+              aria-label={label}
+            >
+              <ArrowUp className="aui-composer-send-icon size-4" />
+            </Button>
+          </ComposerPrimitive.Send>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 interface CanvasGenerationDisplayComposerContentProps extends Omit<CanvasGenerationDisplayComposerProps, 'onSubmit' | 'showSelectors' | 'workspacePath'> {
   onEnsureAcpRuntime?: (autoStart?: boolean) => Promise<boolean>;
   onSubmitText?: (text: string, referenceImages: string[]) => CanvasGenerationDisplaySubmitResult | Promise<CanvasGenerationDisplaySubmitResult>;
@@ -555,8 +677,9 @@ function CanvasGenerationDisplayComposerContent({
   showModelSelectorFallback = false,
   showSelectors = false,
 }: CanvasGenerationDisplayComposerContentProps) {
+  const aui = useAui();
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const [displayReferenceImages, setDisplayReferenceImages] = useState<string[]>([]);
+  const displayReferenceAttachments = useAuiState((state) => state.composer.attachments);
   const loadedDisplayDraftStorageKeyRef = useRef<string | null>(null);
   const persistDisplayDraft = useCallback((text: string) => {
     const storage = getCanvasGenerationComposerDraftStorage();
@@ -566,7 +689,7 @@ function CanvasGenerationDisplayComposerContent({
     if (disabled) return;
     const text = inputRef.current?.value.trim() ?? '';
     if (!text) return;
-    const referenceImages = displayReferenceImages;
+    const referenceImages = await resolveComposerAttachmentReferenceImages(displayReferenceAttachments);
     const submitResult = await onSubmitText?.(text, referenceImages);
     if (submitResult === false) {
       persistDisplayDraft(text);
@@ -577,8 +700,8 @@ function CanvasGenerationDisplayComposerContent({
     if (inputRef.current) {
       inputRef.current.value = '';
     }
-    setDisplayReferenceImages([]);
-  }, [disabled, displayReferenceImages, draftStorageKey, onSubmitText, persistDisplayDraft]);
+    await aui.composer().clearAttachments();
+  }, [aui, disabled, displayReferenceAttachments, draftStorageKey, onSubmitText, persistDisplayDraft]);
   useEffect(() => {
     if (!draftStorageKey) return;
     const storage = getCanvasGenerationComposerDraftStorage();
@@ -609,10 +732,8 @@ function CanvasGenerationDisplayComposerContent({
     if (!pastedFiles.length) return;
     event.preventDefault();
     event.stopPropagation();
-    void readFilesAsDataUrls(pastedFiles).then((images) => {
-      setDisplayReferenceImages((previous) => [...previous, ...images]);
-    });
-  }, [disabled]);
+    void Promise.all(pastedFiles.map((file) => aui.composer().addAttachment(file)));
+  }, [aui, disabled]);
   const handleQuickPromptClick = useCallback((quickPrompt: CanvasAiQuickPrompt) => {
     if (disabled) return;
     const nextText = appendCanvasAiQuickPrompt(inputRef.current?.value ?? '', quickPrompt.prompt);
@@ -645,33 +766,10 @@ function CanvasGenerationDisplayComposerContent({
             onKeyDown={handleInputKeyDown}
             onPaste={handleDisplayPaste}
           />
-          {displayReferenceImages.length ? (
-            <div className="flex items-center justify-between rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
-              <span data-axhub-display-composer-attachment-count>
-                已添加 {displayReferenceImages.length} 张图片
-              </span>
-              <button
-                type="button"
-                className="rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={disabled}
-                onClick={() => { setDisplayReferenceImages([]); }}
-              >
-                清除
-              </button>
-            </div>
-          ) : null}
+          <ComposerAttachments />
           <div className="aui-composer-action-wrapper relative flex items-center justify-between text-[13px] md:text-sm">
             <div className="flex min-w-0 items-center gap-1">
-              <button
-                type="button"
-                aria-label="添加附件"
-                title="添加附件"
-                disabled={disabled}
-                className="aui-composer-add-attachment inline-flex size-8 items-center justify-center rounded-full p-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted-foreground/15 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => {}}
-              >
-                <Plus className="aui-attachment-add-icon size-5 stroke-[1.5px]" />
-              </button>
+              {disabled ? null : <CanvasComposerAddAttachmentButton label="添加附件" />}
               {leadingActions}
               {showSelectors ? <AcpComposerSelectors /> : null}
               {showModelSelectorFallback ? (
@@ -707,18 +805,27 @@ function CanvasGenerationDisplayComposerWithoutAcp({
   onSubmit,
   ...props
 }: CanvasGenerationDisplayComposerProps) {
+  const transport = useMemo(() => new CanvasGenerationDisplayTransport(), []);
+  const runtime = useChatRuntime<UIMessage>({
+    transport,
+    adapters: {
+      attachments: canvasReferenceImageAttachmentAdapter,
+    },
+  });
   return (
-    <CanvasGenerationDisplayComposerContent
-      {...props}
-      onSubmitText={(text, referenceImages) => onSubmit?.(text, {
-        contextBundle: null,
-        provider: '',
-        model: null,
-        mode: null,
-        thought: null,
-        referenceImages,
-      })}
-    />
+    <AssistantRuntimeProvider runtime={runtime}>
+      <CanvasGenerationDisplayComposerContent
+        {...props}
+        onSubmitText={(text, referenceImages) => onSubmit?.(text, {
+          contextBundle: null,
+          provider: '',
+          model: null,
+          mode: null,
+          thought: null,
+          referenceImages,
+        })}
+      />
+    </AssistantRuntimeProvider>
   );
 }
 
@@ -731,7 +838,12 @@ function CanvasGenerationDisplayComposerRuntime({
 }: CanvasGenerationDisplayComposerContentProps & Pick<CanvasGenerationDisplayComposerProps, 'onSubmit'>) {
   const acpContext = useAcpUiRuntimeContext();
   const transport = useMemo(() => new CanvasGenerationDisplayTransport(), []);
-  const runtime = useChatRuntime<UIMessage>({ transport });
+  const runtime = useChatRuntime<UIMessage>({
+    transport,
+    adapters: {
+      attachments: canvasReferenceImageAttachmentAdapter,
+    },
+  });
   const handleSubmitText = useCallback((text: string, referenceImages: string[]) => {
     return onSubmit?.(text, {
       contextBundle: acpContext.consumeContextBundle(),
@@ -857,6 +969,7 @@ function useCanvasGenerationComposerDraftBridge({
 }
 
 function CanvasGenerationRuntimeComposerContent({
+  addAttachmentTooltip,
   allowAttachments,
   ariaLabel,
   canPasteReferenceImages,
@@ -875,6 +988,7 @@ function CanvasGenerationRuntimeComposerContent({
   renderPostSelectorActions,
   renderTriggerPopovers,
   rootClassName = 'aui-composer-root',
+  sendTooltip,
   showModelSelectorFallback = false,
   showSelectors = false,
   submitting,
@@ -893,6 +1007,8 @@ function CanvasGenerationRuntimeComposerContent({
     [initialLocalContextRefs],
   );
   const postSelectorActions = renderPostSelectorActions?.({ submitting });
+  const shouldRenderInlineSelectors = showSelectors && !postSelectorActions;
+  const cancelActiveChatRun = useCancelCanvasActiveChatRun();
 
   useCanvasGenerationComposerDraftBridge({ draftStorageKey });
 
@@ -938,6 +1054,16 @@ function CanvasGenerationRuntimeComposerContent({
       }
     }
   }, [allowAttachments, aui, canPasteReferenceImages, handlePasteReferenceImages, onPasteReferenceImages]);
+  const handleComposerKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== 'Escape') return;
+    const composer = aui.composer();
+    queueMicrotask(() => {
+      if (event.defaultPrevented) return;
+      if (!composer.getState().canCancel) return;
+      cancelActiveChatRun();
+      composer.cancel();
+    });
+  }, [aui, cancelActiveChatRun]);
   const handleQuickPromptSelect = useCallback((quickPrompt: CanvasAiQuickPrompt) => {
     const composer = aui.composer();
     composer.setText(appendCanvasAiQuickPrompt(composer.getState().text, quickPrompt.prompt));
@@ -945,43 +1071,58 @@ function CanvasGenerationRuntimeComposerContent({
 
   return (
     <div className={cn('ax-acp-ui-scope', rootClassName)}>
-      <Composer
-        placeholder={placeholder}
-        ariaLabel={ariaLabel}
-        showAttachments={allowAttachments}
-        showCommandMenu={false}
-        showSelectors={showSelectors && !postSelectorActions}
-        leadingActions={
-          showModelSelectorFallback || postSelectorActions || renderLeadingActions || quickPrompts?.length ? (
-            <>
-              {showModelSelectorFallback ? (
-                <CanvasAcpModelSelectorFallback onEnsureAcpRuntime={onEnsureAcpRuntime} onOpenAISettings={onOpenAISettings} />
-              ) : null}
-              {showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}
-              {postSelectorActions}
-              <CanvasGenerationDisplayQuickPromptsButton
-                disabled={submitting}
-                quickPrompts={quickPrompts}
-                onSelect={handleQuickPromptSelect}
+      <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
+        <ComposerPrimitive.AttachmentDropzone asChild>
+          <div
+            data-slot="aui_composer-shell"
+            className="flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-background p-(--composer-padding) transition-shadow focus-within:border-ring/75 focus-within:ring-2 focus-within:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50"
+          >
+            <ComposerPrimitive.Unstable_TriggerPopoverRoot>
+              {allowAttachments ? <ComposerAttachments /> : null}
+              <ComposerPrimitive.Input
+                placeholder={placeholder}
+                className="aui-composer-input max-h-32 min-h-10 w-full resize-none bg-transparent px-1.75 py-1 text-[13px] outline-none placeholder:text-muted-foreground/80 md:text-sm"
+                rows={1}
+                autoFocus
+                aria-label={ariaLabel}
+                cancelOnEscape={false}
+                onKeyDown={handleComposerKeyDown}
+                onPaste={handleComposerPaste}
               />
-              {renderLeadingActions ? (
-                <div className={footerLeadingActionsClassName}>
-                  {renderLeadingActions?.({ submitting })}
-                </div>
-              ) : null}
-            </>
-          ) : null
-        }
-        trailingActions={
-          renderActions ? (
-            <div className={footerActionsClassName}>
-              {renderActions?.({ submitting })}
+              {renderTriggerPopovers?.()}
+            </ComposerPrimitive.Unstable_TriggerPopoverRoot>
+            <div className="aui-composer-action-wrapper relative flex items-center justify-between text-[13px] md:text-sm">
+              <div className="flex min-w-0 items-center gap-1">
+                {allowAttachments ? <CanvasComposerAddAttachmentButton label={addAttachmentTooltip} /> : null}
+                {shouldRenderInlineSelectors ? <AcpComposerSelectors /> : null}
+                {showModelSelectorFallback ? (
+                  <CanvasAcpModelSelectorFallback onEnsureAcpRuntime={onEnsureAcpRuntime} onOpenAISettings={onOpenAISettings} />
+                ) : null}
+                {showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}
+                {postSelectorActions}
+                <CanvasGenerationDisplayQuickPromptsButton
+                  disabled={submitting}
+                  quickPrompts={quickPrompts}
+                  onSelect={handleQuickPromptSelect}
+                />
+                {renderLeadingActions ? (
+                  <div className={footerLeadingActionsClassName}>
+                    {renderLeadingActions?.({ submitting })}
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-1">
+                {renderActions ? (
+                  <div className={footerActionsClassName}>
+                    {renderActions?.({ submitting })}
+                  </div>
+                ) : null}
+                <CanvasComposerSubmitButton label={sendTooltip} />
+              </div>
             </div>
-          ) : null
-        }
-        triggerPopovers={renderTriggerPopovers?.()}
-        onPaste={handleComposerPaste}
-      />
+          </div>
+        </ComposerPrimitive.AttachmentDropzone>
+      </ComposerPrimitive.Root>
     </div>
   );
 }

@@ -5,10 +5,15 @@ import { fileURLToPath } from 'node:url';
 
 import { getOpenCodeBridgeHub, isOpenCodeBridgeUpgrade } from './opencodeBridge.ts';
 import { getCanvasBridgeHub, isCanvasBridgeUpgrade } from './canvasBridge.ts';
+import { getPreviewBridgeHub, isPreviewBridgeUpgrade } from './previewBridge.ts';
 import {
   createAxhubCanvasMcpToken,
   handleAxhubCanvasMcp,
 } from './axhubCanvasMcp.ts';
+import {
+  createAxhubPreviewMcpToken,
+  handleAxhubPreviewMcp,
+} from './axhubPreviewMcp.ts';
 
 import {
   checkMakeStateHealth,
@@ -311,6 +316,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   const lanHost = getLocalIP();
   const serverInfoHomeDir = options.serverInfoHomeDir
     || (options.registryPath ? path.dirname(path.dirname(path.dirname(options.registryPath))) : undefined);
+  const startupProjectRoot = path.resolve(options.projectRoot);
   const projectRoot = getGlobalMakeStateDir(serverInfoHomeDir);
   const host = resolveMakeServerListenHost({ explicitHost: options.host });
   let runtimeOrigin = resolveRuntimeOrigin(null, options.runtimeOrigin);
@@ -318,6 +324,8 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   let adminServerInfo: AxhubServerInfo | null = null;
   const canvasBridgeHub = getCanvasBridgeHub();
   const axhubCanvasMcpToken = createAxhubCanvasMcpToken();
+  const previewBridgeHub = getPreviewBridgeHub();
+  const axhubPreviewMcpToken = createAxhubPreviewMcpToken();
   let makeStateHealth: MakeStateHealthResult = checkMakeStateHealth(
     options.registryPath ? { registryPath: options.registryPath } : { homeDir: serverInfoHomeDir },
   );
@@ -348,12 +356,13 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
     const currentViteMiddleware = await ensureViteMiddleware();
     const injectScript = buildInjectScript({
       adminRoot,
-      projectRoot,
+      projectRoot: startupProjectRoot,
       host,
       lanHost,
       port: Number(new URL(origin).port),
       runtimeOrigin,
       axhubCanvasMcpToken,
+      axhubPreviewMcpToken,
     });
     const requestUrl = getRequestUrl(req);
     const htmlUrl = pathname || '/';
@@ -397,7 +406,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       const adminStaticOptions: AdminStaticOptions = {
         adminRoot,
         opencodeWebUiRoot,
-        projectRoot,
+        projectRoot: startupProjectRoot,
         activeProjectRoot,
         host,
         lanHost,
@@ -405,6 +414,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         opencodeServerOrigin: resolveOpenCodeServerOrigin(pathname),
         runtimeOrigin,
         axhubCanvasMcpToken,
+        axhubPreviewMcpToken,
       };
 
       // ── 1. Management API ──
@@ -423,8 +433,16 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       })) {
         return;
       }
+      if (await handleAxhubPreviewMcp(req, res, {
+        token: axhubPreviewMcpToken,
+        bridgeHub: previewBridgeHub,
+        captureOutputRoot: path.join(activeProjectRoot || projectRoot, '.local', 'preview-captures'),
+      })) {
+        return;
+      }
       if (await handleManagementApi(req, res, {
         projectRoot,
+        startupProjectRoot,
         adminRoot,
         origin,
         runtimeOrigin,
@@ -488,12 +506,13 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
           const currentViteMiddleware = await ensureViteMiddleware();
           const injectScript = buildInjectScript({
             adminRoot,
-            projectRoot,
+            projectRoot: startupProjectRoot,
             host,
             lanHost,
             port: Number(new URL(origin).port),
             runtimeOrigin,
             axhubCanvasMcpToken,
+            axhubPreviewMcpToken,
           });
           const html = await currentViteMiddleware.transformHtml(
             '/src/index/index.html',
@@ -584,7 +603,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
     });
   });
 
-  // Attach WebSocket upgrade handlers for OpenCode context bridge and Canvas bridge.
+  // Attach WebSocket upgrade handlers for OpenCode context bridge, Canvas bridge, and Preview bridge.
   // In dev mode, non-bridge upgrades are left open for Vite HMR.
   const bridgeHub = getOpenCodeBridgeHub();
   canvasBridgeHub.configureProjectRoot(projectRoot);
@@ -593,6 +612,8 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       bridgeHub.handleUpgrade(req, socket, head);
     } else if (isCanvasBridgeUpgrade(req)) {
       canvasBridgeHub.handleUpgrade(req, socket, head);
+    } else if (isPreviewBridgeUpgrade(req)) {
+      previewBridgeHub.handleUpgrade(req, socket, head);
     } else if (!devMode) {
       (async () => {
         const requestUrl = req.url || '/';

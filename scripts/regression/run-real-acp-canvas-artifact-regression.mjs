@@ -16,8 +16,8 @@ const { PuppeteerAgent } = require(require.resolve('@midscene/web/puppeteer', {
 
 const SUITE_NAME = 'run-real-acp-canvas-artifact-regression';
 const DEFAULT_PROJECT_ID = 'make-2-2';
-const DEFAULT_ACP_WEB_BASE_URL = 'http://localhost:32123';
-const DEFAULT_ACP_API_BASE_URL = 'http://localhost:32123/api';
+const DEFAULT_ACP_WEB_BASE_URL = 'http://localhost:32124';
+const DEFAULT_ACP_API_BASE_URL = 'http://localhost:32124/api';
 const DEFAULT_VIEWPORT = { width: 1440, height: 1000, deviceScaleFactor: 1 };
 const REAL_ACP_RUNTIME_AUTOSTART_PATH = '/api/assistant/runtime?autoStart=true';
 const REAL_ACP_ENTRY_CANVAS_START = 'canvas-start';
@@ -970,7 +970,7 @@ async function installNodeEventRecorder(page, diagnostics) {
 }
 
 function attachBrowserDiagnostics(page, diagnostics) {
-  const shouldTrackRequestUrl = (url) => /\/api\/(?:chat|canvas|assistant\/runtime|ai\/artifact-history)|localhost:32123|AssistantPanel/u.test(url);
+  const shouldTrackRequestUrl = (url) => /\/api\/(?:chat|canvas|assistant\/runtime|ai\/artifact-history)|localhost:32124|AssistantPanel/u.test(url);
   const isChatUrl = (url) => {
     try {
       return new URL(url).pathname === '/api/chat';
@@ -1989,12 +1989,46 @@ async function focusRealAcpCanvasElements(page, requiredKinds = REQUIRED_ARTIFAC
   }, requiredKinds);
 }
 
-async function refreshCanvasPageForRecovery({ page, frames, frameDir, label, acpOrigin }) {
+function countRealAcpPostMessageTypes(events, minAt, expectedTypes) {
+  const counts = Object.fromEntries(expectedTypes.map((type) => [type, 0]));
+  for (const event of events || []) {
+    const type = String(event?.data?.type || '');
+    if (event?.channel !== 'message' || !expectedTypes.includes(type)) continue;
+    if (Number(event?.at || event?.recordedAt || 0) < minAt) continue;
+    counts[type] += 1;
+  }
+  return counts;
+}
+
+async function waitForRealAcpRefreshPostMessageAcks(page, diagnostics, startedAt) {
+  const expectedTypes = ['acp.ui.ready', 'acp.runtime.result', 'acp.context.result'];
+  const deadline = Date.now() + 20_000;
+  let latest = null;
+  while (Date.now() < deadline) {
+    const browserEvents = await page.evaluate(() => window.__AXHUB_REAL_ACP_EVENT_LOG__ || []).catch(() => []);
+    const events = (diagnostics.nodeEventLog || []).concat(browserEvents);
+    const counts = countRealAcpPostMessageTypes(events, startedAt, expectedTypes);
+    const missingTypes = expectedTypes.filter((type) => counts[type] < 1);
+    latest = {
+      counts,
+      missingTypes,
+    };
+    if (missingTypes.length === 0) {
+      return latest;
+    }
+    await sleep(500);
+  }
+  throw new Error(`Timed out waiting for real ACP refresh postMessage ready/runtime/context acknowledgements: ${JSON.stringify(latest)}`);
+}
+
+async function refreshCanvasPageForRecovery({ page, frames, frameDir, label, acpOrigin, diagnostics }) {
   await capture(page, frames, frameDir, `${label}：刷新前现场`);
+  const refreshStartedAt = Date.now();
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
   await ensureBrowserEventRecorderInstalled(page);
   await waitForCanvasReady(page);
   await waitForRealAcpIframe(page, acpOrigin);
+  await waitForRealAcpRefreshPostMessageAcks(page, diagnostics, refreshStartedAt);
   await capture(page, frames, frameDir, `${label}：刷新后画布和真实 ACP iframe 已恢复`);
 }
 
@@ -2289,6 +2323,7 @@ async function main() {
         frameDir,
         label: '4R. 生成中刷新恢复',
         acpOrigin,
+        diagnostics,
       });
       await runRealAcpVisualStep(
         visualAiAgent,
@@ -2317,6 +2352,7 @@ async function main() {
         frameDir,
         label: '6R. 画布写入后刷新恢复',
         acpOrigin,
+        diagnostics,
       });
       await runRealAcpVisualStep(
         visualAiAgent,

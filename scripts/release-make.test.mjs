@@ -333,6 +333,23 @@ describe('release make artifact helpers', () => {
     assert.doesNotMatch(releaseSource, /packages\/axhub-export-core\/scripts\/canvas-fig-sync\.mjs/u);
   });
 
+  it('bundles the canvas fig sync release script with runtime dependencies', () => {
+    const args = releaseMake.createCanvasFigSyncBundleArgs(
+      '/tmp/canvas-fig-sync.mjs',
+      '/repo/node_modules/axhub-export-core/scripts/canvas-fig-sync.mjs',
+    );
+
+    assert.deepEqual(args, [
+      'build',
+      '/repo/node_modules/axhub-export-core/scripts/canvas-fig-sync.mjs',
+      '--target=node',
+      '--format=esm',
+      '--packages=bundle',
+      '--outfile',
+      '/tmp/canvas-fig-sync.mjs',
+    ]);
+  });
+
   it('copies only explicit admin runtime assets into the admin build', () => {
     const viteConfigSource = fs.readFileSync(path.resolve('vite.config.ts'), 'utf8');
 
@@ -416,6 +433,11 @@ describe('release make artifact helpers', () => {
         { path: 'package.json', size: 400, mode: 0o644 },
         { path: 'bin/cli.mjs', size: 180, mode: 0o755 },
         { path: 'dist/server/cli.mjs', size: 1000, mode: 0o644 },
+        { path: 'dist/server/converters/ai-studio-converter.mjs', size: 100, mode: 0o644 },
+        { path: 'dist/server/converters/axure-html-converter.mjs', size: 100, mode: 0o644 },
+        { path: 'dist/server/converters/figma-make-converter.mjs', size: 100, mode: 0o644 },
+        { path: 'dist/server/converters/stitch-converter.mjs', size: 100, mode: 0o644 },
+        { path: 'dist/server/converters/v0-converter.mjs', size: 100, mode: 0o644 },
         { path: 'dist/admin/index.html', size: 100, mode: 0o644 },
         { path: 'dist/admin/assets/favicon.ico', size: 100, mode: 0o644 },
         { path: 'dist/admin/auto-debug-client.js', size: 100, mode: 0o644 },
@@ -424,11 +446,22 @@ describe('release make artifact helpers', () => {
     };
 
     writeFile(path.join(packageDir, 'package.json'), `${JSON.stringify(validPackageJson, null, 2)}\n`);
+    writeFile(path.join(packageDir, 'scripts/canvas-fig-sync.mjs'), 'console.log("bundled canvas fig sync");\n');
 
     assert.doesNotThrow(() => releaseMake.assertNpmPackageShape({
       dryRunInfo: [validPackInfo],
       packageDir,
     }));
+
+    writeFile(
+      path.join(packageDir, 'scripts/canvas-fig-sync.mjs'),
+      'import { decodeBinarySchema } from "kiwi-schema/kiwi-esm.js";\nimport { inflateRaw } from "pako/dist/pako.esm.mjs";\n',
+    );
+    assert.throws(
+      () => releaseMake.assertNpmPackageShape({ dryRunInfo: [validPackInfo], packageDir }),
+      /must be bundled and must not import external canvas fig dependencies/,
+    );
+    writeFile(path.join(packageDir, 'scripts/canvas-fig-sync.mjs'), 'console.log("bundled canvas fig sync");\n');
 
     writeFile(path.join(packageDir, 'package.json'), `${JSON.stringify({
       ...validPackageJson,
@@ -446,6 +479,13 @@ describe('release make artifact helpers', () => {
         packageDir,
       }),
       /missing required file: dist\/admin\/index\.html/,
+    );
+    assert.throws(
+      () => releaseMake.assertNpmPackageShape({
+        dryRunInfo: [{ ...validPackInfo, files: validPackInfo.files.filter((file) => file.path !== 'dist/server/converters/figma-make-converter.mjs') }],
+        packageDir,
+      }),
+      /missing required file: dist\/server\/converters\/figma-make-converter\.mjs/,
     );
 
     for (const pathName of [

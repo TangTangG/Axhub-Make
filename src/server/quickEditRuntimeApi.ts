@@ -32,6 +32,7 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
   const transientViteResourcePatterns = [
     '/@vite/client',
     'html-proxy&index=',
+    '__axhub-preview-loader.js',
   ];
   const transientViteRetryKey = '__axhub_quick_edit_transient_vite_retry__';
   let transientViteRecoveryPromise = null;

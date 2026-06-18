@@ -15,6 +15,7 @@ import {
     Download,
     FileText,
     HelpCircle,
+    ImageIcon,
     Keyboard,
     LayoutDashboard,
     LayoutGrid,
@@ -149,6 +150,7 @@ interface PresentationToolbarProps {
     handleCopyMarkdownPrompt: () => void | Promise<void>;
     handleRefreshElement: () => void;
     handleCopyToFigma: () => void;
+    handleCopyCurrentScreenshot: () => void | Promise<void>;
     handleExportMake: () => void;
     handleExportHtml: (options?: { includeSource?: boolean }) => void;
     handlePublishCloudTarget: (target: CloudPublishTarget) => void | Promise<void>;
@@ -222,6 +224,7 @@ export default function PresentationToolbar({
     handleCopyMarkdownPrompt,
     handleRefreshElement,
     handleCopyToFigma,
+    handleCopyCurrentScreenshot,
     handleExportMake,
     handleExportHtml,
     handlePublishCloudTarget,
@@ -1267,6 +1270,7 @@ export default function PresentationToolbar({
         </TooltipProvider>
     );
     const showExportMenuButton = ((isPreviewContent && viewMode === 'demo') || contentMode === 'theme') && (Boolean(selectedItem) || Boolean(selectedTheme));
+    const canCopyCurrentScreenshot = isPreviewContent && viewMode === 'demo' && Boolean(selectedItem);
     const exportMenuButton = (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1274,7 +1278,7 @@ export default function PresentationToolbar({
                     variant="ghost"
                     size="sm"
                     className={toolbarPillButtonClass}
-                    disabled={!canOpenGenericFigmaExport && !canOpenGenericAxureExport && !showHtmlExportEntry && !handleOpenAxureUsageGuide && !hasCurrentPublishResource}
+                    disabled={!canCopyCurrentScreenshot && !canOpenGenericFigmaExport && !canOpenGenericAxureExport && !showHtmlExportEntry && !handleOpenAxureUsageGuide && !hasCurrentPublishResource}
                 >
                     <Cloud />
                     <span>发布</span>
@@ -1402,6 +1406,14 @@ export default function PresentationToolbar({
                     className="gap-2 h-7 text-sm"
                 >
                     <Settings2 className="h-3.5 w-3.5" /> 设置
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                    onClick={handleCopyCurrentScreenshot}
+                    disabled={!canCopyCurrentScreenshot}
+                    className="gap-2 h-7 text-sm"
+                >
+                    <ImageIcon className="h-3.5 w-3.5" /> 复制截图
                 </DropdownMenuItem>
             </DropdownMenuContent>
         </DropdownMenu>

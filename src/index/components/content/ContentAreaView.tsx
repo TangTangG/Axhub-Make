@@ -2028,7 +2028,7 @@ export default function ContentArea({
         >
             {selectedItem ? (
                 selectedItem.placeholder === true && viewMode === 'demo' ? (
-                        <PrototypePlaceholderGuide
+                    <PrototypePlaceholderGuide
                         item={selectedItem}
                         activeProjectId={activeProjectId}
                         preferredIDE={preferredIDE}

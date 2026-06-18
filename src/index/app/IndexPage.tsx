@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AssistantContextV1, ItemData, TabType, ViewMode } from '../types';
 import { useCreateDialog } from '../hooks';
 import { useAssistantPanelController } from '../domains/assistant/hooks/useAssistantPanelController';
+import { usePreviewBridgeHost, type PreviewHostContext, type ResolvedPreviewNavigateTarget } from '../domains/preview/previewBridgeHost';
 import { useWorkspaceNavigationController } from '../domains/workspace/hooks/useWorkspaceNavigationController';
 import { useIdeActions } from '../hooks/useIdeActions';
 import { useAxhubBridge } from '../hooks/useAxhubBridge';
@@ -17,6 +18,7 @@ import type {
 import { useIndexPageResourceActions } from './index-page/useIndexPageResourceActions';
 import { useIndexPagePreviewActions } from './index-page/useIndexPagePreviewActions';
 import { useIndexPagePreferences } from './hooks/useIndexPagePreferences';
+import { resolveAcpPromptClientProvider } from '@/common/acpModelConfig';
 import { useIndexPagePresentationPropsBuilder } from './hooks/useIndexPagePresentationPropsBuilder';
 import { useIndexPageSelectionSync } from './hooks/useIndexPageSelectionSync';
 import { useIndexPageSidebarPropsBuilder } from './hooks/useIndexPageSidebarPropsBuilder';
@@ -365,6 +367,8 @@ export default function IndexPage({
             collectArtifacts?: boolean;
             artifactSource?: 'auto' | 'provider' | 'runtime';
             ignoredArtifactPaths?: string[];
+            provider?: string | null;
+            model?: string | null;
         },
     ) => {
         const prompt = String(promptText || '').trim();
@@ -372,13 +376,22 @@ export default function IndexPage({
             messageApi.warning('请输入提示词');
             return false;
         }
+        const annotationProvider = resolveAcpPromptClientProvider(preferences.annotationPromptClient || preferences.preferredPromptClient) || 'codex';
+        const annotationModel = preferences.annotationModel || null;
         assistantAutoOpenSuppressedProjectScopeRef.current = '';
         setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);
-        return assistantController.openAssistantWithContextAndSubmitPrompt(context, prompt, options);
+        return assistantController.openAssistantWithContextAndSubmitPrompt(context, prompt, {
+            ...options,
+            provider: options?.provider ?? annotationProvider,
+            model: options?.model ?? annotationModel,
+        });
     }, [
         assistantAutoOpenDismissedStorageKey,
         assistantController.openAssistantWithContextAndSubmitPrompt,
         messageApi,
+        preferences.annotationModel,
+        preferences.annotationPromptClient,
+        preferences.preferredPromptClient,
     ]);
 
     const buildPromptActionAssistantContext = useCallback((targetPath?: string | null): AssistantContextV1 => {
@@ -416,6 +429,124 @@ export default function IndexPage({
         );
         return Boolean(submitted);
     }, [buildPromptActionAssistantContext, handleSubmitAnnotationAssistantPrompt]);
+
+    const handlePreviewNavigate = useCallback(async (target: ResolvedPreviewNavigateTarget): Promise<PreviewHostContext> => {
+        const deepLinkTarget = target.deepLinkTarget;
+        const resourceType = String(target.resourceType || '').trim();
+        const resourceId = String(target.resourceId || '').trim();
+        if (!resourceType || !resourceId || !deepLinkTarget) {
+            throw new Error('preview_navigate requires a resource target');
+        }
+        handleInitialResourceDeepLinkHandled();
+
+        const buildNextContext = (overrides: Partial<PreviewHostContext>): PreviewHostContext => ({
+            projectId: workspace.activeProjectId,
+            activeTab,
+            viewMode,
+            contentMode,
+            selectedItem,
+            selectedPageId: selectedPrototypePageId,
+            selectedDoc: resources.selectedDoc,
+            selectedTemplate: resources.selectedTemplate,
+            selectedTheme: resources.selectedTheme,
+            selectedCanvas: resources.selectedCanvas,
+            currentUrl: buildIndexDeepLinkUrl({
+                ...deepLinkTarget,
+                ...(workspace.activeProjectId ? { projectId: workspace.activeProjectId } : {}),
+            }),
+            canvasSelection: null,
+            resources: {
+                prototypes: workspace.data?.prototypes || [],
+                docs: workspace.docsItems,
+                templates: resources.templateAssets,
+                themes: resources.themes,
+            },
+            ...overrides,
+        });
+
+        if (target.resourceType === 'prototype' || target.resourceType === 'canvas') {
+            const nextPageId = target.resourceType === 'canvas' ? null : target.pageId || null;
+            setActiveTab('prototypes');
+            setSidebarTab('prototype');
+            setSelectedItem(target.resource);
+            setSelectedPrototypePageId(nextPageId);
+            if (target.resourceType === 'canvas') {
+                setViewMode('canvas');
+            } else {
+                setViewMode('demo');
+            }
+            if (target.collapseSidebar) {
+                setCollapsed(true);
+            }
+            return buildNextContext({
+                activeTab: 'prototypes',
+                viewMode: target.resourceType === 'canvas' ? 'canvas' : 'demo',
+                contentMode: 'preview',
+                selectedItem: target.resource,
+                selectedPageId: nextPageId,
+            });
+        }
+
+        if (target.resourceType === 'doc') {
+            setActiveTab('prototypes');
+            setSidebarTab('document');
+            resources.setSelectedDoc(target.resource);
+            setViewMode('demo');
+            if (target.collapseSidebar) {
+                setCollapsed(true);
+            }
+            return buildNextContext({
+                activeTab: 'prototypes',
+                viewMode: 'demo',
+                contentMode: 'doc',
+                selectedDoc: target.resource,
+            });
+        }
+
+        if (target.resourceType === 'theme') {
+            setActiveTab('prototypes');
+            setSidebarTab('assets');
+            setResourceSection('themes');
+            resources.setSelectedTheme(target.resource);
+            setViewMode('demo');
+            if (target.collapseSidebar) {
+                setCollapsed(true);
+            }
+            return buildNextContext({
+                activeTab: 'prototypes',
+                viewMode: 'demo',
+                contentMode: 'theme',
+                selectedTheme: target.resource,
+            });
+        }
+
+        throw new Error(`Unsupported preview resource type: ${resourceType}`);
+    }, [
+        activeTab,
+        contentMode,
+        resources.selectedCanvas,
+        resources.selectedDoc,
+        resources.selectedTemplate,
+        resources.selectedTheme,
+        resources.setSelectedDoc,
+        resources.setSelectedTheme,
+        resources.templateAssets,
+        resources.themes,
+        handleInitialResourceDeepLinkHandled,
+        setActiveTab,
+        setCollapsed,
+        setResourceSection,
+        setSelectedItem,
+        setSelectedPrototypePageId,
+        setSidebarTab,
+        setViewMode,
+        selectedItem,
+        selectedPrototypePageId,
+        viewMode,
+        workspace.activeProjectId,
+        workspace.data?.prototypes,
+        workspace.docsItems,
+    ]);
 
     const preview = useIndexPagePreviewActions({
         activeTab,
@@ -513,7 +644,7 @@ export default function IndexPage({
         setViewMode,
         pendingReturnTarget,
         setPendingReturnTarget,
-        initialResourceDeepLink,
+        initialResourceDeepLink: initialResourceDeepLinkHandled ? null : initialResourceDeepLink,
         onInitialResourceDeepLinkHandled: handleInitialResourceDeepLinkHandled,
         setCollapsed,
         editorMode: preview.editorStatus.mode,
@@ -551,6 +682,47 @@ export default function IndexPage({
     const currentDeepLinkUrl = useMemo(() => (
         currentDeepLinkTarget ? buildIndexDeepLinkUrl(currentDeepLinkTarget) : ''
     ), [currentDeepLinkTarget]);
+
+    const previewBridgeContext = useMemo(() => ({
+        projectId: workspace.activeProjectId,
+        activeTab,
+        viewMode,
+        contentMode,
+        selectedItem,
+        selectedPageId: selectedPrototypePageId,
+        selectedDoc: resources.selectedDoc,
+        selectedTemplate: resources.selectedTemplate,
+        selectedTheme: resources.selectedTheme,
+        selectedCanvas: resources.selectedCanvas,
+        currentUrl: currentDeepLinkUrl || (typeof window !== 'undefined' ? window.location.href : ''),
+        canvasSelection: null,
+        resources: {
+            prototypes: workspace.data?.prototypes || [],
+            docs: workspace.docsItems,
+            templates: resources.templateAssets,
+            themes: resources.themes,
+        },
+    }), [
+        activeTab,
+        contentMode,
+        currentDeepLinkUrl,
+        resources.selectedDoc,
+        resources.selectedTemplate,
+        resources.selectedTheme,
+        resources.selectedCanvas,
+        resources.templateAssets,
+        resources.themes,
+        selectedItem,
+        selectedPrototypePageId,
+        viewMode,
+        workspace.activeProjectId,
+        workspace.data?.prototypes,
+        workspace.docsItems,
+    ]);
+    usePreviewBridgeHost({
+        context: previewBridgeContext,
+        onNavigate: handlePreviewNavigate,
+    });
 
     const canSyncCurrentDeepLinkUrl = shouldSyncIndexDeepLinkUrl({
         currentTarget: currentDeepLinkTarget,
@@ -798,9 +970,10 @@ export default function IndexPage({
         }
         assistantAutoOpenSuppressedProjectScopeRef.current = '';
         setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);
-        setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');
+        const rememberedAiPanelMode = getAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey);
+        setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, rememberedAiPanelMode);
         openedPrototypeWaitingGenerationKeyRef.current = waitingGenerationAutoOpenKey;
-        void restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');
+        void restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode);
     }, [
         assistantAutoOpenDismissedStorageKey,
         assistantAutoOpenPanelModeStorageKey,

@@ -686,6 +686,37 @@ describe('quick edit runtime script', () => {
     expect(appendedElements).toHaveLength(0);
   });
 
+  it('reloads once instead of reporting transient preview loader script failures', async () => {
+    const loaderUrl = 'http://localhost:51720/prototypes/ref-app-home/__axhub-preview-loader.js';
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/@vite/client' || input === loaderUrl) {
+        return { ok: true };
+      }
+      throw new Error(`Unexpected fetch url: ${input}`);
+    });
+    const { appendedElements, emit, windowStub } = createRuntimeHarness({ fetch: fetchMock });
+
+    emit('window:error', {
+      target: {
+        tagName: 'SCRIPT',
+        src: loaderUrl,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(windowStub.location.reload).toHaveBeenCalledTimes(1);
+    });
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/@vite/client',
+      loaderUrl,
+    ]);
+    expect(windowStub.sessionStorage.setItem).toHaveBeenCalledWith(
+      '__axhub_quick_edit_transient_vite_retry__',
+      '/prototypes/ref-app-home',
+    );
+    expect(appendedElements).toHaveLength(0);
+  });
+
   it('reloads stale Vite html-proxy script failures even when the old proxy URL is gone', async () => {
     const proxyUrl = 'http://localhost:51720/@id/__x00__/prototypes/ref-app-home/index.html?html-proxy&index=0.js';
     const fetchMock = vi.fn(async (input: string) => {

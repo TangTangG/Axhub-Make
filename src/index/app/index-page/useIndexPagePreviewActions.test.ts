@@ -49,11 +49,12 @@ describe('useIndexPagePreviewActions source', () => {
   it('keeps focus on the host document before requesting host-side figma clipboard writes', () => {
     const source = readPreviewActionsSource();
 
-    expect(source).toContain("import { copyToClipboard, writeFigmaOfficialClipboardPayload }");
+    expect(source).toContain('copyToClipboard');
+    expect(source).toContain('writeFigmaOfficialClipboardPayload');
     const requestCopyToFigmaSegment = getSourceSegment(
       source,
       'const requestCopyToFigma = useCallback(() => {',
-      'const checkAxureAvailable = useCallback',
+      'const requestCurrentScreenshot = useCallback',
     );
 
     expect(requestCopyToFigmaSegment).not.toContain('targetIframe.focus();');
@@ -342,15 +343,19 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('serverBackedPayload');
   });
 
-  it('opens quick edit without blocking on the AI runtime probe', () => {
-    const source = readPreviewActionsSource();
+  it('opens quick edit without probing or starting the AI runtime', () => {
+    const source = readPreviewRootSource();
+    const handleOpenWebEditorSource = getSourceSegment(
+      source,
+      'const handleOpenWebEditor = useCallback(async () => {',
+      'const handleExitWebEditor = useCallback',
+    );
 
-    expect(source).toContain('enterPrototypeEditor(primaryIframe)');
-    expect(source).toContain('probeAssistantRuntimeSilently');
-    expect(source).not.toContain('await probeAssistantRuntimeSilently?.()');
-    expect(source).toContain('startDeferredAssistantRuntimeProbe({');
-    expect(source).toContain('onRuntimeReady: () => {');
-    expect(source).not.toContain('startAssistantRuntimeForWebEditor');
+    expect(handleOpenWebEditorSource).toContain('enterPrototypeEditor(primaryIframe)');
+    expect(handleOpenWebEditorSource).not.toContain('probeAssistantRuntimeSilently');
+    expect(handleOpenWebEditorSource).not.toContain('connectAssistantRuntimeSilently');
+    expect(handleOpenWebEditorSource).not.toContain('startDeferredAssistantRuntimeProbe');
+    expect(handleOpenWebEditorSource).not.toContain('startAssistantRuntimeForWebEditor');
   });
 
   it('keeps the preview iframe launch URL stable while quick edit is active', () => {
@@ -723,6 +728,30 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });");
     expect(source).toContain('if (!wakeHandled || !isHostToolbarAgentAwake(hostToolbarStateRef.current)) {');
     expect(source).toContain('return runResolvedHostToolbarAction(requestedAction);');
+  });
+
+  it('does not auto-start ACP when entering annotation editing modes', () => {
+    const source = readPreviewRootSource();
+    const enterDocumentEditorSource = getSourceSegment(
+      source,
+      'const enterDocumentEditor = useCallback(async () => {',
+      'const handleEnableDocEdit = useCallback',
+    );
+    const handleOpenWebEditorSource = getSourceSegment(
+      source,
+      'const handleOpenWebEditor = useCallback(async () => {',
+      'const handleExitWebEditor = useCallback',
+    );
+    const runHostToolbarActionSource = getSourceSegment(
+      source,
+      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runQuickEditSaveAction = useCallback',
+    );
+
+    expect(enterDocumentEditorSource).not.toContain('startAnnotationAcpRuntimeConnection();');
+    expect(handleOpenWebEditorSource).not.toContain('startAnnotationAcpRuntimeConnection();');
+    expect(runHostToolbarActionSource).toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });");
+    expect(runHostToolbarActionSource).toContain('return runResolvedHostToolbarAction(requestedAction);');
   });
 
   it('maps annotation host toolbar AI actions to ACP runtime and ACP chat runs', () => {
@@ -1217,6 +1246,26 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('setLatestCloudPublishItems((current) => ({');
     expect(source).toContain('copyToClipboard(latestUrl)');
     expect(source).toContain('currentPublishResourcePath,');
+  });
+
+  it('copies the current primary preview screenshot through the image clipboard helper', () => {
+    const source = readPreviewRootSource();
+    const requestCurrentScreenshotSegment = getSourceSegment(
+      source,
+      'const requestCurrentScreenshot = useCallback(() => {',
+      'const checkAxureAvailable = useCallback',
+    );
+
+    expect(source).toContain("import { copyImageDataUrlToClipboard, copyToClipboard, writeFigmaOfficialClipboardPayload } from '../../utils/clipboard';");
+    expect(source).toContain('const requestCurrentScreenshot = useCallback');
+    expect(source).toContain('getPrimaryPreviewIframe()');
+    expect(source).toContain("type: 'axhub.quickEdit.export.captureScreenshot'");
+    expect(source).toContain('const screenshotSize = resolveCurrentPreviewScreenshotSize(previewConfig, screenshotDefaultSize);');
+    expect(requestCurrentScreenshotSegment).toContain('targetWidth: screenshotSize.width');
+    expect(requestCurrentScreenshotSegment).not.toContain('targetHeight: screenshotSize.height');
+    expect(source).toContain('await copyImageDataUrlToClipboard(result.dataUrl);');
+    expect(source).toContain("messageApi.success('截图已复制到剪贴板');");
+    expect(source).toContain('handleCopyCurrentScreenshot,');
   });
 
   it('does not keep the legacy standalone TEXT_EDIT parent-window protocol', () => {

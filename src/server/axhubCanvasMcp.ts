@@ -34,6 +34,7 @@ export interface AxhubCanvasMcpOptions {
 const TOOL_NAMES = [
   'canvas_get_state',
   'canvas_insert_elements',
+  'canvas_insert_mermaid',
   'canvas_refresh',
   'canvas_capture',
   'canvas_update_elements',
@@ -91,6 +92,42 @@ const AXHUB_CANVAS_TOOLS: ToolDefinition[] = [
           ],
         },
       },
+      additionalProperties: true,
+    },
+  },
+  {
+    name: 'canvas_insert_mermaid',
+    description: 'Convert Mermaid diagram code into editable Excalidraw elements and insert them into the browser canvas.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...COMMON_TOOL_PROPERTIES,
+        mermaidCode: {
+          type: 'string',
+          description: 'Mermaid diagram definition to convert and insert.',
+        },
+        position: {
+          oneOf: [
+            { const: 'auto' },
+            {
+              type: 'object',
+              properties: { x: { type: 'number' }, y: { type: 'number' } },
+              required: ['x', 'y'],
+            },
+          ],
+        },
+        themeVariables: {
+          type: 'object',
+          description: 'Optional Mermaid themeVariables, such as { "fontSize": "20px" }.',
+          additionalProperties: true,
+        },
+        flowchart: {
+          type: 'object',
+          description: 'Optional Mermaid flowchart config, such as { "curve": "linear" }.',
+          additionalProperties: true,
+        },
+      },
+      required: ['mermaidCode'],
       additionalProperties: true,
     },
   },

@@ -264,6 +264,9 @@ describe('ACP host frontend regression script source', () => {
     expect(runner).toContain('Mock ACP Host Regression');
     expect(runner).toContain("const requestUrl = new URL(req.url || '/', 'http://127.0.0.1');");
     expect(runner).toContain("requestUrl.pathname === '/'");
+    expect(runner).toContain('let runtimeConfig = { messages: [], updatedAt: new Date().toISOString() };');
+    expect(runner).toContain("message.type === 'acp.runtime.configure' || message.type === 'acp.runtime.clear'");
+    expect(runner).toContain("type: 'acp.runtime.result'");
     expect(runner).toContain('acp.context.replace');
     expect(runner).toContain('acp.context.add');
     expect(runner).toContain('acp.context.result');
@@ -480,10 +483,16 @@ describe('ACP host frontend regression script source', () => {
     expect(runner).toContain("const REAL_ACP_RECOVERY_REFRESH_AFTER_CANVAS_WRITE = 'refresh-after-canvas-write';");
     expect(runner).toContain('function resolveRealAcpRecoveryMode');
     expect(runner).toContain('async function refreshCanvasPageForRecovery');
+    expect(runner).toContain('function countRealAcpPostMessageTypes');
+    expect(runner).toContain('async function waitForRealAcpRefreshPostMessageAcks');
+    expect(runner).toContain("const expectedTypes = ['acp.ui.ready', 'acp.runtime.result', 'acp.context.result'];");
+    expect(runner).toContain('const deadline = Date.now() + 20_000;');
+    expect(runner).toContain('throw new Error(`Timed out waiting for real ACP refresh postMessage ready/runtime/context acknowledgements');
     expect(runner).toContain('page.reload({ waitUntil: \'domcontentloaded\'');
     expect(runner).toContain('await ensureBrowserEventRecorderInstalled(page);');
     expect(runner).toContain('await waitForCanvasReady(page);');
     expect(runner).toContain('await waitForRealAcpIframe(page, acpOrigin);');
+    expect(runner).toContain('await waitForRealAcpRefreshPostMessageAcks(page, diagnostics, refreshStartedAt);');
     expect(runner).toContain('recoveryMode === REAL_ACP_RECOVERY_REFRESH_DURING_GENERATION');
     expect(runner).toContain('recoveryMode === REAL_ACP_RECOVERY_REFRESH_AFTER_CANVAS_WRITE');
     expect(runner).toContain('visual_verify_refresh_during_generation_recovery');

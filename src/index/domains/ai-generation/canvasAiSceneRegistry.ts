@@ -60,10 +60,10 @@ const DOCUMENT_QUICK_PROMPTS = [
     prompt: '使用 $requirements-exploration 对当前需求做探索和完善。我想要讨论的需求是：\n',
   },
   {
-    id: 'drawio-diagram',
+    id: 'diagram',
     label: '流程图和关系图',
-    description: '生成 Draw.io .drawio.svg 图表',
-    prompt: '使用 $drawio 生成相关流程图和关系图，结果请使用 Draw.io .drawio.svg 图表格式。',
+    description: '生成流程图或关系图并同步到当前画布',
+    prompt: '生成相关流程图和关系图，并根据图表类型选择合适的画布呈现方式，完成后更新到当前画布。',
   },
 ] as const satisfies readonly CanvasAiQuickPrompt[];
 

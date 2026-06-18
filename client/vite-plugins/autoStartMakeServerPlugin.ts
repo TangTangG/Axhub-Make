@@ -117,14 +117,14 @@ export function resolveMakeServerStartCommand(
       label: 'local @axhub/make dev',
     };
   }
-  const args = ['@axhub/make', projectRoot, '--no-open'];
+  const args = ['-y', '@axhub/make@latest', projectRoot, '--no-open'];
   if (runtimeOrigin) {
     args.push('--runtime-origin', runtimeOrigin);
   }
   return {
     command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
     args,
-    label: 'npx @axhub/make',
+    label: 'npx -y @axhub/make@latest',
   };
 }
 

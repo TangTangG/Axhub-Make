@@ -1,6 +1,7 @@
 import type { GenieEditorHostToolbarAction, GenieEditorHostToolbarState } from '@/common/web-editor-types';
 import type { AxureCopyOptions, ImageConfig } from '../../types';
 import type { ExportIndexBundle } from '../../services/api';
+import type { PreviewConfig } from '../../domains/device/preview-layout';
 import { getExplicitLocalPath, stripIndexFilePath } from '../../utils/localPath';
 import { appendEditorLaunchOptionsToUrl, type BuildEditorUrlOptions } from '../../utils/url';
 
@@ -60,6 +61,50 @@ export function normalizePreviewHeight(height: number, fallback: number): number
         return fallback;
     }
     return Math.max(240, Math.round(height));
+}
+
+export function resolveCurrentPreviewScreenshotSize(
+    config: PreviewConfig,
+    fallback: { width: number; height: number },
+): { width: number; height: number } {
+    if (config.previewMode === 'split') {
+        return {
+            width: normalizePreviewWidth(config.splitWidths.primary, DEVICE_SIZES.desktop.width),
+            height: normalizePreviewHeight(config.splitHeights.primary, DEVICE_SIZES.desktop.height),
+        };
+    }
+
+    if (config.previewMode === 'single' && config.singlePreset === 'custom') {
+        return {
+            width: normalizePreviewWidth(config.customWidth ?? fallback.width, fallback.width),
+            height: normalizePreviewHeight(config.customHeight ?? fallback.height, fallback.height),
+        };
+    }
+
+    if (config.previewMode === 'single' && config.singlePreset in DEVICE_SIZES) {
+        const deviceSize = DEVICE_SIZES[config.singlePreset as keyof typeof DEVICE_SIZES];
+        return {
+            width: deviceSize.width,
+            height: deviceSize.height,
+        };
+    }
+
+    if (config.singlePreset === 'custom') {
+        return {
+            width: normalizePreviewWidth(config.customWidth ?? fallback.width, fallback.width),
+            height: normalizePreviewHeight(config.customHeight ?? fallback.height, fallback.height),
+        };
+    }
+
+    if (config.singlePreset in DEVICE_SIZES) {
+        const deviceSize = DEVICE_SIZES[config.singlePreset as keyof typeof DEVICE_SIZES];
+        return {
+            width: deviceSize.width,
+            height: deviceSize.height,
+        };
+    }
+
+    return fallback;
 }
 
 export const DEFAULT_AXURE_COPY_OPTIONS: AxureCopyOptions = {

@@ -255,9 +255,9 @@ export function resolveSidebarTreeTab(sidebarTab: SidebarTab): SidebarTreeTab {
 
 export function getDefaultEditorIntegrationApiBaseUrl(): string {
     if (typeof window === 'undefined') {
-        return 'http://localhost:32123/api';
+        return 'http://localhost:32124/api';
     }
-    return `${window.location.protocol}//${window.location.hostname}:32123/api`;
+    return `${window.location.protocol}//${window.location.hostname}:32124/api`;
 }
 
 export function resolveMobileItemOpenUrl(

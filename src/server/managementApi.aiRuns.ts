@@ -33,7 +33,7 @@ import {
 } from './managementApi.aiArtifactHistory.ts';
 import { classifyAiArtifact } from '../common/aiArtifactClassification.ts';
 
-const DEFAULT_ACP_API_BASE_URL = 'http://localhost:32123/api';
+const DEFAULT_ACP_API_BASE_URL = 'http://localhost:32124/api';
 const DEFAULT_IMAGE_CONFIG = {
   size: 'auto',
   quality: 'auto',
@@ -634,6 +634,7 @@ export function handleAiRunsApi(
       request.preferredPromptClient || request.client || request.provider,
       config?.automation?.defaultPromptClient,
     );
+    const model = safeText(request.model) || undefined;
     const promptPlan = buildRunPrompt({ scene, prompt, body: request, config });
     const artifacts: AiArtifact[] = [];
     const emittedArtifactIds = new Set<string>();
@@ -659,7 +660,7 @@ export function handleAiRunsApi(
       const resolvedRuntime = await resolveAssistantRuntime({
         projectPath: context.project.root,
         assistantConfig: config?.assistant,
-        autoStart: true,
+        autoStart: request.autoStart !== false,
         makeOrigin: getRequestUrl(req).origin,
       });
       const runtimeResponse = createAssistantRuntimeResponse({
@@ -703,7 +704,7 @@ export function handleAiRunsApi(
           metadata: {
             provider,
             preferredPromptClient: safeText(request.preferredPromptClient),
-            model: safeText(request.model),
+            model: model || undefined,
             mode: safeText(request.mode || request.modeId),
             thought: safeText(request.thought || request.thoughtLevel),
           },
@@ -771,7 +772,7 @@ export function handleAiRunsApi(
         threadId,
         provider,
         workspacePath: context.project.root,
-        model: safeText(request.model) || undefined,
+        model,
         modeId: safeText(request.modeId || request.mode) || undefined,
         thoughtLevel: safeText(request.thoughtLevel || request.thought) || undefined,
         context: request.contextBundle || request.context,

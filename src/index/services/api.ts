@@ -4,6 +4,7 @@
 
 import { IDEAvailabilityMap, MainIDEPreference } from '../../common/ide';
 import type { AgentVersionInfo, CLIAgent, LocalAppAgent, RuntimeAgentAvailability, WebAgent } from '../../common/agent';
+import type { AcpProviderKey } from '../../common/acpModelConfig';
 import { PromptClientPreference } from '../types';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../utils/excalidrawUiMode';
 import type { AssistantImageGenerationConfig } from '../domains/assistant/assistantAcpContext';
@@ -20,6 +21,8 @@ interface ConfigResponse {
     automation?: {
         defaultPromptClient?: PromptClientPreference;
         defaultIDE?: MainIDEPreference;
+        annotationPromptClient?: PromptClientPreference;
+        annotationModel?: string | null;
     };
     assistant?: {
         webBaseUrl?: string | null;
@@ -38,8 +41,8 @@ interface ConfigResponse {
 }
 
 export interface AgentVersionsResponse {
-    agents: Partial<Record<CLIAgent, AgentVersionInfo>>;
-    latestAgents?: Partial<Record<CLIAgent, AgentVersionInfo>>;
+    agents: Partial<Record<AcpProviderKey | CLIAgent, AgentVersionInfo>>;
+    latestAgents?: Partial<Record<AcpProviderKey | CLIAgent, AgentVersionInfo>>;
 }
 
 export interface MakeClientUpdateBlockedReason {
@@ -94,6 +97,8 @@ interface SaveServerPreferencesRequest {
     automation?: {
         defaultPromptClient?: PromptClientPreference;
         defaultIDE?: MainIDEPreference;
+        annotationPromptClient?: PromptClientPreference;
+        annotationModel?: string | null;
     };
     assistant?: {
         webBaseUrl?: string | null;

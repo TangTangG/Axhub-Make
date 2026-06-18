@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GenieContextV1 } from '@/common/genie/types';
 import {
     type AcpContextItem,
+    type AssistantPreviewMcpConfig,
     type AssistantImageGenerationConfig,
+    buildAcpPreviewMcpPostMessage,
     buildAcpContextItemsPostMessage,
     buildAcpContextPostMessage,
     buildAcpCanvasMcpPostMessage,
@@ -45,18 +47,58 @@ interface UseAssistantBridgeOptions {
 interface SubmitPromptOptions {
     newThread?: boolean;
     waitUntil?: 'started' | 'finished';
+    provider?: string | null;
+    model?: string | null;
 }
 
 interface QueryArtifactsOptions {
     threadId: string;
     workspacePath?: string;
+    conversationStorePath?: string;
     source?: 'auto' | 'provider' | 'runtime';
     format?: 'ai-sdk/v6' | string;
     sinceMs?: number;
 }
 
+interface AcpPostMessageRequest {
+    type: string;
+    requestId: string;
+    payload?: unknown;
+}
+
+interface AcpPostMessageResponse {
+    type?: unknown;
+    requestId?: unknown;
+    payload?: any;
+}
+
+interface AcpPostMessageRetryOptions<TResult> {
+    request: AcpPostMessageRequest;
+    successTypes: readonly string[];
+    errorTypes?: readonly string[];
+    timeoutMs?: number;
+    defaultErrorMessage?: string;
+    mapResult?: (data: AcpPostMessageResponse) => TResult;
+}
+
+interface AcpHostReadyOptions {
+    events?: readonly string[];
+}
+
 function createAcpChatRequestId(): string {
     return `acp-chat-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createAcpHostReadyRequestId(): string {
+    return `acp-host-ready-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createAcpRuntimeConfigRequestId(): string {
+    return `acp-runtime-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createAcpContextRequestId(): string {
+    return `acp-context-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function createAcpAttachmentRequestId(): string {
@@ -73,12 +115,15 @@ function createAcpArtifactsRequestId(): string {
 
 const ACP_CHAT_SUBMIT_TIMEOUT_MS = 30_000;
 const ACP_ARTIFACTS_QUERY_TIMEOUT_MS = 12_000;
+const ACP_POST_MESSAGE_ACK_TIMEOUT_MS = 8_000;
+const ACP_POST_MESSAGE_RETRY_DELAYS_MS = [0, 160, 520, 1200, 2500] as const;
 
 export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssistantBridgeOptions) {
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const [iframeLoaded, setIframeLoaded] = useState(false);
     const iframeLoadedRef = useRef(false);
     const imageGenerationConfigSyncAttemptRef = useRef(0);
+    const previewMcpConfigSyncAttemptRef = useRef(0);
     const canvasMcpConfigSyncAttemptRef = useRef(0);
 
     useEffect(() => {
@@ -97,6 +142,89 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         }
     }, [iframeSrc]);
 
+    const postAcpRequestWithRetry = useCallback(<TResult = AcpPostMessageResponse>({
+        request,
+        successTypes,
+        errorTypes = [],
+        timeoutMs = ACP_POST_MESSAGE_ACK_TIMEOUT_MS,
+        defaultErrorMessage = 'AI 助手响应超时',
+        mapResult,
+    }: AcpPostMessageRetryOptions<TResult>): Promise<TResult> => {
+        const iframe = iframeRef.current;
+        const targetWindow = iframe?.contentWindow;
+        if (!iframe || !targetWindow) {
+            return Promise.reject(new Error('AI 助手未就绪'));
+        }
+
+        const targetOrigin = resolveTargetOrigin();
+        return new Promise<TResult>((resolve, reject) => {
+            let settled = false;
+            const cleanupTimers: number[] = [];
+            const cleanup = () => {
+                window.removeEventListener('message', handleMessage);
+                cleanupTimers.forEach((timer) => window.clearTimeout(timer));
+            };
+            const finish = (data: AcpPostMessageResponse) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                resolve(mapResult ? mapResult(data) : data as TResult);
+            };
+            const fail = (error: Error) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(error);
+            };
+            const handleMessage = (event: MessageEvent) => {
+                if (event.source !== targetWindow) return;
+                if (targetOrigin !== '*' && event.origin !== targetOrigin) return;
+                const data = event.data as AcpPostMessageResponse;
+                if (!data || data.requestId !== request.requestId || typeof data.type !== 'string') return;
+                if (successTypes.includes(data.type)) {
+                    finish(data);
+                    return;
+                }
+                if (errorTypes.includes(data.type)) {
+                    fail(new Error(String(data.payload?.message || data.payload?.code || defaultErrorMessage)));
+                }
+            };
+            const postRequest = () => {
+                if (settled) return;
+                try {
+                    targetWindow.postMessage(request, targetOrigin);
+                } catch (error: any) {
+                    fail(error instanceof Error ? error : new Error(String(error)));
+                }
+            };
+
+            window.addEventListener('message', handleMessage);
+            for (const delay of ACP_POST_MESSAGE_RETRY_DELAYS_MS) {
+                if (delay === 0) {
+                    postRequest();
+                } else {
+                    cleanupTimers.push(window.setTimeout(postRequest, delay));
+                }
+            }
+            cleanupTimers.push(window.setTimeout(() => fail(new Error(defaultErrorMessage)), timeoutMs));
+        });
+    }, [resolveTargetOrigin]);
+
+    const requestHostReadyWithRetry = useCallback((options: AcpHostReadyOptions = {}) => (
+        postAcpRequestWithRetry({
+            request: {
+                type: 'acp.host.ready',
+                requestId: createAcpHostReadyRequestId(),
+                payload: {
+                    events: Array.from(options.events || []),
+                },
+            },
+            successTypes: ['acp.ui.ready'],
+            errorTypes: ['acp.query.error'],
+            defaultErrorMessage: 'AI 助手握手失败',
+        })
+    ), [postAcpRequestWithRetry]);
+
     const syncContext = useCallback((context: GenieContextV1, mode: 'replace' | 'append' = 'replace') => {
         const iframe = iframeRef.current;
         if (!iframe || !iframe.contentWindow) {
@@ -111,6 +239,19 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
             return false;
         }
     }, [resolveTargetOrigin]);
+
+    const syncContextWithAck = useCallback((context: GenieContextV1, mode: 'replace' | 'append' = 'replace') => {
+        const requestId = createAcpContextRequestId();
+        return postAcpRequestWithRetry({
+            request: {
+                ...buildAcpContextPostMessage(context, mode, requestId),
+                requestId,
+            },
+            successTypes: ['acp.context.result'],
+            errorTypes: ['acp.context.error'],
+            defaultErrorMessage: 'AI 助手上下文同步失败',
+        });
+    }, [postAcpRequestWithRetry]);
 
     const syncContextWithRetry = useCallback((context: GenieContextV1, mode: 'replace' | 'append' = 'replace') => {
         syncContext(context, mode);
@@ -150,6 +291,19 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         }
     }, [resolveTargetOrigin]);
 
+    const syncImageGenerationConfigWithAck = useCallback((config: AssistantImageGenerationConfig | null | undefined) => {
+        const requestId = createAcpRuntimeConfigRequestId();
+        return postAcpRequestWithRetry({
+            request: {
+                ...buildAcpImageGenerationPostMessage(config, requestId),
+                requestId,
+            },
+            successTypes: ['acp.runtime.result'],
+            errorTypes: ['acp.runtime.error'],
+            defaultErrorMessage: 'AI 助手运行时配置同步失败',
+        });
+    }, [postAcpRequestWithRetry]);
+
     const syncImageGenerationConfigWithRetry = useCallback((config: AssistantImageGenerationConfig | null | undefined) => {
         const attempt = imageGenerationConfigSyncAttemptRef.current + 1;
         imageGenerationConfigSyncAttemptRef.current = attempt;
@@ -165,6 +319,50 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
             }
         }, 520);
     }, [syncImageGenerationConfig]);
+
+    const syncPreviewMcpConfig = useCallback((config: AssistantPreviewMcpConfig | null | undefined) => {
+        const iframe = iframeRef.current;
+        if (!iframe || !iframe.contentWindow) {
+            return false;
+        }
+
+        try {
+            const message = buildAcpPreviewMcpPostMessage(config);
+            iframe.contentWindow.postMessage(message, resolveTargetOrigin());
+            return true;
+        } catch {
+            return false;
+        }
+    }, [resolveTargetOrigin]);
+
+    const syncPreviewMcpConfigWithAck = useCallback((config: AssistantPreviewMcpConfig | null | undefined) => {
+        const requestId = createAcpRuntimeConfigRequestId();
+        return postAcpRequestWithRetry({
+            request: {
+                ...buildAcpPreviewMcpPostMessage(config, requestId),
+                requestId,
+            },
+            successTypes: ['acp.runtime.result'],
+            errorTypes: ['acp.runtime.error'],
+            defaultErrorMessage: 'AI 助手 MCP 配置同步失败',
+        });
+    }, [postAcpRequestWithRetry]);
+
+    const syncPreviewMcpConfigWithRetry = useCallback((config: AssistantPreviewMcpConfig | null | undefined) => {
+        const attempt = previewMcpConfigSyncAttemptRef.current + 1;
+        previewMcpConfigSyncAttemptRef.current = attempt;
+        syncPreviewMcpConfig(config);
+        window.setTimeout(() => {
+            if (previewMcpConfigSyncAttemptRef.current === attempt) {
+                syncPreviewMcpConfig(config);
+            }
+        }, 160);
+        window.setTimeout(() => {
+            if (previewMcpConfigSyncAttemptRef.current === attempt) {
+                syncPreviewMcpConfig(config);
+            }
+        }, 520);
+    }, [syncPreviewMcpConfig]);
 
     const syncCanvasMcpConfig = useCallback((config: { makeOrigin?: string | null; token?: string | null } | null | undefined) => {
         const iframe = iframeRef.current;
@@ -220,72 +418,38 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         }
 
         const requestId = createAcpChatRequestId();
-        const targetOrigin = resolveTargetOrigin();
         const request = {
             type: 'acp.chat.submit',
             requestId,
             payload: {
                 text: prompt,
                 waitUntil: submitOptions?.waitUntil || 'started',
+                ...(submitOptions?.provider ? { provider: submitOptions.provider } : {}),
+                ...(submitOptions?.model ? { model: submitOptions.model } : {}),
                 ...(submitOptions?.newThread === true ? { newThread: true } : {}),
             },
         };
 
-        return await new Promise<AcpChatSubmitResult>((resolve, reject) => {
-            let settled = false;
-            const cleanupTimers: number[] = [];
-            const cleanup = () => {
-                window.removeEventListener('message', handleMessage);
-                cleanupTimers.forEach((timer) => window.clearTimeout(timer));
-            };
-            const finish = (result: AcpChatSubmitResult) => {
-                if (settled) return;
-                settled = true;
-                cleanup();
-                resolve(result);
-            };
-            const fail = (error: Error) => {
-                if (settled) return;
-                settled = true;
-                cleanup();
-                reject(error);
-            };
-            const handleMessage = (event: MessageEvent) => {
-                if (event.source !== iframe.contentWindow) return;
-                const data = event.data as { type?: unknown; requestId?: unknown; payload?: any };
-                if (!data || data.requestId !== requestId) return;
-                if (data.type === 'acp.chat.result') {
-                    const resultThreadId = String(data.payload?.threadId || '').trim();
-                    if (resultThreadId) {
-                        bridgeOptions?.onActiveThreadChanged?.(resultThreadId);
-                    }
-                    finish({
-                        ok: true,
-                        canSend: Boolean(data.payload?.canSend),
-                        textLength: Number(data.payload?.textLength || 0),
-                        threadId: resultThreadId,
-                    });
-                    return;
+        return await postAcpRequestWithRetry<AcpChatSubmitResult>({
+            request,
+            successTypes: ['acp.chat.result'],
+            errorTypes: ['acp.chat.error'],
+            timeoutMs: ACP_CHAT_SUBMIT_TIMEOUT_MS,
+            defaultErrorMessage: 'AI 助手提交失败',
+            mapResult: (data) => {
+                const resultThreadId = String(data.payload?.threadId || '').trim();
+                if (resultThreadId) {
+                    bridgeOptions?.onActiveThreadChanged?.(resultThreadId);
                 }
-                if (data.type === 'acp.chat.error') {
-                    fail(new Error(String(data.payload?.message || data.payload?.code || 'AI 助手提交失败')));
-                }
-            };
-            const postSubmit = () => {
-                try {
-                    iframe.contentWindow?.postMessage(request, targetOrigin);
-                } catch (error: any) {
-                    fail(error instanceof Error ? error : new Error(String(error)));
-                }
-            };
-
-            window.addEventListener('message', handleMessage);
-            postSubmit();
-            cleanupTimers.push(window.setTimeout(postSubmit, 160));
-            cleanupTimers.push(window.setTimeout(postSubmit, 520));
-            cleanupTimers.push(window.setTimeout(() => fail(new Error('AI 助手响应超时')), ACP_CHAT_SUBMIT_TIMEOUT_MS));
+                return {
+                    ok: true,
+                    canSend: Boolean(data.payload?.canSend),
+                    textLength: Number(data.payload?.textLength || 0),
+                    threadId: resultThreadId,
+                };
+            },
         });
-    }, [bridgeOptions, resolveTargetOrigin, waitForReady]);
+    }, [bridgeOptions, postAcpRequestWithRetry, waitForReady]);
 
     const queryArtifactsWithRetry = useCallback(async (query: QueryArtifactsOptions): Promise<AcpThreadArtifactsQueryResult> => {
         const threadId = String(query.threadId || '').trim();
@@ -306,6 +470,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
             payload: {
                 threadId,
                 ...(query.workspacePath ? { workspacePath: query.workspacePath } : {}),
+                ...(query.conversationStorePath ? { conversationStorePath: query.conversationStorePath } : {}),
                 source: query.source || 'auto',
                 format: query.format || 'ai-sdk/v6',
                 ...(typeof query.sinceMs === 'number' ? { sinceMs: query.sinceMs } : {}),
@@ -377,63 +542,24 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         }
 
         const requestId = createAcpAttachmentRequestId();
-        const targetOrigin = resolveTargetOrigin();
         const request = {
             type: 'acp.attachment.add',
             requestId,
             payload: attachment,
         };
 
-        return await new Promise<AcpAttachmentAddResult>((resolve, reject) => {
-            let settled = false;
-            const cleanupTimers: number[] = [];
-            const cleanup = () => {
-                window.removeEventListener('message', handleMessage);
-                cleanupTimers.forEach((timer) => window.clearTimeout(timer));
-            };
-            const finish = (result: AcpAttachmentAddResult) => {
-                if (settled) return;
-                settled = true;
-                cleanup();
-                resolve(result);
-            };
-            const fail = (error: Error) => {
-                if (settled) return;
-                settled = true;
-                cleanup();
-                reject(error);
-            };
-            const handleMessage = (event: MessageEvent) => {
-                if (event.source !== iframe.contentWindow) return;
-                const data = event.data as { type?: unknown; requestId?: unknown; payload?: any };
-                if (!data || data.requestId !== requestId) return;
-                if (data.type === 'acp.attachment.result') {
-                    finish({
-                        ok: true,
-                        name: String(data.payload?.name || attachment.name),
-                        mimeType: String(data.payload?.mimeType || attachment.mimeType),
-                    });
-                    return;
-                }
-                if (data.type === 'acp.attachment.error') {
-                    fail(new Error(String(data.payload?.message || data.payload?.code || 'AI 助手添加附件失败')));
-                }
-            };
-            const postAttachment = () => {
-                try {
-                    iframe.contentWindow?.postMessage(request, targetOrigin);
-                } catch (error: any) {
-                    fail(error instanceof Error ? error : new Error(String(error)));
-                }
-            };
-
-            window.addEventListener('message', handleMessage);
-            postAttachment();
-            cleanupTimers.push(window.setTimeout(postAttachment, 160));
-            cleanupTimers.push(window.setTimeout(postAttachment, 520));
-            cleanupTimers.push(window.setTimeout(() => fail(new Error('AI 助手响应超时')), 8000));
+        return await postAcpRequestWithRetry<AcpAttachmentAddResult>({
+            request,
+            successTypes: ['acp.attachment.result'],
+            errorTypes: ['acp.attachment.error'],
+            defaultErrorMessage: 'AI 助手添加附件失败',
+            mapResult: (data) => ({
+                ok: true,
+                name: String(data.payload?.name || attachment.name),
+                mimeType: String(data.payload?.mimeType || attachment.mimeType),
+            }),
         });
-    }, [resolveTargetOrigin, waitForReady]);
+    }, [postAcpRequestWithRetry, waitForReady]);
 
     const appendComposerTextWithRetry = useCallback(async (text: string): Promise<AcpComposerAppendResult> => {
         const prompt = String(text || '').trim();
@@ -447,72 +573,39 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         }
 
         const requestId = createAcpComposerRequestId();
-        const targetOrigin = resolveTargetOrigin();
         const request = {
             type: 'acp.composer.append',
             requestId,
             payload: { text: prompt },
         };
 
-        return await new Promise<AcpComposerAppendResult>((resolve, reject) => {
-            let settled = false;
-            const cleanupTimers: number[] = [];
-            const cleanup = () => {
-                window.removeEventListener('message', handleMessage);
-                cleanupTimers.forEach((timer) => window.clearTimeout(timer));
-            };
-            const finish = (result: AcpComposerAppendResult) => {
-                if (settled) return;
-                settled = true;
-                cleanup();
-                resolve(result);
-            };
-            const fail = (error: Error) => {
-                if (settled) return;
-                settled = true;
-                cleanup();
-                reject(error);
-            };
-            const handleMessage = (event: MessageEvent) => {
-                if (event.source !== iframe.contentWindow) return;
-                const data = event.data as { type?: unknown; requestId?: unknown; payload?: any };
-                if (!data || data.requestId !== requestId) return;
-                if (data.type === 'acp.composer.result') {
-                    finish({
-                        ok: true,
-                        textLength: Number(data.payload?.textLength || prompt.length),
-                    });
-                    return;
-                }
-                if (data.type === 'acp.composer.error') {
-                    fail(new Error(String(data.payload?.message || data.payload?.code || 'AI 助手填充提示词失败')));
-                }
-            };
-            const postComposerAppend = () => {
-                try {
-                    iframe.contentWindow?.postMessage(request, targetOrigin);
-                } catch (error: any) {
-                    fail(error instanceof Error ? error : new Error(String(error)));
-                }
-            };
-
-            window.addEventListener('message', handleMessage);
-            postComposerAppend();
-            cleanupTimers.push(window.setTimeout(postComposerAppend, 160));
-            cleanupTimers.push(window.setTimeout(postComposerAppend, 520));
-            cleanupTimers.push(window.setTimeout(() => fail(new Error('AI 助手响应超时')), 8000));
+        return await postAcpRequestWithRetry<AcpComposerAppendResult>({
+            request,
+            successTypes: ['acp.composer.result'],
+            errorTypes: ['acp.composer.error'],
+            defaultErrorMessage: 'AI 助手填充提示词失败',
+            mapResult: (data) => ({
+                ok: true,
+                textLength: Number(data.payload?.textLength || prompt.length),
+            }),
         });
-    }, [resolveTargetOrigin, waitForReady]);
+    }, [postAcpRequestWithRetry, waitForReady]);
 
     return {
         iframeRef,
         iframeLoaded,
         setIframeLoaded,
+        requestHostReadyWithRetry,
         syncContext,
+        syncContextWithAck,
         syncContextWithRetry,
         addContextItems,
         syncImageGenerationConfig,
+        syncImageGenerationConfigWithAck,
         syncImageGenerationConfigWithRetry,
+        syncPreviewMcpConfig,
+        syncPreviewMcpConfigWithAck,
+        syncPreviewMcpConfigWithRetry,
         syncCanvasMcpConfig,
         syncCanvasMcpConfigWithRetry,
         addImageAttachmentWithRetry,

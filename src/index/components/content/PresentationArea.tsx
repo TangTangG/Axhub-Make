@@ -56,6 +56,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     handleCopyMarkdownPrompt={props.handleCopyMarkdownPrompt}
                     handleRefreshElement={props.handleRefreshElement}
                     handleCopyToFigma={props.handleCopyToFigma}
+                    handleCopyCurrentScreenshot={props.handleCopyCurrentScreenshot}
                     handleExportMake={props.handleExportMake}
                     handleExportHtml={props.handleExportHtml}
                     handlePublishCloudTarget={props.handlePublishCloudTarget}
