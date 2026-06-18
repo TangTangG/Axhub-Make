@@ -129,6 +129,10 @@ function quoteForShell(value: string): string {
   return `"${String(value).replace(/["\\$`]/g, '\\$&')}"`;
 }
 
+function quoteForCmd(value: string): string {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
 function quoteForPowerShellSingle(value: string): string {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
@@ -288,16 +292,16 @@ function buildUnixTerminalCommand(spec: CommandSpec, cwd: string): CommandSpec {
 
 function buildWindowsTerminalCommand(spec: CommandSpec, cwd: string): CommandSpec {
   const commandLine = [
-    `cd /d ${quoteForShell(cwd)}`,
-    [spec.command, ...spec.args].map(quoteForShell).join(' '),
+    `cd /d ${quoteForCmd(cwd)}`,
+    [spec.command, ...spec.args].map(quoteForCmd).join(' '),
   ].join(' && ');
   const displayCommand = [
-    `cd /d ${quoteForShell(cwd)}`,
+    `cd /d ${quoteForCmd(cwd)}`,
     spec.displayCommand,
   ].join(' && ');
   return {
     command: 'cmd.exe',
-    args: ['/d', '/s', '/c', 'start', 'cmd.exe', '/k', commandLine],
+    args: ['/d', '/k', commandLine],
     displayCommand,
   };
 }

@@ -1,4 +1,5 @@
 import type { GenieProvider } from '@/common/genie/types';
+import { normalizeAcpProviderKey, toAcpPromptClient } from './acpModelConfig';
 import type {
   AcpPromptClient,
   GeniePromptClient,
@@ -18,6 +19,14 @@ const LEGACY_PROMPT_CLIENT_MAP: Record<string, AcpPromptClient> = {
   'genie:gemini': 'acp:gemini',
   opencode: 'acp:opencode',
   'genie:opencode': 'acp:opencode',
+  cursor: 'acp:cursor',
+  'genie:cursor': 'acp:cursor',
+  qoder: 'acp:qoder',
+  'genie:qoder': 'acp:qoder',
+  codebuddy: 'acp:codebuddy',
+  'genie:codebuddy': 'acp:codebuddy',
+  reasonix: 'acp:reasonix',
+  'genie:reasonix': 'acp:reasonix',
 };
 
 const ACP_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
@@ -25,6 +34,10 @@ const ACP_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
   'acp:codex',
   'acp:gemini',
   'acp:opencode',
+  'acp:cursor',
+  'acp:qoder',
+  'acp:codebuddy',
+  'acp:reasonix',
 ]);
 
 const GENIE_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
@@ -32,6 +45,10 @@ const GENIE_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
   'genie:codex',
   'genie:gemini',
   'genie:opencode',
+  'genie:cursor',
+  'genie:qoder',
+  'genie:codebuddy',
+  'genie:reasonix',
 ]);
 
 const LOCAL_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
@@ -68,20 +85,16 @@ export function isLocalPromptClient(value: unknown): value is LocalPromptClient 
 export function toAcpProvider(client: PromptClientPreference): GenieProvider | null {
   if (!isAcpPromptClient(client) && !isGeniePromptClient(client)) return null;
 
-  const provider = client.split(':')[1];
-  if (
-    provider === 'claude'
-    || provider === 'codex'
-    || provider === 'gemini'
-    || provider === 'opencode'
-  ) {
-    return provider;
-  }
-  return null;
+  return normalizeAcpProviderKey(client.split(':')[1]) as GenieProvider | null;
 }
 
 export function toGenieProvider(client: PromptClientPreference): GenieProvider | null {
   return toAcpProvider(client);
+}
+
+export function toAcpPromptClientPreference(provider: unknown): AcpPromptClient | null {
+  const normalized = normalizeAcpProviderKey(provider);
+  return normalized ? toAcpPromptClient(normalized) as AcpPromptClient : null;
 }
 
 function generateCursorPromptDeeplink(promptText: string): string {

@@ -9,7 +9,7 @@ describe('make-project default homepage', () => {
   it('serves a restrained centered homepage for the development server root', () => {
     const html = fs.readFileSync(path.join(appRoot, 'src/index.html'), 'utf8');
 
-    expect(html).toContain('可以通过 npx @axhub/make 启动管理页面。');
+    expect(html).toContain('可以通过 npx -y @axhub/make@latest 启动管理页面。');
     expect(html).toContain('/__axhub/make-server/status');
     expect(html).toContain('/__axhub/make-server/start');
     expect(html).toContain('启动管理服务');

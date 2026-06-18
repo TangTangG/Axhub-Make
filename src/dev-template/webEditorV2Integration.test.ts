@@ -123,13 +123,13 @@ describe('createWebEditorV2Controller launch options', () => {
     await controller.enable({
       toolbarMode: 'host',
       genieBridge: {
-        apiBaseUrl: 'http://localhost:32123/api',
+        apiBaseUrl: 'http://localhost:32124/api',
         integrationChannel: 'axhub',
         targetClientId: '',
       },
       integrationWs: {
         enabled: false,
-        apiBaseUrl: 'http://localhost:32123/api',
+        apiBaseUrl: 'http://localhost:32124/api',
         channel: 'axhub',
         clientId: '',
       },
@@ -413,7 +413,7 @@ describe('createWebEditorV2Controller', () => {
     vi.stubGlobal('window', {
       location: {
         search:
-          '?genieApiBaseUrl=http://localhost:32123/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1&cwd=%2Fworkspace%2Fdemo%2Fproject&provider=codex&editorIntegrationWs=1&editorApiBaseUrl=http://localhost:32123/api&editorIntegrationChannel=make&editorClientId=make-editor-abcd&editorSessionId=session-001&editorMobileMode=true',
+          '?genieApiBaseUrl=http://localhost:32124/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1&cwd=%2Fworkspace%2Fdemo%2Fproject&provider=codex&editorIntegrationWs=1&editorApiBaseUrl=http://localhost:32124/api&editorIntegrationChannel=make&editorClientId=make-editor-abcd&editorSessionId=session-001&editorMobileMode=true',
         pathname: '/prototypes/home',
         href: 'http://localhost:51720/prototypes/home?editor=webEditorV2',
       },
@@ -565,7 +565,7 @@ describe('createWebEditorV2Controller', () => {
         return {
           ok: true,
           json: async () => ({
-            apiBaseUrl: 'http://127.0.0.1:32123/api',
+            apiBaseUrl: 'http://127.0.0.1:32124/api',
             projectPath: '/workspace/demo/project',
             health: { status: 'ready' },
           }),
@@ -600,7 +600,7 @@ describe('createWebEditorV2Controller', () => {
     vi.stubGlobal('window', {
       location: {
         search:
-          '?genieApiBaseUrl=http://localhost:32123/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1',
+          '?genieApiBaseUrl=http://localhost:32124/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1',
         pathname: '/prototypes/home',
         href: 'http://localhost:51720/prototypes/home?editor=webEditorV2',
         protocol: 'http:',

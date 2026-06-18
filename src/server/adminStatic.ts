@@ -6,6 +6,8 @@ import { createProjectMetadataStore, isPathInside, type PrototypeResource } from
 
 import { getRequestUrl, sendFile, sendText } from './http.ts';
 import { AXHUB_CANVAS_MCP_PATH } from './axhubCanvasMcp.ts';
+import { AXHUB_PREVIEW_MCP_PATH } from './axhubPreviewMcp.ts';
+import { PREVIEW_BRIDGE_WS_PATH } from './previewBridge.ts';
 import { AXHUB_HUG_SCRIPT, AXHUB_HUG_SCRIPT_PATH, OPENCODE_BASE_PATH } from './opencodeHug.ts';
 import { stripViteDevOnlyModuleImports } from './staticTemplateHtml.ts';
 
@@ -22,6 +24,7 @@ export interface AdminStaticOptions {
   opencodeServerOrigin?: string;
   runtimeOrigin?: string;
   axhubCanvasMcpToken?: string;
+  axhubPreviewMcpToken?: string;
 }
 
 export function escapeScriptString(value: string): string {
@@ -53,6 +56,9 @@ export function buildInjectScript(options: AdminStaticOptions): string {
     window.__RUNTIME_ORIGIN__ = '${escapeScriptString(options.runtimeOrigin || '')}';
     window.__AXHUB_CANVAS_MCP_URL__ = '${AXHUB_CANVAS_MCP_PATH}';
     window.__AXHUB_CANVAS_MCP_TOKEN__ = '${escapeScriptString(options.axhubCanvasMcpToken || '')}';
+    window.__AXHUB_PREVIEW_MCP_URL__ = '${AXHUB_PREVIEW_MCP_PATH}';
+    window.__AXHUB_PREVIEW_MCP_TOKEN__ = '${escapeScriptString(options.axhubPreviewMcpToken || '')}';
+    window.__AXHUB_PREVIEW_BRIDGE_WS_URL__ = '${PREVIEW_BRIDGE_WS_PATH}';
   </script>`;
 }
 

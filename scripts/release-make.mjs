@@ -19,6 +19,7 @@ const releaseAdminDir = path.join(releaseRoot, 'admin');
 const npmPackageDir = path.join(releaseRoot, 'npm-package');
 const npmPackageDistDir = path.join(npmPackageDir, 'dist');
 const npmPackageServerDir = path.join(npmPackageDistDir, 'server');
+const npmPackageServerConvertersDir = path.join(npmPackageServerDir, 'converters');
 const npmPackageScriptsDir = path.join(npmPackageDir, 'scripts');
 const binDir = path.join(releaseRoot, 'bin');
 const artifactsDir = path.join(releaseRoot, 'artifacts');
@@ -28,6 +29,8 @@ const templateReleaseRoot = path.join(repoRoot, '.release/make-client-template')
 const templateArtifactsDir = path.join(templateReleaseRoot, 'artifacts');
 const templateManifestPath = path.join(templateReleaseRoot, 'manifest.json');
 const canvasFigSyncSource = path.join(makeServerRoot, 'vendor/axhub-export-core/scripts/canvas-fig-sync.mjs');
+const canvasFigSyncBundleEntry = path.join(makeServerRoot, 'node_modules/axhub-export-core/scripts/canvas-fig-sync.mjs');
+const bundledCanvasFigSyncPath = path.join(tmpDir, 'canvas-fig-sync.mjs');
 const makeClientTemplateSourceDir = path.join(makeServerRoot, 'client');
 const makeClientTemplatePackageJsonPath = path.join(makeClientTemplateSourceDir, 'package.json');
 const makeClientTemplateSourcePath = path.join(makeServerRoot, 'src/common/makeClientTemplate.ts');
@@ -51,6 +54,11 @@ const requiredNpmPackageFiles = [
   'package.json',
   'bin/cli.mjs',
   'dist/server/cli.mjs',
+  'dist/server/converters/ai-studio-converter.mjs',
+  'dist/server/converters/axure-html-converter.mjs',
+  'dist/server/converters/figma-make-converter.mjs',
+  'dist/server/converters/stitch-converter.mjs',
+  'dist/server/converters/v0-converter.mjs',
   'dist/admin/index.html',
   'dist/admin/assets/favicon.ico',
   'dist/admin/auto-debug-client.js',
@@ -268,6 +276,29 @@ function copyFile(source, destination, mode) {
   if (mode !== undefined) {
     fs.chmodSync(destination, mode);
   }
+}
+
+export function createCanvasFigSyncBundleArgs(outFile, entryFile) {
+  return [
+    'build',
+    entryFile,
+    '--target=node',
+    '--format=esm',
+    '--packages=bundle',
+    '--outfile',
+    outFile,
+  ];
+}
+
+function buildCanvasFigSyncBundle() {
+  if (!fs.existsSync(canvasFigSyncBundleEntry)) {
+    throw new Error(`Canvas fig sync bundle entry is missing: ${canvasFigSyncBundleEntry}`);
+  }
+  fs.mkdirSync(path.dirname(bundledCanvasFigSyncPath), { recursive: true });
+  run('bun', createCanvasFigSyncBundleArgs(bundledCanvasFigSyncPath, canvasFigSyncBundleEntry), { cwd: makeServerRoot });
+  fs.chmodSync(bundledCanvasFigSyncPath, 0o755);
+  assertCanvasFigSyncScriptBundled(bundledCanvasFigSyncPath);
+  return bundledCanvasFigSyncPath;
 }
 
 function walkFiles(rootDir) {
@@ -693,6 +724,13 @@ function assertNpmPackageFilePath(filePath) {
   }
 }
 
+function assertCanvasFigSyncScriptBundled(scriptPath) {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+  if (/^\s*import\s+[^;]*\s+from\s+['"](?:kiwi-schema|pako)(?:\/[^'"]*)?['"]/mu.test(source)) {
+    throw new Error('scripts/canvas-fig-sync.mjs must be bundled and must not import external canvas fig dependencies');
+  }
+}
+
 export function assertNpmPackageShape({ dryRunInfo, packageDir }) {
   const packageJsonPath = path.join(packageDir, 'package.json');
   const packageJson = readJson(packageJsonPath);
@@ -715,6 +753,7 @@ export function assertNpmPackageShape({ dryRunInfo, packageDir }) {
   if (!binFile || (binFile.mode & 0o111) === 0) {
     throw new Error('npm package bin/cli.mjs must be executable');
   }
+  assertCanvasFigSyncScriptBundled(path.join(packageDir, 'scripts/canvas-fig-sync.mjs'));
   for (const file of packInfo.files || []) {
     if (file.path === 'package.json') {
       continue;
@@ -763,6 +802,20 @@ function buildServerBundle() {
   sanitizeLocalMachinePathsInFile(outFile);
 }
 
+function copyServerConverters() {
+  fs.rmSync(npmPackageServerConvertersDir, { recursive: true, force: true });
+  fs.mkdirSync(npmPackageServerConvertersDir, { recursive: true });
+  for (const entry of fs.readdirSync(path.join(makeServerRoot, 'src/server/converters'), { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('-converter.mjs')) {
+      continue;
+    }
+    copyFile(
+      path.join(makeServerRoot, 'src/server/converters', entry.name),
+      path.join(npmPackageServerConvertersDir, entry.name),
+    );
+  }
+}
+
 function createBunEntrypoint() {
   const entryPath = path.join(tmpDir, 'bun-cli-entry.mjs');
   const cliPath = path.join(makeServerRoot, 'src/server/cli.ts');
@@ -801,7 +854,7 @@ export function createExecutableBundleArgs(target, executablePath, entryPath) {
   ];
 }
 
-function createPlatformArtifact(target, executablePath, sourcePackage) {
+function createPlatformArtifact(target, executablePath, sourcePackage, canvasFigSyncScriptPath = bundledCanvasFigSyncPath) {
   const artifactBaseName = `axhub-make-${sourcePackage.version}-${target.id}`;
   const artifactDir = path.join(artifactsDir, artifactBaseName);
   const artifactZip = path.join(artifactsDir, `${artifactBaseName}.zip`);
@@ -812,7 +865,7 @@ function createPlatformArtifact(target, executablePath, sourcePackage) {
   copyFile(executablePath, path.join(artifactDir, target.executableName), target.executableName.endsWith('.exe') ? undefined : 0o755);
   copyDir(releaseAdminDir, path.join(artifactDir, 'admin'));
   copyOpenCodeWebUiToPlatformArtifact({ artifactDir });
-  copyFile(canvasFigSyncSource, path.join(artifactDir, 'scripts/canvas-fig-sync.mjs'), 0o755);
+  copyFile(canvasFigSyncScriptPath, path.join(artifactDir, 'scripts/canvas-fig-sync.mjs'), 0o755);
   fs.writeFileSync(path.join(artifactDir, 'VERSION'), `${sourcePackage.version}\n`, 'utf8');
   assertNoLocalMachinePathsInDirectory(artifactDir, `${target.id} release artifact directory`);
   assertNoLocalMachinePathsInBinaryFile(path.join(artifactDir, target.executableName), `${target.id} executable`);
@@ -836,15 +889,16 @@ function buildSanitizedExecutableTarget(target, entryPath) {
   return executablePath;
 }
 
-function createNpmPackage(sourcePackage) {
+function createNpmPackage(sourcePackage, canvasFigSyncScriptPath = bundledCanvasFigSyncPath) {
   fs.rmSync(npmPackageDir, { recursive: true, force: true });
   fs.mkdirSync(npmPackageDir, { recursive: true });
   writeJson(path.join(npmPackageDir, 'package.json'), createPublishPackageJson(sourcePackage));
   writeNpmBin();
   copyDir(releaseAdminDir, path.join(npmPackageDistDir, 'admin'));
   copyOpenCodeWebUiToNpmPackage();
-  copyFile(canvasFigSyncSource, path.join(npmPackageScriptsDir, 'canvas-fig-sync.mjs'), 0o755);
+  copyFile(canvasFigSyncScriptPath, path.join(npmPackageScriptsDir, 'canvas-fig-sync.mjs'), 0o755);
   buildServerBundle();
+  copyServerConverters();
 }
 
 function packNpmPackage() {
@@ -902,8 +956,11 @@ function prepareRelease(options = {}) {
   copyDir(builtAdminDir, releaseAdminDir);
   copyOpenCodeWebUiToRelease();
 
+  logStep('Bundling canvas fig sync script');
+  const canvasFigSyncScriptPath = buildCanvasFigSyncBundle();
+
   logStep('Creating npm package staging directory');
-  createNpmPackage(sourcePackage);
+  createNpmPackage(sourcePackage, canvasFigSyncScriptPath);
   const { dryRunInfo, tarballPath } = packNpmPackage();
 
   let releaseAssets = [];
@@ -912,7 +969,7 @@ function prepareRelease(options = {}) {
     const bunEntry = createBunEntrypoint();
     releaseAssets = executableTargets.map((target) => {
       const executablePath = buildSanitizedExecutableTarget(target, bunEntry);
-      return createPlatformArtifact(target, executablePath, sourcePackage);
+      return createPlatformArtifact(target, executablePath, sourcePackage, canvasFigSyncScriptPath);
     });
   } else {
     logStep('Skipping platform release artifacts for npm-only release');

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Screenshot To Prototype"
+  short_description: "将明确提供的本地截图或设计稿还原为 client 可运行原型，并做真实截图回归"
+  default_prompt: "使用 $screenshot-to-prototype 将这张截图或设计稿还原为当前 client 的可运行原型。"

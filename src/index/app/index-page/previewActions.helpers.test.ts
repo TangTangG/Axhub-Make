@@ -8,6 +8,7 @@ import {
   createDefaultHostToolbarState,
   getClientUrlOrigin,
   resolveCurrentPublishResourcePath,
+  resolveCurrentPreviewScreenshotSize,
   resolveHostToolbarStateForDisplay,
   waitForHostToolbarActionState,
 } from './previewActions.helpers';
@@ -237,6 +238,30 @@ describe('previewActions.helpers', () => {
         absoluteFilePath: '/workspace/src/themes/other/index.tsx',
       },
     })).toBe('src/themes/brand');
+  });
+
+  it('resolves screenshot copy dimensions from the current preview mode and primary split pane', () => {
+    expect(resolveCurrentPreviewScreenshotSize({
+      previewMode: 'single',
+      singlePreset: 'custom',
+      customWidth: 1024,
+      customHeight: 1365,
+      multiPageColumns: 3,
+      splitWidths: { primary: 1440, secondary: 393 },
+      splitHeights: { primary: 900, secondary: 852 },
+      scaleMode: 'fit-screen',
+    }, { width: 1920, height: 1080 })).toEqual({ width: 1024, height: 1365 });
+
+    expect(resolveCurrentPreviewScreenshotSize({
+      previewMode: 'split',
+      singlePreset: 'desktop',
+      customWidth: null,
+      customHeight: null,
+      multiPageColumns: 3,
+      splitWidths: { primary: 1280, secondary: 390 },
+      splitHeights: { primary: 720, secondary: 846 },
+      scaleMode: 'fit-screen',
+    }, { width: 1920, height: 1080 })).toEqual({ width: 1280, height: 720 });
   });
 
   it('keeps a settled local AI connection visible after a wake action succeeds', () => {

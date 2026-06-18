@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ClaudeCode, Codex, GeminiCLI, OpenCode } from '@lobehub/icons';
+import { ClaudeCode, CodeBuddy, Codex, Cursor, DeepSeek, GeminiCLI, OpenCode, Qoder } from '@lobehub/icons';
 import { AlertTriangle, CheckCircle2, CircleHelp, Copy, Loader2, Play, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -8,6 +8,13 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Field, FieldDescription, FieldLabelWithHint } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import {
     Sheet,
     SheetContent,
@@ -22,6 +29,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { apiService, type AssistantRuntimeResponse, type MakeClientUpdateApplyResult, type MakeClientUpdateStatus } from '../services/api';
 import { normalizePromptClientPreference } from '../../common/promptExecution';
+import { ACP_PROVIDER_OPTIONS, type AcpProviderKey } from '../../common/acpModelConfig';
 import { runAiText, type AiRunClientError } from '../domains/ai-generation/aiRunClient';
 import {
     buildMakeClientUpdateFailurePrompt,
@@ -29,9 +37,9 @@ import {
 } from '../utils/projectSetupErrors';
 import type { MainIDEPreference } from '../../common/ide';
 import type { PromptClientPreference } from '../types';
-import type { CLIAgent } from '../../common/agent';
 import {
     formatAgentVersionMeta,
+    formatAgentVersionMetaTitle,
     isAgentVersionCacheFresh,
     type AgentVersionCache,
     type AgentVersionMap,
@@ -86,6 +94,8 @@ interface Config {
     automation?: {
         defaultPromptClient?: PromptClientPreference;
         defaultIDE?: MainIDEPreference;
+        annotationPromptClient?: PromptClientPreference;
+        annotationModel?: string | null;
     };
     assistant?: {
         webBaseUrl?: string | null;
@@ -108,6 +118,8 @@ interface SettingsFormState {
     projectDescription: string;
     defaultTheme: string;
     defaultPromptClient: PromptClientPreference;
+    annotationPromptClient: PromptClientPreference;
+    annotationModel: string;
     aiBaseUrl: string;
     aiApiKey: string;
     aiModel: string;
@@ -154,6 +166,8 @@ const DEFAULT_FORM_STATE: SettingsFormState = {
     projectDescription: '',
     defaultTheme: '',
     defaultPromptClient: 'acp:codex',
+    annotationPromptClient: null,
+    annotationModel: '',
     aiBaseUrl: 'https://api.openai.com/v1',
     aiApiKey: '',
     aiModel: 'gpt-image-2',
@@ -161,20 +175,25 @@ const DEFAULT_FORM_STATE: SettingsFormState = {
 
 const LOCAL_AI_AGENT_OPTIONS: Array<{
     value: NonNullable<PromptClientPreference>;
+    provider: AcpProviderKey;
     label: string;
-    versionKey: CLIAgent;
-}> = [
-    { value: 'acp:claude', label: 'Claude Code', versionKey: 'claudecode' },
-    { value: 'acp:codex', label: 'Codex', versionKey: 'codex' },
-    { value: 'acp:gemini', label: 'Gemini CLI', versionKey: 'gemini' },
-    { value: 'acp:opencode', label: 'OpenCode', versionKey: 'opencode' },
-];
+    versionKey: AcpProviderKey;
+}> = ACP_PROVIDER_OPTIONS.map((option) => ({
+    value: option.client,
+    provider: option.provider,
+    label: option.label,
+    versionKey: option.provider,
+}));
 
-function getAgentProviderIcon(agent: CLIAgent): React.ReactNode {
-    if (agent === 'codex') return <Codex.Color size={16} />;
-    if (agent === 'gemini') return <GeminiCLI.Color size={16} />;
-    if (agent === 'claudecode') return <ClaudeCode.Color size={16} />;
-    if (agent === 'opencode') return <OpenCode size={16} />;
+function getAgentProviderIcon(provider: AcpProviderKey): React.ReactNode {
+    if (provider === 'codex') return <Codex.Color size={16} />;
+    if (provider === 'gemini') return <GeminiCLI.Color size={16} />;
+    if (provider === 'claude') return <ClaudeCode.Color size={16} />;
+    if (provider === 'opencode') return <OpenCode size={16} />;
+    if (provider === 'cursor') return <Cursor size={16} />;
+    if (provider === 'qoder') return <Qoder.Color size={16} />;
+    if (provider === 'codebuddy') return <CodeBuddy.Color size={16} />;
+    if (provider === 'reasonix') return <DeepSeek.Color size={16} />;
     return null;
 }
 
@@ -186,6 +205,8 @@ function normalizeFormState(config: Config): SettingsFormState {
         projectDescription: config.projectInfo?.description || '',
         defaultTheme: config.projectDefaults?.defaultTheme || '',
         defaultPromptClient: normalizePromptClientPreference(config.automation?.defaultPromptClient) || 'acp:codex',
+        annotationPromptClient: normalizePromptClientPreference(config.automation?.annotationPromptClient),
+        annotationModel: config.automation?.annotationModel || '',
         aiBaseUrl: config.ai?.imageGeneration?.baseUrl || 'https://api.openai.com/v1',
         aiApiKey: config.ai?.imageGeneration?.apiKey || '',
         aiModel: config.ai?.imageGeneration?.model || 'gpt-image-2',
@@ -866,6 +887,8 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                 automation: {
                     ...(currentConfig.automation || {}),
                     defaultPromptClient: formState.defaultPromptClient,
+                    annotationPromptClient: formState.annotationPromptClient || null,
+                    annotationModel: formState.annotationModel.trim() || null,
                 },
                 ai: {
                     ...(currentConfig.ai || {}),
@@ -1268,8 +1291,8 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                             <Table>
                                                 <TableHeader className="bg-muted/30">
                                                     <TableRow className="hover:bg-transparent">
-                                                        <TableHead className="h-8 w-[92px] text-xs">
-                                                            <span className="inline-flex items-center gap-1.5">
+                                                        <TableHead className="h-8 w-[64px] px-2 text-xs">
+                                                            <span className="inline-flex items-center gap-1">
                                                                 执行
                                                                 <TooltipProvider>
                                                                     <Tooltip>
@@ -1283,14 +1306,14 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                                                             </button>
                                                                         </TooltipTrigger>
                                                                         <TooltipContent arrow className="max-w-[320px]">
-                                                                            用于原型生成、批注执行和本地 AI 面板的默认 agent
+                                                                            用于原型生成和本地 AI 面板的默认 agent
                                                                         </TooltipContent>
                                                                     </Tooltip>
                                                                 </TooltipProvider>
                                                             </span>
                                                         </TableHead>
-                                                        <TableHead className="h-8 text-xs">供应商</TableHead>
-                                                        <TableHead className="h-8 w-[150px] text-xs">
+                                                        <TableHead className="h-8 w-[180px] px-2 text-xs">供应商</TableHead>
+                                                        <TableHead className="h-8 w-[180px] px-3 text-xs">
                                                             <span className="inline-flex items-center gap-1.5">
                                                                 版本
                                                                 <TooltipProvider>
@@ -1313,71 +1336,76 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                                                 </TooltipProvider>
                                                             </span>
                                                         </TableHead>
-                                                        <TableHead className="h-8 w-[104px] text-xs">上次测试</TableHead>
-                                                        <TableHead className="h-8 w-[96px] text-right text-xs">测试</TableHead>
+                                                        <TableHead className="h-8 w-[150px] px-3 text-xs">上次测试</TableHead>
                                                     </TableRow>
                                                 </TableHeader>
                                                 <TableBody>
                                                 {LOCAL_AI_AGENT_OPTIONS.map((option) => {
                                                     const meta = formatAgentVersionMeta(agentVersions[option.versionKey], latestAgentVersions[option.versionKey]);
+                                                    const metaTitle = formatAgentVersionMetaTitle(agentVersions[option.versionKey], latestAgentVersions[option.versionKey]);
                                                     const testState = agentProviderTests[option.value];
                                                     const testLabel = getAgentProviderTestLabel(testState);
                                                     const isTesting = testState?.status === 'testing';
                                                     const testTime = testState?.status === 'passed' ? formatAgentProviderTestTime(testState.testedAt) : '';
                                                     return (
                                                         <TableRow key={option.value} data-state={formState.defaultPromptClient === option.value ? 'selected' : undefined}>
-                                                            <TableCell className="py-2">
+                                                            <TableCell className="px-2 py-2">
                                                                 <RadioGroupItem value={option.value} aria-label={`默认使用 ${option.label}`} />
                                                             </TableCell>
-                                                            <TableCell className="py-2">
+                                                            <TableCell className="w-[180px] max-w-[180px] px-2 py-2">
                                                                 <span className="inline-flex min-w-0 items-center gap-2 font-medium text-foreground">
                                                                     <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
-                                                                        {getAgentProviderIcon(option.versionKey)}
+                                                                        {getAgentProviderIcon(option.provider)}
                                                                     </span>
                                                                     <span className="truncate">{option.label}</span>
                                                                 </span>
                                                             </TableCell>
-                                                            <TableCell className="py-2 text-xs text-muted-foreground">
-                                                                <span className="inline-flex min-w-0 items-center gap-1">
+                                                            <TableCell className="w-[180px] max-w-[180px] px-3 py-2 text-xs text-muted-foreground">
+                                                                <span className="inline-flex min-w-0 max-w-full items-center gap-1">
                                                                     {agentVersionsLoading && !meta ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                                                                    <span className="truncate" title={meta || undefined}>{meta || (agentVersionsLoading ? '检测中' : '未检测')}</span>
+                                                                    <span className="block max-w-[144px] truncate font-mono text-[11px] leading-4" title={metaTitle || undefined}>{meta || (agentVersionsLoading ? '检测中' : '未检测')}</span>
                                                                 </span>
                                                             </TableCell>
-                                                            <TableCell className="py-2 text-xs">
-                                                                <div className="flex min-w-0 flex-col gap-0.5">
-                                                                    {testLabel ? (
-                                                                        <span
-                                                                            className={testState?.status === 'passed'
-                                                                                ? 'inline-flex max-w-[180px] whitespace-normal break-words leading-5 items-start gap-1 text-emerald-600 [overflow-wrap:anywhere]'
-                                                                                : testState?.status === 'testing'
-                                                                                    ? 'inline-flex max-w-[180px] whitespace-normal break-words leading-5 items-start gap-1 text-muted-foreground [overflow-wrap:anywhere]'
-                                                                                    : 'block max-w-[180px] whitespace-normal break-words leading-5 text-destructive [overflow-wrap:anywhere]'}
-                                                                            title={testState?.message || testLabel}
-                                                                        >
-                                                                            {isTesting ? <Loader2 className="mt-1 h-3 w-3 shrink-0 animate-spin" /> : null}
-                                                                            {testLabel}{testState?.status === 'failed' && testState.message && testState.message !== testLabel ? `：${testState.message}` : ''}
-                                                                        </span>
-                                                                    ) : (
-                                                                        <span className="text-muted-foreground">未测试</span>
-                                                                    )}
-                                                                    {testState?.status === 'passed' && testTime ? (
-                                                                        <span className="text-muted-foreground">{testTime}</span>
-                                                                    ) : null}
-                                                                </div>
-                                                            </TableCell>
-                                                            <TableCell className="py-2">
-                                                                <div className="flex justify-end">
-                                                                    <Button
-                                                                        type="button"
-                                                                        variant="ghost"
-                                                                        size="sm"
-                                                                        className="h-7 gap-1 px-2 text-xs"
-                                                                        onClick={() => handleAgentProviderTest(option)}
-                                                                        disabled={isTesting}
-                                                                    >
-                                                                        {isTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                                                                        {isTesting ? '测试中' : '测试'}
-                                                                    </Button>
+                                                            <TableCell className="px-3 py-2 text-xs">
+                                                                <div className="flex min-w-0 items-start justify-between gap-2">
+                                                                    <div className="flex min-w-0 flex-col gap-0.5">
+                                                                        {testLabel ? (
+                                                                            <span
+                                                                                className={testState?.status === 'passed'
+                                                                                    ? 'inline-flex max-w-[180px] whitespace-normal break-words leading-5 items-start gap-1 text-emerald-600 [overflow-wrap:anywhere]'
+                                                                                    : testState?.status === 'testing'
+                                                                                        ? 'inline-flex max-w-[180px] whitespace-normal break-words leading-5 items-start gap-1 text-muted-foreground [overflow-wrap:anywhere]'
+                                                                                        : 'block max-w-[180px] whitespace-normal break-words leading-5 text-destructive [overflow-wrap:anywhere]'}
+                                                                                title={testState?.message || testLabel}
+                                                                            >
+                                                                                {isTesting ? <Loader2 className="mt-1 h-3 w-3 shrink-0 animate-spin" /> : null}
+                                                                                {testLabel}{testState?.status === 'failed' && testState.message && testState.message !== testLabel ? `：${testState.message}` : ''}
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="text-muted-foreground">未测试</span>
+                                                                        )}
+                                                                        {testState?.status === 'passed' && testTime ? (
+                                                                            <span className="text-muted-foreground">{testTime}</span>
+                                                                        ) : null}
+                                                                    </div>
+                                                                    <TooltipProvider>
+                                                                        <Tooltip>
+                                                                            <TooltipTrigger asChild>
+                                                                                <Button
+                                                                                    type="button"
+                                                                                    variant="ghost"
+                                                                                    size="icon-xs"
+                                                                                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                                                                                    onClick={() => handleAgentProviderTest(option)}
+                                                                                    disabled={isTesting}
+                                                                                    aria-label={`测试 ${option.label}`}
+                                                                                >
+                                                                                    {isTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                                                                                </Button>
+                                                                            </TooltipTrigger>
+                                                                            <TooltipContent arrow>测试连接</TooltipContent>
+                                                                        </Tooltip>
+                                                                    </TooltipProvider>
                                                                 </div>
                                                             </TableCell>
                                                         </TableRow>
@@ -1387,6 +1415,49 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                             </Table>
                                         </RadioGroup>
                                     </Field>
+                                </section>
+
+                                <Separator className="my-5" />
+
+                                <section className="space-y-4">
+                                    <div className="space-y-1">
+                                        <h3 className="text-base font-semibold text-foreground">批注执行 AI</h3>
+                                        <p className="text-xs text-muted-foreground">可以单独为批注场景配置一个执行速度更快的 AI；不选择时使用上面的执行 Agent。</p>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                                        <Field>
+                                            <FieldLabelWithHint hint="批注执行时优先使用的本地 ACP 供应商；不选择时使用上面的执行 Agent">批注供应商</FieldLabelWithHint>
+                                            <Select
+                                                value={formState.annotationPromptClient || undefined}
+                                                onValueChange={(value) => updateField('annotationPromptClient', normalizePromptClientPreference(value))}
+                                            >
+                                                <SelectTrigger
+                                                    clearable
+                                                    hasValue={Boolean(formState.annotationPromptClient)}
+                                                    onClear={() => updateField('annotationPromptClient', null)}
+                                                >
+                                                    <SelectValue placeholder="默认供应商" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {LOCAL_AI_AGENT_OPTIONS.map((option) => (
+                                                        <SelectItem key={option.value} value={option.value}>
+                                                            {option.label}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </Field>
+
+                                        <Field>
+                                            <FieldLabelWithHint hint="留空时使用供应商或 ACP UI 的默认模型">批注执行模型</FieldLabelWithHint>
+                                            <Input
+                                                value={formState.annotationModel}
+                                                onChange={(event) => updateField('annotationModel', event.target.value)}
+                                                placeholder="例如 gpt-5.5 / sonnet / auto"
+                                            />
+                                        </Field>
+                                    </div>
                                 </section>
 
                                 <Separator className="my-5" />

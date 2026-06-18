@@ -120,12 +120,28 @@ export type AcpCanvasMcpPostMessage =
   | AcpRuntimeConfigurePostMessage
   | AcpRuntimeClearPostMessage;
 
+export type AcpPreviewMcpPostMessage =
+  | AcpRuntimeConfigurePostMessage
+  | AcpRuntimeClearPostMessage;
+
 const ACP_IMAGE_GENERATION_TOOL_ID = 'image-generation';
 const ACP_IMAGE_GENERATION_RUNTIME_CLEAR_FIELDS: AcpRuntimeConfigField[] = ['builtinTools', 'builtinToolSettings'];
+const ACP_PREVIEW_MCP_NAME = 'axhub-preview';
+const ACP_PREVIEW_MCP_PATH = '/api/mcp/axhub-preview';
+const ACP_PREVIEW_MCP_TOKEN_HEADER = 'x-axhub-preview-mcp-token';
+const ACP_PREVIEW_BRIDGE_CLIENT_ID_HEADER = 'x-axhub-preview-bridge-client-id';
 const ACP_CANVAS_MCP_NAME = 'axhub-canvas';
 const ACP_CANVAS_MCP_PATH = '/api/mcp/axhub-canvas';
 const ACP_CANVAS_MCP_TOKEN_HEADER = 'x-axhub-canvas-mcp-token';
-const ACP_CANVAS_MCP_RUNTIME_CLEAR_FIELDS: AcpRuntimeConfigField[] = ['mcpServers'];
+const ACP_MCP_RUNTIME_CLEAR_FIELDS: AcpRuntimeConfigField[] = ['mcpServers'];
+
+export interface AssistantPreviewMcpConfig {
+  makeOrigin?: string | null;
+  previewToken?: string | null;
+  previewBridgeClientId?: string | null;
+  includeCanvas?: boolean | null;
+  canvasToken?: string | null;
+}
 
 function normalizeContextPath(value: unknown): string {
   return typeof value === 'string' ? value.trim().replace(/\\/g, '/') : '';
@@ -403,6 +419,94 @@ export function getAcpImageGenerationConfigSignature(
   });
 }
 
+function buildPreviewMcpServers(config: AssistantPreviewMcpConfig | null | undefined, redactSecrets = false): unknown[] | null {
+  const makeOrigin = normalizeMakeOrigin(config?.makeOrigin);
+  const previewToken = normalizeOptionalPostMessageString(config?.previewToken);
+  if (!makeOrigin || !previewToken) {
+    return null;
+  }
+  const previewBridgeClientId = normalizeOptionalPostMessageString(config?.previewBridgeClientId);
+  const previewHeaders: unknown[] = [{
+    name: ACP_PREVIEW_MCP_TOKEN_HEADER,
+    ...(redactSecrets ? { hasValue: true } : { value: previewToken }),
+  }];
+  if (previewBridgeClientId) {
+    previewHeaders.push({
+      name: ACP_PREVIEW_BRIDGE_CLIENT_ID_HEADER,
+      value: previewBridgeClientId,
+    });
+  }
+
+  const servers: unknown[] = [{
+    name: ACP_PREVIEW_MCP_NAME,
+    type: 'http',
+    url: `${makeOrigin}${ACP_PREVIEW_MCP_PATH}`,
+    headers: previewHeaders,
+  }];
+
+  const canvasToken = normalizeOptionalPostMessageString(config?.canvasToken);
+  if (config?.includeCanvas === true && canvasToken) {
+    servers.push({
+      name: ACP_CANVAS_MCP_NAME,
+      type: 'http',
+      url: `${makeOrigin}${ACP_CANVAS_MCP_PATH}`,
+      headers: [{
+        name: ACP_CANVAS_MCP_TOKEN_HEADER,
+        ...(redactSecrets ? { hasValue: true } : { value: canvasToken }),
+      }],
+    });
+  }
+
+  return servers;
+}
+
+export function buildAcpPreviewMcpPostMessage(
+  config: AssistantPreviewMcpConfig | null | undefined,
+  requestId?: string,
+): AcpPreviewMcpPostMessage {
+  const mcpServers = buildPreviewMcpServers(config, false);
+  if (!mcpServers) {
+    return {
+      type: 'acp.runtime.clear',
+      ...(requestId ? { requestId } : {}),
+      payload: {
+        fields: ACP_MCP_RUNTIME_CLEAR_FIELDS,
+      },
+    };
+  }
+
+  return {
+    type: 'acp.runtime.configure',
+    ...(requestId ? { requestId } : {}),
+    payload: {
+      merge: false,
+      mcpServers,
+    },
+  };
+}
+
+export function getAcpPreviewMcpConfigSignature(
+  config: AssistantPreviewMcpConfig | null | undefined,
+): string {
+  const mcpServers = buildPreviewMcpServers(config, true);
+  if (!mcpServers) {
+    return JSON.stringify({
+      type: 'acp.runtime.clear',
+      payload: {
+        fields: ACP_MCP_RUNTIME_CLEAR_FIELDS,
+      },
+    });
+  }
+
+  return JSON.stringify({
+    type: 'acp.runtime.configure',
+    payload: {
+      merge: false,
+      mcpServers,
+    },
+  });
+}
+
 export function buildAcpCanvasMcpPostMessage(
   config: { makeOrigin?: string | null; token?: string | null } | null | undefined,
   requestId?: string,
@@ -414,7 +518,7 @@ export function buildAcpCanvasMcpPostMessage(
       type: 'acp.runtime.clear',
       ...(requestId ? { requestId } : {}),
       payload: {
-        fields: ACP_CANVAS_MCP_RUNTIME_CLEAR_FIELDS,
+        fields: ACP_MCP_RUNTIME_CLEAR_FIELDS,
       },
     };
   }
@@ -446,7 +550,7 @@ export function getAcpCanvasMcpConfigSignature(
     return JSON.stringify({
       type: 'acp.runtime.clear',
       payload: {
-        fields: ACP_CANVAS_MCP_RUNTIME_CLEAR_FIELDS,
+        fields: ACP_MCP_RUNTIME_CLEAR_FIELDS,
       },
     });
   }

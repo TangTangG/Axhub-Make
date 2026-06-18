@@ -33,17 +33,43 @@ const CANVAS_PROTOTYPE_GENERATION_TIMEOUT_SECONDS = 600;
 const CANVAS_PROTOTYPE_GENERATION_SESSION_TTL_SECONDS = 30;
 const AGENT_VERSION_TIMEOUT_MS = 2_000;
 const AGENT_LATEST_VERSION_TIMEOUT_MS = 3_000;
-const AGENT_VERSION_COMMANDS: Record<CLIAgent, string> = {
-  codex: 'codex',
-  gemini: 'gemini',
-  claudecode: 'claude',
-  opencode: 'opencode',
+type AgentVersionKey =
+  | 'claude'
+  | 'codex'
+  | 'gemini'
+  | 'opencode'
+  | 'cursor'
+  | 'qoder'
+  | 'codebuddy'
+  | 'reasonix';
+type AgentVersionResponseKey = AgentVersionKey | 'claudecode';
+
+interface AgentVersionCommandSpec {
+  command: string;
+  args: string[];
+}
+
+const AGENT_VERSION_COMMANDS: Record<AgentVersionKey, AgentVersionCommandSpec[]> = {
+  claude: [{ command: 'claude', args: ['--version'] }],
+  codex: [{ command: 'codex', args: ['--version'] }],
+  gemini: [{ command: 'gemini', args: ['--version'] }],
+  opencode: [{ command: 'opencode', args: ['--version'] }],
+  cursor: [{ command: 'agent', args: ['--version'] }],
+  qoder: [{ command: 'qodercli', args: ['--version'] }],
+  codebuddy: [{ command: 'codebuddy', args: ['--version'] }],
+  reasonix: [
+    { command: 'reasonix', args: ['--version'] },
+    { command: 'reasonix', args: ['version'] },
+  ],
 };
-const AGENT_NPM_PACKAGES: Record<CLIAgent, string> = {
+const AGENT_NPM_PACKAGES: Partial<Record<AgentVersionKey, string>> = {
+  claude: '@anthropic-ai/claude-code',
   codex: '@openai/codex',
   gemini: '@google/gemini-cli',
-  claudecode: '@anthropic-ai/claude-code',
   opencode: 'opencode-ai',
+  qoder: '@qoder-ai/qodercli',
+  codebuddy: '@tencent-ai/codebuddy-code',
+  reasonix: 'reasonix',
 };
 
 interface AssistantIdeProjectContext {
@@ -123,34 +149,53 @@ function normalizeVersionOutput(...outputs: unknown[]): string {
   return match?.[1] || line;
 }
 
-async function detectAgentVersion(agent: CLIAgent): Promise<AgentVersionInfo> {
-  const command = AGENT_VERSION_COMMANDS[agent];
+async function detectAgentVersion(agent: AgentVersionKey): Promise<AgentVersionInfo> {
+  const commands = AGENT_VERSION_COMMANDS[agent];
   const checkedAt = new Date().toISOString();
-  try {
-    const result = await runLocalCommand(command, ['--version'], {
-      timeoutMs: AGENT_VERSION_TIMEOUT_MS,
-      maxBuffer: 32 * 1024,
-    });
-    const version = normalizeVersionOutput(result.stdout, result.stderr);
-    return {
-      status: 'installed',
-      checkedAt,
-      command,
-      version: version || command,
-    };
-  } catch (error: any) {
-    return {
-      status: error?.code === 'ETIMEDOUT' ? 'unknown' : 'missing',
-      checkedAt,
-      command,
-      reason: error?.message || String(error),
-    };
+  let lastError: any = null;
+  let lastCommand = commands[0]?.command || agent;
+
+  for (const spec of commands) {
+    lastCommand = spec.command;
+    try {
+      const result = await runLocalCommand(spec.command, spec.args, {
+        timeoutMs: AGENT_VERSION_TIMEOUT_MS,
+        maxBuffer: 32 * 1024,
+      });
+      const version = normalizeVersionOutput(result.stdout, result.stderr);
+      return {
+        status: 'installed',
+        checkedAt,
+        command: spec.command,
+        version: version || spec.command,
+      };
+    } catch (error: any) {
+      lastError = error;
+      if (error?.code === 'ETIMEDOUT') {
+        return {
+          status: 'unknown',
+          checkedAt,
+          command: spec.command,
+          reason: error?.message || String(error),
+        };
+      }
+    }
   }
+
+  return {
+    status: 'missing',
+    checkedAt,
+    command: lastCommand,
+    reason: lastError?.message || String(lastError),
+  };
 }
 
-async function detectLatestAgentVersion(agent: CLIAgent): Promise<AgentVersionInfo> {
+async function detectLatestAgentVersion(agent: AgentVersionKey): Promise<AgentVersionInfo | null> {
   const packageName = AGENT_NPM_PACKAGES[agent];
   const checkedAt = new Date().toISOString();
+  if (!packageName) {
+    return null;
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), AGENT_LATEST_VERSION_TIMEOUT_MS);
   try {
@@ -192,15 +237,20 @@ async function detectLatestAgentVersion(agent: CLIAgent): Promise<AgentVersionIn
 }
 
 async function detectAgentVersionMap(
-  detector: (agent: CLIAgent) => Promise<AgentVersionInfo>,
-): Promise<Record<CLIAgent, AgentVersionInfo>> {
-  const entries = await Promise.all(
-    (Object.keys(AGENT_VERSION_COMMANDS) as CLIAgent[]).map(async (agent) => [
+  detector: (agent: AgentVersionKey) => Promise<AgentVersionInfo | null>,
+): Promise<Partial<Record<AgentVersionResponseKey, AgentVersionInfo>>> {
+  const baseEntries = await Promise.all(
+    (Object.keys(AGENT_VERSION_COMMANDS) as AgentVersionKey[]).map(async (agent) => [
       agent,
       await detector(agent),
     ] as const),
   );
-  return Object.fromEntries(entries) as Record<CLIAgent, AgentVersionInfo>;
+  const entries = baseEntries.filter((entry): entry is readonly [AgentVersionKey, AgentVersionInfo] => Boolean(entry[1]));
+  const result = Object.fromEntries(entries) as Partial<Record<AgentVersionResponseKey, AgentVersionInfo>>;
+  if (result.claude) {
+    result.claudecode = result.claude;
+  }
+  return result;
 }
 
 async function detectAgentVersions() {

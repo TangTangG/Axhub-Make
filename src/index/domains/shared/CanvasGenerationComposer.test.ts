@@ -15,22 +15,35 @@ vi.mock('@axhub/acp/react', () => ({
 
 vi.mock('@axhub/acp/runtime', () => ({
   ACP_CAPABILITY_REFRESH_EVENT: 'axhub:acp-capability-refresh',
+  acpApiClient: {
+    cancelChat: vi.fn(),
+  },
   configureAcpUiRuntime: vi.fn(),
 }));
 
 vi.mock('@axhub/acp/ui', () => ({
   AcpComposerSelectors: () => null,
-  Composer: () => null,
+  ComposerAttachments: () => null,
 }));
 
 vi.mock('@/lib/utils', () => ({
   cn: (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(' '),
 }));
 
+vi.mock('@/components/ui/button', () => ({
+  Button: ({ children }: { children: unknown }) => children,
+}));
+
 vi.mock('@/components/ui/popover', () => ({
   Popover: ({ children }: { children: unknown }) => children,
   PopoverContent: ({ children }: { children: unknown }) => children,
   PopoverTrigger: ({ children }: { children: unknown }) => children,
+}));
+
+vi.mock('@/components/ui/tooltip', () => ({
+  Tooltip: ({ children }: { children: unknown }) => children,
+  TooltipContent: ({ children }: { children: unknown }) => children,
+  TooltipTrigger: ({ children }: { children: unknown }) => children,
 }));
 
 vi.mock('../../services/index.api', () => ({

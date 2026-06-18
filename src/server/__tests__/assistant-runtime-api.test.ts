@@ -626,7 +626,7 @@ describe('make-server assistant runtime API', () => {
   it('auto-start repairs a local configured ACP endpoint with missing CORS by restarting the same port', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
-    const assistantOrigin = 'http://localhost:32124';
+    const assistantOrigin = 'http://localhost:32125';
     const assistantPort = Number(new URL(assistantOrigin).port);
     writeProjectConfig(projectRoot, {
       assistant: {
@@ -705,7 +705,7 @@ describe('make-server assistant runtime API', () => {
       });
       expect(childProcessMock.spawnSync).not.toHaveBeenCalledWith(
         'lsof',
-        expect.arrayContaining(['-tiTCP:32123']),
+        expect.arrayContaining(['-tiTCP:32124']),
         expect.any(Object),
       );
     } finally {
@@ -715,16 +715,16 @@ describe('make-server assistant runtime API', () => {
     }
   });
 
-  it('auto-start repairs the default ACP endpoint with missing CORS by restarting 32123', async () => {
+  it('auto-start repairs the default ACP endpoint with missing CORS by restarting 32124', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
     let portLookupCount = 0;
     childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
-      if (command === 'lsof' && args.includes('-tiTCP:32123')) {
+      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
         portLookupCount += 1;
         return { stdout: portLookupCount === 1 ? '890\n' : '', stderr: '', status: 0 };
       }
-      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
+      if (command === 'lsof' && args.includes('-tiTCP:32125')) {
         return { stdout: '', stderr: '', status: 0 };
       }
       return { stdout: '', stderr: '', status: 0 };
@@ -734,7 +734,7 @@ describe('make-server assistant runtime API', () => {
     const realFetch = globalThis.fetch.bind(globalThis);
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
       const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
-      if (!requestUrl.startsWith('http://localhost:32123')) {
+      if (!requestUrl.startsWith('http://localhost:32124')) {
         return realFetch(input, init);
       }
       const method = String(init?.method || 'GET').toUpperCase();
@@ -746,13 +746,13 @@ describe('make-server assistant runtime API', () => {
         }
         : {};
 
-      if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+      if (requestUrl === 'http://localhost:32124/api/acp/runtime') {
         return Promise.resolve(new Response('', { status: 404, headers }));
       }
-      if (requestUrl === 'http://localhost:32123/') {
+      if (requestUrl === 'http://localhost:32124/') {
         return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
       }
-      if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+      if (requestUrl === 'http://localhost:32124/api/chat' && method === 'OPTIONS') {
         return Promise.resolve(new Response(
           childProcessMock.spawn.mock.calls.length > 0 ? null : '',
           {
@@ -761,7 +761,7 @@ describe('make-server assistant runtime API', () => {
           },
         ));
       }
-      if (requestUrl === 'http://localhost:32123/api/chat') {
+      if (requestUrl === 'http://localhost:32124/api/chat') {
         return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
           status: 200,
           headers: { 'content-type': 'application/json', ...headers },
@@ -776,8 +776,8 @@ describe('make-server assistant runtime API', () => {
 
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
-        webBaseUrl: 'http://localhost:32123',
-        apiBaseUrl: 'http://localhost:32123/api',
+        webBaseUrl: 'http://localhost:32124',
+        apiBaseUrl: 'http://localhost:32124/api',
         source: 'default',
         health: {
           status: 'ready',
@@ -790,13 +790,13 @@ describe('make-server assistant runtime API', () => {
       expect(killSpy).toHaveBeenCalledWith(890, 'SIGTERM');
       expectAcpUiSpawn({
         command: 'npx',
-        port: '32123',
+        port: '32124',
         cwd: projectRoot,
         makeOrigin: server.origin,
       });
       expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
         'npx',
-        expect.arrayContaining(['32124']),
+        expect.arrayContaining(['32125']),
         expect.any(Object),
       );
     } finally {
@@ -811,11 +811,11 @@ describe('make-server assistant runtime API', () => {
     writeProjectMetadata(projectRoot);
     let portLookupCount = 0;
     childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
-      if (command === 'lsof' && args.includes('-tiTCP:32123')) {
+      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
         portLookupCount += 1;
         return { stdout: portLookupCount === 1 ? '891\n' : '', stderr: '', status: 0 };
       }
-      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
+      if (command === 'lsof' && args.includes('-tiTCP:32125')) {
         return { stdout: '', stderr: '', status: 0 };
       }
       return { stdout: '', stderr: '', status: 0 };
@@ -825,7 +825,7 @@ describe('make-server assistant runtime API', () => {
     const realFetch = globalThis.fetch.bind(globalThis);
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
       const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
-      if (!requestUrl.startsWith('http://localhost:32123')) {
+      if (!requestUrl.startsWith('http://localhost:32124')) {
         return realFetch(input, init);
       }
       if (childProcessMock.spawn.mock.calls.length === 0) {
@@ -838,16 +838,16 @@ describe('make-server assistant runtime API', () => {
         'access-control-allow-headers': 'content-type',
       };
 
-      if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+      if (requestUrl === 'http://localhost:32124/api/acp/runtime') {
         return Promise.resolve(new Response('', { status: 404, headers }));
       }
-      if (requestUrl === 'http://localhost:32123/') {
+      if (requestUrl === 'http://localhost:32124/') {
         return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
       }
-      if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+      if (requestUrl === 'http://localhost:32124/api/chat' && method === 'OPTIONS') {
         return Promise.resolve(new Response(null, { status: 204, headers }));
       }
-      if (requestUrl === 'http://localhost:32123/api/chat') {
+      if (requestUrl === 'http://localhost:32124/api/chat') {
         return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
           status: 200,
           headers: { 'content-type': 'application/json', ...headers },
@@ -862,8 +862,8 @@ describe('make-server assistant runtime API', () => {
 
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
-        webBaseUrl: 'http://localhost:32123',
-        apiBaseUrl: 'http://localhost:32123/api',
+        webBaseUrl: 'http://localhost:32124',
+        apiBaseUrl: 'http://localhost:32124/api',
         source: 'default',
         health: {
           status: 'ready',
@@ -876,13 +876,13 @@ describe('make-server assistant runtime API', () => {
       expect(killSpy).toHaveBeenCalledWith(891, 'SIGTERM');
       expectAcpUiSpawn({
         command: 'npx',
-        port: '32123',
+        port: '32124',
         cwd: projectRoot,
         makeOrigin: server.origin,
       });
       expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
         'npx',
-        expect.arrayContaining(['32124']),
+        expect.arrayContaining(['32125']),
         expect.any(Object),
       );
     } finally {
@@ -906,7 +906,7 @@ describe('make-server assistant runtime API', () => {
     const realFetch = globalThis.fetch.bind(globalThis);
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
       const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
-      if (requestUrl.startsWith(staleAssistantOrigin) || requestUrl.startsWith('http://localhost:32123')) {
+      if (requestUrl.startsWith(staleAssistantOrigin) || requestUrl.startsWith('http://localhost:32124')) {
         return Promise.reject(new TypeError('fetch failed'));
       }
       return realFetch(input, init);
@@ -919,8 +919,8 @@ describe('make-server assistant runtime API', () => {
 
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
-        webBaseUrl: 'http://localhost:32123',
-        apiBaseUrl: 'http://localhost:32123/api',
+        webBaseUrl: 'http://localhost:32124',
+        apiBaseUrl: 'http://localhost:32124/api',
         source: 'default',
         health: {
           status: 'runtime_unreachable',
@@ -928,10 +928,10 @@ describe('make-server assistant runtime API', () => {
         },
       });
       expect(body.webBaseUrl).not.toBe(staleAssistantOrigin);
-      expect(body.health.message).toContain('32123');
+      expect(body.health.message).toContain('32124');
       expect(savedConfig.assistant).toMatchObject({
-        webBaseUrl: 'http://localhost:32123',
-        apiBaseUrl: 'http://localhost:32123/api',
+        webBaseUrl: 'http://localhost:32124',
+        apiBaseUrl: 'http://localhost:32124/api',
       });
       expect(childProcessMock.spawn).not.toHaveBeenCalled();
     } finally {
@@ -940,7 +940,7 @@ describe('make-server assistant runtime API', () => {
     }
   });
 
-  it('starts on the default ACP port when a persisted local fallback endpoint is stale and 32123 is free', async () => {
+  it('starts on the default ACP port when a persisted local fallback endpoint is stale and 32124 is free', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
     const staleAssistantOrigin = 'http://127.0.0.1:57269';
@@ -958,7 +958,7 @@ describe('make-server assistant runtime API', () => {
       if (requestUrl.startsWith(staleAssistantOrigin)) {
         return Promise.reject(new TypeError('fetch failed'));
       }
-      if (requestUrl.startsWith('http://localhost:32123')) {
+      if (requestUrl.startsWith('http://localhost:32124')) {
         if (childProcessMock.spawn.mock.calls.length === 0) {
           return Promise.reject(new TypeError('fetch failed'));
         }
@@ -968,16 +968,16 @@ describe('make-server assistant runtime API', () => {
           'access-control-allow-methods': 'GET, POST, OPTIONS',
           'access-control-allow-headers': 'content-type',
         };
-        if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+        if (requestUrl === 'http://localhost:32124/api/acp/runtime') {
           return Promise.resolve(new Response('', { status: 404, headers }));
         }
-        if (requestUrl === 'http://localhost:32123/') {
+        if (requestUrl === 'http://localhost:32124/') {
           return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
         }
-        if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+        if (requestUrl === 'http://localhost:32124/api/chat' && method === 'OPTIONS') {
           return Promise.resolve(new Response(null, { status: 204, headers }));
         }
-        if (requestUrl === 'http://localhost:32123/api/chat') {
+        if (requestUrl === 'http://localhost:32124/api/chat') {
           return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
             status: 200,
             headers: { 'content-type': 'application/json', ...headers },
@@ -995,8 +995,8 @@ describe('make-server assistant runtime API', () => {
 
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
-        webBaseUrl: 'http://localhost:32123',
-        apiBaseUrl: 'http://localhost:32123/api',
+        webBaseUrl: 'http://localhost:32124',
+        apiBaseUrl: 'http://localhost:32124/api',
         source: 'default',
         health: {
           status: 'ready',
@@ -1007,12 +1007,12 @@ describe('make-server assistant runtime API', () => {
         },
       });
       expect(savedConfig.assistant).toMatchObject({
-        webBaseUrl: 'http://localhost:32123',
-        apiBaseUrl: 'http://localhost:32123/api',
+        webBaseUrl: 'http://localhost:32124',
+        apiBaseUrl: 'http://localhost:32124/api',
       });
       expectAcpUiSpawn({
         command: 'npx',
-        port: '32123',
+        port: '32124',
         cwd: projectRoot,
         makeOrigin: server.origin,
       });
@@ -1179,7 +1179,7 @@ describe('make-server assistant runtime API', () => {
     let endpointProbeCount = 0;
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
       const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
-      if (!requestUrl.startsWith('http://localhost:32123')) {
+      if (!requestUrl.startsWith('http://localhost:32124')) {
         return realFetch(input, init);
       }
       const method = String(init?.method || 'GET').toUpperCase();
@@ -1191,19 +1191,19 @@ describe('make-server assistant runtime API', () => {
       endpointProbeCount += 1;
       const ready = endpointProbeCount >= 42;
 
-      if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+      if (requestUrl === 'http://localhost:32124/api/acp/runtime') {
         return Promise.resolve(new Response('', { status: 404, headers }));
       }
       if (!ready) {
         return Promise.reject(new TypeError('fetch failed'));
       }
-      if (requestUrl === 'http://localhost:32123/') {
+      if (requestUrl === 'http://localhost:32124/') {
         return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
       }
-      if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+      if (requestUrl === 'http://localhost:32124/api/chat' && method === 'OPTIONS') {
         return Promise.resolve(new Response(null, { status: 204, headers }));
       }
-      if (requestUrl === 'http://localhost:32123/api/chat') {
+      if (requestUrl === 'http://localhost:32124/api/chat') {
         return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
           status: 200,
           headers: { 'content-type': 'application/json', ...headers },
@@ -1227,7 +1227,7 @@ describe('make-server assistant runtime API', () => {
       expect(endpointProbeCount).toBeGreaterThanOrEqual(24);
       expectAcpUiSpawn({
         command: 'npx',
-        port: '32123',
+        port: '32124',
         cwd: projectRoot,
         makeOrigin,
       });
@@ -1237,16 +1237,16 @@ describe('make-server assistant runtime API', () => {
     }
   });
 
-  it('does not persist a fallback port when 32123 is occupied by an unreachable process', async () => {
+  it('does not persist a fallback port when 32124 is occupied by an unreachable process', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
     let portLookupCount = 0;
     childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
-      if (command === 'lsof' && args.includes('-tiTCP:32123')) {
+      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
         portLookupCount += 1;
         return { stdout: portLookupCount === 1 ? '777\n' : '', stderr: '', status: 0 };
       }
-      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
+      if (command === 'lsof' && args.includes('-tiTCP:32125')) {
         return { stdout: '', stderr: '', status: 0 };
       }
       return { stdout: '', stderr: '', status: 0 };
@@ -1255,10 +1255,10 @@ describe('make-server assistant runtime API', () => {
     const realFetch = globalThis.fetch.bind(globalThis);
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
       const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
-      if (requestUrl.startsWith('http://localhost:32124')) {
+      if (requestUrl.startsWith('http://localhost:32125')) {
         return Promise.reject(new TypeError('fetch failed'));
       }
-      if (requestUrl.startsWith('http://localhost:32123')) {
+      if (requestUrl.startsWith('http://localhost:32124')) {
         if (childProcessMock.spawn.mock.calls.length === 0) {
           return Promise.reject(new TypeError('fetch failed'));
         }
@@ -1268,16 +1268,16 @@ describe('make-server assistant runtime API', () => {
           'access-control-allow-methods': 'GET, POST, OPTIONS',
           'access-control-allow-headers': 'content-type',
         };
-        if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+        if (requestUrl === 'http://localhost:32124/api/acp/runtime') {
           return Promise.resolve(new Response('', { status: 404, headers }));
         }
-        if (requestUrl === 'http://localhost:32123/') {
+        if (requestUrl === 'http://localhost:32124/') {
           return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
         }
-        if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+        if (requestUrl === 'http://localhost:32124/api/chat' && method === 'OPTIONS') {
           return Promise.resolve(new Response(null, { status: 204, headers }));
         }
-        if (requestUrl === 'http://localhost:32123/api/chat') {
+        if (requestUrl === 'http://localhost:32124/api/chat') {
           return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
             status: 200,
             headers: { 'content-type': 'application/json', ...headers },
@@ -1295,8 +1295,8 @@ describe('make-server assistant runtime API', () => {
 
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
-        webBaseUrl: 'http://localhost:32123',
-        apiBaseUrl: 'http://localhost:32123/api',
+        webBaseUrl: 'http://localhost:32124',
+        apiBaseUrl: 'http://localhost:32124/api',
         source: 'default',
         health: {
           status: 'ready',
@@ -1309,14 +1309,14 @@ describe('make-server assistant runtime API', () => {
       expect(fs.existsSync(savedConfigPath)).toBe(false);
       expectAcpUiSpawn({
         command: 'npx',
-        port: '32123',
+        port: '32124',
         cwd: projectRoot,
         makeOrigin: server.origin,
       });
       expect(killSpy).toHaveBeenCalledWith(777, 'SIGTERM');
       expect(childProcessMock.spawn).not.toHaveBeenCalledWith(
         'npx',
-        expect.arrayContaining(['32124']),
+        expect.arrayContaining(['32125']),
         expect.any(Object),
       );
       expect(childProcessMock.spawnSync).not.toHaveBeenCalledWith(
@@ -1421,13 +1421,13 @@ describe('make-server assistant runtime API', () => {
     writeProjectMetadata(projectRoot);
     writeProjectConfig(projectRoot, {
       assistant: {
-        webBaseUrl: 'http://localhost:32123',
-        apiBaseUrl: 'http://localhost:32123/api',
+        webBaseUrl: 'http://localhost:32124',
+        apiBaseUrl: 'http://localhost:32124/api',
       },
     });
     let portLookupCount = 0;
     childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
-      if (command === 'lsof' && args.includes('-tiTCP:32123')) {
+      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
         portLookupCount += 1;
         return { stdout: portLookupCount === 1 ? '999\n' : '', stderr: '', status: 0 };
       }
@@ -1439,7 +1439,7 @@ describe('make-server assistant runtime API', () => {
     let corsProbeCount = 0;
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: any, init?: any) => {
       const requestUrl = typeof input === 'string' ? input : input?.url || String(input);
-      if (!requestUrl.startsWith('http://localhost:32123')) {
+      if (!requestUrl.startsWith('http://localhost:32124')) {
         return realFetch(input, init);
       }
       const method = String(init?.method || 'GET').toUpperCase();
@@ -1455,20 +1455,20 @@ describe('make-server assistant runtime API', () => {
       };
       const headers = corsProbeCount >= 3 ? readyHeaders : staleHeaders;
 
-      if (requestUrl === 'http://localhost:32123/api/acp/runtime') {
+      if (requestUrl === 'http://localhost:32124/api/acp/runtime') {
         return Promise.resolve(new Response('', { status: 404, headers }));
       }
-      if (requestUrl === 'http://localhost:32123/') {
+      if (requestUrl === 'http://localhost:32124/') {
         return Promise.resolve(new Response('<!doctype html><title>ACP UI</title>', { status: 200, headers }));
       }
-      if (requestUrl === 'http://localhost:32123/api/chat' && method === 'OPTIONS') {
+      if (requestUrl === 'http://localhost:32124/api/chat' && method === 'OPTIONS') {
         corsProbeCount += 1;
         return Promise.resolve(new Response(null, {
           status: 204,
           headers: corsProbeCount >= 3 ? readyHeaders : staleHeaders,
         }));
       }
-      if (requestUrl === 'http://localhost:32123/api/chat') {
+      if (requestUrl === 'http://localhost:32124/api/chat') {
         return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), {
           status: 200,
           headers: { 'content-type': 'application/json', ...headers },
@@ -1490,8 +1490,8 @@ describe('make-server assistant runtime API', () => {
         success: true,
         mode: 'restart_existing',
         runtime: {
-          webBaseUrl: 'http://localhost:32123',
-          apiBaseUrl: 'http://localhost:32123/api',
+          webBaseUrl: 'http://localhost:32124',
+          apiBaseUrl: 'http://localhost:32124/api',
           health: {
             status: 'ready',
           },
@@ -1504,7 +1504,7 @@ describe('make-server assistant runtime API', () => {
       expect(killSpy).toHaveBeenCalledWith(999, 'SIGTERM');
       expectAcpUiSpawn({
         command: 'npx',
-        port: '32123',
+        port: '32124',
         cwd: projectRoot,
         makeOrigin: server.origin,
       });
@@ -1518,7 +1518,7 @@ describe('make-server assistant runtime API', () => {
   it('restarts only a local configured ACP endpoint', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
-    const assistantOrigin = 'http://localhost:32124';
+    const assistantOrigin = 'http://localhost:32125';
     writeProjectConfig(projectRoot, {
       assistant: {
         webBaseUrl: assistantOrigin,
@@ -1527,7 +1527,7 @@ describe('make-server assistant runtime API', () => {
     });
     let portLookupCount = 0;
     childProcessMock.spawnSync.mockImplementation((command: string, args: string[]) => {
-      if (command === 'lsof' && args.includes('-tiTCP:32124')) {
+      if (command === 'lsof' && args.includes('-tiTCP:32125')) {
         portLookupCount += 1;
         return { stdout: portLookupCount === 1 ? '888\n' : '', stderr: '', status: 0 };
       }
@@ -1591,7 +1591,7 @@ describe('make-server assistant runtime API', () => {
       expect(killSpy).toHaveBeenCalledWith(888, 'SIGTERM');
       expectAcpUiSpawn({
         command: 'npx',
-        port: '32124',
+        port: '32125',
         cwd: projectRoot,
         makeOrigin: server.origin,
       });

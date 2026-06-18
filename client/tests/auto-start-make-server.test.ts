@@ -285,8 +285,8 @@ describe('auto make-server registration', () => {
 
     expect(resolveMakeServerStartCommand(projectRoot)).toEqual({
       command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      args: ['@axhub/make', projectRoot, '--no-open'],
-      label: 'npx @axhub/make',
+      args: ['-y', '@axhub/make@latest', projectRoot, '--no-open'],
+      label: 'npx -y @axhub/make@latest',
     });
   });
 
@@ -297,8 +297,8 @@ describe('auto make-server registration', () => {
       runtimeOrigin: 'http://localhost:51720/',
     })).toEqual({
       command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      args: ['@axhub/make', projectRoot, '--no-open', '--runtime-origin', 'http://localhost:51720'],
-      label: 'npx @axhub/make',
+      args: ['-y', '@axhub/make@latest', projectRoot, '--no-open', '--runtime-origin', 'http://localhost:51720'],
+      label: 'npx -y @axhub/make@latest',
     });
   });
 
@@ -502,7 +502,7 @@ describe('auto make-server registration', () => {
     });
     expect(childProcessMock.spawn).toHaveBeenCalledWith(
       process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      ['@axhub/make', projectRoot, '--no-open'],
+      ['-y', '@axhub/make@latest', projectRoot, '--no-open'],
       expect.objectContaining({
         cwd: projectRoot,
         detached: true,

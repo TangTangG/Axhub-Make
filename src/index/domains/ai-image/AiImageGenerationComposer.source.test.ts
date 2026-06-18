@@ -44,15 +44,13 @@ describe('AiImageGenerationComposer source', () => {
     expect(sharedSource).not.toContain("import '@axhub/acp/react/styles.css';");
     expect(sharedSource).toContain('ax-acp-ui-scope');
     expect(source).toContain('ax-ai-image-composer-root');
-    expect(sharedSource).toContain("import { AcpComposerSelectors, Composer } from '@axhub/acp/ui';");
-    expect(sharedSource).toContain('<Composer');
-    expect(sharedSource).toContain('showAttachments={allowAttachments}');
-    expect(sharedSource).toContain('showCommandMenu={false}');
-    expect(sharedSource).toContain('showSelectors={showSelectors}');
-    expect(sharedSource).not.toContain('addAttachmentLabel=');
-    expect(sharedSource).not.toContain('sendLabel=');
-    expect(sharedSource).toContain('leadingActions={');
-    expect(sharedSource).toContain('trailingActions={');
+    expect(sharedSource).toContain("import { AcpComposerSelectors, ComposerAttachments } from '@axhub/acp/ui';");
+    expect(sharedSource).toContain('<ComposerPrimitive.Root');
+    expect(sharedSource).toContain('allowAttachments ? <ComposerAttachments /> : null');
+    expect(sharedSource).toContain('allowAttachments ? <CanvasComposerAddAttachmentButton label={addAttachmentTooltip} /> : null');
+    expect(sharedSource).toContain('<CanvasComposerSubmitButton label={sendTooltip} />');
+    expect(sharedSource).not.toContain('ComposerAddAttachment,');
+    expect(sharedSource).not.toContain('<ComposerAddAttachment');
     expect(source).toContain('ax-ai-image-composer-root');
     expect(source).toContain('ax-ai-image-composer-footer');
     expect(source).toContain('data-axhub-ai-image-composer-settings-summary');
@@ -83,7 +81,7 @@ describe('AiImageGenerationComposer source', () => {
     expect(sharedSource).toContain('new CanvasGenerationMakeTransport');
     expect(sharedSource).toContain('<AcpUiProvider');
     expect(sharedSource).toContain('<AssistantRuntimeProvider runtime={runtime}>');
-    expect(sharedSource).toContain('triggerPopovers={');
+    expect(sharedSource).toContain('renderTriggerPopovers?.()');
     expect(sharedSource).toContain('onPaste={');
     expect(sharedSource).not.toContain('@assistant-ui/react-ui');
     expect(sharedSource).not.toContain('ThreadConfigProvider');
@@ -252,11 +250,11 @@ describe('AiImageGenerationComposer source', () => {
     const styles = readStyles();
     const sharedSource = readSharedComposerSource();
 
-    expect(sharedSource).toContain('showAttachments={allowAttachments}');
-    expect(sharedSource).toContain('showCommandMenu={false}');
-    expect(sharedSource).toContain('showSelectors={showSelectors}');
-    expect(sharedSource).toContain('leadingActions={');
-    expect(sharedSource).toContain('trailingActions={');
+    expect(sharedSource).toContain('allowAttachments ? <ComposerAttachments /> : null');
+    expect(sharedSource).toContain('allowAttachments ? <CanvasComposerAddAttachmentButton label={addAttachmentTooltip} /> : null');
+    expect(sharedSource).toContain('{shouldRenderInlineSelectors ? <AcpComposerSelectors /> : null}');
+    expect(sharedSource).toContain('{renderLeadingActions ? (');
+    expect(sharedSource).toContain('{renderActions ? (');
     expect(sharedSource).toContain('className={footerLeadingActionsClassName}');
     expect(sharedSource).toContain('className={footerActionsClassName}');
     expect(sharedSource).toContain('renderLeadingActions?.({ submitting })');
@@ -320,8 +318,10 @@ describe('AiImageGenerationComposer source', () => {
     const source = readSource();
     const sharedSource = readSharedComposerSource();
 
-    expect(sharedSource).toContain('showAttachments={allowAttachments}');
-    expect(sharedSource).toContain("import { AcpComposerSelectors, Composer } from '@axhub/acp/ui';");
+    expect(sharedSource).toContain('allowAttachments ? <ComposerAttachments /> : null');
+    expect(sharedSource).toContain("import { AcpComposerSelectors, ComposerAttachments } from '@axhub/acp/ui';");
+    expect(sharedSource).not.toContain('ComposerAddAttachment,');
+    expect(sharedSource).not.toContain('<ComposerAddAttachment');
     expect(sharedSource).toContain('CanvasGenerationMakeTransport');
     expect(sharedSource).toContain('onPasteReferenceImages');
     expect(sharedSource).toContain('canPasteReferenceImages');
@@ -348,7 +348,7 @@ describe('AiImageGenerationComposer source', () => {
     expect(sharedSource).toContain('referenceImages: string[];');
     expect(sharedSource).toContain('showSelectors?: boolean;');
     expect(sharedSource).toContain('workspacePath?: string | null;');
-    expect(sharedSource).toContain('showSelectors={showSelectors}');
+    expect(sharedSource).toContain('showSelectors={showSelectors && !canvasAcpRuntime.needsFallback}');
     expect(sharedSource).toContain('<AcpUiProvider defaultProvider="codex" workspacePath={workspacePath}>');
     expect(sharedSource).toContain('provider: runtimeContext.provider');
     expect(sharedSource).toContain('model: runtimeContext.model');

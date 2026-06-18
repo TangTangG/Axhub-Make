@@ -43,6 +43,9 @@ importers:
       '@braintree/sanitize-url':
         specifier: 7.1.1
         version: 7.1.1
+      '@excalidraw/mermaid-to-excalidraw':
+        specifier: 2.2.2
+        version: 2.2.2
       '@lobehub/icons':
         specifier: ^5.8.0
         version: 5.8.0(@lobehub/ui@4.34.1)(@types/react@18.3.27)(antd@6.3.0(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0))(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
@@ -13492,7 +13495,6 @@ snapshots:
     dependencies:
       client-only: 0.0.1
       react: 18.2.0
-
   stylis@4.2.0: {}
 
   stylis@4.3.6: {}

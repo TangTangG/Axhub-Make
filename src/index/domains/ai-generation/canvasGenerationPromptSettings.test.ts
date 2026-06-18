@@ -30,7 +30,7 @@ describe('appendCanvasGenerationPromptSettings', () => {
   it('appends concrete canvas write requirements when runtime canvas context is provided', () => {
     const prompt = appendCanvasGenerationPromptSettings({
       scene: 'document',
-      prompt: '请生成 prototype、image、drawio、document 四类产物',
+      prompt: '请生成原型页面、图片、流程图、文档四类产物',
       settings: undefined,
       canvasContext: {
         canvasFilePath: 'src/prototypes/untitled-75/canvas.excalidraw',
@@ -47,7 +47,8 @@ describe('appendCanvasGenerationPromptSettings', () => {
     expect(prompt).toContain('直接编辑并保存当前画布 JSON 文件');
     expect(prompt).toContain('customData.generatedBy');
     expect(prompt).toContain('axhub-ai-generation');
-    expect(prompt).toContain('prototype、image、drawio、document');
+    expect(prompt).toContain('原型页面、图片、流程图、文档等产物');
+    expect(prompt).not.toContain('prototype、image、drawio、document');
     expect(prompt).toContain('完成前必须重新读取画布文件');
     expect(prompt).not.toContain('当前文件就是画布文件地址');
     expect(prompt).not.toContain('任务开始时不需要先读取画布落入产物');

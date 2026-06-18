@@ -90,6 +90,19 @@ describe('make-project metadata sync', () => {
     expect(ignoreRules).not.toContain('!.axhub/make/project.json');
   });
 
+  it('keeps prototype ACP conversation stores local while preserving review specs', () => {
+    const ignoreRules = fs.readFileSync(path.join(makeProjectRoot, '.gitignore'), 'utf8');
+    const makeIgnoreRules = fs.readFileSync(path.join(makeProjectRoot, '..', '.gitignore'), 'utf8');
+    const ignoreLines = ignoreRules.split(/\r?\n/u).map((line) => line.trim());
+
+    expect(ignoreRules).toContain('src/prototypes/**/.spec/acp/');
+    expect(makeIgnoreRules).toContain('**/src/prototypes/**/.spec/acp/');
+    expect(ignoreLines).not.toContain('src/prototypes/**/.spec/');
+    expect(ignoreLines).not.toContain('src/prototypes/**/.spec/**');
+    expect(ignoreRules).not.toContain('ui-review.md');
+    expect(ignoreRules).not.toContain('prototype-review.md');
+  });
+
   it('keeps the reusable client sidebar seed free of resource README entries', () => {
     const sidebarTree = JSON.parse(fs.readFileSync(path.join(makeProjectRoot, '.axhub/make/sidebar-tree.json'), 'utf8'));
 

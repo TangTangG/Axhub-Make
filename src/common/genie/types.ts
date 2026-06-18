@@ -1,4 +1,4 @@
-export type GenieProvider = 'claude' | 'cursor' | 'codex' | 'gemini' | 'opencode';
+export type GenieProvider = 'claude' | 'cursor' | 'codex' | 'gemini' | 'opencode' | 'qoder' | 'codebuddy' | 'reasonix';
 export type GenieProviderPreference = GenieProvider | null;
 
 export interface GenieContextElementV1 {

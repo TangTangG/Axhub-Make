@@ -288,7 +288,7 @@ describe('make-server HTTP routing', () => {
       expect(body).toContain('<title>Runtime Preview</title>');
       expect(body).toContain('/prototypes/touch-and-talk-annotation-demo?genieToolbar=host');
       expect(body).not.toContain('/src/index/index.tsx');
-      expect(body).not.toContain('可以通过 npx @axhub/make 启动管理页面。');
+      expect(body).not.toContain('可以通过 npx -y @axhub/make@latest 启动管理页面。');
     } finally {
       await server.close();
     }

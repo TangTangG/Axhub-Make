@@ -139,6 +139,36 @@ describe('IndexPage source', () => {
     expect(source).toContain('resourceType: \'theme\'');
   });
 
+  it('wires preview_navigate to current-project resource selection without switching projects', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const navigateStart = source.indexOf('const handlePreviewNavigate = useCallback');
+    const navigateEnd = source.indexOf('const previewBridgeContext = useMemo', navigateStart);
+    const navigateSource = source.slice(navigateStart, navigateEnd);
+    const selectionStart = source.indexOf('const selection = useIndexPageSelectionSync({');
+    const selectionEnd = source.indexOf('});', selectionStart);
+    const selectionSource = source.slice(selectionStart, selectionEnd);
+    const hookStart = source.indexOf('usePreviewBridgeHost({');
+    const hookEnd = source.indexOf('});', hookStart);
+    const hookSource = source.slice(hookStart, hookEnd);
+
+    expect(navigateStart).toBeGreaterThan(-1);
+    expect(navigateEnd).toBeGreaterThan(navigateStart);
+    expect(selectionStart).toBeGreaterThan(-1);
+    expect(selectionEnd).toBeGreaterThan(selectionStart);
+    expect(navigateSource).toContain('target.deepLinkTarget');
+    expect(navigateSource).toContain('handleInitialResourceDeepLinkHandled();');
+    expect(navigateSource).toContain("target.resourceType === 'canvas'");
+    expect(navigateSource).toContain("setSidebarTab('prototype')");
+    expect(navigateSource).toContain('setSelectedItem(target.resource)');
+    expect(navigateSource).toContain("setViewMode('canvas')");
+    expect(navigateSource).toContain("resources.setSelectedDoc(target.resource)");
+    expect(navigateSource).toContain("resources.setSelectedTheme(target.resource)");
+    expect(navigateSource).not.toContain('workspace.switchProject');
+    expect(selectionSource).toContain('initialResourceDeepLink: initialResourceDeepLinkHandled ? null : initialResourceDeepLink,');
+    expect(hookSource).toContain('context: previewBridgeContext,');
+    expect(hookSource).toContain('onNavigate: handlePreviewNavigate,');
+  });
+
   it('keeps prototype page selection separate from the selected prototype resource', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
 
@@ -318,6 +348,23 @@ describe('IndexPage source', () => {
     expect(submitSource).toContain('request.prompt');
     expect(submitSource).toContain('forceNewThread: true,');
     expect(submitSource).not.toContain('forceNewAssistantThread');
+  });
+
+  it('submits annotation prompts with the configured annotation provider and model', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const submitSource = source.slice(
+      source.indexOf('const handleSubmitAnnotationAssistantPrompt = useCallback'),
+      source.indexOf('const buildPromptActionAssistantContext', source.indexOf('const handleSubmitAnnotationAssistantPrompt = useCallback')),
+    );
+
+    expect(source).toContain("import { resolveAcpPromptClientProvider } from '@/common/acpModelConfig';");
+    expect(submitSource).toContain('const annotationProvider = resolveAcpPromptClientProvider(preferences.annotationPromptClient || preferences.preferredPromptClient) || \'codex\';');
+    expect(submitSource).toContain('const annotationModel = preferences.annotationModel || null;');
+    expect(submitSource).toContain('provider: options?.provider ?? annotationProvider,');
+    expect(submitSource).toContain('model: options?.model ?? annotationModel,');
+    expect(source).toContain('preferences.preferredPromptClient,');
+    expect(source).toContain('preferences.annotationPromptClient,');
+    expect(source).toContain('preferences.annotationModel,');
   });
 
   it('returns visible ACP output artifacts from canvas generation submissions', () => {
@@ -626,10 +673,12 @@ describe('IndexPage source', () => {
     expect(waitingEffectSource).toContain('if (!assistantAutoOpenTargetPath) {');
     expect(waitingEffectSource.indexOf('if (!assistantAutoOpenTargetPath) {'))
       .toBeLessThan(waitingEffectSource.indexOf('openedPrototypeWaitingGenerationKeyRef.current = waitingGenerationAutoOpenKey;'));
-    expect(source).toContain("restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');");
+    expect(waitingEffectSource).toContain('const rememberedAiPanelMode = getAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey);');
+    expect(waitingEffectSource).toContain('restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode);');
+    expect(waitingEffectSource).not.toContain("restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');");
   });
 
-  it('remembers forced waiting prototype assistant opens as the latest auto-open state', () => {
+  it('preserves the remembered assistant panel mode when auto-opening waiting prototype previews', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const waitingEffectStart = source.indexOf('if (!prototypeWaitingGenerationActive) {');
     const waitingEffectEnd = source.indexOf('}, [', waitingEffectStart);
@@ -639,13 +688,18 @@ describe('IndexPage source', () => {
     expect(waitingEffectEnd).toBeGreaterThan(waitingEffectStart);
     expect(waitingEffectSource).toContain("assistantAutoOpenSuppressedProjectScopeRef.current = '';");
     expect(waitingEffectSource).toContain('setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);');
-    expect(waitingEffectSource).toContain("setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');");
+    expect(waitingEffectSource).toContain('const rememberedAiPanelMode = getAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey);');
+    expect(waitingEffectSource).toContain('setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, rememberedAiPanelMode);');
+    expect(waitingEffectSource).not.toContain("setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');");
+    expect(waitingEffectSource).not.toContain("restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');");
+    expect(waitingEffectSource.indexOf('const rememberedAiPanelMode = getAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey);'))
+      .toBeLessThan(waitingEffectSource.indexOf('setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, rememberedAiPanelMode);'));
     expect(waitingEffectSource.indexOf("assistantAutoOpenSuppressedProjectScopeRef.current = '';"))
-      .toBeLessThan(waitingEffectSource.indexOf("void restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');"));
+      .toBeLessThan(waitingEffectSource.indexOf('void restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode);'));
     expect(waitingEffectSource.indexOf('setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);'))
-      .toBeLessThan(waitingEffectSource.indexOf("void restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');"));
-    expect(waitingEffectSource.indexOf("setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');"))
-      .toBeLessThan(waitingEffectSource.indexOf("void restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');"));
+      .toBeLessThan(waitingEffectSource.indexOf('void restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode);'));
+    expect(waitingEffectSource.indexOf('setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, rememberedAiPanelMode);'))
+      .toBeLessThan(waitingEffectSource.indexOf('void restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode);'));
   });
 
   it('does not retry failed automatic assistant starts for waiting prototype previews', () => {
@@ -657,8 +711,9 @@ describe('IndexPage source', () => {
     expect(waitingEffectStart).toBeGreaterThan(-1);
     expect(waitingEffectEnd).toBeGreaterThan(waitingEffectStart);
     expect(waitingEffectSource).toContain('const waitingGenerationAutoOpenKey = prototypeWaitingGenerationAutoOpenKey;');
+    expect(waitingEffectSource).toContain('const rememberedAiPanelMode = getAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey);');
     expect(waitingEffectSource).toContain('openedPrototypeWaitingGenerationKeyRef.current = waitingGenerationAutoOpenKey;');
-    expect(waitingEffectSource).toContain("restoreAssistantPanel(assistantAutoOpenTargetPath, 'general-ai');");
+    expect(waitingEffectSource).toContain('restoreAssistantPanel(assistantAutoOpenTargetPath, rememberedAiPanelMode);');
     expect(waitingEffectSource).not.toContain('then((opened) => {');
     expect(waitingEffectSource).not.toContain('if (!opened && openedPrototypeWaitingGenerationKeyRef.current === waitingGenerationAutoOpenKey) {');
   });

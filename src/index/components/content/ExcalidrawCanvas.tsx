@@ -10,7 +10,9 @@ import {
     useExcalidrawAPI,
     exportToBlob,
     getDataURL,
+    convertToExcalidrawElements,
 } from '@axhub/excalidraw';
+import { parseMermaidToExcalidraw } from '@excalidraw/mermaid-to-excalidraw';
 import '@axhub/excalidraw/index.css';
 import { ImageIcon, LayoutGrid, MessageSquareX, PanelLeftOpen, PanelLeftClose, PencilRuler, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -97,6 +99,7 @@ type ExcalidrawOpenPopup = ReturnType<ExcalidrawAPI['getAppState']>['openPopup']
 type CanvasDropPreviewKind = 'web' | 'doc' | 'image' | 'none';
 type CanvasCommandName = 'canvas_get_state'
     | 'canvas_insert_elements'
+    | 'canvas_insert_mermaid'
     | 'canvas_refresh'
     | 'canvas_capture'
     | 'canvas_update_elements'
@@ -641,6 +644,25 @@ function createCanvasCommandElement(rawElement: any, index: number, position: { 
         link: element.link ?? null,
         locked: element.locked === true,
     };
+}
+
+function translateCanvasCommandElementsToPosition(elements: readonly any[], position: { x: number; y: number }): any[] {
+    const activeElements = elements.filter((element) => element && !element.isDeleted);
+    if (activeElements.length === 0) {
+        return [];
+    }
+    const minX = Math.min(...activeElements.map((element) => Number(element.x || 0)));
+    const minY = Math.min(...activeElements.map((element) => Number(element.y || 0)));
+    const offsetX = position.x - minX;
+    const offsetY = position.y - minY;
+    return elements.map((element) => ({
+        ...element,
+        x: Number(element.x || 0) + offsetX,
+        y: Number(element.y || 0) + offsetY,
+        version: Number(element.version || 0) + 1,
+        versionNonce: Math.floor(Math.random() * 2147483647),
+        updated: Date.now(),
+    }));
 }
 
 function applyCanvasCommandElementUpdates(elements: readonly any[], updates: unknown): { elements: any[]; updatedElementIds: string[] } {
@@ -2151,6 +2173,47 @@ export default function ExcalidrawCanvas({
                 scheduleExplicitCanvasSave({ elements: nextElements, appState: excalidrawAPI.getAppState() });
                 return {
                     insertedElementIds: insertedElements.map((element) => element.id),
+                };
+            }
+            case 'canvas_insert_mermaid': {
+                const mermaidCode = String(payload?.mermaidCode || '').trim();
+                if (!mermaidCode) {
+                    throw new Error('Mermaid code is required.');
+                }
+                const position = resolveCanvasCommandInsertPosition(excalidrawAPI, payload, elements);
+                const { elements: skeletonElements, files = {} } = await parseMermaidToExcalidraw(mermaidCode, {
+                    themeVariables: payload?.themeVariables && typeof payload.themeVariables === 'object'
+                        ? payload.themeVariables
+                        : undefined,
+                    flowchart: payload?.flowchart && typeof payload.flowchart === 'object'
+                        ? payload.flowchart
+                        : undefined,
+                } as any);
+                const insertedElements = translateCanvasCommandElementsToPosition(
+                    convertToExcalidrawElements(skeletonElements as any, {
+                        regenerateIds: true,
+                    }),
+                    position,
+                );
+                if (Object.keys(files).length > 0 && typeof excalidrawAPI.addFiles === 'function') {
+                    excalidrawAPI.addFiles(Object.values(files) as any);
+                }
+                const nextElements = [...elements, ...insertedElements];
+                excalidrawAPI.updateScene({
+                    elements: nextElements as any,
+                    appState: {
+                        selectedElementIds: Object.fromEntries(insertedElements.map((element) => [element.id, true])),
+                    },
+                    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+                } as any);
+                excalidrawAPI.scrollToContent(insertedElements as any, {
+                    fitToContent: true,
+                    animate: true,
+                } as any);
+                scheduleExplicitCanvasSave({ elements: nextElements, appState: excalidrawAPI.getAppState() });
+                return {
+                    insertedElementIds: insertedElements.map((element) => element.id),
+                    fileIds: Object.keys(files),
                 };
             }
             case 'canvas_update_elements': {

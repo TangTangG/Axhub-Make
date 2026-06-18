@@ -59,6 +59,40 @@ describe('useIndexPagePreferences source', () => {
     expect(source).toContain('assistantImageGenerationConfig,');
   });
 
+  it('marks initial preferences loaded only after caching assistant image generation config', () => {
+    const source = readFileSync(resolve(__dirname, './useIndexPagePreferences.ts'), 'utf8');
+    const initialEffectStart = source.indexOf('useEffect(() => {');
+    const handleSettingsStart = source.indexOf('const handleSettingsSaved = useCallback', initialEffectStart);
+    const initialEffectSource = source.slice(initialEffectStart, handleSettingsStart);
+    const imageConfigIndex = initialEffectSource.indexOf('setAssistantImageGenerationConfig(config?.ai?.imageGeneration || null);');
+    const loadedIndex = initialEffectSource.indexOf('setInitialPreferencesLoaded(true);');
+
+    expect(imageConfigIndex).toBeGreaterThan(-1);
+    expect(loadedIndex).toBeGreaterThan(imageConfigIndex);
+  });
+
+  it('caches annotation AI preferences from bootstrap and settings refresh', () => {
+    const source = readFileSync(resolve(__dirname, './useIndexPagePreferences.ts'), 'utf8');
+    const initialEffectStart = source.indexOf('useEffect(() => {');
+    const handleSettingsStart = source.indexOf('const handleSettingsSaved = useCallback', initialEffectStart);
+    const initialEffectSource = source.slice(initialEffectStart, handleSettingsStart);
+    const returnStart = source.indexOf('return {', handleSettingsStart);
+    const handleSettingsSource = source.slice(handleSettingsStart, returnStart);
+
+    expect(source).toContain('annotationPromptClient: PromptClientPreference;');
+    expect(source).toContain('annotationModel: string | null;');
+    expect(source).toContain('const [annotationPromptClient, setAnnotationPromptClient] = useState<PromptClientPreference>(null);');
+    expect(source).toContain('const [annotationModel, setAnnotationModel] = useState<string | null>(null);');
+    expect(initialEffectSource).toContain('setAnnotationPromptClient(normalizePromptClientPreference(config?.automation?.annotationPromptClient));');
+    expect(initialEffectSource).toContain('setAnnotationModel(config?.automation?.annotationModel || null);');
+    expect(handleSettingsSource).toContain('setAnnotationPromptClient(normalizePromptClientPreference(config?.automation?.annotationPromptClient));');
+    expect(handleSettingsSource).toContain('setAnnotationModel(config?.automation?.annotationModel || null);');
+    expect(source).toContain('setAnnotationPromptClient(null);');
+    expect(source).toContain('setAnnotationModel(null);');
+    expect(source).toContain('annotationPromptClient,');
+    expect(source).toContain('annotationModel,');
+  });
+
   it('restores default design state from project defaults', () => {
     const source = readFileSync(resolve(__dirname, './useIndexPagePreferences.ts'), 'utf8');
     const initialEffectStart = source.indexOf('useEffect(() => {');

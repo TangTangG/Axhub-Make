@@ -23,3 +23,7 @@ src/resources/    项目资料、文档和素材
 
 Axhub Make Client 适合把想法、业务流程、界面方案和设计系统沉淀成一个可持续演进的本地项目。
 其中「设计决策」是管理端理解页面意图、生成多方案和沉淀设计取舍的主要入口；实现层仍可能沿用 propertyPanel/tweak 等内部命名。
+
+## Local Runtime Data
+
+ACP 助手会把每个原型自己的对话缓存写入 `src/prototypes/<prototype-id>/.spec/acp/`。这个目录只用于本机侧边栏运行态，不应提交到 Git，也不应进入导出或发布产物。

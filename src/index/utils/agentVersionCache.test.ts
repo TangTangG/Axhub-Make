@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_VERSION_CACHE_TTL_MS,
   formatAgentVersionMeta,
+  formatAgentVersionMetaTitle,
   isAgentVersionCacheFresh,
 } from './agentVersionCache';
 
@@ -31,5 +32,17 @@ describe('agentVersionCache', () => {
       { status: 'missing', checkedAt: 'now', command: 'opencode' },
       { status: 'installed', checkedAt: 'now', command: 'opencode-ai', version: '1.16.2', packageName: 'opencode-ai' },
     )).toBe('未安装（1.16.2）');
+  });
+
+  it('keeps long build versions quiet in the table while preserving the full title', () => {
+    const cursorVersion = {
+      status: 'installed' as const,
+      checkedAt: 'now',
+      command: 'agent',
+      version: '2026.06.15-03-48-54-da23e37',
+    };
+
+    expect(formatAgentVersionMeta(cursorVersion)).toBe('2026.06.15');
+    expect(formatAgentVersionMetaTitle(cursorVersion)).toBe('2026.06.15-03-48-54-da23e37');
   });
 });

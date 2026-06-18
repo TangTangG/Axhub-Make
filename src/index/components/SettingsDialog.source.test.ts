@@ -90,16 +90,20 @@ describe('SettingsDialog source', () => {
 
   it('renders local AI execution agent preferences as a provider table above image settings', () => {
     const source = readSource();
+    const acpConfigSource = readFileSync(resolve(__dirname, '../../common/acpModelConfig.ts'), 'utf8');
     const acpServiceIndex = source.indexOf('本地 ACP 服务');
     const localAiIndex = source.indexOf('AI Agent');
+    const annotationAiIndex = source.indexOf('批注执行 AI');
     const imageGenerationIndex = source.indexOf('图片生成 AI');
-    const localAiSource = source.slice(localAiIndex, imageGenerationIndex);
+    const localAiSource = source.slice(localAiIndex, annotationAiIndex);
 
     expect(acpServiceIndex).toBeGreaterThan(-1);
     expect(localAiIndex).toBeGreaterThan(-1);
+    expect(annotationAiIndex).toBeGreaterThan(-1);
     expect(imageGenerationIndex).toBeGreaterThan(-1);
     expect(acpServiceIndex).toBeLessThan(localAiIndex);
-    expect(localAiIndex).toBeLessThan(imageGenerationIndex);
+    expect(localAiIndex).toBeLessThan(annotationAiIndex);
+    expect(annotationAiIndex).toBeLessThan(imageGenerationIndex);
     expect(source).toContain('用于在网页端直接使用相关 AI Agent。');
     expect(source).toContain('执行 agent');
     expect(source).toContain('LOCAL_AI_AGENT_OPTIONS');
@@ -114,27 +118,70 @@ describe('SettingsDialog source', () => {
     expect(localAiSource).toContain('版本');
     expect(localAiSource).not.toContain('脚本版本');
     expect(localAiSource).toContain('上次测试');
-    expect(localAiSource).toContain('测试');
+    expect(localAiSource).not.toContain('<TableHead className="h-8 w-[96px] text-right text-xs">测试</TableHead>');
+    expect(localAiSource).toContain('<TableHead className="h-8 w-[64px] px-2 text-xs">');
+    expect(localAiSource).toContain('<TableHead className="h-8 w-[180px] px-2 text-xs">供应商</TableHead>');
+    expect(localAiSource).toContain('<TableHead className="h-8 w-[180px] px-3 text-xs">');
+    expect(localAiSource).toContain('<TableCell className="w-[180px] max-w-[180px] px-3 py-2 text-xs text-muted-foreground">');
+    expect(localAiSource).toContain('className="block max-w-[144px] truncate font-mono text-[11px] leading-4"');
     expect(localAiSource).toContain('aria-label="刷新版本"');
     expect(localAiSource).toContain('<RefreshCw');
     expect(localAiSource).toContain('<RadioGroup');
     expect(localAiSource).toContain('<RadioGroupItem');
     expect(localAiSource).not.toContain('<Select');
-    expect(localAiSource).not.toContain('<FieldLabelWithHint hint="用于原型生成、批注执行和本地 AI 面板的默认 agent">执行 agent</FieldLabelWithHint>');
+    expect(localAiSource).toContain('用于原型生成和本地 AI 面板的默认 agent');
+    expect(localAiSource).not.toContain('用于原型生成、批注执行和本地 AI 面板的默认 agent');
     expect(source).toContain("defaultPromptClient: formState.defaultPromptClient");
     expect(source).toContain("normalizePromptClientPreference(config.automation?.defaultPromptClient)");
     expect(source).toContain('配置本地可用的 AI Agent。');
     expect(source).toContain("defaultPromptClient: 'acp:codex'");
-    expect(source).toContain("value: 'acp:claude'");
-    expect(source).toContain("value: 'acp:codex'");
-    expect(source).toContain("value: 'acp:gemini'");
-    expect(source).toContain("value: 'acp:opencode'");
-    expect(source).toContain("label: 'Claude Code'");
-    expect(source).toContain("label: 'Codex'");
-    expect(source).toContain("label: 'Gemini CLI'");
-    expect(source).toContain("label: 'OpenCode'");
+    expect(source).toContain('ACP_PROVIDER_OPTIONS.map((option) => ({');
+    expect(source).toContain('value: option.client');
+    expect(source).toContain('provider: option.provider');
+    expect(source).toContain('label: option.label');
+    expect(source).toContain('versionKey: option.provider');
+    for (const provider of ['claude', 'codex', 'gemini', 'opencode', 'cursor', 'qoder', 'codebuddy', 'reasonix']) {
+      expect(acpConfigSource).toContain(`provider: '${provider}'`);
+      expect(acpConfigSource).toContain(`client: 'acp:${provider}'`);
+    }
+    for (const label of ['Claude Code', 'Codex', 'Gemini CLI', 'OpenCode', 'Cursor', 'Qoder', 'CodeBuddy', 'Reasonix']) {
+      expect(acpConfigSource).toContain(`label: '${label}'`);
+    }
     expect(source).not.toContain("value: 'genie:codex'");
     expect(source).not.toContain('配置 Genie 默认使用的本地执行 agent。');
+  });
+
+  it('configures annotation AI separately from the default execution provider table', () => {
+    const source = readSource();
+    const aiTabSource = source.slice(
+      source.indexOf('AI Agent'),
+      source.indexOf('图片生成 AI'),
+    );
+
+    expect(source).toContain('annotationPromptClient: PromptClientPreference;');
+    expect(source).toContain('annotationModel: string;');
+    expect(source).toContain('annotationPromptClient: null');
+    expect(source).toContain("annotationModel: ''");
+    expect(source).toContain('normalizePromptClientPreference(config.automation?.annotationPromptClient)');
+    expect(source).toContain('annotationModel: config.automation?.annotationModel ||');
+    expect(source).toContain('annotationPromptClient: formState.annotationPromptClient || null');
+    expect(source).toContain('annotationModel: formState.annotationModel.trim() || null');
+    expect(aiTabSource).toContain('批注执行 AI');
+    expect(aiTabSource).toContain('可以单独为批注场景配置一个执行速度更快的 AI；不选择时使用上面的执行 Agent。');
+    expect(aiTabSource).toContain('批注供应商');
+    expect(aiTabSource).toContain('批注执行时优先使用的本地 ACP 供应商；不选择时使用上面的执行 Agent');
+    expect(aiTabSource).toContain('value={formState.annotationPromptClient || undefined}');
+    expect(aiTabSource).toContain("onValueChange={(value) => updateField('annotationPromptClient', normalizePromptClientPreference(value))}");
+    expect(aiTabSource).toContain('clearable');
+    expect(aiTabSource).toContain('hasValue={Boolean(formState.annotationPromptClient)}');
+    expect(aiTabSource).toContain("onClear={() => updateField('annotationPromptClient', null)}");
+    expect(aiTabSource).toContain('<SelectValue placeholder="默认供应商" />');
+    expect(aiTabSource).toContain('批注执行模型');
+    expect(aiTabSource).toContain('<Select');
+    expect(aiTabSource).toContain('LOCAL_AI_AGENT_OPTIONS.map((option) => (');
+    expect(aiTabSource).not.toContain('模型配置');
+    expect(aiTabSource).not.toContain('DialogContent');
+    expect(aiTabSource).not.toContain('openai');
   });
 
   it('gates AI settings behind the local ACP service status', () => {
@@ -274,13 +321,19 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('apiService.getAgentVersions');
     expect(source).toContain('agentVersionCacheRef');
     expect(source).toContain('formatAgentVersionMeta');
+    expect(source).toContain('formatAgentVersionMetaTitle');
     expect(source).toContain('latestAgentVersions');
     expect(source).toContain('latestVersions');
-    expect(source).toContain('formatAgentVersionMeta(agentVersions[option.versionKey], latestAgentVersions[option.versionKey])');
+    expect(source).toContain('const meta = formatAgentVersionMeta(agentVersions[option.versionKey], latestAgentVersions[option.versionKey]);');
+    expect(source).toContain('const metaTitle = formatAgentVersionMetaTitle(agentVersions[option.versionKey], latestAgentVersions[option.versionKey]);');
+    expect(source).toContain('title={metaTitle || undefined}');
+    expect(source).toContain('<TableCell className="w-[180px] max-w-[180px] px-3 py-2 text-xs text-muted-foreground">');
+    expect(source).toContain('className="block max-w-[144px] truncate font-mono text-[11px] leading-4"');
     expect(source).not.toContain('AI 设置首次打开时检测版本并缓存');
     expect(source).not.toContain('刷新版本会强制重新检测');
     expect(source).not.toContain('handleLocalAiSelectOpenChange');
     expect(agentVersionCacheSource).toContain('AGENT_VERSION_CACHE_TTL_MS');
+    expect(agentVersionCacheSource).toContain('type AgentVersionKey = AcpProviderKey | CLIAgent;');
     expect(agentVersionCacheSource).toContain('10 * 60_000');
     expect(agentVersionCacheSource).toContain('latestVersions');
     expect(agentVersionCacheSource).toContain('（${latestMeta}）');
@@ -322,11 +375,14 @@ describe('SettingsDialog source', () => {
 
     expect(source).toContain('setAgentProviderTests((previous) => ({ ...previous, [client]: state }));');
     expect(tableBodySource).toContain("const testTime = testState?.status === 'passed' ? formatAgentProviderTestTime(testState.testedAt) : '';");
-    expect(tableBodySource).toContain("{isTesting ? '测试中' : '测试'}");
+    expect(tableBodySource).toContain('aria-label={`测试 ${option.label}`}');
+    expect(tableBodySource).toContain('<TooltipContent arrow>测试连接</TooltipContent>');
     expect(tableBodySource).toContain("testState?.status === 'failed' && testState.message");
     expect(tableBodySource).toContain("testState?.status === 'passed' && testTime");
     expect(tableBodySource).toContain('max-w-[180px] whitespace-normal break-words leading-5');
     expect(tableBodySource).toContain('[overflow-wrap:anywhere]');
+    expect(tableBodySource).not.toContain("{isTesting ? '测试中' : '测试'}");
+    expect(tableBodySource).not.toContain('<TableCell className="py-2">\n                                                                <div className="flex justify-end">');
     expect(tableBodySource).not.toContain('max-w-[180px] truncate text-destructive');
     expect(tableBodySource).not.toContain('flex flex-col items-end gap-1');
   });
@@ -335,11 +391,22 @@ describe('SettingsDialog source', () => {
     const source = readSource();
 
     expect(source).toContain("from '@lobehub/icons'");
-    expect(source).toContain("if (agent === 'codex') return <Codex.Color size={16} />;");
-    expect(source).toContain("if (agent === 'gemini') return <GeminiCLI.Color size={16} />;");
-    expect(source).toContain("if (agent === 'claudecode') return <ClaudeCode.Color size={16} />;");
-    expect(source).toContain("if (agent === 'opencode') return <OpenCode size={16} />;");
-    expect(source).toContain('getAgentProviderIcon(option.versionKey)');
+    expect(source).toContain('Cursor');
+    expect(source).toContain('Qoder');
+    expect(source).toContain('CodeBuddy');
+    expect(source).toContain('DeepSeek');
+    expect(source).toContain("if (provider === 'codex') return <Codex.Color size={16} />;");
+    expect(source).toContain("if (provider === 'gemini') return <GeminiCLI.Color size={16} />;");
+    expect(source).toContain("if (provider === 'claude') return <ClaudeCode.Color size={16} />;");
+    expect(source).toContain("if (provider === 'opencode') return <OpenCode size={16} />;");
+    expect(source).toContain("if (provider === 'cursor') return <Cursor size={16} />;");
+    expect(source).toContain("if (provider === 'qoder') return <Qoder.Color size={16} />;");
+    expect(source).toContain("if (provider === 'codebuddy') return <CodeBuddy.Color size={16} />;");
+    expect(source).toContain("if (provider === 'reasonix') return <DeepSeek.Color size={16} />;");
+    expect(source).toContain('getAgentProviderIcon(option.provider)');
+    expect(source).toContain("defaultPromptClient: 'acp:codex'");
+    expect(source).not.toContain('Bot');
+    expect(source).not.toContain('data-provider={provider}');
   });
 
   it('tests AI image generation settings directly against the configured image API using the current form values', () => {

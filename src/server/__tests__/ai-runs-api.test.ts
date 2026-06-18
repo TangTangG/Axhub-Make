@@ -195,6 +195,7 @@ describe('AI runs API', () => {
         body: JSON.stringify({
           scene: 'prototype',
           prompt: '生成一个 dashboard 页面',
+          autoStart: false,
         }),
       });
       const events = await collectRunEvents(response);

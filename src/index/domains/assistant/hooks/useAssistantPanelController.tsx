@@ -29,15 +29,19 @@ import { useAssistantRuntime } from './useAssistantRuntime';
 import {
     type AcpContextItem,
     type AssistantImageGenerationConfig,
+    type AssistantPreviewMcpConfig,
     buildAcpContextPostMessage,
-    getAcpCanvasMcpConfigSignature,
+    getAcpPreviewMcpConfigSignature,
     getAcpImageGenerationConfigSignature,
 } from '../assistantAcpContext';
 import { buildAssistantContextItemsFromCanvasElements, type AssistantImageAttachmentPayload } from '../assistantContextPayload';
 import {
     getAssistantResourceThreadId,
     getAssistantResourceThreadIdWithFallback,
+    getAssistantStoreThreadId,
+    resolvePrototypeConversationStorePath,
     setAssistantResourceThreadId,
+    setAssistantStoreThreadId,
 } from '../assistantResourceThread';
 import {
     getGenieCurrentFilePath,
@@ -61,6 +65,8 @@ type OpenAssistantSubmitOptions = {
     collectArtifacts?: boolean;
     artifactSource?: 'auto' | 'provider' | 'runtime';
     ignoredArtifactPaths?: string[];
+    provider?: string | null;
+    model?: string | null;
 };
 type OpenAssistantSubmitResult = {
     ok: boolean;
@@ -72,13 +78,15 @@ type OpenAssistantSubmitResult = {
 type AcpNavigationChangedMessage = {
     href: string;
     threadId?: string | null;
+    conversationStorePath?: string | null;
 };
-type AssistantCanvasMcpRuntimeConfig = {
-    makeOrigin: string;
-    token: string;
-};
-
 const ACP_NAVIGATION_CHANGED_EVENT = 'acp.navigation.changed';
+const ACP_HOST_READY_EVENTS = [
+    'thread.runtime.changed',
+    'thread.messages.changed',
+    'thread.artifacts.changed',
+    'thread.idle',
+] as const;
 
 const LEGACY_ASSISTANT_OPEN_PARAMS = [
     'context',
@@ -119,7 +127,7 @@ function readAcpNavigationChangedMessage(data: unknown): AcpNavigationChangedMes
         return null;
     }
 
-    const payload = record.payload as { href?: unknown; threadId?: unknown };
+    const payload = record.payload as { href?: unknown; threadId?: unknown; conversationStorePath?: unknown };
     const href = typeof payload.href === 'string' ? payload.href.trim() : '';
     if (!href) {
         return null;
@@ -130,10 +138,16 @@ function readAcpNavigationChangedMessage(data: unknown): AcpNavigationChangedMes
         : payload.threadId === null
             ? null
             : undefined;
+    const conversationStorePath = typeof payload.conversationStorePath === 'string'
+        ? payload.conversationStorePath.trim() || null
+        : payload.conversationStorePath === null
+            ? null
+            : undefined;
 
     return {
         href,
         ...(threadId !== undefined ? { threadId } : {}),
+        ...(conversationStorePath !== undefined ? { conversationStorePath } : {}),
     };
 }
 
@@ -253,17 +267,23 @@ function isAssistantCanvasMcpContext(context: AssistantContextV1): boolean {
     return /^src\/prototypes\/[^/]+\/canvas\.excalidraw$/u.test(currentFilePath);
 }
 
-function getAssistantCanvasMcpRuntimeConfig(context: AssistantContextV1): AssistantCanvasMcpRuntimeConfig | null {
-    if (!isAssistantCanvasMcpContext(context) || typeof window === 'undefined') {
+function getAssistantPreviewMcpRuntimeConfig(context: AssistantContextV1): AssistantPreviewMcpConfig | null {
+    if (typeof window === 'undefined') {
         return null;
     }
-    const token = String((window as unknown as Record<string, unknown>).__AXHUB_CANVAS_MCP_TOKEN__ || '').trim();
-    if (!token) {
+    const globals = window as unknown as Record<string, unknown>;
+    const previewToken = String(globals.__AXHUB_PREVIEW_MCP_TOKEN__ || '').trim();
+    if (!previewToken) {
         return null;
     }
+    const previewBridgeClientId = String(globals.__AXHUB_PREVIEW_BRIDGE_CLIENT_ID__ || '').trim();
+    const canvasToken = String(globals.__AXHUB_CANVAS_MCP_TOKEN__ || '').trim();
     return {
         makeOrigin: window.location.origin,
-        token,
+        previewToken,
+        previewBridgeClientId,
+        includeCanvas: isAssistantCanvasMcpContext(context) && Boolean(canvasToken),
+        canvasToken,
     };
 }
 
@@ -287,6 +307,7 @@ interface OpenAssistantUrlEventDetail {
 interface ResolvedAssistantUrl {
     url: string;
     resourceThreadStoragePath: string;
+    conversationStorePath: string;
 }
 
 interface UseAssistantPanelControllerParams {
@@ -322,8 +343,8 @@ export function useAssistantPanelController({
     currentDataTable = null,
 }: UseAssistantPanelControllerParams) {
     const ASSISTANT_RUNTIME_UI_LOG_PREFIX = '[assistant-runtime-ui]';
-    const DEFAULT_ASSISTANT_WEB_BASE_URL = 'http://localhost:32123';
-    const DEFAULT_ASSISTANT_INSTALL_CMD = 'npx -y @axhub/acp --port 32123';
+    const DEFAULT_ASSISTANT_WEB_BASE_URL = 'http://localhost:32124';
+    const DEFAULT_ASSISTANT_INSTALL_CMD = 'npx -y @axhub/acp --port 32124';
     const DEFAULT_ASSISTANT_PANEL_WIDTH = 320;
     const MIN_ASSISTANT_PANEL_WIDTH = 320;
     const ASSISTANT_PANEL_MAX_VIEWPORT_RATIO = 0.5;
@@ -350,7 +371,7 @@ export function useAssistantPanelController({
             hints: {
                 installGlobal: DEFAULT_ASSISTANT_INSTALL_CMD,
                 start: DEFAULT_ASSISTANT_INSTALL_CMD,
-                status: 'curl http://localhost:32123/api/chat',
+                status: 'curl http://localhost:32124/api/chat',
             },
         },
     };
@@ -376,10 +397,13 @@ export function useAssistantPanelController({
     const assistantContextCommentsSignatureRef = useRef('');
     const assistantIframeLoadSyncSignatureRef = useRef('');
     const assistantImageGenerationConfigSyncSignatureRef = useRef('');
-    const assistantCanvasMcpConfigSyncSignatureRef = useRef('');
+    const assistantPreviewMcpConfigSyncSignatureRef = useRef('');
+    const assistantIframeBridgeRecoveringRef = useRef(false);
     const assistantIframeCurrentUrlRef = useRef('');
+    const assistantIframeResourceSwitchSignatureRef = useRef('');
     const latestAssistantSyncContextRef = useRef<AssistantContextV1 | null>(null);
     const latestAssistantResourcePathRef = useRef('');
+    const latestAssistantConversationStorePathRef = useRef('');
     const latestAssistantNavigationThreadIdRef = useRef<string | null | undefined>(undefined);
     const assistantResourceThreadBindingSuppressedRef = useRef(false);
     const previousAssistantProjectIdRef = useRef(projectId || '');
@@ -394,12 +418,20 @@ export function useAssistantPanelController({
         projectId,
     });
 
-    const buildAssistantIframeUrlForRuntime = useCallback((runtime?: AssistantRuntimeState | null) => {
+    const buildAssistantIframeUrlForRuntime = useCallback((
+        runtime?: AssistantRuntimeState | null,
+        conversationStorePath?: string | null,
+    ) => {
         const webBaseUrl = (runtime?.webBaseUrl || DEFAULT_ASSISTANT_WEB_BASE_URL).replace(/\/+$/g, '');
         const url = new URL(`${webBaseUrl}/`);
         const projectPath = runtime?.projectPath || '';
         if (projectPath) {
             url.searchParams.set('cwd', projectPath);
+        }
+        const normalizedConversationStorePath = String(conversationStorePath || '').trim();
+        if (normalizedConversationStorePath) {
+            url.searchParams.set('conversationStorePath', normalizedConversationStorePath);
+            url.searchParams.set('restoreLastThread', '1');
         }
         return url.toString();
     }, []);
@@ -420,6 +452,7 @@ export function useAssistantPanelController({
 
     const assistantIframeSrc = assistantIframeOverrideUrl || assistantIframeUrl;
     const assistantSupportsAcpContext = assistantPanelMode === 'general-ai';
+    const assistantAcceptsImageRuntimeConfig = assistantPanelMode === 'general-ai' || assistantPanelMode === 'image-ai';
     const assistantContextAppendAvailable = assistantSupportsAcpContext && assistantVisible;
 
     useEffect(() => {
@@ -431,13 +464,26 @@ export function useAssistantPanelController({
             return;
         }
         const resourcePath = latestAssistantResourcePathRef.current;
+        const conversationStorePath = latestAssistantConversationStorePathRef.current;
         if (!resourcePath) {
+            if (conversationStorePath) {
+                setAssistantStoreThreadId({
+                    projectScope: projectId || assistantRuntime?.projectPath || '',
+                    conversationStorePath,
+                }, threadId);
+            }
             return;
         }
         setAssistantResourceThreadId({
             projectScope: projectId || assistantRuntime?.projectPath || '',
             resourcePath,
         }, threadId);
+        if (conversationStorePath) {
+            setAssistantStoreThreadId({
+                projectScope: projectId || assistantRuntime?.projectPath || '',
+                conversationStorePath,
+            }, threadId);
+        }
     }, [
         assistantRuntime?.projectPath,
         projectId,
@@ -450,11 +496,15 @@ export function useAssistantPanelController({
         iframeRef: assistantIframeRef,
         iframeLoaded: assistantIframeLoaded,
         setIframeLoaded: setAssistantIframeLoaded,
+        requestHostReadyWithRetry,
         syncContext: postAssistantContextToIframe,
+        syncContextWithAck: postAssistantContextToIframeWithAck,
         syncContextWithRetry: postAssistantContextToIframeWithRetry,
         addContextItems: postAssistantContextItemsToIframe,
+        syncImageGenerationConfigWithAck: postAssistantImageGenerationConfigToIframeWithAck,
         syncImageGenerationConfigWithRetry: postAssistantImageGenerationConfigToIframeWithRetry,
-        syncCanvasMcpConfigWithRetry: postAssistantCanvasMcpConfigToIframeWithRetry,
+        syncPreviewMcpConfigWithAck: postAssistantPreviewMcpConfigToIframeWithAck,
+        syncPreviewMcpConfigWithRetry: postAssistantPreviewMcpConfigToIframeWithRetry,
         addImageAttachmentWithRetry,
         appendComposerTextWithRetry,
         submitPromptWithRetry,
@@ -515,6 +565,7 @@ export function useAssistantPanelController({
             }
 
             assistantIframeCurrentUrlRef.current = navigationUrl;
+            latestAssistantConversationStorePathRef.current = navigation.conversationStorePath || '';
             const navigationThreadId = navigation.threadId ?? resolveAcpNavigationThreadId(navigationUrl);
             latestAssistantNavigationThreadIdRef.current = navigationThreadId;
             handleAssistantActiveThreadChange(navigationThreadId);
@@ -573,11 +624,39 @@ export function useAssistantPanelController({
         postAssistantContextToIframeWithRetry,
     ]);
 
-    const syncAssistantImageGenerationConfigToIframe = useCallback((options: { requireLoaded?: boolean } = {}) => {
+    const syncAssistantContextToIframeWithAck = useCallback(async (
+        context: AssistantContextV1,
+        mode: 'replace' | 'append' = 'replace',
+        options: { requireLoaded?: boolean; requireVisible?: boolean } = {},
+    ) => {
+        latestAssistantSyncContextRef.current = context;
         const requireLoaded = options.requireLoaded !== false;
+        const requireVisible = options.requireVisible !== false;
         if (
             !assistantSupportsAcpContext
-            || !assistantVisible
+            || (requireVisible && !assistantVisible)
+            || (requireLoaded && !assistantIframeLoaded)
+            || !assistantIframeRef.current?.contentWindow
+        ) {
+            return false;
+        }
+
+        await postAssistantContextToIframeWithAck(context, mode);
+        return true;
+    }, [
+        assistantIframeLoaded,
+        assistantIframeRef,
+        assistantSupportsAcpContext,
+        assistantVisible,
+        postAssistantContextToIframeWithAck,
+    ]);
+
+    const syncAssistantImageGenerationConfigToIframe = useCallback((options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean } = {}) => {
+        const requireLoaded = options.requireLoaded !== false;
+        const requireVisible = options.requireVisible !== false;
+        if (
+            !assistantAcceptsImageRuntimeConfig
+            || (requireVisible && !assistantVisible)
             || (requireLoaded && !assistantIframeLoaded)
             || !assistantIframeRef.current?.contentWindow
         ) {
@@ -585,7 +664,7 @@ export function useAssistantPanelController({
         }
 
         const imageConfigSignature = getAcpImageGenerationConfigSignature(assistantImageGenerationConfig);
-        if (assistantImageGenerationConfigSyncSignatureRef.current === imageConfigSignature) {
+        if (!options.force && assistantImageGenerationConfigSyncSignatureRef.current === imageConfigSignature) {
             return;
         }
 
@@ -594,10 +673,39 @@ export function useAssistantPanelController({
     }, [
         assistantIframeLoaded,
         assistantIframeRef,
+        assistantAcceptsImageRuntimeConfig,
         assistantImageGenerationConfig,
-        assistantSupportsAcpContext,
         assistantVisible,
         postAssistantImageGenerationConfigToIframeWithRetry,
+    ]);
+
+    const syncAssistantImageGenerationConfigToIframeWithAck = useCallback(async (options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean } = {}) => {
+        const requireLoaded = options.requireLoaded !== false;
+        const requireVisible = options.requireVisible !== false;
+        if (
+            !assistantAcceptsImageRuntimeConfig
+            || (requireVisible && !assistantVisible)
+            || (requireLoaded && !assistantIframeLoaded)
+            || !assistantIframeRef.current?.contentWindow
+        ) {
+            return false;
+        }
+
+        const imageConfigSignature = getAcpImageGenerationConfigSignature(assistantImageGenerationConfig);
+        if (!options.force && assistantImageGenerationConfigSyncSignatureRef.current === imageConfigSignature) {
+            return true;
+        }
+
+        await postAssistantImageGenerationConfigToIframeWithAck(assistantImageGenerationConfig);
+        assistantImageGenerationConfigSyncSignatureRef.current = imageConfigSignature;
+        return true;
+    }, [
+        assistantIframeLoaded,
+        assistantIframeRef,
+        assistantAcceptsImageRuntimeConfig,
+        assistantImageGenerationConfig,
+        assistantVisible,
+        postAssistantImageGenerationConfigToIframeWithAck,
     ]);
 
     const postAssistantContextToWindowWithRetry = useCallback((
@@ -691,32 +799,63 @@ export function useAssistantPanelController({
         mergeAssistantContextForActiveFile(assistantBaseContextV1, assistantExternalContext)
     ), [assistantBaseContextV1, assistantExternalContext]);
 
-    const syncAssistantCanvasMcpConfigToIframe = useCallback((options: { requireLoaded?: boolean } = {}) => {
+    const syncAssistantPreviewMcpConfigToIframe = useCallback((options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean } = {}) => {
         const requireLoaded = options.requireLoaded !== false;
+        const requireVisible = options.requireVisible !== false;
         if (
             !assistantSupportsAcpContext
-            || !assistantVisible
+            || (requireVisible && !assistantVisible)
             || (requireLoaded && !assistantIframeLoaded)
             || !assistantIframeRef.current?.contentWindow
         ) {
             return;
         }
 
-        const canvasMcpConfig = getAssistantCanvasMcpRuntimeConfig(assistantContextV1);
-        const canvasMcpConfigSignature = getAcpCanvasMcpConfigSignature(canvasMcpConfig);
-        if (assistantCanvasMcpConfigSyncSignatureRef.current === canvasMcpConfigSignature) {
+        const previewMcpConfig = getAssistantPreviewMcpRuntimeConfig(assistantContextV1);
+        const previewMcpConfigSignature = getAcpPreviewMcpConfigSignature(previewMcpConfig);
+        if (!options.force && assistantPreviewMcpConfigSyncSignatureRef.current === previewMcpConfigSignature) {
             return;
         }
 
-        assistantCanvasMcpConfigSyncSignatureRef.current = canvasMcpConfigSignature;
-        postAssistantCanvasMcpConfigToIframeWithRetry(canvasMcpConfig);
+        assistantPreviewMcpConfigSyncSignatureRef.current = previewMcpConfigSignature;
+        postAssistantPreviewMcpConfigToIframeWithRetry(previewMcpConfig);
     }, [
         assistantContextV1,
         assistantIframeLoaded,
         assistantIframeRef,
         assistantSupportsAcpContext,
         assistantVisible,
-        postAssistantCanvasMcpConfigToIframeWithRetry,
+        postAssistantPreviewMcpConfigToIframeWithRetry,
+    ]);
+
+    const syncAssistantPreviewMcpConfigToIframeWithAck = useCallback(async (options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean } = {}) => {
+        const requireLoaded = options.requireLoaded !== false;
+        const requireVisible = options.requireVisible !== false;
+        if (
+            !assistantSupportsAcpContext
+            || (requireVisible && !assistantVisible)
+            || (requireLoaded && !assistantIframeLoaded)
+            || !assistantIframeRef.current?.contentWindow
+        ) {
+            return false;
+        }
+
+        const previewMcpConfig = getAssistantPreviewMcpRuntimeConfig(assistantContextV1);
+        const previewMcpConfigSignature = getAcpPreviewMcpConfigSignature(previewMcpConfig);
+        if (!options.force && assistantPreviewMcpConfigSyncSignatureRef.current === previewMcpConfigSignature) {
+            return true;
+        }
+
+        await postAssistantPreviewMcpConfigToIframeWithAck(previewMcpConfig);
+        assistantPreviewMcpConfigSyncSignatureRef.current = previewMcpConfigSignature;
+        return true;
+    }, [
+        assistantContextV1,
+        assistantIframeLoaded,
+        assistantIframeRef,
+        assistantSupportsAcpContext,
+        assistantVisible,
+        postAssistantPreviewMcpConfigToIframeWithAck,
     ]);
 
     useEffect(() => {
@@ -724,7 +863,11 @@ export function useAssistantPanelController({
             return;
         }
         latestAssistantResourcePathRef.current = getAssistantContextCurrentFilePath(assistantContextV1);
-    }, [assistantContextV1]);
+        latestAssistantConversationStorePathRef.current = resolvePrototypeConversationStorePath({
+            projectPath: assistantRuntime?.projectPath || '',
+            resourcePath: latestAssistantResourcePathRef.current,
+        });
+    }, [assistantContextV1, assistantRuntime?.projectPath]);
 
     const buildAssistantContextForItem = useCallback((
         item: ItemData,
@@ -825,15 +968,112 @@ export function useAssistantPanelController({
     }, [assistantContextV1, syncAssistantContextToTargets]);
 
     useEffect(() => {
+        if (assistantIframeBridgeRecoveringRef.current) {
+            return;
+        }
         syncAssistantImageGenerationConfigToIframe();
     }, [syncAssistantImageGenerationConfigToIframe]);
 
     useEffect(() => {
-        syncAssistantCanvasMcpConfigToIframe();
-    }, [syncAssistantCanvasMcpConfigToIframe]);
+        if (assistantIframeBridgeRecoveringRef.current) {
+            return;
+        }
+        syncAssistantPreviewMcpConfigToIframe();
+    }, [syncAssistantPreviewMcpConfigToIframe]);
+
+    const forceSyncAssistantRuntimeConfigToIframe = useCallback(() => {
+        assistantImageGenerationConfigSyncSignatureRef.current = '';
+        assistantPreviewMcpConfigSyncSignatureRef.current = '';
+        void (async () => {
+            try {
+                const imageConfigAcked = await syncAssistantImageGenerationConfigToIframeWithAck({
+                    requireLoaded: false,
+                    requireVisible: false,
+                    force: true,
+                });
+                const previewMcpAcked = await syncAssistantPreviewMcpConfigToIframeWithAck({
+                    requireLoaded: false,
+                    requireVisible: false,
+                    force: true,
+                });
+                if (!imageConfigAcked || !previewMcpAcked) {
+                    throw new Error('AI 助手 iframe 未就绪');
+                }
+            } catch (error) {
+                console.warn(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} runtime config ack sync fell back to retry sync`, error);
+                syncAssistantImageGenerationConfigToIframe({
+                    requireLoaded: false,
+                    requireVisible: false,
+                    force: true,
+                });
+                syncAssistantPreviewMcpConfigToIframe({
+                    requireLoaded: false,
+                    requireVisible: false,
+                    force: true,
+                });
+            }
+        })();
+    }, [
+        syncAssistantImageGenerationConfigToIframe,
+        syncAssistantImageGenerationConfigToIframeWithAck,
+        syncAssistantPreviewMcpConfigToIframe,
+        syncAssistantPreviewMcpConfigToIframeWithAck,
+    ]);
+
+    const recoverAssistantIframeBridge = useCallback(async () => {
+        if (!assistantSupportsAcpContext || !assistantIframeRef.current?.contentWindow) {
+            assistantIframeBridgeRecoveringRef.current = false;
+            return false;
+        }
+
+        assistantIframeBridgeRecoveringRef.current = true;
+        try {
+            await requestHostReadyWithRetry({ events: ACP_HOST_READY_EVENTS });
+            await syncAssistantImageGenerationConfigToIframeWithAck({ requireLoaded: false, requireVisible: false, force: true });
+            await syncAssistantPreviewMcpConfigToIframeWithAck({ requireLoaded: false, requireVisible: false, force: true });
+            await syncAssistantContextToIframeWithAck(assistantContextV1, 'replace', {
+                requireLoaded: false,
+                requireVisible: false,
+            });
+            assistantIframeLoadSyncSignatureRef.current = JSON.stringify(assistantContextV1);
+            return true;
+        } catch (error) {
+            console.warn(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} iframe refresh recovery fell back to retry sync`, error);
+            syncAssistantImageGenerationConfigToIframe({
+                requireLoaded: false,
+                requireVisible: false,
+                force: true,
+            });
+            syncAssistantPreviewMcpConfigToIframe({
+                requireLoaded: false,
+                requireVisible: false,
+                force: true,
+            });
+            syncAssistantContextToTargets(assistantContextV1, 'replace', {
+                retryIframe: true,
+            });
+            return false;
+        } finally {
+            assistantIframeBridgeRecoveringRef.current = false;
+        }
+    }, [
+        assistantContextV1,
+        assistantIframeRef,
+        assistantSupportsAcpContext,
+        requestHostReadyWithRetry,
+        syncAssistantContextToIframeWithAck,
+        syncAssistantContextToTargets,
+        syncAssistantImageGenerationConfigToIframe,
+        syncAssistantImageGenerationConfigToIframeWithAck,
+        syncAssistantPreviewMcpConfigToIframe,
+        syncAssistantPreviewMcpConfigToIframeWithAck,
+    ]);
 
     useEffect(() => {
         if (!assistantSupportsAcpContext || !assistantVisible || !assistantIframeLoaded) {
+            return;
+        }
+        if (assistantIframeBridgeRecoveringRef.current) {
             return;
         }
 
@@ -860,46 +1100,72 @@ export function useAssistantPanelController({
         runtimeOverride?: AssistantRuntimeState | null,
     ): ResolvedAssistantUrl => {
         const resourceThreadStoragePath = String(targetPath || '').trim();
+        const runtimeForUrl = runtimeOverride || assistantRuntime;
+        const conversationStorePath = resolvePrototypeConversationStorePath({
+            projectPath: runtimeForUrl?.projectPath || '',
+            resourcePath: targetPath,
+        });
+        const sourceUrlWithStore = (() => {
+            if (!conversationStorePath) {
+                return sourceUrl;
+            }
+            try {
+                const parsedUrl = new URL(sourceUrl, window.location.origin);
+                parsedUrl.searchParams.set('conversationStorePath', conversationStorePath);
+                parsedUrl.searchParams.set('restoreLastThread', '1');
+                return parsedUrl.toString();
+            } catch {
+                return sourceUrl;
+            }
+        })();
         if (!targetPath) {
             return {
-                url: sourceUrl,
+                url: sourceUrlWithStore,
                 resourceThreadStoragePath,
+                conversationStorePath,
             };
         }
 
-        const runtimeForUrl = runtimeOverride || assistantRuntime;
         const projectScope = projectId || runtimeForUrl?.projectPath || '';
         const fallbackResourcePath = resolveAssistantFallbackResourcePathFromUrl(targetPath);
+        const storeThreadId = getAssistantStoreThreadId({
+            projectScope,
+            conversationStorePath,
+        });
         const threadId = getAssistantResourceThreadId({
             projectScope,
             resourcePath: targetPath,
         });
-        const resolvedThreadId = threadId || getAssistantResourceThreadIdWithFallback({
+        const resourceFallbackThreadId = getAssistantResourceThreadIdWithFallback({
             projectScope,
             resourcePath: targetPath,
             fallbackResourcePath,
         });
+        const resolvedThreadId = storeThreadId || threadId || resourceFallbackThreadId;
         if (!resolvedThreadId) {
             return {
-                url: sourceUrl,
+                url: sourceUrlWithStore,
                 resourceThreadStoragePath,
+                conversationStorePath,
             };
         }
-        const resolvedResourceThreadStoragePath = threadId
+        const resolvedResourceThreadStoragePath = threadId || storeThreadId
             ? resourceThreadStoragePath
             : fallbackResourcePath || resourceThreadStoragePath;
 
         try {
-            const parsedUrl = new URL(sourceUrl, window.location.origin);
+            const parsedUrl = new URL(sourceUrlWithStore, window.location.origin);
             parsedUrl.pathname = `/thread/${encodeURIComponent(resolvedThreadId)}`;
             return {
                 url: parsedUrl.toString(),
                 resourceThreadStoragePath: resolvedResourceThreadStoragePath,
+                conversationStorePath,
             };
         } catch {
             return {
-                url: sourceUrl,
+                url: sourceUrlWithStore,
                 resourceThreadStoragePath,
+                conversationStorePath,
             };
         }
     }, [
@@ -913,7 +1179,11 @@ export function useAssistantPanelController({
         runtimeOverride?: AssistantRuntimeState | null,
     ) => {
         const runtimeForUrl = runtimeOverride || assistantRuntime;
-        const sourceUrl = targetUrl || buildAssistantIframeUrlForRuntime(runtimeForUrl);
+        const conversationStorePath = resolvePrototypeConversationStorePath({
+            projectPath: runtimeForUrl?.projectPath || '',
+            resourcePath: targetPath,
+        });
+        const sourceUrl = targetUrl || buildAssistantIframeUrlForRuntime(runtimeForUrl, conversationStorePath);
         let nextUrl = sourceUrl;
 
         try {
@@ -937,6 +1207,38 @@ export function useAssistantPanelController({
         resolveAssistantThreadLandingUrl,
     ]);
 
+    useEffect(() => {
+        if (!assistantPanelMounted || !assistantVisible || !assistantSupportsAcpContext) {
+            return;
+        }
+        if (assistantPanelMode !== 'general-ai') {
+            return;
+        }
+
+        const targetPath = getAssistantContextCurrentFilePath(assistantContextV1);
+        const resolvedAssistantUrl = resolveAssistantUrl(undefined, targetPath);
+        const signature = `${targetPath}::${resolvedAssistantUrl.url}`;
+        if (assistantIframeResourceSwitchSignatureRef.current === signature) {
+            return;
+        }
+
+        assistantIframeResourceSwitchSignatureRef.current = signature;
+        latestAssistantResourcePathRef.current = resolvedAssistantUrl.resourceThreadStoragePath;
+        latestAssistantConversationStorePathRef.current = resolvedAssistantUrl.conversationStorePath;
+        latestAssistantNavigationThreadIdRef.current = resolveAcpNavigationThreadId(resolvedAssistantUrl.url);
+        assistantIframeCurrentUrlRef.current = resolvedAssistantUrl.url;
+        setAssistantIframeLoaded(false);
+        setAssistantIframeOverrideUrl(resolvedAssistantUrl.url);
+    }, [
+        assistantContextV1,
+        assistantPanelMode,
+        assistantPanelMounted,
+        assistantSupportsAcpContext,
+        assistantVisible,
+        resolveAssistantUrl,
+        setAssistantIframeLoaded,
+    ]);
+
     const openAssistantWithUrl = useCallback((
         targetUrl?: string,
         targetPath?: string,
@@ -948,9 +1250,13 @@ export function useAssistantPanelController({
         latestAssistantResourcePathRef.current = options.suppressResourceThreadBinding === true
             ? ''
             : resolvedAssistantUrl.resourceThreadStoragePath;
+        latestAssistantConversationStorePathRef.current = options.suppressResourceThreadBinding === true
+            ? ''
+            : resolvedAssistantUrl.conversationStorePath;
         const nextUrl = resolvedAssistantUrl.url;
         const nextPanelMode = options.panelMode || assistantPanelMode || 'general-ai';
         assistantIframeCurrentUrlRef.current = nextUrl;
+        assistantIframeResourceSwitchSignatureRef.current = `${latestAssistantResourcePathRef.current}::${nextUrl}`;
         latestAssistantNavigationThreadIdRef.current = resolveAcpNavigationThreadId(nextUrl);
 
         flushSync(() => {
@@ -969,6 +1275,8 @@ export function useAssistantPanelController({
         }
 
         assistantIframeCurrentUrlRef.current = nextUrl;
+        latestAssistantConversationStorePathRef.current = '';
+        assistantIframeResourceSwitchSignatureRef.current = '';
         latestAssistantNavigationThreadIdRef.current = undefined;
         setAssistantPanelMode('external');
         setAssistantPanelMounted(true);
@@ -987,8 +1295,10 @@ export function useAssistantPanelController({
         assistantResourceThreadBindingSuppressedRef.current = false;
         const resolvedAssistantUrl = resolveAssistantUrl(targetUrl, targetPath, runtimeOverride);
         latestAssistantResourcePathRef.current = resolvedAssistantUrl.resourceThreadStoragePath;
+        latestAssistantConversationStorePathRef.current = resolvedAssistantUrl.conversationStorePath;
         const nextUrl = resolvedAssistantUrl.url;
         assistantIframeCurrentUrlRef.current = nextUrl;
+        assistantIframeResourceSwitchSignatureRef.current = `${latestAssistantResourcePathRef.current}::${nextUrl}`;
         latestAssistantNavigationThreadIdRef.current = resolveAcpNavigationThreadId(nextUrl);
         const windowFeatures = contextOverride ? undefined : 'noopener,noreferrer';
         const childWindow = window.open(nextUrl, '_blank', windowFeatures);
@@ -1146,11 +1456,16 @@ export function useAssistantPanelController({
 
         assistantResourceThreadBindingSuppressedRef.current = false;
         assistantIframeCurrentUrlRef.current = '';
+        assistantIframeResourceSwitchSignatureRef.current = '';
         latestAssistantResourcePathRef.current = getAssistantContextCurrentFilePath(assistantContextV1);
+        latestAssistantConversationStorePathRef.current = resolvePrototypeConversationStorePath({
+            projectPath: assistantRuntime?.projectPath || '',
+            resourcePath: latestAssistantResourcePathRef.current,
+        });
         latestAssistantNavigationThreadIdRef.current = undefined;
         assistantIframeLoadSyncSignatureRef.current = '';
         assistantImageGenerationConfigSyncSignatureRef.current = '';
-        assistantCanvasMcpConfigSyncSignatureRef.current = '';
+        assistantPreviewMcpConfigSyncSignatureRef.current = '';
         setAssistantIframeLoaded(false);
         setAssistantIframeOverrideUrl(null);
 
@@ -1282,6 +1597,7 @@ export function useAssistantPanelController({
 
         if (assistantPanelMounted) {
             setAssistantVisible(true);
+            forceSyncAssistantRuntimeConfigToIframe();
             return;
         }
 
@@ -1300,6 +1616,7 @@ export function useAssistantPanelController({
         assistantPanelMounted,
         assistantVisible,
         ensureAssistantReadyThenOpen,
+        forceSyncAssistantRuntimeConfigToIframe,
     ]);
 
     const handleOpenGenieWebAgent = useCallback((targetPath?: string, _provider?: GenieProvider) => {
@@ -1342,6 +1659,7 @@ export function useAssistantPanelController({
                 return true;
             }
             setAssistantVisible(true);
+            forceSyncAssistantRuntimeConfigToIframe();
             return true;
         }
         return ensureAssistantReadyThenOpen('event', undefined, targetPath, 'iframe', null, {
@@ -1359,6 +1677,7 @@ export function useAssistantPanelController({
         buildAssistantIframeUrlForRuntime,
         buildImagePlaygroundUrlForRuntime,
         ensureAssistantReadyThenOpen,
+        forceSyncAssistantRuntimeConfigToIframe,
         openAssistantWithUrl,
     ]);
 
@@ -1525,11 +1844,14 @@ export function useAssistantPanelController({
             const submitResult = await submitPromptWithRetry(text, {
                 newThread: shouldForceNewThread,
                 waitUntil: options.collectArtifacts === true ? 'started' : options.waitUntil || 'started',
+                provider: options.provider,
+                model: options.model,
             });
             if (options.collectArtifacts === true && submitResult.threadId) {
                 const artifactResult = await waitForAcpArtifacts(() => queryArtifactsWithRetry({
                     threadId: submitResult.threadId,
                     workspacePath: assistantRuntime?.projectPath || undefined,
+                    conversationStorePath: latestAssistantConversationStorePathRef.current || undefined,
                     source: options.artifactSource || 'auto',
                     format: 'ai-sdk/v6',
                     sinceMs: artifactSinceMs,
@@ -1555,6 +1877,10 @@ export function useAssistantPanelController({
             if (shouldForceNewThread) {
                 assistantResourceThreadBindingSuppressedRef.current = false;
                 latestAssistantResourcePathRef.current = context ? getAssistantContextCurrentFilePath(context) : getAssistantContextCurrentFilePath(assistantContextV1);
+                latestAssistantConversationStorePathRef.current = resolvePrototypeConversationStorePath({
+                    projectPath: assistantRuntime?.projectPath || '',
+                    resourcePath: latestAssistantResourcePathRef.current,
+                });
                 const latestNavigationThreadId = latestAssistantNavigationThreadIdRef.current;
                 if (latestNavigationThreadId !== undefined) {
                     handleAssistantActiveThreadChange(latestNavigationThreadId);
@@ -1643,15 +1969,24 @@ export function useAssistantPanelController({
     }, [assistantRuntime?.projectPath, messageApi]);
 
     const handleAssistantIframeLoad = useCallback(() => {
+        assistantIframeBridgeRecoveringRef.current = true;
         assistantIframeLoadSyncSignatureRef.current = '';
         assistantImageGenerationConfigSyncSignatureRef.current = '';
-        assistantCanvasMcpConfigSyncSignatureRef.current = '';
+        assistantPreviewMcpConfigSyncSignatureRef.current = '';
         setAssistantIframeLoaded(true);
-        syncAssistantImageGenerationConfigToIframe({ requireLoaded: false });
-        syncAssistantCanvasMcpConfigToIframe({ requireLoaded: false });
+        if (assistantPanelMode === 'image-ai') {
+            syncAssistantImageGenerationConfigToIframe({
+                requireLoaded: false,
+                requireVisible: false,
+                force: true,
+            });
+            return;
+        }
+        void recoverAssistantIframeBridge();
     }, [
+        assistantPanelMode,
+        recoverAssistantIframeBridge,
         setAssistantIframeLoaded,
-        syncAssistantCanvasMcpConfigToIframe,
         syncAssistantImageGenerationConfigToIframe,
     ]);
 

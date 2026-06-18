@@ -725,6 +725,68 @@ describe('make-server project APIs', () => {
     }
   });
 
+  it('reads nested project doc content by filesystem-relative path when metadata uses a legacy basename id', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
+    const docsDir = path.join(projectRoot, 'content', 'docs');
+    const nestedDocPath = path.join(docsDir, '商品2.7', 'prd-qink追踪方案.md');
+    fs.mkdirSync(path.dirname(nestedDocPath), { recursive: true });
+    fs.writeFileSync(nestedDocPath, '# Qink PRD\n\nNested notes.\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'client-a', name: 'Client A' },
+      resources: {
+        prototypes: [],
+        docs: [
+          {
+            id: 'prd-qink追踪方案',
+            name: 'prd-qink追踪方案',
+            title: 'Qink PRD',
+            path: nestedDocPath,
+          },
+        ],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: ['prd-qink追踪方案'] },
+      resourceWriteTargets: {
+        docs: { type: 'project-relative-path', path: 'content/docs' },
+      },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath: getProjectRegistryPath(registryHome),
+    });
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const docId = encodeURIComponent('商品2.7/prd-qink追踪方案');
+      const docReadResponse = await fetch(`${server.origin}/api/projects/client-a/docs/${docId}/content`);
+      const docRead = await docReadResponse.json();
+
+      expect(docReadResponse.status).toBe(200);
+      expect(docRead.content).toBe('# Qink PRD\n\nNested notes.\n');
+
+      const docWriteResponse = await fetch(`${server.origin}/api/projects/client-a/docs/${docId}/content`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: '# Updated Nested PRD\n' }),
+      });
+      const docWrite = await docWriteResponse.json();
+
+      expect(docWriteResponse.status).toBe(200);
+      expect(docWrite).toMatchObject({ success: true });
+      expect(fs.readFileSync(nestedDocPath, 'utf8')).toBe('# Updated Nested PRD\n');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('does not repoint an existing make client registry entry from a marker-backed startup root', async () => {
     const previousRoot = createTempRoot('axhub-make-old-client-');
     writeMakeClientMarkerForProject(previousRoot, 'make-project', 'Old Make Client');

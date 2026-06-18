@@ -90,7 +90,7 @@ describe('CanvasGenerationComposer source', () => {
   it('configures ACP UI runtime endpoints so composer selectors load model capabilities from ACP UI', () => {
     const source = readCanvasGenerationComposerSource();
 
-    expect(source).toContain("import { ACP_CAPABILITY_REFRESH_EVENT, configureAcpUiRuntime } from '@axhub/acp/runtime';");
+    expect(source).toContain("import { ACP_CAPABILITY_REFRESH_EVENT, acpApiClient, configureAcpUiRuntime } from '@axhub/acp/runtime';");
     expect(source).toContain("import { apiService } from '../../services/index.api';");
     expect(source).toContain('function useCanvasAcpRuntimeBridge');
     expect(source).toContain('apiService.getAssistantRuntime({ autoStart })');
@@ -131,7 +131,6 @@ describe('CanvasGenerationComposer source', () => {
     expect(fallbackSegment).toContain('Settings2');
     expect(fallbackSegment).toContain('ChevronDown');
     expect(fallbackSegment).not.toContain('data-acp-config-option');
-    expect(source).toContain('leadingActions={');
     expect(source).toContain('<CanvasAcpModelSelectorFallback');
     expect(source).toContain('showSelectors && canvasAcpRuntime.needsFallback');
     expect(source).toContain('onOpenAISettings={onOpenAISettings}');
@@ -163,24 +162,26 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment).toContain('appendCanvasAiQuickPrompt(inputRef.current?.value ?? \'\', quickPrompt.prompt)');
     expect(displayComponentSegment).toContain('inputRef.current.value = nextText;');
     expect(displayComponentSegment).toContain('CanvasGenerationDisplayQuickPromptsButton');
-    expect(displayComponentSegment).toContain('aui-composer-add-attachment');
+    expect(displayComponentSegment).toContain('<ComposerAttachments />');
+    expect(displayComponentSegment).toContain('{disabled ? null : <CanvasComposerAddAttachmentButton label="添加附件" />}');
     expect(displayComponentSegment).toContain('aui-composer-send');
     expect(displayComponentSegment).toContain('min-h-[112px]');
     expect(displayComponentSegment).toContain('rounded-2xl border border-border bg-background p-3 shadow-sm');
     expect(displayComponentSegment).toContain('bg-slate-100 text-slate-700');
     expect(displayComponentSegment).toContain('onPaste={handleDisplayPaste}');
     expect(displayComponentSegment).toContain('getClipboardImageFiles(event.nativeEvent)');
-    expect(displayComponentSegment).toContain('readFilesAsDataUrls(pastedFiles)');
-    expect(displayComponentSegment).toContain('displayReferenceImages');
-    expect(displayComponentSegment).toContain('data-axhub-display-composer-attachment-count');
-    expect(displayComponentSegment).toContain('onClick={() => { setDisplayReferenceImages([]); }}');
+    expect(displayComponentSegment).toContain('aui.composer().addAttachment(file)');
+    expect(displayComponentSegment).toContain('displayReferenceAttachments');
+    expect(displayComponentSegment).toContain('resolveComposerAttachmentReferenceImages(displayReferenceAttachments)');
+    expect(displayComponentSegment).not.toContain('data-axhub-display-composer-attachment-count');
+    expect(displayComponentSegment).not.toContain('onClick={() => { setDisplayReferenceImages([]); }}');
+    expect(displayComponentSegment).not.toContain('onClick={() => {}}');
+    expect(displayComponentSegment).not.toContain('readFilesAsDataUrls');
     expect(displayComponentSegment).not.toContain('aria-label="语音输入"');
     expect(displayComponentSegment).not.toContain('title="语音输入"');
     expect(displayComponentSegment).not.toContain('<Mic');
     expect(displayComponentSegment).not.toContain('focus-within:ring-2');
     expect(displayComponentSegment).not.toContain('shadow-[0_18px_45px');
-    expect(displayComponentSegment).not.toContain('useChatRuntime');
-    expect(displayComponentSegment).not.toContain('AssistantRuntimeProvider');
     expect(displayComponentSegment).not.toContain('onSubmitPrompt');
     expect(displayComponentSegment).not.toContain('CanvasGenerationMakeTransport');
     expect(displayComponentSegment).not.toContain('data-axhub-placeholder-quick-prompt');
@@ -192,6 +193,7 @@ describe('CanvasGenerationComposer source', () => {
     expect(source).toContain('className="z-[1300] w-80 overflow-hidden p-0"');
     expect(source).toContain('data-axhub-canvas-generation-prompt-option');
     expect(source).toContain('<Sparkles');
+    expect(source).not.toContain('import { ArrowUp, Mic, Plus }');
     expect(source).not.toContain('import { ArrowUp, Mic, Plus }');
     expect(indexStyles).toContain('.ax-placeholder-display-composer .aui-composer-input:focus-visible');
     expect(indexStyles).toContain('box-shadow: none !important;');
@@ -208,7 +210,18 @@ describe('CanvasGenerationComposer source', () => {
       source.indexOf('function CanvasAcpModelSelectorFallback'),
     );
 
-    expect(source).toContain("import { AcpComposerSelectors, Composer } from '@axhub/acp/ui';");
+    expect(source).toContain('ComposerPrimitive,');
+    expect(source).toContain("import { AcpComposerSelectors, ComposerAttachments } from '@axhub/acp/ui';");
+    expect(source).toContain('PlusIcon');
+    expect(source).toContain("import { Button } from '@/components/ui/button';");
+    expect(source).toContain("import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';");
+    expect(source).toContain('function CanvasComposerAddAttachmentButton');
+    expect(source).toContain('<TooltipProvider>');
+    expect(source).toContain('<ComposerPrimitive.AddAttachment asChild>');
+    expect(source).toContain('className="aui-composer-add-attachment size-8 rounded-full p-1 font-semibold text-xs hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30"');
+    expect(source).not.toContain('Composer,');
+    expect(source).not.toContain('ComposerAddAttachment,');
+    expect(source).not.toContain('<ComposerAddAttachment');
     expect(displayPropsSegment).toContain('export interface CanvasGenerationDisplaySubmitSelection');
     expect(displayPropsSegment).toContain('contextBundle: ContextBundleV2 | null;');
     expect(displayPropsSegment).toContain('provider: string;');
@@ -229,6 +242,26 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayAcpSegment).toContain('mode: acpContext.modeId');
     expect(displayAcpSegment).toContain('thought: acpContext.thoughtLevel');
     expect(displayAcpSegment).toContain('referenceImages,');
+  });
+
+  it('backs the placeholder display composer attachment button with the ACP UI attachment adapter', () => {
+    const source = readCanvasGenerationComposerSource();
+    const displayWithoutAcpSegment = source.slice(
+      source.indexOf('function CanvasGenerationDisplayComposerWithoutAcp'),
+      source.indexOf('function CanvasGenerationDisplayComposerRuntime'),
+    );
+    const displayRuntimeSegment = source.slice(
+      source.indexOf('function CanvasGenerationDisplayComposerRuntime'),
+      source.indexOf('function CanvasGenerationDisplayComposerWithAcp'),
+    );
+
+    expect(source).toContain('resolveComposerAttachmentReferenceImages');
+    expect(displayWithoutAcpSegment).toContain('const runtime = useChatRuntime<UIMessage>({');
+    expect(displayWithoutAcpSegment).toContain('attachments: canvasReferenceImageAttachmentAdapter');
+    expect(displayWithoutAcpSegment).toContain('<AssistantRuntimeProvider runtime={runtime}>');
+    expect(displayRuntimeSegment).toContain('const runtime = useChatRuntime<UIMessage>({');
+    expect(displayRuntimeSegment).toContain('attachments: canvasReferenceImageAttachmentAdapter');
+    expect(displayRuntimeSegment).toContain('<AssistantRuntimeProvider runtime={runtime}>');
   });
 
   it('passes runtime ACP selector context through the real canvas composer submit transport', () => {
@@ -258,6 +291,43 @@ describe('CanvasGenerationComposer source', () => {
     expect(runtimeSegment).toContain('thought: runtimeContext.thoughtLevel,');
   });
 
+  it('uses ACP UI attachment actions for runtime canvas composers', () => {
+    const source = readCanvasGenerationComposerSource();
+    const runtimePropsSegment = source.slice(
+      source.indexOf('interface CanvasGenerationRuntimeComposerProps'),
+      source.indexOf('export interface CanvasGenerationComposerProps'),
+    );
+    const runtimeContentSegment = source.slice(
+      source.indexOf('function CanvasGenerationRuntimeComposerContent('),
+      source.indexOf('function useAssistantUiDialogOverlayDismiss'),
+    );
+
+    expect(runtimePropsSegment).toContain('addAttachmentTooltip: string;');
+    expect(runtimePropsSegment).toContain('sendTooltip: string;');
+    expect(runtimeContentSegment).toContain('addAttachmentTooltip,');
+    expect(runtimeContentSegment).toContain('sendTooltip,');
+    expect(source).toContain('function CanvasComposerSubmitButton');
+    expect(source).toContain('function useCancelCanvasActiveChatRun');
+    expect(source).toContain('const { provider, workspacePath } = useAcpUiRuntimeContext();');
+    expect(source).toContain('const remoteId = useAuiState((state) => state.threadListItem.remoteId);');
+    expect(source).toContain('const mainThreadId = useAuiState((state) => state.threads.mainThreadId);');
+    expect(source).toContain('void acpApiClient.cancelChat({');
+    expect(runtimeContentSegment).toContain('cancelActiveChatRun();');
+    expect(runtimeContentSegment).toContain('<ComposerPrimitive.Root');
+    expect(runtimeContentSegment).toContain('<ComposerPrimitive.AttachmentDropzone asChild>');
+    expect(runtimeContentSegment).toContain('allowAttachments ? <ComposerAttachments /> : null');
+    expect(runtimeContentSegment).toContain('<ComposerPrimitive.Input');
+    expect(runtimeContentSegment).toContain('cancelOnEscape={false}');
+    expect(runtimeContentSegment).toContain('onKeyDown={handleComposerKeyDown}');
+    expect(runtimeContentSegment).not.toContain('shouldMountCommandMenu');
+    expect(runtimeContentSegment).not.toContain('LazyCanvasCommandMenu');
+    expect(runtimeContentSegment).toContain('allowAttachments ? <CanvasComposerAddAttachmentButton label={addAttachmentTooltip} /> : null');
+    expect(runtimeContentSegment).toContain('<CanvasComposerSubmitButton label={sendTooltip} />');
+    expect(runtimeContentSegment).not.toContain('<Composer\n');
+    expect(runtimeContentSegment).not.toContain('<Composer ');
+    expect(runtimeContentSegment).not.toContain('aui-composer-add-attachment inline-flex');
+  });
+
   it('supports actions that render after ACP model selectors in the runtime composer row', () => {
     const source = readCanvasGenerationComposerSource();
     const runtimePropsSegment = source.slice(
@@ -272,7 +342,8 @@ describe('CanvasGenerationComposer source', () => {
     expect(runtimePropsSegment).toContain('renderPostSelectorActions?: (props: { submitting: boolean }) => React.ReactNode;');
     expect(runtimeContentSegment).toContain('renderPostSelectorActions,');
     expect(runtimeContentSegment).toContain('const postSelectorActions = renderPostSelectorActions?.({ submitting });');
-    expect(runtimeContentSegment).toContain('showSelectors={showSelectors && !postSelectorActions}');
+    expect(runtimeContentSegment).toContain('const shouldRenderInlineSelectors = showSelectors && !postSelectorActions;');
+    expect(runtimeContentSegment).toContain('{shouldRenderInlineSelectors ? <AcpComposerSelectors /> : null}');
     expect(runtimeContentSegment).toContain('{showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}');
     expect(runtimeContentSegment.indexOf('{showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}')).toBeLessThan(
       runtimeContentSegment.indexOf('{postSelectorActions}'),
@@ -395,12 +466,13 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment).toContain('persistDisplayDraft(event.currentTarget.value);');
     expect(displayComponentSegment).toContain('persistDisplayDraft(nextText);');
     expect(source).toContain('type CanvasGenerationDisplaySubmitResult = boolean | void;');
-    expect(displayComponentSegment).toContain('const referenceImages = displayReferenceImages;');
+    expect(displayComponentSegment).toContain('const referenceImages = await resolveComposerAttachmentReferenceImages(displayReferenceAttachments);');
     expect(displayComponentSegment).toContain('const submitResult = await onSubmitText?.(text, referenceImages);');
     expect(displayComponentSegment).toContain('if (submitResult === false) {');
     expect(displayComponentSegment).toContain('persistDisplayDraft(text);');
     expect(displayComponentSegment).toContain('clearCanvasGenerationComposerDraft(storage, draftStorageKey);');
     expect(displayComponentSegment).toContain("inputRef.current.value = '';");
+    expect(displayComponentSegment).toContain('await aui.composer().clearAttachments();');
     expect(displayComponentSegment).toContain('onChange={handleInputChange}');
     expect(displayAcpSegment).toContain('return onSubmit?.(text, {');
   });

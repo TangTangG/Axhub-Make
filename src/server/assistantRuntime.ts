@@ -10,9 +10,9 @@ import {
 } from './localCommand.ts';
 import { releaseListeningProcessesOnPort } from './portOccupancy.ts';
 
-const DEFAULT_ASSISTANT_WEB_BASE_URL = 'http://localhost:32123';
-const DEFAULT_ASSISTANT_PORT = '32123';
-const DEFAULT_ASSISTANT_PORT_NUMBER = 32123;
+const DEFAULT_ASSISTANT_WEB_BASE_URL = 'http://localhost:32124';
+const DEFAULT_ASSISTANT_PORT = '32124';
+const DEFAULT_ASSISTANT_PORT_NUMBER = 32124;
 const ACP_UI_NPX_COMMAND = 'npx';
 const ACP_UI_NPX_PACKAGE = '@axhub/acp@latest';
 const ACP_UI_NPM_COMMAND = 'npm';

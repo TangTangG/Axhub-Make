@@ -63,7 +63,7 @@ export interface NormalizedAcpImage {
   metadata?: AiImageGeneratedMetadata;
 }
 
-const DEFAULT_ACP_API_BASE_URL = 'http://localhost:32123/api';
+const DEFAULT_ACP_API_BASE_URL = 'http://localhost:32124/api';
 const DEFAULT_IMAGE_REQUEST_PARAMS: AiImageTaskParams = {
   size: 'auto',
   quality: 'auto',

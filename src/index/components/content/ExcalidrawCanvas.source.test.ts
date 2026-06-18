@@ -662,6 +662,12 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain("case 'canvas_insert_elements':");
     expect(source).toContain('resolveCanvasCommandInsertPosition(');
     expect(source).toContain('scheduleExplicitCanvasSave({ elements: nextElements, appState: excalidrawAPI.getAppState() });');
+    expect(source).toContain("case 'canvas_insert_mermaid':");
+    expect(source).toContain("import { parseMermaidToExcalidraw } from '@excalidraw/mermaid-to-excalidraw';");
+    expect(source).toContain('const { elements: skeletonElements, files = {} } = await parseMermaidToExcalidraw(');
+    expect(source).toContain('convertToExcalidrawElements(skeletonElements as any, {');
+    expect(source).toContain('excalidrawAPI.addFiles(Object.values(files) as any);');
+    expect(source).toContain('scrollToContent(insertedElements as any, {');
     expect(source).toContain("case 'canvas_update_elements':");
     expect(source).toContain('applyCanvasCommandElementUpdates(');
     expect(source).toContain("case 'canvas_delete_elements':");

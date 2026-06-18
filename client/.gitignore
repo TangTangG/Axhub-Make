@@ -47,6 +47,9 @@ entries.json
 .claude/*
 !.claude/skills/
 !.claude/skills/**
+.agents/*
+!.agents/skills/
+!.agents/skills/**
 .opencode/
 .trae/
 /.drafts/
@@ -78,6 +81,7 @@ logs/
 .drawio-tmp/
 
 # Runtime review/comment artifacts are project-local by default.
+src/prototypes/**/.spec/acp/
 src/prototypes/**/.spec/prototype-comments.json
 
 # Coverage reports

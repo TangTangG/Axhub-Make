@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { copyToClipboard, writeFigmaOfficialClipboardPayload } from '../../utils/clipboard';
+import { copyImageDataUrlToClipboard, copyToClipboard, writeFigmaOfficialClipboardPayload } from '../../utils/clipboard';
 import { buildEditorUrl, buildItemUrl, buildLANItemUrl } from '../../utils/url';
 import { generateSvgContent, svgToPng } from '../../utils/svg';
 import { apiService, type CloudPublishLatestItem, type CloudPublishTarget, type ExportIndexBundle, type ReviewResult } from '../../services/api';
@@ -66,9 +66,9 @@ import {
     postProjectCommunicationRecord,
     readPreviewFrameEditorApi,
     resolveCurrentPublishResourcePath,
+    resolveCurrentPreviewScreenshotSize,
     resolveHostToolbarStateAfterClearEdits,
     resolveHostToolbarStateForDisplay,
-    startDeferredAssistantRuntimeProbe,
     waitForHostToolbarActionState,
     type DocumentEditorApi,
     type HostToolbarEditorsApi,
@@ -183,11 +183,11 @@ export function useIndexPagePreviewActions(params: any) {
     const exportPreferencesReadyRef = useRef(false);
     const skipExportContentTypeResetRef = useRef(false);
     const exportModalWasOpenRef = useRef(false);
+    const pendingClipboardScreenshotRequestIdsRef = useRef<Set<string>>(new Set());
     const markdownPromptCacheRef = useRef<{ key: string; result: any } | null>(null);
     const pendingDocSwitchRef = useRef<{ kind: 'doc' | 'template'; item: any } | null>(null);
     const lastQuickEditRuntimeDocumentUrlKeyRef = useRef<string>('');
     const quickEditRuntimeActiveRef = useRef(false);
-    const deferredAssistantRuntimeProbeSeqRef = useRef(0);
     const documentEditorActiveRef = useRef(false);
     const documentHostToolbarUnsubscribeRef = useRef<(() => void) | null>(null);
     const prototypeHostToolbarUnsubscribeRef = useRef<(() => void) | null>(null);
@@ -902,42 +902,6 @@ export function useIndexPagePreviewActions(params: any) {
         return false;
     }, [messageApi, setAnnotationAssistantToolbarState]);
 
-    const startAnnotationAcpRuntimeConnection = useCallback(() => {
-        const probeSeq = deferredAssistantRuntimeProbeSeqRef.current += 1;
-        startDeferredAssistantRuntimeProbe({
-            probeRuntime: connectAssistantRuntimeSilently ?? probeAssistantRuntimeSilently,
-            isEditorActive: () => (
-                (quickEditRuntimeActiveRef.current || documentEditorActiveRef.current)
-                && deferredAssistantRuntimeProbeSeqRef.current === probeSeq
-            ),
-            onRuntimeReady: () => {
-                void connectAnnotationAcpRuntime({ showFeedback: false });
-            },
-            onRuntimeError: () => {
-                if (
-                    !quickEditRuntimeActiveRef.current
-                    && !documentEditorActiveRef.current
-                ) {
-                    return;
-                }
-                setAnnotationAssistantToolbarState({
-                    robotState: 'sleeping' as const,
-                    robotLoading: false,
-                    robotDisabled: false,
-                    sendDisabled: true,
-                    sendLoading: false,
-                    interruptDisabled: true,
-                    interruptLoading: false,
-                });
-            },
-        });
-    }, [
-        connectAnnotationAcpRuntime,
-        connectAssistantRuntimeSilently,
-        probeAssistantRuntimeSilently,
-        setAnnotationAssistantToolbarState,
-    ]);
-
     const runQuickEditHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {
         if (action.type === 'wake-genie') {
             return connectAnnotationAcpRuntime({ showFeedback: true });
@@ -1483,7 +1447,6 @@ export function useIndexPagePreviewActions(params: any) {
         documentHostToolbarUnsubscribeRef.current = null;
         prototypeHostToolbarUnsubscribeRef.current?.();
         prototypeHostToolbarUnsubscribeRef.current = null;
-        deferredAssistantRuntimeProbeSeqRef.current += 1;
         documentEditorActiveRef.current = false;
         quickEditRuntimeActiveRef.current = false;
         activePrototypeEditorLaunchOptionsRef.current = null;
@@ -1894,6 +1857,72 @@ export function useIndexPagePreviewActions(params: any) {
         });
     }, [getIframeOrigin, getPreviewIframe, selectedItem]);
 
+    const requestCurrentScreenshot = useCallback(() => {
+        return new Promise<{ dataUrl: string; width: number; height: number }>((resolve, reject) => {
+            const targetIframe = getPrimaryPreviewIframe();
+            if (!targetIframe || !targetIframe.contentWindow) {
+                reject(new Error('未找到可截图的主预览窗口'));
+                return;
+            }
+            if (!selectedItem) {
+                reject(new Error('请先选择一个原型页面'));
+                return;
+            }
+            if (exportAvailability.axureRuntimeDisabledReason) {
+                reject(new Error(exportAvailability.axureRuntimeDisabledReason));
+                return;
+            }
+            const requestId = createRuntimeExportRequestId('copy-screenshot');
+            pendingClipboardScreenshotRequestIdsRef.current.add(requestId);
+            const targetOrigin = getIframeOrigin(targetIframe);
+            const timeout = window.setTimeout(() => {
+                pendingClipboardScreenshotRequestIdsRef.current.delete(requestId);
+                window.removeEventListener('message', handleMessage);
+                reject(new Error('截图生成超时，请重试'));
+            }, 15000);
+            const handleMessage = (event: MessageEvent) => {
+                if (event.source !== targetIframe.contentWindow) return;
+                if (event.origin !== targetOrigin) return;
+                if (!event.data || event.data.type !== 'axhub.quickEdit.export.captureScreenshotResult') return;
+                if (event.data.requestId !== requestId) return;
+                pendingClipboardScreenshotRequestIdsRef.current.delete(requestId);
+                window.removeEventListener('message', handleMessage);
+                window.clearTimeout(timeout);
+                if (event.data.success) {
+                    const dataUrl = typeof event.data.dataUrl === 'string' ? event.data.dataUrl : '';
+                    if (!dataUrl) {
+                        reject(new Error('截图数据为空，请刷新预览后重试'));
+                        return;
+                    }
+                    resolve({
+                        dataUrl,
+                        width: typeof event.data.width === 'number' ? event.data.width : 0,
+                        height: typeof event.data.height === 'number' ? event.data.height : 0,
+                    });
+                    return;
+                }
+                reject(new Error(event.data.error || '截图生成失败'));
+            };
+            window.addEventListener('message', handleMessage);
+            const screenshotSize = resolveCurrentPreviewScreenshotSize(previewConfig, screenshotDefaultSize);
+            targetIframe.contentWindow.postMessage(createRuntimeExportMessage({
+                type: 'axhub.quickEdit.export.captureScreenshot',
+                selectedItem,
+                requestId,
+                payload: {
+                    targetWidth: screenshotSize.width,
+                },
+            }), targetOrigin);
+        });
+    }, [
+        exportAvailability.axureRuntimeDisabledReason,
+        getIframeOrigin,
+        getPrimaryPreviewIframe,
+        previewConfig,
+        screenshotDefaultSize,
+        selectedItem,
+    ]);
+
     const checkAxureAvailable = useCallback(async (): Promise<boolean> => {
         let response: Response;
         try {
@@ -2036,7 +2065,6 @@ export function useIndexPagePreviewActions(params: any) {
                 sidebarCollapsedBeforeWebEditorRef.current = collapsed;
             }
             setCollapsed(true);
-            startAnnotationAcpRuntimeConnection();
         } catch (error) {
             console.error('[Axhub] 启动文档编辑器失败:', error);
             messageApi.error('启动文档编辑器失败');
@@ -2049,7 +2077,6 @@ export function useIndexPagePreviewActions(params: any) {
         messageApi,
         refreshEditorStatus,
         setCollapsed,
-        startAnnotationAcpRuntimeConnection,
     ]);
 
     const handleEnableDocEdit = useCallback(() => {
@@ -2310,7 +2337,6 @@ export function useIndexPagePreviewActions(params: any) {
                 sidebarCollapsedBeforeWebEditorRef.current = collapsed;
             }
             setCollapsed(true);
-            startAnnotationAcpRuntimeConnection();
         } catch (error) {
             activePrototypeEditorLaunchOptionsRef.current = null;
             console.error('[Axhub] 启动编辑器失败:', error);
@@ -2334,7 +2360,6 @@ export function useIndexPagePreviewActions(params: any) {
         selectedItem,
         setCollapsed,
         standalonePanelOpen,
-        startAnnotationAcpRuntimeConnection,
         viewMode,
     ]);
 
@@ -2359,7 +2384,6 @@ export function useIndexPagePreviewActions(params: any) {
                     await Promise.resolve(editors.disable());
                 }
             }));
-            deferredAssistantRuntimeProbeSeqRef.current += 1;
             documentEditorActiveRef.current = false;
             quickEditRuntimeActiveRef.current = false;
             clearAssistantSelectedElementsOnExit();
@@ -2488,6 +2512,23 @@ export function useIndexPagePreviewActions(params: any) {
             hide();
         }
     }, [exportAvailability.figmaDomDisabledReason, messageApi, requestCopyToFigma, selectedItem]);
+
+    const handleCopyCurrentScreenshot = useCallback(async () => {
+        if (!selectedItem) {
+            messageApi.warning('请先选择一个原型页面');
+            return;
+        }
+        const hide = messageApi.loading('正在复制截图...', 0);
+        try {
+            const result = await requestCurrentScreenshot();
+            await copyImageDataUrlToClipboard(result.dataUrl);
+            messageApi.success('截图已复制到剪贴板');
+        } catch (error: any) {
+            messageApi.error(error?.message || '复制截图失败');
+        } finally {
+            hide();
+        }
+    }, [messageApi, requestCurrentScreenshot, selectedItem]);
 
     const handleExportMake = useCallback(async () => {
         if (activeTab !== 'prototypes' || !selectedItem) {
@@ -3056,6 +3097,7 @@ export function useIndexPagePreviewActions(params: any) {
             }
             if (typeof event.data?.type === 'string' && event.data.type.startsWith('axhub.quickEdit.export.')) {
                 if (event.data.type !== 'axhub.quickEdit.export.captureScreenshotResult') return;
+                if (pendingClipboardScreenshotRequestIdsRef.current.has(event.data.requestId)) return;
                 if (event.data.success) {
                     setImageConfig((previous) => ({
                         ...previous,
@@ -3358,6 +3400,7 @@ export function useIndexPagePreviewActions(params: any) {
         handleCopyLANLink,
         getLANUrl,
         handleCopyToFigma,
+        handleCopyCurrentScreenshot,
         handleExportMake,
         handleExportHtml,
         handlePublishCloudTarget,

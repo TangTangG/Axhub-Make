@@ -153,8 +153,8 @@ describe('AI run client', () => {
         code: 'ACP_RUNTIME_UNAVAILABLE',
         action: 'open-ai-settings',
         runtime: {
-          webBaseUrl: 'http://localhost:32123',
-          apiBaseUrl: 'http://localhost:32123/api',
+          webBaseUrl: 'http://localhost:32124',
+          apiBaseUrl: 'http://localhost:32124/api',
           projectPath: '/tmp/project',
           health: {
             status: 'runtime_unreachable',
@@ -163,8 +163,8 @@ describe('AI run client', () => {
             commandSource: 'default',
             hints: {
               installGlobal: 'npx -y @axhub/acp --help',
-              start: 'npx -y @axhub/acp --port 32123',
-              status: 'curl http://localhost:32123/api/chat',
+              start: 'npx -y @axhub/acp --port 32124',
+              status: 'curl http://localhost:32124/api/chat',
             },
           },
         },
@@ -185,7 +185,7 @@ describe('AI run client', () => {
         health: expect.objectContaining({
           status: 'runtime_unreachable',
           hints: expect.objectContaining({
-            start: 'npx -y @axhub/acp --port 32123',
+            start: 'npx -y @axhub/acp --port 32124',
           }),
         }),
       }),

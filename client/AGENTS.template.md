@@ -19,6 +19,7 @@
 | 项目资料和文档 | `src/resources/` | `rules/resource-management-guide.md` |
 | UI Review 结论 | `src/prototypes/<prototype-name>/.spec/ui-review.md` | `rules/ui-review-guide.md` |
 | 原型 Review 结论 | `src/prototypes/<prototype-name>/.spec/prototype-review.md` | `rules/prototype-review-guide.md` |
+| ACP 对话缓存 | `src/prototypes/<prototype-name>/.spec/acp/` | 本地私有运行数据，不提交、不导出、不发布 |
 
 ## ⚠️ 重要原则
 

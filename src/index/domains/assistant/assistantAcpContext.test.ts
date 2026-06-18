@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildAcpPreviewMcpPostMessage,
   buildAcpCanvasMcpPostMessage,
   buildAcpImageGenerationPostMessage,
   buildAcpContextPostMessage,
+  getAcpPreviewMcpConfigSignature,
   getAcpCanvasMcpConfigSignature,
   getAcpImageGenerationConfigSignature,
   mapAssistantContextToAcpContextBundle,
@@ -249,51 +251,131 @@ describe('assistant ACP context mapping', () => {
     expect(firstSignature).not.toEqual(secondSignature);
   });
 
-  it('builds transient ACP runtime MCP config for the Make canvas endpoint', () => {
-    const message = buildAcpCanvasMcpPostMessage({
+  it('builds transient ACP runtime MCP config for the Make preview endpoint', () => {
+    const message = buildAcpPreviewMcpPostMessage({
       makeOrigin: ' http://localhost:5174/ ',
-      token: ' canvas-secret ',
-    }, 'canvas-mcp-1');
+      previewToken: ' preview-secret ',
+      previewBridgeClientId: ' preview-2 ',
+      includeCanvas: false,
+      canvasToken: ' canvas-secret ',
+    }, 'preview-mcp-1');
 
     expect(message).toEqual({
       type: 'acp.runtime.configure',
-      requestId: 'canvas-mcp-1',
+      requestId: 'preview-mcp-1',
       payload: {
-        merge: true,
+        merge: false,
         mcpServers: [{
-          name: 'axhub-canvas',
+          name: 'axhub-preview',
           type: 'http',
-          url: 'http://localhost:5174/api/mcp/axhub-canvas',
+          url: 'http://localhost:5174/api/mcp/axhub-preview',
           headers: [{
-            name: 'x-axhub-canvas-mcp-token',
-            value: 'canvas-secret',
+            name: 'x-axhub-preview-mcp-token',
+            value: 'preview-secret',
+          }, {
+            name: 'x-axhub-preview-bridge-client-id',
+            value: 'preview-2',
           }],
         }],
       },
     });
   });
 
-  it('builds ACP runtime MCP clear messages when canvas MCP details are unavailable', () => {
-    expect(buildAcpCanvasMcpPostMessage({
+  it('adds the canvas MCP endpoint when the current assistant context is a canvas', () => {
+    const message = buildAcpPreviewMcpPostMessage({
+      makeOrigin: ' http://localhost:5174/ ',
+      previewToken: ' preview-secret ',
+      includeCanvas: true,
+      canvasToken: ' canvas-secret ',
+    }, 'combined-mcp-1');
+
+    expect(message).toEqual({
+      type: 'acp.runtime.configure',
+      requestId: 'combined-mcp-1',
+      payload: {
+        merge: false,
+        mcpServers: [
+          {
+            name: 'axhub-preview',
+            type: 'http',
+            url: 'http://localhost:5174/api/mcp/axhub-preview',
+            headers: [{
+              name: 'x-axhub-preview-mcp-token',
+              value: 'preview-secret',
+            }],
+          },
+          {
+            name: 'axhub-canvas',
+            type: 'http',
+            url: 'http://localhost:5174/api/mcp/axhub-canvas',
+            headers: [{
+              name: 'x-axhub-canvas-mcp-token',
+              value: 'canvas-secret',
+            }],
+          },
+        ],
+      },
+    });
+  });
+
+  it('keeps the legacy canvas MCP builder as a canvas-only wrapper', () => {
+    const message = buildAcpCanvasMcpPostMessage({
+      makeOrigin: ' http://localhost:5174/ ',
+      token: ' canvas-secret ',
+    }, 'canvas-mcp-1');
+
+    expect(message).toMatchObject({
+      type: 'acp.runtime.configure',
+      requestId: 'canvas-mcp-1',
+      payload: {
+        mcpServers: [{
+          name: 'axhub-canvas',
+        }],
+      },
+    });
+  });
+
+  it('builds ACP runtime MCP clear messages when preview MCP details are unavailable', () => {
+    expect(buildAcpPreviewMcpPostMessage({
       makeOrigin: 'http://localhost:5174',
-      token: '',
-    }, 'canvas-mcp-clear')).toEqual({
+      previewToken: '',
+      includeCanvas: true,
+      canvasToken: 'canvas-secret',
+    }, 'preview-mcp-clear')).toEqual({
       type: 'acp.runtime.clear',
-      requestId: 'canvas-mcp-clear',
+      requestId: 'preview-mcp-clear',
       payload: {
         fields: ['mcpServers'],
       },
     });
   });
 
-  it('does not retain the canvas MCP token in config sync signatures', () => {
+  it('does not retain preview or canvas MCP tokens in config sync signatures', () => {
+    const signature = getAcpPreviewMcpConfigSignature({
+      makeOrigin: 'http://localhost:5174',
+      previewToken: 'preview-secret',
+      previewBridgeClientId: 'preview-2',
+      includeCanvas: true,
+      canvasToken: 'canvas-secret',
+    });
+
+    expect(signature).toContain('axhub-preview');
+    expect(signature).toContain('x-axhub-preview-mcp-token');
+    expect(signature).toContain('x-axhub-preview-bridge-client-id');
+    expect(signature).toContain('preview-2');
+    expect(signature).toContain('axhub-canvas');
+    expect(signature).toContain('x-axhub-canvas-mcp-token');
+    expect(signature).not.toContain('preview-secret');
+    expect(signature).not.toContain('canvas-secret');
+  });
+
+  it('keeps the legacy canvas MCP signature redacted', () => {
     const signature = getAcpCanvasMcpConfigSignature({
       makeOrigin: 'http://localhost:5174',
       token: 'canvas-secret',
     });
 
     expect(signature).toContain('axhub-canvas');
-    expect(signature).toContain('x-axhub-canvas-mcp-token');
     expect(signature).not.toContain('canvas-secret');
   });
 });

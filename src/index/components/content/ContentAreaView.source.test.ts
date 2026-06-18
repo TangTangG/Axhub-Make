@@ -509,6 +509,8 @@ describe('ContentAreaView review zoom source', () => {
     expect(submitHandlerSegment).toContain("setViewMode?.('canvas');");
     expect(submitHandlerSegment).toContain('await onSubmitCanvasAssistantPrompt?.(request);');
     expect(submitHandlerSegment.indexOf('await apiService.startPlaceholderPrototypeGeneration(selectedItem.name);'))
+      .toBeLessThan(submitHandlerSegment.indexOf('await onRefreshPrototypes?.();'));
+    expect(submitHandlerSegment.indexOf('await onRefreshPrototypes?.();'))
       .toBeLessThan(submitHandlerSegment.indexOf("setViewMode?.('demo');"));
     expect(submitHandlerSegment.indexOf("setViewMode?.('demo');"))
       .toBeLessThan(submitHandlerSegment.indexOf('await onSubmitCanvasAssistantPrompt?.(request);'));
@@ -537,6 +539,21 @@ describe('ContentAreaView review zoom source', () => {
     expect(prototypeCanvasBranch).not.toContain('pendingAiGenerationRequest=');
     expect(prototypeCanvasBranch).not.toContain('onPendingAiGenerationRequestConsumed=');
     expect(source).toContain('await onSubmitCanvasAssistantPrompt?.(request);');
+  });
+
+  it('renders waiting generation prototypes through the normal preview iframe path', () => {
+    const source = readContentAreaViewSource();
+    const selectedItemBranchStart = source.indexOf('{selectedItem ? (');
+    const canvasBranchStart = source.indexOf(") : viewMode === 'canvas' ? (", selectedItemBranchStart);
+    expect(selectedItemBranchStart).toBeGreaterThan(-1);
+    expect(canvasBranchStart).toBeGreaterThan(selectedItemBranchStart);
+    const selectedPrototypeBranch = source.slice(selectedItemBranchStart, canvasBranchStart);
+
+    expect(source).not.toContain('function PrototypeWaitingGenerationState({');
+    expect(source).not.toContain('正在生成原型');
+    expect(selectedPrototypeBranch).not.toContain("selectedItem.generationStatus === 'waiting' && viewMode === 'demo' ? (");
+    expect(selectedPrototypeBranch).toContain("selectedItem.placeholder === true && viewMode === 'demo' ? (");
+    expect(source).toContain('renderScaledIframe(');
   });
 
   it('passes sidebar-owned canvas AI submissions into both canvas render paths', () => {
