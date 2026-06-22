@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-21T17:37:50.270Z",
+  "updatedAt": "2026-06-22T14:32:04.943Z",
   "prototypes": [
     {
       "id": "item:prototypes:beginner-guide",
@@ -910,7 +910,9 @@
     "xbox-com"
   ],
   "data": [],
-  "templates": [],
+  "templates": [
+    "prd-template.md"
+  ],
   "components": [],
   "canvas": []
 }
