@@ -27,6 +27,10 @@ describe('AssistantPanel source', () => {
 
   it('shows a full-panel assistant context drop overlay only for assistant-context drags', () => {
     const source = readFileSync(resolve(__dirname, './AssistantPanel.tsx'), 'utf8');
+    const dropOverlaySource = source.slice(
+      source.indexOf('{assistantContextDragging ? ('),
+      source.indexOf('</div>', source.indexOf('拖放到这里添加为 AI 上下文')),
+    );
 
     expect(source).toContain("import { ASSISTANT_CONTEXT_DRAG_MIME, parseAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';");
     expect(source).toContain('onAddContextItems: (items: AcpContextItem[]) => boolean | Promise<boolean>;');
@@ -39,7 +43,33 @@ describe('AssistantPanel source', () => {
     expect(source).toContain('parseAssistantContextDragPayload(event.dataTransfer.getData(ASSISTANT_CONTEXT_DRAG_MIME))');
     expect(source).toContain('onAddContextItems(payload.items)');
     expect(source).toContain('拖放到这里添加为 AI 上下文');
-    expect(source).toContain("pointerEvents: 'auto'");
-    expect(source).not.toContain("pointerEvents: 'none'");
+    expect(dropOverlaySource).toContain("pointerEvents: 'auto'");
+    expect(dropOverlaySource).not.toContain("pointerEvents: 'none'");
+  });
+
+  it('uses the page-level assistant toggle for the hover close affordance', () => {
+    const panelSource = readFileSync(resolve(__dirname, './AssistantPanel.tsx'), 'utf8');
+    const desktopSource = readFileSync(resolve(__dirname, './IndexPageDesktop.tsx'), 'utf8');
+    const indexPageSource = readFileSync(resolve(__dirname, '../../app/IndexPage.tsx'), 'utf8');
+    const assistantPanelPropsSource = indexPageSource.slice(
+      indexPageSource.indexOf('const assistantPanelProps = {'),
+      indexPageSource.indexOf('const dialogsProps = {', indexPageSource.indexOf('const assistantPanelProps = {')),
+    );
+
+    expect(panelSource).toContain('onToggle: () => void;');
+    expect(panelSource).toContain('onClick={onToggle}');
+    expect(panelSource).toContain('aria-label="关闭 AI 助手"');
+    expect(panelSource).toContain('title="关闭 AI 助手"');
+    expect(panelSource).toContain('opacity: 0');
+    expect(panelSource).toContain('transform: translate(-50%, -2px);');
+    expect(panelSource).toContain('transform: translate(-50%, 0);');
+    expect(panelSource).toContain('left: 0,');
+    expect(panelSource).toContain('top: 96,');
+    expect(panelSource).toContain("groupHoverStyleTag");
+    expect(desktopSource).toContain('onToggle: () => void;');
+    expect(desktopSource).toContain('onToggle={assistantPanel.onToggle}');
+    expect(assistantPanelPropsSource).toContain('onToggle: handleToggleAssistantPanel,');
+    expect(assistantPanelPropsSource).not.toContain('hideAssistantPanelTemporarily');
+    expect(assistantPanelPropsSource).not.toContain('handleCloseAiPanel');
   });
 });

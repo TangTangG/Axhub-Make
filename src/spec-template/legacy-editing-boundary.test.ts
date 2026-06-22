@@ -30,6 +30,15 @@ describe('spec-template quick editing regression boundary', () => {
     expect(bootstrapSource).toContain('save(');
   });
 
+  it('saves project document content endpoints through the original PUT API', () => {
+    const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
+
+    expect(viewerSource).toContain("PROJECT_DOCUMENT_CONTENT_PATH_RE.test(pathname)");
+    expect(viewerSource).toMatch(
+      /if \(pathname === '\/api\/markdown-file' \|\| pathname\.startsWith\('\/api\/docs\/'\) \|\| PROJECT_DOCUMENT_CONTENT_PATH_RE\.test\(pathname\)\) \{[\s\S]*?method: 'PUT'/,
+    );
+  });
+
   it('keeps the Markdown comment prompt helper used by quick-edit comment mode', () => {
     const helperPath = resolve(__dirname, 'quickEdit.ts');
     expect(existsSync(helperPath)).toBe(true);
@@ -82,6 +91,9 @@ describe('spec-template quick editing regression boundary', () => {
     expect(viewerSource).toContain("createGenieEditor({");
     expect(viewerSource).toContain("interactionProfile: 'text-comment'");
     expect(viewerSource).toContain("toolbarMode: 'host'");
+    expect(viewerSource).toContain('initialSelectionModeActive: false');
+    expect(viewerSource).toContain('hideExecutionControls: true');
+    expect(viewerSource).toContain("editor.runHostToolbarAction?.({ type: 'toggle-selection-mode', active: false })");
     expect(viewerSource).toContain('initialDarkMode');
     expect(viewerSource).not.toContain('genieBridge');
     expect(viewerSource).not.toContain('integrationWs');

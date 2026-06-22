@@ -176,6 +176,18 @@ describe('quick edit runtime script', () => {
     return { appendedElements, copiedPlainTexts, documentStub, emit, listeners, messages, windowStub };
   }
 
+  function expectStoredTransientRetryToken(windowStub: any, token: string) {
+    expect(windowStub.sessionStorage.setItem).toHaveBeenCalledWith(
+      '__axhub_quick_edit_transient_vite_retry__',
+      expect.any(String),
+    );
+    const rawValue = windowStub.sessionStorage.setItem.mock.calls.at(-1)?.[1] || '{}';
+    expect(JSON.parse(rawValue)).toMatchObject({
+      token,
+      createdAt: expect.any(Number),
+    });
+  }
+
   it('posts runtimeReady from a client page so make-server can detect the runtime handshake', () => {
     const messages: Array<{ message: any; targetOrigin: string }> = [];
     const windowStub: any = {
@@ -449,6 +461,24 @@ describe('quick edit runtime script', () => {
     expect(source).toContain('export function buildOfficialClipboardPayloadFromCapturedDocument');
   });
 
+  it('loads the browser runtime export bundle with a runtime version cache buster', () => {
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).toContain("'/assets/runtime-export-core.js?v='");
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).toContain('encodeURIComponent(runtimeVersion)');
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).not.toContain("return runtimeOrigin + '/assets/runtime-export-core.js';");
+  });
+
+  it('prefers the host runtime origin from export messages when loading the export bundle', () => {
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).toContain('let hostRuntimeOrigin =');
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).toContain("return (hostRuntimeOrigin || runtimeOrigin) + '/assets/runtime-export-core.js?v='");
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).toContain('function updateHostRuntimeOrigin(data)');
+
+    const messageHandlerStart = QUICK_EDIT_RUNTIME_SCRIPT.indexOf("window.addEventListener('message'");
+    const messageHandlerSource = QUICK_EDIT_RUNTIME_SCRIPT.slice(messageHandlerStart);
+    expect(messageHandlerSource).toContain("if (data.type === 'axhub.quickEdit.export.copyToFigma') {\n      updateHostRuntimeOrigin(data);");
+    expect(messageHandlerSource).toContain("if (data.type === 'axhub.quickEdit.export.captureScreenshot') {\n      updateHostRuntimeOrigin(data);");
+    expect(messageHandlerSource).toContain("if (data.type === 'axhub.quickEdit.export.axureJson') {\n      updateHostRuntimeOrigin(data);");
+  });
+
   it('handles editable Axure export requests in the make-server runtime and returns the matching request id', async () => {
     const axurePayload = { scene: { items: [] }, imageMap: {} };
     const htmlToAxure = vi.fn(async () => axurePayload);
@@ -679,9 +709,9 @@ describe('quick edit runtime script', () => {
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       '/@vite/client',
     ]);
-    expect(windowStub.sessionStorage.setItem).toHaveBeenCalledWith(
-      '__axhub_quick_edit_transient_vite_retry__',
-      '/prototypes/ref-app-home',
+    expectStoredTransientRetryToken(
+      windowStub,
+      '/prototypes/ref-app-home::html-proxy:/@id/__x00__/prototypes/ref-app-home/index.html?html-proxy&index=0.js',
     );
     expect(appendedElements).toHaveLength(0);
   });
@@ -710,9 +740,9 @@ describe('quick edit runtime script', () => {
       '/@vite/client',
       loaderUrl,
     ]);
-    expect(windowStub.sessionStorage.setItem).toHaveBeenCalledWith(
-      '__axhub_quick_edit_transient_vite_retry__',
-      '/prototypes/ref-app-home',
+    expectStoredTransientRetryToken(
+      windowStub,
+      '/prototypes/ref-app-home::preview-loader:/prototypes/ref-app-home/__axhub-preview-loader.js',
     );
     expect(appendedElements).toHaveLength(0);
   });
@@ -740,10 +770,40 @@ describe('quick edit runtime script', () => {
       expect(windowStub.location.reload).toHaveBeenCalledTimes(1);
     });
 
-    expect(windowStub.sessionStorage.setItem).toHaveBeenCalledWith(
+    expectStoredTransientRetryToken(
+      windowStub,
+      '/prototypes/ref-app-home::html-proxy:/@id/__x00__/prototypes/ref-app-home/index.html?html-proxy&index=0.js',
+    );
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/@vite/client',
+    ]);
+    expect(appendedElements).toHaveLength(0);
+  });
+
+  it('recovers html-proxy failures when an old pathname-only retry token exists', async () => {
+    const proxyUrl = 'http://localhost:51720/@id/__x00__/prototypes/ref-app-home/index.html?html-proxy&index=0.js';
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/@vite/client') {
+        return { ok: true };
+      }
+      throw new Error(`Unexpected fetch url: ${input}`);
+    });
+    const { appendedElements, emit, windowStub } = createRuntimeHarness({ fetch: fetchMock });
+
+    windowStub.sessionStorage.setItem(
       '__axhub_quick_edit_transient_vite_retry__',
       '/prototypes/ref-app-home',
     );
+    emit('window:error', {
+      target: {
+        tagName: 'SCRIPT',
+        src: proxyUrl,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(windowStub.location.reload).toHaveBeenCalledTimes(1);
+    });
+
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       '/@vite/client',
     ]);

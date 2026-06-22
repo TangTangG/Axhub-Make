@@ -94,7 +94,8 @@ describe('canvas prototype generation helpers', () => {
       y: 200,
       customData: {
         title: '结账流程',
-        resourceType: 'prototype',
+        resourceType: 'preview',
+        sourceResourceType: 'prototype',
         resourceId: 'checkout-flow',
         previewUrl: '/prototypes/checkout-flow',
         embedViewMode: 'preview',

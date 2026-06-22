@@ -55,6 +55,8 @@ describe('AI run client', () => {
     const result = await runAiStream({
       scene: 'document',
       prompt: '写文档',
+      runId: 'run-one',
+      threadId: 'thread-one',
       taskId: 'task-one',
       conversationId: 'conversation-one',
       generatorElementId: 'generator-1',
@@ -95,6 +97,8 @@ describe('AI run client', () => {
     expect(requestBody).toMatchObject({
       scene: 'document',
       prompt: '写文档',
+      runId: 'run-one',
+      threadId: 'thread-one',
       taskId: 'task-one',
       conversationId: 'conversation-one',
       generatorElementId: 'generator-1',

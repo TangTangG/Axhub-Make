@@ -466,6 +466,25 @@ export interface GenieEditorHostResource {
 }
 
 export type PrototypeEditCommentTaskStatus = 'idle' | 'editing' | 'completed' | 'error';
+export type GenieEditorExternalEditingState = PrototypeEditCommentTaskStatus;
+
+export interface GenieEditorExternalEditingTaskRef {
+  provider: string | null;
+  sessionId: string | null;
+  requestId: string | null;
+}
+
+export interface GenieEditorExternalEditingTargetRef {
+  locator?: ElementLocator | null;
+  label?: string | null;
+}
+
+export interface GenieEditorExternalEditingStateResult {
+  elementKey: WebEditorElementKey;
+  state: GenieEditorExternalEditingState;
+  applied: boolean;
+  taskRef?: GenieEditorExternalEditingTaskRef | null;
+}
 
 export interface PrototypeEditCommentTweakEntry {
   summaryLines?: string[];
@@ -630,7 +649,10 @@ export interface GenieEditorHostToolbarState {
 
 export type GenieEditorHostToolbarAction =
   | { type: 'wake-genie' }
-  | { type: 'send-to-genie' }
+  | ({
+      type: 'send-to-genie';
+      elementKey?: WebEditorElementKey;
+    } & GenieEditorExternalEditingTargetRef)
   | { type: 'interrupt-genie' }
   | { type: 'copy-prompt'; clipboard?: 'host' }
   | { type: 'clear-edits'; skipConfirm?: boolean }
@@ -885,6 +907,13 @@ export interface GenieEditorApi {
   subscribeHostToolbarState: (listener: GenieEditorHostToolbarStateListener) => () => void;
   /** Execute a host toolbar action through the same runtime logic as the inline toolbar */
   runHostToolbarAction: (action: GenieEditorHostToolbarAction) => Promise<boolean>;
+  /** Update the external editing task state for an element controlled by a host/API run */
+  setNodeEditingState: (
+    elementKey: WebEditorElementKey,
+    nextState: GenieEditorExternalEditingState,
+    taskRef: Partial<GenieEditorExternalEditingTaskRef> | null,
+    targetRef?: GenieEditorExternalEditingTargetRef | null,
+  ) => Promise<GenieEditorExternalEditingStateResult>;
   /** Start the editor in property-panel-only mode (no selection/interaction) */
   startPanelOnly?: () => void;
   /** Stop the editor from property-panel-only mode */

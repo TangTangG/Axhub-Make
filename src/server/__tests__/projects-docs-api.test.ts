@@ -205,6 +205,20 @@ describe('make-server project docs APIs', () => {
       });
       expect(fs.existsSync(path.join(docsDir, 'Renamed-Guide.md'))).toBe(true);
 
+      const savedDoc = await fetch(`${server.origin}/api/docs/Renamed-Guide.md`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: '# Saved Guide\n\nEdited online.\n' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(savedDoc).toMatchObject({
+        status: 200,
+        body: {
+          success: true,
+          path: path.join(docsDir, 'Renamed-Guide.md'),
+        },
+      });
+      expect(fs.readFileSync(path.join(docsDir, 'Renamed-Guide.md'), 'utf8')).toBe('# Saved Guide\n\nEdited online.\n');
+
       const deleted = await fetch(`${server.origin}/api/docs/Plan-Draft.md`, { method: 'DELETE' })
         .then((response) => response.json());
       expect(deleted).toEqual({ success: true });
@@ -218,6 +232,113 @@ describe('make-server project docs APIs', () => {
       expect(metadata.resources.docs).not.toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'Plan-Draft' }),
       ]));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('saves markdown template content without treating the request as a rename', async () => {
+    const projectRoot = createTempRoot();
+    const templatesDir = path.join(projectRoot, 'content', 'templates');
+    fs.mkdirSync(templatesDir, { recursive: true });
+    fs.writeFileSync(path.join(templatesDir, 'write-prd.md'), '# Write PRD 模板\n\nOriginal body.\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'template-save-client', name: 'Template Save Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [
+          {
+            id: 'write-prd',
+            name: 'write-prd.md',
+            title: 'Write PRD 模板',
+            path: path.join(templatesDir, 'write-prd.md'),
+          },
+        ],
+      },
+      navigation: { prototypes: [], docs: [] },
+      resourceWriteTargets: {
+        templates: { path: 'content/templates' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'template-save-client', 'Template Save Client');
+      await setActiveProject(server.origin, 'template-save-client');
+
+      const saved = await fetch(`${server.origin}/api/docs/templates/write-prd.md`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: '# Updated PRD 模板\n\nSaved from editor.\n' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({
+        status: 200,
+        body: {
+          success: true,
+          path: path.join(templatesDir, 'write-prd.md'),
+        },
+      });
+      expect(fs.readFileSync(path.join(templatesDir, 'write-prd.md'), 'utf8')).toBe('# Updated PRD 模板\n\nSaved from editor.\n');
+      expect(fs.existsSync(path.join(templatesDir, 'Updated-PRD-模板.md'))).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('renames nested templates inside their current directory', async () => {
+    const projectRoot = createTempRoot();
+    const templatesDir = path.join(projectRoot, 'content', 'templates');
+    fs.mkdirSync(path.join(templatesDir, 'nested'), { recursive: true });
+    fs.writeFileSync(path.join(templatesDir, 'nested', 'prd-template.md'), '# Nested PRD\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'nested-template-rename-client', name: 'Nested Template Rename Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [
+          {
+            id: 'nested-prd-template',
+            name: 'nested/prd-template.md',
+            title: 'Nested PRD',
+            path: path.join(templatesDir, 'nested', 'prd-template.md'),
+          },
+        ],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: ['nested/prd-template.md'] },
+      resourceWriteTargets: {
+        templates: { path: 'content/templates' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'nested-template-rename-client', 'Nested Template Rename Client');
+      await setActiveProject(server.origin, 'nested-template-rename-client');
+
+      const renamed = await fetch(`${server.origin}/api/docs/templates/${encodeURIComponent('nested/prd-template.md')}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newBaseName: 'prd-template-v2' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(renamed).toMatchObject({
+        status: 200,
+        body: {
+          success: true,
+          name: 'nested/prd-template-v2.md',
+          absoluteFilePath: path.join(templatesDir, 'nested', 'prd-template-v2.md'),
+        },
+      });
+      expect(fs.existsSync(path.join(templatesDir, 'nested', 'prd-template-v2.md'))).toBe(true);
+      expect(fs.existsSync(path.join(templatesDir, 'nested', 'nested', 'prd-template-v2.md'))).toBe(false);
+      expect(fs.existsSync(path.join(templatesDir, 'prd-template-v2.md'))).toBe(false);
     } finally {
       await server.close();
     }
@@ -338,6 +459,47 @@ describe('make-server project docs APIs', () => {
       expect(downloadResponse.headers.get('content-type')).toBe('application/octet-stream');
       expect(downloadResponse.headers.get('x-axhub-preview-fallback')).toBeNull();
       expect(await downloadResponse.text()).toBe('<mxfile />\n');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('injects the shared HTML annotation bootstrap into browser previews for HTML docs', async () => {
+    const projectRoot = createTempRoot();
+    const docsDir = path.join(projectRoot, 'content', 'docs');
+    fs.mkdirSync(docsDir, { recursive: true });
+    fs.writeFileSync(path.join(docsDir, 'visual-prd.html'), '<!doctype html><html><body><main>Visual PRD</main></body></html>', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'docs-html-preview-client', name: 'Docs HTML Preview Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      resourceWriteTargets: {
+        docs: { path: 'content/docs' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'docs-html-preview-client', 'Docs HTML Preview Client');
+      await setActiveProject(server.origin, 'docs-html-preview-client');
+
+      const response = await fetch(`${server.origin}/api/docs/visual-prd.html`, {
+        headers: {
+          accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/html');
+      expect(html).toContain('Visual PRD');
+      expect(html).toContain('<script type="module" src="/assets/html-template-bootstrap.js"></script>');
     } finally {
       await server.close();
     }

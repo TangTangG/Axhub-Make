@@ -62,9 +62,12 @@ describe('getManualChunkName', () => {
     expect(
       getManualChunkName('/repo/node_modules/.pnpm/dayjs@1.11.18/node_modules/dayjs/dayjs.min.js'),
     ).toBe('vendor-common');
+  });
+
+  it('keeps assistant nanoid runtime with assistant packages to avoid chunk initialization cycles', () => {
     expect(
-      getManualChunkName('/repo/node_modules/.pnpm/nanoid@5.1.6/node_modules/nanoid/index.browser.js'),
-    ).toBe('vendor-common');
+      getManualChunkName('/repo/node_modules/.pnpm/nanoid@5.1.11/node_modules/nanoid/index.browser.js'),
+    ).toBe('vendor-assistant');
   });
 
   it('keeps Ant Design reset css on the spec-template styles entry instead of shared homepage chunks', () => {

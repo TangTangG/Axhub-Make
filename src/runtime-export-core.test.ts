@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { captureDocumentScreenshot } from './runtime-export-core';
@@ -20,8 +22,17 @@ class FakeHTMLElement {
     this.style = {
       marginLeft: '',
       marginRight: '',
+      marginTop: '',
+      marginBottom: '',
+      paddingTop: '',
+      paddingBottom: '',
       width: '',
       height: '',
+      minHeight: '',
+      display: '',
+      alignItems: '',
+      justifyContent: '',
+      placeItems: '',
       backgroundImage: '',
       setProperty: (name: string, value: string) => {
         this.style[name] = value;
@@ -165,6 +176,108 @@ describe('runtime-export-core captureDocumentScreenshot', () => {
     }));
   });
 
+  it('temporarily anchors the screenshot root and page chrome to the top-left viewport', async () => {
+    const element = new FakeHTMLElement();
+    const documentElement = new FakeHTMLElement();
+    const body = new FakeHTMLElement();
+    element.style.marginLeft = 'auto';
+    element.style.marginRight = 'auto';
+    element.style.marginTop = '48px';
+    element.style.marginBottom = '24px';
+    documentElement.style.width = '100%';
+    documentElement.style.height = '100%';
+    body.style.width = '100%';
+    body.style.height = '100%';
+    body.style.minHeight = '100vh';
+    body.style.marginTop = '32px';
+    body.style.paddingTop = '16px';
+    body.style.paddingBottom = '8px';
+    body.style.display = 'flex';
+    body.style.alignItems = 'center';
+    body.style.justifyContent = 'center';
+    body.style.placeItems = 'center';
+    element.scrollWidth = 390;
+    element.scrollHeight = 846;
+    document.body = body as any;
+    document.documentElement = documentElement as any;
+    snapdomToPng.mockImplementation(async (calledElement) => {
+      expect(calledElement).toBe(element);
+      expect(element.style.marginLeft).toBe('0');
+      expect(element.style.marginRight).toBe('0');
+      expect(element.style.marginTop).toBe('0');
+      expect(element.style.marginBottom).toBe('0');
+      expect(documentElement.style.width).toBe('390px');
+      expect(documentElement.style.height).toBe('846px');
+      expect(body.style.width).toBe('390px');
+      expect(body.style.height).toBe('846px');
+      expect(body.style.minHeight).toBe('846px');
+      expect(body.style.marginTop).toBe('0');
+      expect(body.style.paddingTop).toBe('0');
+      expect(body.style.paddingBottom).toBe('0');
+      expect(body.style.display).toBe('block');
+      expect(body.style.alignItems).toBe('initial');
+      expect(body.style.justifyContent).toBe('initial');
+      expect(body.style.placeItems).toBe('initial');
+      return {
+        src: 'data:image/png;base64,c25hcGRvbQ==',
+        getAttribute: vi.fn(),
+      };
+    });
+
+    await captureDocumentScreenshot(element as any, {
+      targetWidth: 390,
+      targetHeight: 846,
+    });
+
+    expect(element.style.marginLeft).toBe('auto');
+    expect(element.style.marginRight).toBe('auto');
+    expect(element.style.marginTop).toBe('48px');
+    expect(element.style.marginBottom).toBe('24px');
+    expect(documentElement.style.width).toBe('100%');
+    expect(documentElement.style.height).toBe('100%');
+    expect(body.style.width).toBe('100%');
+    expect(body.style.height).toBe('100%');
+    expect(body.style.minHeight).toBe('100vh');
+    expect(body.style.marginTop).toBe('32px');
+    expect(body.style.paddingTop).toBe('16px');
+    expect(body.style.paddingBottom).toBe('8px');
+    expect(body.style.display).toBe('flex');
+    expect(body.style.alignItems).toBe('center');
+    expect(body.style.justifyContent).toBe('center');
+    expect(body.style.placeItems).toBe('center');
+  });
+
+  it('temporarily disables root flex centering that can create blank top screenshot space', async () => {
+    const element = new FakeHTMLElement();
+    element.style.display = 'flex';
+    element.style.alignItems = 'center';
+    element.style.justifyContent = 'center';
+    element.style.placeItems = 'center';
+    element.scrollWidth = 390;
+    element.scrollHeight = 846;
+    snapdomToPng.mockImplementation(async (calledElement) => {
+      expect(calledElement).toBe(element);
+      expect(element.style.display).toBe('flex');
+      expect(element.style.alignItems).toBe('initial');
+      expect(element.style.justifyContent).toBe('initial');
+      expect(element.style.placeItems).toBe('initial');
+      return {
+        src: 'data:image/png;base64,c25hcGRvbQ==',
+        getAttribute: vi.fn(),
+      };
+    });
+
+    await captureDocumentScreenshot(element as any, {
+      targetWidth: 390,
+      targetHeight: 846,
+    });
+
+    expect(element.style.display).toBe('flex');
+    expect(element.style.alignItems).toBe('center');
+    expect(element.style.justifyContent).toBe('center');
+    expect(element.style.placeItems).toBe('center');
+  });
+
   it('throws when snapDOM returns an empty image and still restores styles', async () => {
     const element = new FakeHTMLElement();
     element.style.marginLeft = 'auto';
@@ -189,5 +302,16 @@ describe('runtime-export-core captureDocumentScreenshot', () => {
 
     await expect(captureDocumentScreenshot(element as any)).rejects.toThrow('snapdom failed');
     expect(snapdomToPng).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('runtime-export-core bundle boundaries', () => {
+  it('keeps snapDOM as a static dependency so Vite does not emit cross-origin modulepreload paths', () => {
+    const source = readFileSync(resolve(__dirname, './runtime-export-core.ts'), 'utf8');
+
+    expect(source).toContain("import { snapdom, type SnapdomOptions } from '@zumer/snapdom';");
+    expect(source).toContain('const snapdomToPng = testSnapdomToPng ?? snapdom.toPng;');
+    expect(source).not.toContain("await import('@zumer/snapdom')");
+    expect(source).not.toContain("import('@zumer/snapdom')");
   });
 });

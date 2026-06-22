@@ -1081,6 +1081,7 @@ export function createGenieBridgeService(options: {
   function notifyTaskStateChange(): void {
     state.breadcrumbs?.refresh();
     state.propertyPanel?.refresh();
+    options.changes.renderChangeMarkers();
     state.positionTracker?.forceUpdate(true);
   }
 
@@ -1363,6 +1364,14 @@ export function createGenieBridgeService(options: {
         elementKey: textCommentMeta.elementKey,
         locator: textCommentMeta.locator,
         label: textCommentMeta.label,
+      };
+    }
+    const existingMeta = options.changes.getMetaForElement?.(element);
+    if (existingMeta) {
+      return {
+        elementKey: existingMeta.elementKey,
+        locator: existingMeta.locator,
+        label: existingMeta.label,
       };
     }
     const locator = createElementLocator(element);

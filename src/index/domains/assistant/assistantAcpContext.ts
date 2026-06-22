@@ -124,6 +124,14 @@ export type AcpPreviewMcpPostMessage =
   | AcpRuntimeConfigurePostMessage
   | AcpRuntimeClearPostMessage;
 
+export interface AcpThemePostMessage {
+  type: 'acp.theme.set';
+  requestId?: string;
+  payload: {
+    theme: 'light' | 'dark';
+  };
+}
+
 const ACP_IMAGE_GENERATION_TOOL_ID = 'image-generation';
 const ACP_IMAGE_GENERATION_RUNTIME_CLEAR_FIELDS: AcpRuntimeConfigField[] = ['builtinTools', 'builtinToolSettings'];
 const ACP_PREVIEW_MCP_NAME = 'axhub-preview';
@@ -338,6 +346,19 @@ export function buildAcpContextItemsPostMessage(
     payload: {
       items: Array.isArray(items) ? items : [],
       messageFilter,
+    },
+  };
+}
+
+export function buildAcpThemePostMessage(
+  isDarkMode: boolean,
+  requestId?: string,
+): AcpThemePostMessage {
+  return {
+    type: 'acp.theme.set',
+    ...(requestId ? { requestId } : {}),
+    payload: {
+      theme: isDarkMode ? 'dark' : 'light',
     },
   };
 }

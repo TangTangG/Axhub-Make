@@ -117,6 +117,10 @@ export function shouldShowOverlayActivityFeed(options: {
   return options.activityCount > 0;
 }
 
+export function resolveTaskOverlayBackdropFilter(running: boolean): string {
+  return running ? 'blur(4px)' : 'blur(2px)';
+}
+
 export function pickOverlayActivityHostTask(
   tasks: readonly Pick<ElementGenieTaskState, 'elementKey' | 'status' | 'origin' | 'updatedAt'>[],
 ): string | null {
@@ -468,7 +472,7 @@ export function ElementGenieTaskOverlays(
               border: running ? `2px solid ${WEB_EDITOR_V2_COLORS.selectionBorder}` : `1px solid ${tone.border}`,
               boxShadow: running ? 'none' : `0 0 0 1px ${tone.border}, 0 12px 30px ${tone.glow}`,
               background: tone.background,
-              backdropFilter: running ? 'blur(2px)' : 'blur(1px)',
+              backdropFilter: resolveTaskOverlayBackdropFilter(running),
             }}
           />
           {running ? (

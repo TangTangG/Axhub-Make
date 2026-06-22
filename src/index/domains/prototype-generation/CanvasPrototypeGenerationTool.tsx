@@ -807,6 +807,7 @@ export default function CanvasPrototypeGenerationTool({
           initialReferenceImages={pendingInitialReferenceImages}
           initialLocalContextRefs={pendingInitialLocalContextRefs}
           onPasteReferenceImages={pasteCanvasReferenceImages}
+          preferredPromptClient={preferredPromptClient}
           themes={themes}
           onSubmitPrompt={handleSubmitPrompt}
         />

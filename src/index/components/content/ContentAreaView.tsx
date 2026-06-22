@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ChevronDown, Copy, ExternalLink, FileIcon, Globe, ImageIcon, Monitor, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone, UploadCloud } from 'lucide-react';
+import { ChevronDown, CircleHelp, Copy, ExternalLink, FileIcon, Globe, ImageIcon, Monitor, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { Segmented } from 'antd';
 import { ItemData, CanvasItem, TabType, ViewMode, type PromptClientPreference } from '../../types';
@@ -70,12 +70,17 @@ import {
     pickCanvasAiPrototypeStartPlaceholder,
 } from '../../domains/ai-generation/canvasAiSceneRegistry';
 import {
+    appendDocumentStartPromptSettings,
     appendImageStartPromptSettings,
     appendPrototypeStartPromptSettings,
+    type CanvasDocumentFormat,
+    type CanvasDocumentPromptSettings,
 } from '../../domains/ai-generation/canvasGenerationPromptSettings';
 import { apiService } from '../../services/index.api';
+import { documentTemplatesApi, type DocumentTemplateOption } from '../../services/documentTemplates';
 import { generateTemplateImportPrompt, type TemplateLibraryPromptItem } from '../../utils/templateImportPrompts';
 import { getUserFriendlyUploadErrorMessage } from '../../utils/uploadErrors';
+import { resolveMarkdownPreviewIframeUrl } from '../../utils/markdownPreview';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
 const ExcalidrawCanvas = React.lazy(() => lazyWithRetry(() => import('./ExcalidrawCanvas')));
@@ -87,14 +92,13 @@ const UNSPECIFIED_START_SETTING_VALUE = '__unspecified__';
 const PROTOTYPE_START_COUNT_OPTIONS = [1, 2, 3, 4] as const;
 const START_SETTINGS_SELECT_CONTENT_STYLE = { zIndex: 1400 } satisfies CSSProperties;
 const IMAGE_START_SIZE_OPTIONS = [
-    { label: 'auto', value: 'auto' },
-    { label: '1:1', value: '1024x1024' },
-    { label: '3:2', value: '1536x1024' },
-    { label: '2:3', value: '1024x1536' },
-    { label: '4:3', value: '1365x1024' },
-    { label: '3:4', value: '1024x1365' },
-    { label: '16:9(2k)', value: '2048x1152' },
-    { label: '9:16(2k)', value: '1152x2048' },
+    { label: '自动', value: 'auto' },
+    { label: '移动端 1K', value: '1024x1536' },
+    { label: '移动端 2K', value: '1152x2048' },
+    { label: '移动端 4K', value: '2160x3840' },
+    { label: 'PC 端 1K', value: '1536x1024' },
+    { label: 'PC 端 2K', value: '2048x1152' },
+    { label: 'PC 端 4K', value: '3840x2160' },
 ] as const;
 const IMAGE_START_QUALITY_OPTIONS = [
     { label: '自动', value: 'auto' },
@@ -107,6 +111,112 @@ const IMAGE_START_FORMAT_OPTIONS = [
     { label: 'JPEG', value: 'jpeg' },
     { label: 'WebP', value: 'webp' },
 ] as const;
+const DOCUMENT_START_FORMAT_OPTIONS = [
+    { label: 'Markdown 文档', value: 'md' },
+    { label: 'HTML 文档', value: 'html' },
+    { label: 'Mermaid 图表', value: 'mermaid' },
+    { label: 'Drawio 图表', value: 'drawio' },
+] as const satisfies readonly { label: string; value: CanvasDocumentFormat }[];
+type HtmlVisualSpecSkillId =
+    | 'kami'
+    | 'baoyu-classic'
+    | 'baoyu-grace'
+    | 'baoyu-simple'
+    | 'baoyu-modern'
+    | 'html-presentations-terminal'
+    | 'html-presentations-catppuccin'
+    | 'html-presentations-nord'
+    | 'guizang-editorial'
+    | 'guizang-swiss';
+const DOCUMENT_HTML_VISUAL_SPEC_OPTIONS = [
+    {
+        value: 'kami',
+        label: 'Kami 纸感文档',
+        description: '暖白纸张、墨蓝点缀、衬线标题，适合白皮书、简历、作品集和正式长文。',
+        themeInstruction: '使用 kami 的纸感文档主题：暖白纸张、墨蓝点缀、衬线标题和清晰的信息层级。',
+        skillName: 'kami',
+        githubUrl: 'https://github.com/tw93/kami',
+    },
+    {
+        value: 'baoyu-classic',
+        label: 'Baoyu 经典文章',
+        description: '传统公众号文章排版，居中标题、分隔线和醒目的二级标题，适合稳妥发布。',
+        themeInstruction: '使用 baoyu-markdown-to-html 的 default 主题：传统公众号文章排版，居中标题、分隔线和醒目的二级标题。',
+        skillName: 'baoyu-markdown-to-html',
+        githubUrl: 'https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-markdown-to-html',
+    },
+    {
+        value: 'baoyu-grace',
+        label: 'Baoyu 优雅文章',
+        description: '阴影、圆角卡片和精致引用块，适合更柔和、更有修饰感的长文。',
+        themeInstruction: '使用 baoyu-markdown-to-html 的 grace 主题：阴影、圆角卡片和精致引用块。',
+        skillName: 'baoyu-markdown-to-html',
+        githubUrl: 'https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-markdown-to-html',
+    },
+    {
+        value: 'baoyu-simple',
+        label: 'Baoyu 极简文章',
+        description: '留白更干净、圆角不对称，适合轻量说明、产品笔记和现代文档。',
+        themeInstruction: '使用 baoyu-markdown-to-html 的 simple 主题：干净留白和不对称圆角。',
+        skillName: 'baoyu-markdown-to-html',
+        githubUrl: 'https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-markdown-to-html',
+    },
+    {
+        value: 'baoyu-modern',
+        label: 'Baoyu 现代文章',
+        description: '大圆角、胶囊标题、行距更松，适合轻松但完整的图文发布。',
+        themeInstruction: '使用 baoyu-markdown-to-html 的 modern 主题：大圆角、胶囊标题和更松的阅读节奏。',
+        skillName: 'baoyu-markdown-to-html',
+        githubUrl: 'https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-markdown-to-html',
+    },
+    {
+        value: 'html-presentations-terminal',
+        label: 'HTML Presentation · Terminal',
+        description: '黑底绿字、等宽字体、终端扫描线感，适合技术演示和开发者分享。',
+        themeInstruction: '使用 html-presentations 的 terminal.css 主题：黑底绿字、等宽字体和终端扫描线感。',
+        skillName: 'html-presentations',
+        githubUrl: 'https://github.com/ericmjl/skills/tree/main/skills/html-presentations',
+    },
+    {
+        value: 'html-presentations-catppuccin',
+        label: 'HTML Presentation · Catppuccin',
+        description: '暖暗色底配柔和粉彩强调色，适合产品讲解、轻量分享和现代技术 deck。',
+        themeInstruction: '使用 html-presentations 的 catppuccin 主题：暖暗色底和柔和粉彩强调色。',
+        skillName: 'html-presentations',
+        githubUrl: 'https://github.com/ericmjl/skills/tree/main/skills/html-presentations',
+    },
+    {
+        value: 'html-presentations-nord',
+        label: 'HTML Presentation · Nord',
+        description: '蓝灰冷调、克制安静，适合系统说明、研究汇报和偏理性的演示。',
+        themeInstruction: '使用 html-presentations 的 nord 主题：蓝灰冷调、克制安静。',
+        skillName: 'html-presentations',
+        githubUrl: 'https://github.com/ericmjl/skills/tree/main/skills/html-presentations',
+    },
+    {
+        value: 'guizang-editorial',
+        label: 'Guizang · 电子杂志风',
+        description: '电子墨水、杂志排版、强叙事节奏，适合观点表达、个人分享和产品故事。',
+        themeInstruction: '使用 guizang-ppt-skill 的 Style A 电子杂志风：电子墨水、杂志排版和强叙事节奏。',
+        skillName: 'guizang-ppt-skill',
+        githubUrl: 'https://github.com/op7418/guizang-ppt-skill',
+    },
+    {
+        value: 'guizang-swiss',
+        label: 'Guizang · 瑞士国际主义',
+        description: '网格、直角色块、发丝线、高饱和锚点色，适合事实、产品、分析和方法论。',
+        themeInstruction: '使用 guizang-ppt-skill 的 Style B 瑞士国际主义：网格、直角色块、发丝线和高饱和锚点色。',
+        skillName: 'guizang-ppt-skill',
+        githubUrl: 'https://github.com/op7418/guizang-ppt-skill',
+    },
+] as const satisfies readonly {
+    value: HtmlVisualSpecSkillId;
+    label: string;
+    description: string;
+    themeInstruction: string;
+    skillName: string;
+    githubUrl: string;
+}[];
 const IMAGE_START_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 const PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_KEY = 'axhub:placeholder-template-library:v1';
 const PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
@@ -210,6 +320,52 @@ function writePlaceholderTemplateLibraryCache(templates: TemplateLibraryCardItem
         // Homepage examples are opportunistic; ignore storage failures.
     }
 }
+
+function FieldLabelWithHint({ label, hint }: { label: string; hint: string }) {
+    return (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            <span>{label}</span>
+            <TooltipProvider delayDuration={150}>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <span
+                            className="inline-flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground"
+                            aria-label={`${label}说明`}
+                        >
+                            <CircleHelp className="h-3.5 w-3.5" aria-hidden="true" />
+                        </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-[260px] text-xs leading-5">
+                        {hint}
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+        </span>
+    );
+}
+
+const PROTOTYPE_START_FIELD_HINTS = {
+    count: '选择后会按方案数量生成，并在最终提示词中加载本地 explore-options（多方案探索）技能提示。',
+    theme: '选择一个设计系统后，原型会尽量沿用该资源的视觉风格和组件约束。',
+    requirements: '开启后会加载 $requirements-exploration 技能来分析并完善需求。',
+} as const;
+
+const IMAGE_START_FIELD_HINTS = {
+    size: '选择移动端或 PC 端的 1K、2K、4K 画布尺寸。',
+    quality: '质量越高通常细节越好，但生成时间和消耗也可能更高。',
+    count: '选择后会按方案数量生成多个设计方向，并在最终提示词中加载本地 explore-options（多方案探索）技能提示。',
+    format: '选择生成图片的输出格式，透明背景仅支持 PNG。',
+    theme: '选择一个设计系统后，设计图会尽量沿用该资源的视觉风格和组件约束。',
+    promptOptimization: '开启后会要求 AI 完整使用输入内容，不主动改写提示词。',
+    transparentBackground: '生成 PNG 透明背景图片，适合图标、头像和贴纸等素材。',
+} as const;
+
+const DOCUMENT_START_FIELD_HINTS = {
+    format: 'Markdown 更轻量；HTML 文档有更好的视觉效果，但会消耗更多 token；Drawio 图表支持更丰富的图形和在线编辑，也会消耗更多 token。',
+    template: '可以在资源的 templates 目录下设置文档模板。',
+    visualSpec: 'HTML 文档可选择视觉规范技能，让排版更接近对应模板风格。',
+    requirements: '开启后会加载 $requirements-exploration 技能来分析并完善需求。',
+} as const;
 
 interface CanvasErrorBoundaryProps {
     resetKey: string;
@@ -356,7 +512,9 @@ interface ContentAreaProps {
     themes?: ThemeResourceItem[];
     defaultThemeName?: string | null;
     onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;
-    onRefreshPrototypes?: () => Promise<ItemData[]>;
+    prototypeStartDraftActive?: boolean;
+    onCreatePrototypeForDraftStart?: () => Promise<ItemData | null>;
+    onRefreshPrototypes?: (preferredName?: string) => Promise<ItemData[]>;
     onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     onAddCanvasScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;
     onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;
@@ -566,15 +724,19 @@ function PrototypeStartSettingsPopover({
     selectedThemeName,
     themeLabel,
     themes,
+    needsRequirementsAnalysis,
     onCountChange,
     onThemeChange,
+    onNeedsRequirementsAnalysisChange,
 }: {
     count?: number;
     selectedThemeName: string;
     themeLabel: string;
     themes?: ThemeResourceItem[];
+    needsRequirementsAnalysis: boolean;
     onCountChange: (count?: number) => void;
     onThemeChange: (themeName: string) => void;
+    onNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
 }) {
     const hasCount = typeof count === 'number';
     const hasSelectedTheme = selectedThemeName !== NO_PROTOTYPE_THEME_VALUE;
@@ -606,7 +768,7 @@ function PrototypeStartSettingsPopover({
 
                     <div className="grid grid-cols-2 gap-3">
                         <label className="space-y-1.5">
-                            <span className="text-xs font-medium text-muted-foreground">生成数量</span>
+                            <FieldLabelWithHint label="方案数量" hint={PROTOTYPE_START_FIELD_HINTS.count} />
                             <Select
                                 value={hasCount ? String(count) : UNSPECIFIED_START_SETTING_VALUE}
                                 onValueChange={(value) => onCountChange(value === UNSPECIFIED_START_SETTING_VALUE ? undefined : Number(value))}
@@ -628,12 +790,24 @@ function PrototypeStartSettingsPopover({
                         </label>
 
                         <label className="space-y-1.5">
-                            <span className="text-xs font-medium text-muted-foreground">设计系统</span>
+                            <FieldLabelWithHint label="设计系统" hint={PROTOTYPE_START_FIELD_HINTS.theme} />
                             <PrototypeThemeSearchSelect
                                 themes={themes}
                                 value={selectedThemeName}
                                 onValueChange={onThemeChange}
                             />
+                        </label>
+
+                        <label className="col-span-2 space-y-1.5">
+                            <FieldLabelWithHint label="需求分析" hint={PROTOTYPE_START_FIELD_HINTS.requirements} />
+                            <div className="flex h-8 items-center gap-2 text-xs font-medium text-foreground">
+                                <Switch
+                                    checked={needsRequirementsAnalysis}
+                                    onCheckedChange={(checked) => onNeedsRequirementsAnalysisChange(checked === true)}
+                                    aria-label="原型需要需求分析"
+                                />
+                                <span>开启</span>
+                            </div>
                         </label>
                     </div>
                 </div>
@@ -669,7 +843,7 @@ function ImageStartSettingsPopover({
     const summary = [
         params.size && params.size !== 'auto' ? sizeLabel : null,
         params.quality && params.quality !== 'auto' ? qualityLabel : null,
-        typeof params.n === 'number' ? `${params.n} 张` : null,
+        typeof params.n === 'number' ? `${params.n} 个` : null,
         params.output_format ? formatLabel : null,
         hasSelectedTheme ? themeLabel : null,
         transparentBackgroundChecked ? '透明背景' : null,
@@ -704,7 +878,7 @@ function ImageStartSettingsPopover({
 
                     <div className="grid grid-cols-2 gap-3">
                         <label className="space-y-1.5">
-                            <span className="text-xs font-medium text-muted-foreground">尺寸</span>
+                            <FieldLabelWithHint label="尺寸" hint={IMAGE_START_FIELD_HINTS.size} />
                             <Select value={params.size} onValueChange={(value) => updateParam('size', value)}>
                                 <SelectTrigger className="h-8 text-xs">
                                     <SelectValue />
@@ -720,7 +894,7 @@ function ImageStartSettingsPopover({
                         </label>
 
                         <label className="space-y-1.5">
-                            <span className="text-xs font-medium text-muted-foreground">质量</span>
+                            <FieldLabelWithHint label="质量" hint={IMAGE_START_FIELD_HINTS.quality} />
                             <Select value={params.quality} onValueChange={(value) => updateParam('quality', value as AiImageTaskParams['quality'])}>
                                 <SelectTrigger className="h-8 text-xs">
                                     <SelectValue />
@@ -736,7 +910,7 @@ function ImageStartSettingsPopover({
                         </label>
 
                         <label className="space-y-1.5">
-                            <span className="text-xs font-medium text-muted-foreground">图片数量</span>
+                            <FieldLabelWithHint label="方案数量" hint={IMAGE_START_FIELD_HINTS.count} />
                             <Select
                                 value={typeof params.n === 'number' ? String(params.n) : UNSPECIFIED_START_SETTING_VALUE}
                                 onValueChange={(value) => updateParam('n', value === UNSPECIFIED_START_SETTING_VALUE ? undefined : Number(value))}
@@ -750,7 +924,7 @@ function ImageStartSettingsPopover({
                                     </SelectItem>
                                     {IMAGE_START_COUNT_OPTIONS.map((count) => (
                                         <SelectItem key={count} value={String(count)}>
-                                            {count} 张
+                                            {count} 个
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
@@ -758,7 +932,7 @@ function ImageStartSettingsPopover({
                         </label>
 
                         <label className="space-y-1.5">
-                            <span className="text-xs font-medium text-muted-foreground">格式</span>
+                            <FieldLabelWithHint label="格式" hint={IMAGE_START_FIELD_HINTS.format} />
                             <Select
                                 value={params.output_format || UNSPECIFIED_START_SETTING_VALUE}
                                 onValueChange={(value) => updateParam('output_format', value === UNSPECIFIED_START_SETTING_VALUE ? undefined : value as AiImageTaskParams['output_format'])}
@@ -780,7 +954,7 @@ function ImageStartSettingsPopover({
                         </label>
 
                         <label className="col-span-2 space-y-1.5">
-                            <span className="text-xs font-medium text-muted-foreground">设计系统</span>
+                            <FieldLabelWithHint label="设计系统" hint={IMAGE_START_FIELD_HINTS.theme} />
                             <PrototypeThemeSearchSelect
                                 themes={themes}
                                 value={selectedThemeName}
@@ -788,31 +962,31 @@ function ImageStartSettingsPopover({
                             />
                         </label>
 
-                        <div className="col-span-2 flex items-center gap-6">
-                            <label
-                                className={`inline-flex items-center gap-2 text-xs font-medium ${hasSelectedTheme ? 'text-muted-foreground' : 'text-foreground'}`}
-                                title={hasSelectedTheme ? '已选择设计系统，会自动保持原始提示词以避免改写设计约束。' : '开启后会要求 AI 完整使用输入内容，不主动改写提示词。'}
-                            >
-                                <Switch
-                                    checked={disablePromptOptimizationChecked}
-                                    disabled={hasSelectedTheme}
-                                    onCheckedChange={(checked) => updateParam('disable_prompt_optimization', checked === true)}
-                                    aria-label="禁止优化提示词"
-                                />
-                                <span>禁止优化提示词</span>
+                        <div className="col-span-2 grid grid-cols-2 gap-3">
+                            <label className={`space-y-1.5 text-xs font-medium ${hasSelectedTheme ? 'text-muted-foreground' : 'text-foreground'}`}>
+                                <FieldLabelWithHint label="禁止优化提示词" hint={hasSelectedTheme ? '已选择设计系统，会自动保持原始提示词以避免改写设计约束。' : IMAGE_START_FIELD_HINTS.promptOptimization} />
+                                <div className="flex h-8 items-center gap-2">
+                                    <Switch
+                                        checked={disablePromptOptimizationChecked}
+                                        disabled={hasSelectedTheme}
+                                        onCheckedChange={(checked) => updateParam('disable_prompt_optimization', checked === true)}
+                                        aria-label="禁止优化提示词"
+                                    />
+                                    <span>开启</span>
+                                </div>
                             </label>
 
-                            <label
-                                className={`inline-flex items-center gap-2 text-xs font-medium ${canUseTransparentBackground ? 'text-foreground' : 'text-muted-foreground'}`}
-                                title={canUseTransparentBackground ? '生成 PNG 透明背景图片。' : '透明背景仅支持 PNG 格式。'}
-                            >
-                                <Switch
-                                    checked={transparentBackgroundChecked}
-                                    disabled={!canUseTransparentBackground}
-                                    onCheckedChange={(checked) => updateParam('background', checked === true ? 'transparent' : 'auto')}
-                                    aria-label="透明背景"
-                                />
-                                <span>透明背景</span>
+                            <label className={`space-y-1.5 text-xs font-medium ${canUseTransparentBackground ? 'text-foreground' : 'text-muted-foreground'}`}>
+                                <FieldLabelWithHint label="透明背景" hint={canUseTransparentBackground ? IMAGE_START_FIELD_HINTS.transparentBackground : '透明背景仅支持 PNG 格式。'} />
+                                <div className="flex h-8 items-center gap-2">
+                                    <Switch
+                                        checked={transparentBackgroundChecked}
+                                        disabled={!canUseTransparentBackground}
+                                        onCheckedChange={(checked) => updateParam('background', checked === true ? 'transparent' : 'auto')}
+                                        aria-label="透明背景"
+                                    />
+                                    <span>开启</span>
+                                </div>
                             </label>
                         </div>
                     </div>
@@ -822,8 +996,160 @@ function ImageStartSettingsPopover({
     );
 }
 
+function DocumentStartSettingsPopover({
+    format,
+    htmlVisualSpec,
+    selectedTemplateName,
+    templates,
+    templatesLoading,
+    templateError,
+    needsRequirementsAnalysis,
+    onFormatChange,
+    onHtmlVisualSpecChange,
+    onTemplateChange,
+    onNeedsRequirementsAnalysisChange,
+}: {
+    format: CanvasDocumentFormat | '';
+    htmlVisualSpec: HtmlVisualSpecSkillId | '';
+    selectedTemplateName: string;
+    templates: DocumentTemplateOption[];
+    templatesLoading?: boolean;
+    templateError?: string;
+    needsRequirementsAnalysis: boolean;
+    onFormatChange: (format: CanvasDocumentFormat | '') => void;
+    onHtmlVisualSpecChange: (visualSpec: HtmlVisualSpecSkillId | '') => void;
+    onTemplateChange: (templateName: string) => void;
+    onNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
+}) {
+    const formatLabel = DOCUMENT_START_FORMAT_OPTIONS.find((option) => option.value === format)?.label || '';
+    const visualSpecOption = DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.find((option) => option.value === htmlVisualSpec) || null;
+    const visualSpecSummaryLabel = format === 'html' ? visualSpecOption?.label : '';
+    const selectedTemplate = templates.find((template) => template.name === selectedTemplateName) || null;
+    const templateLabel = selectedTemplate?.displayName || selectedTemplateName || '';
+    const summary = [formatLabel, visualSpecSummaryLabel, templateLabel].filter(Boolean).join(' · ') || '未指定';
+    return (
+        <Popover>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    data-axhub-document-start-settings-trigger
+                    className="ax-ai-image-settings-trigger"
+                    aria-label="文档设置"
+                >
+                    <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span className="ax-ai-image-settings-summary">{summary}</span>
+                    <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
+                <div className="space-y-3">
+                    <div className="space-y-1">
+                        <div className="text-sm font-medium text-foreground">文档设置</div>
+                        <div className="text-xs text-muted-foreground">{summary}</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <label className="space-y-1.5">
+                            <FieldLabelWithHint label="文档格式" hint={DOCUMENT_START_FIELD_HINTS.format} />
+                            <Select
+                                value={format || UNSPECIFIED_START_SETTING_VALUE}
+                                onValueChange={(value) => onFormatChange(value === UNSPECIFIED_START_SETTING_VALUE ? '' : value as CanvasDocumentFormat)}
+                            >
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    <SelectItem value={UNSPECIFIED_START_SETTING_VALUE}>
+                                        未指定
+                                    </SelectItem>
+                                    {DOCUMENT_START_FORMAT_OPTIONS.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                            {option.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </label>
+
+                        <label className="space-y-1.5">
+                            <FieldLabelWithHint label="模板" hint={DOCUMENT_START_FIELD_HINTS.template} />
+                            <Select
+                                value={selectedTemplateName || UNSPECIFIED_START_SETTING_VALUE}
+                                onValueChange={(value) => onTemplateChange(value === UNSPECIFIED_START_SETTING_VALUE ? '' : value)}
+                                disabled={templatesLoading || templates.length === 0}
+                            >
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                    <SelectItem value={UNSPECIFIED_START_SETTING_VALUE}>
+                                        {templatesLoading ? '加载中' : '未指定'}
+                                    </SelectItem>
+                                    {templates.length === 0 ? null : (
+                                        templates.map((template) => (
+                                            <SelectItem key={template.name} value={template.name}>
+                                                {template.displayName}
+                                            </SelectItem>
+                                        ))
+                                    )}
+                                </SelectContent>
+                            </Select>
+                        </label>
+
+                        {format === 'html' ? (
+                            <label className="col-span-2 space-y-1.5">
+                                <FieldLabelWithHint label="视觉规范" hint={DOCUMENT_START_FIELD_HINTS.visualSpec} />
+                                <Select
+                                    value={htmlVisualSpec || UNSPECIFIED_START_SETTING_VALUE}
+                                    onValueChange={(value) => onHtmlVisualSpecChange(value === UNSPECIFIED_START_SETTING_VALUE ? '' : value as HtmlVisualSpecSkillId)}
+                                >
+                                    <SelectTrigger className="h-8 text-xs">
+                                        <SelectValue>{visualSpecOption?.label || '未指定'}</SelectValue>
+                                    </SelectTrigger>
+                                    <SelectContent style={START_SETTINGS_SELECT_CONTENT_STYLE}>
+                                        <SelectItem value={UNSPECIFIED_START_SETTING_VALUE}>
+                                            未指定
+                                        </SelectItem>
+                                        {DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.map((option) => (
+                                            <SelectItem key={option.value} value={option.value} className="items-start py-2">
+                                                <div className="min-w-0 space-y-0.5">
+                                                    <div className="text-sm leading-5">{option.label}</div>
+                                                    <div className="whitespace-normal text-xs leading-4 text-muted-foreground">
+                                                        {option.description}
+                                                    </div>
+                                                </div>
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </label>
+                        ) : null}
+                        <label className="col-span-2 space-y-1.5">
+                            <FieldLabelWithHint label="需求分析" hint={DOCUMENT_START_FIELD_HINTS.requirements} />
+                            <div className="flex h-8 items-center gap-2 text-xs font-medium text-foreground">
+                                <Switch
+                                    checked={needsRequirementsAnalysis}
+                                    onCheckedChange={(checked) => onNeedsRequirementsAnalysisChange(checked === true)}
+                                    aria-label="文档需要需求分析"
+                                />
+                                <span>开启</span>
+                            </div>
+                        </label>
+                        {templateError ? (
+                            <div className="col-span-2 text-xs leading-5 text-destructive">
+                                {templateError}
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+}
+
 function PrototypePlaceholderGuide({
     item,
+    draftActive = false,
     activeProjectId,
     assistantProjectPath,
     preferredIDE,
@@ -843,6 +1169,7 @@ function PrototypePlaceholderGuide({
     onSubmitPrototypeStartRequest,
 }: {
     item: ItemData;
+    draftActive?: boolean;
     activeProjectId?: string | null;
     assistantProjectPath?: string;
     preferredIDE?: MainIDEPreference;
@@ -858,17 +1185,25 @@ function PrototypePlaceholderGuide({
     themes?: ThemeResourceItem[];
     defaultThemeName?: string | null;
     onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;
-    onRefreshPrototypes?: () => Promise<ItemData[]>;
+    onRefreshPrototypes?: (preferredName?: string) => Promise<ItemData[]>;
     onSubmitPrototypeStartRequest?: (request: CanvasAiGenerationRequest) => void | Promise<void>;
 }) {
     const [activeScene, setActiveScene] = useState<CanvasAiScene>('page');
     const activeSceneDefinition = getCanvasAiSceneDefinition(activeScene);
     const activeStartPlaceholders = getCanvasAiPrototypeStartPlaceholders(activeScene);
-    const activeQuickPrompts = getCanvasAiPrototypeStartQuickPrompts(activeScene);
+    const activeQuickPrompts = activeScene === 'document' ? [] : getCanvasAiPrototypeStartQuickPrompts(activeScene);
     const activeStartSystemPrompt = getCanvasAiPrototypeStartSystemPrompt(activeScene);
     const [placeholder, setPlaceholder] = useState(() => pickCanvasAiPrototypeStartPlaceholder(activeScene));
     const [prototypeGenerationCount, setPrototypeGenerationCount] = useState<number | undefined>(undefined);
+    const [prototypeNeedsRequirementsAnalysis, setPrototypeNeedsRequirementsAnalysis] = useState(false);
     const [imageStartParams, setImageStartParams] = useState<ImageStartParams>(DEFAULT_IMAGE_START_PARAMS);
+    const [documentFormat, setDocumentFormat] = useState<CanvasDocumentFormat | ''>('');
+    const [documentHtmlVisualSpec, setDocumentHtmlVisualSpec] = useState<HtmlVisualSpecSkillId | ''>('');
+    const [documentNeedsRequirementsAnalysis, setDocumentNeedsRequirementsAnalysis] = useState(false);
+    const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplateOption[]>([]);
+    const [documentTemplatesLoading, setDocumentTemplatesLoading] = useState(false);
+    const [documentTemplateError, setDocumentTemplateError] = useState('');
+    const [selectedDocumentTemplateName, setSelectedDocumentTemplateName] = useState('');
     const [templateCases, setTemplateCases] = useState<TemplateLibraryCardItem[]>([]);
     const [templateCasesLoading, setTemplateCasesLoading] = useState(false);
     const [templateCasesError, setTemplateCasesError] = useState('');
@@ -907,6 +1242,36 @@ function PrototypePlaceholderGuide({
     useEffect(() => {
         setPlaceholder(pickCanvasAiPrototypeStartPlaceholder(activeScene));
     }, [activeScene]);
+
+    useEffect(() => {
+        let cancelled = false;
+        setDocumentTemplatesLoading(true);
+        setDocumentTemplateError('');
+        documentTemplatesApi.list()
+            .then((templates) => {
+                if (cancelled) return;
+                setDocumentTemplates(templates);
+                setDocumentTemplateError('');
+                setSelectedDocumentTemplateName((current) => (
+                    current && templates.some((template) => template.name === current) ? current : ''
+                ));
+            })
+            .catch((error: any) => {
+                if (cancelled) return;
+                setDocumentTemplates([]);
+                setSelectedDocumentTemplateName('');
+                setDocumentTemplateError(error?.message || '文档模板读取失败');
+            })
+            .finally(() => {
+                if (!cancelled) {
+                    setDocumentTemplatesLoading(false);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     useEffect(() => {
         const previousDefaultThemeName = previousDefaultThemeNameRef.current;
@@ -990,17 +1355,21 @@ function PrototypePlaceholderGuide({
         }
         setTemplateImportingId(template.id);
         try {
+            const targetPrototypeName = draftActive ? undefined : item.name;
             const response = await fetch('/api/template-library/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ templateId: template.id, targetPrototypeName: item.name }),
+                body: JSON.stringify({
+                    templateId: template.id,
+                    ...(targetPrototypeName ? { targetPrototypeName } : {}),
+                }),
             });
             const result = await response.json();
             if (!response.ok || !result?.success) {
                 throw new Error(result?.error || '直接导入失败');
             }
             toast.success('模板已导入');
-            void onRefreshPrototypes?.();
+            void onRefreshPrototypes?.(String(result?.folderName || result?.name || '').trim());
         } catch (error: any) {
             toast.error(getUserFriendlyUploadErrorMessage(error, '直接导入失败，请稍后重试'));
         } finally {
@@ -1035,9 +1404,9 @@ function PrototypePlaceholderGuide({
                         buildPrompt={() => generateTemplateImportPrompt({
                             template: toPromptTemplateItem(template),
                             repo: 'lintendo/Make-Template',
-                            targetPrototypeName: item.name,
+                            targetPrototypeName: draftActive ? undefined : item.name,
                         })}
-                        getTargetPath={() => prototypeIndexPath}
+                        getTargetPath={() => draftActive ? null : prototypeIndexPath}
                         onExecutePrompt={onExecutePrompt}
                         copyLabel="复制提示词"
                         copySuccessMessage="提示词已复制到剪贴板"
@@ -1073,16 +1442,41 @@ function PrototypePlaceholderGuide({
                             placeholder={placeholder || activeStartPlaceholders[0] || activeSceneDefinition.placeholders[0] || '描述你想创建的内容'}
                             ariaLabel="原型起始页 AI 输入"
                             quickPrompts={activeQuickPrompts}
+                            preferredPromptClient={preferredPromptClient}
                             showSelectors
                             workspacePath={assistantProjectPath}
                             draftStorageKey={placeholderStartComposerDraftStorageKey}
                             onOpenAISettings={onOpenAISettings}
-                            onSubmit={(prompt, selection) => {
+                            onSubmit={async (prompt, selection) => {
                                 const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(prompt, activeStartSystemPrompt);
                                 const prototypeStartSettings = {
                                     count: prototypeGenerationCount,
                                     themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : selectedTheme?.name || '',
+                                    needsRequirementsAnalysis: prototypeNeedsRequirementsAnalysis,
                                 };
+                                let documentStartSettings: CanvasDocumentPromptSettings | undefined;
+                                if (activeScene === 'document') {
+                                    const selectedHtmlVisualSpecOption = documentFormat === 'html' && documentHtmlVisualSpec
+                                        ? DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.find((option) => option.value === documentHtmlVisualSpec)
+                                        : null;
+                                    const nextDocumentStartSettings: CanvasDocumentPromptSettings = {
+                                        ...(documentFormat ? { format: documentFormat } : {}),
+                                        ...(selectedHtmlVisualSpecOption ? {
+                                            htmlVisualSpec: {
+                                                label: selectedHtmlVisualSpecOption.label,
+                                                description: selectedHtmlVisualSpecOption.description,
+                                                themeInstruction: selectedHtmlVisualSpecOption.themeInstruction,
+                                                skillName: selectedHtmlVisualSpecOption.skillName,
+                                                githubUrl: selectedHtmlVisualSpecOption.githubUrl,
+                                            },
+                                        } : {}),
+                                        ...(selectedDocumentTemplateName ? { templateName: selectedDocumentTemplateName } : {}),
+                                        ...(documentNeedsRequirementsAnalysis ? { needsRequirementsAnalysis: true } : {}),
+                                    };
+                                    documentStartSettings = Object.keys(nextDocumentStartSettings).length
+                                        ? nextDocumentStartSettings
+                                        : undefined;
+                                }
                                 const submittedPrompt = activeScene === 'page'
                                     ? appendPrototypeStartPromptSettings({
                                         prompt: promptWithStartSystemPrompt,
@@ -1093,12 +1487,15 @@ function PrototypePlaceholderGuide({
                                             prompt: promptWithStartSystemPrompt,
                                             settings: effectiveImageStartParams,
                                         })
-                                        : promptWithStartSystemPrompt;
+                                        : appendDocumentStartPromptSettings({
+                                            prompt: promptWithStartSystemPrompt,
+                                            settings: documentStartSettings || {},
+                                        });
                                 return onSubmitPrototypeStartRequest?.({
                                     scene: activeScene,
                                     prompt: submittedPrompt,
                                     source: 'placeholder-start',
-                                    sceneSettings: activeScene === 'design' ? effectiveImageStartParams : undefined,
+                                    sceneSettings: activeScene === 'design' ? effectiveImageStartParams : activeScene === 'document' ? documentStartSettings : undefined,
                                     provider: selection?.provider,
                                     model: selection?.model,
                                     mode: selection?.mode,
@@ -1114,11 +1511,13 @@ function PrototypePlaceholderGuide({
                                         selectedThemeName={selectedThemeName}
                                         themeLabel={themeLabel}
                                         themes={themes}
+                                        needsRequirementsAnalysis={prototypeNeedsRequirementsAnalysis}
                                         onCountChange={setPrototypeGenerationCount}
                                         onThemeChange={(themeName) => {
                                             userSelectedThemeRef.current = true;
                                             setSelectedThemeName(themeName);
                                         }}
+                                        onNeedsRequirementsAnalysisChange={setPrototypeNeedsRequirementsAnalysis}
                                     />
                                 ) : activeScene === 'design' ? (
                                     <ImageStartSettingsPopover
@@ -1132,6 +1531,20 @@ function PrototypePlaceholderGuide({
                                             setSelectedThemeName(themeName);
                                         }}
                                     />
+                                ) : activeScene === 'document' ? (
+                                    <DocumentStartSettingsPopover
+                                        format={documentFormat}
+                                        htmlVisualSpec={documentHtmlVisualSpec}
+                                        selectedTemplateName={selectedDocumentTemplateName}
+                                        templates={documentTemplates}
+                                        templatesLoading={documentTemplatesLoading}
+                                        templateError={documentTemplateError}
+                                        needsRequirementsAnalysis={documentNeedsRequirementsAnalysis}
+                                        onFormatChange={setDocumentFormat}
+                                        onHtmlVisualSpecChange={setDocumentHtmlVisualSpec}
+                                        onTemplateChange={setSelectedDocumentTemplateName}
+                                        onNeedsRequirementsAnalysisChange={setDocumentNeedsRequirementsAnalysis}
+                                    />
                                 ) : null
                             }
                         />
@@ -1144,7 +1557,7 @@ function PrototypePlaceholderGuide({
                                 handleOpenProjectInIDE={onOpenProjectInIDE!}
                                 preferredIDE={preferredIDE ?? null}
                                 activeProjectId={activeProjectId}
-                                targetPath={prototypeIndexPath}
+                                targetPath={draftActive ? null : prototypeIndexPath}
                                 ideAvailability={ideAvailability}
                                 agentAvailability={agentAvailability}
                                 onPreferredIDEChange={onPreferredIDEChange}
@@ -1171,7 +1584,7 @@ function PrototypePlaceholderGuide({
                                         variant="ghost"
                                         size="sm"
                                         className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
-                                        onClick={() => onOpenPrototypeCreateDialog?.({ initialTab: 'onlineImport', targetPrototypeName: item.name })}
+                                        onClick={() => onOpenPrototypeCreateDialog?.({ initialTab: 'onlineImport', targetPrototypeName: draftActive ? undefined : item.name })}
                                     >
                                         <ExternalLink className="h-3.5 w-3.5" />
                                         更多模板
@@ -1186,7 +1599,7 @@ function PrototypePlaceholderGuide({
                                         variant="ghost"
                                         size="sm"
                                         className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
-                                        onClick={() => onOpenPrototypeCreateDialog?.({ initialTab: 'upload', targetPrototypeName: item.name })}
+                                        onClick={() => onOpenPrototypeCreateDialog?.({ initialTab: 'upload', targetPrototypeName: draftActive ? undefined : item.name })}
                                     >
                                         <UploadCloud className="h-3.5 w-3.5" />
                                         导入原型
@@ -1303,6 +1716,8 @@ export default function ContentArea({
     themes,
     defaultThemeName,
     onOpenPrototypeCreateDialog,
+    prototypeStartDraftActive,
+    onCreatePrototypeForDraftStart,
     onRefreshPrototypes,
     onSubmitCanvasAssistantPrompt,
     onAddCanvasScreenshotToAI,
@@ -1327,6 +1742,13 @@ export default function ContentArea({
 
     const selectedMarkdownItem = contentMode === 'template' ? selectedTemplate : selectedDoc;
     const markdownEmptyLabel = contentMode === 'template' ? '模板' : '资源';
+    const draftPrototypeStartItem = useMemo<ItemData>(() => ({
+        name: 'prototype-start-draft',
+        displayName: '新原型草稿',
+        jsUrl: '',
+        specUrl: '',
+        previewDisabled: true,
+    }), []);
     const selectedPrototypeCanvasName = selectedItem
         ? `prototypes/${selectedItem.name}/canvas.excalidraw`
         : '';
@@ -1337,15 +1759,42 @@ export default function ContentArea({
         ? resolveCanvasFilePath(selectedCanvas, selectedCanvas.name)
         : '';
     const handleSubmitPrototypeStartRequest = async (request: CanvasAiGenerationRequest) => {
-        if (request.scene === 'page' && selectedItem?.name) {
-            await apiService.startPlaceholderPrototypeGeneration(selectedItem.name);
-            await onRefreshPrototypes?.();
+        const draftCreatedItem = prototypeStartDraftActive && !selectedItem
+            ? await onCreatePrototypeForDraftStart?.()
+            : null;
+        const startItem = draftCreatedItem || selectedItem;
+        if (!startItem) {
+            toast.error('创建原型失败');
+            return;
+        }
+        const startCanvasFilePath = resolvePrototypeCanvasFilePath(startItem, `prototypes/${startItem.name}/canvas.excalidraw`);
+        const startPrototypeIndexPath = resolvePrototypeIndexFilePath(startItem);
+        const startPrototypeLocalContextRef: CanvasLocalContextRef = {
+            resourceType: 'prototype',
+            resourceId: startItem.name,
+            title: startItem.displayName || startItem.name,
+            paths: [startPrototypeIndexPath],
+        };
+        const submittedRequest: CanvasAiGenerationRequest = {
+            ...request,
+            createdPrototype: startItem,
+            canvasFilePath: request.scene === 'page' ? request.canvasFilePath : startCanvasFilePath,
+            localContextRefs: request.scene === 'page' ? request.localContextRefs || [] : [startPrototypeLocalContextRef],
+        };
+
+        if (request.scene === 'page' && startItem?.name) {
+            await apiService.startPlaceholderPrototypeGeneration(startItem.name);
+            const refreshedPrototypes = await onRefreshPrototypes?.(startItem.name);
+            const refreshedStartItem = refreshedPrototypes?.find((item) => item.name === startItem.name);
+            if (refreshedStartItem) {
+                submittedRequest.createdPrototype = refreshedStartItem;
+            }
             setViewMode?.('demo');
-            await onSubmitCanvasAssistantPrompt?.(request);
+            await onSubmitCanvasAssistantPrompt?.(submittedRequest);
             return;
         }
         setViewMode?.('canvas');
-        await onSubmitCanvasAssistantPrompt?.(request);
+        await onSubmitCanvasAssistantPrompt?.(submittedRequest);
     };
     const selectedPrototypeRuntimeUnavailable = viewMode === 'demo'
         && Boolean(selectedItem)
@@ -1799,9 +2248,10 @@ export default function ContentArea({
             selectedMarkdownItem.filePath,
             selectedMarkdownItem.absoluteFilePath,
         ];
+        const markdownIframeUrl = resolveMarkdownPreviewIframeUrl(selectedMarkdownItem, contentMode);
         const iframePreviewablePattern = /\.(md|html?|txt|csv|json|ya?ml|xml|svg)([?#/]|$)/i;
         const imagePattern = /\.(png|jpe?g|gif|webp|bmp|ico|avif)([?#/]|$)/i;
-        const canPreviewInIframe = candidateFields.some(
+        const canPreviewInIframe = markdownIframeUrl.includes('/spec-template.html') || candidateFields.some(
             (field) => field && iframePreviewablePattern.test(String(field)),
         );
         const isImageFile = candidateFields.some(
@@ -1888,7 +2338,7 @@ export default function ContentArea({
                 <iframe
                     ref={previewIframeRef}
                     key={`${elementIframeKey}-${selectedMarkdownItem.name}`}
-                    src={selectedMarkdownItem.previewUrl || selectedMarkdownItem.specUrl}
+                    src={markdownIframeUrl}
                     onLoad={onPreviewIframeLoad}
                     className="w-full h-full border-none block bg-background"
                     title={selectedMarkdownItem.displayName}
@@ -2265,6 +2715,28 @@ export default function ContentArea({
                         </div>
                     )
                 )
+            ) : prototypeStartDraftActive ? (
+                <PrototypePlaceholderGuide
+                    item={draftPrototypeStartItem}
+                    draftActive={prototypeStartDraftActive && !selectedItem}
+                    activeProjectId={activeProjectId}
+                    preferredIDE={preferredIDE}
+                    preferredPromptClient={preferredPromptClient}
+                    ideAvailability={ideAvailability}
+                    agentAvailability={agentAvailability}
+                    assistantVisible={assistantVisible}
+                    aiPanelMode={aiPanelMode}
+                    assistantProjectPath={assistantProjectPath}
+                    onOpenProjectInIDE={onOpenProjectInIDE}
+                    onPreferredIDEChange={onPreferredIDEChange}
+                    onExecutePrompt={onExecutePrompt}
+                    themes={themes}
+                    defaultThemeName={defaultThemeName}
+                    onOpenPrototypeCreateDialog={onOpenPrototypeCreateDialog}
+                    onRefreshPrototypes={onRefreshPrototypes}
+                    onSubmitPrototypeStartRequest={handleSubmitPrototypeStartRequest}
+                    onOpenAISettings={onOpenAISettings}
+                />
             ) : (
                 !hasPrototypeItems ? (
                     <ProjectContentEmptyState

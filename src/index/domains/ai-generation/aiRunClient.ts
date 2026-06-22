@@ -3,6 +3,8 @@ import { getGenerationArtifactHistoryStore } from './generationArtifactHistorySt
 export interface AiRunClientRequest {
   scene: string;
   prompt: string;
+  runId?: string;
+  threadId?: string;
   taskId?: string;
   conversationId?: string;
   preferredPromptClient?: string | null;
@@ -14,6 +16,7 @@ export interface AiRunClientRequest {
   mode?: string | null;
   thought?: string | null;
   provider?: string | null;
+  conversationStorePath?: string | null;
   params?: unknown;
   referenceImages?: string[];
   canvasId?: string;
@@ -99,6 +102,8 @@ export async function runAiStream(
     body: JSON.stringify({
       scene: params.scene,
       prompt: params.prompt,
+      runId: params.runId,
+      threadId: params.threadId,
       taskId: params.taskId,
       conversationId: params.conversationId,
       preferredPromptClient: params.preferredPromptClient,
@@ -110,6 +115,7 @@ export async function runAiStream(
       mode: params.mode,
       thought: params.thought,
       provider: params.provider,
+      conversationStorePath: params.conversationStorePath,
       params: params.params,
       referenceImages: params.referenceImages,
       canvasId: params.canvasId,

@@ -51,6 +51,11 @@ describe('apiService source', () => {
   it('exposes placeholder prototype generation start endpoint', () => {
     const source = readFileSync(resolve(__dirname, './api.ts'), 'utf8');
 
+    expect(source).toContain('export interface CreatePlaceholderPrototypeResponse');
+    expect(source).toContain('canvasFilePath?: string;');
+    expect(source).toContain('absoluteCanvasFilePath?: string;');
+    expect(source).toContain('async createPlaceholderPrototype(options?: GetConfigOptions): Promise<CreatePlaceholderPrototypeResponse>');
+    expect(source).toContain("fetch(buildProjectScopedUrl('/api/prototypes/create-placeholder', options), {");
     expect(source).toContain('async startPlaceholderPrototypeGeneration(prototypeName: string)');
     expect(source).toContain("const encodedPrototypeName = encodeURIComponent(prototypeName);");
     expect(source).toContain("fetch(`/api/prototypes/${encodedPrototypeName}/start-generation`, {");

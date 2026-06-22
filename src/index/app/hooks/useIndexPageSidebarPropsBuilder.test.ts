@@ -219,6 +219,27 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     expect(handleSetDefaultTheme).toHaveBeenCalledWith('theme-b');
   });
 
+  it('disables manual assistant opening on the prototype start page', () => {
+    const handleOpenGenieWebAgent = vi.fn();
+    const handleOpenImageAiPanel = vi.fn();
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      state: {
+        prototypeStartPageActive: true,
+        webAgentPanelOpen: true,
+        aiPanelMode: 'general-ai',
+      },
+      deps: {
+        handleOpenGenieWebAgent,
+        handleOpenImageAiPanel,
+      },
+    }));
+
+    expect(props.state.webAgentPanelOpen).toBe(false);
+    expect(props.state.aiPanelMode).toBeNull();
+    expect(props.actions.onOpenGenieWebAgent).toBeUndefined();
+    expect(props.actions.onOpenImageAiPanel).toBeUndefined();
+  });
+
   it('forwards uploaded document resources so the resource layer can select the new file', () => {
     const handleUploadedResourceFiles = vi.fn();
     const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
@@ -348,6 +369,25 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     expect(setInitialCreateDialogTab).not.toHaveBeenCalledWith('create');
     expect(setCreateDialogVisible).toHaveBeenCalledWith(true);
     expect(handleCreatePlaceholderPrototype).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts a front-end prototype draft from the sidebar plus without creating a placeholder', () => {
+    const handleCreatePrototypeStartDraft = vi.fn();
+    const handleCreatePlaceholderPrototype = vi.fn();
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      deps: {
+        handleCreatePrototypeStartDraft,
+        resources: {
+          ...createBuilderParams().deps.resources,
+          handleCreatePlaceholderPrototype,
+        },
+      } as any,
+    }));
+
+    props.actions.onCreatePlaceholderPrototype();
+
+    expect(handleCreatePrototypeStartDraft).toHaveBeenCalledTimes(1);
+    expect(handleCreatePlaceholderPrototype).not.toHaveBeenCalled();
   });
 
   it('opens project settings with the requested tab', () => {

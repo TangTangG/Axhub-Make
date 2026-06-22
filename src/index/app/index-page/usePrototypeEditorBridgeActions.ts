@@ -7,6 +7,7 @@ import {
     type SetStateAction,
 } from 'react';
 import type {
+    GenieEditorExternalEditingTargetRef,
     GenieEditorHostToolbarAction,
     GenieEditorHostToolbarState,
 } from '@/common/web-editor-types';
@@ -52,6 +53,13 @@ type PrototypeEditorEnableOptions = {
 type PrototypeEditorEnterOptions = {
     showMissingWarning?: boolean;
 };
+type PrototypeEditorNodeEditingState = 'editing' | 'idle' | 'completed' | 'error';
+type PrototypeEditorNodeEditingTaskRef = {
+    provider: string | null;
+    sessionId: string | null;
+    requestId: string | null;
+} | null;
+type PrototypeEditorNodeEditingTargetRef = GenieEditorExternalEditingTargetRef | null;
 
 type PrototypeEditorBridgeActions = {
     getPrototypeEditorApi: (iframe?: HTMLIFrameElement | null) => PrototypeEditorApi | null;
@@ -74,8 +82,78 @@ type PrototypeEditorBridgeActions = {
         iframe: HTMLIFrameElement,
         action: QuickEditSaveAction,
     ) => Promise<PrototypeEditorBridgeStateMessage | null>;
+    postPrototypeEditorNodeEditingState: (
+        iframe: HTMLIFrameElement,
+        elementKey: string,
+        nextState: PrototypeEditorNodeEditingState,
+        taskRef: PrototypeEditorNodeEditingTaskRef,
+        targetRef?: PrototypeEditorNodeEditingTargetRef,
+    ) => Promise<PrototypeEditorBridgeStateMessage | null>;
     queryPrototypeEditorState: (iframe: HTMLIFrameElement) => Promise<PrototypeEditorBridgeStateMessage | null>;
 };
+
+const HTML_TEMPLATE_BOOTSTRAP_SRC = '/assets/html-template-bootstrap.js';
+const HTML_TEMPLATE_BOOTSTRAP_WAIT_MS = 2000;
+const HTML_TEMPLATE_BOOTSTRAP_POLL_MS = 50;
+
+function isHtmlDocumentPreviewIframe(iframe: HTMLIFrameElement): boolean {
+    const src = iframe.getAttribute('src') || iframe.src || '';
+    if (!/\.html(?:[?#]|$)/iu.test(src)) {
+        return false;
+    }
+    return src.includes('/api/docs/') || src.includes('/api/markdown-file');
+}
+
+function waitForHtmlDocumentPreviewEditorApi(iframe: HTMLIFrameElement): Promise<PrototypeEditorApi | null> {
+    return new Promise((resolve) => {
+        const startedAt = Date.now();
+        const check = () => {
+            const editors = readPreviewFrameEditorApi<PrototypeEditorApi>(iframe, 'HtmlTemplateBootstrap');
+            if (editors?.enable) {
+                resolve(editors);
+                return;
+            }
+            if (Date.now() - startedAt >= HTML_TEMPLATE_BOOTSTRAP_WAIT_MS) {
+                resolve(null);
+                return;
+            }
+            window.setTimeout(check, HTML_TEMPLATE_BOOTSTRAP_POLL_MS);
+        };
+        check();
+    });
+}
+
+async function ensureHtmlDocumentPreviewEditorApi(iframe: HTMLIFrameElement): Promise<PrototypeEditorApi | null> {
+    const existing = readPreviewFrameEditorApi<PrototypeEditorApi>(iframe, 'HtmlTemplateBootstrap');
+    if (existing?.enable) {
+        return existing;
+    }
+    if (!isHtmlDocumentPreviewIframe(iframe)) {
+        return null;
+    }
+
+    let doc: Document | null | undefined;
+    try {
+        doc = iframe.contentDocument;
+        const contentType = doc?.contentType?.toLowerCase() || '';
+        if (contentType && !contentType.includes('html')) {
+            return null;
+        }
+    } catch {
+        return null;
+    }
+    if (!doc) {
+        return null;
+    }
+
+    if (!doc.querySelector('script[src*="html-template-bootstrap.js"]')) {
+        const script = doc.createElement('script');
+        script.type = 'module';
+        script.src = HTML_TEMPLATE_BOOTSTRAP_SRC;
+        doc.head?.appendChild(script) ?? doc.documentElement.appendChild(script);
+    }
+    return waitForHtmlDocumentPreviewEditorApi(iframe);
+}
 
 export function usePrototypeEditorBridgeActions({
     getPrimaryPreviewIframe,
@@ -127,7 +205,7 @@ export function usePrototypeEditorBridgeActions({
 
     const getPrototypeEditorApi = useCallback((iframe: HTMLIFrameElement | null = getPrimaryPreviewIframe()): PrototypeEditorApi | null => {
         const editors = readPreviewFrameEditorApi<PrototypeEditorApi>(iframe, 'DevTemplateBootstrap');
-        return editors;
+        return editors ?? readPreviewFrameEditorApi<PrototypeEditorApi>(iframe, 'HtmlTemplateBootstrap');
     }, [getPrimaryPreviewIframe]);
 
     const buildPrototypeEditorContext = useCallback((iframe: HTMLIFrameElement): PrototypeEditorContext => {
@@ -233,6 +311,20 @@ export function usePrototypeEditorBridgeActions({
         action,
     } satisfies PrototypeEditorSaveActionMessage), [postPrototypeEditorBridgeMessage]);
 
+    const postPrototypeEditorNodeEditingState = useCallback((
+        iframe: HTMLIFrameElement,
+        elementKey: string,
+        nextState: PrototypeEditorNodeEditingState,
+        taskRef: PrototypeEditorNodeEditingTaskRef,
+        targetRef?: PrototypeEditorNodeEditingTargetRef,
+    ) => postPrototypeEditorBridgeMessage(iframe, {
+        type: 'AXHUB_PROTOTYPE_EDITOR_NODE_EDITING_STATE',
+        elementKey,
+        nextState,
+        taskRef,
+        targetRef: targetRef ?? null,
+    }), [postPrototypeEditorBridgeMessage]);
+
     const queryPrototypeEditorState = useCallback((iframe: HTMLIFrameElement) => (
         postPrototypeEditorBridgeMessage(iframe, {
             type: 'AXHUB_PROTOTYPE_EDITOR_QUERY_STATE',
@@ -250,25 +342,34 @@ export function usePrototypeEditorBridgeActions({
             return false;
         }
         const context = buildPrototypeEditorContext(iframe);
-        const editors = getPrototypeEditorApi(iframe);
-        if (editors?.enable) {
-            editors.setContext?.(buildPrototypeEditorScopedContext(context));
-            await Promise.resolve(editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context)));
+        const enableEditors = async (resolvedEditors: PrototypeEditorApi) => {
+            resolvedEditors.setContext?.(buildPrototypeEditorScopedContext(context));
+            await Promise.resolve(resolvedEditors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context)));
 
             if (context.pane === 'primary') {
                 prototypeHostToolbarUnsubscribeRef.current?.();
-                prototypeHostToolbarUnsubscribeRef.current = editors.subscribeHostToolbarState?.((nextState) => {
+                prototypeHostToolbarUnsubscribeRef.current = resolvedEditors.subscribeHostToolbarState?.((nextState) => {
                     setHostToolbarState((previousState) => resolveHostToolbarStateForDisplay(
                         previousState,
                         nextState,
                         isDarkModeRef.current,
                     ));
                 }) ?? null;
-                const nextState = editors.getHostToolbarState?.() ?? createDefaultHostToolbarState();
+                const nextState = resolvedEditors.getHostToolbarState?.() ?? createDefaultHostToolbarState();
                 setHostToolbarState((previousState) => resolveHostToolbarStateForDisplay(previousState, nextState, isDarkMode));
             }
 
             return true;
+        };
+
+        let editors = getPrototypeEditorApi(iframe);
+        if (editors?.enable) {
+            return enableEditors(editors);
+        }
+
+        editors = await ensureHtmlDocumentPreviewEditorApi(iframe);
+        if (editors?.enable) {
+            return enableEditors(editors);
         }
 
         const bridgeResult = await postPrototypeEditorEnable(iframe, context);
@@ -294,7 +395,7 @@ export function usePrototypeEditorBridgeActions({
             return true;
         }
         if (options.showMissingWarning !== false) {
-            messageApi.warning('当前客户端页面尚未接入真正的快速编辑器，请确认预览页已加载 DevTemplateBootstrap');
+            messageApi.warning('当前客户端页面尚未接入真正的快速编辑器，请确认预览页已加载 DevTemplateBootstrap 或 HtmlTemplateBootstrap');
         }
         return false;
     }, [
@@ -445,6 +546,7 @@ export function usePrototypeEditorBridgeActions({
         postPrototypeEditorDisable,
         postPrototypeEditorHostToolbarAction,
         postPrototypeEditorSaveAction,
+        postPrototypeEditorNodeEditingState,
         queryPrototypeEditorState,
     };
 }

@@ -5,10 +5,14 @@ import {
     buildAssistantAutoOpenDismissedStorageKey,
     getAssistantAutoOpenDismissed,
     getAssistantAutoOpenPanelMode,
+    formatThrownError,
+    isHtmlCommentableResource,
+    isDocumentCommentableResource,
     isMarkdownEditableResource,
     normalizeDocItem,
     normalizeDocsItems,
     normalizeTemplateItem,
+    resolveDocRenameBaseName,
     replaceSidebarItemTitle,
     resolveMobileItemOpenUrl,
     setAssistantAutoOpenDismissed,
@@ -16,6 +20,12 @@ import {
 } from './index-page.helpers';
 
 describe('index page helpers', () => {
+    it('formats non-Error thrown values with useful diagnostic details', () => {
+        expect(formatThrownError({ error: 'Session annotation-1 failed', status: 500 })).toBe('Session annotation-1 failed；status=500');
+        expect(formatThrownError({ detail: { message: 'provider unavailable' } })).toBe('provider unavailable');
+        expect(formatThrownError({})).toBe('未知错误');
+    });
+
     it('keeps assistant auto-open enabled by default and stores real closes project-wide', () => {
         const storage = new Map<string, string>();
         const fakeStorage = {
@@ -126,6 +136,35 @@ describe('index page helpers', () => {
         expect(template.previewUrl).toBe('/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fcontent%252Ftemplates%252Fprd-template.md');
     });
 
+    it('builds rendered markdown previews for metadata-only templates', () => {
+        const template = normalizeTemplateItem({
+            name: 'write-prd.md',
+            displayName: 'Write PRD',
+        });
+
+        expect(template.name).toBe('write-prd.md');
+        expect(template.specUrl).toBe('/api/docs/templates/write-prd.md');
+        expect(template.previewUrl).toBe('/spec-template.html?url=%2Fapi%2Fdocs%2Ftemplates%2Fwrite-prd.md');
+        expect(template.filePath).toBeUndefined();
+        expect(template.absoluteFilePath).toBeUndefined();
+    });
+
+    it('uses only the final file segment when renaming nested docs or templates', () => {
+        expect(resolveDocRenameBaseName('templates/prd-template.md')).toBe('prd-template');
+        expect(resolveDocRenameBaseName('templates/prd-template-v2.md', '.md')).toBe('prd-template-v2');
+        expect(resolveDocRenameBaseName('templates/prd-template-v2', '.md')).toBe('prd-template-v2');
+        expect(resolveDocRenameBaseName('nested\\product spec.md')).toBe('product spec');
+    });
+
+    it('uses the final file segment as the default display name for nested templates', () => {
+        const template = normalizeTemplateItem({
+            name: 'templates/prd-template.md',
+            displayName: 'templates/prd-template',
+        });
+
+        expect(template.displayName).toBe('prd-template');
+    });
+
     it('builds direct file preview URLs for non-markdown resources', () => {
         const image = normalizeDocItem({
             name: 'assets/logo.png',
@@ -180,7 +219,71 @@ describe('index page helpers', () => {
 	            specUrl: '',
 	            previewUrl: '',
 	            jsUrl: '',
-	        })).toBe(false);
+        })).toBe(false);
+    });
+
+    it('recognizes commentable HTML document resources without treating plain text as commentable', () => {
+        expect(isDocumentCommentableResource({
+            name: 'visual-prd',
+            displayName: 'Visual PRD',
+            absoluteFilePath: '/workspace/content/docs/visual-prd.html',
+            specUrl: '',
+            previewUrl: '',
+            jsUrl: '',
+        })).toBe(true);
+        expect(isDocumentCommentableResource({
+            name: 'visual-prd',
+            displayName: 'Visual PRD',
+            specUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fvisual-prd.html',
+            previewUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fvisual-prd.html',
+            jsUrl: '',
+        })).toBe(true);
+        expect(isDocumentCommentableResource({
+            name: 'plain-note',
+            displayName: 'Plain Note',
+            filePath: 'content/docs/plain-note.txt',
+            specUrl: '',
+            previewUrl: '',
+            jsUrl: '',
+        })).toBe(false);
+    });
+
+    it('keeps Markdown and HTML commentable document resources distinguishable', () => {
+        expect(isMarkdownEditableResource({
+            name: 'visual-prd.html',
+            displayName: 'Visual PRD',
+            specUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fvisual-prd.html',
+            previewUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fvisual-prd.html',
+            jsUrl: '',
+        })).toBe(false);
+        expect(isHtmlCommentableResource({
+            name: 'visual-prd.html',
+            displayName: 'Visual PRD',
+            specUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fvisual-prd.html',
+            previewUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fvisual-prd.html',
+            jsUrl: '',
+        })).toBe(true);
+        expect(isDocumentCommentableResource({
+            name: 'visual-prd.html',
+            displayName: 'Visual PRD',
+            specUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fvisual-prd.html',
+            previewUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fvisual-prd.html',
+            jsUrl: '',
+        })).toBe(true);
+        expect(isMarkdownEditableResource({
+            name: 'api-doc.md',
+            displayName: 'API Doc',
+            specUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fapi-doc.md',
+            previewUrl: '/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fcontent%252Fdocs%252Fapi-doc.md',
+            jsUrl: '',
+        })).toBe(true);
+        expect(isHtmlCommentableResource({
+            name: 'api-doc.md',
+            displayName: 'API Doc',
+            specUrl: '/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fapi-doc.md',
+            previewUrl: '/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fcontent%252Fdocs%252Fapi-doc.md',
+            jsUrl: '',
+        })).toBe(false);
     });
 
     it('updates a persisted sidebar item title without changing its placement', () => {

@@ -26,9 +26,9 @@ describe('CanvasGenerationComposer source', () => {
       source.indexOf('function CanvasGenerationDisplayComposerWithoutAcp'),
     );
 
-    expect(displayComponentSegment.indexOf('{showSelectors ? <AcpComposerSelectors /> : null}')).toBeGreaterThan(-1);
+    expect(displayComponentSegment.indexOf('{showSelectors ? <CanvasAcpComposerSelectors /> : null}')).toBeGreaterThan(-1);
     expect(displayComponentSegment.indexOf('{postSelectorActions}')).toBeGreaterThan(
-      displayComponentSegment.indexOf('{showSelectors ? <AcpComposerSelectors /> : null}'),
+      displayComponentSegment.indexOf('{showSelectors ? <CanvasAcpComposerSelectors /> : null}'),
     );
     expect(displayComponentSegment.indexOf('<CanvasGenerationDisplayQuickPromptsButton')).toBeGreaterThan(
       displayComponentSegment.indexOf('{postSelectorActions}'),
@@ -42,9 +42,9 @@ describe('CanvasGenerationComposer source', () => {
       source.indexOf('function useAssistantUiDialogOverlayDismiss'),
     );
 
-    expect(runtimeContentSegment.indexOf('{showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}')).toBeGreaterThan(-1);
+    expect(runtimeContentSegment.indexOf('{showSelectors && postSelectorActions ? <CanvasAcpComposerSelectors /> : null}')).toBeGreaterThan(-1);
     expect(runtimeContentSegment.indexOf('{postSelectorActions}')).toBeGreaterThan(
-      runtimeContentSegment.indexOf('{showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}'),
+      runtimeContentSegment.indexOf('{showSelectors && postSelectorActions ? <CanvasAcpComposerSelectors /> : null}'),
     );
     expect(runtimeContentSegment.indexOf('{renderLeadingActions ? (')).toBeGreaterThan(
       runtimeContentSegment.indexOf('{postSelectorActions}'),
@@ -57,6 +57,7 @@ describe('CanvasGenerationComposer source', () => {
 
     expect(source).toContain("import './canvas-generation-acp-scope.css';");
     expect(source).not.toContain("import '@axhub/acp/react/styles.css';");
+    expect(source).not.toContain("from '@axhub/acp/react';");
     expect(source).toContain('ax-acp-ui-scope');
 
     expect(acpScopeStyles).toContain('.ax-acp-ui-scope');
@@ -87,10 +88,26 @@ describe('CanvasGenerationComposer source', () => {
     expect(aiImageStyles).not.toContain('.ax-ai-image-settings-summary');
   });
 
+  it('scopes ACP settings dialog portal overrides to the ACP settings dialog only', () => {
+    const acpScopeStyles = readAcpScopeStyles();
+    const indexStyles = readIndexStyles();
+
+    expect(indexStyles).toContain('@source "../node_modules/@axhub/acp/dist/components/assistant-ui/image-generation-settings-dialog.mjs";');
+    expect(indexStyles).toContain('@source "../node_modules/@axhub/acp/dist/components/ui/checkbox.mjs";');
+    expect(indexStyles).toContain('@source "../node_modules/@axhub/acp/dist/components/ui/switch.mjs";');
+    expect(indexStyles).toContain('@source "../node_modules/@axhub/acp/dist/components/ui/tabs.mjs";');
+    expect(acpScopeStyles).toContain('.ax-acp-settings-dialog-content');
+    expect(acpScopeStyles).toMatch(/\.ax-acp-settings-dialog-content\s*\{[^}]*width: min\(calc\(100vw - 2rem\), 42rem\) !important;/s);
+    expect(acpScopeStyles).toMatch(/\.ax-acp-settings-dialog-content\s*\{[^}]*max-width: min\(calc\(100vw - 2rem\), 42rem\) !important;/s);
+    expect(acpScopeStyles).toMatch(/\.ax-acp-settings-dialog-content\s*\{[^}]*grid-template-rows: auto minmax\(0, 1fr\) auto;/s);
+    expect(acpScopeStyles).toMatch(/\.ax-acp-settings-dialog-content \[role='checkbox'\]\[data-state='checked'\]\s*\{/);
+    expect(acpScopeStyles).not.toMatch(/\[data-slot=['"]dialog-content['"]\s*\{/);
+  });
+
   it('configures ACP UI runtime endpoints so composer selectors load model capabilities from ACP UI', () => {
     const source = readCanvasGenerationComposerSource();
 
-    expect(source).toContain("import { ACP_CAPABILITY_REFRESH_EVENT, acpApiClient, configureAcpUiRuntime } from '@axhub/acp/runtime';");
+    expect(source).toContain("import { ACP_CAPABILITY_REFRESH_EVENT, AcpUiProvider, acpApiClient, configureAcpUiRuntime, hydrateAcpCapabilityCacheFromDefaults, useAcpUiRuntimeContext } from '@axhub/acp/runtime';");
     expect(source).toContain("import { apiService } from '../../services/index.api';");
     expect(source).toContain('function useCanvasAcpRuntimeBridge');
     expect(source).toContain('apiService.getAssistantRuntime({ autoStart })');
@@ -211,7 +228,8 @@ describe('CanvasGenerationComposer source', () => {
     );
 
     expect(source).toContain('ComposerPrimitive,');
-    expect(source).toContain("import { AcpComposerSelectors, ComposerAttachments } from '@axhub/acp/ui';");
+    expect(source).toContain("import { ComposerAttachments } from '@axhub/acp/composer';");
+    expect(source).not.toContain('import { AcpComposerSelectors');
     expect(source).toContain('PlusIcon');
     expect(source).toContain("import { Button } from '@/components/ui/button';");
     expect(source).toContain("import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';");
@@ -229,12 +247,22 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayPropsSegment).toContain('mode: string | null;');
     expect(displayPropsSegment).toContain('thought: string | null;');
     expect(displayPropsSegment).toContain('referenceImages: string[];');
+    expect(displayPropsSegment).toContain('preferredPromptClient?: PromptClientPreference;');
     expect(displayPropsSegment).toContain('showSelectors?: boolean;');
     expect(displayPropsSegment).toContain('workspacePath?: string | null;');
     expect(displayAcpSegment).toContain('const canvasAcpRuntime = useCanvasAcpRuntimeBridge({ enabled: showSelectors, workspacePath });');
-    expect(displayAcpSegment).toContain('<AcpUiProvider defaultProvider="codex" workspacePath={workspacePath}>');
+    expect(displayAcpSegment).toContain('const acpSelectorDefaults = useMemo(() => resolveCanvasAcpSelectorDefaults(preferredPromptClient), [preferredPromptClient]);');
+    expect(displayAcpSegment).toContain('const acpRuntimeKey = useMemo(() => [');
+    expect(displayAcpSegment).toContain('acpSelectorDefaults.defaultProvider,');
+    expect(displayAcpSegment).toContain('acpSelectorDefaults.providerOptions.join(\',\'),');
+    expect(displayAcpSegment).toContain('workspacePath ?? \'global\',');
+    expect(displayAcpSegment).toContain('key={acpRuntimeKey}');
+    expect(displayAcpSegment).toContain('defaultProvider={acpSelectorDefaults.defaultProvider}');
+    expect(displayAcpSegment).toContain('defaultModel={acpSelectorDefaults.defaultModel}');
+    expect(displayAcpSegment).toContain('providerOptions={acpSelectorDefaults.providerOptions}');
+    expect(displayAcpSegment).toContain('showProviderSettings={false}');
     expect(displayAcpSegment).toContain('<AssistantRuntimeProvider runtime={runtime}>');
-    expect(source).toContain('<AcpComposerSelectors />');
+    expect(source).toContain('<CanvasAcpComposerSelectors />');
     expect(source).toContain('<CanvasAcpModelSelectorFallback');
     expect(displayAcpSegment).toContain('contextBundle: acpContext.consumeContextBundle()');
     expect(displayAcpSegment).toContain('provider: acpContext.provider');
@@ -242,6 +270,27 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayAcpSegment).toContain('mode: acpContext.modeId');
     expect(displayAcpSegment).toContain('thought: acpContext.thoughtLevel');
     expect(displayAcpSegment).toContain('referenceImages,');
+  });
+
+  it('remounts both ACP composer runtimes when the configured default provider changes', () => {
+    const source = readCanvasGenerationComposerSource();
+    const displayAcpSegment = source.slice(
+      source.indexOf('function CanvasGenerationDisplayComposerWithAcp'),
+      source.indexOf('export function CanvasGenerationDisplayComposer'),
+    );
+    const runtimeAcpSegment = source.slice(
+      source.indexOf('function CanvasGenerationRuntimeComposerWithAcp'),
+      source.indexOf('export default function CanvasGenerationComposer'),
+    );
+
+    for (const segment of [displayAcpSegment, runtimeAcpSegment]) {
+      expect(segment).toContain('const acpRuntimeKey = useMemo(() => [');
+      expect(segment).toContain('acpSelectorDefaults.defaultProvider,');
+      expect(segment).toContain('acpSelectorDefaults.defaultModel ?? \'default-model\',');
+      expect(segment).toContain('acpSelectorDefaults.providerOptions.join(\',\'),');
+      expect(segment).toContain('workspacePath ?? \'global\',');
+      expect(segment).toContain('key={acpRuntimeKey}');
+    }
   });
 
   it('backs the placeholder display composer attachment button with the ACP UI attachment adapter', () => {
@@ -328,6 +377,32 @@ describe('CanvasGenerationComposer source', () => {
     expect(runtimeContentSegment).not.toContain('aui-composer-add-attachment inline-flex');
   });
 
+  it('wraps ACP attachment lists in a tooltip provider for pasted attachments', () => {
+    const source = readCanvasGenerationComposerSource();
+    const displayComponentSegment = source.slice(
+      source.indexOf('function CanvasGenerationDisplayComposerContent('),
+      source.indexOf('function CanvasGenerationDisplayComposerWithoutAcp'),
+    );
+    const runtimeContentSegment = source.slice(
+      source.indexOf('function CanvasGenerationRuntimeComposerContent('),
+      source.indexOf('function useAssistantUiDialogOverlayDismiss'),
+    );
+
+    const displayAttachmentIndex = displayComponentSegment.indexOf('<ComposerAttachments />');
+    const displayProviderStart = displayComponentSegment.lastIndexOf('<TooltipProvider>', displayAttachmentIndex);
+    const displayProviderEnd = displayComponentSegment.indexOf('</TooltipProvider>', displayAttachmentIndex);
+    expect(displayAttachmentIndex).toBeGreaterThan(-1);
+    expect(displayProviderStart).toBeGreaterThan(-1);
+    expect(displayProviderEnd).toBeGreaterThan(displayAttachmentIndex);
+
+    const runtimeAttachmentIndex = runtimeContentSegment.indexOf('allowAttachments ? <ComposerAttachments /> : null');
+    const runtimeProviderStart = runtimeContentSegment.lastIndexOf('<TooltipProvider>', runtimeAttachmentIndex);
+    const runtimeProviderEnd = runtimeContentSegment.indexOf('</TooltipProvider>', runtimeAttachmentIndex);
+    expect(runtimeAttachmentIndex).toBeGreaterThan(-1);
+    expect(runtimeProviderStart).toBeGreaterThan(-1);
+    expect(runtimeProviderEnd).toBeGreaterThan(runtimeAttachmentIndex);
+  });
+
   it('supports actions that render after ACP model selectors in the runtime composer row', () => {
     const source = readCanvasGenerationComposerSource();
     const runtimePropsSegment = source.slice(
@@ -343,9 +418,9 @@ describe('CanvasGenerationComposer source', () => {
     expect(runtimeContentSegment).toContain('renderPostSelectorActions,');
     expect(runtimeContentSegment).toContain('const postSelectorActions = renderPostSelectorActions?.({ submitting });');
     expect(runtimeContentSegment).toContain('const shouldRenderInlineSelectors = showSelectors && !postSelectorActions;');
-    expect(runtimeContentSegment).toContain('{shouldRenderInlineSelectors ? <AcpComposerSelectors /> : null}');
-    expect(runtimeContentSegment).toContain('{showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}');
-    expect(runtimeContentSegment.indexOf('{showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}')).toBeLessThan(
+    expect(runtimeContentSegment).toContain('{shouldRenderInlineSelectors ? <CanvasAcpComposerSelectors /> : null}');
+    expect(runtimeContentSegment).toContain('{showSelectors && postSelectorActions ? <CanvasAcpComposerSelectors /> : null}');
+    expect(runtimeContentSegment.indexOf('{showSelectors && postSelectorActions ? <CanvasAcpComposerSelectors /> : null}')).toBeLessThan(
       runtimeContentSegment.indexOf('{postSelectorActions}'),
     );
     expect(runtimeContentSegment).toContain('{postSelectorActions}');
@@ -387,6 +462,25 @@ describe('CanvasGenerationComposer source', () => {
     expect(source).toContain("accept: 'image/*'");
     expect(runtimeSegment).toContain('adapters: {');
     expect(runtimeSegment).toContain('attachments: canvasReferenceImageAttachmentAdapter');
+  });
+
+  it('renders Make-owned ACP provider selectors without ACP provider settings', () => {
+    const source = readCanvasGenerationComposerSource();
+    const selectorSegment = source.slice(
+      source.indexOf('const CANVAS_ACP_PROVIDER_LABELS'),
+      source.indexOf('function CanvasAcpModelSelectorFallback'),
+    );
+
+    expect(selectorSegment).toContain('CANVAS_ACP_PROVIDER_LABELS');
+    expect(selectorSegment).toContain("claude: 'Claude Code'");
+    expect(selectorSegment).toContain("codex: 'Codex'");
+    expect(selectorSegment).toContain("opencode: 'OpenCode'");
+    expect(selectorSegment).toContain('resolveCanvasAcpRuntimeProviderOptions(contextProviderOptions, context.provider)');
+    expect(selectorSegment).toContain('runtimeProviderOptions.includes(option.value)');
+    expect(selectorSegment).not.toContain('useVisibleAcpProviders');
+    expect(selectorSegment).not.toContain('ProviderSettingsMenuItem');
+    expect(selectorSegment).not.toContain('data-acp-provider-settings-trigger');
+    expect(selectorSegment).not.toContain('设置');
   });
 
   it('adds ordinary clipboard images as composer attachments without requiring Excalidraw reference paste', () => {

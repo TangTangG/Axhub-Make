@@ -738,7 +738,7 @@ describe('ContentPanel prototype page children source', () => {
     expect(source).not.toContain('onTreePersist(page');
   });
 
-  it('drags prototype page rows as normal prototype embeds with only page-specific URLs', () => {
+  it('drags prototype page rows as generic preview embeds with only page-specific URLs', () => {
     const source = readContentPanelSource();
     const helperSource = source.slice(
       source.indexOf('function resolvePrototypePageEmbedDisplayName'),
@@ -749,7 +749,9 @@ describe('ContentPanel prototype page children source', () => {
       source.indexOf('interface ProjectSetupDialogProps'),
     );
 
-    expect(helperSource).toContain("resourceType: 'prototype'");
+    expect(helperSource).toContain("type: 'preview'");
+    expect(helperSource).toContain("resourceType: 'preview'");
+    expect(helperSource).toContain("sourceResourceType: 'prototype'");
     expect(helperSource).toContain('resourceId');
     expect(helperSource).toContain("previewKind: 'web'");
     expect(helperSource).toContain("embedViewMode: 'preview'");
@@ -768,9 +770,19 @@ describe('ContentPanel prototype page children source', () => {
       source.indexOf('const payload = {'),
       source.indexOf('try {', source.indexOf('const payload = {')),
     );
+    const treeDragSource = source.slice(
+      source.indexOf('// Attach canvas-drop payload so the item can be'),
+      source.indexOf('e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME', source.indexOf('// Attach canvas-drop payload so the item can be')),
+    );
 
+    expect(payloadSource).toContain("type: 'preview'");
+    expect(payloadSource).toContain("resourceType: 'preview'");
+    expect(payloadSource).toContain('sourceResourceType');
     expect(payloadSource).toContain('embedViewMode: \'preview\'');
     expect(payloadSource).not.toContain('embedViewMode: \'link\'');
+    expect(treeDragSource).toContain("type: 'preview'");
+    expect(treeDragSource).toContain("resourceType: 'preview'");
+    expect(treeDragSource).toContain('sourceResourceType');
   });
 
   it('uses a text-only selected state for prototype pages so parent and first page backgrounds do not stack', () => {

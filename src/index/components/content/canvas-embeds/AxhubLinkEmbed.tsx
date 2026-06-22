@@ -1,8 +1,8 @@
 import React from 'react';
-import { PanelsTopLeft, FileText, Paintbrush } from 'lucide-react';
+import { PanelsTopLeft, FileText, Paintbrush, Eye } from 'lucide-react';
 import { LINK_EMBED_HEIGHT } from './linkEmbedSizing';
 
-export type LinkEmbedKind = 'prototype' | 'doc' | 'theme';
+export type LinkEmbedKind = 'preview' | 'prototype' | 'doc' | 'theme';
 
 interface AxhubLinkEmbedProps {
     title: string;
@@ -18,6 +18,7 @@ const KIND_CONFIG: Record<LinkEmbedKind, {
     Icon: typeof PanelsTopLeft;
     color: string;
 }> = {
+    preview:   { Icon: Eye,           color: '#008F5D' },
     prototype: { Icon: PanelsTopLeft, color: '#3b82f6' },
     doc:       { Icon: FileText,      color: '#f59e0b' },
     theme:     { Icon: Paintbrush,    color: '#8b5cf6' },
@@ -26,7 +27,7 @@ const KIND_CONFIG: Record<LinkEmbedKind, {
 /* ── Component ───────────────────────────────────────────────────── */
 
 function AxhubLinkEmbedInner({ title, kind }: AxhubLinkEmbedProps) {
-    const config = KIND_CONFIG[kind] || KIND_CONFIG.prototype;
+    const config = KIND_CONFIG[kind] || KIND_CONFIG.preview;
     const { Icon, color } = config;
 
     const fontSize = 16;

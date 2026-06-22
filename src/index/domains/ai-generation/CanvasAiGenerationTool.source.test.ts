@@ -87,6 +87,8 @@ describe('CanvasAiGenerationTool source', () => {
     expect(source).toContain('defaultThemeName?: string | null;');
     expect(source).toContain('defaultThemeName,');
     expect(source).toContain('defaultThemeName={defaultThemeName}');
+    expect(source).toContain('preferredPromptClient?: PromptClientPreference;');
+    expect(source).toContain('preferredPromptClient={preferredPromptClient}');
     expect(source).toContain('export interface CanvasAiGenerationResult {');
     expect(source).toContain('artifacts?: GenerationArtifactRecord[];');
     expect(source).toContain('onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;');
@@ -204,6 +206,7 @@ describe('CanvasAiGenerationTool source', () => {
 
     expect(source).toContain('generatorId?: string;');
     expect(source).toContain('canvasFilePath?: string;');
+    expect(source).toContain('createdPrototype?: ItemData;');
     expect(source).toContain('provider?: string | null;');
     expect(source).toContain('model?: string | null;');
     expect(source).toContain('mode?: string | null;');

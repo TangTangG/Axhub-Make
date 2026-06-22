@@ -397,6 +397,45 @@ describe('useAssistantPanelController source', () => {
     expect(iframeLoadSource).toContain('force: true,');
   });
 
+  it('syncs Make theme changes to the mounted ACP UI iframe through acp.theme.set', () => {
+    const adapterSource = readFileSync(resolve(__dirname, '../assistantAcpContext.ts'), 'utf8');
+    const bridgeSource = readFileSync(resolve(__dirname, './useAssistantBridge.ts'), 'utf8');
+    const controllerSource = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+    const indexPageSource = readFileSync(resolve(__dirname, '../../../app/IndexPage.tsx'), 'utf8');
+    const themeSyncSource = controllerSource.slice(
+      controllerSource.indexOf('const syncAssistantThemeToIframe = useCallback'),
+      controllerSource.indexOf('const syncAssistantPreviewMcpConfigToIframe = useCallback'),
+    );
+    const iframeLoadSource = controllerSource.slice(
+      controllerSource.indexOf('const handleAssistantIframeLoad = useCallback(() => {'),
+      controllerSource.indexOf('const visibleAiPanelMode = assistantPanelMode', controllerSource.indexOf('const handleAssistantIframeLoad = useCallback(() => {')),
+    );
+
+    expect(indexPageSource).toContain('isDarkMode,');
+    expect(controllerSource).toContain('isDarkMode: boolean;');
+    expect(controllerSource).toContain('const assistantThemeSyncSignatureRef = useRef(\'\');');
+    expect(controllerSource).toContain('syncThemeWithRetry: postAssistantThemeToIframeWithRetry,');
+    expect(adapterSource).toContain('export interface AcpThemePostMessage');
+    expect(adapterSource).toContain("type: 'acp.theme.set';");
+    expect(adapterSource).toContain('export function buildAcpThemePostMessage');
+    expect(adapterSource).toContain("theme: isDarkMode ? 'dark' : 'light'");
+    expect(bridgeSource).toContain('buildAcpThemePostMessage');
+    expect(bridgeSource).toContain('const syncTheme = useCallback((isDarkMode: boolean) => {');
+    expect(bridgeSource).toContain('const message = buildAcpThemePostMessage(isDarkMode);');
+    expect(bridgeSource).toContain('syncThemeWithRetry');
+    expect(themeSyncSource).toContain('const themeSignature = isDarkMode ? \'dark\' : \'light\';');
+    expect(themeSyncSource).toContain('if (!options.force && assistantThemeSyncSignatureRef.current === themeSignature) {');
+    expect(themeSyncSource).toContain('assistantThemeSyncSignatureRef.current = themeSignature;');
+    expect(themeSyncSource).toContain('postAssistantThemeToIframeWithRetry(isDarkMode);');
+    expect(controllerSource).toContain('syncAssistantThemeToIframe();');
+    expect(controllerSource).toContain("assistantThemeSyncSignatureRef.current = '';");
+    expect(iframeLoadSource).toContain('syncAssistantThemeToIframe({');
+    expect(iframeLoadSource).toContain('requireLoaded: false,');
+    expect(iframeLoadSource).toContain('requireVisible: false,');
+    expect(iframeLoadSource).toContain('force: true,');
+    expect(controllerSource).not.toContain("url.searchParams.set('theme'");
+  });
+
   it('restores a hidden mounted assistant with the remembered panel mode and matching iframe url', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
     const restoreSource = source.slice(
@@ -661,7 +700,7 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain('postAssistantContextToWindowWithRetry(childWindow, nextUrl, contextOverride);');
     expect(source).toContain("const childWindow = window.open(nextUrl, '_blank', windowFeatures);");
     expect(source).toContain("const windowFeatures = contextOverride ? undefined : 'noopener,noreferrer';");
-    expect(itemContextSource).toContain("void ensureAssistantReadyThenOpen('button', url.toString(), undefined, 'window', itemContext, {");
+    expect(itemContextSource).toContain("void ensureAssistantReadyThenOpen('button', url.toString(), targetPath, 'window', itemContext, {");
     expect(itemContextSource).toContain("panelMode: 'general-ai',");
     expect(itemContextSource).not.toContain("searchParams.set('targetPath'");
     expect(itemContextSource).not.toContain("url.searchParams.set('context'");

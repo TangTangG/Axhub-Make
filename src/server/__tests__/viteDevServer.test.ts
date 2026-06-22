@@ -209,6 +209,7 @@ describe('make-server Vite dev middleware', () => {
     ['/assets/canvas-template-bootstrap.js', '/src/canvas-template/index.tsx'],
     ['/assets/html-template-bootstrap.js', '/src/html-template/index.tsx'],
     ['/assets/runtime-export-core.js', '/src/runtime-export-core.ts'],
+    ['/assets/runtime-export-core.js?v=0.3.0', '/src/runtime-export-core.ts'],
   ])('serves production entry asset %s from source in dev mode', async (assetUrl, sourceUrl) => {
     let handledUrl = '';
     const close = vi.fn();

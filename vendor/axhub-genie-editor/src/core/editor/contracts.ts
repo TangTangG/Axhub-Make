@@ -235,7 +235,7 @@ export interface EditorInteractionService {
     element: Element,
     modifiers: EventModifiers,
     selectionAnchor?: { clientX: number; clientY: number },
-  ): void;
+  ): Promise<void>;
   handleDeselect(): void;
   handlePositionUpdate(rects: TrackedRects): void;
   handleTransactionChange(event: TransactionChangeEvent): void;

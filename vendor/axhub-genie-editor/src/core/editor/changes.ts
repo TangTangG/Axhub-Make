@@ -27,6 +27,12 @@ import type {
 import { getGlobalGenieEditorTweakProtocol } from '../../tweak/protocol';
 import { normalizePromptCardSkillIds } from '../../ui/runtime/prompt-card-skills';
 
+const ANNOTATION_MARKER_NODE_ID_ATTR = 'data-axhub-annotation-node-id';
+const ANNOTATION_HOST_ID = '__axhub_annotation_host__';
+const ANNOTATION_PANEL_NODE_ID_ATTR = 'data-axhub-annotation-panel-node-id';
+
+type ChangeMarkerTaskState = 'editing' | 'error';
+
 export function filterVisibleChangeMarkerMetas(
   metas: readonly ElementEditMeta[],
   activeMarkerKey: WebEditorElementKey | null,
@@ -46,6 +52,107 @@ export function createChangesService(options: {
 
   function normalizeNote(value: string): string {
     return String(value ?? '').replace(/\r\n/g, '\n');
+  }
+
+  function cssEscape(value: string): string {
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+      return CSS.escape(value);
+    }
+    return String(value).replace(/["\\]/g, '\\$&');
+  }
+
+  function extractAnnotationPanelNodeId(locator: ElementLocator): string {
+    for (const selector of locator.selectors ?? []) {
+      const normalized = String(selector ?? '').trim();
+      if (!normalized) continue;
+      const match = normalized.match(/\[data-axhub-annotation-panel-node-id=(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/);
+      const rawValue = match?.[1] ?? match?.[2] ?? match?.[3] ?? '';
+      const nodeId = String(rawValue).trim();
+      if (nodeId) return nodeId;
+    }
+    return '';
+  }
+
+  function readAnnotationPanelNodeId(element: Element | null): string {
+    try {
+      return String(element?.getAttribute?.(ANNOTATION_PANEL_NODE_ID_ATTR) ?? '').trim();
+    } catch {
+      return '';
+    }
+  }
+
+  function buildAnnotationPanelLocator(nodeId: string): ElementLocator {
+    return {
+      selectors: [`[${ANNOTATION_PANEL_NODE_ID_ATTR}="${cssEscape(nodeId)}"]`],
+      fingerprint: `annotation-panel:${nodeId}`,
+      path: [],
+      shadowHostChain: [],
+    };
+  }
+
+  function resolveEditableElementIdentity(element: Element): {
+    elementKey: WebEditorElementKey;
+    locator: ElementLocator;
+    label: string;
+  } {
+    const annotationNodeId = readAnnotationPanelNodeId(element);
+    if (annotationNodeId) {
+      const locator = buildAnnotationPanelLocator(annotationNodeId);
+      return {
+        elementKey: `annotation-panel:${annotationNodeId}`,
+        locator,
+        label: 'Annotation Panel',
+      };
+    }
+
+    const locator = createElementLocator(element);
+    return {
+      elementKey: generateStableElementKey(element, locator.shadowHostChain),
+      locator,
+      label: generateFullElementLabel(element, locator.shadowHostChain),
+    };
+  }
+
+  function findAnnotationMarkerByNodeId(nodeId: string): Element | null {
+    if (!nodeId || typeof document === 'undefined') {
+      return null;
+    }
+    const selector = `[${ANNOTATION_MARKER_NODE_ID_ATTR}="${cssEscape(nodeId)}"]`;
+    try {
+      const host = typeof document.getElementById === 'function'
+        ? document.getElementById(ANNOTATION_HOST_ID)
+        : null;
+      const shadowRoot = (host as (Element & { shadowRoot?: ShadowRoot | null }) | null)?.shadowRoot ?? null;
+      const shadowMarker = shadowRoot?.querySelector(selector) ?? null;
+      if (shadowMarker) return shadowMarker;
+      return typeof document.querySelector === 'function' ? document.querySelector(selector) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function locateMarkerRenderableElement(locator: ElementLocator): Element | null {
+    let element: Element | null = null;
+    try {
+      element = locateElement(locator);
+    } catch {
+      element = null;
+    }
+    if (element?.isConnected) return element;
+
+    const annotationNodeId = extractAnnotationPanelNodeId(locator);
+    const annotationMarker = findAnnotationMarkerByNodeId(annotationNodeId);
+    return annotationMarker?.isConnected ? annotationMarker : null;
+  }
+
+  function resolveAnnotationMarkerAnchor(locator: ElementLocator): MarkerAnchor | null {
+    const annotationNodeId = extractAnnotationPanelNodeId(locator);
+    if (!annotationNodeId) return null;
+
+    const annotationMarker = findAnnotationMarkerByNodeId(annotationNodeId);
+    if (!annotationMarker?.isConnected) return null;
+
+    return buildFallbackAnchor(annotationMarker);
   }
 
   function formatSelectorPath(locator: ElementLocator | null | undefined): string {
@@ -305,9 +412,7 @@ export function createChangesService(options: {
     if (isTextCommentTargetElement(element)) {
       return null;
     }
-    const locator = createElementLocator(element);
-    const elementKey = generateStableElementKey(element, locator.shadowHostChain);
-    const label = generateFullElementLabel(element, locator.shadowHostChain);
+    const { elementKey, locator, label } = resolveEditableElementIdentity(element);
     return (
       state.editMetaByKey.get(elementKey) ??
       findExistingMetaForLiveElement(element, elementKey, locator, label) ??
@@ -331,7 +436,10 @@ export function createChangesService(options: {
     locator: ElementLocator,
     fallbackAnchor: MarkerAnchor | null,
   ): MarkerAnchor | null {
-    let element = locateElement(locator);
+    const annotationMarkerAnchor = resolveAnnotationMarkerAnchor(locator);
+    if (annotationMarkerAnchor) return annotationMarkerAnchor;
+
+    let element = locateMarkerRenderableElement(locator);
 
     // For text comments the locator is synthetic (empty selectors),
     // so locateElement finds nothing.  Fall back to the live source element
@@ -447,6 +555,17 @@ export function createChangesService(options: {
     return lines;
   }
 
+  function resolveChangeMarkerTaskState(elementKey: WebEditorElementKey): ChangeMarkerTaskState | null {
+    const task =
+      state.externalEditingTaskByElementKey.get(elementKey)
+      ?? state.genieTaskByElementKey.get(elementKey)
+      ?? null;
+    if (!task || task.dismissed) return null;
+    if (task.status === 'pending' || task.status === 'created') return 'editing';
+    if (task.status === 'error') return 'error';
+    return null;
+  }
+
   function pruneIdleMeta(elementKey: WebEditorElementKey): void {
     const meta = state.editMetaByKey.get(elementKey);
     if (!meta) return;
@@ -504,14 +623,35 @@ export function createChangesService(options: {
       const anchor = resolveLiveAnchor(meta.locator, meta.anchor);
       if (!anchor) return null;
       const position = getViewportMarkerPosition(anchor);
+      const annotationNodeId = extractAnnotationPanelNodeId(meta.locator);
+      const detailLines = buildMarkerDetailLines(meta);
+      const markerText = String(index + 1);
+      const taskState = resolveChangeMarkerTaskState(meta.elementKey);
+      const taskLocked = taskState === 'editing';
       const marker = document.createElement('div');
-      marker.className = 'we-change-marker';
+      marker.className = [
+        'we-change-marker',
+        annotationNodeId ? 'we-change-marker--annotation-note' : '',
+        taskState ? `we-change-marker--task-${taskState}` : '',
+      ].filter(Boolean).join(' ');
       marker.style.left = `${position.left}px`;
       marker.style.top = `${position.top}px`;
-      marker.textContent = String(index + 1);
       marker.setAttribute('role', 'button');
       marker.tabIndex = 0;
-      marker.setAttribute('aria-label', `定位到 ${meta.label}`);
+      marker.setAttribute(
+        'aria-label',
+        `定位到 ${meta.label}${taskState === 'editing' ? '，修改中' : taskState === 'error' ? '，修改失败' : ''}`,
+      );
+      if (taskState) {
+        marker.setAttribute('data-task-state', taskState);
+      }
+      if (taskLocked) {
+        marker.setAttribute('aria-disabled', 'true');
+      }
+
+      const markerBody = document.createElement('span');
+      markerBody.className = 'we-change-marker__body';
+      markerBody.textContent = markerText;
 
       const tooltip = document.createElement('div');
       tooltip.className = 'we-change-marker__tooltip';
@@ -522,7 +662,7 @@ export function createChangesService(options: {
 
       const details = document.createElement('div');
       details.className = 'we-change-marker__details';
-      for (const line of buildMarkerDetailLines(meta)) {
+      for (const line of detailLines) {
         const detail = document.createElement('span');
         detail.className = 'we-change-marker__note';
         detail.textContent = line;
@@ -530,7 +670,7 @@ export function createChangesService(options: {
       }
 
       const selectMarkedElement = () => {
-        const element = locateElement(meta.locator);
+        const element = locateMarkerRenderableElement(meta.locator);
         if (!element || !element.isConnected) return;
         options.onSelectMarkedElement?.(element, anchor);
       };
@@ -538,17 +678,19 @@ export function createChangesService(options: {
       marker.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (taskLocked) return;
         selectMarkedElement();
       });
       marker.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();
         event.stopPropagation();
+        if (taskLocked) return;
         selectMarkedElement();
       });
 
       tooltip.append(label, details);
-      marker.append(tooltip);
+      marker.append(markerBody, tooltip);
       return marker;
     }).filter((node): node is HTMLDivElement => node !== null);
 

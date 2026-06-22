@@ -19,6 +19,8 @@ export interface ItemData {
     specUrl: string;
     filePath?: string;
     absoluteFilePath?: string;
+    canvasFilePath?: string;
+    absoluteCanvasFilePath?: string;
     fileSize?: number;
     specFilePath?: string;
     specAbsoluteFilePath?: string;

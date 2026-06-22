@@ -38,11 +38,15 @@ function resolveCanvasNamePath(canvasName?: string): string {
 function getExplicitCanvasItemPath(item: unknown): string {
     if (!item || typeof item !== 'object') return '';
     const record = item as {
+        canvasFilePath?: unknown;
+        absoluteCanvasFilePath?: unknown;
         filePath?: unknown;
         absoluteFilePath?: unknown;
         path?: unknown;
     };
-    return normalizePath(record.filePath)
+    return normalizePath(record.canvasFilePath)
+        || normalizePath(record.absoluteCanvasFilePath)
+        || normalizePath(record.filePath)
         || normalizePath(record.absoluteFilePath)
         || normalizePath(record.path);
 }

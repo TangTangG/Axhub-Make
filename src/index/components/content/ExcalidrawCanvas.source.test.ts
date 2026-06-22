@@ -475,6 +475,20 @@ describe('ExcalidrawCanvas source', () => {
     expect(renderSource).toContain("const embedViewMode = customData?.embedViewMode || 'link';");
   });
 
+  it('creates new canvas embeddables as generic preview nodes that can hold arbitrary links', () => {
+    const source = readSource();
+    const createStart = source.indexOf('export function createEmbeddableFromDrop');
+    const createEnd = source.indexOf('async function createImageElementFromDrop', createStart);
+    const createSource = source.slice(createStart, createEnd);
+
+    expect(createSource).toContain("resourceType?: 'preview' | 'prototype' | 'doc' | 'theme';");
+    expect(createSource).toContain("const resourceType = payload.resourceType || 'preview';");
+    expect(createSource).toContain("const link = payload.openUrl || previewUrl || payload.previewUrl || '';");
+    expect(createSource).toContain("previewKind: payload.previewKind || 'web',");
+    expect(createSource).toContain('previewUrl: previewUrl || payload.previewUrl || \'\',');
+    expect(createSource).not.toContain("const resourceType = payload.resourceType || (isDoc ? 'doc' : isTheme ? 'theme' : 'prototype');");
+  });
+
   it('passes prototype generation props into the unified AI generation tool', () => {
     const source = readSource();
 
@@ -521,7 +535,8 @@ describe('ExcalidrawCanvas source', () => {
     const resolverEnd = source.indexOf('export function createEmbeddableFromDrop', resolverStart);
     const resolverSource = source.slice(resolverStart, resolverEnd);
 
-    expect(resolverSource).toContain("if (resolveEmbeddableResourceType(element) === 'prototype' && previewUrl) {");
+    expect(resolverSource).toContain("const sourceResourceType = resolveString(element?.customData?.sourceResourceType);");
+    expect(resolverSource).toContain("resolveEmbeddableResourceType(element) === 'prototype' || sourceResourceType === 'prototype'");
     expect(resolverSource).toContain('return previewUrl;');
     expect(resolverSource).toContain('const storedOpenUrl = resolveString(element?.customData?.openUrl);');
   });

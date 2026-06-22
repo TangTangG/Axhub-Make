@@ -45,13 +45,41 @@ function getCanvasTitle(canvasName: string): string {
   return displayName ? `${displayName} - Canvas` : 'Canvas';
 }
 
+function readProjectServerShareHosts(projectRoot?: string): { localHost: string; lanHost: string } {
+  if (!projectRoot) {
+    return { localHost: 'localhost', lanHost: '' };
+  }
+  try {
+    const configPath = path.join(projectRoot, '.axhub', 'make', 'axhub.config.json');
+    const config = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      : {};
+    const server = config?.server && typeof config.server === 'object' ? config.server : {};
+    const localHost = typeof server.host === 'string' && server.host.trim()
+      ? server.host.trim()
+      : 'localhost';
+    const lanHost = typeof server.lanHost === 'string' && server.lanHost.trim()
+      ? server.lanHost.trim()
+      : '';
+    return { localHost, lanHost };
+  } catch {
+    return { localHost: 'localhost', lanHost: '' };
+  }
+}
+
 export function buildInjectScript(options: AdminStaticOptions): string {
+  const shareHosts = readProjectServerShareHosts(options.activeProjectRoot || options.projectRoot);
+  const lanHost = shareHosts.lanHost || options.lanHost || options.host;
   return `
   <script>
     window.__PROJECT_PREFIX__ = '';
     window.__IS_MIXED_PROJECT__ = false;
-    window.__LOCAL_IP__ = '${escapeScriptString(options.lanHost || options.host)}';
+    window.__LOCAL_IP__ = '${escapeScriptString(lanHost)}';
     window.__LOCAL_PORT__ = ${options.port};
+    window.__AXHUB_SHARE_HOSTS__ = {
+      localHost: '${escapeScriptString(shareHosts.localHost)}',
+      lanHost: '${escapeScriptString(lanHost)}'
+    };
     window.__PROJECT_ROOT__ = '${escapeScriptString(options.projectRoot)}';
     window.__RUNTIME_ORIGIN__ = '${escapeScriptString(options.runtimeOrigin || '')}';
     window.__AXHUB_CANVAS_MCP_URL__ = '${AXHUB_CANVAS_MCP_PATH}';

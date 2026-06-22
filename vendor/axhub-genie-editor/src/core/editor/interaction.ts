@@ -18,6 +18,10 @@ import type { CommentEntryMode } from '../../ui/selection-ui-mode';
 import type { TextComment } from '../../selection/text-comment-manager';
 import { createMarkerAnchor } from './marker-anchor';
 import { formatTextCommentLabel } from './text-comment-target';
+import {
+  isAnnotationMarkerElement,
+  openAnnotationMarkerCommentTarget,
+} from '../../utils/annotation-comment-bridge';
 
 export function createInteractionService(options: {
   state: EditorRuntimeState;
@@ -77,7 +81,24 @@ export function createInteractionService(options: {
     state.positionTracker?.forceUpdate();
   }
 
-  function handleSelect(
+  function closeAnnotationBridgeSelection(nextTarget: Element | null): void {
+    const selection = state.annotationBridgeSelection;
+    if (!selection) return;
+    if (
+      nextTarget &&
+      (
+        nextTarget === selection.target ||
+        (typeof selection.target.contains === 'function' && selection.target.contains(nextTarget))
+      )
+    ) {
+      return;
+    }
+
+    selection.bridge.closeTarget(selection.target);
+    state.annotationBridgeSelection = null;
+  }
+
+  function selectResolvedElement(
     element: Element,
     modifiers: EventModifiers,
     selectionAnchor?: { clientX: number; clientY: number },
@@ -114,7 +135,31 @@ export function createInteractionService(options: {
     console.log(`${options.logPrefix} Selected${modInfo}:`, element.tagName, element);
   }
 
+  async function handleSelect(
+    element: Element,
+    modifiers: EventModifiers,
+    selectionAnchor?: { clientX: number; clientY: number },
+  ): Promise<void> {
+    if (genieBridge.isElementInteractionLocked(element)) {
+      return;
+    }
+
+    if (isAnnotationMarkerElement(element)) {
+      const bridgeSelection = await openAnnotationMarkerCommentTarget(element);
+      if (!bridgeSelection) return;
+      closeAnnotationBridgeSelection(bridgeSelection.target);
+      state.annotationBridgeSelection = bridgeSelection;
+      selectResolvedElement(bridgeSelection.target, modifiers);
+      return;
+    }
+
+    closeAnnotationBridgeSelection(element);
+    selectResolvedElement(element, modifiers, selectionAnchor);
+  }
+
   function handleDeselect(): void {
+    closeAnnotationBridgeSelection(null);
+
     if (!state.selectedElement && state.activeTextComment) {
       options.changes.clearPendingSelectionAnchor();
       state.selectionAnchor = null;
@@ -239,7 +284,7 @@ export function createInteractionService(options: {
     if (!target || !target.isConnected) return false;
 
     if (state.selectedElement !== target) {
-      handleSelect(target, DEFAULT_MODIFIERS, selectionAnchor);
+      void handleSelect(target, DEFAULT_MODIFIERS, selectionAnchor);
     }
 
     enterCommentInput('bubble-card');

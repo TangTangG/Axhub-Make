@@ -50,7 +50,7 @@ describe('EmbedFloatingToolbar source', () => {
         const resolverEnd = source.indexOf('function isEmbedPreviewable', resolverStart);
         const resolverSource = source.slice(resolverStart, resolverEnd);
 
-        expect(resolverSource).toContain("if (el?.customData?.resourceType === 'prototype' && previewUrl) {");
+        expect(resolverSource).toContain("el?.customData?.sourceResourceType === 'prototype'");
         expect(resolverSource).toContain('return previewUrl;');
         expect(resolverSource).toContain('return resolveString(el?.customData?.openUrl) || resolveString(el?.link);');
     });

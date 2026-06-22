@@ -75,6 +75,7 @@ interface ServerConfig {
     host: string;
     port: number;
     allowLAN: boolean;
+    lanHost?: string;
     enableCommandAPI?: boolean;
 }
 
@@ -87,6 +88,7 @@ interface Config {
     projectId?: string | null;
     projectPath?: string | null;
     server: ServerConfig;
+    availableLANHosts?: string[];
     projectInfo?: ProjectInfoConfig;
     projectDefaults?: {
         defaultTheme?: string | null;
@@ -113,6 +115,7 @@ interface Config {
 
 interface SettingsFormState {
     host: string;
+    lanHost: string;
     allowLAN: boolean;
     projectName: string;
     projectDescription: string;
@@ -161,6 +164,7 @@ const MAKE_CLIENT_UPDATE_STEPS = [
 
 const DEFAULT_FORM_STATE: SettingsFormState = {
     host: 'localhost',
+    lanHost: '',
     allowLAN: true,
     projectName: '',
     projectDescription: '',
@@ -200,6 +204,7 @@ function getAgentProviderIcon(provider: AcpProviderKey): React.ReactNode {
 function normalizeFormState(config: Config): SettingsFormState {
     return {
         host: config.server.host || 'localhost',
+        lanHost: config.server.lanHost || config.availableLANHosts?.[0] || '',
         allowLAN: config.server.allowLAN !== false,
         projectName: config.projectInfo?.name || '',
         projectDescription: config.projectInfo?.description || '',
@@ -382,6 +387,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
     const [aiImageConfigTest, setAiImageConfigTest] = useState<AiImageConfigTestState>({ status: 'idle' });
     const [aiImageConfigLastTest, setAiImageConfigLastTest] = useState<AiImageConfigLastTest | undefined>(undefined);
     const [availableThemes, setAvailableThemes] = useState<ThemeResourceItem[]>([]);
+    const [availableLANHosts, setAvailableLANHosts] = useState<string[]>([]);
     const [activeProjectId, setActiveProjectId] = useState('');
     const [localAcpRuntime, setLocalAcpRuntime] = useState<AssistantRuntimeResponse | null>(null);
     const [localAcpFailureContext, setLocalAcpFailureContext] = useState<{ source: string; message: string } | null>(null);
@@ -419,6 +425,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
             initialAcpFailureAppliedRef.current = false;
             localAcpAutoCloseBlockedRef.current = false;
             setAvailableThemes([]);
+            setAvailableLANHosts([]);
             return;
         }
 
@@ -453,6 +460,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
             }
             const config: Config = await response.json();
             setFormState(normalizeFormState(config));
+            setAvailableLANHosts(Array.isArray(config.availableLANHosts) ? config.availableLANHosts : []);
             setAiImageConfigLastTest(normalizeAiImageConfigLastTest(config.ai?.imageGeneration?.lastTest));
             const projectId = typeof config.projectId === 'string' ? config.projectId.trim() : '';
             setActiveProjectId(projectId);
@@ -874,6 +882,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                     host,
                     port: currentConfig.server.port || 51720,
                     allowLAN: formState.allowLAN,
+                    lanHost: formState.lanHost.trim(),
                     enableCommandAPI: currentConfig.server.enableCommandAPI || false,
                 },
                 projectInfo: {
@@ -925,6 +934,10 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
             }
 
             const result = await response.json();
+            window.__AXHUB_SHARE_HOSTS__ = {
+                localHost: host,
+                lanHost: formState.lanHost.trim() || availableLANHosts[0] || '',
+            };
             toast.success(result.message || '配置已保存');
             onSaved?.();
             onClose();
@@ -1026,7 +1039,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                         </div>
 
                         <Field>
-                            <FieldLabelWithHint hint="服务监听的主机地址。通常保持 localhost 即可。">主机地址</FieldLabelWithHint>
+                            <FieldLabelWithHint hint="复制本地访问链接时使用的地址。通常保持 localhost 即可。">本地地址</FieldLabelWithHint>
                             <Input
                                 value={formState.host}
                                 onChange={(event) => updateField('host', event.target.value)}
@@ -1042,6 +1055,31 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                             />
                             <span className="font-medium text-foreground">允许局域网访问</span>
                         </label>
+
+                        {formState.allowLAN ? (
+                            <Field>
+                                <FieldLabelWithHint hint="复制局域网链接和二维码时使用的固定地址，可手动填写或从检测到的地址中选择。">局域网地址</FieldLabelWithHint>
+                                <Input
+                                    value={formState.lanHost}
+                                    onChange={(event) => updateField('lanHost', event.target.value)}
+                                    placeholder={availableLANHosts[0] || '192.168.1.10'}
+                                />
+                                {availableLANHosts.length ? (
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {availableLANHosts.slice(0, 4).map((host) => (
+                                            <button
+                                                key={host}
+                                                type="button"
+                                                className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] leading-5 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                                                onClick={() => updateField('lanHost', host)}
+                                            >
+                                                {host}
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : null}
+                            </Field>
+                        ) : null}
                         </section>
                     </TabsContent>
 
@@ -1291,16 +1329,16 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                             <Table>
                                                 <TableHeader className="bg-muted/30">
                                                     <TableRow className="hover:bg-transparent">
-                                                        <TableHead className="h-8 w-[64px] px-2 text-xs">
+                                                        <TableHead className="h-8 w-[76px] px-2 text-xs">
                                                             <span className="inline-flex items-center gap-1">
-                                                                执行
+                                                                默认
                                                                 <TooltipProvider>
                                                                     <Tooltip>
                                                                         <TooltipTrigger asChild>
                                                                             <button
                                                                                 type="button"
                                                                                 className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                                                                                aria-label="执行说明"
+                                                                                aria-label="默认说明"
                                                                             >
                                                                                 <CircleHelp className="h-3.5 w-3.5" />
                                                                             </button>
@@ -1312,7 +1350,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                                                 </TooltipProvider>
                                                             </span>
                                                         </TableHead>
-                                                        <TableHead className="h-8 w-[180px] px-2 text-xs">供应商</TableHead>
+                                                        <TableHead className="h-8 w-[170px] px-2 text-xs">供应商</TableHead>
                                                         <TableHead className="h-8 w-[180px] px-3 text-xs">
                                                             <span className="inline-flex items-center gap-1.5">
                                                                 版本
@@ -1336,7 +1374,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                                                 </TooltipProvider>
                                                             </span>
                                                         </TableHead>
-                                                        <TableHead className="h-8 w-[150px] px-3 text-xs">上次测试</TableHead>
+                                                        <TableHead className="h-8 w-[230px] px-3 text-center text-xs">上次测试</TableHead>
                                                     </TableRow>
                                                 </TableHeader>
                                                 <TableBody>
@@ -1352,7 +1390,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                                             <TableCell className="px-2 py-2">
                                                                 <RadioGroupItem value={option.value} aria-label={`默认使用 ${option.label}`} />
                                                             </TableCell>
-                                                            <TableCell className="w-[180px] max-w-[180px] px-2 py-2">
+                                                            <TableCell className="w-[170px] max-w-[170px] px-2 py-2">
                                                                 <span className="inline-flex min-w-0 items-center gap-2 font-medium text-foreground">
                                                                     <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
                                                                         {getAgentProviderIcon(option.provider)}
@@ -1366,19 +1404,19 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                                                     <span className="block max-w-[144px] truncate font-mono text-[11px] leading-4" title={metaTitle || undefined}>{meta || (agentVersionsLoading ? '检测中' : '未检测')}</span>
                                                                 </span>
                                                             </TableCell>
-                                                            <TableCell className="px-3 py-2 text-xs">
-                                                                <div className="flex min-w-0 items-start justify-between gap-2">
-                                                                    <div className="flex min-w-0 flex-col gap-0.5">
+                                                            <TableCell className="w-[230px] max-w-[230px] px-3 py-2 text-center text-xs align-middle">
+                                                                <div className="inline-flex min-w-0 max-w-full items-center justify-center gap-2">
+                                                                    <div className="flex min-w-0 flex-col items-center text-center gap-0.5">
                                                                         {testLabel ? (
                                                                             <span
                                                                                 className={testState?.status === 'passed'
-                                                                                    ? 'inline-flex max-w-[180px] whitespace-normal break-words leading-5 items-start gap-1 text-emerald-600 [overflow-wrap:anywhere]'
+                                                                                    ? 'inline-flex max-w-[190px] items-center gap-1 whitespace-normal break-words leading-5 text-emerald-600 [overflow-wrap:anywhere]'
                                                                                     : testState?.status === 'testing'
-                                                                                        ? 'inline-flex max-w-[180px] whitespace-normal break-words leading-5 items-start gap-1 text-muted-foreground [overflow-wrap:anywhere]'
-                                                                                        : 'block max-w-[180px] whitespace-normal break-words leading-5 text-destructive [overflow-wrap:anywhere]'}
+                                                                                        ? 'inline-flex max-w-[190px] items-center gap-1 whitespace-normal break-words leading-5 text-muted-foreground [overflow-wrap:anywhere]'
+                                                                                        : 'block max-w-[190px] whitespace-normal break-words leading-5 text-destructive [overflow-wrap:anywhere]'}
                                                                                 title={testState?.message || testLabel}
                                                                             >
-                                                                                {isTesting ? <Loader2 className="mt-1 h-3 w-3 shrink-0 animate-spin" /> : null}
+                                                                                {isTesting ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : null}
                                                                                 {testLabel}{testState?.status === 'failed' && testState.message && testState.message !== testLabel ? `：${testState.message}` : ''}
                                                                             </span>
                                                                         ) : (

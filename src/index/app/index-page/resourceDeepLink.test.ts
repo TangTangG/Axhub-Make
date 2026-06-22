@@ -58,7 +58,7 @@ describe('resource deep links', () => {
         });
     });
 
-    it('builds and parses short document and theme links', () => {
+    it('builds and parses short document, template, and theme links', () => {
         expect(buildIndexDeepLinkUrl({
             resourceType: 'doc',
             resourceId: 'product-spec.md',
@@ -68,6 +68,19 @@ describe('resource deep links', () => {
         expect(parseIndexDeepLink('/?projectId=client-a&doc=product-spec.md')).toEqual({
             resourceType: 'doc',
             resourceId: 'product-spec.md',
+            projectId: 'client-a',
+            collapseSidebar: false,
+        });
+
+        expect(buildIndexDeepLinkUrl({
+            resourceType: 'template',
+            resourceId: 'write-prd.md',
+            projectId: 'client-a',
+        }, 'http://localhost:51720/old/path?ignored=1')).toBe('http://localhost:51720/?projectId=client-a&doc=templates%2Fwrite-prd.md');
+
+        expect(parseIndexDeepLink('/?projectId=client-a&doc=templates%2Fwrite-prd.md')).toEqual({
+            resourceType: 'template',
+            resourceId: 'write-prd.md',
             projectId: 'client-a',
             collapseSidebar: false,
         });
@@ -195,9 +208,10 @@ describe('resource deep links', () => {
         })).toBeNull();
     });
 
-    it('resolves short links for prototypes, documents, and themes', () => {
+    it('resolves short links for prototypes, documents, templates, and themes', () => {
         const prototype = createItem('express-home');
         const doc = createItem('product-spec.md');
+        const template = createItem('write-prd.md');
         const theme = { name: 'june', displayName: 'June' };
 
         expect(resolveIndexDeepLinkSelection({
@@ -231,6 +245,24 @@ describe('resource deep links', () => {
             kind: 'doc',
             item: doc,
             sidebarTab: 'document',
+            collapseSidebar: false,
+        });
+
+        expect(resolveIndexDeepLinkSelection({
+            resourceType: 'template',
+            resourceId: 'write-prd.md',
+            projectId: 'client-a',
+            collapseSidebar: false,
+        }, {
+            prototypes: [prototype],
+            docs: [doc],
+            templates: [template],
+            themes: [theme],
+        })).toEqual({
+            kind: 'template',
+            item: template,
+            sidebarTab: 'assets',
+            resourceSection: 'templates',
             collapseSidebar: false,
         });
 

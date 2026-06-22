@@ -9,6 +9,7 @@ import {
 } from './projectCore/index.ts';
 
 import { getRequestUrl, readJsonBody, sendFile, sendJson } from './http.ts';
+import { sendHtmlDocumentPreview } from './htmlDocumentPreview.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { openPathInSystem } from './managementApi.workspace.ts';
 import { sendUnsupportedFilePreview } from './unsupportedFilePreview.ts';
@@ -607,6 +608,9 @@ export function handleProjectDocsApi(
       })) {
         return true;
       }
+      if (sendHtmlDocumentPreview(req, res, templatePath)) {
+        return true;
+      }
       if (!sendFile(res, templatePath)) {
         sendJson(res, { error: 'Template not found' }, { status: 404 });
       }
@@ -678,6 +682,12 @@ export function handleProjectDocsApi(
     }
     if (req.method === 'PUT') {
       readJsonBody(req).then((body) => {
+        if (Object.prototype.hasOwnProperty.call(body ?? {}, 'content')) {
+          fs.mkdirSync(path.dirname(templatePath), { recursive: true });
+          fs.writeFileSync(templatePath, String(body?.content ?? ''), 'utf8');
+          sendJson(res, { success: true, path: templatePath });
+          return;
+        }
         const nextBaseName = sanitizeDocBaseName(String(body?.newBaseName || ''));
         if (!nextBaseName) {
           sendJson(res, { error: 'Missing newBaseName' }, { status: 400 });
@@ -733,6 +743,9 @@ export function handleProjectDocsApi(
         openEndpoint,
         resourceType: 'docs',
       })) {
+        return true;
+      }
+      if (sendHtmlDocumentPreview(req, res, docPath)) {
         return true;
       }
       if (!sendFile(res, docPath)) {
@@ -821,6 +834,12 @@ export function handleProjectDocsApi(
     }
     if (req.method === 'PUT') {
       readJsonBody(req).then((body) => {
+        if (Object.prototype.hasOwnProperty.call(body ?? {}, 'content')) {
+          fs.mkdirSync(path.dirname(docPath), { recursive: true });
+          fs.writeFileSync(docPath, String(body?.content ?? ''), 'utf8');
+          sendJson(res, { success: true, path: docPath });
+          return;
+        }
         const nextBaseName = sanitizeDocBaseName(String(body?.newBaseName || ''));
         if (!nextBaseName) {
           sendJson(res, { error: 'Missing newBaseName' }, { status: 400 });

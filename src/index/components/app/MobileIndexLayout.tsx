@@ -1,6 +1,5 @@
 import React from 'react';
-import { Copy, Loader2, MessageCircle, Search } from 'lucide-react';
-import { GenieBrandButton } from 'axhub-genie-editor';
+import { Copy, ImageIcon, Loader2, MessageCircle, Search, Sparkles } from 'lucide-react';
 import type { ItemData } from '../../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,10 +8,10 @@ interface MobileIndexLayoutProps {
     loading: boolean;
     items: ItemData[];
     searchText: string;
-    assistantVisible: boolean;
     onSearchTextChange: (value: string) => void;
     onCopyProjectDirectory: () => Promise<void> | void;
     onOpenAssistant: () => void;
+    onOpenImageAiPanel: () => void;
     onOpenItem: (item: ItemData) => void;
     onOpenAssistantWithItemContext: (item: ItemData) => void;
 }
@@ -21,10 +20,10 @@ export default function MobileIndexLayout({
     loading,
     items,
     searchText,
-    assistantVisible,
     onSearchTextChange,
     onCopyProjectDirectory,
     onOpenAssistant,
+    onOpenImageAiPanel,
     onOpenItem,
     onOpenAssistantWithItemContext,
 }: MobileIndexLayoutProps) {
@@ -66,17 +65,30 @@ export default function MobileIndexLayout({
                         <Button
                             variant="ghost"
                             size="icon"
+                            title="在线对话 AI"
+                            aria-label="在线对话 AI"
+                            onClick={onOpenAssistant}
+                        >
+                            <Sparkles className="h-4 w-4" />
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            title="生图 AI"
+                            aria-label="生图 AI"
+                            onClick={onOpenImageAiPanel}
+                        >
+                            <ImageIcon className="h-4 w-4" />
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
                             title="复制项目目录"
                             aria-label="复制项目目录"
                             onClick={() => void onCopyProjectDirectory()}
                         >
                             <Copy className="h-4 w-4" />
                         </Button>
-                        <GenieBrandButton
-                            state={assistantVisible ? 'awake' : 'sleeping'}
-                            size={32}
-                            onClick={onOpenAssistant}
-                        />
                     </div>
                 </div>
 

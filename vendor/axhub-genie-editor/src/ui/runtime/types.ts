@@ -55,6 +55,7 @@ export interface WebEditorUiRuntimeOptions {
   propertyPanelOptions?: PropertyPanelOptions | null;
   propertyPanelVisible?: boolean;
   initialPropertyPanelOpen?: boolean;
+  initialSelectionModeActive?: boolean;
   toolbarMode?: GenieEditorToolbarMode;
   breadcrumbsOptions?: BreadcrumbsOptions | null;
 }
@@ -63,6 +64,7 @@ export interface WebEditorUiAppProps {
   propertyPanelOptions?: PropertyPanelOptions | null;
   propertyPanelVisible?: boolean;
   initialPropertyPanelOpen?: boolean;
+  initialSelectionModeActive?: boolean;
   toolbarMode?: GenieEditorToolbarMode;
   breadcrumbsOptions?: BreadcrumbsOptions | null;
   propertyPanelRef: React.RefObject<PropertyPanelHandle>;
@@ -174,6 +176,7 @@ export interface PromptCardViewProps extends SharedNoteActions, SharedTextAction
   bubbleStyleEditorOpen: boolean;
   genieVisualState: 'sleeping' | 'awake';
   hideExecutionControls?: boolean;
+  hideContextAppendAction?: boolean;
   onBubbleStyleEditorOpenChange: (open: boolean) => void;
   onSendCurrentElementPromptToGenie?: (element: Element) => void | Promise<void>;
   onWakeGenie?: () => boolean | Promise<boolean>;

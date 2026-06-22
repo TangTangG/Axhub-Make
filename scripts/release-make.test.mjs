@@ -192,12 +192,15 @@ describe('release make artifact helpers', () => {
     const clientRoot = path.join(sourceRoot, 'client');
     writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
     writeFile(path.join(clientRoot, 'src/prototypes/template-home/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/acp/conversations.json'), `{"cwd":"/${'Users'}/builder/project"}\n`);
     writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/prototype-comments.json'), '{}\n');
     writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/prototype-review.md'), '# Keep review\n');
     writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.ttf'), 'source font\n');
     writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'), 'subset font\n');
     writeFile(path.join(clientRoot, 'tests/template.test.mjs'), 'export {};\n');
     writeFile(path.join(clientRoot, '.git/config'), '[core]\n');
+    writeFile(path.join(clientRoot, '.DS_Store'), 'finder\n');
+    writeFile(path.join(clientRoot, 'src/resources/.DS_Store'), 'finder\n');
     writeFile(path.join(clientRoot, '.drawio-tmp/order-flow/order-flow.spec.yaml'), 'id: order-flow\n');
     writeFile(path.join(clientRoot, 'node_modules/left-pad/index.js'), 'module.exports = null;\n');
     writeFile(path.join(clientRoot, 'dist/build.js'), 'console.log("built");\n');
@@ -209,10 +212,12 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, '.axhub/make/README.md'), '# Make client\n');
     writeFile(path.join(clientRoot, '.axhub/make/sidebar-tree.json'), '{"version":1,"themesTree":[]}\n');
     writeFile(path.join(clientRoot, '.axhub/make/project.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/entries.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/.dev-server-info.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/axhub.config.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/sessions/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/exports/stale.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/edit-history/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/sessions/conversations.json'), '{}\n');
 
     const result = await releaseMake.createMakeClientTemplateZip({
@@ -225,12 +230,15 @@ describe('release make artifact helpers', () => {
     const entries = releaseMake.listZipEntries(result.path);
     assert(entries.includes('package.json'));
     assert(entries.includes('src/prototypes/template-home/index.tsx'));
+    assert(!entries.some((entry) => entry.startsWith('src/prototypes/template-home/.spec/acp/')));
     assert(!entries.includes('src/prototypes/template-home/.spec/prototype-comments.json'));
     assert(entries.includes('src/prototypes/template-home/.spec/prototype-review.md'));
     assert(!entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.ttf'));
     assert(entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'));
     assert(!entries.some((entry) => entry.startsWith('tests/')));
     assert(!entries.some((entry) => entry.startsWith('.git/')));
+    assert(!entries.includes('.DS_Store'));
+    assert(!entries.includes('src/resources/.DS_Store'));
     assert(!entries.some((entry) => entry.startsWith('.drawio-tmp/')));
     assert(!entries.some((entry) => entry.startsWith('node_modules/')));
     assert(!entries.some((entry) => entry.startsWith('dist/')));
@@ -243,9 +251,11 @@ describe('release make artifact helpers', () => {
     assert(entries.includes('.axhub/make/README.md'));
     assert(entries.includes('.axhub/make/sidebar-tree.json'));
     assert(!entries.includes('.axhub/make/project.json'));
+    assert(!entries.includes('.axhub/make/entries.json'));
     assert(!entries.includes('.axhub/make/.dev-server-info.json'));
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/sessions/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/exports/')));
+    assert(!entries.some((entry) => entry.startsWith('.axhub/make/edit-history/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/sessions/')));
   });
 

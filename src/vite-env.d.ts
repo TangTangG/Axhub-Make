@@ -3,6 +3,10 @@
 interface Window {
   __LOCAL_IP__?: string;
   __LOCAL_PORT__?: number;
+  __AXHUB_SHARE_HOSTS__?: {
+    localHost?: string;
+    lanHost?: string;
+  };
   __RUNTIME_ORIGIN__?: string;
   __ERROR_SYSTEM__?: {
     markReactReady: () => void;

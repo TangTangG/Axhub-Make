@@ -5,6 +5,7 @@ import {
   buildAcpCanvasMcpPostMessage,
   buildAcpImageGenerationPostMessage,
   buildAcpContextPostMessage,
+  buildAcpThemePostMessage,
   getAcpPreviewMcpConfigSignature,
   getAcpCanvasMcpConfigSignature,
   getAcpImageGenerationConfigSignature,
@@ -97,6 +98,22 @@ describe('assistant ACP context mapping', () => {
       },
     });
     expect(JSON.stringify(message)).not.toContain('update_context');
+  });
+
+  it('builds ACP theme set postMessage envelopes from Make dark mode state', () => {
+    expect(buildAcpThemePostMessage(true)).toEqual({
+      type: 'acp.theme.set',
+      payload: {
+        theme: 'dark',
+      },
+    });
+    expect(buildAcpThemePostMessage(false, 'theme-sync-1')).toEqual({
+      type: 'acp.theme.set',
+      requestId: 'theme-sync-1',
+      payload: {
+        theme: 'light',
+      },
+    });
   });
 
   it('maps selected canvas elements without annotations to stable ACP annotation items', () => {

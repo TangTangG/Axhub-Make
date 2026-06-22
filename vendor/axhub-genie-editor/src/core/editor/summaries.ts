@@ -61,6 +61,37 @@ type InternalMoveSummary = MoveSummary & {
   elementKey: string;
 };
 
+type AnnotationPromptControl = {
+  attributeId?: unknown;
+  displayName?: unknown;
+  initialValue?: unknown;
+  options?: unknown;
+};
+
+type AnnotationPromptNode = {
+  id?: unknown;
+  index?: unknown;
+  locator?: unknown;
+  aiPrompt?: unknown;
+  annotationText?: unknown;
+  controls?: unknown;
+};
+
+type AnnotationPromptContext = {
+  nodeId: string;
+  node: AnnotationPromptNode | null;
+};
+
+type AnnotationProtoDevRuntime = {
+  getState?: unknown;
+};
+
+const ANNOTATION_PANEL_TARGET_ATTR = 'data-axhub-annotation-panel-target';
+const ANNOTATION_PANEL_NODE_ID_ATTR = 'data-axhub-annotation-panel-node-id';
+const ANNOTATION_SOURCE_KEY = '__AXHUB_ANNOTATION_SOURCE__';
+const ANNOTATION_PROTO_DEV_KEY = '__AXHUB_PROTO_DEV__';
+const ANNOTATION_TEXT_MAX_LENGTH = 280;
+
 function normalizeNote(value: string): string {
   return String(value ?? '').replace(/\r\n/g, '\n').trim();
 }
@@ -81,6 +112,139 @@ function normalizeInlineText(value: unknown): string {
 
 function normalizePathValue(value: unknown): string {
   return String(value ?? '').trim();
+}
+
+function readElementAttr(element: Element | null, attr: string): string {
+  if (!element) return '';
+  try {
+    return element.getAttribute(attr)?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function readAnnotationPanelNodeId(element: Element | null): string {
+  return readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function truncateInlineText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function formatAnnotationLocator(locator: unknown): string {
+  if (!isPlainObject(locator)) return '';
+
+  const selectors = Array.isArray(locator.selectors)
+    ? locator.selectors.map((selector) => normalizePathValue(selector)).filter(Boolean)
+    : [];
+  if (selectors.length > 0) return selectors.join(' | ');
+
+  const path = Array.isArray(locator.path)
+    ? locator.path.map((part) => normalizePathValue(part)).filter(Boolean)
+    : [];
+  if (path.length > 0) return path.join('>');
+
+  return normalizePathValue(locator.fingerprint);
+}
+
+function formatAnnotationControlValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value).trim();
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value).trim();
+  }
+}
+
+function formatAnnotationControlOption(option: unknown): string {
+  if (!isPlainObject(option)) return formatAnnotationControlValue(option);
+
+  const label = normalizeInlineText(option.label);
+  const value = formatAnnotationControlValue(option.value);
+  if (label && value && label !== value) return `${label}=${value}`;
+  return label || value;
+}
+
+function formatAnnotationControl(
+  control: AnnotationPromptControl,
+  runtimeState: Record<string, unknown> | null,
+): string {
+  const attributeId = normalizePathValue(control.attributeId);
+  const displayName = normalizeInlineText(control.displayName) || attributeId || '控件';
+  const label = attributeId && attributeId !== displayName
+    ? `${displayName}(${attributeId})`
+    : displayName;
+  const details: string[] = [];
+
+  const initialValue = formatAnnotationControlValue(control.initialValue);
+  if (initialValue) details.push(`默认 ${initialValue}`);
+
+  if (
+    runtimeState &&
+    attributeId &&
+    Object.prototype.hasOwnProperty.call(runtimeState, attributeId)
+  ) {
+    const currentValue = formatAnnotationControlValue(runtimeState[attributeId]);
+    if (currentValue) details.push(`当前 ${currentValue}`);
+  }
+
+  const options = Array.isArray(control.options)
+    ? control.options.map(formatAnnotationControlOption).filter(Boolean)
+    : [];
+  if (options.length > 0) details.push(`选项 ${options.join(', ')}`);
+
+  return details.length > 0 ? `${label}: ${details.join('；')}` : label;
+}
+
+function resolveAnnotationAvailablePanels(node: AnnotationPromptNode | null): string[] {
+  const panels: string[] = [];
+  const annotationText = normalizeInlineText(node?.annotationText);
+  if (annotationText) {
+    panels.push('内容');
+  }
+  if (Array.isArray(node?.controls) && node.controls.some(isPlainObject)) {
+    panels.push('状态');
+  }
+  return panels;
+}
+
+function readAnnotationSourceNode(nodeId: string): AnnotationPromptNode | null {
+  if (!nodeId || typeof window === 'undefined') return null;
+
+  const snapshot = (window as unknown as Record<string, unknown>)[ANNOTATION_SOURCE_KEY];
+  const nodes = isPlainObject(snapshot) && Array.isArray(snapshot.nodes)
+    ? snapshot.nodes
+    : [];
+  const matched = nodes.find((node) => (
+    isPlainObject(node) && normalizePathValue(node.id) === nodeId
+  ));
+  return isPlainObject(matched) ? matched : null;
+}
+
+function readAnnotationProtoDevState(): Record<string, unknown> | null {
+  if (typeof window === 'undefined') return null;
+
+  const runtime = (window as unknown as Record<string, unknown>)[ANNOTATION_PROTO_DEV_KEY] as
+    | AnnotationProtoDevRuntime
+    | undefined;
+  if (!runtime || typeof runtime !== 'object' || typeof runtime.getState !== 'function') {
+    return null;
+  }
+
+  try {
+    const state = runtime.getState();
+    return isPlainObject(state) ? state : null;
+  } catch {
+    return null;
+  }
 }
 
 function dedupeStrings(values: readonly string[]): string[] {
@@ -274,6 +438,10 @@ export function createEditorSummariesService(options: {
     const textCommentMeta = resolveTextCommentElementMeta(state, element);
     if (textCommentMeta) {
       return textCommentMeta.elementKey;
+    }
+    const annotationNodeId = readAnnotationPanelNodeId(element);
+    if (annotationNodeId) {
+      return `annotation-panel:${annotationNodeId}`;
     }
     const locator = createElementLocator(element);
     return generateStableElementKey(element, locator.shadowHostChain);
@@ -563,6 +731,63 @@ export function createEditorSummariesService(options: {
     lines.push('约束: 元素描述仅用于定位，只改动明确指出的内容，其余保持不动。');
   }
 
+  function resolveAnnotationPromptContext(locator: ElementLocator): AnnotationPromptContext | null {
+    const element = tryLocateElement(locator);
+    if (readElementAttr(element, ANNOTATION_PANEL_TARGET_ATTR) !== 'true') return null;
+
+    const nodeId = readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR);
+    if (!nodeId) return null;
+
+    return {
+      nodeId,
+      node: readAnnotationSourceNode(nodeId),
+    };
+  }
+
+  function appendAnnotationPromptContext(
+    lines: string[],
+    context: AnnotationPromptContext,
+  ): void {
+    const node = context.node;
+
+    lines.push('  - 当前选择: @axhub/annotation 标注节点');
+    lines.push(`  - 节点 ID: ${context.nodeId}`);
+
+    const nodeIndex = normalizePathValue(node?.index);
+    if (nodeIndex) lines.push(`  - 节点序号: ${nodeIndex}`);
+
+    const nodeLocator = formatAnnotationLocator(node?.locator);
+    if (nodeLocator) lines.push(`  - 节点定位: ${nodeLocator}`);
+
+    const aiPrompt = normalizeInlineText(node?.aiPrompt);
+    if (aiPrompt) lines.push(`  - 节点提示: ${aiPrompt}`);
+
+    const availablePanels = resolveAnnotationAvailablePanels(node);
+    if (availablePanels.length > 0) lines.push(`  - 可用面板: ${availablePanels.join(', ')}`);
+
+    const annotationText = truncateInlineText(
+      normalizeInlineText(node?.annotationText),
+      ANNOTATION_TEXT_MAX_LENGTH,
+    );
+    if (annotationText) lines.push(`  - 节点内容: ${annotationText}`);
+
+    const runtimeState = readAnnotationProtoDevState();
+    const controls = Array.isArray(node?.controls)
+      ? node.controls
+        .filter(isPlainObject)
+        .map((control) => formatAnnotationControl(control, runtimeState))
+        .filter(Boolean)
+      : [];
+    if (controls.length > 0) {
+      lines.push('  - 节点控件:');
+      for (const control of controls) {
+        lines.push(`    - ${control}`);
+      }
+    }
+
+    lines.push('  - 定位说明: 当前选中的是标注面板；请根据这个标注节点的 locator 定位真实原型元素，不要把标注面板本身当作修改对象。');
+  }
+
   function appendChangeItem(
     lines: string[],
     params: {
@@ -576,6 +801,7 @@ export function createEditorSummariesService(options: {
       note?: string;
     },
   ): void {
+    const annotationContext = resolveAnnotationPromptContext(params.locator);
     const snapshot = readElementSnapshot(params.locator, {
       fallbackLabel: params.fallbackLabel,
       fallbackText: params.fallbackText,
@@ -583,9 +809,13 @@ export function createEditorSummariesService(options: {
     const selectorPath = formatSelectorPath(params.locator);
 
     lines.push(`- 修改项 ${params.index}`);
-    if (snapshot.tagName) lines.push(`  - 当前元素标签: ${snapshot.tagName}`);
-    if (snapshot.currentText) lines.push(`  - 当前元素文本: ${snapshot.currentText}`);
-    if (selectorPath) lines.push(`  - 元素定位: ${selectorPath}`);
+    if (annotationContext) {
+      appendAnnotationPromptContext(lines, annotationContext);
+    } else {
+      if (snapshot.tagName) lines.push(`  - 当前元素标签: ${snapshot.tagName}`);
+      if (snapshot.currentText) lines.push(`  - 当前元素文本: ${snapshot.currentText}`);
+      if (selectorPath) lines.push(`  - 元素定位: ${selectorPath}`);
+    }
     if (params.pageScope) lines.push(`  - 页面范围: ${params.pageScope}`);
     if (params.debugFileHint) lines.push(`  - 可能相关文件: ${params.debugFileHint}`);
     const allActions = [...params.actions];

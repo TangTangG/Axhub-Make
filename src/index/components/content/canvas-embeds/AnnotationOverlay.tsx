@@ -21,7 +21,7 @@ export interface CanvasElementContextInfo {
     link?: string;
     width: number;
     height: number;
-    resourceType?: 'prototype' | 'doc' | 'theme';
+    resourceType?: 'preview' | 'prototype' | 'doc' | 'theme';
     resourceId?: string;
     filePath?: string;
     absoluteFilePath?: string;
@@ -51,6 +51,10 @@ interface AnnotationOverlayProps {
 }
 
 function getResourceTypeFromElement(element: any): 'prototype' | 'doc' | 'theme' {
+    const sourceResourceType = element?.customData?.sourceResourceType;
+    if (sourceResourceType === 'doc') return 'doc';
+    if (sourceResourceType === 'theme') return 'theme';
+    if (sourceResourceType === 'prototype') return 'prototype';
     const resourceType = element?.customData?.resourceType;
     if (resourceType === 'doc' || element?.customData?.type === 'axhub-doc') return 'doc';
     if (resourceType === 'theme' || element?.customData?.type === 'axhub-theme') return 'theme';
@@ -62,6 +66,10 @@ function resolveString(value: unknown): string {
 }
 
 function resolveElementResourceType(element: any): 'prototype' | 'doc' | 'theme' | undefined {
+    const sourceResourceType = element?.customData?.sourceResourceType;
+    if (sourceResourceType === 'prototype' || sourceResourceType === 'doc' || sourceResourceType === 'theme') {
+        return sourceResourceType;
+    }
     const resourceType = element?.customData?.resourceType;
     if (resourceType === 'prototype' || resourceType === 'doc' || resourceType === 'theme') {
         return resourceType;

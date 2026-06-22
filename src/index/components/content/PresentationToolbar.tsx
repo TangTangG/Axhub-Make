@@ -54,7 +54,7 @@ import type {
     GenieEditorHostToolbarAction,
     GenieEditorHostToolbarState,
 } from 'axhub-genie-editor';
-import { isMarkdownEditableResource } from '../../app/index-page.helpers';
+import { isDocumentCommentableResource, isHtmlCommentableResource, isMarkdownEditableResource } from '../../app/index-page.helpers';
 import { hasExplicitLocalPath } from '../../utils/localPath';
 import { SPEC_QUICK_EDIT_SEGMENT_OPTIONS, type SpecQuickEditMode } from '../../utils/specQuickEdit';
 import type {
@@ -147,6 +147,8 @@ interface PresentationToolbarProps {
     handleSaveDocEdit: () => void;
     handleExitDocEdit: () => void;
     handleSwitchDocQuickEditMode: (mode: SpecQuickEditMode) => void;
+    drawioResourceEditAvailable?: boolean;
+    handleOpenDrawioResourceEditor: () => void | Promise<void>;
     handleCopyMarkdownPrompt: () => void | Promise<void>;
     handleRefreshElement: () => void;
     handleCopyToFigma: () => void;
@@ -221,6 +223,8 @@ export default function PresentationToolbar({
     handleSaveDocEdit,
     handleExitDocEdit,
     handleSwitchDocQuickEditMode,
+    drawioResourceEditAvailable = false,
+    handleOpenDrawioResourceEditor,
     handleCopyMarkdownPrompt,
     handleRefreshElement,
     handleCopyToFigma,
@@ -291,7 +295,8 @@ export default function PresentationToolbar({
     void isPrototypePreviewMode;
     void isCanvasViewMode;
     const isDocumentEditingContent = contentMode === 'doc' || contentMode === 'template';
-    const isQuickEditActive = quickEditActive && !isDocumentEditingContent;
+    const isHtmlDocumentEditingContent = isDocumentEditingContent && isHtmlCommentableResource(currentMarkdownItem);
+    const isQuickEditActive = quickEditActive && (!isDocumentEditingContent || isHtmlDocumentEditingContent);
     const isDocumentEditActive = docEditState.enabled;
     const isDocumentCommentActive = isDocumentEditActive && docEditState.quickEditMode === 'comment';
     const isSplitQuickEditActive = isQuickEditActive && previewConfig.previewMode === 'split';
@@ -306,10 +311,13 @@ export default function PresentationToolbar({
             onChange={(value) => handleSwitchDocQuickEditMode(value as SpecQuickEditMode)}
         />
     );
+    const canInlineCurrentDocumentEdit = isDocumentEditingContent
+        ? isMarkdownEditableResource(currentMarkdownItem)
+        : false;
     const documentEditActionButtons = docEditState.enabled ? (
         <>
-            {documentModeSegmentedControl}
-            {docEditState.quickEditMode === 'edit' ? (
+            {canInlineCurrentDocumentEdit ? documentModeSegmentedControl : null}
+            {canInlineCurrentDocumentEdit && docEditState.quickEditMode === 'edit' ? (
                 <Button
                     variant="ghost"
                     size="xs"
@@ -837,9 +845,13 @@ export default function PresentationToolbar({
     const resourceActionButtons = (() => {
         if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {
             const canInlineDocEdit = isMarkdownEditableResource(currentMarkdownItem);
+            const canCommentOnDocument = isDocumentCommentableResource(currentMarkdownItem);
 
             if (docEditState.enabled) {
                 return documentEditActionButtons;
+            }
+            if (isHtmlDocumentEditingContent && isQuickEditActive) {
+                return activeQuickEditToolbarButtons;
             }
 
             return (
@@ -856,12 +868,36 @@ export default function PresentationToolbar({
                             </Tooltip>
                         </TooltipProvider>
                     ) : null}
+                    {drawioResourceEditAvailable ? (
+                        <TooltipProvider>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="xs" className={toolbarTextButtonClass} onClick={() => { void handleOpenDrawioResourceEditor(); }}>
+                                        <SquarePen /> 在线编辑
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>使用 Draw.io 在线编辑</TooltipContent>
+                            </Tooltip>
+                        </TooltipProvider>
+                    ) : null}
+                    {canCommentOnDocument ? (
+                        <TooltipProvider>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="xs" className={toolbarTextButtonClass} onClick={handleEnableDocEdit}>
+                                        <PencilRuler /> 批注
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>{`批注${currentMarkdownLabel}`}</TooltipContent>
+                            </Tooltip>
+                        </TooltipProvider>
+                    ) : null}
                     {canInlineDocEdit ? (
                         <TooltipProvider>
                             <Tooltip>
                                 <TooltipTrigger asChild>
                                     <Button variant="ghost" size="xs" className={toolbarTextButtonClass} onClick={handleEnableDocEdit}>
-                                        <SquarePen /> 编辑
+                                        <FileText /> 编辑
                                     </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>{`编辑${currentMarkdownLabel}`}</TooltipContent>

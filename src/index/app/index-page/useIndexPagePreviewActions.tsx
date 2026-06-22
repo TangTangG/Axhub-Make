@@ -6,10 +6,11 @@ import { generateSvgContent, svgToPng } from '../../utils/svg';
 import { apiService, type CloudPublishLatestItem, type CloudPublishTarget, type ExportIndexBundle, type ReviewResult } from '../../services/api';
 import { downloadExportHtmlArchive } from '../../domains/export/export.api';
 import { buildQuickEditAcpPrompt } from '../../utils/quickEditPrompts';
-import { buildMarkdownFileMetaUrl, buildMarkdownFileUrl } from '../../utils/markdownPreview';
+import { buildMarkdownFileMetaUrl, buildMarkdownFileUrl, resolveMarkdownPreviewIframeUrl } from '../../utils/markdownPreview';
 import { buildReviewPrompt, resolveReviewDocumentPath, type ReviewKind } from '../../utils/uiReviewPrompt';
 import { resolveSpecQuickEditSwitchDecision, type SpecQuickEditMode } from '../../utils/specQuickEdit';
 import { createExportReviewFailureResult } from '../../utils/exportReviewPrompt';
+import { isDrawioResource, openDrawioResourceEditor } from '../../domains/drawio/drawioResourceEditor';
 import {
     buildExportModalPreferencesStorageKey,
     mergeExportModalPreferences,
@@ -18,6 +19,7 @@ import {
 } from '../../utils/exportModalPreferences';
 import { getAssistantContextCurrentFilePath } from '../../utils/genieContext';
 import type {
+    ElementLocator,
     GenieEditorHostToolbarAction,
     GenieEditorHostToolbarState,
 } from '@/common/web-editor-types';
@@ -31,6 +33,8 @@ import {
     createDefaultMarkdownQuickEditState,
     formatThrownError,
     getScreenshotExportDefaultSize,
+    isDocumentCommentableResource,
+    isHtmlCommentableResource,
     isMarkdownEditableResource,
     readJsonOrTextResponse,
 } from '../index-page.helpers';
@@ -93,6 +97,27 @@ const CLOUD_PUBLISH_TARGET_LABELS: Record<CloudPublishTarget, string> = {
 
 type LatestCloudPublishItems = Partial<Record<CloudPublishTarget, CloudPublishLatestItem>>;
 
+type AnnotationEditingTaskRef = {
+    provider: string | null;
+    sessionId: string | null;
+    requestId: string | null;
+};
+
+type AnnotationEditingTarget = {
+    pane?: PreviewPane;
+    iframe?: HTMLIFrameElement | null;
+    elementKey: string;
+    targetRef?: {
+        locator?: ElementLocator | null;
+        label?: string | null;
+    } | null;
+};
+
+type AnnotationPromptRunRequest = {
+    promptText: string | null | undefined;
+    editingTargets?: AnnotationEditingTarget[];
+};
+
 function hasHostToolbarDecisionData(state: GenieEditorHostToolbarState | null | undefined): boolean {
     return Boolean(
         state
@@ -101,6 +126,87 @@ function hasHostToolbarDecisionData(state: GenieEditorHostToolbarState | null | 
             || Number(state.terminalTaskCount ?? 0) > 0
         ),
     );
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+    return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function getAnnotationEditingTargetsFromSnapshot(
+    editors: HostToolbarEditorsApi | null | undefined,
+): Array<Pick<AnnotationEditingTarget, 'elementKey' | 'targetRef'>> {
+    const snapshot = editors?.getEditedSnapshot?.();
+    const candidates = [
+        snapshot?.selectedElement,
+        ...(snapshot?.modifiedElements || []),
+    ];
+    const uniqueTargets = new Map<string, Pick<AnnotationEditingTarget, 'elementKey' | 'targetRef'>>();
+    for (const item of candidates) {
+        const elementKey = String(item?.elementKey || '').trim();
+        if (!elementKey) continue;
+        if (uniqueTargets.has(elementKey)) continue;
+        uniqueTargets.set(elementKey, {
+            elementKey,
+            targetRef: {
+                locator: item?.locator ?? null,
+                label: String(item?.label || '').trim() || elementKey,
+            },
+        });
+    }
+    return Array.from(uniqueTargets.values());
+}
+
+function getAnnotationActionEditingTargets(
+    action: GenieEditorHostToolbarAction | null | undefined,
+    editors: HostToolbarEditorsApi | null | undefined,
+): Array<Pick<AnnotationEditingTarget, 'elementKey' | 'targetRef'>> {
+    const uniqueTargets = new Map<string, Pick<AnnotationEditingTarget, 'elementKey' | 'targetRef'>>();
+    if (action?.type === 'send-to-genie') {
+        const elementKey = String(action.elementKey || '').trim();
+        if (elementKey) {
+            uniqueTargets.set(elementKey, {
+                elementKey,
+                targetRef: {
+                    locator: action.locator ?? null,
+                    label: String(action.label || '').trim() || elementKey,
+                },
+            });
+        }
+    }
+    for (const target of getAnnotationEditingTargetsFromSnapshot(editors)) {
+        if (!uniqueTargets.has(target.elementKey)) {
+            uniqueTargets.set(target.elementKey, target);
+        }
+    }
+    return Array.from(uniqueTargets.values());
+}
+
+function buildAnnotationEditingTargets(
+    pane: PreviewPane,
+    iframe: HTMLIFrameElement | null | undefined,
+    targets: Array<Pick<AnnotationEditingTarget, 'elementKey' | 'targetRef'>>,
+): AnnotationEditingTarget[] {
+    const uniqueTargets = new Map<string, AnnotationEditingTarget>();
+    for (const target of targets) {
+        const elementKey = String(target?.elementKey || '').trim();
+        if (!elementKey || uniqueTargets.has(elementKey)) continue;
+        uniqueTargets.set(elementKey, {
+            pane,
+            iframe: iframe ?? null,
+            elementKey,
+            targetRef: target.targetRef ?? null,
+        });
+    }
+    return Array.from(uniqueTargets.values());
+}
+
+function normalizeAnnotationPromptRunRequest(
+    request: string | null | undefined | AnnotationPromptRunRequest,
+): AnnotationPromptRunRequest {
+    if (request && typeof request === 'object') {
+        return request;
+    }
+    return { promptText: request };
 }
 
 const PROTOTYPE_PAGE_ID_RE = /^[a-z0-9-]+$/u;
@@ -168,7 +274,7 @@ export function useIndexPagePreviewActions(params: any) {
         assistantProjectPath,
         assistantContextAppendAvailable = false,
         onOpenAnnotationAssistant,
-        onSubmitAnnotationAssistantPrompt,
+        onRunAnnotationAssistantPromptViaApi,
         probeAssistantRuntimeSilently,
         connectAssistantRuntimeSilently,
         clearAssistantSelectedElementsOnExit,
@@ -182,7 +288,6 @@ export function useIndexPagePreviewActions(params: any) {
     const exportPreferencesLoadedKeyRef = useRef<string | null>(null);
     const exportPreferencesReadyRef = useRef(false);
     const skipExportContentTypeResetRef = useRef(false);
-    const exportModalWasOpenRef = useRef(false);
     const pendingClipboardScreenshotRequestIdsRef = useRef<Set<string>>(new Set());
     const markdownPromptCacheRef = useRef<{ key: string; result: any } | null>(null);
     const pendingDocSwitchRef = useRef<{ kind: 'doc' | 'template'; item: any } | null>(null);
@@ -289,7 +394,21 @@ export function useIndexPagePreviewActions(params: any) {
     }, [contentMode, selectedDoc, selectedTemplate]);
     const currentMarkdownItem = currentMarkdownResource.item;
     const currentMarkdownLabel = currentMarkdownResource.kind === 'template' ? '模板' : '文档';
-    const selectedEditablePreviewResource = contentMode === 'theme' ? selectedTheme : selectedItem;
+    const currentDocumentIsHtml = Boolean(
+        isDocumentEditingContent
+        && currentMarkdownItem
+        && isHtmlCommentableResource(currentMarkdownItem),
+    );
+    const drawioResourceEditAvailable = Boolean(
+        isDocumentEditingContent
+        && currentMarkdownItem
+        && isDrawioResource(currentMarkdownItem),
+    );
+    const selectedEditablePreviewResource = currentDocumentIsHtml
+        ? currentMarkdownItem
+        : contentMode === 'theme'
+            ? selectedTheme
+            : selectedItem;
     const resourceType: 'prototype' | 'theme' = contentMode === 'theme' ? 'theme' : 'prototype';
     const currentPublishResourcePath = useMemo(() => resolveCurrentPublishResourcePath({
         contentMode,
@@ -344,10 +463,10 @@ export function useIndexPagePreviewActions(params: any) {
         : prototypeEditorLaunchOptions;
     const buildPaneIframeUrl = useCallback((pane: PreviewPane) => {
         if (contentMode === 'doc') {
-            return selectedDoc?.previewUrl || selectedDoc?.specUrl || '';
+            return resolveMarkdownPreviewIframeUrl(selectedDoc, 'doc');
         }
         if (contentMode === 'template') {
-            return selectedTemplate?.previewUrl || selectedTemplate?.specUrl || '';
+            return resolveMarkdownPreviewIframeUrl(selectedTemplate, 'template');
         }
         if (contentMode === 'theme') {
             return buildMainPreviewIframeUrl(selectedTheme);
@@ -391,8 +510,7 @@ export function useIndexPagePreviewActions(params: any) {
     const iframeUrl = primaryIframeUrl;
     const getDocumentEditorApi = useCallback((): DocumentEditorApi | null => {
         const iframe = getPrimaryPreviewIframe();
-        const api = readPreviewFrameEditorApi<DocumentEditorApi>(iframe, 'SpecTemplateBootstrap');
-        return api;
+        return readPreviewFrameEditorApi<DocumentEditorApi>(iframe, 'SpecTemplateBootstrap');
     }, [getPrimaryPreviewIframe]);
     const prototypeEditorBridgeActions = usePrototypeEditorBridgeActions({
         getPrimaryPreviewIframe,
@@ -416,6 +534,7 @@ export function useIndexPagePreviewActions(params: any) {
     const postPrototypeEditorDisable = prototypeEditorBridgeActions.postPrototypeEditorDisable;
     const postPrototypeEditorHostToolbarAction = prototypeEditorBridgeActions.postPrototypeEditorHostToolbarAction;
     const postPrototypeEditorSaveAction = prototypeEditorBridgeActions.postPrototypeEditorSaveAction;
+    const postPrototypeEditorNodeEditingState = prototypeEditorBridgeActions.postPrototypeEditorNodeEditingState;
     const queryPrototypeEditorState = prototypeEditorBridgeActions.queryPrototypeEditorState;
 
     useEffect(() => {
@@ -825,14 +944,67 @@ export function useIndexPagePreviewActions(params: any) {
         setAnnotationAssistantToolbarState,
     ]);
 
-    const runAnnotationAcpChatPrompt = useCallback(async (promptText: string | null | undefined) => {
-        const prompt = String(promptText || '').trim();
+    const applyAnnotationEditingTaskState = useCallback(async (
+        targets: AnnotationEditingTarget[] | null | undefined,
+        nextState: 'editing' | 'completed' | 'error',
+        taskRef: AnnotationEditingTaskRef,
+    ) => {
+        const uniqueTargets = new Map<string, AnnotationEditingTarget>();
+        for (const target of targets || []) {
+            const elementKey = String(target?.elementKey || '').trim();
+            if (!elementKey) continue;
+            const pane = target.pane || 'primary';
+            uniqueTargets.set(`${pane}:${elementKey}`, {
+                ...target,
+                pane,
+                elementKey,
+            });
+        }
+        await Promise.all(Array.from(uniqueTargets.values()).map(async (target) => {
+            const iframe = target.iframe ?? getPreviewIframe(target.pane || 'primary');
+            const editors = getPrototypeEditorApi(iframe);
+            let synced = false;
+            if (editors?.setNodeEditingState) {
+                try {
+                    await editors.setNodeEditingState(target.elementKey, nextState, taskRef, target.targetRef ?? null);
+                    synced = true;
+                } catch {
+                    synced = false;
+                }
+            }
+            if (!synced && iframe?.contentWindow) {
+                try {
+                    await postPrototypeEditorNodeEditingState(
+                        target.iframe ?? iframe,
+                        target.elementKey,
+                        nextState,
+                        taskRef,
+                        target.targetRef ?? null,
+                    );
+                } catch {
+                    // State sync is best-effort; the API run should not fail because an overlay is unavailable.
+                }
+            }
+        }));
+    }, [
+        getPreviewIframe,
+        getPrototypeEditorApi,
+        postPrototypeEditorNodeEditingState,
+    ]);
+
+    const runAnnotationAcpChatPrompt = useCallback(async (input: string | null | undefined | AnnotationPromptRunRequest) => {
+        const request = normalizeAnnotationPromptRunRequest(input);
+        const prompt = String(request.promptText || '').trim();
         if (!prompt) {
             messageApi.info('没有可发送的提示词内容');
             return false;
         }
 
-        const hideLoading = messageApi.loading('正在发送给 AI...', 0);
+        let latestTaskRef: AnnotationEditingTaskRef = {
+            provider: 'api',
+            sessionId: null,
+            requestId: `annotation-direct-${Date.now()}`,
+        };
         setAnnotationAssistantToolbarState({
             robotState: 'working' as const,
             robotLoading: false,
@@ -842,14 +1014,43 @@ export function useIndexPagePreviewActions(params: any) {
             interruptLoading: false,
         });
         try {
-            if (!onSubmitAnnotationAssistantPrompt) {
+            if (!onRunAnnotationAssistantPromptViaApi) {
                 messageApi.warning('AI 助手入口未就绪');
                 return false;
             }
-            const submitted = await onSubmitAnnotationAssistantPrompt(assistantContextV1, prompt);
+            await applyAnnotationEditingTaskState(request.editingTargets, 'editing', latestTaskRef);
+            const submitted = await onRunAnnotationAssistantPromptViaApi({
+                context: assistantContextV1,
+                prompt,
+                editingTargets: request.editingTargets,
+                onPrepared: async (payload: any) => {
+                    latestTaskRef = {
+                        provider: String(payload?.provider || 'api'),
+                        sessionId: String(payload?.threadId || '') || null,
+                        requestId: String(payload?.runId || latestTaskRef.requestId),
+                    };
+                    await applyAnnotationEditingTaskState(request.editingTargets, 'editing', latestTaskRef);
+                },
+                onAccepted: async (payload: any) => {
+                    latestTaskRef = {
+                        provider: String(payload?.provider || latestTaskRef.provider || 'api'),
+                        sessionId: String(payload?.threadId || latestTaskRef.sessionId || '') || null,
+                        requestId: String(payload?.runId || latestTaskRef.requestId),
+                    };
+                    await applyAnnotationEditingTaskState(request.editingTargets, 'editing', latestTaskRef);
+                },
+            });
             if (submitted === false) {
                 throw new Error('AI 执行失败');
             }
+            if (submitted && typeof submitted === 'object') {
+                latestTaskRef = {
+                    ...latestTaskRef,
+                    sessionId: String(submitted.threadId || latestTaskRef.sessionId || '') || null,
+                    requestId: String(submitted.runId || latestTaskRef.requestId),
+                };
+            }
+            await applyAnnotationEditingTaskState(request.editingTargets, 'completed', latestTaskRef);
             setAnnotationAssistantToolbarState({
                 robotState: 'awake' as const,
                 sendDisabled: false,
@@ -860,6 +1061,7 @@ export function useIndexPagePreviewActions(params: any) {
             messageApi.success('AI 已执行');
             return true;
         } catch (error: any) {
+            await applyAnnotationEditingTaskState(request.editingTargets, 'error', latestTaskRef);
             setAnnotationAssistantToolbarState({
                 robotState: 'awake' as const,
                 sendDisabled: false,
@@ -867,15 +1069,14 @@ export function useIndexPagePreviewActions(params: any) {
                 interruptDisabled: true,
                 interruptLoading: false,
             });
-            messageApi.error(error?.message || 'AI 执行失败');
+            messageApi.error(`AI 执行失败：${formatThrownError(error)}`);
             return false;
-        } finally {
-            hideLoading?.();
         }
     }, [
         assistantContextV1,
+        applyAnnotationEditingTaskState,
         messageApi,
-        onSubmitAnnotationAssistantPrompt,
+        onRunAnnotationAssistantPromptViaApi,
         setAnnotationAssistantToolbarState,
     ]);
 
@@ -1047,35 +1248,48 @@ export function useIndexPagePreviewActions(params: any) {
         warnAnnotationAcpInterruptUnsupported,
     ]);
 
-    const collectPrototypePrompt = useCallback(async (pane: PreviewPane): Promise<string> => {
+    const collectPrototypePrompt = useCallback(async (
+        pane: PreviewPane,
+        action?: GenieEditorHostToolbarAction | null,
+    ): Promise<AnnotationPromptRunRequest> => {
         const iframe = getPreviewIframe(pane);
         const editors = getPrototypeEditorApi(iframe);
+        const editingTargets = buildAnnotationEditingTargets(
+            pane,
+            iframe,
+            getAnnotationActionEditingTargets(action, editors),
+        );
         const promptText = editors?.getCopyPromptText?.();
         if (typeof promptText === 'string') {
-            return promptText;
+            return {
+                promptText,
+                editingTargets,
+            };
         }
         if (!iframe?.contentWindow) {
-            return '';
+            return { promptText: '', editingTargets };
         }
         const bridgeResult = await postPrototypeEditorHostToolbarAction(iframe, {
             type: 'copy-prompt',
             clipboard: 'host',
         });
-        return bridgeResult?.promptText ?? '';
+        return { promptText: bridgeResult?.promptText ?? '', editingTargets };
     }, [
         getPreviewIframe,
         getPrototypeEditorApi,
         postPrototypeEditorHostToolbarAction,
     ]);
 
-    const collectSplitPrototypePrompts = useCallback(async () => {
+    const collectSplitPrototypePrompts = useCallback(async (
+        action?: GenieEditorHostToolbarAction | null,
+    ) => {
         const [primaryPrompt, secondaryPrompt] = await Promise.all([
-            collectPrototypePrompt('primary'),
-            collectPrototypePrompt('secondary'),
+            collectPrototypePrompt('primary', action),
+            collectPrototypePrompt('secondary', action),
         ]);
         return [
-            { pane: 'primary' as const, promptText: primaryPrompt },
-            { pane: 'secondary' as const, promptText: secondaryPrompt },
+            { pane: 'primary' as const, ...primaryPrompt },
+            { pane: 'secondary' as const, ...secondaryPrompt },
         ];
     }, [collectPrototypePrompt]);
 
@@ -1083,20 +1297,16 @@ export function useIndexPagePreviewActions(params: any) {
         pane: PreviewPane,
         action: PrototypePanePromptAction,
     ): Promise<boolean> => {
-        const promptText = await collectPrototypePrompt(pane);
+        const prompt = await collectPrototypePrompt(
+            pane,
+            action === 'send-to-genie' ? { type: 'send-to-genie' } : null,
+        );
         if (action === 'copy-prompt') {
-            return copyHostToolbarPromptText(promptText);
+            return copyHostToolbarPromptText(prompt.promptText);
         }
-        if (!isHostToolbarAgentAwake(hostToolbarStateRef.current)) {
-            const wakeHandled = await connectAnnotationAcpRuntime({ showFeedback: true });
-            if (!wakeHandled || !isHostToolbarAgentAwake(hostToolbarStateRef.current)) {
-                return false;
-            }
-        }
-        return runAnnotationAcpChatPrompt(promptText);
+        return runAnnotationAcpChatPrompt(prompt);
     }, [
         collectPrototypePrompt,
-        connectAnnotationAcpRuntime,
         copyHostToolbarPromptText,
         runAnnotationAcpChatPrompt,
     ]);
@@ -1120,7 +1330,9 @@ export function useIndexPagePreviewActions(params: any) {
                     : null;
                 try {
                     if (nextAction.type === 'send-to-genie') {
-                        return runAnnotationAcpChatPrompt(editorApi?.getCopyPromptText?.());
+                        return runAnnotationAcpChatPrompt({
+                            promptText: editorApi?.getCopyPromptText?.(),
+                        });
                     }
                     if (nextAction.type === 'copy-prompt') {
                         const promptText = editorApi?.getCopyPromptText?.();
@@ -1170,12 +1382,23 @@ export function useIndexPagePreviewActions(params: any) {
                 try {
                     if (nextAction.type === 'send-to-genie') {
                         if (previewConfig.previewMode === 'split') {
-                            const combinedPrompt = buildCombinedPrototypePrompt(await collectSplitPrototypePrompts());
-                            return runAnnotationAcpChatPrompt(combinedPrompt);
+                            const splitPrompts = await collectSplitPrototypePrompts(nextAction);
+                            const combinedPrompt = buildCombinedPrototypePrompt(splitPrompts);
+                            return runAnnotationAcpChatPrompt({
+                                promptText: combinedPrompt,
+                                editingTargets: splitPrompts.flatMap((item) => item.editingTargets || []),
+                            });
                         }
                         const promptText = editors?.getCopyPromptText?.();
                         if (typeof promptText === 'string') {
-                            return runAnnotationAcpChatPrompt(promptText);
+                            return runAnnotationAcpChatPrompt({
+                                promptText,
+                                editingTargets: buildAnnotationEditingTargets(
+                                    'primary',
+                                    getPrimaryPreviewIframe(),
+                                    getAnnotationActionEditingTargets(nextAction, editors),
+                                ),
+                            });
                         }
                         const primaryIframe = getPrimaryPreviewIframe();
                         if (primaryIframe?.contentWindow) {
@@ -1184,7 +1407,14 @@ export function useIndexPagePreviewActions(params: any) {
                                 type: 'copy-prompt',
                                 clipboard: 'host',
                             });
-                            return runAnnotationAcpChatPrompt(bridgeResult?.promptText);
+                            return runAnnotationAcpChatPrompt({
+                                promptText: bridgeResult?.promptText,
+                                editingTargets: buildAnnotationEditingTargets(
+                                    'primary',
+                                    primaryIframe,
+                                    getAnnotationActionEditingTargets(nextAction, editors),
+                                ),
+                            });
                         }
                         return runAnnotationAcpChatPrompt(null);
                     }
@@ -1251,12 +1481,6 @@ export function useIndexPagePreviewActions(params: any) {
             }
             return runQuickEditHostToolbarAction(nextAction);
         };
-        if (requestedAction.type === 'send-to-genie' && !isHostToolbarAgentAwake(hostToolbarStateRef.current)) {
-            const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });
-            if (!wakeHandled || !isHostToolbarAgentAwake(hostToolbarStateRef.current)) {
-                return false;
-            }
-        }
         return runResolvedHostToolbarAction(requestedAction);
     }, [
         connectAnnotationAcpRuntime,
@@ -1365,7 +1589,7 @@ export function useIndexPagePreviewActions(params: any) {
             const results = await Promise.all(getPreviewIframes().map(runAgainstIframe));
             const handled = results.some(Boolean);
             if (!handled) {
-                messageApi.warning('当前客户端页面尚未接入快速编辑保存能力，请确认预览页已加载 DevTemplateBootstrap');
+                messageApi.warning('当前客户端页面尚未接入快速编辑保存能力，请确认预览页已加载 DevTemplateBootstrap 或 HtmlTemplateBootstrap');
             }
             return handled;
         } catch (error) {
@@ -1598,6 +1822,24 @@ export function useIndexPagePreviewActions(params: any) {
     }, [
         exitPrototypeEditorPanelOnly,
         prototypeEditorLaunchOptions,
+    ]);
+
+    const handleOpenDrawioResourceEditor = useCallback(() => {
+        if (!currentMarkdownItem || !isDrawioResource(currentMarkdownItem)) {
+            messageApi.warning('请先选择 Draw.io 资源');
+            return;
+        }
+        void openDrawioResourceEditor({
+            resource: currentMarkdownItem,
+            kind: currentMarkdownResource.kind,
+            messageApi,
+            onSaved: handleRefreshElement,
+        });
+    }, [
+        currentMarkdownItem,
+        currentMarkdownResource.kind,
+        handleRefreshElement,
+        messageApi,
     ]);
 
     const notifyPreviewMessage = useCallback((level: unknown, content: unknown) => {
@@ -1911,6 +2153,7 @@ export function useIndexPagePreviewActions(params: any) {
                 requestId,
                 payload: {
                     targetWidth: screenshotSize.width,
+                    targetHeight: screenshotSize.height,
                 },
             }), targetOrigin);
         });
@@ -2079,13 +2322,55 @@ export function useIndexPagePreviewActions(params: any) {
         setCollapsed,
     ]);
 
+    const enterHtmlDocumentEditor = useCallback(async () => {
+        const primaryIframe = getPrimaryPreviewIframe();
+        if (!primaryIframe?.contentWindow) {
+            messageApi.warning('未找到可操作的预览窗口');
+            return false;
+        }
+        try {
+            activePrototypeEditorLaunchOptionsRef.current = prototypeEditorLaunchOptions;
+            if (!await enterPrototypeEditor(primaryIframe)) {
+                activePrototypeEditorLaunchOptionsRef.current = null;
+                return false;
+            }
+            documentEditorActiveRef.current = false;
+            quickEditRuntimeActiveRef.current = true;
+            setStandalonePanelOpen(false);
+            setEditorStatus({ mode: 'quickEdit' });
+            refreshEditorStatus();
+            if (sidebarCollapsedBeforeWebEditorRef.current === null) {
+                sidebarCollapsedBeforeWebEditorRef.current = collapsed;
+            }
+            setCollapsed(true);
+            return true;
+        } catch (error) {
+            activePrototypeEditorLaunchOptionsRef.current = null;
+            console.error('[Axhub] 启动 HTML 批注编辑器失败:', error);
+            messageApi.error('启动 HTML 批注失败');
+            return false;
+        }
+    }, [
+        collapsed,
+        enterPrototypeEditor,
+        getPrimaryPreviewIframe,
+        messageApi,
+        prototypeEditorLaunchOptions,
+        refreshEditorStatus,
+        setCollapsed,
+    ]);
+
     const handleEnableDocEdit = useCallback(() => {
         if (!currentMarkdownItem) {
             messageApi.warning(`请先选择${currentMarkdownLabel}`);
             return;
         }
-        if (!isMarkdownEditableResource(currentMarkdownItem)) {
-            messageApi.warning(`仅支持 Markdown ${currentMarkdownLabel}在线编辑`);
+        if (!isDocumentCommentableResource(currentMarkdownItem)) {
+            messageApi.warning(`仅支持 Markdown 或 HTML ${currentMarkdownLabel}批注`);
+            return;
+        }
+        if (isHtmlCommentableResource(currentMarkdownItem)) {
+            void enterHtmlDocumentEditor();
             return;
         }
         if (postToPreview({ type: 'SPEC_EDIT_ENABLE' })) {
@@ -2093,7 +2378,14 @@ export function useIndexPagePreviewActions(params: any) {
             setDocEditState((previous) => ({ ...previous, enabled: true, quickEditMode: 'comment' }));
             void enterDocumentEditor();
         }
-    }, [currentMarkdownItem, currentMarkdownLabel, enterDocumentEditor, messageApi, postToPreview]);
+    }, [
+        currentMarkdownItem,
+        currentMarkdownLabel,
+        enterDocumentEditor,
+        enterHtmlDocumentEditor,
+        messageApi,
+        postToPreview,
+    ]);
 
     const handleSaveDocEdit = useCallback(() => {
         if (!currentMarkdownItem) {
@@ -2299,7 +2591,11 @@ export function useIndexPagePreviewActions(params: any) {
 
     const handleOpenWebEditor = useCallback(async () => {
         if (isDocumentEditingContent) {
-            await enterDocumentEditor();
+            if (currentDocumentIsHtml) {
+                await enterHtmlDocumentEditor();
+            } else {
+                await enterDocumentEditor();
+            }
             return;
         }
 
@@ -2344,7 +2640,9 @@ export function useIndexPagePreviewActions(params: any) {
         }
     }, [
         collapsed,
+        currentDocumentIsHtml,
         enterDocumentEditor,
+        enterHtmlDocumentEditor,
         enterPrototypeEditor,
         getSecondaryPreviewIframe,
         getPrimaryPreviewIframe,
@@ -3262,27 +3560,9 @@ export function useIndexPagePreviewActions(params: any) {
 
     useEffect(() => {
         if (isExportModalOpen && imageConfig.contentType === 'screenshot' && !imageConfig.rawScreenshotUrl) {
-            exportModalWasOpenRef.current = true;
             handleRequestScreenshot();
-            return;
-        }
-        if (isExportModalOpen) {
-            exportModalWasOpenRef.current = true;
-            return;
-        }
-        if (!exportModalWasOpenRef.current) {
-            return;
-        }
-        if (!isExportModalOpen) {
-            const targetIframe = getPreviewIframe();
-            if (targetIframe?.contentWindow) {
-                targetIframe.contentWindow.postMessage({ type: 'RESET_SCREENSHOT_STYLES' }, getIframeOrigin(targetIframe));
-            }
-            exportModalWasOpenRef.current = false;
         }
     }, [
-        getIframeOrigin,
-        getPreviewIframe,
         handleRequestScreenshot,
         imageConfig.contentType,
         imageConfig.rawScreenshotUrl,
@@ -3331,6 +3611,7 @@ export function useIndexPagePreviewActions(params: any) {
         editorStatus,
         docEditState,
         markdownPromptCopying,
+        drawioResourceEditAvailable,
         reviewPanelOpen,
         activeReviewKind,
         reviewMarkdown,
@@ -3385,6 +3666,7 @@ export function useIndexPagePreviewActions(params: any) {
         handleSaveDocEdit,
         handleExitDocEdit,
         handleSwitchDocQuickEditMode,
+        handleOpenDrawioResourceEditor,
         handleCopyMarkdownPrompt,
         handleReviewKindChange,
         handleReviewPanelToggle,

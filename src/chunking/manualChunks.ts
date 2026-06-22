@@ -131,6 +131,7 @@ export function getManualChunkName(id: string): string | undefined {
     || packageName === '@axhub/acp'
     || packageName === 'assistant-cloud'
     || packageName === 'assistant-stream'
+    || packageName === 'nanoid'
   ) {
     return 'vendor-assistant';
   }

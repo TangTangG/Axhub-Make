@@ -13,6 +13,7 @@ interface UseIndexPagePresentationPropsBuilderParams {
         state: {
             collapsed: boolean;
             selectedItem: any;
+            prototypeStartDraftActive?: boolean;
             viewMode: ViewMode;
         activeTab: 'prototypes';
         assistantVisible: boolean;
@@ -86,7 +87,8 @@ interface UseIndexPagePresentationPropsBuilderParams {
         onCloseWebAgentPanel?: () => void;
         onPreferredIDEChange?: (ide: any) => void;
         openSettingsDialog?: (tab?: SettingsDialogInitialTab) => void;
-        onRefreshPrototypes?: () => Promise<any[]>;
+        onCreatePrototypeForDraftStart?: () => Promise<any | null>;
+        onRefreshPrototypes?: (preferredName?: string) => Promise<any[]>;
         onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     };
 }
@@ -101,6 +103,7 @@ export function useIndexPagePresentationPropsBuilder({
         state: {
             collapsed: state.collapsed,
             selectedItem: state.selectedItem,
+            prototypeStartDraftActive: state.prototypeStartDraftActive,
             viewMode: state.viewMode,
             activeTab: state.activeTab,
             selectedDeviceId: preview.selectedDeviceId,
@@ -111,6 +114,7 @@ export function useIndexPagePresentationPropsBuilder({
             quickEditActive: preview.editorStatus.mode === 'quickEdit',
             docEditState: preview.docEditState,
             markdownPromptCopying: preview.markdownPromptCopying,
+            drawioResourceEditAvailable: preview.drawioResourceEditAvailable,
             reviewPanelOpen: preview.reviewPanelOpen,
             activeReviewKind: preview.activeReviewKind,
             reviewMarkdown: preview.reviewMarkdown,
@@ -193,6 +197,7 @@ export function useIndexPagePresentationPropsBuilder({
             handleSaveDocEdit: preview.handleSaveDocEdit,
             handleExitDocEdit: preview.handleExitDocEdit,
             handleSwitchDocQuickEditMode: preview.handleSwitchDocQuickEditMode,
+            handleOpenDrawioResourceEditor: preview.handleOpenDrawioResourceEditor,
             handleCopyMarkdownPrompt: preview.handleCopyMarkdownPrompt,
             handleReviewPanelToggle: preview.handleReviewPanelToggle,
             handleReviewKindChange: preview.handleReviewKindChange,
@@ -252,6 +257,7 @@ export function useIndexPagePresentationPropsBuilder({
             onCloseWebAgentPanel: actions.onCloseWebAgentPanel,
             onPreferredIDEChange: actions.onPreferredIDEChange,
             onOpenAISettings: actions.openSettingsDialog ? () => actions.openSettingsDialog?.('ai') : undefined,
+            onCreatePrototypeForDraftStart: actions.onCreatePrototypeForDraftStart,
             onRefreshPrototypes: actions.onRefreshPrototypes,
             onSubmitCanvasAssistantPrompt: actions.onSubmitCanvasAssistantPrompt,
         },

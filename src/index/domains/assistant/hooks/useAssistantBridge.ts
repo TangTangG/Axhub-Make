@@ -9,6 +9,7 @@ import {
     buildAcpContextPostMessage,
     buildAcpCanvasMcpPostMessage,
     buildAcpImageGenerationPostMessage,
+    buildAcpThemePostMessage,
 } from '../assistantAcpContext';
 import type { AssistantImageAttachmentPayload } from '../assistantContextPayload';
 
@@ -122,6 +123,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const [iframeLoaded, setIframeLoaded] = useState(false);
     const iframeLoadedRef = useRef(false);
+    const themeSyncAttemptRef = useRef(0);
     const imageGenerationConfigSyncAttemptRef = useRef(0);
     const previewMcpConfigSyncAttemptRef = useRef(0);
     const canvasMcpConfigSyncAttemptRef = useRef(0);
@@ -275,6 +277,37 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
             return false;
         }
     }, [resolveTargetOrigin]);
+
+    const syncTheme = useCallback((isDarkMode: boolean) => {
+        const iframe = iframeRef.current;
+        if (!iframe || !iframe.contentWindow) {
+            return false;
+        }
+
+        try {
+            const message = buildAcpThemePostMessage(isDarkMode);
+            iframe.contentWindow.postMessage(message, resolveTargetOrigin());
+            return true;
+        } catch {
+            return false;
+        }
+    }, [resolveTargetOrigin]);
+
+    const syncThemeWithRetry = useCallback((isDarkMode: boolean) => {
+        const attempt = themeSyncAttemptRef.current + 1;
+        themeSyncAttemptRef.current = attempt;
+        syncTheme(isDarkMode);
+        window.setTimeout(() => {
+            if (themeSyncAttemptRef.current === attempt) {
+                syncTheme(isDarkMode);
+            }
+        }, 160);
+        window.setTimeout(() => {
+            if (themeSyncAttemptRef.current === attempt) {
+                syncTheme(isDarkMode);
+            }
+        }, 520);
+    }, [syncTheme]);
 
     const syncImageGenerationConfig = useCallback((config: AssistantImageGenerationConfig | null | undefined) => {
         const iframe = iframeRef.current;
@@ -600,6 +633,8 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         syncContextWithAck,
         syncContextWithRetry,
         addContextItems,
+        syncTheme,
+        syncThemeWithRetry,
         syncImageGenerationConfig,
         syncImageGenerationConfigWithAck,
         syncImageGenerationConfigWithRetry,

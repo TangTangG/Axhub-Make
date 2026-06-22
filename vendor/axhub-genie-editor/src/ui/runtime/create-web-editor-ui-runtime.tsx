@@ -149,7 +149,7 @@ export function createWebEditorUiRuntime(options: WebEditorUiRuntimeOptions): We
     disablePageAnimations: false,
     pageZoomEnabled: false,
     copySkillInstallPromptDisabled: true,
-    selectionModeActive: true,
+    selectionModeActive: options.initialSelectionModeActive ?? true,
     fullExitAvailable: false,
   });
 
@@ -185,6 +185,7 @@ export function createWebEditorUiRuntime(options: WebEditorUiRuntimeOptions): We
                 propertyPanelOptions={options.propertyPanelOptions}
                 propertyPanelVisible={propertyPanelVisible}
                 initialPropertyPanelOpen={options.initialPropertyPanelOpen}
+                initialSelectionModeActive={options.initialSelectionModeActive}
                 toolbarMode={options.toolbarMode ?? options.propertyPanelOptions?.toolbarMode}
                 breadcrumbsOptions={options.breadcrumbsOptions}
                 propertyPanelRef={propertyPanelRef}

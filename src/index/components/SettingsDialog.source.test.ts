@@ -48,6 +48,27 @@ describe('SettingsDialog source', () => {
     expect(source).not.toContain('默认 IDE');
   });
 
+  it('exposes configurable local and LAN share hosts in server settings', () => {
+    const source = readSource();
+
+    expect(source).toContain('lanHost: string;');
+    expect(source).toContain('availableLANHosts?: string[];');
+    expect(source).toContain('lanHost: config.server.lanHost || config.availableLANHosts?.[0] ||');
+    expect(source).toContain('const [availableLANHosts, setAvailableLANHosts] = useState<string[]>([]);');
+    expect(source).toContain('setAvailableLANHosts(Array.isArray(config.availableLANHosts) ? config.availableLANHosts : []);');
+    expect(source).toContain('lanHost: formState.lanHost.trim()');
+    expect(source).toContain('window.__AXHUB_SHARE_HOSTS__ = {');
+    expect(source).toContain('本地地址');
+    expect(source).toContain('局域网地址');
+    expect(source).toContain('availableLANHosts.slice(0, 4).map');
+    expect(source).toContain("onClick={() => updateField('lanHost', host)}");
+    expect(source).toContain('rounded-full border border-border bg-muted/40');
+    expect(source).toContain("updateField('lanHost'");
+    expect(source).toContain('formState.allowLAN');
+    expect(source).not.toContain('<SelectTrigger className="w-[168px] shrink-0">');
+    expect(source).not.toContain('<SelectValue placeholder="选择地址" />');
+  });
+
   it('loads Make client update status from the update tab and applies updates through project APIs', () => {
     const source = readSource();
     const projectIndex = source.indexOf('<TabsTrigger value="project"');
@@ -112,16 +133,21 @@ describe('SettingsDialog source', () => {
     expect(source).toContain("from '@/components/ui/tooltip'");
     expect(localAiSource).toContain('<Table');
     expect(localAiSource).toContain('<TableHead');
-    expect(localAiSource).toContain('执行');
+    expect(localAiSource).toContain('默认');
+    expect(localAiSource).not.toContain('执行\n');
     expect(localAiSource).not.toContain('默认执行');
     expect(localAiSource).toContain('供应商');
     expect(localAiSource).toContain('版本');
     expect(localAiSource).not.toContain('脚本版本');
     expect(localAiSource).toContain('上次测试');
     expect(localAiSource).not.toContain('<TableHead className="h-8 w-[96px] text-right text-xs">测试</TableHead>');
-    expect(localAiSource).toContain('<TableHead className="h-8 w-[64px] px-2 text-xs">');
-    expect(localAiSource).toContain('<TableHead className="h-8 w-[180px] px-2 text-xs">供应商</TableHead>');
+    expect(localAiSource).toContain('<TableHead className="h-8 w-[76px] px-2 text-xs">');
+    expect(localAiSource).toContain('aria-label="默认说明"');
+    expect(localAiSource).toContain('<TableHead className="h-8 w-[170px] px-2 text-xs">供应商</TableHead>');
     expect(localAiSource).toContain('<TableHead className="h-8 w-[180px] px-3 text-xs">');
+    expect(localAiSource).toContain('<TableHead className="h-8 w-[230px] px-3 text-center text-xs">上次测试</TableHead>');
+    expect(localAiSource).toContain('<TableCell className="w-[230px] max-w-[230px] px-3 py-2 text-center text-xs align-middle">');
+    expect(localAiSource).toContain('<div className="inline-flex min-w-0 max-w-full items-center justify-center gap-2">');
     expect(localAiSource).toContain('<TableCell className="w-[180px] max-w-[180px] px-3 py-2 text-xs text-muted-foreground">');
     expect(localAiSource).toContain('className="block max-w-[144px] truncate font-mono text-[11px] leading-4"');
     expect(localAiSource).toContain('aria-label="刷新版本"');
@@ -379,8 +405,12 @@ describe('SettingsDialog source', () => {
     expect(tableBodySource).toContain('<TooltipContent arrow>测试连接</TooltipContent>');
     expect(tableBodySource).toContain("testState?.status === 'failed' && testState.message");
     expect(tableBodySource).toContain("testState?.status === 'passed' && testTime");
-    expect(tableBodySource).toContain('max-w-[180px] whitespace-normal break-words leading-5');
+    expect(tableBodySource).toContain('inline-flex min-w-0 max-w-full items-center justify-center gap-2');
+    expect(tableBodySource).toContain('items-center text-center');
+    expect(tableBodySource).toContain('max-w-[190px] whitespace-normal break-words leading-5');
     expect(tableBodySource).toContain('[overflow-wrap:anywhere]');
+    expect(tableBodySource).not.toContain('items-start gap-2');
+    expect(tableBodySource).not.toContain('justify-between');
     expect(tableBodySource).not.toContain("{isTesting ? '测试中' : '测试'}");
     expect(tableBodySource).not.toContain('<TableCell className="py-2">\n                                                                <div className="flex justify-end">');
     expect(tableBodySource).not.toContain('max-w-[180px] truncate text-destructive');

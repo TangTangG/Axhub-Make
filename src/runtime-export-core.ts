@@ -5,7 +5,7 @@ import {
   htmlToAxure as htmlToAxureImpl,
   type CapturedDocument,
 } from 'axhub-export-core';
-import type { SnapdomOptions } from '@zumer/snapdom';
+import { snapdom, type SnapdomOptions } from '@zumer/snapdom';
 
 const SCREENSHOT_IMAGE_PROXY_PATH = '/api/export/image-proxy';
 const SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
@@ -214,6 +214,185 @@ function collectScreenshotSize(element: HTMLElement): { width: number; height: n
   };
 }
 
+type ScreenshotRootStyleSnapshot = {
+  marginLeft: string;
+  marginRight: string;
+  marginTop: string;
+  marginBottom: string;
+  width: string;
+  height: string;
+  display: string;
+  alignItems: string;
+  justifyContent: string;
+  placeItems: string;
+};
+
+type ScreenshotPageStyleSnapshot = {
+  width: string;
+  height: string;
+  minHeight: string;
+  margin: string;
+  marginTop: string;
+  marginRight: string;
+  marginBottom: string;
+  marginLeft: string;
+  padding: string;
+  paddingTop: string;
+  paddingRight: string;
+  paddingBottom: string;
+  paddingLeft: string;
+  display: string;
+  alignItems: string;
+  justifyContent: string;
+  placeItems: string;
+};
+
+function snapshotPageStyle(element: HTMLElement): ScreenshotPageStyleSnapshot {
+  return {
+    width: element.style.width,
+    height: element.style.height,
+    minHeight: element.style.minHeight,
+    margin: element.style.margin,
+    marginTop: element.style.marginTop,
+    marginRight: element.style.marginRight,
+    marginBottom: element.style.marginBottom,
+    marginLeft: element.style.marginLeft,
+    padding: element.style.padding,
+    paddingTop: element.style.paddingTop,
+    paddingRight: element.style.paddingRight,
+    paddingBottom: element.style.paddingBottom,
+    paddingLeft: element.style.paddingLeft,
+    display: element.style.display,
+    alignItems: element.style.alignItems,
+    justifyContent: element.style.justifyContent,
+    placeItems: element.style.placeItems,
+  };
+}
+
+function restorePageStyle(element: HTMLElement, snapshot: ScreenshotPageStyleSnapshot): void {
+  element.style.width = snapshot.width;
+  element.style.height = snapshot.height;
+  element.style.minHeight = snapshot.minHeight;
+  element.style.margin = snapshot.margin;
+  element.style.marginTop = snapshot.marginTop;
+  element.style.marginRight = snapshot.marginRight;
+  element.style.marginBottom = snapshot.marginBottom;
+  element.style.marginLeft = snapshot.marginLeft;
+  element.style.padding = snapshot.padding;
+  element.style.paddingTop = snapshot.paddingTop;
+  element.style.paddingRight = snapshot.paddingRight;
+  element.style.paddingBottom = snapshot.paddingBottom;
+  element.style.paddingLeft = snapshot.paddingLeft;
+  element.style.display = snapshot.display;
+  element.style.alignItems = snapshot.alignItems;
+  element.style.justifyContent = snapshot.justifyContent;
+  element.style.placeItems = snapshot.placeItems;
+}
+
+function installScreenshotLayoutOverride(
+  rootElement: HTMLElement,
+  options: {
+    targetWidth?: number;
+    targetHeight?: number;
+  },
+): () => void {
+  const documentElement = document.documentElement instanceof HTMLElement ? document.documentElement : null;
+  const body = document.body instanceof HTMLElement ? document.body : null;
+  const rootSnapshot: ScreenshotRootStyleSnapshot = {
+    marginLeft: rootElement.style.marginLeft,
+    marginRight: rootElement.style.marginRight,
+    marginTop: rootElement.style.marginTop,
+    marginBottom: rootElement.style.marginBottom,
+    width: rootElement.style.width,
+    height: rootElement.style.height,
+    display: rootElement.style.display,
+    alignItems: rootElement.style.alignItems,
+    justifyContent: rootElement.style.justifyContent,
+    placeItems: rootElement.style.placeItems,
+  };
+  const documentSnapshot = documentElement ? snapshotPageStyle(documentElement) : null;
+  const bodySnapshot = body ? snapshotPageStyle(body) : null;
+  const width = options.targetWidth ? `${options.targetWidth}px` : undefined;
+  const height = options.targetHeight ? `${options.targetHeight}px` : undefined;
+
+  rootElement.style.marginLeft = '0';
+  rootElement.style.marginRight = '0';
+  rootElement.style.marginTop = '0';
+  rootElement.style.marginBottom = '0';
+  rootElement.style.alignItems = 'initial';
+  rootElement.style.justifyContent = 'initial';
+  rootElement.style.placeItems = 'initial';
+  if (width) {
+    rootElement.style.width = width;
+  }
+  if (height) {
+    rootElement.style.height = height;
+  }
+
+  if (documentElement) {
+    documentElement.style.margin = '0';
+    documentElement.style.marginTop = '0';
+    documentElement.style.marginRight = '0';
+    documentElement.style.marginBottom = '0';
+    documentElement.style.marginLeft = '0';
+    documentElement.style.padding = '0';
+    documentElement.style.paddingTop = '0';
+    documentElement.style.paddingRight = '0';
+    documentElement.style.paddingBottom = '0';
+    documentElement.style.paddingLeft = '0';
+    if (width) {
+      documentElement.style.width = width;
+    }
+    if (height) {
+      documentElement.style.height = height;
+      documentElement.style.minHeight = height;
+    }
+  }
+
+  if (body) {
+    body.style.margin = '0';
+    body.style.marginTop = '0';
+    body.style.marginRight = '0';
+    body.style.marginBottom = '0';
+    body.style.marginLeft = '0';
+    body.style.padding = '0';
+    body.style.paddingTop = '0';
+    body.style.paddingRight = '0';
+    body.style.paddingBottom = '0';
+    body.style.paddingLeft = '0';
+    body.style.display = 'block';
+    body.style.alignItems = 'initial';
+    body.style.justifyContent = 'initial';
+    body.style.placeItems = 'initial';
+    if (width) {
+      body.style.width = width;
+    }
+    if (height) {
+      body.style.height = height;
+      body.style.minHeight = height;
+    }
+  }
+
+  return () => {
+    rootElement.style.marginLeft = rootSnapshot.marginLeft;
+    rootElement.style.marginRight = rootSnapshot.marginRight;
+    rootElement.style.marginTop = rootSnapshot.marginTop;
+    rootElement.style.marginBottom = rootSnapshot.marginBottom;
+    rootElement.style.width = rootSnapshot.width;
+    rootElement.style.height = rootSnapshot.height;
+    rootElement.style.display = rootSnapshot.display;
+    rootElement.style.alignItems = rootSnapshot.alignItems;
+    rootElement.style.justifyContent = rootSnapshot.justifyContent;
+    rootElement.style.placeItems = rootSnapshot.placeItems;
+    if (documentElement && documentSnapshot) {
+      restorePageStyle(documentElement, documentSnapshot);
+    }
+    if (body && bodySnapshot) {
+      restorePageStyle(body, bodySnapshot);
+    }
+  };
+}
+
 function waitForScreenshotFrame(): Promise<void> {
   return new Promise((resolve) => {
     if (typeof window.requestAnimationFrame === 'function') {
@@ -266,7 +445,7 @@ async function captureElementWithSnapdom(
   },
 ): Promise<string> {
   const testSnapdomToPng = (globalThis as RuntimeExportCoreTestGlobal).__AXHUB_RUNTIME_EXPORT_CORE_TEST_SNAPDOM_TO_PNG__;
-  const snapdomToPng = testSnapdomToPng ?? (await import('@zumer/snapdom')).snapdom.toPng;
+  const snapdomToPng = testSnapdomToPng ?? snapdom.toPng;
   const image = await snapdomToPng(element, {
     width: options.width,
     height: options.height,
@@ -303,21 +482,10 @@ export async function captureDocumentScreenshot(
   const targetWidth = positiveNumber(options.targetWidth);
   const targetHeight = positiveNumber(options.targetHeight);
   const targetPixelRatio = positivePixelRatio(options.targetPixelRatio);
-  const originalStyle = {
-    marginLeft: element.style.marginLeft,
-    marginRight: element.style.marginRight,
-    width: element.style.width,
-    height: element.style.height,
-  };
-
-  element.style.marginLeft = '0';
-  element.style.marginRight = '0';
-  if (targetWidth) {
-    element.style.width = `${targetWidth}px`;
-  }
-  if (targetHeight) {
-    element.style.height = `${targetHeight}px`;
-  }
+  const restoreScreenshotLayout = installScreenshotLayoutOverride(element, {
+    targetWidth,
+    targetHeight,
+  });
   if (targetWidth || targetHeight) {
     await settleScreenshotLayout();
   }
@@ -338,9 +506,6 @@ export async function captureDocumentScreenshot(
   } finally {
     restoreImageUrls();
     restoreScrollbarHidingStyle();
-    element.style.marginLeft = originalStyle.marginLeft;
-    element.style.marginRight = originalStyle.marginRight;
-    element.style.width = originalStyle.width;
-    element.style.height = originalStyle.height;
+    restoreScreenshotLayout();
   }
 }

@@ -1,4 +1,9 @@
-import type { GenieEditorHostToolbarAction, GenieEditorHostToolbarState } from '@/common/web-editor-types';
+import type {
+    ElementLocator,
+    GenieEditorEditedSnapshot,
+    GenieEditorHostToolbarAction,
+    GenieEditorHostToolbarState,
+} from '@/common/web-editor-types';
 import type { AxureCopyOptions, ImageConfig } from '../../types';
 import type { ExportIndexBundle } from '../../services/api';
 import type { PreviewConfig } from '../../domains/device/preview-layout';
@@ -129,6 +134,20 @@ export type HostToolbarEditorsApi = {
     subscribeHostToolbarState?: (listener: (state: GenieEditorHostToolbarState) => void) => () => void;
     runHostToolbarAction?: (action: GenieEditorHostToolbarAction) => Promise<boolean>;
     getCopyPromptText?: () => string;
+    getEditedSnapshot?: () => GenieEditorEditedSnapshot;
+    setNodeEditingState?: (
+        elementKey: string,
+        nextState: 'editing' | 'idle' | 'completed' | 'error',
+        taskRef: {
+            provider: string | null;
+            sessionId: string | null;
+            requestId: string | null;
+        } | null,
+        targetRef?: {
+            locator?: ElementLocator | null;
+            label?: string | null;
+        } | null,
+    ) => Promise<unknown>;
     getDecisionDataCount?: () => number;
 };
 
@@ -201,7 +220,7 @@ export const PROTOTYPE_EDITOR_BRIDGE_TIMEOUT_MS = 1500;
 
 export function readPreviewFrameEditorApi<T extends object>(
     iframe: HTMLIFrameElement | null | undefined,
-    bootstrapKey: 'DevTemplateBootstrap' | 'SpecTemplateBootstrap',
+    bootstrapKey: 'DevTemplateBootstrap' | 'SpecTemplateBootstrap' | 'HtmlTemplateBootstrap',
 ): T | null {
     try {
         const editors = (iframe?.contentWindow as any)?.[bootstrapKey]?.editors;
@@ -276,7 +295,7 @@ export function resolveHostToolbarStateForDisplay(
             terminalTaskCount: nextState.terminalTaskCount,
             selectedAgent: nextState.selectedAgent,
             agentOptions: nextState.agentOptions,
-            selectionModeActive: true,
+            selectionModeActive: nextState.selectionModeActive,
             fullExitAvailable: nextState.fullExitAvailable,
         };
     }
@@ -642,6 +661,10 @@ function getRuntimeOrigin(): string {
         : '';
 }
 
+function getHostRuntimeOrigin(): string {
+    return getWindowLocationOrigin();
+}
+
 function hasExplicitUrlOrigin(value: string): boolean {
     return /^[a-z][a-z\d+.-]*:\/\//iu.test(value);
 }
@@ -859,6 +882,7 @@ export function createRuntimeExportMessage({
         resourceId: selectedItem.resourceId || selectedItem.name,
         resourceType: 'prototypes',
         clientUrl: selectedItem.clientUrl,
+        runtimeOrigin: getHostRuntimeOrigin(),
         ...payload,
     };
 }

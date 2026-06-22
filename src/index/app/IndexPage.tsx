@@ -46,6 +46,7 @@ import { buildMakeClientStartupFailurePrompt } from '../utils/projectSetupErrors
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../utils/excalidrawUiMode';
 import type { CanvasAiGenerationRequest } from '../domains/ai-generation/CanvasAiGenerationTool';
 import { mapAcpOutputArtifactsToGenerationArtifacts } from '../domains/ai-generation/acpOutputArtifacts';
+import { submitAnnotationPromptViaApi } from '../domains/assistant/annotationDirectRun';
 import type { AssistantImageAttachmentPayload } from '../domains/assistant/assistantContextPayload';
 import './styles/index-page.css';
 
@@ -101,6 +102,34 @@ function readRecord(value: unknown): Record<string, any> {
         : {};
 }
 
+function buildCreatedPrototypeStartItem(result: any): ItemData | null {
+    const name = String(result?.name || result?.folderName || '').trim();
+    if (!name) {
+        return null;
+    }
+    const displayName = String(result?.displayName || result?.title || name).trim() || name;
+    const clientUrl = String(result?.clientUrl || '').trim();
+    const filePath = String(result?.filePath || '').trim();
+    const absoluteFilePath = String(result?.absoluteFilePath || '').trim();
+    const canvasFilePath = String(result?.canvasFilePath || '').trim();
+    const absoluteCanvasFilePath = String(result?.absoluteCanvasFilePath || '').trim();
+    return {
+        name,
+        displayName,
+        jsUrl: '',
+        specUrl: '',
+        previewUrl: clientUrl,
+        clientUrl: clientUrl || undefined,
+        filePath: filePath || undefined,
+        absoluteFilePath: absoluteFilePath || undefined,
+        canvasFilePath: canvasFilePath || undefined,
+        absoluteCanvasFilePath: absoluteCanvasFilePath || undefined,
+        previewDisabled: !clientUrl,
+        ...(result?.placeholder === true ? { placeholder: true } : {}),
+        ...(result?.placeholderGuide ? { placeholderGuide: result.placeholderGuide } : {}),
+    };
+}
+
 function buildMakeStatePermissionPrompt(health: unknown): string {
     const record = readRecord(health);
     const details = readRecord(record.details);
@@ -140,6 +169,7 @@ export default function IndexPage({
     const [viewMode, setViewMode] = useState<ViewMode>('demo');
     const [activeTab, setActiveTab] = useState<TabType>('prototypes');
     const [selectedItem, setSelectedItem] = useState<ItemData | null>(null);
+    const [prototypeStartDraftActive, setPrototypeStartDraftActive] = useState(false);
     const [selectedPrototypePageId, setSelectedPrototypePageId] = useState<string | null>(null);
     const [sidebarTab, setSidebarTab] = useState<SidebarTab>('prototype');
     const [resourceSection, setResourceSection] = useState<ResourceSection>('themes');
@@ -158,6 +188,13 @@ export default function IndexPage({
     const handleInitialResourceDeepLinkHandled = useCallback(() => {
         setInitialResourceDeepLinkHandled(true);
     }, []);
+    useEffect(() => {
+        if (!prototypeStartDraftActive) return;
+        if (selectedItem || sidebarTab !== 'prototype' || viewMode !== 'demo') {
+            setPrototypeStartDraftActive(false);
+        }
+    }, [prototypeStartDraftActive, selectedItem, sidebarTab, viewMode]);
+
     const openSettingsDialog = useCallback((tab: SettingsDialogInitialTab = 'project', aiContext?: SettingsDialogAIContext | null) => {
         setSettingsDialogInitialTab(tab);
         setSettingsDialogAIContext(tab === 'ai' ? aiContext || null : null);
@@ -206,6 +243,15 @@ export default function IndexPage({
         clearCreateDialogState,
         handleCreateCancel,
     } = useCreateDialog(activeTab, workspace.data);
+
+    const handleCreatePrototypeStartDraft = useCallback(() => {
+        setActiveTab('prototypes');
+        setSidebarTab('prototype');
+        setViewMode('demo');
+        setSelectedItem(null);
+        setSelectedPrototypePageId(null);
+        setPrototypeStartDraftActive(true);
+    }, []);
 
     const handleOpenPrototypeCreateDialog = useCallback((options: {
         initialTab: typeof initialCreateDialogTab;
@@ -283,6 +329,7 @@ export default function IndexPage({
     const currentMarkdownItem = currentMarkdownResource.item;
     const currentMarkdownLabel = currentMarkdownResource.kind === 'template' ? '模板' : '文档';
     const prototypePlaceholderActive = contentMode === 'preview' && viewMode === 'demo' && selectedItem?.placeholder === true;
+    const prototypeStartPageActive = prototypeStartDraftActive || prototypePlaceholderActive;
     const prototypePlaceholderAutoCloseKey = prototypePlaceholderActive && selectedItem
         ? selectedItem.resourceId || selectedItem.name
         : '';
@@ -312,6 +359,7 @@ export default function IndexPage({
         activeProjectId: workspace.activeProjectId,
         activeTab,
         viewMode,
+        isDarkMode,
         selectedItem,
         contentMode,
         currentMarkdownResource,
@@ -392,6 +440,47 @@ export default function IndexPage({
         preferences.annotationModel,
         preferences.annotationPromptClient,
         preferences.preferredPromptClient,
+    ]);
+
+    const handleRunAnnotationAssistantPromptViaApi = useCallback(async (request: {
+        context: AssistantContextV1;
+        prompt: string;
+        onPrepared?: (payload: any) => void | Promise<void>;
+        onAccepted?: (payload: any) => void | Promise<void>;
+    }) => {
+        const prompt = String(request.prompt || '').trim();
+        if (!prompt) {
+            messageApi.warning('请输入提示词');
+            return false;
+        }
+        const annotationPromptClient = preferences.annotationPromptClient || preferences.preferredPromptClient || null;
+        const annotationProvider = resolveAcpPromptClientProvider(annotationPromptClient) || 'codex';
+        const annotationModel = preferences.annotationModel || null;
+        return submitAnnotationPromptViaApi({
+            context: request.context,
+            prompt,
+            projectPath: assistantController.assistantProjectPath,
+            projectScope: workspace.activeProjectId || assistantController.assistantProjectPath || workspace.projectTitle,
+            projectId: workspace.activeProjectId,
+            preferredPromptClient: annotationPromptClient || `acp:${annotationProvider}`,
+            provider: annotationProvider,
+            model: annotationModel,
+            builtinToolSettings: preferences.assistantImageGenerationConfig
+                ? { imageGeneration: preferences.assistantImageGenerationConfig }
+                : undefined,
+            onFirstRun: (message) => messageApi.info(message),
+            onPrepared: request.onPrepared,
+            onAccepted: request.onAccepted,
+        });
+    }, [
+        assistantController.assistantProjectPath,
+        messageApi,
+        preferences.annotationModel,
+        preferences.annotationPromptClient,
+        preferences.assistantImageGenerationConfig,
+        preferences.preferredPromptClient,
+        workspace.activeProjectId,
+        workspace.projectTitle,
     ]);
 
     const buildPromptActionAssistantContext = useCallback((targetPath?: string | null): AssistantContextV1 => {
@@ -503,6 +592,23 @@ export default function IndexPage({
             });
         }
 
+        if (target.resourceType === 'template') {
+            setActiveTab('prototypes');
+            setSidebarTab('assets');
+            setResourceSection('templates');
+            resources.setSelectedTemplate(target.resource);
+            setViewMode('demo');
+            if (target.collapseSidebar) {
+                setCollapsed(true);
+            }
+            return buildNextContext({
+                activeTab: 'prototypes',
+                viewMode: 'demo',
+                contentMode: 'template',
+                selectedTemplate: target.resource,
+            });
+        }
+
         if (target.resourceType === 'theme') {
             setActiveTab('prototypes');
             setSidebarTab('assets');
@@ -529,6 +635,7 @@ export default function IndexPage({
         resources.selectedTemplate,
         resources.selectedTheme,
         resources.setSelectedDoc,
+        resources.setSelectedTemplate,
         resources.setSelectedTheme,
         resources.templateAssets,
         resources.themes,
@@ -576,6 +683,7 @@ export default function IndexPage({
         assistantContextAppendAvailable: assistantController.assistantContextAppendAvailable,
         onOpenAnnotationAssistant: assistantController.openAssistantWithContext,
         onSubmitAnnotationAssistantPrompt: handleSubmitAnnotationAssistantPrompt,
+        onRunAnnotationAssistantPromptViaApi: handleRunAnnotationAssistantPromptViaApi,
         probeAssistantRuntimeSilently: assistantController.probeAssistantRuntimeSilently,
         connectAssistantRuntimeSilently: assistantController.connectAssistantRuntimeSilently,
         syncAssistantCanvasComments: assistantController.syncAssistantCanvasComments,
@@ -623,6 +731,7 @@ export default function IndexPage({
         loading: workspace.loading,
         data: workspace.data,
         docsItems: workspace.docsItems,
+        templateAssets: resources.templateAssets,
         themes: workspace.themes,
         sidebarAssetsLoaded: workspace.sidebarAssetsLoaded,
         searchText: workspace.searchText,
@@ -634,6 +743,7 @@ export default function IndexPage({
         setSelectedPrototypePageId,
         setSelectedDoc: resources.setSelectedDoc,
         setSelectedResourceFolder: resources.setSelectedResourceFolder,
+        setSelectedTemplate: resources.setSelectedTemplate,
         setSelectedTheme: resources.setSelectedTheme,
         sidebarTrees: workspace.sidebarTrees,
         sidebarTab,
@@ -644,6 +754,7 @@ export default function IndexPage({
         setViewMode,
         pendingReturnTarget,
         setPendingReturnTarget,
+        prototypeStartDraftActive,
         initialResourceDeepLink: initialResourceDeepLinkHandled ? null : initialResourceDeepLink,
         onInitialResourceDeepLinkHandled: handleInitialResourceDeepLinkHandled,
         setCollapsed,
@@ -669,6 +780,13 @@ export default function IndexPage({
                 projectId: activeProjectId || undefined,
             };
         }
+        if (contentMode === 'template' && resources.selectedTemplate) {
+            return {
+                resourceType: 'template',
+                resourceId: resources.selectedTemplate.resourceId || resources.selectedTemplate.name,
+                projectId: activeProjectId || undefined,
+            };
+        }
         if (contentMode === 'theme' && resources.selectedTheme) {
             return {
                 resourceType: 'theme',
@@ -677,7 +795,7 @@ export default function IndexPage({
             };
         }
         return null;
-    }, [contentMode, resources.selectedDoc, resources.selectedTheme, selectedItem, selectedPrototypePageId, viewMode, workspace.activeProjectId]);
+    }, [contentMode, resources.selectedDoc, resources.selectedTemplate, resources.selectedTheme, selectedItem, selectedPrototypePageId, viewMode, workspace.activeProjectId]);
 
     const currentDeepLinkUrl = useMemo(() => (
         currentDeepLinkTarget ? buildIndexDeepLinkUrl(currentDeepLinkTarget) : ''
@@ -1088,13 +1206,71 @@ export default function IndexPage({
         await Promise.resolve(handleOpenGenieWebAgent());
     }, [handleOpenGenieWebAgent]);
 
+    const handleRefreshCanvasPrototypeItems = useCallback(async (preferredName?: string) => {
+        await workspace.loadData();
+        let nextPrototypes: ItemData[] = workspace.data.prototypes;
+        const projectId = workspace.activeProjectId?.trim();
+        if (projectId) {
+            const projectResponse = await fetch(`/api/projects/${encodeURIComponent(projectId)}/resources`).catch(() => null);
+            if (projectResponse?.ok) {
+                const payload = await projectResponse.json().catch(() => null);
+                nextPrototypes = normalizeProjectResourcesPayload(payload, projectId).data.prototypes;
+            }
+        }
+        if (!projectId || nextPrototypes === workspace.data.prototypes) {
+            const response = await fetch('/api/entries.json').catch(() => null);
+            if (response?.ok) {
+                const body = await response.json().catch(() => null);
+                nextPrototypes = Array.isArray(body?.prototypes) ? body.prototypes : workspace.data.prototypes;
+            }
+        }
+        const targetName = String(preferredName || selectedItem?.name || '').trim();
+        const refreshedSelectedItem = targetName
+            ? nextPrototypes.find((item) => item.name === targetName)
+            : null;
+        if (refreshedSelectedItem) {
+            setSelectedItem(refreshedSelectedItem);
+        }
+        return nextPrototypes;
+    }, [selectedItem?.name, setSelectedItem, workspace]);
+
+    const handleCreatePrototypeForDraftStart = useCallback(async (): Promise<ItemData | null> => {
+        try {
+            const result = await apiService.createPlaceholderPrototype({ projectId: workspace.activeProjectId });
+            const createdFromResult = buildCreatedPrototypeStartItem(result);
+            if (!createdFromResult) {
+                throw new Error('创建原型失败');
+            }
+            const refreshedPrototypes = await handleRefreshCanvasPrototypeItems(createdFromResult.name);
+            const created = refreshedPrototypes.find((item) => item.name === createdFromResult.name) || createdFromResult;
+            setSelectedItem(created);
+            setSelectedPrototypePageId(null);
+            setSidebarTab('prototype');
+            setViewMode('demo');
+            setPrototypeStartDraftActive(false);
+            return created;
+        } catch (error: any) {
+            messageApi.error(error?.message || '创建原型失败');
+            return null;
+        }
+    }, [
+        handleRefreshCanvasPrototypeItems,
+        messageApi,
+        setSelectedItem,
+        setSelectedPrototypePageId,
+        setSidebarTab,
+        setViewMode,
+        workspace.activeProjectId,
+    ]);
+
     const buildCanvasAssistantContext = useCallback((request: CanvasAiGenerationRequest): AssistantContextV1 => {
         const canvasFilePath = String(request.canvasFilePath || '').trim();
+        const requestPrototypeItem = request.createdPrototype || selectedItem;
         const isPrototypePlaceholderStart = request.source === 'placeholder-start' && request.scene === 'page';
         const isDesignPlaceholderStart = request.source === 'placeholder-start' && request.scene === 'design';
         const placeholderStartCurrentFile = isPrototypePlaceholderStart
             ? resolveAssistantCurrentFile({
-                selectedItem,
+                selectedItem: requestPrototypeItem,
                 activeTab,
                 viewMode: 'demo',
                 contentMode: 'preview',
@@ -1110,7 +1286,7 @@ export default function IndexPage({
                 displayName: canvasFilePath.split('/').filter(Boolean).pop() || 'canvas.excalidraw',
             }
             : resolveAssistantCurrentFile({
-            selectedItem,
+            selectedItem: requestPrototypeItem,
             activeTab,
             viewMode,
             contentMode,
@@ -1135,13 +1311,13 @@ export default function IndexPage({
                 viewMode: isPrototypePlaceholderStart ? 'demo' : isDesignPlaceholderStart ? 'canvas' : 'canvas',
                 activeTab,
                 contentMode,
-                selectedItem: selectedItem
+                selectedItem: requestPrototypeItem
                     ? {
-                        name: selectedItem.name,
-                        displayName: selectedItem.displayName,
-                        clientUrl: selectedItem.clientUrl,
-                        previewUrl: selectedItem.previewUrl,
-                        specUrl: selectedItem.specUrl,
+                        name: requestPrototypeItem.name,
+                        displayName: requestPrototypeItem.displayName,
+                        clientUrl: requestPrototypeItem.clientUrl,
+                        previewUrl: requestPrototypeItem.previewUrl,
+                        specUrl: requestPrototypeItem.specUrl,
                     }
                     : null,
                 paths: {
@@ -1407,6 +1583,7 @@ export default function IndexPage({
             defaultThemeName: resources.defaultThemeName,
             searchText: workspace.searchText,
             selectedItem,
+            prototypeStartDraftActive,
             selectedPrototypePageId,
             resourceSection,
             projectTitle: workspace.projectTitle,
@@ -1418,8 +1595,9 @@ export default function IndexPage({
             lanAccessAllowed,
             isDarkMode,
             sidebarTrees: workspace.sidebarTrees,
-            webAgentPanelOpen: assistantController.assistantVisible,
-            aiPanelMode: assistantController.aiPanelMode,
+            prototypeStartPageActive,
+            webAgentPanelOpen: prototypeStartPageActive ? false : assistantController.assistantVisible,
+            aiPanelMode: prototypeStartPageActive ? null : assistantController.aiPanelMode,
             selectedDoc: resources.selectedDoc,
             selectedResourceFolder: resources.selectedResourceFolder,
             selectedCanvas: resources.selectedCanvas,
@@ -1450,9 +1628,10 @@ export default function IndexPage({
             handleTabChange: selection.handleTabChange,
             handleMenuClick: selection.handleMenuClick,
             setSelectedPrototypePageId,
+            handleCreatePrototypeStartDraft,
             handleOpenProjectInIDE: ideActions.handleOpenProjectInIDE,
-            handleOpenGenieWebAgent,
-            handleOpenImageAiPanel,
+            handleOpenGenieWebAgent: prototypeStartPageActive ? undefined : handleOpenGenieWebAgent,
+            handleOpenImageAiPanel: prototypeStartPageActive ? undefined : handleOpenImageAiPanel,
             handleOpenWebAgentInPanel: assistantController.openRawUrlInAssistantPanel,
             onExecutePrompt: handleExecutePromptAction,
             onCloseAiPanel: handleCloseAiPanel,
@@ -1472,40 +1651,14 @@ export default function IndexPage({
         setViewMode('demo');
     }, [setActiveTab, setSidebarTab, setViewMode]);
 
-    const handleRefreshCanvasPrototypeItems = useCallback(async () => {
-        await workspace.loadData();
-        let nextPrototypes: ItemData[] = workspace.data.prototypes;
-        const projectId = workspace.activeProjectId?.trim();
-        if (projectId) {
-            const projectResponse = await fetch(`/api/projects/${encodeURIComponent(projectId)}/resources`).catch(() => null);
-            if (projectResponse?.ok) {
-                const payload = await projectResponse.json().catch(() => null);
-                nextPrototypes = normalizeProjectResourcesPayload(payload, projectId).data.prototypes;
-            }
-        }
-        if (!projectId || nextPrototypes === workspace.data.prototypes) {
-            const response = await fetch('/api/entries.json').catch(() => null);
-            if (response?.ok) {
-                const body = await response.json().catch(() => null);
-                nextPrototypes = Array.isArray(body?.prototypes) ? body.prototypes : workspace.data.prototypes;
-            }
-        }
-        const refreshedSelectedItem = selectedItem?.name
-            ? nextPrototypes.find((item) => item.name === selectedItem.name)
-            : null;
-        if (refreshedSelectedItem) {
-            setSelectedItem(refreshedSelectedItem);
-        }
-        return nextPrototypes;
-    }, [selectedItem?.name, setSelectedItem, workspace]);
-
     const presentationAreaProps = useIndexPagePresentationPropsBuilder({
         state: {
             collapsed,
             selectedItem,
+            prototypeStartDraftActive,
             viewMode,
             activeTab,
-            assistantVisible: assistantController.assistantVisible,
+            assistantVisible: prototypeStartPageActive ? false : assistantController.assistantVisible,
             isDarkMode,
             contentMode,
             docsItems: workspace.docsItems,
@@ -1531,8 +1684,8 @@ export default function IndexPage({
             excalidrawPropertyPanelPosition,
             bridgeConnected: assistantController.assistantContextAppendAvailable,
             activeProjectId: workspace.activeProjectId,
-            webAgentPanelOpen: assistantController.assistantVisible,
-            aiPanelMode: assistantController.aiPanelMode,
+            webAgentPanelOpen: prototypeStartPageActive ? false : assistantController.assistantVisible,
+            aiPanelMode: prototypeStartPageActive ? null : assistantController.aiPanelMode,
             assistantApiBaseUrl: assistantController.assistantApiBaseUrl,
             assistantProjectPath: assistantController.assistantProjectPath,
             prototypes: workspace.data.prototypes,
@@ -1544,7 +1697,7 @@ export default function IndexPage({
             setCollapsed,
             setViewMode,
             handleEnterSelectedPrototypePreview,
-            handleToggleAssistant: handleToggleAssistantPanel,
+            handleToggleAssistant: prototypeStartPageActive ? () => undefined : handleToggleAssistantPanel,
             handleStartCurrentProjectServer,
             handleCopyStartServerErrorPrompt,
             handleOpenIdeFile: ideActions.handleOpenIdeFile,
@@ -1568,14 +1721,15 @@ export default function IndexPage({
             onOpenCanvasInIDE: handleOpenCanvasInIDE,
             onOpenCanvasGenie: handleOpenCanvasGenie,
             handleOpenProjectInIDE: ideActions.handleOpenProjectInIDE,
-            onOpenGenieWebAgent: handleOpenGenieWebAgent,
-            onOpenImageAiPanel: handleOpenImageAiPanel,
+            onOpenGenieWebAgent: prototypeStartPageActive ? undefined : handleOpenGenieWebAgent,
+            onOpenImageAiPanel: prototypeStartPageActive ? undefined : handleOpenImageAiPanel,
             onOpenWebAgentInPanel: assistantController.openRawUrlInAssistantPanel,
             onExecutePrompt: handleExecutePromptAction,
             onCloseAiPanel: handleCloseAiPanel,
             onCloseWebAgentPanel: handleCloseWebAgentPanel,
             onPreferredIDEChange: preferences.setPreferredIDE,
             openSettingsDialog,
+            onCreatePrototypeForDraftStart: handleCreatePrototypeForDraftStart,
             onRefreshPrototypes: handleRefreshCanvasPrototypeItems,
             onSubmitCanvasAssistantPrompt: handleSubmitCanvasAssistantPrompt,
         },
@@ -1594,8 +1748,8 @@ export default function IndexPage({
     };
 
     const assistantPanelProps = {
-        mounted: assistantController.assistantPanelMounted,
-        visible: assistantController.assistantVisible,
+        mounted: prototypeStartPageActive ? false : assistantController.assistantPanelMounted,
+        visible: prototypeStartPageActive ? false : assistantController.assistantVisible,
         width: assistantController.assistantPanelWidth,
         minWidth: assistantController.assistantPanelMinWidth,
         maxWidth: assistantController.assistantPanelMaxWidth,
@@ -1604,6 +1758,7 @@ export default function IndexPage({
         onLoad: assistantController.handleAssistantIframeLoad,
         onResize: assistantController.setAssistantPanelWidth,
         onAddContextItems: assistantController.addContextItems,
+        onToggle: handleToggleAssistantPanel,
     };
 
     const dialogsProps = {
@@ -1701,10 +1856,10 @@ export default function IndexPage({
         loading: workspace.loading,
         items: workspace.data.prototypes,
         searchText: workspace.searchText,
-        assistantVisible: assistantController.assistantVisible,
         onSearchTextChange: workspace.setSearchText,
         onCopyProjectDirectory: assistantController.handleCopyProjectDirectory,
         onOpenAssistant: assistantController.handleOpenAssistantInNewWindowNoContext,
+        onOpenImageAiPanel: assistantController.handleOpenImageAiPanelInNewWindow,
         onOpenItem: handleMobileItemClick,
         onOpenAssistantWithItemContext: assistantController.handleOpenAssistantWithItemContext,
     };

@@ -33,7 +33,7 @@ export interface AssistantCanvasElementContextInput {
     link?: string;
     width: number;
     height: number;
-    resourceType?: AssistantResourceContextType | 'prototype' | 'doc' | 'theme';
+    resourceType?: AssistantResourceContextType | 'preview';
     resourceId?: string;
     filePath?: string;
     absoluteFilePath?: string;

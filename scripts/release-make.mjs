@@ -433,6 +433,12 @@ function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
   if (entryName.endsWith('.tsbuildinfo')) {
     return true;
   }
+  if (/^src\/prototypes\/[^/]+\/\.spec\/acp(?:\/|$)/u.test(normalizedRelativePath)) {
+    return true;
+  }
+  if (/^src\/prototypes\/[^/]+\/\.spec\/prototype-comments\.json$/u.test(normalizedRelativePath)) {
+    return true;
+  }
   if (/\.(?:otf|ttf)$/iu.test(entryName)) {
     return true;
   }

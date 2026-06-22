@@ -129,6 +129,8 @@ describe('CanvasPrototypeGenerationTool source', () => {
     expect(source).toContain('PROTOTYPE_COMPOSER_WIDTH = 640');
     expect(source).toContain('assistantProjectPath?: string;');
     expect(source).toContain('assistantProjectPath={assistantProjectPath}');
+    expect(source).toContain('preferredPromptClient?: PromptClientPreference;');
+    expect(source).toContain('preferredPromptClient={preferredPromptClient}');
     expect(source).toContain('themes?: ThemeResourceItem[]');
     expect(source).toContain('themes={themes}');
     expect(source).not.toContain('defaultThemeName?: string | null');

@@ -440,6 +440,8 @@ var DEFAULT_MAX_CANDIDATES = 5;
 var FINGERPRINT_TEXT_MAX_LENGTH = 32;
 var FINGERPRINT_MAX_CLASSES = 8;
 var UNIQUE_DATA_ATTRS = [
+  "data-axhub-annotation-comment-target-id",
+  "data-axhub-annotation-panel-node-id",
   "data-testid",
   "data-test-id",
   "data-test",
@@ -453,6 +455,8 @@ var UNIQUE_DATA_ATTRS = [
 ];
 var MAX_CLASS_COMBO_DEPTH = 3;
 var ANCHOR_DATA_ATTRS = [
+  "data-axhub-annotation-comment-target-id",
+  "data-axhub-annotation-panel-node-id",
   "data-testid",
   "data-test-id",
   "data-test",
@@ -1550,6 +1554,7 @@ function resolveWebEditorOptions(options = {}) {
       breadcrumbs: true,
       propertyPanel: true,
       toolbarMode: "inline",
+      initialSelectionModeActive: true,
       initialDarkMode: false,
       showCopyPromptAction: true,
       hideExecutionControls: false,
@@ -1649,10 +1654,18 @@ function createEditorRuntimeState() {
     externalEditingTaskByElementKey: /* @__PURE__ */ new Map(),
     textCommentManager: null,
     textCommentTargetElement: null,
-    activeTextComment: null
+    activeTextComment: null,
+    annotationBridgeSelection: null
   };
 }
+function clearAnnotationBridgeSelection(state2) {
+  const selection = state2.annotationBridgeSelection;
+  if (!selection) return;
+  selection.bridge.closeTarget(selection.target);
+  state2.annotationBridgeSelection = null;
+}
 function resetEditorTransientState(state2) {
+  clearAnnotationBridgeSelection(state2);
   state2.editMetaByKey.clear();
   state2.processedEditTimestampsByKey.clear();
   state2.pendingMarkerAnchors.clear();
@@ -1672,6 +1685,7 @@ function resetEditorTransientState(state2) {
   state2.activeTextComment = null;
 }
 function clearEditorRuntimeRefs(state2) {
+  clearAnnotationBridgeSelection(state2);
   state2.shadowHost = null;
   state2.canvasOverlay = null;
   state2.handlesController = null;
@@ -1830,6 +1844,9 @@ ${prefix}`;
 }
 
 // src/core/editor/changes.ts
+var ANNOTATION_MARKER_NODE_ID_ATTR = "data-axhub-annotation-node-id";
+var ANNOTATION_HOST_ID = "__axhub_annotation_host__";
+var ANNOTATION_PANEL_NODE_ID_ATTR = "data-axhub-annotation-panel-node-id";
 function filterVisibleChangeMarkerMetas(metas, activeMarkerKey) {
   if (!activeMarkerKey) return metas.slice();
   return metas.filter((meta) => meta.elementKey !== activeMarkerKey);
@@ -1838,6 +1855,89 @@ function createChangesService(options) {
   const { state: state2 } = options;
   function normalizeNote2(value) {
     return String(value ?? "").replace(/\r\n/g, "\n");
+  }
+  function cssEscape2(value) {
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+      return CSS.escape(value);
+    }
+    return String(value).replace(/["\\]/g, "\\$&");
+  }
+  function extractAnnotationPanelNodeId2(locator) {
+    for (const selector of locator.selectors ?? []) {
+      const normalized = String(selector ?? "").trim();
+      if (!normalized) continue;
+      const match = normalized.match(/\[data-axhub-annotation-panel-node-id=(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/);
+      const rawValue = match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
+      const nodeId = String(rawValue).trim();
+      if (nodeId) return nodeId;
+    }
+    return "";
+  }
+  function readAnnotationPanelNodeId2(element) {
+    try {
+      return String(element?.getAttribute?.(ANNOTATION_PANEL_NODE_ID_ATTR) ?? "").trim();
+    } catch {
+      return "";
+    }
+  }
+  function buildAnnotationPanelLocator(nodeId) {
+    return {
+      selectors: [`[${ANNOTATION_PANEL_NODE_ID_ATTR}="${cssEscape2(nodeId)}"]`],
+      fingerprint: `annotation-panel:${nodeId}`,
+      path: [],
+      shadowHostChain: []
+    };
+  }
+  function resolveEditableElementIdentity(element) {
+    const annotationNodeId = readAnnotationPanelNodeId2(element);
+    if (annotationNodeId) {
+      const locator2 = buildAnnotationPanelLocator(annotationNodeId);
+      return {
+        elementKey: `annotation-panel:${annotationNodeId}`,
+        locator: locator2,
+        label: "Annotation Panel"
+      };
+    }
+    const locator = createElementLocator(element);
+    return {
+      elementKey: generateStableElementKey(element, locator.shadowHostChain),
+      locator,
+      label: generateFullElementLabel(element, locator.shadowHostChain)
+    };
+  }
+  function findAnnotationMarkerByNodeId(nodeId) {
+    if (!nodeId || typeof document === "undefined") {
+      return null;
+    }
+    const selector = `[${ANNOTATION_MARKER_NODE_ID_ATTR}="${cssEscape2(nodeId)}"]`;
+    try {
+      const host = typeof document.getElementById === "function" ? document.getElementById(ANNOTATION_HOST_ID) : null;
+      const shadowRoot = host?.shadowRoot ?? null;
+      const shadowMarker = shadowRoot?.querySelector(selector) ?? null;
+      if (shadowMarker) return shadowMarker;
+      return typeof document.querySelector === "function" ? document.querySelector(selector) : null;
+    } catch {
+      return null;
+    }
+  }
+  function locateMarkerRenderableElement(locator) {
+    let element = null;
+    try {
+      element = locateElement(locator);
+    } catch {
+      element = null;
+    }
+    if (element?.isConnected) return element;
+    const annotationNodeId = extractAnnotationPanelNodeId2(locator);
+    const annotationMarker = findAnnotationMarkerByNodeId(annotationNodeId);
+    return annotationMarker?.isConnected ? annotationMarker : null;
+  }
+  function resolveAnnotationMarkerAnchor(locator) {
+    const annotationNodeId = extractAnnotationPanelNodeId2(locator);
+    if (!annotationNodeId) return null;
+    const annotationMarker = findAnnotationMarkerByNodeId(annotationNodeId);
+    if (!annotationMarker?.isConnected) return null;
+    return buildFallbackAnchor(annotationMarker);
   }
   function formatSelectorPath(locator) {
     if (!locator) return "";
@@ -2035,9 +2135,7 @@ function createChangesService(options) {
     if (isTextCommentTargetElement(element)) {
       return null;
     }
-    const locator = createElementLocator(element);
-    const elementKey = generateStableElementKey(element, locator.shadowHostChain);
-    const label = generateFullElementLabel(element, locator.shadowHostChain);
+    const { elementKey, locator, label } = resolveEditableElementIdentity(element);
     return state2.editMetaByKey.get(elementKey) ?? findExistingMetaForLiveElement(element, elementKey, locator, label) ?? getOrCreateEditMeta(
       elementKey,
       locator,
@@ -2052,7 +2150,9 @@ function createChangesService(options) {
     });
   }
   function resolveLiveAnchor(locator, fallbackAnchor) {
-    let element = locateElement(locator);
+    const annotationMarkerAnchor = resolveAnnotationMarkerAnchor(locator);
+    if (annotationMarkerAnchor) return annotationMarkerAnchor;
+    let element = locateMarkerRenderableElement(locator);
     if (!element || !element.isConnected) {
       const src = state2.activeTextComment?.sourceElement;
       if (src && src.isConnected) {
@@ -2133,6 +2233,13 @@ function createChangesService(options) {
     }
     return lines;
   }
+  function resolveChangeMarkerTaskState(elementKey) {
+    const task = state2.externalEditingTaskByElementKey.get(elementKey) ?? state2.genieTaskByElementKey.get(elementKey) ?? null;
+    if (!task || task.dismissed) return null;
+    if (task.status === "pending" || task.status === "created") return "editing";
+    if (task.status === "error") return "error";
+    return null;
+  }
   function pruneIdleMeta(elementKey) {
     const meta = state2.editMetaByKey.get(elementKey);
     if (!meta) return;
@@ -2176,14 +2283,34 @@ function createChangesService(options) {
       const anchor = resolveLiveAnchor(meta.locator, meta.anchor);
       if (!anchor) return null;
       const position = getViewportMarkerPosition(anchor);
+      const annotationNodeId = extractAnnotationPanelNodeId2(meta.locator);
+      const detailLines = buildMarkerDetailLines(meta);
+      const markerText = String(index + 1);
+      const taskState = resolveChangeMarkerTaskState(meta.elementKey);
+      const taskLocked = taskState === "editing";
       const marker = document.createElement("div");
-      marker.className = "we-change-marker";
+      marker.className = [
+        "we-change-marker",
+        annotationNodeId ? "we-change-marker--annotation-note" : "",
+        taskState ? `we-change-marker--task-${taskState}` : ""
+      ].filter(Boolean).join(" ");
       marker.style.left = `${position.left}px`;
       marker.style.top = `${position.top}px`;
-      marker.textContent = String(index + 1);
       marker.setAttribute("role", "button");
       marker.tabIndex = 0;
-      marker.setAttribute("aria-label", `\u5B9A\u4F4D\u5230 ${meta.label}`);
+      marker.setAttribute(
+        "aria-label",
+        `\u5B9A\u4F4D\u5230 ${meta.label}${taskState === "editing" ? "\uFF0C\u4FEE\u6539\u4E2D" : taskState === "error" ? "\uFF0C\u4FEE\u6539\u5931\u8D25" : ""}`
+      );
+      if (taskState) {
+        marker.setAttribute("data-task-state", taskState);
+      }
+      if (taskLocked) {
+        marker.setAttribute("aria-disabled", "true");
+      }
+      const markerBody = document.createElement("span");
+      markerBody.className = "we-change-marker__body";
+      markerBody.textContent = markerText;
       const tooltip = document.createElement("div");
       tooltip.className = "we-change-marker__tooltip";
       const label = document.createElement("span");
@@ -2191,30 +2318,32 @@ function createChangesService(options) {
       label.textContent = meta.label;
       const details = document.createElement("div");
       details.className = "we-change-marker__details";
-      for (const line of buildMarkerDetailLines(meta)) {
+      for (const line of detailLines) {
         const detail = document.createElement("span");
         detail.className = "we-change-marker__note";
         detail.textContent = line;
         details.append(detail);
       }
       const selectMarkedElement = () => {
-        const element = locateElement(meta.locator);
+        const element = locateMarkerRenderableElement(meta.locator);
         if (!element || !element.isConnected) return;
         options.onSelectMarkedElement?.(element, anchor);
       };
       marker.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (taskLocked) return;
         selectMarkedElement();
       });
       marker.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         event.stopPropagation();
+        if (taskLocked) return;
         selectMarkedElement();
       });
       tooltip.append(label, details);
-      marker.append(tooltip);
+      marker.append(markerBody, tooltip);
       return marker;
     }).filter((node) => node !== null);
     layer.hidden = nodes.length === 0;
@@ -4004,6 +4133,7 @@ function createGenieBridgeService(options) {
   function notifyTaskStateChange() {
     state2.breadcrumbs?.refresh();
     state2.propertyPanel?.refresh();
+    options.changes.renderChangeMarkers();
     state2.positionTracker?.forceUpdate(true);
   }
   function clearCompletedTaskDismissTimer(requestId) {
@@ -4212,6 +4342,14 @@ function createGenieBridgeService(options) {
         elementKey: textCommentMeta.elementKey,
         locator: textCommentMeta.locator,
         label: textCommentMeta.label
+      };
+    }
+    const existingMeta = options.changes.getMetaForElement?.(element);
+    if (existingMeta) {
+      return {
+        elementKey: existingMeta.elementKey,
+        locator: existingMeta.locator,
+        label: existingMeta.label
       };
     }
     const locator = createElementLocator(element);
@@ -6753,6 +6891,34 @@ function createEditorIntegrationWsService(options) {
   };
 }
 
+// src/utils/annotation-comment-bridge.ts
+var ANNOTATION_COMMENT_BRIDGE_KEY = "__AXHUB_ANNOTATION_COMMENT_BRIDGE__";
+var ANNOTATION_MARKER_ATTR = "data-axhub-annotation-marker";
+function readAttr(element, attr) {
+  try {
+    return element.getAttribute(attr) ?? "";
+  } catch {
+    return "";
+  }
+}
+function isAnnotationMarkerElement(element) {
+  return readAttr(element, ANNOTATION_MARKER_ATTR) === "true";
+}
+function getAnnotationCommentBridge() {
+  if (typeof window === "undefined") return null;
+  const candidate = window[ANNOTATION_COMMENT_BRIDGE_KEY];
+  if (!candidate || typeof candidate !== "object") return null;
+  const bridge = candidate;
+  return typeof bridge.openMarkerTarget === "function" && typeof bridge.closeTarget === "function" ? bridge : null;
+}
+async function openAnnotationMarkerCommentTarget(element) {
+  if (!isAnnotationMarkerElement(element)) return null;
+  const bridge = getAnnotationCommentBridge();
+  if (!bridge) return null;
+  const target = await bridge.openMarkerTarget(element);
+  return target ? { bridge, target } : null;
+}
+
 // src/core/editor/interaction.ts
 function createInteractionService(options) {
   const { state: state2, genieBridge } = options;
@@ -6787,7 +6953,16 @@ function createInteractionService(options) {
     state2.positionTracker?.setHoverElement(element);
     state2.positionTracker?.forceUpdate();
   }
-  function handleSelect(element, modifiers, selectionAnchor) {
+  function closeAnnotationBridgeSelection(nextTarget) {
+    const selection = state2.annotationBridgeSelection;
+    if (!selection) return;
+    if (nextTarget && (nextTarget === selection.target || typeof selection.target.contains === "function" && selection.target.contains(nextTarget))) {
+      return;
+    }
+    selection.bridge.closeTarget(selection.target);
+    state2.annotationBridgeSelection = null;
+  }
+  function selectResolvedElement(element, modifiers, selectionAnchor) {
     if (genieBridge.isElementInteractionLocked(element)) {
       return;
     }
@@ -6815,7 +6990,23 @@ function createInteractionService(options) {
     const modInfo = modifiers.alt ? " (Alt: drill-up)" : "";
     console.log(`${options.logPrefix} Selected${modInfo}:`, element.tagName, element);
   }
+  async function handleSelect(element, modifiers, selectionAnchor) {
+    if (genieBridge.isElementInteractionLocked(element)) {
+      return;
+    }
+    if (isAnnotationMarkerElement(element)) {
+      const bridgeSelection = await openAnnotationMarkerCommentTarget(element);
+      if (!bridgeSelection) return;
+      closeAnnotationBridgeSelection(bridgeSelection.target);
+      state2.annotationBridgeSelection = bridgeSelection;
+      selectResolvedElement(bridgeSelection.target, modifiers);
+      return;
+    }
+    closeAnnotationBridgeSelection(element);
+    selectResolvedElement(element, modifiers, selectionAnchor);
+  }
   function handleDeselect() {
+    closeAnnotationBridgeSelection(null);
     if (!state2.selectedElement && state2.activeTextComment) {
       options.changes.clearPendingSelectionAnchor();
       state2.selectionAnchor = null;
@@ -6907,7 +7098,7 @@ function createInteractionService(options) {
     target = genieBridge.resolveSelectableElement(target);
     if (!target || !target.isConnected) return false;
     if (state2.selectedElement !== target) {
-      handleSelect(target, DEFAULT_MODIFIERS, selectionAnchor);
+      void handleSelect(target, DEFAULT_MODIFIERS, selectionAnchor);
     }
     enterCommentInput("bubble-card");
     return true;
@@ -7575,6 +7766,41 @@ var SHADOW_HOST_STYLES = (
     z-index: 9996;
   }
 
+  @keyframes we-change-marker-task-pulse {
+    0% {
+      opacity: 0.9;
+      transform: scale(0.92);
+      box-shadow: 0 0 0 0 rgba(0, 143, 93, 0.2);
+    }
+    62% {
+      opacity: 0.28;
+      transform: scale(1.22);
+      box-shadow: 0 0 0 7px rgba(0, 143, 93, 0);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.28);
+      box-shadow: 0 0 0 8px rgba(0, 143, 93, 0);
+    }
+  }
+
+  @keyframes we-change-marker-task-sweep {
+    0% {
+      background-position: -34px 0;
+      opacity: 0;
+    }
+    18% {
+      opacity: 0.72;
+    }
+    72% {
+      opacity: 0.5;
+    }
+    100% {
+      background-position: 34px 0;
+      opacity: 0;
+    }
+  }
+
   .we-change-marker {
     position: fixed;
     transform: translate(-50%, -50%);
@@ -7589,13 +7815,34 @@ var SHADOW_HOST_STYLES = (
     font-size: 11px;
     font-weight: 700;
     line-height: 1;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     box-shadow:
       0 8px 18px rgba(15, 23, 42, 0.22),
       0 0 0 2px rgba(255, 255, 255, 0.95);
     pointer-events: auto;
     cursor: pointer;
     transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+    isolation: isolate;
+    --we-change-marker-task-accent: #008F5D;
+  }
+
+  .we-change-marker::before,
+  .we-change-marker::after {
+    content: "";
+    position: absolute;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  .we-change-marker::before {
+    inset: -5px;
+    z-index: -1;
+  }
+
+  .we-change-marker::after {
+    inset: 2px;
+    z-index: 1;
   }
 
   .we-change-marker:hover,
@@ -7608,8 +7855,94 @@ var SHADOW_HOST_STYLES = (
     outline: none;
   }
 
+  .we-change-marker--annotation-note {
+    transform: translate(8px, -50%);
+  }
+
+  .we-change-marker--annotation-note:hover,
+  .we-change-marker--annotation-note:focus-visible {
+    transform: translate(8px, -50%) scale(1.03);
+  }
+
+  .we-change-marker--task-editing {
+    --we-change-marker-task-accent: #008F5D;
+    cursor: progress;
+    box-shadow:
+      0 8px 18px rgba(15, 23, 42, 0.22),
+      0 0 0 2px rgba(255, 255, 255, 0.95),
+      0 0 0 5px rgba(0, 143, 93, 0.2),
+      0 0 18px rgba(0, 143, 93, 0.28);
+  }
+
+  .we-change-marker--task-editing::before {
+    opacity: 1;
+    border: 1px solid rgba(0, 143, 93, 0.72);
+    animation: we-change-marker-task-pulse 1.65s ease-out infinite;
+  }
+
+  .we-change-marker--task-editing::after {
+    background:
+      linear-gradient(
+        115deg,
+        transparent 0%,
+        transparent 39%,
+        rgba(255, 255, 255, 0.18) 47%,
+        rgba(0, 214, 143, 0.24) 51%,
+        transparent 62%,
+        transparent 100%
+      );
+    background-size: 42px 42px;
+    animation: we-change-marker-task-sweep 1.8s linear infinite;
+  }
+
+  .we-change-marker--task-error {
+    --we-change-marker-task-accent: #EF4444;
+    box-shadow:
+      0 8px 18px rgba(15, 23, 42, 0.22),
+      0 0 0 2px rgba(239, 68, 68, 0.9),
+      0 0 0 5px rgba(239, 68, 68, 0.16),
+      0 0 18px rgba(239, 68, 68, 0.2);
+  }
+
+  .we-change-marker--task-error::before {
+    inset: -4px;
+    opacity: 1;
+    border: 1px solid rgba(239, 68, 68, 0.68);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+  }
+
+  .we-change-marker--task-editing:hover,
+  .we-change-marker--task-editing:focus-visible {
+    box-shadow:
+      0 10px 22px rgba(15, 23, 42, 0.28),
+      0 0 0 2px rgba(255, 255, 255, 0.95),
+      0 0 0 5px rgba(0, 143, 93, 0.26),
+      0 0 20px rgba(0, 143, 93, 0.34);
+  }
+
+  .we-change-marker--task-error:hover,
+  .we-change-marker--task-error:focus-visible {
+    box-shadow:
+      0 10px 22px rgba(15, 23, 42, 0.28),
+      0 0 0 2px rgba(239, 68, 68, 0.94),
+      0 0 0 6px rgba(239, 68, 68, 0.2),
+      0 0 22px rgba(239, 68, 68, 0.24);
+  }
+
+  .we-change-marker__body {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    position: relative;
+    z-index: 2;
+  }
+
   .we-change-marker__tooltip {
     position: absolute;
+    z-index: 10;
     left: 50%;
     top: calc(100% + 8px);
     transform: translateX(-50%);
@@ -7629,6 +7962,16 @@ var SHADOW_HOST_STYLES = (
   .we-change-marker:focus-visible .we-change-marker__tooltip {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+  }
+
+  .we-change-marker--annotation-note .we-change-marker__tooltip {
+    left: 0;
+    transform: translateY(-2px);
+  }
+
+  .we-change-marker--annotation-note:hover .we-change-marker__tooltip,
+  .we-change-marker--annotation-note:focus-visible .we-change-marker__tooltip {
+    transform: translateY(0);
   }
 
   .we-change-marker__details {
@@ -8773,6 +9116,20 @@ var PROPERTY_PANEL_LOCAL_STYLES = `
 
 // src/ui/runtime/styles/popup-root-styles.ts
 var WEB_EDITOR_POPUP_ROOT_STYLES = `
+  @keyframes we-runtime-genie-task-scan {
+    0% {
+      top: calc(-1 * var(--we-runtime-genie-task-scan-size, 88px));
+      opacity: 0;
+    }
+    12% {
+      opacity: 1;
+    }
+    100% {
+      top: 100%;
+      opacity: 0;
+    }
+  }
+
   [data-overlayscrollbars-initialize]:not([data-overlayscrollbars-viewport]),
   [data-overlayscrollbars-viewport~="scrollbarHidden"],
   html[data-overlayscrollbars-viewport~="scrollbarHidden"] > body {
@@ -8954,6 +9311,34 @@ var WEB_EDITOR_POPUP_ROOT_STYLES = `
     width: 100%;
     height: 1px;
     background: color-mix(in srgb, ${EDITOR_CHROME.divider} 78%, transparent);
+  }
+
+  .we-runtime-genie-task__scanner {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: var(--we-runtime-genie-task-scan-size, 88px);
+    top: calc(-1 * var(--we-runtime-genie-task-scan-size, 88px));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      color-mix(in srgb, var(--we-runtime-genie-task-accent) 14%, transparent) 38%,
+      color-mix(in srgb, var(--we-runtime-genie-task-accent) 20%, transparent) 50%,
+      color-mix(in srgb, var(--we-runtime-genie-task-accent) 14%, transparent) 62%,
+      transparent 100%
+    );
+    animation: we-runtime-genie-task-scan 2.8s linear infinite;
+  }
+
+  .we-runtime-genie-task__scanner::after {
+    content: "";
+    width: 100%;
+    height: 1px;
+    background: color-mix(in srgb, var(--we-runtime-genie-task-accent) 72%, white);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--we-runtime-genie-task-accent) 64%, transparent);
   }
 
   .we-runtime-overlay-scrollbars {
@@ -9162,6 +9547,9 @@ function shouldShowOverlayActivityFeed(options) {
   if (options.task.origin === "external-editing") return false;
   if (!options.activityVisible) return false;
   return options.activityCount > 0;
+}
+function resolveTaskOverlayBackdropFilter(running) {
+  return running ? "blur(4px)" : "blur(2px)";
 }
 function pickOverlayActivityHostTask(tasks) {
   const candidate = [...tasks].filter((task) => (task.status === "pending" || task.status === "created") && task.origin !== "external-editing").sort((a, b) => b.updatedAt - a.updatedAt)[0];
@@ -9416,7 +9804,7 @@ function ElementGenieTaskOverlays(props) {
                 border: running ? `2px solid ${WEB_EDITOR_V2_COLORS.selectionBorder}` : `1px solid ${tone.border}`,
                 boxShadow: running ? "none" : `0 0 0 1px ${tone.border}, 0 12px 30px ${tone.glow}`,
                 background: tone.background,
-                backdropFilter: running ? "blur(2px)" : "blur(1px)"
+                backdropFilter: resolveTaskOverlayBackdropFilter(running)
               }
             }
           ),
@@ -10282,8 +10670,9 @@ async function executePromptCardCurrentElementAction(options) {
   }
   await onConfirmText();
   await onConfirmNote();
-  await onSendCurrentElementPromptToGenie(currentTarget);
+  const sendPromise = Promise.resolve(onSendCurrentElementPromptToGenie(currentTarget));
   onDismissSelection?.();
+  await sendPromise;
   return true;
 }
 
@@ -13061,6 +13450,7 @@ var PromptCardView = import_react10.default.forwardRef(
       onExportSelectionToDesignTool,
       getExportSelectionToDesignToolBlockReason,
       hideExecutionControls = false,
+      hideContextAppendAction = false,
       onHoverSelectionSuppressedChange,
       onSelectionInteractionLockChange,
       onTargetChange,
@@ -13380,7 +13770,7 @@ var PromptCardView = import_react10.default.forwardRef(
       currentTarget,
       uiMode,
       toolMinimized,
-      onSendToGenie: options.onSendToGenie,
+      onSendToGenie: hideContextAppendAction ? void 0 : options.onSendToGenie,
       getGenieBridgeAvailable: options.getGenieBridgeAvailable,
       getAssistantPanelOpen: options.getAssistantPanelOpen
     });
@@ -13467,6 +13857,9 @@ var PromptCardView = import_react10.default.forwardRef(
       };
     }, [currentTaskTerminal, dismissTerminalTaskAndSelection, promptVisible, uiMode]);
     const wakeGenieForCurrentElementAction = import_react10.default.useCallback(async () => {
+      if (hideExecutionControls) {
+        return true;
+      }
       const connected = getGenieBridgeConnected?.();
       if (connected !== false && genieVisualState === "awake") {
         return true;
@@ -13483,7 +13876,13 @@ var PromptCardView = import_react10.default.forwardRef(
       } catch {
       }
       return false;
-    }, [genieVisualState, getGenieBridgeConnected, onGenieVisualStateChange, onWakeGenie]);
+    }, [
+      genieVisualState,
+      getGenieBridgeConnected,
+      hideExecutionControls,
+      onGenieVisualStateChange,
+      onWakeGenie
+    ]);
     const handleConfirmSendCurrentElementPrompt = import_react10.default.useCallback(async () => {
       const ready = await wakeGenieForCurrentElementAction();
       if (!ready) return;
@@ -13563,7 +13962,7 @@ var PromptCardView = import_react10.default.forwardRef(
     const genieSelectionShortcutLabels = genieSelectionShortcutSettings?.enabled ? genieSelectionShortcutSettings.shortcuts.filter((shortcut) => Boolean(shortcut)).map((shortcut) => formatModifierShortcutLabel(shortcut)) : [];
     const genieSelectionShortcutHint = genieSelectionShortcutLabels.length > 0 ? `\uFF0C\u957F\u6309 ${genieSelectionShortcutLabels.join(" / ")} \u4E5F\u53EF\u5524\u8D77` : "";
     const genieSelectionActionTitle = currentTaskRunning ? "\u6DFB\u52A0\u5230 AI \u5BF9\u8BDD" : `\u6DFB\u52A0\u5230 AI \u5BF9\u8BDD${genieSelectionShortcutHint}`;
-    const showCurrentElementExecutionControls = !hideExecutionControls;
+    const showContextAppendExecutionControls = !hideExecutionControls;
     const notePlaceholder = resolvePromptCardNotePlaceholder();
     const promptCardCloseActionTitle = "\u5173\u95ED\u5E76\u4FDD\u5B58 (Enter / Esc)";
     const promptCardNode = /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
@@ -13622,7 +14021,7 @@ var PromptCardView = import_react10.default.forwardRef(
           ` }),
           /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 2 }, children: [
-              showCurrentElementExecutionControls && genieAvailable ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+              showContextAppendExecutionControls && genieAvailable ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
                 IconActionButton,
                 {
                   title: genieSelectionActionTitle,
@@ -18582,9 +18981,10 @@ function usePointerTracker() {
 var import_react19 = __toESM(require("react"));
 function useSelectionModeGuards(params) {
   const { propertyPanelOptions, setToolMinimized } = params;
+  const initialSelectionModeActive = params.initialSelectionModeActive ?? true;
   const toolMinimizedRef = import_react19.default.useRef(false);
-  const [selectionModeActive, setSelectionModeActive] = import_react19.default.useState(true);
-  const selectionModeActiveRef = import_react19.default.useRef(true);
+  const [selectionModeActive, setSelectionModeActive] = import_react19.default.useState(initialSelectionModeActive);
+  const selectionModeActiveRef = import_react19.default.useRef(initialSelectionModeActive);
   const selectionHoverOwnersRef = import_react19.default.useRef(/* @__PURE__ */ new Set());
   const selectionInteractionLockOwnersRef = import_react19.default.useRef(/* @__PURE__ */ new Set());
   const selectionRestoreTimerRef = import_react19.default.useRef(null);
@@ -19515,6 +19915,7 @@ function WebEditorUiApp(props) {
     propertyPanelOptions,
     propertyPanelVisible = Boolean(propertyPanelOptions),
     initialPropertyPanelOpen = false,
+    initialSelectionModeActive = true,
     toolbarMode: toolbarModeProp,
     breadcrumbsOptions,
     propertyPanelRef,
@@ -19570,6 +19971,7 @@ function WebEditorUiApp(props) {
   const latestPointerPositionRef = usePointerTracker();
   const selectionGuards = useSelectionModeGuards({
     propertyPanelOptions,
+    initialSelectionModeActive,
     setToolMinimized
   });
   const promptSelectionInteractionLockChangeRef = import_react22.default.useRef(
@@ -20181,6 +20583,9 @@ function WebEditorUiApp(props) {
         hideExecutionControls: Boolean(
           breadcrumbsOptions.hideExecutionControls ?? propertyPanelOptions?.hideExecutionControls
         ),
+        hideContextAppendAction: Boolean(
+          breadcrumbsOptions.hideExecutionControls ?? propertyPanelOptions?.hideExecutionControls
+        ),
         onBubbleStyleEditorOpenChange: setBubbleStyleEditorOpen,
         onSendCurrentElementPromptToGenie: handleSendCurrentElementPromptToGenie,
         onWakeGenie: propertyPanelOptions?.onWakeGenie,
@@ -20412,7 +20817,7 @@ function createWebEditorUiRuntime(options) {
     disablePageAnimations: false,
     pageZoomEnabled: false,
     copySkillInstallPromptDisabled: true,
-    selectionModeActive: true,
+    selectionModeActive: options.initialSelectionModeActive ?? true,
     fullExitAvailable: false
   });
   function RuntimeMount() {
@@ -20447,6 +20852,7 @@ function createWebEditorUiRuntime(options) {
                   propertyPanelOptions: options.propertyPanelOptions,
                   propertyPanelVisible,
                   initialPropertyPanelOpen: options.initialPropertyPanelOpen,
+                  initialSelectionModeActive: options.initialSelectionModeActive,
                   toolbarMode: options.toolbarMode ?? options.propertyPanelOptions?.toolbarMode,
                   breadcrumbsOptions: options.breadcrumbsOptions,
                   propertyPanelRef,
@@ -22329,6 +22735,7 @@ var AXHUB_ANNOTATION_SHELL_IDS = /* @__PURE__ */ new Set([
   "__axhub_annotation_ui__"
 ]);
 var AXHUB_ANNOTATION_COMMENT_TARGET_ATTR = "data-axhub-annotation-comment-target";
+var AXHUB_ANNOTATION_DIRECT_ACTION_ATTR = "data-axhub-annotation-direct-action";
 function isFinitePoint(x, y) {
   return Number.isFinite(x) && Number.isFinite(y);
 }
@@ -22382,6 +22789,33 @@ function isNearFullViewportElement(element) {
 function isAnnotationCommentTarget(element) {
   return getAttributeValue(element, AXHUB_ANNOTATION_COMMENT_TARGET_ATTR) === "true";
 }
+function isAxhubAnnotationDirectActionElement(element) {
+  return getAttributeValue(element, AXHUB_ANNOTATION_DIRECT_ACTION_ATTR) === "true";
+}
+function closestAxhubAnnotationDirectActionElement(element) {
+  let current = element;
+  while (current) {
+    if (isAxhubAnnotationDirectActionElement(current)) return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+function isAxhubAnnotationDirectActionEvent(event) {
+  try {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    for (const node of path) {
+      if (node instanceof Element && closestAxhubAnnotationDirectActionElement(node)) {
+        return true;
+      }
+    }
+  } catch {
+  }
+  const point = event;
+  const x = typeof point.clientX === "number" ? point.clientX : Number.NaN;
+  const y = typeof point.clientY === "number" ? point.clientY : Number.NaN;
+  if (!isFinitePoint(x, y)) return false;
+  return readAxhubAnnotationShadowHitElementsAtPoint(x, y).some((element) => closestAxhubAnnotationDirectActionElement(element));
+}
 function resolveAnnotationCommentTarget(element) {
   let current = element;
   while (current) {
@@ -22417,13 +22851,18 @@ function readShadowElementsFromPoint(shadowRoot, x, y) {
   }
   return [];
 }
-function getAxhubAnnotationShadowHitElementsAtPoint(x, y) {
+function readAxhubAnnotationShadowHitElementsAtPoint(x, y) {
   if (!isFinitePoint(x, y)) return [];
   const shadowRoot = getAnnotationShadowRoot();
   if (!shadowRoot) return [];
-  const hitElements = readShadowElementsFromPoint(shadowRoot, x, y).filter(
+  return readShadowElementsFromPoint(shadowRoot, x, y).filter(
     (element) => !isAnnotationShellElement(element) && !isPointerPassthroughElement(element)
   );
+}
+function getAxhubAnnotationShadowHitElementsAtPoint(x, y) {
+  const hitElements = readAxhubAnnotationShadowHitElementsAtPoint(x, y);
+  if (hitElements.length === 0) return [];
+  if (hitElements.some((element) => closestAxhubAnnotationDirectActionElement(element))) return [];
   const declaredTargets = uniqueElements(
     hitElements.map((element) => resolveAnnotationCommentTarget(element)).filter((element) => Boolean(element))
   );
@@ -23163,6 +23602,9 @@ function createEventController(options) {
     event.stopPropagation();
   }
   function shouldEventBypassPageBlock(event) {
+    if (isAxhubAnnotationDirectActionEvent(event)) {
+      return true;
+    }
     if (!shouldAllowPageEvent) {
       return false;
     }
@@ -25780,6 +26222,15 @@ function createLifecycleService(deps) {
   function shouldDelegateAiActionToHost() {
     return options.ui.toolbarMode === "host" && typeof options.ui.onHostToolbarAction === "function";
   }
+  function buildHostSendToGenieAction(element) {
+    const meta = services.changes.getMetaForElement(element ?? null);
+    return meta?.elementKey ? {
+      type: "send-to-genie",
+      elementKey: meta.elementKey,
+      locator: meta.locator,
+      label: meta.label
+    } : { type: "send-to-genie" };
+  }
   async function runHostAiAction(action) {
     if (!shouldDelegateAiActionToHost()) {
       return false;
@@ -26363,7 +26814,7 @@ function createLifecycleService(deps) {
           const rect = parent.getBoundingClientRect();
           const clientX = Number.isFinite(rect.left) ? rect.left + rect.width / 2 : void 0;
           const clientY = Number.isFinite(rect.top) ? rect.top + Math.min(18, Math.max(10, rect.height / 2)) : void 0;
-          services.interaction.handleSelect(
+          void services.interaction.handleSelect(
             parent,
             {
               alt: false,
@@ -26384,7 +26835,7 @@ function createLifecycleService(deps) {
         onSelect: (event) => {
           const target = services.genieBridge.resolveSelectableElement(event.element);
           if (!target?.isConnected) return;
-          services.interaction.handleSelect(target, event.modifiers, {
+          void services.interaction.handleSelect(target, event.modifiers, {
             clientX: event.clientX,
             clientY: event.clientY
           });
@@ -26404,6 +26855,10 @@ function createLifecycleService(deps) {
         getSelectedElement: () => state2.selectedElement,
         isElementInteractionLocked: (element) => services.genieBridge.isElementInteractionLocked(element)
       });
+      if (!options.ui.initialSelectionModeActive) {
+        state2.eventController.setMode("interaction", { allowPageInteraction: true });
+        state2.selectionChromeVisible = false;
+      }
       if (isTextComment && state2.textCommentManager) {
         const textCommentManager = state2.textCommentManager;
         let pendingTextSelectionCommitTimer = null;
@@ -26449,7 +26904,7 @@ function createLifecycleService(deps) {
           const rect = element.getBoundingClientRect();
           const clientX = Number.isFinite(rect.left) ? rect.left + rect.width / 2 : void 0;
           const clientY = Number.isFinite(rect.top) ? rect.top + Math.min(18, Math.max(10, rect.height / 2)) : void 0;
-          services.interaction.handleSelect(
+          void services.interaction.handleSelect(
             element,
             {
               alt: false,
@@ -26513,7 +26968,7 @@ function createLifecycleService(deps) {
           } : void 0,
           onSendPromptToGenie: async (element) => {
             if (shouldDelegateAiActionToHost()) {
-              const handled = await runHostAiAction({ type: "send-to-genie" });
+              const handled = await runHostAiAction(buildHostSendToGenieAction(element));
               if (!handled) {
                 throw new Error("\u5BBF\u4E3B\u6682\u672A\u5904\u7406 AI \u6267\u884C\u8BF7\u6C42\u3002");
               }
@@ -26535,7 +26990,7 @@ function createLifecycleService(deps) {
           },
           onSendCurrentElementPromptToGenie: async (element) => {
             if (shouldDelegateAiActionToHost()) {
-              const handled = await runHostAiAction({ type: "send-to-genie" });
+              const handled = await runHostAiAction(buildHostSendToGenieAction(element));
               if (!handled) {
                 throw new Error("\u5BBF\u4E3B\u6682\u672A\u5904\u7406 AI \u6267\u884C\u8BF7\u6C42\u3002");
               }
@@ -26731,6 +27186,7 @@ function createLifecycleService(deps) {
           container: elements.uiRoot,
           shadowRoot: elements.shadowRoot,
           propertyPanelVisible: options.ui.propertyPanel,
+          initialSelectionModeActive: options.ui.initialSelectionModeActive,
           toolbarMode: options.ui.toolbarMode,
           breadcrumbsOptions: options.ui.breadcrumbs ? {
             container: elements.uiRoot,
@@ -27011,6 +27467,7 @@ function createLifecycleService(deps) {
           shadowRoot: elements.shadowRoot,
           propertyPanelVisible: true,
           initialPropertyPanelOpen: true,
+          initialSelectionModeActive: options.ui.initialSelectionModeActive,
           toolbarMode: options.ui.toolbarMode,
           breadcrumbsOptions: null,
           propertyPanelOptions
@@ -27222,6 +27679,29 @@ function stripLocatorDebugSource(locator) {
   if (!locator.debugSource) return locator;
   const { debugSource: _debugSource, ...rest } = locator;
   return rest;
+}
+function extractAnnotationPanelNodeId(locator) {
+  for (const selector of locator?.selectors ?? []) {
+    const normalized = String(selector ?? "").trim();
+    if (!normalized) continue;
+    const match = normalized.match(/\[data-axhub-annotation-panel-node-id=(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/);
+    const rawValue = match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
+    const nodeId = String(rawValue).trim();
+    if (nodeId) return nodeId;
+  }
+  return "";
+}
+function normalizeAnnotationPanelCacheIdentity(locator) {
+  const nodeId = extractAnnotationPanelNodeId(locator);
+  if (!nodeId) return null;
+  const nextElementKey = `annotation-panel:${nodeId}`;
+  return {
+    elementKey: nextElementKey,
+    locator: {
+      ...locator,
+      fingerprint: nextElementKey
+    }
+  };
 }
 function cloneTweakValue(value) {
   return Array.isArray(value) ? value.slice() : value;
@@ -28148,16 +28628,19 @@ function createPersistenceService(options) {
       if (isLegacyTextCommentCacheEntry) {
         continue;
       }
-      const element = locateElement(entry.locator);
-      if (!element || !element.isConnected) continue;
-      const resolvedElementKey = entryElementKey || generateStableElementKey(element, entry.locator.shadowHostChain);
-      const resolvedLabel = String(entry.label ?? "").trim() || generateFullElementLabel(element, entry.locator.shadowHostChain);
+      const annotationPanelIdentity = normalizeAnnotationPanelCacheIdentity(entry.locator);
+      const entryLocator = annotationPanelIdentity?.locator ?? entry.locator;
+      const element = locateElement(entryLocator);
+      const canRestoreWithoutLiveElement = Boolean(annotationPanelIdentity) && Boolean(entry.marker);
+      if ((!element || !element.isConnected) && !canRestoreWithoutLiveElement) continue;
+      const resolvedElementKey = annotationPanelIdentity?.elementKey ?? (entryElementKey || (element ? generateStableElementKey(element, entryLocator.shadowHostChain) : locatorKey(entryLocator)));
+      const resolvedLabel = String(entry.label ?? "").trim() || (element ? generateFullElementLabel(element, entryLocator.shadowHostChain) : "Annotation Panel");
       const meta = changes.getOrCreateEditMeta(
         resolvedElementKey,
-        entry.locator,
+        entryLocator,
         resolvedLabel
       );
-      meta.locator = entry.locator;
+      meta.locator = entryLocator;
       meta.label = resolvedLabel;
       meta.note = changes.normalizeNote(entry.note ?? meta.note);
       const entrySkillIds = normalizePromptCardSkillIds(entry.skillIds ?? []);
@@ -28202,6 +28685,7 @@ function createPersistenceService(options) {
         for (const prop of Object.keys(afterStyles)) {
           const afterValue = String(afterStyles[prop] ?? "");
           const beforeValue = String(beforeStyles[prop] ?? "");
+          if (!element) continue;
           const style = element.style;
           if (style) {
             if (afterValue.trim()) {
@@ -28210,10 +28694,10 @@ function createPersistenceService(options) {
               style.removeProperty(prop);
             }
           }
-          tm.recordStyle(entry.locator, prop, beforeValue, afterValue, { merge: false });
+          tm.recordStyle(entryLocator, prop, beforeValue, afterValue, { merge: false });
         }
       }
-      if (entry.textChange) {
+      if (entry.textChange && element) {
         const before = String(entry.textChange.before ?? "");
         const after = String(entry.textChange.after ?? "");
         if (before !== after && element instanceof HTMLElement) {
@@ -28350,6 +28834,11 @@ function createPersistenceService(options) {
 }
 
 // src/core/editor/summaries.ts
+var ANNOTATION_PANEL_TARGET_ATTR = "data-axhub-annotation-panel-target";
+var ANNOTATION_PANEL_NODE_ID_ATTR2 = "data-axhub-annotation-panel-node-id";
+var ANNOTATION_SOURCE_KEY = "__AXHUB_ANNOTATION_SOURCE__";
+var ANNOTATION_PROTO_DEV_KEY = "__AXHUB_PROTO_DEV__";
+var ANNOTATION_TEXT_MAX_LENGTH = 280;
 function normalizeNote(value) {
   return String(value ?? "").replace(/\r\n/g, "\n").trim();
 }
@@ -28364,6 +28853,96 @@ function normalizeInlineText(value) {
 }
 function normalizePathValue2(value) {
   return String(value ?? "").trim();
+}
+function readElementAttr(element, attr) {
+  if (!element) return "";
+  try {
+    return element.getAttribute(attr)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+function readAnnotationPanelNodeId(element) {
+  return readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR2);
+}
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function truncateInlineText(value, maxLength) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 1)).trimEnd()}\u2026`;
+}
+function formatAnnotationLocator(locator) {
+  if (!isPlainObject(locator)) return "";
+  const selectors = Array.isArray(locator.selectors) ? locator.selectors.map((selector) => normalizePathValue2(selector)).filter(Boolean) : [];
+  if (selectors.length > 0) return selectors.join(" | ");
+  const path = Array.isArray(locator.path) ? locator.path.map((part) => normalizePathValue2(part)).filter(Boolean) : [];
+  if (path.length > 0) return path.join(">");
+  return normalizePathValue2(locator.fingerprint);
+}
+function formatAnnotationControlValue(value) {
+  if (value === null || value === void 0) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value).trim();
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value).trim();
+  }
+}
+function formatAnnotationControlOption(option) {
+  if (!isPlainObject(option)) return formatAnnotationControlValue(option);
+  const label = normalizeInlineText(option.label);
+  const value = formatAnnotationControlValue(option.value);
+  if (label && value && label !== value) return `${label}=${value}`;
+  return label || value;
+}
+function formatAnnotationControl(control, runtimeState) {
+  const attributeId = normalizePathValue2(control.attributeId);
+  const displayName = normalizeInlineText(control.displayName) || attributeId || "\u63A7\u4EF6";
+  const label = attributeId && attributeId !== displayName ? `${displayName}(${attributeId})` : displayName;
+  const details = [];
+  const initialValue = formatAnnotationControlValue(control.initialValue);
+  if (initialValue) details.push(`\u9ED8\u8BA4 ${initialValue}`);
+  if (runtimeState && attributeId && Object.prototype.hasOwnProperty.call(runtimeState, attributeId)) {
+    const currentValue = formatAnnotationControlValue(runtimeState[attributeId]);
+    if (currentValue) details.push(`\u5F53\u524D ${currentValue}`);
+  }
+  const options = Array.isArray(control.options) ? control.options.map(formatAnnotationControlOption).filter(Boolean) : [];
+  if (options.length > 0) details.push(`\u9009\u9879 ${options.join(", ")}`);
+  return details.length > 0 ? `${label}: ${details.join("\uFF1B")}` : label;
+}
+function resolveAnnotationAvailablePanels(node) {
+  const panels = [];
+  const annotationText = normalizeInlineText(node?.annotationText);
+  if (annotationText) {
+    panels.push("\u5185\u5BB9");
+  }
+  if (Array.isArray(node?.controls) && node.controls.some(isPlainObject)) {
+    panels.push("\u72B6\u6001");
+  }
+  return panels;
+}
+function readAnnotationSourceNode(nodeId) {
+  if (!nodeId || typeof window === "undefined") return null;
+  const snapshot = window[ANNOTATION_SOURCE_KEY];
+  const nodes = isPlainObject(snapshot) && Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
+  const matched = nodes.find((node) => isPlainObject(node) && normalizePathValue2(node.id) === nodeId);
+  return isPlainObject(matched) ? matched : null;
+}
+function readAnnotationProtoDevState() {
+  if (typeof window === "undefined") return null;
+  const runtime = window[ANNOTATION_PROTO_DEV_KEY];
+  if (!runtime || typeof runtime !== "object" || typeof runtime.getState !== "function") {
+    return null;
+  }
+  try {
+    const state2 = runtime.getState();
+    return isPlainObject(state2) ? state2 : null;
+  } catch {
+    return null;
+  }
 }
 function dedupeStrings(values) {
   const out = [];
@@ -28488,6 +29067,10 @@ function createEditorSummariesService(options) {
     const textCommentMeta = resolveTextCommentElementMeta(state2, element);
     if (textCommentMeta) {
       return textCommentMeta.elementKey;
+    }
+    const annotationNodeId = readAnnotationPanelNodeId(element);
+    if (annotationNodeId) {
+      return `annotation-panel:${annotationNodeId}`;
     }
     const locator = createElementLocator(element);
     return generateStableElementKey(element, locator.shadowHostChain);
@@ -28681,16 +29264,58 @@ ${lines.join("\n")}
   function appendGlobalConstraints(lines) {
     lines.push("\u7EA6\u675F: \u5143\u7D20\u63CF\u8FF0\u4EC5\u7528\u4E8E\u5B9A\u4F4D\uFF0C\u53EA\u6539\u52A8\u660E\u786E\u6307\u51FA\u7684\u5185\u5BB9\uFF0C\u5176\u4F59\u4FDD\u6301\u4E0D\u52A8\u3002");
   }
+  function resolveAnnotationPromptContext(locator) {
+    const element = tryLocateElement(locator);
+    if (readElementAttr(element, ANNOTATION_PANEL_TARGET_ATTR) !== "true") return null;
+    const nodeId = readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR2);
+    if (!nodeId) return null;
+    return {
+      nodeId,
+      node: readAnnotationSourceNode(nodeId)
+    };
+  }
+  function appendAnnotationPromptContext(lines, context) {
+    const node = context.node;
+    lines.push("  - \u5F53\u524D\u9009\u62E9: @axhub/annotation \u6807\u6CE8\u8282\u70B9");
+    lines.push(`  - \u8282\u70B9 ID: ${context.nodeId}`);
+    const nodeIndex = normalizePathValue2(node?.index);
+    if (nodeIndex) lines.push(`  - \u8282\u70B9\u5E8F\u53F7: ${nodeIndex}`);
+    const nodeLocator = formatAnnotationLocator(node?.locator);
+    if (nodeLocator) lines.push(`  - \u8282\u70B9\u5B9A\u4F4D: ${nodeLocator}`);
+    const aiPrompt = normalizeInlineText(node?.aiPrompt);
+    if (aiPrompt) lines.push(`  - \u8282\u70B9\u63D0\u793A: ${aiPrompt}`);
+    const availablePanels = resolveAnnotationAvailablePanels(node);
+    if (availablePanels.length > 0) lines.push(`  - \u53EF\u7528\u9762\u677F: ${availablePanels.join(", ")}`);
+    const annotationText = truncateInlineText(
+      normalizeInlineText(node?.annotationText),
+      ANNOTATION_TEXT_MAX_LENGTH
+    );
+    if (annotationText) lines.push(`  - \u8282\u70B9\u5185\u5BB9: ${annotationText}`);
+    const runtimeState = readAnnotationProtoDevState();
+    const controls = Array.isArray(node?.controls) ? node.controls.filter(isPlainObject).map((control) => formatAnnotationControl(control, runtimeState)).filter(Boolean) : [];
+    if (controls.length > 0) {
+      lines.push("  - \u8282\u70B9\u63A7\u4EF6:");
+      for (const control of controls) {
+        lines.push(`    - ${control}`);
+      }
+    }
+    lines.push("  - \u5B9A\u4F4D\u8BF4\u660E: \u5F53\u524D\u9009\u4E2D\u7684\u662F\u6807\u6CE8\u9762\u677F\uFF1B\u8BF7\u6839\u636E\u8FD9\u4E2A\u6807\u6CE8\u8282\u70B9\u7684 locator \u5B9A\u4F4D\u771F\u5B9E\u539F\u578B\u5143\u7D20\uFF0C\u4E0D\u8981\u628A\u6807\u6CE8\u9762\u677F\u672C\u8EAB\u5F53\u4F5C\u4FEE\u6539\u5BF9\u8C61\u3002");
+  }
   function appendChangeItem(lines, params) {
+    const annotationContext = resolveAnnotationPromptContext(params.locator);
     const snapshot = readElementSnapshot(params.locator, {
       fallbackLabel: params.fallbackLabel,
       fallbackText: params.fallbackText
     });
     const selectorPath = formatSelectorPath(params.locator);
     lines.push(`- \u4FEE\u6539\u9879 ${params.index}`);
-    if (snapshot.tagName) lines.push(`  - \u5F53\u524D\u5143\u7D20\u6807\u7B7E: ${snapshot.tagName}`);
-    if (snapshot.currentText) lines.push(`  - \u5F53\u524D\u5143\u7D20\u6587\u672C: ${snapshot.currentText}`);
-    if (selectorPath) lines.push(`  - \u5143\u7D20\u5B9A\u4F4D: ${selectorPath}`);
+    if (annotationContext) {
+      appendAnnotationPromptContext(lines, annotationContext);
+    } else {
+      if (snapshot.tagName) lines.push(`  - \u5F53\u524D\u5143\u7D20\u6807\u7B7E: ${snapshot.tagName}`);
+      if (snapshot.currentText) lines.push(`  - \u5F53\u524D\u5143\u7D20\u6587\u672C: ${snapshot.currentText}`);
+      if (selectorPath) lines.push(`  - \u5143\u7D20\u5B9A\u4F4D: ${selectorPath}`);
+    }
     if (params.pageScope) lines.push(`  - \u9875\u9762\u8303\u56F4: ${params.pageScope}`);
     if (params.debugFileHint) lines.push(`  - \u53EF\u80FD\u76F8\u5173\u6587\u4EF6: ${params.debugFileHint}`);
     const allActions = [...params.actions];
@@ -29441,7 +30066,7 @@ function createGenieEditor(options = {}) {
       disablePageAnimations: false,
       pageZoomEnabled: false,
       copySkillInstallPromptDisabled: true,
-      selectionModeActive: true,
+      selectionModeActive: resolvedOptions.ui.initialSelectionModeActive,
       fullExitAvailable: false
     };
   }
@@ -29485,12 +30110,12 @@ function createGenieEditor(options = {}) {
     }
     return "idle";
   }
-  function resolveElementByKey(elementKey) {
+  function resolveElementByKey(elementKey, targetRef) {
     const selectedSummary = buildSelectedElementSummary();
     if (selectedSummary?.elementKey === elementKey && state2.selectedElement?.isConnected) {
       return state2.selectedElement;
     }
-    const locator = state2.editMetaByKey.get(elementKey)?.locator ?? genieBridge?.getTaskStateByElementKey?.(elementKey)?.locator ?? state2.externalEditingTaskByElementKey.get(elementKey)?.locator ?? state2.genieTaskByElementKey.get(elementKey)?.locator ?? null;
+    const locator = state2.editMetaByKey.get(elementKey)?.locator ?? genieBridge?.getTaskStateByElementKey?.(elementKey)?.locator ?? state2.externalEditingTaskByElementKey.get(elementKey)?.locator ?? state2.genieTaskByElementKey.get(elementKey)?.locator ?? targetRef?.locator ?? null;
     if (!locator) return null;
     try {
       const element = locateElement(locator);
@@ -29590,10 +30215,17 @@ function createGenieEditor(options = {}) {
       height: screenshot.height
     };
   }
-  async function setNodeEditingState(elementKey, nextState, taskRef) {
-    const targetElement = resolveElementByKey(elementKey);
+  async function setNodeEditingState(elementKey, nextState, taskRef, targetRef) {
+    const targetElement = resolveElementByKey(elementKey, targetRef);
     if (!targetElement) {
       throw new Error(`NOT_FOUND: Element not found for key: ${elementKey}`);
+    }
+    if (targetRef?.locator) {
+      changes.getOrCreateEditMeta(
+        elementKey,
+        targetRef.locator,
+        String(targetRef.label || "").trim() || elementKey
+      );
     }
     if (!genieBridge?.setExternalEditingState || !genieBridge.clearExternalEditingState) {
       throw new Error("NOT_IMPLEMENTED: External editing state control is unavailable");
@@ -29636,7 +30268,7 @@ function createGenieEditor(options = {}) {
     onSelectMarkedElement: (element, anchor) => {
       if (!element.isConnected) return;
       state2.eventController?.setMode("selecting");
-      interaction?.handleSelect(element, DEFAULT_MODIFIERS, {
+      void interaction?.handleSelect(element, DEFAULT_MODIFIERS, {
         clientX: anchor.clientX,
         clientY: anchor.clientY
       });
@@ -29646,7 +30278,7 @@ function createGenieEditor(options = {}) {
   const textSession = createTextSessionService({
     state: state2,
     ensureSelected: (element, modifiers) => {
-      interaction?.handleSelect(element, modifiers);
+      void interaction?.handleSelect(element, modifiers);
     },
     logPrefix: "[WebEditorV2]"
   });
@@ -29872,6 +30504,7 @@ function createGenieEditor(options = {}) {
     getHostToolbarState,
     subscribeHostToolbarState,
     runHostToolbarAction,
+    setNodeEditingState,
     getCopyPromptText: () => summaries.buildCopyPrompt()
   };
 }

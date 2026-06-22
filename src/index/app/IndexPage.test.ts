@@ -58,6 +58,18 @@ describe('IndexPage source', () => {
     expect(assistantControllerCall).toContain('assistantImageGenerationConfig: preferences.assistantImageGenerationConfig,');
   });
 
+  it('passes image generation settings into annotation direct API runs without MCP servers', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const directRunSource = source.slice(
+      source.indexOf('const handleRunAnnotationAssistantPromptViaApi = useCallback'),
+      source.indexOf('const buildPromptActionAssistantContext = useCallback'),
+    );
+
+    expect(directRunSource).toContain('builtinToolSettings: preferences.assistantImageGenerationConfig');
+    expect(directRunSource).toContain('? { imageGeneration: preferences.assistantImageGenerationConfig }');
+    expect(directRunSource).not.toContain('mcpServers');
+  });
+
   it('passes project and pending selection context into resource actions', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const resourceActionsCall = source.slice(
@@ -136,6 +148,7 @@ describe('IndexPage source', () => {
     expect(source).toContain('activeProjectId: workspace.activeProjectId');
     expect(source).toContain('resourceType: \'prototype\'');
     expect(source).toContain('resourceType: \'doc\'');
+    expect(source).toContain('resourceType: \'template\'');
     expect(source).toContain('resourceType: \'theme\'');
   });
 
@@ -162,6 +175,7 @@ describe('IndexPage source', () => {
     expect(navigateSource).toContain('setSelectedItem(target.resource)');
     expect(navigateSource).toContain("setViewMode('canvas')");
     expect(navigateSource).toContain("resources.setSelectedDoc(target.resource)");
+    expect(navigateSource).toContain("resources.setSelectedTemplate(target.resource)");
     expect(navigateSource).toContain("resources.setSelectedTheme(target.resource)");
     expect(navigateSource).not.toContain('workspace.switchProject');
     expect(selectionSource).toContain('initialResourceDeepLink: initialResourceDeepLinkHandled ? null : initialResourceDeepLink,');
@@ -198,14 +212,14 @@ describe('IndexPage source', () => {
   it('refreshes the currently selected prototype after canvas-side prototype reloads', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const refreshSource = source.slice(
-      source.indexOf('const handleRefreshCanvasPrototypeItems = useCallback(async () => {'),
-      source.indexOf('const presentationAreaProps = useIndexPagePresentationPropsBuilder', source.indexOf('const handleRefreshCanvasPrototypeItems = useCallback(async () => {')),
+      source.indexOf('const handleRefreshCanvasPrototypeItems = useCallback(async (preferredName?: string) => {'),
+      source.indexOf('const buildCanvasAssistantContext = useCallback', source.indexOf('const handleRefreshCanvasPrototypeItems = useCallback(async (preferredName?: string) => {')),
     );
 
     expect(refreshSource).toContain('let nextPrototypes: ItemData[] = workspace.data.prototypes;');
     expect(refreshSource).toContain('nextPrototypes = normalizeProjectResourcesPayload(payload, projectId).data.prototypes;');
-    expect(refreshSource).toContain("const refreshedSelectedItem = selectedItem?.name");
-    expect(refreshSource).toContain('nextPrototypes.find((item) => item.name === selectedItem.name)');
+    expect(refreshSource).toContain("const targetName = String(preferredName || selectedItem?.name || '').trim();");
+    expect(refreshSource).toContain('nextPrototypes.find((item) => item.name === targetName)');
     expect(refreshSource).toContain('setSelectedItem(refreshedSelectedItem);');
     expect(refreshSource).toContain('return nextPrototypes;');
   });
@@ -284,6 +298,7 @@ describe('IndexPage source', () => {
 
     expect(source).toContain('resolveAssistantCurrentFile');
     expect(submitSource).toContain("const canvasFilePath = String(request.canvasFilePath || '').trim();");
+    expect(submitSource).toContain('const requestPrototypeItem = request.createdPrototype || selectedItem;');
     expect(submitSource).toContain("const isPrototypePlaceholderStart = request.source === 'placeholder-start' && request.scene === 'page';");
     expect(submitSource).toContain("const isDesignPlaceholderStart = request.source === 'placeholder-start' && request.scene === 'design';");
     expect(submitSource).toContain('const canvasCurrentFile = canvasFilePath');
@@ -292,6 +307,7 @@ describe('IndexPage source', () => {
     expect(submitSource).toContain('const currentFile = isPrototypePlaceholderStart');
     expect(submitSource).toContain('currentFile,');
     expect(submitSource).toContain("viewMode: isPrototypePlaceholderStart ? 'demo' : isDesignPlaceholderStart ? 'canvas' : 'canvas'");
+    expect(submitSource).toContain('selectedItem: requestPrototypeItem');
     expect(submitSource).toContain('canvasAiGeneration: {');
     expect(submitSource).toContain('scene: request.scene');
     expect(submitSource).toContain('source: request.source || \'canvas-node\'');
@@ -335,6 +351,53 @@ describe('IndexPage source', () => {
     expect(submitSource).toContain("const currentFileDirectory = currentFilePath.replace(/\\/[^/]+$/u, '');");
     expect(submitSource).toContain("viewMode: isPrototypePlaceholderStart ? 'demo' : isDesignPlaceholderStart ? 'canvas' : 'canvas'");
     expect(submitSource).toContain("canvasFilePath: isPrototypePlaceholderStart ? undefined : request.canvasFilePath");
+  });
+
+  it('tracks prototype start drafts and creates a real prototype before first submission', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const draftStateSource = source.slice(
+      source.indexOf('const [prototypeStartDraftActive'),
+      source.indexOf('const openSettingsDialog', source.indexOf('const [prototypeStartDraftActive')),
+    );
+    const createDraftSource = source.slice(
+      source.indexOf('const handleCreatePrototypeStartDraft = useCallback'),
+      source.indexOf('const handleOpenPrototypeCreateDialog', source.indexOf('const handleCreatePrototypeStartDraft = useCallback')),
+    );
+    const createForDraftSource = source.slice(
+      source.indexOf('const handleCreatePrototypeForDraftStart = useCallback'),
+      source.indexOf('const handleSubmitCanvasAssistantPrompt = useCallback', source.indexOf('const handleCreatePrototypeForDraftStart = useCallback')),
+    );
+    const sidebarBuilderCall = source.slice(
+      source.indexOf('const sidebarProps = useIndexPageSidebarPropsBuilder'),
+      source.indexOf('const handleEnterSelectedPrototypePreview'),
+    );
+    const presentationBuilderCall = source.slice(
+      source.indexOf('const presentationAreaProps = useIndexPagePresentationPropsBuilder'),
+      source.indexOf('const handleMobileItemClick'),
+    );
+
+    expect(draftStateSource).toContain('const [prototypeStartDraftActive, setPrototypeStartDraftActive] = useState(false);');
+    expect(draftStateSource).toContain('if (!prototypeStartDraftActive) return;');
+    expect(draftStateSource).toContain("sidebarTab !== 'prototype'");
+    expect(draftStateSource).toContain("viewMode !== 'demo'");
+    expect(draftStateSource).toContain('selectedItem');
+    expect(createDraftSource).toContain("setActiveTab('prototypes');");
+    expect(createDraftSource).toContain("setSidebarTab('prototype');");
+    expect(createDraftSource).toContain("setViewMode('demo');");
+    expect(createDraftSource).toContain('setSelectedItem(null);');
+    expect(createDraftSource).toContain('setSelectedPrototypePageId(null);');
+    expect(createDraftSource).toContain('setPrototypeStartDraftActive(true);');
+    expect(createForDraftSource).toContain('apiService.createPlaceholderPrototype({ projectId: workspace.activeProjectId })');
+    expect(createForDraftSource).toContain('const createdFromResult = buildCreatedPrototypeStartItem(result);');
+    expect(createForDraftSource).toContain('const refreshedPrototypes = await handleRefreshCanvasPrototypeItems(createdFromResult.name);');
+    expect(createForDraftSource).toContain('const created = refreshedPrototypes.find((item) => item.name === createdFromResult.name) || createdFromResult;');
+    expect(createForDraftSource).toContain('setSelectedItem(created);');
+    expect(createForDraftSource).toContain('setPrototypeStartDraftActive(false);');
+    expect(createForDraftSource).toContain('return created;');
+    expect(sidebarBuilderCall).toContain('prototypeStartDraftActive,');
+    expect(sidebarBuilderCall).toContain('handleCreatePrototypeStartDraft,');
+    expect(presentationBuilderCall).toContain('prototypeStartDraftActive,');
+    expect(presentationBuilderCall).toContain('onCreatePrototypeForDraftStart: handleCreatePrototypeForDraftStart,');
   });
 
   it('starts every canvas generation request in a fresh assistant thread', () => {
@@ -745,5 +808,38 @@ describe('IndexPage source', () => {
 
     expect(source).not.toContain('getAssistantArtifacts: assistantController.getAssistantArtifacts,');
     expect(presentationBuilderCall).not.toContain('getAssistantArtifacts');
+  });
+
+  it('blocks the global assistant sidebar while a prototype start page is active', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const startStateSource = source.slice(
+      source.indexOf('const prototypePlaceholderActive = contentMode ==='),
+      source.indexOf('const preferences = useIndexPagePreferences'),
+    );
+    const sidebarBuilderCall = source.slice(
+      source.indexOf('const sidebarProps = useIndexPageSidebarPropsBuilder'),
+      source.indexOf('const handleEnterSelectedPrototypePreview'),
+    );
+    const presentationBuilderCall = source.slice(
+      source.indexOf('const presentationAreaProps = useIndexPagePresentationPropsBuilder'),
+      source.indexOf('const handleMobileItemClick', source.indexOf('const presentationAreaProps = useIndexPagePresentationPropsBuilder')),
+    );
+    const assistantPanelPropsSource = source.slice(
+      source.indexOf('const assistantPanelProps = {'),
+      source.indexOf('const dialogsProps = {'),
+    );
+
+    expect(startStateSource).toContain('const prototypeStartPageActive = prototypeStartDraftActive || prototypePlaceholderActive;');
+    expect(sidebarBuilderCall).toContain('prototypeStartPageActive,');
+    expect(sidebarBuilderCall).toContain('webAgentPanelOpen: prototypeStartPageActive ? false : assistantController.assistantVisible,');
+    expect(sidebarBuilderCall).toContain('aiPanelMode: prototypeStartPageActive ? null : assistantController.aiPanelMode,');
+    expect(sidebarBuilderCall).toContain('handleOpenGenieWebAgent: prototypeStartPageActive ? undefined : handleOpenGenieWebAgent,');
+    expect(sidebarBuilderCall).toContain('handleOpenImageAiPanel: prototypeStartPageActive ? undefined : handleOpenImageAiPanel,');
+    expect(presentationBuilderCall).toContain('assistantVisible: prototypeStartPageActive ? false : assistantController.assistantVisible,');
+    expect(presentationBuilderCall).toContain('webAgentPanelOpen: prototypeStartPageActive ? false : assistantController.assistantVisible,');
+    expect(presentationBuilderCall).toContain('aiPanelMode: prototypeStartPageActive ? null : assistantController.aiPanelMode,');
+    expect(presentationBuilderCall).toContain('handleToggleAssistant: prototypeStartPageActive ? () => undefined : handleToggleAssistantPanel,');
+    expect(assistantPanelPropsSource).toContain('mounted: prototypeStartPageActive ? false : assistantController.assistantPanelMounted,');
+    expect(assistantPanelPropsSource).toContain('visible: prototypeStartPageActive ? false : assistantController.assistantVisible,');
   });
 });

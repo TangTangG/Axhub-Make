@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { resolveAiRunTimeoutMs } from '../managementApi.aiRuns.ts';
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
@@ -232,6 +233,11 @@ describe('AI runs API', () => {
     }
   });
 
+  it('keeps direct ACP runs above the short settings-test timeout floor', () => {
+    expect(resolveAiRunTimeoutMs('direct', { automation: { acp: { timeout: 30 } } })).toBe(180_000);
+    expect(resolveAiRunTimeoutMs('prototype', { automation: { acp: { timeout: 30 } } })).toBe(30_000);
+  });
+
   it('streams image generation artifacts through one unified AI run endpoint', async () => {
     const projectRoot = createTempRoot('axhub-ai-runs-image-');
     writeProjectMetadata(projectRoot, {
@@ -425,6 +431,85 @@ describe('AI runs API', () => {
           apiKey: 'sk-current',
           model: 'current-image-model',
         },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('enables image generation builtin tool for direct annotation runs with image settings', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-image-settings-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-direct-image-settings', name: 'AI Runs Direct Image Settings' },
+    });
+    const acp = await startAcpRunTestServer();
+    const server = await startRegisteredTestServer(projectRoot, acp, {
+      ai: {
+        imageGeneration: {
+          baseUrl: 'https://saved.example.com/v1',
+          apiKey: 'sk-saved',
+          model: 'saved-image-model',
+        },
+      },
+    });
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '这个批注需要生成一张参考图。',
+          builtinToolSettings: {
+            imageGeneration: {
+              baseUrl: 'https://current.example.com/v1',
+              apiKey: 'sk-current',
+              model: 'current-image-model',
+            },
+          },
+        }),
+      });
+      await collectRunEvents(response);
+
+      expect(acp.requests[0].body).toMatchObject({
+        builtinTools: ['image-generation'],
+        builtinToolSettings: {
+          imageGeneration: {
+            baseUrl: 'https://current.example.com/v1',
+            apiKey: 'sk-current',
+            model: 'current-image-model',
+          },
+        },
+      });
+      expect(acp.requests[0].body.mcpServers).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('forwards prototype conversation store paths to direct ACP runs', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-store-path-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-direct-store-path', name: 'AI Runs Direct Store Path' },
+    });
+    const acp = await startAcpRunTestServer();
+    const server = await startRegisteredTestServer(projectRoot, acp);
+    const conversationStorePath = path.join(projectRoot, 'src', 'prototypes', 'home', '.spec', 'acp', 'conversations.json');
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '把当前批注应用到原型。',
+          conversationStorePath,
+        }),
+      });
+      await collectRunEvents(response);
+
+      expect(acp.requests[0].body).toMatchObject({
+        conversationStorePath,
       });
     } finally {
       await server.close();

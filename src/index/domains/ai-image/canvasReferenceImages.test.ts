@@ -150,7 +150,8 @@ describe('canvas reference image helpers', () => {
           type: 'embeddable',
           isDeleted: false,
           customData: {
-            resourceType: 'prototype',
+            resourceType: 'preview',
+            sourceResourceType: 'prototype',
             resourceId: 'checkout-flow',
             title: 'Checkout Flow',
             screenshotUrl: '/prototypes/checkout-flow/canvas-assets/screenshot.png',
@@ -162,7 +163,8 @@ describe('canvas reference image helpers', () => {
           isDeleted: false,
           customData: {
             type: 'axhub-theme',
-            resourceType: 'theme',
+            resourceType: 'preview',
+            sourceResourceType: 'theme',
             resourceId: 'quiet-saas',
             title: 'Quiet SaaS',
           },

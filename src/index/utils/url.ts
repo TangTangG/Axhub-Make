@@ -69,7 +69,11 @@ function isLocalOnlyHostname(value: unknown): boolean {
 }
 
 function getLANHostname(): string {
-    const injectedHost = normalizeString((window as any).__LOCAL_IP__);
+    const configuredLANHost = normalizeString(window.__AXHUB_SHARE_HOSTS__?.lanHost);
+    if (configuredLANHost && !isLocalOnlyHostname(configuredLANHost)) {
+        return configuredLANHost;
+    }
+    const injectedHost = normalizeString(window.__LOCAL_IP__);
     if (injectedHost && !isLocalOnlyHostname(injectedHost)) {
         return injectedHost;
     }
@@ -80,6 +84,23 @@ function getLANHostname(): string {
     return injectedHost || currentHost || 'localhost';
 }
 
+function rewriteLocalOnlyUrlHost(url: URL, hostname: string): URL {
+    const nextUrl = new URL(url.toString());
+    nextUrl.hostname = hostname;
+    return nextUrl;
+}
+
+function rewriteLocalOnlyUrlToLocalShareHost(url: URL): URL {
+    if (!isLocalOnlyHostname(url.hostname)) {
+        return url;
+    }
+    const configuredLocalHost = normalizeString(window.__AXHUB_SHARE_HOSTS__?.localHost);
+    if (!configuredLocalHost) {
+        return url;
+    }
+    return rewriteLocalOnlyUrlHost(url, configuredLocalHost);
+}
+
 function rewriteLocalOnlyUrlToLAN(url: URL): URL {
     if (!isLocalOnlyHostname(url.hostname)) {
         return url;
@@ -88,12 +109,18 @@ function rewriteLocalOnlyUrlToLAN(url: URL): URL {
     if (!lanHostname || isLocalOnlyHostname(lanHostname)) {
         return url;
     }
-    const nextUrl = new URL(url.toString());
-    nextUrl.hostname = lanHostname;
-    return nextUrl;
+    return rewriteLocalOnlyUrlHost(url, lanHostname);
 }
 
 export function buildItemUrl(
+    selectedItem: ItemData | null,
+    viewMode: ViewMode,
+): URL | null {
+    const url = buildRawItemUrl(selectedItem, viewMode);
+    return url ? rewriteLocalOnlyUrlToLocalShareHost(url) : null;
+}
+
+function buildRawItemUrl(
     selectedItem: ItemData | null,
     viewMode: ViewMode,
 ): URL | null {
@@ -111,7 +138,7 @@ export function buildLANItemUrl(
     selectedItem: ItemData | null,
     viewMode: ViewMode,
 ): string {
-    const url = buildItemUrl(selectedItem, viewMode);
+    const url = buildRawItemUrl(selectedItem, viewMode);
     if (!url) return '';
     return rewriteLocalOnlyUrlToLAN(url).toString();
 }

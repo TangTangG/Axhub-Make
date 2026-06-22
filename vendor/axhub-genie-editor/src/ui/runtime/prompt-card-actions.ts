@@ -21,7 +21,8 @@ export async function executePromptCardCurrentElementAction(options: {
 
   await onConfirmText();
   await onConfirmNote();
-  await onSendCurrentElementPromptToGenie(currentTarget);
+  const sendPromise = Promise.resolve(onSendCurrentElementPromptToGenie(currentTarget));
   onDismissSelection?.();
+  await sendPromise;
   return true;
 }

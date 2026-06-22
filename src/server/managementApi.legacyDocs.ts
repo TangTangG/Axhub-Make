@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { isPathInside, resolveProjectPath, type ProjectMetadata, type RegisteredProject } from './projectCore/index.ts';
 
 import { readJsonBody, sendFile, sendJson } from './http.ts';
+import { sendHtmlDocumentPreview } from './htmlDocumentPreview.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { stripViteDevOnlyModuleImports } from './staticTemplateHtml.ts';
 import { sendUnsupportedFilePreview } from './unsupportedFilePreview.ts';
@@ -113,6 +114,9 @@ function handleMarkdownFileApi(
       openEndpoint: '/api/docs/open-system',
       resourceType: 'docs',
     })) {
+      return true;
+    }
+    if (sendHtmlDocumentPreview(req, res, filePath)) {
       return true;
     }
     if (!sendFile(res, filePath)) {

@@ -1,7 +1,10 @@
 import React from 'react';
+import { PencilRuler } from 'lucide-react';
 import PresentationToolbar from './PresentationToolbar';
 import ContentAreaView from './ContentAreaView';
 import UiReviewPanel from './UiReviewPanel';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 import type {
     PresentationAreaLegacyProps,
     PresentationAreaProps,
@@ -23,10 +26,47 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
 
     const isCanvasMode = props.contentMode === 'canvas' || props.viewMode === 'canvas';
     const isResourceFolderPreview = props.contentMode === 'doc' && Boolean(props.selectedResourceFolder);
+    const isPrototypeStartDraft = props.prototypeStartDraftActive === true && !props.selectedItem;
+    const isPrototypeStartPlaceholder = props.selectedItem?.placeholder === true && props.viewMode === 'demo';
+    const shouldShowPresentationToolbar = !isCanvasMode
+        && !isResourceFolderPreview
+        && !isPrototypeStartDraft
+        && !isPrototypeStartPlaceholder;
+    const shouldShowAssistantPanel = props.reviewPanelOpen
+        && props.viewMode !== 'canvas'
+        && !isPrototypeStartDraft
+        && !isPrototypeStartPlaceholder;
+    const shouldShowPrototypeStartActions = isPrototypeStartDraft || isPrototypeStartPlaceholder;
+    const handleOpenPrototypeStartCanvas = async () => {
+        const draftCreatedItem = isPrototypeStartDraft
+            ? await props.onCreatePrototypeForDraftStart?.()
+            : null;
+        const startItem = draftCreatedItem || props.selectedItem;
+        if (!startItem) {
+            toast.error('创建原型失败');
+            return;
+        }
+        props.setViewMode?.('canvas');
+    };
 
     return (
-        <div className="flex flex-col flex-1 h-full min-h-0 min-w-0 bg-background">
-            {!isCanvasMode && !isResourceFolderPreview ? (
+        <div className="relative flex flex-col flex-1 h-full min-h-0 min-w-0 bg-background">
+            {shouldShowPrototypeStartActions ? (
+                <div className="pointer-events-none absolute right-8 top-5 z-10 flex items-center justify-end">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="pointer-events-auto h-8 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
+                        aria-label="打开画布"
+                        onClick={() => { void handleOpenPrototypeStartCanvas(); }}
+                    >
+                        <PencilRuler className="h-4 w-4" />
+                        <span>画布</span>
+                    </Button>
+                </div>
+            ) : null}
+            {shouldShowPresentationToolbar ? (
                 <PresentationToolbar
                     collapsed={props.collapsed}
                     setCollapsed={props.setCollapsed}
@@ -53,6 +93,8 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     handleSaveDocEdit={props.handleSaveDocEdit}
                     handleExitDocEdit={props.handleExitDocEdit}
                     handleSwitchDocQuickEditMode={props.handleSwitchDocQuickEditMode}
+                    drawioResourceEditAvailable={props.drawioResourceEditAvailable}
+                    handleOpenDrawioResourceEditor={props.handleOpenDrawioResourceEditor}
                     handleCopyMarkdownPrompt={props.handleCopyMarkdownPrompt}
                     handleRefreshElement={props.handleRefreshElement}
                     handleCopyToFigma={props.handleCopyToFigma}
@@ -102,6 +144,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         previewIframeRef={props.previewIframeRef}
                         secondaryPreviewIframeRef={props.secondaryPreviewIframeRef}
                         selectedItem={props.selectedItem}
+                        prototypeStartDraftActive={props.prototypeStartDraftActive}
                         activeTab={props.activeTab}
                         previewConfig={props.previewConfig}
                         reviewPageZoomEnabled={props.reviewPageZoomEnabled}
@@ -186,11 +229,12 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         defaultThemeName={props.defaultThemeName}
                         onOpenPrototypeCreateDialog={props.onOpenPrototypeCreateDialog}
                         onOpenAISettings={props.onOpenAISettings}
+                        onCreatePrototypeForDraftStart={props.onCreatePrototypeForDraftStart}
                         onRefreshPrototypes={props.onRefreshPrototypes}
                         onSubmitCanvasAssistantPrompt={props.onSubmitCanvasAssistantPrompt}
                     />
                 </div>
-                {props.reviewPanelOpen && props.viewMode !== 'canvas' ? (
+                {shouldShowAssistantPanel ? (
                     <UiReviewPanel
                         activeKind={props.activeReviewKind || 'design'}
                         markdown={props.reviewMarkdown || ''}

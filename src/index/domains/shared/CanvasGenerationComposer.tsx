@@ -10,20 +10,20 @@ import {
   type ThreadMessage,
 } from '@assistant-ui/react';
 import { useChatRuntime } from '@assistant-ui/react-ai-sdk';
-import { AcpUiProvider, useAcpUiRuntimeContext } from '@axhub/acp/react';
-import { AcpComposerSelectors, ComposerAttachments } from '@axhub/acp/ui';
-import { ACP_CAPABILITY_REFRESH_EVENT, acpApiClient, configureAcpUiRuntime } from '@axhub/acp/runtime';
-import type { ContextBundleV2, ContextItem } from '@axhub/acp/runtime';
+import { ComposerAttachments } from '@axhub/acp/composer';
+import { ACP_CAPABILITY_REFRESH_EVENT, AcpUiProvider, acpApiClient, configureAcpUiRuntime, hydrateAcpCapabilityCacheFromDefaults, useAcpUiRuntimeContext } from '@axhub/acp/runtime';
+import type { AcpCapabilitySnapshot, ContextBundleV2, ContextItem } from '@axhub/acp/runtime';
 import type {
   ChatTransport,
   FileUIPart,
   UIMessage,
   UIMessageChunk,
 } from 'ai';
-import { ArrowUp, ChevronDown, PlusIcon, Settings2, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, ChevronRight, Gauge, Network, PlusIcon, Settings2, SlidersHorizontal, Sparkles, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { getAcpProviderOption, resolveAcpPromptClientProvider, type AcpProviderKey } from '../../../common/acpModelConfig';
 import {
   Popover,
   PopoverContent,
@@ -37,6 +37,7 @@ import {
   appendCanvasAiQuickPrompt,
   type CanvasAiQuickPrompt,
 } from '../ai-generation/canvasAiSceneRegistry';
+import type { PromptClientPreference } from '../../types';
 import {
   clearCanvasGenerationComposerDraft,
   getCanvasGenerationComposerDraftStorage,
@@ -55,6 +56,38 @@ export interface CanvasGenerationComposerPlacement {
 type CanvasGenerationComposerPlacementMode = 'absolute' | 'fixed-bottom-center';
 
 export type CanvasAiScene = 'page' | 'design' | 'document';
+
+const FIXED_CANVAS_ACP_PROVIDER_OPTIONS = ['claude', 'codex', 'opencode'] as const satisfies readonly AcpProviderKey[];
+
+export interface CanvasAcpSelectorDefaults {
+  defaultProvider: AcpProviderKey;
+  defaultModel: string | null;
+  providerOptions: readonly AcpProviderKey[];
+}
+
+export function resolveCanvasAcpSelectorDefaults(
+  preferredPromptClient?: PromptClientPreference,
+): CanvasAcpSelectorDefaults {
+  const defaultProvider = resolveAcpPromptClientProvider(preferredPromptClient) || 'codex';
+  return {
+    defaultProvider,
+    defaultModel: getAcpProviderOption(defaultProvider)?.defaultAnnotationModel || null,
+    providerOptions: resolveCanvasAcpRuntimeProviderOptions(undefined, defaultProvider),
+  };
+}
+
+export function resolveCanvasAcpRuntimeProviderOptions(
+  providerOptions?: readonly AcpProviderKey[] | null,
+  selectedProvider?: string | null,
+): readonly AcpProviderKey[] {
+  const resolvedOptions = providerOptions?.length
+    ? [...providerOptions]
+    : [...FIXED_CANVAS_ACP_PROVIDER_OPTIONS];
+  const currentProvider = resolveAcpPromptClientProvider(selectedProvider);
+  return currentProvider && !resolvedOptions.some((provider) => provider === currentProvider)
+    ? [...resolvedOptions, currentProvider]
+    : resolvedOptions;
+}
 
 export interface CanvasAiSubmitResult {
   ok: boolean;
@@ -99,6 +132,7 @@ export interface CanvasGenerationDisplayComposerProps {
   draftStorageKey?: string | null;
   leadingActions?: React.ReactNode;
   postSelectorActions?: React.ReactNode;
+  preferredPromptClient?: PromptClientPreference;
   quickPrompts?: readonly CanvasAiQuickPrompt[];
   showSelectors?: boolean;
   workspacePath?: string | null;
@@ -114,6 +148,7 @@ interface CanvasGenerationRuntimeComposerProps {
   initialReferenceImages?: string[];
   onPasteReferenceImages?: () => Promise<string[]>;
   placeholder: string;
+  preferredPromptClient?: PromptClientPreference;
   quickPrompts?: readonly CanvasAiQuickPrompt[];
   renderActions?: (props: { submitting: boolean }) => React.ReactNode;
   renderLeadingActions?: (props: { submitting: boolean }) => React.ReactNode;
@@ -655,7 +690,7 @@ function CanvasComposerSubmitButton({
   );
 }
 
-interface CanvasGenerationDisplayComposerContentProps extends Omit<CanvasGenerationDisplayComposerProps, 'onSubmit' | 'showSelectors' | 'workspacePath'> {
+interface CanvasGenerationDisplayComposerContentProps extends Omit<CanvasGenerationDisplayComposerProps, 'onSubmit' | 'preferredPromptClient' | 'showSelectors' | 'workspacePath'> {
   onEnsureAcpRuntime?: (autoStart?: boolean) => Promise<boolean>;
   onSubmitText?: (text: string, referenceImages: string[]) => CanvasGenerationDisplaySubmitResult | Promise<CanvasGenerationDisplaySubmitResult>;
   showModelSelectorFallback?: boolean;
@@ -745,64 +780,67 @@ function CanvasGenerationDisplayComposerContent({
   }, [disabled, persistDisplayDraft]);
 
   return (
-    <div className={cn('aui-root ax-acp-ui-scope ax-placeholder-display-composer mx-auto w-full max-w-[720px]', className)}>
-      <div className="aui-composer-root relative flex w-full flex-col">
-        <div
-          data-slot="aui_composer-shell"
-          className={cn(
-            'flex min-h-[112px] w-full flex-col gap-2 rounded-2xl border border-border bg-background p-3 shadow-sm transition-colors focus-within:border-border-strong',
-            disabled ? 'opacity-60' : '',
-          )}
-        >
-          <textarea
-            ref={inputRef}
-            placeholder={placeholder}
-            className="aui-composer-input max-h-32 min-h-14 w-full resize-none bg-transparent px-1.75 py-1.5 text-[13px] outline-none placeholder:text-muted-foreground/80 disabled:cursor-not-allowed md:text-sm"
-            rows={1}
-            autoFocus
-            aria-label={ariaLabel}
-            disabled={disabled}
-            onChange={handleInputChange}
-            onKeyDown={handleInputKeyDown}
-            onPaste={handleDisplayPaste}
-          />
-          <ComposerAttachments />
-          <div className="aui-composer-action-wrapper relative flex items-center justify-between text-[13px] md:text-sm">
-            <div className="flex min-w-0 items-center gap-1">
-              {disabled ? null : <CanvasComposerAddAttachmentButton label="添加附件" />}
-              {leadingActions}
-              {showSelectors ? <AcpComposerSelectors /> : null}
-              {showModelSelectorFallback ? (
-                <CanvasAcpModelSelectorFallback onEnsureAcpRuntime={onEnsureAcpRuntime} onOpenAISettings={onOpenAISettings} />
-              ) : null}
-              {postSelectorActions}
-              <CanvasGenerationDisplayQuickPromptsButton
-                disabled={disabled}
-                quickPrompts={quickPrompts}
-                onSelect={handleQuickPromptClick}
-              />
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                aria-label="发送"
-                title="发送"
-                disabled={disabled}
-                className="aui-composer-send inline-flex size-8 items-center justify-center rounded-full bg-slate-100 text-slate-700 transition-colors hover:bg-slate-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => { void submitDisplayText(); }}
-              >
-                <ArrowUp className="aui-composer-send-icon size-4" />
-              </button>
+    <TooltipProvider>
+      <div className={cn('aui-root ax-acp-ui-scope ax-placeholder-display-composer mx-auto w-full max-w-[720px]', className)}>
+        <div className="aui-composer-root relative flex w-full flex-col">
+          <div
+            data-slot="aui_composer-shell"
+            className={cn(
+              'flex min-h-[112px] w-full flex-col gap-2 rounded-2xl border border-border bg-background p-3 shadow-sm transition-colors focus-within:border-border-strong',
+              disabled ? 'opacity-60' : '',
+            )}
+          >
+            <textarea
+              ref={inputRef}
+              placeholder={placeholder}
+              className="aui-composer-input max-h-32 min-h-14 w-full resize-none bg-transparent px-1.75 py-1.5 text-[13px] outline-none placeholder:text-muted-foreground/80 disabled:cursor-not-allowed md:text-sm"
+              rows={1}
+              autoFocus
+              aria-label={ariaLabel}
+              disabled={disabled}
+              onChange={handleInputChange}
+              onKeyDown={handleInputKeyDown}
+              onPaste={handleDisplayPaste}
+            />
+            <ComposerAttachments />
+            <div className="aui-composer-action-wrapper relative flex items-center justify-between text-[13px] md:text-sm">
+              <div className="flex min-w-0 items-center gap-1">
+                {disabled ? null : <CanvasComposerAddAttachmentButton label="添加附件" />}
+                {leadingActions}
+                {showSelectors ? <CanvasAcpComposerSelectors /> : null}
+                {showModelSelectorFallback ? (
+                  <CanvasAcpModelSelectorFallback onEnsureAcpRuntime={onEnsureAcpRuntime} onOpenAISettings={onOpenAISettings} />
+                ) : null}
+                {postSelectorActions}
+                <CanvasGenerationDisplayQuickPromptsButton
+                  disabled={disabled}
+                  quickPrompts={quickPrompts}
+                  onSelect={handleQuickPromptClick}
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label="发送"
+                  title="发送"
+                  disabled={disabled}
+                  className="aui-composer-send inline-flex size-8 items-center justify-center rounded-full bg-slate-100 text-slate-700 transition-colors hover:bg-slate-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => { void submitDisplayText(); }}
+                >
+                  <ArrowUp className="aui-composer-send-icon size-4" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
 
 function CanvasGenerationDisplayComposerWithoutAcp({
   onSubmit,
+  preferredPromptClient: _preferredPromptClient,
   ...props
 }: CanvasGenerationDisplayComposerProps) {
   const transport = useMemo(() => new CanvasGenerationDisplayTransport(), []);
@@ -871,12 +909,27 @@ function CanvasGenerationDisplayComposerRuntime({
 function CanvasGenerationDisplayComposerWithAcp({
   showSelectors,
   workspacePath,
+  preferredPromptClient,
   ...props
 }: CanvasGenerationDisplayComposerProps) {
   const canvasAcpRuntime = useCanvasAcpRuntimeBridge({ enabled: showSelectors, workspacePath });
+  const acpSelectorDefaults = useMemo(() => resolveCanvasAcpSelectorDefaults(preferredPromptClient), [preferredPromptClient]);
+  const acpRuntimeKey = useMemo(() => [
+    acpSelectorDefaults.defaultProvider,
+    acpSelectorDefaults.defaultModel ?? 'default-model',
+    acpSelectorDefaults.providerOptions.join(','),
+    workspacePath ?? 'global',
+  ].join('|'), [acpSelectorDefaults, workspacePath]);
 
   return (
-    <AcpUiProvider defaultProvider="codex" workspacePath={workspacePath}>
+    <AcpUiProvider
+      key={acpRuntimeKey}
+      defaultProvider={acpSelectorDefaults.defaultProvider}
+      defaultModel={acpSelectorDefaults.defaultModel}
+      providerOptions={acpSelectorDefaults.providerOptions}
+      showProviderSettings={false}
+      workspacePath={workspacePath}
+    >
       <CanvasGenerationDisplayComposerRuntime
         {...props}
         onEnsureAcpRuntime={canvasAcpRuntime.ensureRuntime}
@@ -892,6 +945,432 @@ export function CanvasGenerationDisplayComposer(props: CanvasGenerationDisplayCo
     return <CanvasGenerationDisplayComposerWithAcp {...props} />;
   }
   return <CanvasGenerationDisplayComposerWithoutAcp {...props} />;
+}
+
+interface CanvasAcpSelectorOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+interface CanvasAcpSelectorSection {
+  key: 'provider' | 'model' | 'mode' | 'thinking';
+  label: string;
+  value: string | null;
+  options: readonly CanvasAcpSelectorOption[];
+  onChange: (value: string | null) => void;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+const CANVAS_ACP_PROVIDER_LABELS: Record<AcpProviderKey, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  gemini: 'Gemini CLI',
+  cursor: 'Cursor',
+  qoder: 'Qoder',
+  codebuddy: 'CodeBuddy',
+  reasonix: 'Reasonix',
+};
+
+const CANVAS_ACP_PROVIDER_ORDER = [
+  'claude',
+  'codex',
+  'opencode',
+  'gemini',
+  'cursor',
+  'qoder',
+  'codebuddy',
+  'reasonix',
+] as const satisfies readonly AcpProviderKey[];
+
+const CANVAS_ACP_PROVIDER_OPTIONS = CANVAS_ACP_PROVIDER_ORDER.map((provider) => ({
+  value: provider,
+  label: CANVAS_ACP_PROVIDER_LABELS[provider],
+}));
+
+const CANVAS_ACP_CONFIG_MENU_DESKTOP_QUERY = '(min-width: 640px)';
+
+function useCanvasAcpMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia(query);
+    const syncMatches = () => setMatches(media.matches);
+    syncMatches();
+    media.addEventListener('change', syncMatches);
+    return () => media.removeEventListener('change', syncMatches);
+  }, [query]);
+
+  return matches;
+}
+
+function canvasAcpCapabilityOptions(
+  snapshot: AcpCapabilitySnapshot | null,
+  key: 'model' | 'mode' | 'thought_level',
+): CanvasAcpSelectorOption[] {
+  return snapshot?.capabilities[key]?.options
+    ?.filter((option) => option.value)
+    .map((option) => ({
+      value: option.value,
+      label: option.label || option.value,
+      description: option.description,
+    })) ?? [];
+}
+
+function ensureCanvasAcpSelectedOption(
+  options: readonly CanvasAcpSelectorOption[],
+  selectedValue: string | null,
+): CanvasAcpSelectorOption[] {
+  if (!selectedValue || options.some((option) => option.value === selectedValue)) {
+    return [...options];
+  }
+  return [{ value: selectedValue, label: selectedValue }, ...options];
+}
+
+function syncCanvasAcpCapabilitySnapshot(
+  snapshot: AcpCapabilitySnapshot | null,
+  actions: Pick<ReturnType<typeof useAcpUiRuntimeContext>, 'syncModel' | 'syncModeId' | 'syncThoughtLevel'>,
+) {
+  if (snapshot?.capabilities.model?.currentValue) {
+    actions.syncModel(snapshot.capabilities.model.currentValue);
+  }
+  if (snapshot?.capabilities.mode?.currentValue) {
+    actions.syncModeId(snapshot.capabilities.mode.currentValue);
+  }
+  if (snapshot?.capabilities.thought_level?.currentValue) {
+    actions.syncThoughtLevel(snapshot.capabilities.thought_level.currentValue);
+  }
+}
+
+function useCanvasAcpCapabilitySnapshot(): AcpCapabilitySnapshot | null {
+  const { provider, workspacePath, syncModel, syncModeId, syncThoughtLevel } = useAcpUiRuntimeContext();
+  const threadId = useAuiState((state) => state.threadListItem.remoteId ?? state.threads.mainThreadId);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [snapshot, setSnapshot] = useState<AcpCapabilitySnapshot | null>(() => (
+    hydrateAcpCapabilityCacheFromDefaults(provider, workspacePath)
+  ));
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleCapabilityRefresh = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        provider?: string | null;
+        threadId?: string | null;
+        workspacePath?: string | null;
+      }>).detail;
+      if (detail?.provider && detail.provider !== provider) return;
+      if (detail?.threadId && detail.threadId !== threadId) return;
+      if ('workspacePath' in (detail ?? {}) && (detail?.workspacePath ?? null) !== (workspacePath ?? null)) return;
+      setRefreshToken((current) => current + 1);
+    };
+
+    window.addEventListener(ACP_CAPABILITY_REFRESH_EVENT, handleCapabilityRefresh);
+    return () => window.removeEventListener(ACP_CAPABILITY_REFRESH_EVENT, handleCapabilityRefresh);
+  }, [provider, threadId, workspacePath]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = hydrateAcpCapabilityCacheFromDefaults(provider, workspacePath);
+    setSnapshot(cached);
+    syncCanvasAcpCapabilitySnapshot(cached, { syncModel, syncModeId, syncThoughtLevel });
+
+    acpApiClient
+      .getCapabilities({ provider, threadId, workspacePath })
+      .then((body) => {
+        if (cancelled) return;
+        const nextSnapshot = body?.capabilitySnapshot ?? cached;
+        setSnapshot(nextSnapshot);
+        syncCanvasAcpCapabilitySnapshot(nextSnapshot, { syncModel, syncModeId, syncThoughtLevel });
+      })
+      .catch(() => {
+        if (!cancelled) setSnapshot(cached);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, refreshToken, syncModeId, syncModel, syncThoughtLevel, threadId, workspacePath]);
+
+  return snapshot;
+}
+
+function getCanvasAcpOptionLabel(options: readonly CanvasAcpSelectorOption[], value: string | null): string {
+  if (!options.length) return '';
+  return options.find((option) => option.value === value)?.label || options[0].label;
+}
+
+function getCanvasAcpSelectedLabel(section: CanvasAcpSelectorSection): string {
+  const selectedValue = section.value || section.options[0]?.value || null;
+  return section.options.find((option) => option.value === selectedValue)?.label || selectedValue || '';
+}
+
+function CanvasAcpComposerSelectors() {
+  const context = useAcpUiRuntimeContext();
+  const snapshot = useCanvasAcpCapabilitySnapshot();
+  const contextProviderOptions = (context as { providerOptions?: readonly AcpProviderKey[] | null }).providerOptions;
+  const runtimeProviderOptions = resolveCanvasAcpRuntimeProviderOptions(contextProviderOptions, context.provider);
+  const providerOptions = useMemo(() => (
+    CANVAS_ACP_PROVIDER_OPTIONS.filter((option) => runtimeProviderOptions.includes(option.value))
+  ), [runtimeProviderOptions]);
+  const modelOptions = useMemo(() => ensureCanvasAcpSelectedOption(
+    canvasAcpCapabilityOptions(snapshot, 'model'),
+    context.model,
+  ), [context.model, snapshot]);
+  const modeOptions = useMemo(() => ensureCanvasAcpSelectedOption(
+    canvasAcpCapabilityOptions(snapshot, 'mode'),
+    context.modeId,
+  ), [context.modeId, snapshot]);
+  const thoughtOptions = useMemo(() => ensureCanvasAcpSelectedOption(
+    canvasAcpCapabilityOptions(snapshot, 'thought_level'),
+    context.thoughtLevel,
+  ), [context.thoughtLevel, snapshot]);
+  const sections = useMemo<CanvasAcpSelectorSection[]>(() => [
+    {
+      key: 'provider',
+      label: '供应商',
+      value: context.provider,
+      options: providerOptions,
+      onChange: context.setProvider,
+      icon: Network,
+    },
+    {
+      key: 'model',
+      label: '模型',
+      value: context.model,
+      options: modelOptions,
+      onChange: context.setModel,
+      icon: SlidersHorizontal,
+    },
+    {
+      key: 'mode',
+      label: '模式',
+      value: context.modeId,
+      options: modeOptions,
+      onChange: context.setModeId,
+      icon: SlidersHorizontal,
+    },
+    {
+      key: 'thinking',
+      label: '思考深度',
+      value: context.thoughtLevel,
+      options: thoughtOptions,
+      onChange: context.setThoughtLevel,
+      icon: Gauge,
+    },
+  ], [
+    context.modeId,
+    context.model,
+    context.provider,
+    context.setModeId,
+    context.setModel,
+    context.setProvider,
+    context.setThoughtLevel,
+    context.thoughtLevel,
+    modeOptions,
+    modelOptions,
+    providerOptions,
+    thoughtOptions,
+  ]);
+
+  return <CanvasAcpConfigMenu sections={sections} />;
+}
+
+function CanvasAcpConfigMenu({ sections }: { sections: readonly CanvasAcpSelectorSection[] }) {
+  const [open, setOpen] = useState(false);
+  const isDesktopLayout = useCanvasAcpMediaQuery(CANVAS_ACP_CONFIG_MENU_DESKTOP_QUERY);
+  const visibleSections = useMemo(() => sections.filter((section) => section.options.length > 0), [sections]);
+  const [desktopActiveKey, setDesktopActiveKey] = useState<CanvasAcpSelectorSection['key'] | null>(visibleSections[0]?.key ?? null);
+  const [mobileExpandedKey, setMobileExpandedKey] = useState<CanvasAcpSelectorSection['key'] | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const providerSection = visibleSections.find((section) => section.key === 'provider');
+  const modelSection = visibleSections.find((section) => section.key === 'model');
+  const desktopActiveSection = visibleSections.find((section) => section.key === desktopActiveKey) ?? visibleSections[0];
+  const providerLabel = providerSection ? getCanvasAcpSelectedLabel(providerSection) : '配置';
+  const modelLabel = modelSection
+    ? getCanvasAcpOptionLabel(modelSection.options, modelSection.value || modelSection.options[0]?.value || null)
+    : '';
+
+  useEffect(() => {
+    const nextActiveKey = visibleSections.some((section) => section.key === desktopActiveKey)
+      ? desktopActiveKey
+      : visibleSections[0]?.key ?? null;
+    if (nextActiveKey !== desktopActiveKey) {
+      setDesktopActiveKey(nextActiveKey);
+    }
+    if (mobileExpandedKey && !visibleSections.some((section) => section.key === mobileExpandedKey)) {
+      setMobileExpandedKey(null);
+    }
+  }, [desktopActiveKey, mobileExpandedKey, visibleSections]);
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return;
+    const closeMenu = () => {
+      setOpen(false);
+      setMobileExpandedKey(null);
+    };
+    const isInside = (target: EventTarget | null) => target instanceof Node && Boolean(rootRef.current?.contains(target));
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!isInside(event.target)) closeMenu();
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!isInside(event.target)) closeMenu();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('focusin', handleFocusIn);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('focusin', handleFocusIn);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  if (!visibleSections.length) return null;
+
+  const handleTriggerClick = () => {
+    const nextOpen = !open;
+    setOpen(nextOpen);
+    setDesktopActiveKey((current) => current ?? visibleSections[0]?.key ?? null);
+    if (!nextOpen) {
+      setMobileExpandedKey(null);
+    }
+  };
+  const handleSectionClick = (sectionKey: CanvasAcpSelectorSection['key']) => {
+    if (isDesktopLayout) {
+      setDesktopActiveKey(sectionKey);
+      return;
+    }
+    setMobileExpandedKey((current) => (current === sectionKey ? null : sectionKey));
+  };
+
+  return (
+    <div ref={rootRef} className="relative px-0.5">
+      <button
+        type="button"
+        className="inline-flex h-8 max-w-56 items-center gap-1 rounded-md px-2 text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        data-axhub-acp-config-trigger
+        onClick={handleTriggerClick}
+      >
+        <Settings2 className="size-3.5 shrink-0" />
+        <span className="truncate">{modelLabel ? `${providerLabel} · ${modelLabel}` : providerLabel}</span>
+        <ChevronDown className="size-3 shrink-0" />
+      </button>
+      {open ? (
+        <div
+          className="absolute bottom-full left-0 z-50 mb-2 w-[min(20rem,calc(100vw-2rem))] rounded-md border bg-popover p-1 text-popover-foreground shadow-md max-sm:w-[calc(100vw-5rem)]"
+          role="menu"
+          data-axhub-acp-config-root-menu
+        >
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">配置</div>
+          <div className="relative">
+            {visibleSections.map((section) => {
+              const Icon = section.icon;
+              const selectedValue = section.value || section.options[0]?.value || null;
+              const selectedLabel = getCanvasAcpOptionLabel(section.options, selectedValue);
+              const isDesktopActive = section.key === desktopActiveSection?.key;
+              const isMobileExpanded = section.key === mobileExpandedKey;
+              return (
+                <div key={section.key}>
+                  <button
+                    type="button"
+                    className={cn(
+                      'flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:outline-none',
+                      isDesktopActive && 'sm:bg-accent/70 sm:text-accent-foreground',
+                      isMobileExpanded && 'max-sm:bg-accent/70 max-sm:text-accent-foreground',
+                    )}
+                    aria-haspopup="menu"
+                    aria-expanded={isDesktopLayout ? isDesktopActive : isMobileExpanded}
+                    data-axhub-acp-config-section={section.key}
+                    onPointerEnter={(event) => {
+                      if (event.pointerType === 'mouse') {
+                        setDesktopActiveKey(section.key);
+                      }
+                    }}
+                    onFocus={() => {
+                      if (isDesktopLayout) setDesktopActiveKey(section.key);
+                    }}
+                    onClick={() => handleSectionClick(section.key)}
+                  >
+                    <Icon className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{section.label}</span>
+                      <span className="block truncate text-muted-foreground text-xs">{getCanvasAcpSelectedLabel(section) || selectedLabel || '默认'}</span>
+                    </span>
+                    <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground sm:block" />
+                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground sm:hidden" />
+                  </button>
+                  {isMobileExpanded ? (
+                    <CanvasAcpConfigSubmenu section={section} variant="mobile" />
+                  ) : null}
+                </div>
+              );
+            })}
+            {desktopActiveSection ? (
+              <CanvasAcpConfigSubmenu section={desktopActiveSection} variant="desktop" />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CanvasAcpConfigSubmenu({
+  section,
+  variant,
+}: {
+  section: CanvasAcpSelectorSection;
+  variant: 'desktop' | 'mobile';
+}) {
+  const selectedValue = section.value || section.options[0]?.value || null;
+  return (
+    <div
+      className={cn(
+        'overflow-y-auto rounded-md bg-popover p-1 text-popover-foreground',
+        variant === 'desktop'
+          ? 'absolute bottom-0 left-[calc(100%+0.5rem)] hidden max-h-80 w-[min(22rem,calc(100vw-2rem))] border shadow-md sm:block'
+          : 'mt-1 max-h-56 w-full border-x-0 border-b-0 border-t sm:hidden',
+      )}
+      role="menu"
+      data-axhub-acp-config-submenu={variant}
+    >
+      {variant === 'desktop' ? (
+        <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">{section.label}</div>
+      ) : null}
+      {section.options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className={cn(
+            'flex min-h-10 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:outline-none',
+            option.value === selectedValue && 'bg-accent/60',
+          )}
+          role="menuitemradio"
+          aria-checked={option.value === selectedValue}
+          data-axhub-acp-config-option={option.value}
+          onClick={() => {
+            section.onChange(option.value);
+          }}
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{option.label}</span>
+            {option.description ? (
+              <span className="block truncate text-muted-foreground text-xs">{option.description}</span>
+            ) : null}
+          </span>
+          {option.value === selectedValue ? <Check className="size-4 shrink-0" /> : null}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function CanvasAcpModelSelectorFallback({
@@ -1070,60 +1549,62 @@ function CanvasGenerationRuntimeComposerContent({
   }, [aui]);
 
   return (
-    <div className={cn('ax-acp-ui-scope', rootClassName)}>
-      <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
-        <ComposerPrimitive.AttachmentDropzone asChild>
-          <div
-            data-slot="aui_composer-shell"
-            className="flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-background p-(--composer-padding) transition-shadow focus-within:border-ring/75 focus-within:ring-2 focus-within:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50"
-          >
-            <ComposerPrimitive.Unstable_TriggerPopoverRoot>
-              {allowAttachments ? <ComposerAttachments /> : null}
-              <ComposerPrimitive.Input
-                placeholder={placeholder}
-                className="aui-composer-input max-h-32 min-h-10 w-full resize-none bg-transparent px-1.75 py-1 text-[13px] outline-none placeholder:text-muted-foreground/80 md:text-sm"
-                rows={1}
-                autoFocus
-                aria-label={ariaLabel}
-                cancelOnEscape={false}
-                onKeyDown={handleComposerKeyDown}
-                onPaste={handleComposerPaste}
-              />
-              {renderTriggerPopovers?.()}
-            </ComposerPrimitive.Unstable_TriggerPopoverRoot>
-            <div className="aui-composer-action-wrapper relative flex items-center justify-between text-[13px] md:text-sm">
-              <div className="flex min-w-0 items-center gap-1">
-                {allowAttachments ? <CanvasComposerAddAttachmentButton label={addAttachmentTooltip} /> : null}
-                {shouldRenderInlineSelectors ? <AcpComposerSelectors /> : null}
-                {showModelSelectorFallback ? (
-                  <CanvasAcpModelSelectorFallback onEnsureAcpRuntime={onEnsureAcpRuntime} onOpenAISettings={onOpenAISettings} />
-                ) : null}
-                {showSelectors && postSelectorActions ? <AcpComposerSelectors /> : null}
-                {postSelectorActions}
-                <CanvasGenerationDisplayQuickPromptsButton
-                  disabled={submitting}
-                  quickPrompts={quickPrompts}
-                  onSelect={handleQuickPromptSelect}
+    <TooltipProvider>
+      <div className={cn('ax-acp-ui-scope', rootClassName)}>
+        <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
+          <ComposerPrimitive.AttachmentDropzone asChild>
+            <div
+              data-slot="aui_composer-shell"
+              className="flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-background p-(--composer-padding) transition-shadow focus-within:border-ring/75 focus-within:ring-2 focus-within:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50"
+            >
+              <ComposerPrimitive.Unstable_TriggerPopoverRoot>
+                {allowAttachments ? <ComposerAttachments /> : null}
+                <ComposerPrimitive.Input
+                  placeholder={placeholder}
+                  className="aui-composer-input max-h-32 min-h-10 w-full resize-none bg-transparent px-1.75 py-1 text-[13px] outline-none placeholder:text-muted-foreground/80 md:text-sm"
+                  rows={1}
+                  autoFocus
+                  aria-label={ariaLabel}
+                  cancelOnEscape={false}
+                  onKeyDown={handleComposerKeyDown}
+                  onPaste={handleComposerPaste}
                 />
-                {renderLeadingActions ? (
-                  <div className={footerLeadingActionsClassName}>
-                    {renderLeadingActions?.({ submitting })}
-                  </div>
-                ) : null}
-              </div>
-              <div className="flex items-center gap-1">
-                {renderActions ? (
-                  <div className={footerActionsClassName}>
-                    {renderActions?.({ submitting })}
-                  </div>
-                ) : null}
-                <CanvasComposerSubmitButton label={sendTooltip} />
+                {renderTriggerPopovers?.()}
+              </ComposerPrimitive.Unstable_TriggerPopoverRoot>
+              <div className="aui-composer-action-wrapper relative flex items-center justify-between text-[13px] md:text-sm">
+                <div className="flex min-w-0 items-center gap-1">
+                  {allowAttachments ? <CanvasComposerAddAttachmentButton label={addAttachmentTooltip} /> : null}
+                  {shouldRenderInlineSelectors ? <CanvasAcpComposerSelectors /> : null}
+                  {showModelSelectorFallback ? (
+                    <CanvasAcpModelSelectorFallback onEnsureAcpRuntime={onEnsureAcpRuntime} onOpenAISettings={onOpenAISettings} />
+                  ) : null}
+                  {showSelectors && postSelectorActions ? <CanvasAcpComposerSelectors /> : null}
+                  {postSelectorActions}
+                  <CanvasGenerationDisplayQuickPromptsButton
+                    disabled={submitting}
+                    quickPrompts={quickPrompts}
+                    onSelect={handleQuickPromptSelect}
+                  />
+                  {renderLeadingActions ? (
+                    <div className={footerLeadingActionsClassName}>
+                      {renderLeadingActions?.({ submitting })}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-1">
+                  {renderActions ? (
+                    <div className={footerActionsClassName}>
+                      {renderActions?.({ submitting })}
+                    </div>
+                  ) : null}
+                  <CanvasComposerSubmitButton label={sendTooltip} />
+                </div>
               </div>
             </div>
-          </div>
-        </ComposerPrimitive.AttachmentDropzone>
-      </ComposerPrimitive.Root>
-    </div>
+          </ComposerPrimitive.AttachmentDropzone>
+        </ComposerPrimitive.Root>
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -1183,13 +1664,28 @@ function CanvasGenerationRuntimeComposerWithAcp(
   {
     workspacePath,
     showSelectors,
+    preferredPromptClient,
     ...props
   }: CanvasGenerationRuntimeComposerProps & Pick<CanvasGenerationComposerProps, 'onSubmitPrompt' | 'workspacePath'>,
 ) {
   const canvasAcpRuntime = useCanvasAcpRuntimeBridge({ enabled: showSelectors, workspacePath });
+  const acpSelectorDefaults = useMemo(() => resolveCanvasAcpSelectorDefaults(preferredPromptClient), [preferredPromptClient]);
+  const acpRuntimeKey = useMemo(() => [
+    acpSelectorDefaults.defaultProvider,
+    acpSelectorDefaults.defaultModel ?? 'default-model',
+    acpSelectorDefaults.providerOptions.join(','),
+    workspacePath ?? 'global',
+  ].join('|'), [acpSelectorDefaults, workspacePath]);
 
   return (
-    <AcpUiProvider defaultProvider="codex" workspacePath={workspacePath}>
+    <AcpUiProvider
+      key={acpRuntimeKey}
+      defaultProvider={acpSelectorDefaults.defaultProvider}
+      defaultModel={acpSelectorDefaults.defaultModel}
+      providerOptions={acpSelectorDefaults.providerOptions}
+      showProviderSettings={false}
+      workspacePath={workspacePath}
+    >
       <CanvasGenerationRuntimeComposer
         {...props}
         onEnsureAcpRuntime={canvasAcpRuntime.ensureRuntime}
@@ -1218,6 +1714,7 @@ export default function CanvasGenerationComposer({
   placement,
   placementMode = 'absolute',
   placeholder,
+  preferredPromptClient,
   quickPrompts,
   renderActions,
   renderLeadingActions,
@@ -1275,6 +1772,7 @@ export default function CanvasGenerationComposer({
         onPasteReferenceImages={onPasteReferenceImages}
         onSubmitPrompt={onSubmitPrompt}
         placeholder={placeholder}
+        preferredPromptClient={preferredPromptClient}
         quickPrompts={quickPrompts}
         renderActions={renderActions}
         renderLeadingActions={renderLeadingActions}

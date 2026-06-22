@@ -19,4 +19,17 @@ describe('dev template editor bridge launch options', () => {
     expect(enableSource).toContain('readPrototypeEditorBridgeCommentPageScope');
     expect(enableSource).toContain("editorModeManager?.api.enable('webEditorV2'");
   });
+
+  it('accepts node editing state updates over the parent bridge', () => {
+    const source = readFileSync(resolve(__dirname, './index.tsx'), 'utf8');
+
+    expect(source).toContain("event.data.type === 'AXHUB_PROTOTYPE_EDITOR_NODE_EDITING_STATE'");
+    expect(source).toContain("if (!editorModeManager?.api.setNodeEditingState) {");
+    expect(source).toContain("throw new Error('NOT_IMPLEMENTED: External editing state control is unavailable');");
+    expect(source).toContain('await Promise.resolve(editorModeManager.api.setNodeEditingState(');
+    expect(source).toContain('event.data.elementKey');
+    expect(source).toContain('event.data.nextState');
+    expect(source).toContain('event.data.taskRef ?? null');
+    expect(source).toContain('event.data.targetRef ?? null');
+  });
 });

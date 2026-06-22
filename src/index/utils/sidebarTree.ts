@@ -64,11 +64,15 @@ function resolveItemTitle(tab: SidebarTreeTab, item: ItemData, persistedTitle?: 
     const itemKey = `${tab}/${item.name}`;
     const defaultTitleCandidates = new Set([
         item.name,
+        stripFinalPathExtension(item.name),
         item.name.split('/').pop() || item.name,
         itemKey,
+        stripFinalPathExtension(itemKey),
         itemKey.split('/').pop() || itemKey,
         toGeneratedTitle(item.name),
+        toGeneratedTitle(stripFinalPathExtension(item.name)),
         toGeneratedTitle(itemKey),
+        toGeneratedTitle(stripFinalPathExtension(itemKey)),
     ]);
 
     if (defaultTitleCandidates.has(title)) {

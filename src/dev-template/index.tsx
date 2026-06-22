@@ -97,10 +97,6 @@ const ReactDOMFull = {
 // 导出 React 和 ReactDOM 供其他模块使用
 export { React, ReactDOMFull as ReactDOM };
 
-const SCREENSHOT_IMAGE_PROXY_PATH = '/api/export/image-proxy';
-const SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"></svg>',
-)}`;
 const EMBED_SCROLLBAR_HIDING_STYLE_ID = 'axhub-embed-hide-scrollbars';
 const EMBED_SCROLLBAR_HIDING_CSS = `
 html,
@@ -144,124 +140,6 @@ function ensureEmbedScrollbarHidingStyle() {
   style.id = EMBED_SCROLLBAR_HIDING_STYLE_ID;
   style.textContent = EMBED_SCROLLBAR_HIDING_CSS;
   document.head.appendChild(style);
-}
-
-function buildScreenshotProxyUrl(rawUrl: string): string | null {
-  if (typeof window === 'undefined' || !window.location?.origin) {
-    return null;
-  }
-
-  try {
-    const absoluteUrl = new URL(rawUrl, document.baseURI).href;
-    const parsedUrl = new URL(absoluteUrl);
-    if (parsedUrl.origin === window.location.origin) {
-      return null;
-    }
-    return `${window.location.origin}${SCREENSHOT_IMAGE_PROXY_PATH}?url=${encodeURIComponent(absoluteUrl)}`;
-  } catch {
-    return null;
-  }
-}
-
-function extractBackgroundUrls(backgroundImage: string): string[] {
-  const result: string[] = [];
-  if (!backgroundImage || backgroundImage === 'none') {
-    return result;
-  }
-
-  const regex = /url\((['"]?)(.*?)\1\)/g;
-  let match: RegExpExecArray | null = null;
-  while ((match = regex.exec(backgroundImage)) !== null) {
-    const url = String(match[2] || '').trim();
-    if (url) {
-      result.push(url);
-    }
-  }
-  return result;
-}
-
-function rewriteElementImageUrlsForScreenshot(rootElement: HTMLElement): () => void {
-  const restorers: Array<() => void> = [];
-  const elements = [rootElement, ...Array.from(rootElement.querySelectorAll('*'))];
-
-  elements.forEach((node) => {
-    if (node instanceof HTMLImageElement) {
-      const originalSrc = node.getAttribute('src');
-      const proxySrc = originalSrc ? buildScreenshotProxyUrl(originalSrc) : null;
-      if (!originalSrc || !proxySrc) {
-        return;
-      }
-
-      const originalSrcset = node.getAttribute('srcset');
-      const originalSizes = node.getAttribute('sizes');
-      node.setAttribute('src', proxySrc);
-      node.removeAttribute('srcset');
-      node.removeAttribute('sizes');
-
-      restorers.push(() => {
-        node.setAttribute('src', originalSrc);
-        if (originalSrcset !== null) {
-          node.setAttribute('srcset', originalSrcset);
-        } else {
-          node.removeAttribute('srcset');
-        }
-        if (originalSizes !== null) {
-          node.setAttribute('sizes', originalSizes);
-        } else {
-          node.removeAttribute('sizes');
-        }
-      });
-      return;
-    }
-
-    if (!(node instanceof HTMLElement)) {
-      return;
-    }
-
-    const inlineBackgroundImage = node.style.backgroundImage;
-    const computedBackgroundImage = window.getComputedStyle(node).backgroundImage;
-    const sourceBackgroundImage = inlineBackgroundImage || computedBackgroundImage;
-    const backgroundUrls = extractBackgroundUrls(sourceBackgroundImage);
-    if (backgroundUrls.length === 0) {
-      return;
-    }
-
-    let nextBackgroundImage = sourceBackgroundImage;
-    let changed = false;
-    backgroundUrls.forEach((backgroundUrl) => {
-      const proxyUrl = buildScreenshotProxyUrl(backgroundUrl);
-      if (!proxyUrl) {
-        return;
-      }
-
-      const replacement = `url("${proxyUrl}")`;
-      nextBackgroundImage = nextBackgroundImage
-        .replace(`url(${backgroundUrl})`, replacement)
-        .replace(`url('${backgroundUrl}')`, replacement)
-        .replace(`url(\"${backgroundUrl}\")`, replacement);
-      changed = true;
-    });
-
-    if (!changed || nextBackgroundImage === sourceBackgroundImage) {
-      return;
-    }
-
-    const previousInlineValue = node.style.backgroundImage;
-    node.style.setProperty('background-image', nextBackgroundImage, 'important');
-    restorers.push(() => {
-      if (previousInlineValue) {
-        node.style.backgroundImage = previousInlineValue;
-      } else {
-        node.style.removeProperty('background-image');
-      }
-    });
-  });
-
-  return () => {
-    for (let i = restorers.length - 1; i >= 0; i -= 1) {
-      restorers[i]();
-    }
-  };
 }
 
 function postPrototypeEditorState(payload: {
@@ -310,22 +188,6 @@ function ensurePrototypeEditorHostToolbarBridge() {
 function teardownPrototypeEditorHostToolbarBridge() {
   prototypeEditorHostToolbarUnsubscribe?.();
   prototypeEditorHostToolbarUnsubscribe = null;
-}
-
-function normalizeScreenshotTargetSize(value: unknown): number | undefined {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return undefined;
-  }
-  return Math.max(1, Math.round(numeric));
-}
-
-function normalizeScreenshotPixelRatio(value: unknown): number {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return 2;
-  }
-  return Math.max(1, Math.min(2, numeric));
 }
 
 type ScreenshotViewportSize = {
@@ -396,56 +258,6 @@ function readPrototypeEditorBridgeCommentPageScope(data: any): string | undefine
     ? data.context.commentPageScope.trim()
     : '';
   return contextScope || undefined;
-}
-
-function waitForScreenshotFrame(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(() => resolve());
-      return;
-    }
-    window.setTimeout(resolve, 16);
-  });
-}
-
-async function settleScreenshotLayout(): Promise<void> {
-  window.dispatchEvent(new Event('resize'));
-  await waitForScreenshotFrame();
-  await waitForScreenshotFrame();
-  await new Promise(resolve => setTimeout(resolve, 80));
-}
-
-async function captureRootWithSnapdom(
-  rootElement: HTMLElement,
-  width: number,
-  height: number,
-  pixelRatio: number,
-): Promise<string> {
-  const { snapdom } = await import('@zumer/snapdom');
-  const image = await snapdom.toPng(rootElement, {
-    width,
-    height,
-    dpr: pixelRatio,
-    backgroundColor: '#fff',
-    embedFonts: true,
-    fallbackURL: SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL,
-    cache: 'soft',
-  });
-
-  const dataUrl = image.src || image.getAttribute('src') || '';
-  if (!dataUrl) {
-    throw new Error('snapdom returned an empty screenshot');
-  }
-  return dataUrl;
-}
-
-async function captureRootScreenshot(
-  rootElement: HTMLElement,
-  width: number,
-  height: number,
-  pixelRatio = 2,
-): Promise<string> {
-  return captureRootWithSnapdom(rootElement, width, height, pixelRatio);
 }
 
 // 挂载到全局，供 HTML 直接使用
@@ -663,6 +475,31 @@ if (typeof window !== 'undefined') {
       }
     }
 
+    if (event.data && event.data.type === 'AXHUB_PROTOTYPE_EDITOR_NODE_EDITING_STATE') {
+      try {
+        if (!editorModeManager?.api.setNodeEditingState) {
+          throw new Error('NOT_IMPLEMENTED: External editing state control is unavailable');
+        }
+        await Promise.resolve(editorModeManager.api.setNodeEditingState(
+          String(event.data.elementKey || ''),
+          event.data.nextState,
+          event.data.taskRef ?? null,
+          event.data.targetRef ?? null,
+        ));
+        postPrototypeEditorState({
+          requestId: event.data.requestId,
+          success: true,
+          handled: true,
+        });
+      } catch (error) {
+        postPrototypeEditorState({
+          requestId: event.data.requestId,
+          success: false,
+          error: String(error),
+        });
+      }
+    }
+
     // Delayed state sync: parent sends this after enterPrototypeEditor to catch
     // async host editor connection state changes that happened after init.
     if (event.data && event.data.type === 'AXHUB_PROTOTYPE_EDITOR_QUERY_STATE') {
@@ -670,104 +507,6 @@ if (typeof window !== 'undefined') {
         requestId: event.data.requestId,
         success: true,
       });
-    }
-
-    if (event.data && event.data.type === 'CAPTURE_SCREENSHOT') {
-      console.log('[Dev Template] 收到截图请求', event.data);
-      const screenshotRequestId = typeof event.data.requestId === 'string' ? event.data.requestId : undefined;
-      ensureEmbedScrollbarHidingStyle();
-
-      // 临时禁用错误捕获，避免截图引擎的跨域资源错误干扰
-      const errorSystem = (window as any).__ERROR_SYSTEM__;
-      const wasEnabled = errorSystem?.isErrorCaptureEnabled?.() ?? true;
-      if (errorSystem?.setErrorCaptureEnabled) {
-        errorSystem.setErrorCaptureEnabled(false);
-      }
-
-      try {
-        const rootElement = document.getElementById('root');
-
-        if (rootElement) {
-          const originalMarginLeft = rootElement.style.marginLeft;
-          const originalMarginRight = rootElement.style.marginRight;
-          let originalViewportSize: ScreenshotViewportSize | null = null;
-
-          try {
-            // 临时移除居中样式，避免截图时包含留白
-            rootElement.style.marginLeft = '0';
-            rootElement.style.marginRight = '0';
-
-            // 如果传入目标尺寸，支持独立设置宽/高
-            const targetWidth = normalizeScreenshotTargetSize(event.data.targetWidth);
-            const targetHeight = normalizeScreenshotTargetSize(event.data.targetHeight);
-            const targetPixelRatio = normalizeScreenshotPixelRatio(event.data.targetPixelRatio);
-            if (targetWidth) {
-              originalViewportSize = setScreenshotViewportSize(rootElement, targetWidth, targetHeight);
-            } else if (targetHeight) {
-              originalViewportSize = setScreenshotViewportSize(rootElement, undefined, targetHeight);
-            }
-            if (originalViewportSize) {
-              await settleScreenshotLayout();
-            }
-
-            const restoreImageUrls = rewriteElementImageUrlsForScreenshot(rootElement);
-
-            const captureWidth = targetWidth ?? rootElement.scrollWidth;
-            const captureHeight = targetHeight ?? rootElement.scrollHeight;
-
-            let dataUrl = '';
-            try {
-              await new Promise(resolve => setTimeout(resolve, 80));
-              dataUrl = await captureRootScreenshot(rootElement, captureWidth, captureHeight, targetPixelRatio);
-            } finally {
-              restoreImageUrls();
-            }
-
-            // 发回截图结果
-            window.parent.postMessage({
-              type: 'SCREENSHOT_CAPTURED',
-              requestId: screenshotRequestId,
-              dataUrl: dataUrl,
-              width: captureWidth,
-              height: captureHeight
-            }, '*');
-            console.log('[Dev Template] 截图成功并发送');
-          } finally {
-            rootElement.style.marginLeft = originalMarginLeft;
-            rootElement.style.marginRight = originalMarginRight;
-            if (originalViewportSize) {
-              restoreScreenshotViewportSize(rootElement, originalViewportSize);
-            }
-          }
-        } else {
-          throw new Error('Missing #root element for screenshot capture');
-        }
-      } catch (error) {
-        console.error('[Dev Template] 截图失败:', error);
-        window.parent.postMessage({
-          type: 'SCREENSHOT_FAILED',
-          requestId: screenshotRequestId,
-          error: String(error)
-        }, '*');
-      } finally {
-        // 恢复错误捕获状态
-        if (errorSystem?.setErrorCaptureEnabled && wasEnabled) {
-          errorSystem.setErrorCaptureEnabled(true);
-        }
-      }
-    }
-
-    if (event.data && event.data.type === 'RESET_SCREENSHOT_STYLES') {
-      console.log('[Dev Template] 收到还原样式请求');
-      const rootElement = document.getElementById('root');
-      if (rootElement) {
-        // 清除截图时设置的内联样式
-        rootElement.style.width = '';
-        rootElement.style.height = '';
-        rootElement.style.marginLeft = '';
-        rootElement.style.marginRight = '';
-        console.log('[Dev Template] 样式已还原');
-      }
     }
 
     if (event.data && event.data.type === 'WEB_EDITOR_SET_ROOT_SIZE') {

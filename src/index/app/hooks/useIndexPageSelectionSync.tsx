@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { STORAGE_KEY_ACTIVE_TAB } from '../../constants';
 import type { DataType, ItemData, SidebarTreeNode, TabType, ViewMode } from '../../types';
+import type { TemplateResourceItem } from '../../domains/resources/resource.types';
 import type { ResourceSection, SelectedResourceFolder, SidebarTab, ThemeResourceItem } from '../../types/index-page.types';
 import { isBrowsingResourceSidebarInPrototypeCanvas } from '../index-page/contentMode';
 import {
@@ -9,6 +10,7 @@ import {
     resolveResourceDeepLinkSelection,
     type ResourceDeepLinkTarget,
 } from '../index-page/resourceDeepLink';
+import { normalizeTemplateItem } from '../index-page.helpers';
 
 export interface PendingReturnTarget {
     sidebarTab: SidebarTab;
@@ -42,6 +44,7 @@ interface ResolvePrototypeAutoSelectionDecisionParams {
     items: ItemData[];
     lastCanvasItem: ItemData | null;
     pendingReturnTarget?: PendingReturnTarget | null;
+    prototypeStartDraftActive?: boolean;
     selectedItem: ItemData | null;
     sidebarTab: SidebarTab;
     sidebarTrees: Record<'prototypes' | 'docs' | 'canvas', SidebarTreeNode[]>;
@@ -77,11 +80,20 @@ export function resolvePrototypeAutoSelectionDecision({
     items,
     lastCanvasItem,
     pendingReturnTarget = null,
+    prototypeStartDraftActive = false,
     selectedItem,
     sidebarTab,
     sidebarTrees,
     viewMode,
 }: ResolvePrototypeAutoSelectionDecisionParams): PrototypeAutoSelectionDecision {
+    if (prototypeStartDraftActive && sidebarTab === 'prototype' && viewMode === 'demo') {
+        return {
+            kind: 'keep',
+            markExplicitSelection: false,
+            nextCanvasItem: lastCanvasItem,
+        };
+    }
+
     if (items.length === 0) {
         return {
             kind: 'clear',
@@ -229,6 +241,7 @@ interface UseIndexPageSelectionSyncParams {
     loading: boolean;
     data: DataType;
     docsItems: ItemData[];
+    templateAssets: TemplateResourceItem[];
     themes: ThemeResourceItem[];
     sidebarAssetsLoaded: boolean;
     searchText: string;
@@ -240,6 +253,7 @@ interface UseIndexPageSelectionSyncParams {
     setSelectedPrototypePageId: Dispatch<SetStateAction<string | null>>;
     setSelectedDoc: Dispatch<SetStateAction<ItemData | null>>;
     setSelectedResourceFolder?: Dispatch<SetStateAction<SelectedResourceFolder | null>>;
+    setSelectedTemplate: Dispatch<SetStateAction<ItemData | null>>;
     setSelectedTheme: Dispatch<SetStateAction<ThemeResourceItem | null>>;
     sidebarTrees: Record<'prototypes' | 'docs' | 'canvas', SidebarTreeNode[]>;
     sidebarTab: SidebarTab;
@@ -250,6 +264,7 @@ interface UseIndexPageSelectionSyncParams {
     setViewMode: Dispatch<SetStateAction<ViewMode>>;
     pendingReturnTarget: PendingReturnTarget | null;
     setPendingReturnTarget: Dispatch<SetStateAction<PendingReturnTarget | null>>;
+    prototypeStartDraftActive?: boolean;
     initialResourceDeepLink?: ResourceDeepLinkTarget | null;
     onInitialResourceDeepLinkHandled?: () => void;
     setCollapsed?: (collapsed: boolean) => void;
@@ -261,6 +276,7 @@ export function useIndexPageSelectionSync({
     loading,
     data,
     docsItems,
+    templateAssets,
     themes,
     sidebarAssetsLoaded,
     searchText,
@@ -272,6 +288,7 @@ export function useIndexPageSelectionSync({
     setSelectedPrototypePageId,
     setSelectedDoc,
     setSelectedResourceFolder,
+    setSelectedTemplate,
     setSelectedTheme,
     sidebarTrees,
     sidebarTab,
@@ -282,6 +299,7 @@ export function useIndexPageSelectionSync({
     setViewMode,
     pendingReturnTarget,
     setPendingReturnTarget,
+    prototypeStartDraftActive = false,
     initialResourceDeepLink = null,
     onInitialResourceDeepLinkHandled,
     setCollapsed,
@@ -330,12 +348,22 @@ export function useIndexPageSelectionSync({
             markInitialResourceDeepLinkHandled();
         }
 
+        if (prototypeStartDraftActive && sidebarTab === 'prototype' && viewMode === 'demo') {
+            hasExplicitSelectionRef.current = false;
+            if (selectedItem !== null) {
+                setSelectedItem(null);
+            }
+            setSelectedPrototypePageId(null);
+            return;
+        }
+
         const decision = resolvePrototypeAutoSelectionDecision({
             activeTab,
             hasExplicitSelection: hasExplicitSelectionRef.current,
             items,
             lastCanvasItem: lastPrototypeCanvasItemRef.current,
             pendingReturnTarget,
+            prototypeStartDraftActive,
             selectedItem,
             sidebarTab,
             sidebarTrees,
@@ -398,6 +426,7 @@ export function useIndexPageSelectionSync({
         markInitialResourceDeepLinkHandled,
         onInitialResourceDeepLinkHandled,
         pendingReturnTarget,
+        prototypeStartDraftActive,
         selectedItem,
         setCollapsed,
         setPendingReturnTarget,
@@ -414,7 +443,14 @@ export function useIndexPageSelectionSync({
         if (loading) {
             return;
         }
-        if ((initialResourceDeepLink?.resourceType === 'doc' || initialResourceDeepLink?.resourceType === 'theme') && !sidebarAssetsLoaded) {
+        if (
+            (
+                initialResourceDeepLink?.resourceType === 'doc'
+                || initialResourceDeepLink?.resourceType === 'template'
+                || initialResourceDeepLink?.resourceType === 'theme'
+            )
+            && !sidebarAssetsLoaded
+        ) {
             return;
         }
         if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'doc') {
@@ -435,10 +471,32 @@ export function useIndexPageSelectionSync({
             }
             markInitialResourceDeepLinkHandled();
         }
+        if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'template') {
+            const resolvedDeepLink = resolveIndexDeepLinkSelection(initialResourceDeepLink, {
+                prototypes: data.prototypes,
+                docs: docsItems,
+                templates: templateAssets.map((template) => normalizeTemplateItem(template)),
+                themes,
+            });
+            if (resolvedDeepLink?.kind === 'template') {
+                markInitialResourceDeepLinkHandled();
+                setSidebarTab(resolvedDeepLink.sidebarTab);
+                setResourceSection(resolvedDeepLink.resourceSection);
+                setSelectedResourceFolder?.(null);
+                setSelectedTemplate(resolvedDeepLink.item);
+                setViewMode('demo');
+                if (resolvedDeepLink.collapseSidebar) {
+                    setCollapsed?.(true);
+                }
+                return;
+            }
+            markInitialResourceDeepLinkHandled();
+        }
         if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'theme') {
             const resolvedDeepLink = resolveIndexDeepLinkSelection(initialResourceDeepLink, {
                 prototypes: data.prototypes,
                 docs: docsItems,
+                templates: templateAssets.map((template) => normalizeTemplateItem(template)),
                 themes,
             });
             if (resolvedDeepLink?.kind === 'theme') {
@@ -481,10 +539,12 @@ export function useIndexPageSelectionSync({
         setPendingReturnTarget,
         setSelectedDoc,
         setSelectedResourceFolder,
+        setSelectedTemplate,
         setSelectedTheme,
         setResourceSection,
         setSidebarTab,
         setViewMode,
+        templateAssets,
         themes,
     ]);
 

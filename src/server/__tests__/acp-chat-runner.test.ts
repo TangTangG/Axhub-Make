@@ -29,6 +29,19 @@ function createJsonEvent(chunk: Record<string, unknown>) {
   return `data: ${JSON.stringify(chunk)}\n\n`;
 }
 
+function createTimeoutReadResponse(): Response {
+  return new Response(new ReadableStream({
+    pull() {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    },
+  }), {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+    },
+  });
+}
+
 describe('ACP chat runner', () => {
   it('creates URL-safe one-shot thread ids', async () => {
     const mod = await loadRunnerModule();
@@ -74,6 +87,7 @@ describe('ACP chat runner', () => {
       acpApiBaseUrl: 'http://acp.local/api/',
       provider: 'genie:codex',
       workspacePath: '/workspace',
+      conversationStorePath: '/workspace/src/prototypes/home/.spec/acp/conversations.json',
       prompt: 'Run the requested task.',
       builtinTools: ['image-generation'],
     }, { fetchImpl });
@@ -91,6 +105,7 @@ describe('ACP chat runner', () => {
       threadId: result.threadId,
       provider: 'codex',
       workspacePath: '/workspace',
+      conversationStorePath: '/workspace/src/prototypes/home/.spec/acp/conversations.json',
       builtinTools: ['image-generation'],
       messages: [
         {
@@ -230,6 +245,40 @@ describe('ACP chat runner', () => {
           },
         ],
       },
+    });
+  });
+
+  it('maps ACP chat fetch timeouts to a readable run error', async () => {
+    const mod = await loadRunnerModule();
+    const fetchImpl = vi.fn(async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+
+    await expect(mod.runAcpChatCommand({
+      acpApiBaseUrl: 'http://acp.local/api',
+      workspacePath: '/workspace',
+      prompt: 'Run.',
+    }, { fetchImpl, timeoutMs: 30_000 })).rejects.toMatchObject({
+      name: 'AcpChatRunError',
+      code: 'ACP_CHAT_TIMEOUT',
+      statusCode: 504,
+      message: 'ACP 响应超时，请检查本地 ACP UI 或当前模型是否卡住。',
+    });
+  });
+
+  it('maps ACP chat stream read timeouts to a readable run error', async () => {
+    const mod = await loadRunnerModule();
+    const fetchImpl = vi.fn(async () => createTimeoutReadResponse());
+
+    await expect(mod.runAcpChatCommand({
+      acpApiBaseUrl: 'http://acp.local/api',
+      workspacePath: '/workspace',
+      prompt: 'Run.',
+    }, { fetchImpl, timeoutMs: 30_000 })).rejects.toMatchObject({
+      name: 'AcpChatRunError',
+      code: 'ACP_CHAT_TIMEOUT',
+      statusCode: 504,
+      message: 'ACP 响应超时，请检查本地 ACP UI 或当前模型是否卡住。',
     });
   });
 });

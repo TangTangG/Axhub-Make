@@ -39,7 +39,7 @@ interface CreateDialogProps {
     targetPrototypeName?: string;
     onAfterCreatePromptAction: () => void;
     onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
-    onUploadSuccess?: () => void | Promise<void>;
+    onUploadSuccess?: (result?: any) => void | Promise<void>;
 }
 
 interface UploadResult {
@@ -301,7 +301,7 @@ export default function CreateDialog({
                     toast.success(result.message || '上传成功');
                     setTimeout(() => {
                         onClose();
-                        void onUploadSuccess?.();
+                        void onUploadSuccess?.(result);
                     }, 800);
                 } else {
                     toast.success(result.message || '页面已准备好，可继续交给 AI 完善');
@@ -347,7 +347,7 @@ export default function CreateDialog({
             }
             toast.success('模板已导入');
             onClose();
-            void onUploadSuccess?.();
+            void onUploadSuccess?.(result);
         } catch (error: any) {
             toast.error(getUserFriendlyUploadErrorMessage(error, '直接导入失败，请稍后重试'));
         } finally {
