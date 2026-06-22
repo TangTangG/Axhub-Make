@@ -93,4 +93,31 @@ describe('url helpers', () => {
       clientUrl: 'http://localhost:51720/prototypes/home?mode=demo#screen',
     }, 'demo')).toBe('http://192.168.31.88:51720/prototypes/home?mode=demo#screen');
   });
+
+  it('uses configured local and LAN hosts when building share URLs', () => {
+    vi.stubGlobal('window', {
+      __AXHUB_SHARE_HOSTS__: {
+        localHost: 'make.local',
+        lanHost: '10.0.8.42',
+      },
+      __LOCAL_IP__: '192.168.31.88',
+      location: {
+        origin: 'http://localhost:5174',
+        protocol: 'http:',
+        hostname: 'localhost',
+        port: '5174',
+      },
+    });
+
+    const item = {
+      name: 'home',
+      displayName: 'Home',
+      jsUrl: '',
+      specUrl: '',
+      clientUrl: 'http://localhost:51720/prototypes/home?mode=demo#screen',
+    };
+
+    expect(buildEditorUrl(item, 'demo')).toBe('http://make.local:51720/prototypes/home?mode=demo&axhubDisplayName=Home#screen');
+    expect(buildLANItemUrl(item, 'demo')).toBe('http://10.0.8.42:51720/prototypes/home?mode=demo#screen');
+  });
 });

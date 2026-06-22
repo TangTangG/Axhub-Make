@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import '../ai-image/AiImageGenerationComposer.css';
-import { ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, CircleHelp, SlidersHorizontal } from 'lucide-react';
 
 import CanvasGenerationComposer, {
   type CanvasAiSubmitRequest,
@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   NO_PROTOTYPE_THEME_VALUE,
   resolvePrototypeGenerationInitialThemeName,
@@ -29,6 +30,7 @@ import {
 import type { CanvasLocalContextRef } from '../ai-image/canvasReferenceImages';
 import { pickCanvasAiScenePlaceholder } from '../ai-generation/canvasAiSceneRegistry';
 import { PrototypeThemeSearchSelect } from './PrototypeThemeSearchSelect';
+import type { PromptClientPreference } from '../../types';
 
 export interface PrototypeGenerationComposerSettings {
   count?: number;
@@ -46,6 +48,7 @@ export interface PrototypeGenerationComposerProps {
   onPasteReferenceImages?: () => Promise<string[]>;
   onOpenAISettings?: () => void;
   placement: CanvasGenerationComposerPlacement;
+  preferredPromptClient?: PromptClientPreference;
   topContent?: React.ReactNode;
   themes?: ThemeResourceItem[];
   onSubmitPrompt: (
@@ -56,6 +59,33 @@ export interface PrototypeGenerationComposerProps {
 const COUNT_OPTIONS = [1, 2, 3, 4];
 const UNSPECIFIED_PROTOTYPE_SETTING_VALUE = '__unspecified__';
 const PROTOTYPE_SETTINGS_SELECT_CONTENT_STYLE = { zIndex: 1400 } satisfies CSSProperties;
+const PROTOTYPE_GENERATION_FIELD_HINTS = {
+  count: '选择后会按方案数量生成，并在最终提示词中加载本地 explore-options（多方案探索）技能提示。',
+  theme: '选择一个设计系统后，原型会尽量沿用该资源的视觉风格和组件约束。',
+} as const;
+
+function FieldLabelWithHint({ label, hint }: { label: string; hint: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+      <span>{label}</span>
+      <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className="inline-flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground"
+              aria-label={`${label}说明`}
+            >
+              <CircleHelp className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[260px] text-xs leading-5">
+            {hint}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </span>
+  );
+}
 
 export default function PrototypeGenerationComposer({
   assistantProjectPath,
@@ -67,6 +97,7 @@ export default function PrototypeGenerationComposer({
   onPasteReferenceImages,
   onOpenAISettings,
   placement,
+  preferredPromptClient,
   topContent,
   themes,
   onSubmitPrompt,
@@ -137,6 +168,7 @@ export default function PrototypeGenerationComposer({
       topContent={topContent}
       workspacePath={assistantProjectPath}
       placeholder={placeholder}
+      preferredPromptClient={preferredPromptClient}
       ariaLabel="AI 原型生成提示词"
       sendTooltip="生成原型"
       addAttachmentTooltip="添加参考图"
@@ -183,7 +215,7 @@ export default function PrototypeGenerationComposer({
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="space-y-1.5">
-                  <span className="text-xs font-medium text-muted-foreground">生成数量</span>
+                  <FieldLabelWithHint label="方案数量" hint={PROTOTYPE_GENERATION_FIELD_HINTS.count} />
                   <Select
                     value={hasGenerationCount ? String(generationCount) : UNSPECIFIED_PROTOTYPE_SETTING_VALUE}
                     onValueChange={(value) => setGenerationCount(value === UNSPECIFIED_PROTOTYPE_SETTING_VALUE ? undefined : Number(value))}
@@ -205,7 +237,7 @@ export default function PrototypeGenerationComposer({
                 </label>
 
                 <label className="space-y-1.5">
-                  <span className="text-xs font-medium text-muted-foreground">设计系统</span>
+                  <FieldLabelWithHint label="设计系统" hint={PROTOTYPE_GENERATION_FIELD_HINTS.theme} />
                   <PrototypeThemeSearchSelect
                     themes={themes}
                     value={selectedThemeName}

@@ -279,6 +279,41 @@ describe('make-server project legacy compatibility APIs', () => {
     }
   });
 
+  it('injects the shared HTML annotation bootstrap into legacy markdown-file HTML previews', async () => {
+    const projectRoot = createTempRoot();
+    const resourcesDir = path.join(projectRoot, 'src', 'resources');
+    fs.mkdirSync(resourcesDir, { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, 'visual-prd.html'), '<!doctype html><html><body><main>Legacy Visual PRD</main></body></html>', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'legacy-html-preview', name: 'Legacy HTML Preview' },
+      resourceWriteTargets: {
+        docs: { type: 'project-relative-path', path: 'src/resources' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'legacy-html-preview', 'Legacy HTML Preview');
+
+      const response = await fetch(
+        `${server.origin}/api/markdown-file?path=${encodeURIComponent('src/resources/visual-prd.html')}`,
+        {
+          headers: {
+            accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+        },
+      );
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/html');
+      expect(html).toContain('Legacy Visual PRD');
+      expect(html).toContain('<script type="module" src="/assets/html-template-bootstrap.js"></script>');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('supports legacy spec-doc protocol for standalone Markdown docs through the active project context', async () => {
     const projectRoot = createTempRoot();
     const docsDir = path.join(projectRoot, 'src', 'resources');

@@ -5,12 +5,14 @@ import { isMobileDevice, forceAndroidRecomposite } from '../../../utils/mobile-d
 
 export function useSelectionModeGuards(params: {
   propertyPanelOptions?: PropertyPanelOptions | null;
+  initialSelectionModeActive?: boolean;
   setToolMinimized: React.Dispatch<React.SetStateAction<boolean>>;
 }): SelectionModeGuards {
   const { propertyPanelOptions, setToolMinimized } = params;
+  const initialSelectionModeActive = params.initialSelectionModeActive ?? true;
   const toolMinimizedRef = React.useRef(false);
-  const [selectionModeActive, setSelectionModeActive] = React.useState(true);
-  const selectionModeActiveRef = React.useRef(true);
+  const [selectionModeActive, setSelectionModeActive] = React.useState(initialSelectionModeActive);
+  const selectionModeActiveRef = React.useRef(initialSelectionModeActive);
   const selectionHoverOwnersRef = React.useRef<Set<'panel' | 'prompt'>>(new Set());
   const selectionInteractionLockOwnersRef = React.useRef<Set<'panel' | 'prompt'>>(new Set());
   const selectionRestoreTimerRef = React.useRef<number | null>(null);

@@ -227,6 +227,42 @@ function hasMarkdownExtension(value: unknown): boolean {
     return candidates.some((candidate) => /\.md(?:$|[?#&/])/i.test(candidate));
 }
 
+function hasHtmlExtension(value: unknown): boolean {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) return false;
+
+    const matchesHtmlPath = (candidate: string) => /\.html?(?:$|[?#&/])/i.test(candidate);
+    const candidates = new Set<string>([rawValue]);
+    let previous = rawValue;
+    for (let index = 0; index < 2; index += 1) {
+        try {
+            const decoded = decodeURIComponent(previous);
+            if (decoded === previous) break;
+            candidates.add(decoded);
+            previous = decoded;
+        } catch {
+            break;
+        }
+    }
+
+    for (const candidate of candidates) {
+        try {
+            const parsed = new URL(candidate, 'http://axhub.local');
+            const pathname = decodeURIComponent(parsed.pathname || '');
+            const isSpecTemplateShell = /(?:^|\/)spec-template\.html$/i.test(pathname);
+            for (const key of ['path', 'docPath', 'resourcePath', 'url', 'src']) {
+                const nested = parsed.searchParams.get(key);
+                if (nested && hasHtmlExtension(nested)) return true;
+            }
+            if (!isSpecTemplateShell && matchesHtmlPath(pathname)) return true;
+        } catch {
+            if (matchesHtmlPath(candidate)) return true;
+        }
+    }
+
+    return false;
+}
+
 export function isMarkdownEditableResource(item: Partial<ItemData> | null | undefined): boolean {
     if (!item) return false;
     return [
@@ -238,6 +274,32 @@ export function isMarkdownEditableResource(item: Partial<ItemData> | null | unde
         item.specUrl,
         item.previewUrl,
     ].some(hasMarkdownExtension);
+}
+
+export function isHtmlCommentableResource(item: Partial<ItemData> | null | undefined): boolean {
+    if (!item) return false;
+    return [
+        item.name,
+        item.filePath,
+        item.absoluteFilePath,
+        item.specFilePath,
+        item.specAbsoluteFilePath,
+        item.specUrl,
+        item.previewUrl,
+    ].some(hasHtmlExtension);
+}
+
+export function isDocumentCommentableResource(item: Partial<ItemData> | null | undefined): boolean {
+    if (!item) return false;
+    return [
+        item.name,
+        item.filePath,
+        item.absoluteFilePath,
+        item.specFilePath,
+        item.specAbsoluteFilePath,
+        item.specUrl,
+        item.previewUrl,
+    ].some((value) => hasMarkdownExtension(value) || hasHtmlExtension(value));
 }
 
 export function resolveSidebarTreeTab(sidebarTab: SidebarTab): SidebarTreeTab {
@@ -285,6 +347,15 @@ export function getDocFileName(name: string): string {
     const raw = String(name || '').trim().replace(/\\/g, '/');
     const segments = raw.split('/');
     return segments[segments.length - 1] || raw;
+}
+
+export function resolveDocRenameBaseName(name: string, extension?: string): string {
+    const fileName = getDocFileName(name);
+    const normalizedExtension = String(extension || '').trim();
+    if (normalizedExtension && fileName.toLowerCase().endsWith(normalizedExtension.toLowerCase())) {
+        return fileName.slice(0, -normalizedExtension.length).trim();
+    }
+    return getDocDisplayName(fileName);
 }
 
 export function isProtectedDocItemName(name: string): boolean {
@@ -359,7 +430,8 @@ export function normalizeTemplateItem(template: { name?: string; displayName?: s
     const displayName = getDocDisplayName(normalizedName);
     const sourcePath = String(template?.path || '').trim();
     const absoluteFilePath = String(template?.absoluteFilePath || '').trim();
-    const markdownUrl = buildMarkdownFileUrl(absoluteFilePath || sourcePath);
+    const markdownUrl = buildMarkdownFileUrl(absoluteFilePath || sourcePath)
+        || (hasMarkdownExtension(normalizedName) ? `/api/docs/templates/${encodeURIComponent(normalizedName)}` : '');
     return {
         name: normalizedName,
         displayName: displayName || normalizedName,
@@ -501,14 +573,36 @@ export function getScreenshotExportDefaultSize(activeTab: TabType, selectedDevic
 }
 
 export function readErrorString(value: unknown): string {
-    return typeof value === 'string' ? value.trim() : '';
+    if (typeof value === 'string') {
+        return value.trim();
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value).trim();
+    }
+    return '';
+}
+
+function readNestedErrorString(value: any): string {
+    const direct = readErrorString(value);
+    if (direct) {
+        return direct;
+    }
+    if (!value || typeof value !== 'object') {
+        return '';
+    }
+    return readErrorString(value.message)
+        || readErrorString(value.errorMessage)
+        || readErrorString(value.error)
+        || readNestedErrorString(value.detail)
+        || readNestedErrorString(value.cause);
 }
 
 export function formatThrownError(error: any): string {
     const parts: string[] = [];
-    const message = readErrorString(error?.message);
-    const causeMessage = readErrorString(error?.cause?.message);
+    const message = readNestedErrorString(error);
+    const causeMessage = readNestedErrorString(error?.cause);
     const code = readErrorString(error?.code) || readErrorString(error?.cause?.code);
+    const status = readErrorString(error?.status) || readErrorString(error?.statusCode);
 
     if (message) {
         parts.push(message);
@@ -518,6 +612,9 @@ export function formatThrownError(error: any): string {
     }
     if (code) {
         parts.push(`code=${code}`);
+    }
+    if (status) {
+        parts.push(`status=${status}`);
     }
 
     return parts.join('；') || '未知错误';

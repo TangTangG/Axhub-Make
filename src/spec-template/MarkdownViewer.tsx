@@ -95,6 +95,7 @@ export interface MarkdownViewerHandle {
 const SPEC_EDIT_QUERY_KEY = 'specEdit';
 const SPEC_DRAFT_STORAGE_PREFIX = 'axhub-spec-draft:';
 const SPEC_DRAFT_DEBOUNCE_MS = 650;
+const PROJECT_DOCUMENT_CONTENT_PATH_RE = /^\/api\/projects\/[^/]+\/docs\/.+\/content$/iu;
 
 function resolveAxhubDisplayNameFromLocation(): string {
     if (typeof window === 'undefined') return '';
@@ -640,6 +641,8 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
             interactionProfile: 'text-comment',
             ui: {
                 toolbarMode: 'host',
+                initialSelectionModeActive: false,
+                hideExecutionControls: true,
                 initialDarkMode,
                 getAssistantPanelOpen: () => commentEditorAssistantPanelOpenRef.current,
                 skillInstallSource: '.agents/skills/prototype-comments/SKILL.md',
@@ -920,7 +923,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
             search = '';
         }
 
-        if (pathname === '/api/markdown-file' || pathname.startsWith('/api/docs/')) {
+        if (pathname === '/api/markdown-file' || pathname.startsWith('/api/docs/') || PROJECT_DOCUMENT_CONTENT_PATH_RE.test(pathname)) {
             return {
                 url: `${pathname}${search}`,
                 init: {
@@ -1302,10 +1305,12 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
         enableDocumentEditor(options) {
             draftPromptedDocKeysRef.current.clear();
             setQuickEditModeState('comment');
-            ensureCommentEditor({
+            const editor = ensureCommentEditor({
                 initialDarkMode: options?.initialDarkMode,
                 assistantPanelOpen: options?.assistantPanelOpen,
-            }).start();
+            });
+            editor.start();
+            void editor.runHostToolbarAction?.({ type: 'toggle-selection-mode', active: false });
         },
         disableDocumentEditor() {
             stopCommentEditor();

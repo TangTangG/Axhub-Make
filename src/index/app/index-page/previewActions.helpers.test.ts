@@ -170,6 +170,29 @@ describe('previewActions.helpers', () => {
     expect(getClientUrlOrigin('http://client.local:4173/prototypes/home')).toBe('http://client.local:4173');
   });
 
+  it('includes the make admin origin in quick-edit export messages', () => {
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://localhost:53817',
+      },
+      __RUNTIME_ORIGIN__: 'http://localhost:51723/',
+    });
+
+    expect(helpers.createRuntimeExportMessage({
+      type: 'axhub.quickEdit.export.captureScreenshot',
+      selectedItem: {
+        projectId: 'project-1',
+        resourceId: 'home',
+        clientUrl: 'http://localhost:51721/prototypes/home',
+      },
+      requestId: 'copy-screenshot-1',
+    })).toMatchObject({
+      type: 'axhub.quickEdit.export.captureScreenshot',
+      requestId: 'copy-screenshot-1',
+      runtimeOrigin: 'http://localhost:53817',
+    });
+  });
+
   it('keeps unrelated relative preview URLs on the current origin', () => {
     vi.stubGlobal('window', {
       location: {
@@ -280,7 +303,7 @@ describe('previewActions.helpers', () => {
     expect(resolvedState?.sendDisabled).toBe(false);
   });
 
-  it('keeps element selection active when showing a hidden host toolbar state', () => {
+  it('preserves the selection mode flag when showing a hidden host toolbar state', () => {
     const hiddenHostState = {
       ...createDefaultHostToolbarState(),
       visible: false,
@@ -290,7 +313,7 @@ describe('previewActions.helpers', () => {
     const resolvedState = resolveHostToolbarStateForDisplay(null, hiddenHostState, false);
 
     expect(resolvedState?.visible).toBe(true);
-    expect(resolvedState?.selectionModeActive).toBe(true);
+    expect(resolvedState?.selectionModeActive).toBe(false);
   });
 
   it('waits for the next host toolbar state when wake starts from a stale sleeping snapshot', async () => {

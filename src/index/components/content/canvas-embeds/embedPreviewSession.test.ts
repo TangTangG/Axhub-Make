@@ -251,6 +251,22 @@ describe('embed preview session guards', () => {
         })).toBe('/api/markdown-file?path=README.md');
     });
 
+    it('keeps generic preview resource links as arbitrary URLs instead of prototype or theme runtime routes', () => {
+        expect(resolveCanvasEmbedPreviewUrl({
+            previewUrl: 'https://example.com/assets/report.html?view=full',
+            resourceType: 'preview',
+            runtimeOrigin: 'http://localhost:51720',
+            currentOrigin: 'http://localhost:53817',
+        })).toBe('https://example.com/assets/report.html?view=full');
+
+        expect(resolveCanvasEmbedPreviewUrl({
+            previewUrl: '/resources/report.html',
+            resourceType: 'preview',
+            runtimeOrigin: 'http://localhost:51720',
+            currentOrigin: 'http://localhost:53817',
+        })).toBe('/resources/report.html');
+    });
+
     it('resolves local markdown file preview URLs through the markdown file API', () => {
         expect(resolveCanvasEmbedPreviewUrl({
             previewUrl: 'src/prototypes/erp-home/.spec/2026-06-10-supply-chain-home.md',

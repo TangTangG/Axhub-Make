@@ -465,6 +465,12 @@ describe('createWebEditorV2Controller', () => {
 
   it('uses prototype comment file adapter for host persistence', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
       if (String(input).startsWith('/api/prototype-comments?') && init?.method !== 'PUT') {
         return {
           ok: true,
@@ -522,12 +528,102 @@ describe('createWebEditorV2Controller', () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      '/api/prototype-comments?targetPath=prototypes%2Fhome&hydrateImages=1',
+      '/__axhub/make-server/status',
       { method: 'GET' },
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
+      '/api/prototype-comments?targetPath=prototypes%2Fhome&hydrateImages=1',
+      { method: 'GET' },
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/__axhub/make-server/status',
+      { method: 'GET' },
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
       '/api/prototype-comments?targetPath=prototypes%2Fhome',
+      expect.objectContaining({
+        method: 'PUT',
+      }),
+    );
+  });
+
+  it('sends prototype comment persistence requests to the Make server origin when the preview runs on another port', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/__axhub/make-server/status') {
+        return {
+          ok: true,
+          json: async () => ({
+            ready: true,
+            adminOrigin: 'http://localhost:53817',
+          }),
+        };
+      }
+      if (url.startsWith('http://localhost:53817/api/prototype-comments?') && init?.method !== 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({
+            exists: true,
+            document: {
+              schemaVersion: 1,
+              kind: 'prototype-edit-comments',
+              resource: {
+                id: 'home',
+                targetPath: 'prototypes/home',
+                filePath: 'src/prototypes/home/.spec/prototype-comments.json',
+              },
+              comments: [],
+              tasks: {},
+              images: [],
+            },
+          }),
+        };
+      }
+      if (url.startsWith('http://localhost:53817/api/prototype-comments?') && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({ ok: true }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const adapter = createPrototypeCommentsPersistenceAdapter();
+    const scope = {
+      targetPath: 'prototypes/home',
+      storageScope: 'prototypes/home',
+      prototypeId: 'home',
+      filePath: 'src/prototypes/home/index.tsx',
+      resource: null,
+    };
+
+    await adapter.read(scope);
+    await adapter.write(scope, {
+      schemaVersion: 1,
+      kind: 'prototype-edit-comments',
+      resource: {
+        id: 'home',
+        targetPath: 'prototypes/home',
+        filePath: 'src/prototypes/home/.spec/prototype-comments.json',
+      },
+      comments: [],
+      tasks: {},
+      images: [],
+    }, 'changes');
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/__axhub/make-server/status', { method: 'GET' });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:53817/api/prototype-comments?targetPath=prototypes%2Fhome&hydrateImages=1',
+      { method: 'GET' },
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      'http://localhost:53817/api/prototype-comments?targetPath=prototypes%2Fhome',
       expect.objectContaining({
         method: 'PUT',
       }),

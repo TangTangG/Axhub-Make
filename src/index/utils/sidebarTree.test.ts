@@ -168,6 +168,48 @@ describe('sidebarTree', () => {
         ]);
     });
 
+    it('refreshes persisted path-like nested doc titles from resource display names', () => {
+        const items = [
+            createPrototype({
+                name: 'templates/prd-template.md',
+                displayName: 'prd-template',
+            }),
+        ];
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-templates',
+                kind: 'folder',
+                title: 'templates',
+                children: [
+                    {
+                        id: 'item-docs-templates-prd-template',
+                        kind: 'item',
+                        title: 'templates/prd-template',
+                        itemKey: 'docs/templates/prd-template.md',
+                    },
+                ],
+            },
+        ];
+
+        const tree = sanitizeSidebarTree('docs', persistedTree, items);
+
+        expect(tree).toEqual([
+            {
+                id: 'folder-docs-templates',
+                kind: 'folder',
+                title: 'templates',
+                children: [
+                    {
+                        id: 'item:docs:templates/prd-template.md',
+                        kind: 'item',
+                        title: 'prd-template',
+                        itemKey: 'docs/templates/prd-template.md',
+                    },
+                ],
+            },
+        ]);
+    });
+
     it('refreshes generated repeated theme titles from resource display names', () => {
         const items = [
             createPrototype({

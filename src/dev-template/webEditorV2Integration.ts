@@ -1,5 +1,10 @@
 import type {
   GenieEditorDebugState,
+  GenieEditorEditedSnapshot,
+  GenieEditorExternalEditingState,
+  GenieEditorExternalEditingTaskRef,
+  GenieEditorExternalEditingStateResult,
+  GenieEditorExternalEditingTargetRef,
   GenieEditorHostToolbarAction,
   GenieEditorHostToolbarState,
   GenieEditorHostResource,
@@ -33,6 +38,13 @@ export interface WebEditorV2Controller {
   getHostToolbarState: () => GenieEditorHostToolbarState;
   subscribeHostToolbarState: (listener: (state: GenieEditorHostToolbarState) => void) => () => void;
   runHostToolbarAction: (action: GenieEditorHostToolbarAction) => Promise<boolean>;
+  getEditedSnapshot: () => GenieEditorEditedSnapshot | null;
+  setNodeEditingState: (
+    elementKey: string,
+    nextState: GenieEditorExternalEditingState,
+    taskRef: Partial<GenieEditorExternalEditingTaskRef> | null,
+    targetRef?: GenieEditorExternalEditingTargetRef | null,
+  ) => Promise<GenieEditorExternalEditingStateResult>;
   saveTextChanges: () => Promise<void>;
   saveStyleChanges: () => Promise<void>;
   clearForcedStyles: () => Promise<void>;
@@ -119,10 +131,52 @@ function buildPrototypeCommentsUrl(
   return `/api/prototype-comments?${params.toString()}`;
 }
 
+function normalizeOrigin(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  try {
+    return new URL(value).origin.replace(/\/+$/u, '');
+  } catch {
+    return '';
+  }
+}
+
+async function resolvePrototypeCommentsApiOrigin(): Promise<string> {
+  try {
+    const response = await fetch('/__axhub/make-server/status', { method: 'GET' });
+    if (!response.ok) {
+      return '';
+    }
+    const payload = await response.json().catch(() => null) as { adminOrigin?: unknown } | null;
+    const adminOrigin = normalizeOrigin(payload?.adminOrigin);
+    if (adminOrigin) {
+      return adminOrigin;
+    }
+  } catch {
+    // Standalone previews do not expose the Make server status endpoint.
+  }
+  return '';
+}
+
 export function createPrototypeCommentsPersistenceAdapter(): PrototypeEditCommentsPersistenceAdapter {
+  let cachedPrototypeCommentsApiOrigin = '';
+
+  const resolveRequestUrl = async (
+    scope: PrototypeEditCommentsPersistenceScope,
+    extraSearchParams: Record<string, string> = {},
+  ): Promise<string> => {
+    const path = buildPrototypeCommentsUrl(scope, extraSearchParams);
+    if (!path) return '';
+    if (!cachedPrototypeCommentsApiOrigin) {
+      cachedPrototypeCommentsApiOrigin = await resolvePrototypeCommentsApiOrigin();
+    }
+    return cachedPrototypeCommentsApiOrigin
+      ? new URL(path, cachedPrototypeCommentsApiOrigin).toString()
+      : path;
+  };
+
   return {
     async read(scope) {
-      const url = buildPrototypeCommentsUrl(scope, { hydrateImages: '1' });
+      const url = await resolveRequestUrl(scope, { hydrateImages: '1' });
       if (!url) return null;
       try {
         const response = await fetch(url, { method: 'GET' });
@@ -144,7 +198,7 @@ export function createPrototypeCommentsPersistenceAdapter(): PrototypeEditCommen
       }
     },
     async write(scope, document) {
-      const url = buildPrototypeCommentsUrl(scope);
+      const url = await resolveRequestUrl(scope);
       if (!url) return;
       try {
         const response = await fetch(url, {
@@ -941,6 +995,14 @@ export const createWebEditorV2Controller = (
     runHostToolbarAction: async (action) => {
       const currentEditor = await ensureEditorReady();
       return currentEditor.runHostToolbarAction?.(action) ?? false;
+    },
+    getEditedSnapshot: () => editor?.getEditedSnapshot?.() ?? null,
+    setNodeEditingState: async (elementKey, nextState, taskRef, targetRef) => {
+      const currentEditor = await ensureEditorReady();
+      if (!currentEditor.setNodeEditingState) {
+        throw new Error('NOT_IMPLEMENTED: External editing state control is unavailable');
+      }
+      return currentEditor.setNodeEditingState(elementKey, nextState, taskRef, targetRef ?? null);
     },
     saveTextChanges: async () => {
       const currentEditor = await ensureEditorReady();

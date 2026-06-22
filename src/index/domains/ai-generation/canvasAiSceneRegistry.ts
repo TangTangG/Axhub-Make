@@ -86,9 +86,9 @@ export const CANVAS_AI_SCENES = [
     label: '设计图',
     artifactKind: 'image',
     placeholders: [
-      '描述你想生成的 UI 设计图',
-      '例如：生成一个移动端登录页设计图',
-      '输入设计场景，AI 会帮你生成图片',
+      '描述你想生成的移动端或 PC 端设计图',
+      '例如：生成一个移动端登录页设计图，或一个 PC 端数据看板设计图',
+      '也可以生成海报、封面、边框、背景、头像等设计素材',
     ],
     quickPrompts: DESIGN_QUICK_PROMPTS,
     prototypeStartQuickPrompts: [],

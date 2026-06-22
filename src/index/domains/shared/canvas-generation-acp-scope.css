@@ -50,6 +50,67 @@
   --ring: 159 100% 35%;
 }
 
+.ax-acp-settings-dialog-content {
+  --background: 0 0% 100%;
+  --foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 47.4% 11.2%;
+  --primary: 159 100% 28%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 78% 58%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 159 100% 28%;
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-border: var(--axhub-border-color);
+  --color-input: var(--axhub-input-color);
+  --color-ring: var(--axhub-ring-color);
+  width: min(calc(100vw - 2rem), 42rem) !important;
+  max-width: min(calc(100vw - 2rem), 42rem) !important;
+  max-height: min(calc(100dvh - 2rem), 42rem);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: hsl(var(--foreground));
+}
+
+.dark .ax-acp-settings-dialog-content,
+.ax-acp-settings-dialog-content.dark {
+  --background: 224 71% 4%;
+  --foreground: 213 31% 91%;
+  --muted: 216 34% 13%;
+  --muted-foreground: 217.9 10.6% 64.9%;
+  --accent: 216 34% 16%;
+  --accent-foreground: 210 40% 98%;
+  --popover: 222 39% 10%;
+  --popover-foreground: 213 31% 91%;
+  --primary: 159 100% 35%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 74% 45%;
+  --border: 215 27.9% 16.9%;
+  --input: 215 27.9% 16.9%;
+  --ring: 159 100% 35%;
+}
+
+.ax-acp-settings-dialog-content [role='checkbox'][data-state='checked'] {
+  border-color: hsl(var(--primary));
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
 .ax-acp-ui-scope .aui-composer-root {
   --composer-radius: 24px;
   --composer-padding: 10px;

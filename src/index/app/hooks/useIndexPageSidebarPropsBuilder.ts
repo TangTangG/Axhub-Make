@@ -44,6 +44,8 @@ interface UseIndexPageSidebarPropsBuilderParams {
         selectedResourceFolder?: any;
         selectedCanvas: any;
         selectedTheme: any;
+        prototypeStartDraftActive?: boolean;
+        prototypeStartPageActive?: boolean;
     };
     deps: {
         preferredPromptClient: any;
@@ -78,6 +80,7 @@ interface UseIndexPageSidebarPropsBuilderParams {
         handleTabChange: (tab: TabType) => void;
         handleMenuClick: (params: { key: string; pageId?: string | null }) => void | Promise<void>;
         setSelectedPrototypePageId?: Dispatch<SetStateAction<string | null>>;
+        handleCreatePrototypeStartDraft?: () => void;
         handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
         handleOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
         handleOpenImageAiPanel?: () => void | Promise<void>;
@@ -97,6 +100,7 @@ export function useIndexPageSidebarPropsBuilder({
     deps,
 }: UseIndexPageSidebarPropsBuilderParams): NewSidebarGroupedProps {
     return useMemo(() => {
+        const prototypeStartPageActive = state.prototypeStartPageActive === true;
         const resetToPrototypeStartView = () => {
             deps.setActiveTab('prototypes');
             deps.setSidebarTab('prototype');
@@ -132,8 +136,9 @@ export function useIndexPageSidebarPropsBuilder({
             lanAccessAllowed: state.lanAccessAllowed,
             isDarkMode: state.isDarkMode,
             sidebarTrees: state.sidebarTrees,
-            webAgentPanelOpen: state.webAgentPanelOpen,
-            aiPanelMode: state.aiPanelMode,
+            webAgentPanelOpen: prototypeStartPageActive ? false : state.webAgentPanelOpen,
+            aiPanelMode: prototypeStartPageActive ? null : state.aiPanelMode,
+            prototypeStartPageActive: state.prototypeStartPageActive,
         },
         actions: {
             handleTabChange: deps.handleTabChange,
@@ -187,7 +192,13 @@ export function useIndexPageSidebarPropsBuilder({
                 deps.setCreateDialogVisible(true);
             },
             onImportTheme: deps.resources.handleImportThemeResource,
-            onCreatePlaceholderPrototype: () => { void deps.resources.handleCreatePlaceholderPrototype(); },
+            onCreatePlaceholderPrototype: () => {
+                if (deps.handleCreatePrototypeStartDraft) {
+                    deps.handleCreatePrototypeStartDraft();
+                    return;
+                }
+                void deps.resources.handleCreatePlaceholderPrototype();
+            },
             onUploadedResourceFiles: (files) => { void deps.resources.handleUploadedResourceFiles(files); },
             onCreateCanvasFile: () => { void deps.resources.handleCreateCanvasFile(); },
             handleRenameCanvasItem: deps.resources.handleRenameCanvasItem,
@@ -223,8 +234,8 @@ export function useIndexPageSidebarPropsBuilder({
             onSidebarTreePersist: deps.resources.handleSidebarTreePersist,
             handleVersionManagement: deps.resources.handleVersionManagement,
             handleOpenProjectInIDE: deps.handleOpenProjectInIDE,
-            onOpenGenieWebAgent: deps.handleOpenGenieWebAgent,
-            onOpenImageAiPanel: deps.handleOpenImageAiPanel,
+            onOpenGenieWebAgent: prototypeStartPageActive ? undefined : deps.handleOpenGenieWebAgent,
+            onOpenImageAiPanel: prototypeStartPageActive ? undefined : deps.handleOpenImageAiPanel,
             onOpenWebAgentInPanel: deps.handleOpenWebAgentInPanel,
             onExecutePrompt: deps.onExecutePrompt,
             onCloseAiPanel: deps.onCloseAiPanel,

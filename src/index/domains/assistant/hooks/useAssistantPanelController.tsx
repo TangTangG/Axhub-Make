@@ -318,6 +318,7 @@ interface UseAssistantPanelControllerParams {
     activeProjectId: string | null;
     activeTab: TabType;
     viewMode: ViewMode;
+    isDarkMode: boolean;
     selectedItem: ItemData | null;
     contentMode: AssistantContentMode;
     currentMarkdownResource: AssistantMarkdownResourceSelection;
@@ -334,6 +335,7 @@ export function useAssistantPanelController({
     activeProjectId,
     activeTab,
     viewMode,
+    isDarkMode,
     selectedItem,
     contentMode,
     currentMarkdownResource,
@@ -396,6 +398,7 @@ export function useAssistantPanelController({
     const assistantCurrentFilePathRef = useRef('');
     const assistantContextCommentsSignatureRef = useRef('');
     const assistantIframeLoadSyncSignatureRef = useRef('');
+    const assistantThemeSyncSignatureRef = useRef('');
     const assistantImageGenerationConfigSyncSignatureRef = useRef('');
     const assistantPreviewMcpConfigSyncSignatureRef = useRef('');
     const assistantIframeBridgeRecoveringRef = useRef(false);
@@ -501,6 +504,7 @@ export function useAssistantPanelController({
         syncContextWithAck: postAssistantContextToIframeWithAck,
         syncContextWithRetry: postAssistantContextToIframeWithRetry,
         addContextItems: postAssistantContextItemsToIframe,
+        syncThemeWithRetry: postAssistantThemeToIframeWithRetry,
         syncImageGenerationConfigWithAck: postAssistantImageGenerationConfigToIframeWithAck,
         syncImageGenerationConfigWithRetry: postAssistantImageGenerationConfigToIframeWithRetry,
         syncPreviewMcpConfigWithAck: postAssistantPreviewMcpConfigToIframeWithAck,
@@ -799,6 +803,34 @@ export function useAssistantPanelController({
         mergeAssistantContextForActiveFile(assistantBaseContextV1, assistantExternalContext)
     ), [assistantBaseContextV1, assistantExternalContext]);
 
+    const syncAssistantThemeToIframe = useCallback((options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean } = {}) => {
+        const requireLoaded = options.requireLoaded !== false;
+        const requireVisible = options.requireVisible === true;
+        if (
+            !assistantAcceptsImageRuntimeConfig
+            || (requireVisible && !assistantVisible)
+            || (requireLoaded && !assistantIframeLoaded)
+            || !assistantIframeRef.current?.contentWindow
+        ) {
+            return;
+        }
+
+        const themeSignature = isDarkMode ? 'dark' : 'light';
+        if (!options.force && assistantThemeSyncSignatureRef.current === themeSignature) {
+            return;
+        }
+
+        assistantThemeSyncSignatureRef.current = themeSignature;
+        postAssistantThemeToIframeWithRetry(isDarkMode);
+    }, [
+        assistantAcceptsImageRuntimeConfig,
+        assistantIframeLoaded,
+        assistantIframeRef,
+        assistantVisible,
+        isDarkMode,
+        postAssistantThemeToIframeWithRetry,
+    ]);
+
     const syncAssistantPreviewMcpConfigToIframe = useCallback((options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean } = {}) => {
         const requireLoaded = options.requireLoaded !== false;
         const requireVisible = options.requireVisible !== false;
@@ -968,6 +1000,10 @@ export function useAssistantPanelController({
     }, [assistantContextV1, syncAssistantContextToTargets]);
 
     useEffect(() => {
+        syncAssistantThemeToIframe();
+    }, [syncAssistantThemeToIframe]);
+
+    useEffect(() => {
         if (assistantIframeBridgeRecoveringRef.current) {
             return;
         }
@@ -982,8 +1018,14 @@ export function useAssistantPanelController({
     }, [syncAssistantPreviewMcpConfigToIframe]);
 
     const forceSyncAssistantRuntimeConfigToIframe = useCallback(() => {
+        assistantThemeSyncSignatureRef.current = '';
         assistantImageGenerationConfigSyncSignatureRef.current = '';
         assistantPreviewMcpConfigSyncSignatureRef.current = '';
+        syncAssistantThemeToIframe({
+            requireLoaded: false,
+            requireVisible: false,
+            force: true,
+        });
         void (async () => {
             try {
                 const imageConfigAcked = await syncAssistantImageGenerationConfigToIframeWithAck({
@@ -1014,6 +1056,7 @@ export function useAssistantPanelController({
             }
         })();
     }, [
+        syncAssistantThemeToIframe,
         syncAssistantImageGenerationConfigToIframe,
         syncAssistantImageGenerationConfigToIframeWithAck,
         syncAssistantPreviewMcpConfigToIframe,
@@ -1044,6 +1087,11 @@ export function useAssistantPanelController({
                 requireVisible: false,
                 force: true,
             });
+            syncAssistantThemeToIframe({
+                requireLoaded: false,
+                requireVisible: false,
+                force: true,
+            });
             syncAssistantPreviewMcpConfigToIframe({
                 requireLoaded: false,
                 requireVisible: false,
@@ -1067,6 +1115,7 @@ export function useAssistantPanelController({
         syncAssistantImageGenerationConfigToIframeWithAck,
         syncAssistantPreviewMcpConfigToIframe,
         syncAssistantPreviewMcpConfigToIframeWithAck,
+        syncAssistantThemeToIframe,
     ]);
 
     useEffect(() => {
@@ -1464,6 +1513,7 @@ export function useAssistantPanelController({
         });
         latestAssistantNavigationThreadIdRef.current = undefined;
         assistantIframeLoadSyncSignatureRef.current = '';
+        assistantThemeSyncSignatureRef.current = '';
         assistantImageGenerationConfigSyncSignatureRef.current = '';
         assistantPreviewMcpConfigSyncSignatureRef.current = '';
         setAssistantIframeLoaded(false);
@@ -1634,6 +1684,15 @@ export function useAssistantPanelController({
         ensureAssistantReadyThenOpen,
     ]);
 
+    const handleOpenImageAiPanelInNewWindow = useCallback(() => {
+        void ensureAssistantReadyThenOpen('button', undefined, undefined, 'window', null, {
+            panelMode: 'image-ai',
+            suppressResourceThreadBinding: true,
+        });
+    }, [
+        ensureAssistantReadyThenOpen,
+    ]);
+
     const hideAssistantPanelTemporarily = useCallback(() => {
         setAssistantVisible(false);
     }, []);
@@ -1745,7 +1804,7 @@ export function useAssistantPanelController({
         try {
             const url = new URL(assistantIframeUrl);
             removeLegacyAssistantOpenParams(url);
-            void ensureAssistantReadyThenOpen('button', url.toString(), undefined, 'window', itemContext, {
+            void ensureAssistantReadyThenOpen('button', url.toString(), targetPath, 'window', itemContext, {
                 panelMode: 'general-ai',
             });
         } catch {
@@ -1971,9 +2030,15 @@ export function useAssistantPanelController({
     const handleAssistantIframeLoad = useCallback(() => {
         assistantIframeBridgeRecoveringRef.current = true;
         assistantIframeLoadSyncSignatureRef.current = '';
+        assistantThemeSyncSignatureRef.current = '';
         assistantImageGenerationConfigSyncSignatureRef.current = '';
         assistantPreviewMcpConfigSyncSignatureRef.current = '';
         setAssistantIframeLoaded(true);
+        syncAssistantThemeToIframe({
+            requireLoaded: false,
+            requireVisible: false,
+            force: true,
+        });
         if (assistantPanelMode === 'image-ai') {
             syncAssistantImageGenerationConfigToIframe({
                 requireLoaded: false,
@@ -1988,6 +2053,7 @@ export function useAssistantPanelController({
         recoverAssistantIframeBridge,
         setAssistantIframeLoaded,
         syncAssistantImageGenerationConfigToIframe,
+        syncAssistantThemeToIframe,
     ]);
 
     const visibleAiPanelMode = assistantPanelMode === 'general-ai' || assistantPanelMode === 'image-ai'
@@ -2017,6 +2083,7 @@ export function useAssistantPanelController({
         handleToggleAssistant,
         handleOpenGenieWebAgent,
         openImageAiPanel,
+        handleOpenImageAiPanelInNewWindow,
         hideAssistantPanelTemporarily,
         restoreAssistantPanel,
         openRawUrlInAssistantPanel,

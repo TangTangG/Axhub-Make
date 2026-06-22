@@ -74,7 +74,7 @@
     "@ant-design/x-markdown": "^2.1.1",
     "@assistant-ui/react": "^0.14.7",
     "@assistant-ui/react-ai-sdk": "1.3.26",
-    "@axhub/acp": "^0.1.1",
+    "@axhub/acp": "^0.1.5",
     "@axhub/excalidraw": "file:vendor/axhub-excalidraw",
     "@braintree/sanitize-url": "7.1.1",
     "@excalidraw/mermaid-to-excalidraw": "2.2.2",

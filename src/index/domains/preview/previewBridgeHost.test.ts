@@ -50,6 +50,12 @@ function createHostContext(overrides: Record<string, unknown> = {}) {
         previewUrl: '/spec-template.html?url=%2Fapi%2Fdocs%2Fguide',
         clientUrl: '',
       })],
+      templates: [createResource({
+        name: 'write-prd.md',
+        resourceId: 'write-prd.md',
+        previewUrl: '/spec-template.html?url=%2Fapi%2Fdocs%2Ftemplates%2Fwrite-prd.md',
+        clientUrl: '',
+      })],
       themes: [createResource({
         name: 'brand',
         resourceId: 'brand',
@@ -269,6 +275,19 @@ describe('previewBridgeHost helpers', () => {
     });
     expect(resolvePreviewNavigateTarget({
       target: {
+        resourceType: 'template',
+        resourceId: 'write-prd.md',
+      },
+    }, context)).toMatchObject({
+      resourceType: 'template',
+      resourceId: 'write-prd.md',
+      deepLinkTarget: {
+        resourceType: 'template',
+        resourceId: 'write-prd.md',
+      },
+    });
+    expect(resolvePreviewNavigateTarget({
+      target: {
         resourceType: 'theme',
         resourceId: 'brand',
       },
@@ -393,6 +412,14 @@ describe('previewBridgeHost helpers', () => {
     expect(hookSource).toContain('onNavigateRef.current');
     expect(hookSource).toContain("__AXHUB_PREVIEW_BRIDGE_CLIENT_ID__");
     expect(hookSource).toContain("msg.type === 'hello'");
+  });
+
+  it('sends the host origin to quick-edit runtime screenshot requests', () => {
+    const source = readFileSync(resolve(__dirname, './previewBridgeHost.ts'), 'utf8');
+
+    expect(source).toContain("type: 'axhub.quickEdit.requestRuntimeReady',\n            requestId,\n            runtimeOrigin: getWindowOrigin(),");
+    expect(source).toContain("type: 'axhub.quickEdit.export.captureScreenshot',");
+    expect(source).toContain('clientUrl: target.url,\n            runtimeOrigin: getWindowOrigin(),');
   });
 
   it('reuses a short-lived hidden iframe for multi-viewport capture and removes it in finally', async () => {

@@ -148,7 +148,6 @@ function rewriteDevEntryAssetRequestUrl(requestUrl: string | undefined): string 
 
   const suffixIndex = requestUrl.search(/[?#]/u);
   const pathname = suffixIndex >= 0 ? requestUrl.slice(0, suffixIndex) : requestUrl;
-  const suffix = suffixIndex >= 0 ? requestUrl.slice(suffixIndex) : '';
   let decodedPathname = pathname;
   try {
     decodedPathname = decodeURIComponent(pathname);
@@ -157,7 +156,7 @@ function rewriteDevEntryAssetRequestUrl(requestUrl: string | undefined): string 
   }
 
   const sourcePath = DEV_ENTRY_ASSET_SOURCE_MAP.get(decodedPathname);
-  return sourcePath ? `${sourcePath}${suffix}` : requestUrl;
+  return sourcePath || requestUrl;
 }
 
 function handleViteRequest(vite: ViteServer, req: IncomingMessage, res: ServerResponse, next: () => void): void {

@@ -229,6 +229,54 @@ describe('make-server project config APIs', () => {
     }
   });
 
+  it('preserves the configured LAN share host and exposes detected LAN host options', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'lan-config-client', name: 'LAN Config Client' },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'lan-config-client', 'LAN Config Client');
+
+    try {
+      const before = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(before.server).toEqual(expect.objectContaining({
+        host: 'localhost',
+        allowLAN: true,
+      }));
+      expect(before.availableLANHosts).toEqual(expect.any(Array));
+
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server: { host: 'localhost', allowLAN: true, lanHost: '10.0.8.42' },
+          projectInfo: { name: 'LAN Config Client' },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const projectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
+      expect(projectConfig.server).toEqual({
+        host: 'localhost',
+        allowLAN: true,
+        lanHost: '10.0.8.42',
+      });
+
+      const after = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(after.server).toEqual(expect.objectContaining({
+        host: 'localhost',
+        allowLAN: true,
+        lanHost: '10.0.8.42',
+      }));
+      expect(after.availableLANHosts).toEqual(expect.any(Array));
+    } finally {
+      await server.close();
+    }
+  });
+
   it('defaults Excalidraw property panel mode to collapsed and only persists collapsed or expanded', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {

@@ -97,7 +97,8 @@ describe('AnnotationOverlay AI context menu source', () => {
   it('preserves embeddable resource metadata when building canvas element context infos', () => {
     const source = readSource();
 
-    expect(source).toContain("resourceType?: 'prototype' | 'doc' | 'theme';");
+    expect(source).toContain("resourceType?: 'preview' | 'prototype' | 'doc' | 'theme';");
+    expect(source).toContain('const sourceResourceType = element?.customData?.sourceResourceType;');
     expect(source).toContain('resourceId?: string;');
     expect(source).toContain('filePath?: string;');
     expect(source).toContain('function buildCanvasElementContextInfo(element: any): CanvasElementContextInfo');

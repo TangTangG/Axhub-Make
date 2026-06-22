@@ -1,6 +1,11 @@
 import { createWebEditorV2Controller } from './webEditorV2Integration';
 import type {
   GenieEditorDebugState,
+  GenieEditorEditedSnapshot,
+  GenieEditorExternalEditingState,
+  GenieEditorExternalEditingTaskRef,
+  GenieEditorExternalEditingStateResult,
+  GenieEditorExternalEditingTargetRef,
   GenieEditorHostToolbarAction,
   GenieEditorHostToolbarState,
   GenieEditorToolbarMode,
@@ -31,6 +36,13 @@ export interface DevEditorsApi {
   getHostToolbarState: () => GenieEditorHostToolbarState;
   subscribeHostToolbarState: (listener: (state: GenieEditorHostToolbarState) => void) => () => void;
   runHostToolbarAction: (action: GenieEditorHostToolbarAction) => Promise<boolean>;
+  getEditedSnapshot: () => GenieEditorEditedSnapshot | null;
+  setNodeEditingState: (
+    elementKey: string,
+    nextState: GenieEditorExternalEditingState,
+    taskRef: Partial<GenieEditorExternalEditingTaskRef> | null,
+    targetRef?: GenieEditorExternalEditingTargetRef | null,
+  ) => Promise<GenieEditorExternalEditingStateResult>;
   getCopyPromptText?: () => string;
   getDecisionDataCount: () => number;
   getStatus: () => {
@@ -114,6 +126,8 @@ export const createEditorModeManager = (initialMode?: EditorMode) => {
     getHostToolbarState: () => webEditorController.getHostToolbarState(),
     subscribeHostToolbarState: (listener) => webEditorController.subscribeHostToolbarState(listener),
     runHostToolbarAction: (action) => webEditorController.runHostToolbarAction(action),
+    getEditedSnapshot: () => webEditorController.getEditedSnapshot(),
+    setNodeEditingState: (elementKey, nextState, taskRef, targetRef) => webEditorController.setNodeEditingState(elementKey, nextState, taskRef, targetRef ?? null),
     getCopyPromptText: () => webEditorController.getCopyPromptText?.() ?? '',
     getDecisionDataCount: () => webEditorController.getDecisionDataCount(),
     getStatus: () => ({

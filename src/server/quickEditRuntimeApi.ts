@@ -15,6 +15,7 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
       return window.location.origin;
     }
   })();
+  let hostRuntimeOrigin = '';
   const root = window.axhub || (window.axhub = {});
   const quickEdit = root.quickEdit || (root.quickEdit = {});
   const prototypeRuntime = root.prototypeRuntime || (root.prototypeRuntime = {});
@@ -35,6 +36,7 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
     '__axhub-preview-loader.js',
   ];
   const transientViteRetryKey = '__axhub_quick_edit_transient_vite_retry__';
+  const transientViteRetryWindowMs = 10_000;
   let transientViteRecoveryPromise = null;
 
   function buildResourcePayload(extra) {
@@ -379,9 +381,56 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
     }
   }
 
+  function getTransientViteResourceKey(resourceUrl) {
+    const normalizedText = String(resourceUrl || '');
+    let resourcePath = normalizedText;
+    try {
+      const parsed = new URL(normalizedText, window.location.href);
+      resourcePath = parsed.pathname + parsed.search;
+    } catch {
+      // Keep the raw URL when parsing fails.
+    }
+    if (isHtmlProxyResourceIssue(resourceUrl)) {
+      return 'html-proxy:' + resourcePath;
+    }
+    if (resourcePath.includes('__axhub-preview-loader.js')) {
+      return 'preview-loader:' + resourcePath;
+    }
+    if (resourcePath.includes('/@vite/client')) {
+      return 'vite-client';
+    }
+    return resourcePath;
+  }
+
+  function createTransientViteRetryToken(resourceUrl) {
+    return getCurrentPathname() + '::' + getTransientViteResourceKey(resourceUrl);
+  }
+
+  function getActiveTransientViteRetryToken() {
+    const rawValue = getTransientViteRetryToken();
+    if (!rawValue) {
+      return '';
+    }
+    try {
+      const record = JSON.parse(rawValue);
+      const token = typeof record?.token === 'string' ? record.token : '';
+      const createdAt = Number(record?.createdAt || 0);
+      if (token && createdAt > 0 && Date.now() - createdAt <= transientViteRetryWindowMs) {
+        return token;
+      }
+    } catch {
+      // Older builds stored only the page pathname. Treat that as stale.
+    }
+    clearTransientViteRetryToken();
+    return '';
+  }
+
   function setTransientViteRetryToken(value) {
     try {
-      window.sessionStorage?.setItem(transientViteRetryKey, value);
+      window.sessionStorage?.setItem(transientViteRetryKey, JSON.stringify({
+        token: value,
+        createdAt: Date.now(),
+      }));
     } catch {
       // ignore storage failures
     }
@@ -426,8 +475,8 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
       return false;
     }
 
-    const pathname = getCurrentPathname();
-    if (getTransientViteRetryToken() === pathname) {
+    const retryToken = createTransientViteRetryToken(resourceUrl);
+    if (getActiveTransientViteRetryToken() === retryToken) {
       clearTransientViteRetryToken();
       return false;
     }
@@ -452,7 +501,7 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
           clearTransientViteRetryToken();
           return;
         }
-        setTransientViteRetryToken(pathname);
+        setTransientViteRetryToken(retryToken);
         window.location.reload();
       })
       .catch(() => {
@@ -466,7 +515,29 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
   }
 
   function getRuntimeExportCoreUrl() {
-    return runtimeOrigin + '/assets/runtime-export-core.js';
+    return (hostRuntimeOrigin || runtimeOrigin) + '/assets/runtime-export-core.js?v=' + encodeURIComponent(runtimeVersion);
+  }
+
+  function normalizeRuntimeOrigin(value) {
+    if (typeof value !== 'string' || !value.trim()) {
+      return '';
+    }
+    try {
+      const url = new URL(value, window.location.href);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return '';
+      }
+      return url.origin;
+    } catch {
+      return '';
+    }
+  }
+
+  function updateHostRuntimeOrigin(data) {
+    const nextOrigin = normalizeRuntimeOrigin(data && data.runtimeOrigin);
+    if (nextOrigin) {
+      hostRuntimeOrigin = nextOrigin;
+    }
   }
 
   function isExportCoreLike(value) {
@@ -829,30 +900,37 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
   window.addEventListener('message', (event) => {
     const data = event.data || {};
     if (data.type === 'axhub.quickEdit.requestRuntimeReady') {
+      updateHostRuntimeOrigin(data);
       quickEdit.postReady();
       return;
     }
     if (data.type === 'axhub.quickEdit.enter') {
+      updateHostRuntimeOrigin(data);
       enter(data);
       return;
     }
     if (data.type === 'axhub.quickEdit.save') {
+      updateHostRuntimeOrigin(data);
       save();
       return;
     }
     if (data.type === 'axhub.quickEdit.exit') {
+      updateHostRuntimeOrigin(data);
       exit();
       return;
     }
     if (data.type === 'axhub.quickEdit.export.copyToFigma') {
+      updateHostRuntimeOrigin(data);
       void copyToFigma(data);
       return;
     }
     if (data.type === 'axhub.quickEdit.export.captureScreenshot') {
+      updateHostRuntimeOrigin(data);
       void captureScreenshot(data);
       return;
     }
     if (data.type === 'axhub.quickEdit.export.axureJson') {
+      updateHostRuntimeOrigin(data);
       void exportAxureJson(data);
     }
   });

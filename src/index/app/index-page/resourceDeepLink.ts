@@ -1,7 +1,7 @@
 import type { ItemData, ViewMode } from '../../types';
 import type { ResourceSection, SidebarTab, ThemeResourceItem } from '../../types/index-page.types';
 
-export type ResourceDeepLinkType = 'prototype' | 'doc' | 'theme';
+export type ResourceDeepLinkType = 'prototype' | 'doc' | 'template' | 'theme';
 
 export interface ResourceDeepLinkTarget {
     resourceType: ResourceDeepLinkType;
@@ -27,6 +27,13 @@ export type ResolvedResourceDeepLinkSelection =
         collapseSidebar: boolean;
     }
     | {
+        kind: 'template';
+        item: ItemData;
+        sidebarTab: Extract<SidebarTab, 'assets'>;
+        resourceSection: Extract<ResourceSection, 'templates'>;
+        collapseSidebar: boolean;
+    }
+    | {
         kind: 'theme';
         theme: ThemeResourceItem;
         sidebarTab: Extract<SidebarTab, 'assets'>;
@@ -42,6 +49,14 @@ function getBaseUrl(baseUrl?: string): string {
         return window.location.href;
     }
     return 'http://localhost/';
+}
+
+function normalizeTemplateDeepLinkResourceId(value: string): string {
+    return String(value || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '')
+        .replace(/^templates\/+/u, '');
 }
 
 export function buildResourceDeepLinkUrl(target: ResourceDeepLinkTarget, baseUrl?: string): string {
@@ -66,6 +81,11 @@ export function buildIndexDeepLinkUrl(target: ResourceDeepLinkTarget, baseUrl?: 
         }
     } else if (target.resourceType === 'doc') {
         url.searchParams.set('doc', target.resourceId);
+    } else if (target.resourceType === 'template') {
+        const templateId = normalizeTemplateDeepLinkResourceId(target.resourceId);
+        if (templateId) {
+            url.searchParams.set('doc', `templates/${templateId}`);
+        }
     } else if (target.resourceType === 'theme') {
         url.searchParams.set('theme', target.resourceId);
     }
@@ -122,6 +142,15 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
 
     const docId = url.searchParams.get('doc')?.trim();
     if (docId) {
+        const templateId = normalizeTemplateDeepLinkResourceId(docId);
+        if (docId.replace(/\\/g, '/').replace(/^\/+/, '').startsWith('templates/') && templateId) {
+            return {
+                resourceType: 'template',
+                resourceId: templateId,
+                ...(projectId ? { projectId } : {}),
+                collapseSidebar: false,
+            };
+        }
         return {
             resourceType: 'doc',
             resourceId: docId,
@@ -142,7 +171,15 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
 
     const resourceType = url.searchParams.get('resourceType')?.trim();
     const resourceId = url.searchParams.get('resourceId')?.trim();
-    if ((resourceType !== 'prototype' && resourceType !== 'doc' && resourceType !== 'theme') || !resourceId) {
+    if (
+        (
+            resourceType !== 'prototype'
+            && resourceType !== 'doc'
+            && resourceType !== 'template'
+            && resourceType !== 'theme'
+        )
+        || !resourceId
+    ) {
         return null;
     }
 
@@ -164,6 +201,7 @@ export function resolveIndexDeepLinkSelection(
     resources: {
         prototypes: ItemData[];
         docs: ItemData[];
+        templates?: ItemData[];
         themes?: ThemeResourceItem[];
     },
 ): ResolvedResourceDeepLinkSelection | null {
@@ -183,6 +221,23 @@ export function resolveIndexDeepLinkSelection(
             item,
             sidebarTab: 'prototype',
             viewMode: target.view || 'demo',
+            collapseSidebar: Boolean(target.collapseSidebar),
+        };
+    }
+
+    if (target.resourceType === 'template') {
+        const templateId = normalizeTemplateDeepLinkResourceId(target.resourceId);
+        const item = (resources.templates || []).find((candidate) => (
+            candidate.resourceId === templateId || candidate.name === templateId
+        ));
+        if (!item) {
+            return null;
+        }
+        return {
+            kind: 'template',
+            item,
+            sidebarTab: 'assets',
+            resourceSection: 'templates',
             collapseSidebar: Boolean(target.collapseSidebar),
         };
     }
@@ -222,6 +277,7 @@ export function resolveResourceDeepLinkSelection(
     resources: {
         prototypes: ItemData[];
         docs: ItemData[];
+        templates?: ItemData[];
         themes?: ThemeResourceItem[];
     },
 ): ResolvedResourceDeepLinkSelection | null {

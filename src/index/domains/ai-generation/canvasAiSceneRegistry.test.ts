@@ -80,8 +80,12 @@ describe('canvas AI scene registry', () => {
   });
 
   it('keeps design image quick prompts available from the placeholder-start scene option', () => {
+    const designPlaceholders = getCanvasAiSceneDefinition('design').placeholders.join('\n');
+
     expect(CANVAS_AI_SCENES.map((scene) => scene.id)).toContain('design');
     expect(getCanvasAiSceneOptions().map((option) => option.value)).toContain('design');
+    expect(designPlaceholders).toContain('移动端或 PC 端设计图');
+    expect(designPlaceholders).toContain('海报、封面、边框、背景、头像');
     expect(getCanvasAiSceneQuickPrompts('design')).toEqual([
       expect.objectContaining({
         id: 'extract-icons',

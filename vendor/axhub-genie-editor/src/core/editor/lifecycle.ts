@@ -106,6 +106,18 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     return options.ui.toolbarMode === 'host' && typeof options.ui.onHostToolbarAction === 'function';
   }
 
+  function buildHostSendToGenieAction(element?: Element | null): GenieEditorHostToolbarAction {
+    const meta = services.changes.getMetaForElement(element ?? null);
+    return meta?.elementKey
+      ? {
+          type: 'send-to-genie',
+          elementKey: meta.elementKey,
+          locator: meta.locator,
+          label: meta.label,
+        }
+      : { type: 'send-to-genie' };
+  }
+
   async function runHostAiAction(action: GenieEditorHostToolbarAction): Promise<boolean> {
     if (!shouldDelegateAiActionToHost()) {
       return false;
@@ -828,7 +840,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           const clientY =
             Number.isFinite(rect.top) ? rect.top + Math.min(18, Math.max(10, rect.height / 2)) : undefined;
 
-          services.interaction.handleSelect(
+          void services.interaction.handleSelect(
             parent,
             {
               alt: false,
@@ -851,7 +863,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         onSelect: (event) => {
           const target = services.genieBridge.resolveSelectableElement(event.element);
           if (!target?.isConnected) return;
-          services.interaction.handleSelect(target, event.modifiers, {
+          void services.interaction.handleSelect(target, event.modifiers, {
             clientX: event.clientX,
             clientY: event.clientY,
           });
@@ -877,6 +889,10 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         getSelectedElement: () => state.selectedElement,
         isElementInteractionLocked: (element) => services.genieBridge.isElementInteractionLocked(element),
       });
+      if (!options.ui.initialSelectionModeActive) {
+        state.eventController.setMode('interaction', { allowPageInteraction: true });
+        state.selectionChromeVisible = false;
+      }
 
       // Text-comment mode: listen for mouseup to commit text selections
       if (isTextComment && state.textCommentManager) {
@@ -938,7 +954,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           const clientX = Number.isFinite(rect.left) ? rect.left + rect.width / 2 : undefined;
           const clientY = Number.isFinite(rect.top) ? rect.top + Math.min(18, Math.max(10, rect.height / 2)) : undefined;
 
-          services.interaction.handleSelect(
+          void services.interaction.handleSelect(
             element,
             {
               alt: false,
@@ -1007,7 +1023,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             : undefined,
           onSendPromptToGenie: async (element) => {
             if (shouldDelegateAiActionToHost()) {
-              const handled = await runHostAiAction({ type: 'send-to-genie' });
+              const handled = await runHostAiAction(buildHostSendToGenieAction(element));
               if (!handled) {
                 throw new Error('宿主暂未处理 AI 执行请求。');
               }
@@ -1031,7 +1047,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           },
           onSendCurrentElementPromptToGenie: async (element) => {
             if (shouldDelegateAiActionToHost()) {
-              const handled = await runHostAiAction({ type: 'send-to-genie' });
+              const handled = await runHostAiAction(buildHostSendToGenieAction(element));
               if (!handled) {
                 throw new Error('宿主暂未处理 AI 执行请求。');
               }
@@ -1237,6 +1253,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           container: elements.uiRoot,
           shadowRoot: elements.shadowRoot,
           propertyPanelVisible: options.ui.propertyPanel,
+          initialSelectionModeActive: options.ui.initialSelectionModeActive,
           toolbarMode: options.ui.toolbarMode,
           breadcrumbsOptions: options.ui.breadcrumbs
             ? {
@@ -1546,6 +1563,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           shadowRoot: elements.shadowRoot,
           propertyPanelVisible: true,
           initialPropertyPanelOpen: true,
+          initialSelectionModeActive: options.ui.initialSelectionModeActive,
           toolbarMode: options.ui.toolbarMode,
           breadcrumbsOptions: null,
           propertyPanelOptions,

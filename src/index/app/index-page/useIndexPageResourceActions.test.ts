@@ -113,6 +113,24 @@ describe('useIndexPageResourceActions source', () => {
     expect(docResourceSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(item.name)}`), { method: \'DELETE\' })');
   });
 
+  it('normalizes nested document and template rename input down to a file basename', () => {
+    const rootSource = readResourceRootSource();
+    const templateRenameStart = rootSource.indexOf('const handleRenameTemplateResource = useCallback');
+    const docRenameStart = rootSource.indexOf('const handleRenameDocItem = useCallback');
+    const duplicateTemplateStart = rootSource.indexOf('const handleDuplicateTemplateResource', templateRenameStart);
+    const duplicateDocStart = rootSource.indexOf('const handleDuplicateDocItem', docRenameStart);
+    const templateRenameSource = rootSource.slice(templateRenameStart, duplicateTemplateStart);
+    const docRenameSource = rootSource.slice(docRenameStart, duplicateDocStart);
+
+    expect(rootSource).toContain('resolveDocRenameBaseName');
+    expect(templateRenameSource).toContain('const currentBaseName = resolveDocRenameBaseName(currentName, currentExt);');
+    expect(templateRenameSource).toContain('trimmedName = resolveDocRenameBaseName(trimmedName);');
+    expect(templateRenameSource).toContain('body: JSON.stringify(buildResourceBody({ newBaseName: trimmedName }))');
+    expect(docRenameSource).toContain('const currentBaseName = resolveDocRenameBaseName(currentName, currentExt);');
+    expect(docRenameSource).toContain('trimmedName = resolveDocRenameBaseName(trimmedName);');
+    expect(docRenameSource).toContain('body: JSON.stringify(buildResourceBody({ newBaseName: trimmedName }))');
+  });
+
   it('selects new placeholder prototypes in demo mode instead of canvas mode', () => {
     const source = readResourceRootSource();
 

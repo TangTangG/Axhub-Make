@@ -66,6 +66,17 @@ describe('useIndexPageSelectionSync source', () => {
     expect(source).toContain('setSelectedTheme(resolvedDeepLink.theme);');
   });
 
+  it('restores template deep links from legacy doc template URLs', () => {
+    const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
+
+    expect(source).toContain('templateAssets:');
+    expect(source).toContain('setSelectedTemplate');
+    expect(source).toContain("initialResourceDeepLink?.resourceType === 'template'");
+    expect(source).toContain("resolvedDeepLink?.kind === 'template'");
+    expect(source).toContain('setResourceSection(resolvedDeepLink.resourceSection);');
+    expect(source).toContain('setSelectedTemplate(resolvedDeepLink.item);');
+  });
+
   it('handles a theme deep link only after attempting to resolve the requested theme', () => {
     const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
     const themeBlockStart = source.indexOf("if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'theme')");
@@ -182,6 +193,32 @@ describe('useIndexPageSelectionSync source', () => {
       markExplicitSelection: false,
       resetPageSelection: true,
       nextCanvasItem: previousCanvasPrototype,
+    });
+  });
+
+  it('does not auto-select an existing prototype while the start draft is active', () => {
+    const firstPrototype = createPrototype('first-prototype');
+    const sidebarTrees = {
+      prototypes: [createItemNode(firstPrototype.name)],
+      docs: [],
+      canvas: [],
+    };
+
+    expect(resolvePrototypeAutoSelectionDecision({
+      activeTab: 'prototypes',
+      hasExplicitSelection: false,
+      items: [firstPrototype],
+      lastCanvasItem: null,
+      pendingReturnTarget: null,
+      selectedItem: null,
+      sidebarTab: 'prototype',
+      sidebarTrees,
+      viewMode: 'demo',
+      prototypeStartDraftActive: true,
+    } as any)).toMatchObject({
+      kind: 'keep',
+      markExplicitSelection: false,
+      nextCanvasItem: null,
     });
   });
 

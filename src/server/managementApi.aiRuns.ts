@@ -109,9 +109,11 @@ function resolvePromptProvider(value: unknown, fallback: unknown): string {
   return provider === 'manual' ? 'codex' : provider;
 }
 
-function timeoutMsForScene(_scene: AiRunScene, config: any): number {
+export function resolveAiRunTimeoutMs(scene: AiRunScene, config: any): number {
   const timeoutSeconds = Number(config?.automation?.acp?.timeout || 1800);
-  return Math.max(30, Math.min(7200, Math.round(Number.isFinite(timeoutSeconds) ? timeoutSeconds : 1800))) * 1000;
+  const configuredSeconds = Math.round(Number.isFinite(timeoutSeconds) ? timeoutSeconds : 1800);
+  const minSeconds = scene === 'direct' ? 180 : 30;
+  return Math.max(minSeconds, Math.min(7200, configuredSeconds)) * 1000;
 }
 
 function writeSseHeaders(res: ServerResponse): void {
@@ -230,6 +232,13 @@ function resolveImageBuiltinToolSettings(config: any, savePathPattern?: string, 
     ...(savePathPattern ? { savePathPattern } : {}),
   };
   return Object.keys(imageGeneration).length ? { imageGeneration } : undefined;
+}
+
+function shouldEnableImageGenerationBuiltinTool(scene: AiRunScene, builtinToolSettings: unknown): boolean {
+  return scene === 'image'
+    || (scene === 'direct'
+      && isRecord(builtinToolSettings)
+      && isRecord(builtinToolSettings.imageGeneration));
 }
 
 function createArtifactId(kind: AiArtifactKind, sourceId: string, index: number): string {
@@ -678,6 +687,7 @@ export function handleAiRunsApi(
         return;
       }
       const acpApiBaseUrl = runtimeResponse.apiBaseUrl || resolveConfiguredAcpApiBaseUrl(config?.assistant);
+      const enableImageGenerationBuiltinTool = shouldEnableImageGenerationBuiltinTool(scene, request.builtinToolSettings);
       await persistRunTaskSafely({
         context,
         targetPath: request.targetPath,
@@ -772,17 +782,18 @@ export function handleAiRunsApi(
         threadId,
         provider,
         workspacePath: context.project.root,
+        conversationStorePath: safeText(request.conversationStorePath) || undefined,
         model,
         modeId: safeText(request.modeId || request.mode) || undefined,
         thoughtLevel: safeText(request.thoughtLevel || request.thought) || undefined,
         context: request.contextBundle || request.context,
-        builtinTools: scene === 'image' ? ['image-generation'] : undefined,
-        builtinToolSettings: scene === 'image'
+        builtinTools: enableImageGenerationBuiltinTool ? ['image-generation'] : undefined,
+        builtinToolSettings: enableImageGenerationBuiltinTool
           ? resolveImageBuiltinToolSettings(config, promptPlan.imageSavePathPattern, request.builtinToolSettings)
           : undefined,
         messages: [buildUserMessage(threadId, promptPlan.prompt)],
       }, {
-        timeoutMs: timeoutMsForScene(scene, config),
+        timeoutMs: resolveAiRunTimeoutMs(scene, config),
       })) {
         finalResult = event.result;
         if (event.type === 'chunk') {

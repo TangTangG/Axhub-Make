@@ -474,6 +474,8 @@ describe('make-server project prototype upload APIs', () => {
           projectId: 'prototype-create-client',
           name: 'untitled',
           path: 'prototypes/untitled',
+          canvasFilePath: 'content/prototypes/untitled/canvas.excalidraw',
+          absoluteCanvasFilePath: path.join(projectRoot, 'content/prototypes/untitled/canvas.excalidraw'),
           clientUrl: `${server.origin}/prototypes/untitled`,
         },
       });
@@ -555,6 +557,8 @@ describe('make-server project prototype upload APIs', () => {
           name: 'untitled',
           path: 'prototypes/untitled',
           filePath: 'src/prototypes/untitled/index.tsx',
+          canvasFilePath: 'src/prototypes/untitled/canvas.excalidraw',
+          absoluteCanvasFilePath: path.join(projectRoot, 'src/prototypes/untitled/canvas.excalidraw'),
           clientUrl: `${server.origin}/prototypes/untitled`,
         },
       });

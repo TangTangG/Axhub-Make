@@ -22,6 +22,7 @@ interface IndexPageDesktopProps {
         onLoad: () => void;
         onResize: (width: number) => void;
         onAddContextItems: (items: AcpContextItem[]) => boolean | Promise<boolean>;
+        onToggle: () => void;
     };
 }
 
@@ -50,6 +51,7 @@ export default function IndexPageDesktop({
                             onLoad={assistantPanel.onLoad}
                             onResize={assistantPanel.onResize}
                             onAddContextItems={assistantPanel.onAddContextItems}
+                            onToggle={assistantPanel.onToggle}
                         />
                     ) : null}
                 </div>

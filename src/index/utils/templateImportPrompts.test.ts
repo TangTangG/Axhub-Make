@@ -53,6 +53,17 @@ describe('generateTemplateImportPrompt', () => {
         expect(prompt).toContain('验证项目构建/运行');
     });
 
+    it('asks draft imports to create a new prototype when no target is provided', () => {
+        const prompt = generateTemplateImportPrompt({
+            template: TEMPLATE,
+            repo: 'lintendo/Make-Template',
+        });
+
+        expect(prompt).toContain('创建一个新原型');
+        expect(prompt).not.toContain('必须覆盖当前占位原型目录');
+        expect(prompt).not.toContain('prototypes/untitled');
+    });
+
     it('targets the current placeholder prototype when targetPrototypeName is provided', () => {
         const prompt = generateTemplateImportPrompt({
             template: TEMPLATE,

@@ -37,11 +37,13 @@ import type {
 } from '../../core/editor/ui-settings';
 import { DEFAULT_WEB_EDITOR_UI_SETTINGS } from './ui-settings';
 import type { GenieEditorTweakValues } from '../../tweak/protocol';
+import type { AnnotationBridgeSelection } from '../../utils/annotation-comment-bridge';
 
 export interface WebEditorV2UiOptions {
   breadcrumbs?: boolean;
   propertyPanel?: boolean;
   toolbarMode?: GenieEditorToolbarMode;
+  initialSelectionModeActive?: boolean;
   initialDarkMode?: boolean;
   showCopyPromptAction?: boolean;
   hideExecutionControls?: boolean;
@@ -269,6 +271,7 @@ export interface EditorRuntimeState {
   textCommentManager: TextCommentManager | null;
   textCommentTargetElement: HTMLElement | null;
   activeTextComment: TextComment | null;
+  annotationBridgeSelection: AnnotationBridgeSelection | null;
 }
 
 export const DEFAULT_MODIFIERS = {
@@ -298,6 +301,7 @@ export function resolveWebEditorOptions(
       breadcrumbs: true,
       propertyPanel: true,
       toolbarMode: 'inline',
+      initialSelectionModeActive: true,
       initialDarkMode: false,
       showCopyPromptAction: true,
       hideExecutionControls: false,
@@ -399,10 +403,19 @@ export function createEditorRuntimeState(): EditorRuntimeState {
     textCommentManager: null,
     textCommentTargetElement: null,
     activeTextComment: null,
+    annotationBridgeSelection: null,
   };
 }
 
+export function clearAnnotationBridgeSelection(state: EditorRuntimeState): void {
+  const selection = state.annotationBridgeSelection;
+  if (!selection) return;
+  selection.bridge.closeTarget(selection.target);
+  state.annotationBridgeSelection = null;
+}
+
 export function resetEditorTransientState(state: EditorRuntimeState): void {
+  clearAnnotationBridgeSelection(state);
   state.editMetaByKey.clear();
   state.processedEditTimestampsByKey.clear();
   state.pendingMarkerAnchors.clear();
@@ -423,6 +436,7 @@ export function resetEditorTransientState(state: EditorRuntimeState): void {
 }
 
 export function clearEditorRuntimeRefs(state: EditorRuntimeState): void {
+  clearAnnotationBridgeSelection(state);
   state.shadowHost = null;
   state.canvasOverlay = null;
   state.handlesController = null;

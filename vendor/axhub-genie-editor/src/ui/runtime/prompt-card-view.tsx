@@ -167,6 +167,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       onExportSelectionToDesignTool,
       getExportSelectionToDesignToolBlockReason,
       hideExecutionControls = false,
+      hideContextAppendAction = false,
       onHoverSelectionSuppressedChange,
       onSelectionInteractionLockChange,
       onTargetChange,
@@ -552,7 +553,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       currentTarget,
       uiMode,
       toolMinimized,
-      onSendToGenie: options.onSendToGenie,
+      onSendToGenie: hideContextAppendAction ? undefined : options.onSendToGenie,
       getGenieBridgeAvailable: options.getGenieBridgeAvailable,
       getAssistantPanelOpen: options.getAssistantPanelOpen,
     });
@@ -645,6 +646,9 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     }, [currentTaskTerminal, dismissTerminalTaskAndSelection, promptVisible, uiMode]);
 
     const wakeGenieForCurrentElementAction = React.useCallback(async (): Promise<boolean> => {
+      if (hideExecutionControls) {
+        return true;
+      }
       const connected = getGenieBridgeConnected?.();
       if (connected !== false && genieVisualState === 'awake') {
         return true;
@@ -663,7 +667,13 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
         // The wake bridge reports user-facing feedback.
       }
       return false;
-    }, [genieVisualState, getGenieBridgeConnected, onGenieVisualStateChange, onWakeGenie]);
+    }, [
+      genieVisualState,
+      getGenieBridgeConnected,
+      hideExecutionControls,
+      onGenieVisualStateChange,
+      onWakeGenie,
+    ]);
 
     const handleConfirmSendCurrentElementPrompt = React.useCallback(async () => {
       const ready = await wakeGenieForCurrentElementAction();
@@ -761,7 +771,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     const genieSelectionActionTitle = currentTaskRunning
       ? '添加到 AI 对话'
       : `添加到 AI 对话${genieSelectionShortcutHint}`;
-    const showCurrentElementExecutionControls = !hideExecutionControls;
+    const showContextAppendExecutionControls = !hideExecutionControls;
     const notePlaceholder = resolvePromptCardNotePlaceholder();
     const promptCardCloseActionTitle = '关闭并保存 (Enter / Esc)';
 
@@ -822,7 +832,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
         </style>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {showCurrentElementExecutionControls && genieAvailable ? (
+            {showContextAppendExecutionControls && genieAvailable ? (
               <IconActionButton
                 title={genieSelectionActionTitle}
                 icon={<GenieSparkleIcon />}

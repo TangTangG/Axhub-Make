@@ -9,13 +9,28 @@ export interface JsonResponseOptions {
   headers?: Record<string, string>;
 }
 
-export function getLocalIP(): string {
-  for (const nets of Object.values(networkInterfaces())) {
+export type NetworkInterfaceMap = ReturnType<typeof networkInterfaces>;
+
+export function getLocalNetworkHostsFromInterfaces(interfaces: NetworkInterfaceMap): string[] {
+  const hosts = new Set<string>();
+  for (const nets of Object.values(interfaces)) {
     for (const net of nets || []) {
       if (net.family === 'IPv4' && !net.internal) {
-        return net.address;
+        hosts.add(net.address);
       }
     }
+  }
+  return Array.from(hosts);
+}
+
+export function getLocalNetworkHosts(): string[] {
+  return getLocalNetworkHostsFromInterfaces(networkInterfaces());
+}
+
+export function getLocalIP(): string {
+  const [firstHost] = getLocalNetworkHosts();
+  if (firstHost) {
+    return firstHost;
   }
   return 'localhost';
 }

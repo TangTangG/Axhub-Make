@@ -69,7 +69,7 @@ export interface PreviewCaptureArgs {
     waitSeconds?: number;
 }
 
-export type PreviewNavigateResourceType = 'prototype' | 'canvas' | 'doc' | 'theme';
+export type PreviewNavigateResourceType = 'prototype' | 'canvas' | 'doc' | 'template' | 'theme';
 
 export interface PreviewNavigateTargetInput {
     resourceType?: PreviewNavigateResourceType | string;
@@ -480,6 +480,7 @@ function normalizePreviewNavigateResourceType(value: unknown): PreviewNavigateRe
         resourceType === 'prototype'
         || resourceType === 'canvas'
         || resourceType === 'doc'
+        || resourceType === 'template'
         || resourceType === 'theme'
     ) {
         return resourceType;
@@ -830,6 +831,7 @@ function requestRuntimeReady(iframe: HTMLIFrameElement, timeoutMs = 1500): Promi
         targetWindow.postMessage({
             type: 'axhub.quickEdit.requestRuntimeReady',
             requestId,
+            runtimeOrigin: getWindowOrigin(),
         }, '*');
     });
 }
@@ -967,6 +969,7 @@ export function captureIframeViaQuickEditRuntime({
             resourceType: target.resourceType,
             resourceId: target.resourceId,
             clientUrl: target.url,
+            runtimeOrigin: getWindowOrigin(),
             targetWidth: viewport.width,
             targetHeight: viewport.height,
             targetPixelRatio: 1,

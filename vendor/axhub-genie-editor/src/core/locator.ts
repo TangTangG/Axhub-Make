@@ -40,6 +40,8 @@ const FINGERPRINT_MAX_CLASSES = 8;
 
 /** Priority ordered data attributes for unique identification */
 const UNIQUE_DATA_ATTRS = [
+  'data-axhub-annotation-comment-target-id',
+  'data-axhub-annotation-panel-node-id',
   'data-testid',
   'data-test-id',
   'data-test',
@@ -56,6 +58,8 @@ const MAX_CLASS_COMBO_DEPTH = 3;
 
 /** Data attributes eligible for ancestor anchors (Phase 2.9) */
 const ANCHOR_DATA_ATTRS = [
+  'data-axhub-annotation-comment-target-id',
+  'data-axhub-annotation-panel-node-id',
   'data-testid',
   'data-test-id',
   'data-test',

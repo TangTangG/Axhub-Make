@@ -67,8 +67,9 @@ export function buildResourceFolderCanvasPayload(item: ItemData) {
     ]);
 
     return {
-        type: 'doc',
-        resourceType: 'doc',
+        type: 'preview',
+        resourceType: 'preview',
+        sourceResourceType: 'doc',
         resourceId,
         name: item.name,
         displayName: item.displayName || item.name,

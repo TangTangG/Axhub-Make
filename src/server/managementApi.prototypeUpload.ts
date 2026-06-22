@@ -1235,7 +1235,8 @@ export async function handleCreatePlaceholderPrototype(
     fs.writeFileSync(path.join(targetDir, 'index.tsx'), createPlaceholderIndexTsx(displayName), 'utf8');
     fs.writeFileSync(path.join(targetDir, 'style.css'), createPlaceholderStyleCss(), 'utf8');
 
-    fs.writeFileSync(path.join(targetDir, 'canvas.excalidraw'), JSON.stringify(createDefaultCanvasData(), null, 2), 'utf8');
+    const canvasPath = path.join(targetDir, 'canvas.excalidraw');
+    fs.writeFileSync(canvasPath, JSON.stringify(createDefaultCanvasData(), null, 2), 'utf8');
 
     const indexPath = path.join(targetDir, 'index.tsx');
     const clientUrl = resolvePrototypeClientUrl(options, context, folderName);
@@ -1256,6 +1257,8 @@ export async function handleCreatePlaceholderPrototype(
       path: `prototypes/${folderName}`,
       filePath: createProjectRelativePath(context.project.root, indexPath),
       absoluteFilePath: indexPath,
+      canvasFilePath: createProjectRelativePath(context.project.root, canvasPath),
+      absoluteCanvasFilePath: canvasPath,
       clientUrl,
       placeholder: true,
       placeholderGuide: PROTOTYPE_PLACEHOLDER_GUIDE,

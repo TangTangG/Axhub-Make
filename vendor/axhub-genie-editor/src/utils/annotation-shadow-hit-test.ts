@@ -5,6 +5,7 @@ const AXHUB_ANNOTATION_SHELL_IDS = new Set([
   '__axhub_annotation_ui__',
 ]);
 const AXHUB_ANNOTATION_COMMENT_TARGET_ATTR = 'data-axhub-annotation-comment-target';
+export const AXHUB_ANNOTATION_DIRECT_ACTION_ATTR = 'data-axhub-annotation-direct-action';
 
 type ShadowHitRoot = {
   elementsFromPoint?: (x: number, y: number) => Element[];
@@ -78,6 +79,40 @@ function isAnnotationCommentTarget(element: Element): boolean {
   return getAttributeValue(element, AXHUB_ANNOTATION_COMMENT_TARGET_ATTR) === 'true';
 }
 
+export function isAxhubAnnotationDirectActionElement(element: Element): boolean {
+  return getAttributeValue(element, AXHUB_ANNOTATION_DIRECT_ACTION_ATTR) === 'true';
+}
+
+function closestAxhubAnnotationDirectActionElement(element: Element | null): Element | null {
+  let current: Element | null = element;
+  while (current) {
+    if (isAxhubAnnotationDirectActionElement(current)) return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
+export function isAxhubAnnotationDirectActionEvent(event: Event): boolean {
+  try {
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    for (const node of path) {
+      if (node instanceof Element && closestAxhubAnnotationDirectActionElement(node)) {
+        return true;
+      }
+    }
+  } catch {
+    // Fall back to coordinate hit-testing below.
+  }
+
+  const point = event as MouseEvent;
+  const x = typeof point.clientX === 'number' ? point.clientX : Number.NaN;
+  const y = typeof point.clientY === 'number' ? point.clientY : Number.NaN;
+  if (!isFinitePoint(x, y)) return false;
+
+  return readAxhubAnnotationShadowHitElementsAtPoint(x, y)
+    .some((element) => closestAxhubAnnotationDirectActionElement(element));
+}
+
 function resolveAnnotationCommentTarget(element: Element): Element | null {
   let current: Element | null = element;
   while (current) {
@@ -120,15 +155,21 @@ function readShadowElementsFromPoint(shadowRoot: ShadowHitRoot, x: number, y: nu
   return [];
 }
 
-export function getAxhubAnnotationShadowHitElementsAtPoint(x: number, y: number): Element[] {
+function readAxhubAnnotationShadowHitElementsAtPoint(x: number, y: number): Element[] {
   if (!isFinitePoint(x, y)) return [];
 
   const shadowRoot = getAnnotationShadowRoot();
   if (!shadowRoot) return [];
 
-  const hitElements = readShadowElementsFromPoint(shadowRoot, x, y).filter(
+  return readShadowElementsFromPoint(shadowRoot, x, y).filter(
     (element) => !isAnnotationShellElement(element) && !isPointerPassthroughElement(element),
   );
+}
+
+export function getAxhubAnnotationShadowHitElementsAtPoint(x: number, y: number): Element[] {
+  const hitElements = readAxhubAnnotationShadowHitElementsAtPoint(x, y);
+  if (hitElements.length === 0) return [];
+  if (hitElements.some((element) => closestAxhubAnnotationDirectActionElement(element))) return [];
 
   const declaredTargets = uniqueElements(
     hitElements

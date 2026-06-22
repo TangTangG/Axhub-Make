@@ -82,11 +82,39 @@ const UI_SETTINGS_KEY = 'web-editor-v2-ui-settings';
 const GENIE_CONVERSATION_KEY_PREFIX = 'web-editor-v2-genie-conversation:';
 const GENIE_TASKS_KEY_PREFIX = 'web-editor-v2-genie-tasks:';
 const SCOPED_COMMENT_TASK_KEY_PREFIX = 'page-scope:';
+const ANNOTATION_PANEL_NODE_ID_ATTR = 'data-axhub-annotation-panel-node-id';
 
 function stripLocatorDebugSource(locator: ElementLocator): ElementLocator {
   if (!locator.debugSource) return locator;
   const { debugSource: _debugSource, ...rest } = locator;
   return rest;
+}
+
+function extractAnnotationPanelNodeId(locator: ElementLocator | null | undefined): string {
+  for (const selector of locator?.selectors ?? []) {
+    const normalized = String(selector ?? '').trim();
+    if (!normalized) continue;
+    const match = normalized.match(/\[data-axhub-annotation-panel-node-id=(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/);
+    const rawValue = match?.[1] ?? match?.[2] ?? match?.[3] ?? '';
+    const nodeId = String(rawValue).trim();
+    if (nodeId) return nodeId;
+  }
+  return '';
+}
+
+function normalizeAnnotationPanelCacheIdentity(
+  locator: ElementLocator,
+): { elementKey: WebEditorElementKey; locator: ElementLocator } | null {
+  const nodeId = extractAnnotationPanelNodeId(locator);
+  if (!nodeId) return null;
+  const nextElementKey = `annotation-panel:${nodeId}` as WebEditorElementKey;
+  return {
+    elementKey: nextElementKey,
+    locator: {
+      ...locator,
+      fingerprint: nextElementKey,
+    },
+  };
 }
 
 function cloneTweakValue(value: GenieEditorTweakValues[string] | undefined) {
@@ -1310,17 +1338,29 @@ export function createPersistenceService(options: {
         continue;
       }
 
-      const element = locateElement(entry.locator);
-      if (!element || !element.isConnected) continue;
+      const annotationPanelIdentity = normalizeAnnotationPanelCacheIdentity(entry.locator);
+      const entryLocator = annotationPanelIdentity?.locator ?? entry.locator;
+      const element = locateElement(entryLocator);
+      const canRestoreWithoutLiveElement = Boolean(annotationPanelIdentity) && Boolean(entry.marker);
+      if ((!element || !element.isConnected) && !canRestoreWithoutLiveElement) continue;
 
-      const resolvedElementKey = entryElementKey || generateStableElementKey(element, entry.locator.shadowHostChain);
-      const resolvedLabel = String(entry.label ?? '').trim() || generateFullElementLabel(element, entry.locator.shadowHostChain);
+      const resolvedElementKey = annotationPanelIdentity?.elementKey
+        ?? (entryElementKey || (
+          element
+            ? generateStableElementKey(element, entryLocator.shadowHostChain)
+            : locatorKey(entryLocator)
+        ));
+      const resolvedLabel = String(entry.label ?? '').trim() || (
+        element
+          ? generateFullElementLabel(element, entryLocator.shadowHostChain)
+          : 'Annotation Panel'
+      );
       const meta = changes.getOrCreateEditMeta(
         resolvedElementKey,
-        entry.locator,
+        entryLocator,
         resolvedLabel,
       );
-      meta.locator = entry.locator;
+      meta.locator = entryLocator;
       meta.label = resolvedLabel;
       meta.note = changes.normalizeNote(entry.note ?? meta.note);
       const entrySkillIds = normalizePromptCardSkillIds(entry.skillIds ?? []);
@@ -1368,6 +1408,7 @@ export function createPersistenceService(options: {
         for (const prop of Object.keys(afterStyles)) {
           const afterValue = String(afterStyles[prop] ?? '');
           const beforeValue = String(beforeStyles[prop] ?? '');
+          if (!element) continue;
           const style = (element as HTMLElement).style;
           if (style) {
             if (afterValue.trim()) {
@@ -1376,11 +1417,11 @@ export function createPersistenceService(options: {
               style.removeProperty(prop);
             }
           }
-          tm.recordStyle(entry.locator, prop, beforeValue, afterValue, { merge: false });
+          tm.recordStyle(entryLocator, prop, beforeValue, afterValue, { merge: false });
         }
       }
 
-      if (entry.textChange) {
+      if (entry.textChange && element) {
         const before = String(entry.textChange.before ?? '');
         const after = String(entry.textChange.after ?? '');
         if (before !== after && element instanceof HTMLElement) {

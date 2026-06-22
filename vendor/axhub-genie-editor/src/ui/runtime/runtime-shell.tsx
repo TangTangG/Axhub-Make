@@ -124,6 +124,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
     propertyPanelOptions,
     propertyPanelVisible = Boolean(propertyPanelOptions),
     initialPropertyPanelOpen = false,
+    initialSelectionModeActive = true,
     toolbarMode: toolbarModeProp,
     breadcrumbsOptions,
     propertyPanelRef,
@@ -187,6 +188,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
   const latestPointerPositionRef = usePointerTracker();
   const selectionGuards = useSelectionModeGuards({
     propertyPanelOptions,
+    initialSelectionModeActive,
     setToolMinimized,
   });
   const promptSelectionInteractionLockChangeRef = React.useRef(
@@ -894,6 +896,9 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
           bubbleStyleEditorOpen={bubbleStyleEditorOpen}
           genieVisualState={genieVisualState}
           hideExecutionControls={Boolean(
+            breadcrumbsOptions.hideExecutionControls ?? propertyPanelOptions?.hideExecutionControls,
+          )}
+          hideContextAppendAction={Boolean(
             breadcrumbsOptions.hideExecutionControls ?? propertyPanelOptions?.hideExecutionControls,
           )}
           onBubbleStyleEditorOpenChange={setBubbleStyleEditorOpen}

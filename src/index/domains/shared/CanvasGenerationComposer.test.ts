@@ -1,8 +1,13 @@
 import type { ThreadMessage } from '@assistant-ui/react';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@axhub/acp/react', () => ({
+vi.mock('@axhub/acp/runtime', () => ({
+  ACP_CAPABILITY_REFRESH_EVENT: 'axhub:acp-capability-refresh',
   AcpUiProvider: ({ children }: { children: unknown }) => children,
+  acpApiClient: {
+    cancelChat: vi.fn(),
+  },
+  configureAcpUiRuntime: vi.fn(),
   useAcpUiRuntimeContext: () => ({
     consumeContextBundle: () => null,
     modeId: null,
@@ -13,15 +18,7 @@ vi.mock('@axhub/acp/react', () => ({
   }),
 }));
 
-vi.mock('@axhub/acp/runtime', () => ({
-  ACP_CAPABILITY_REFRESH_EVENT: 'axhub:acp-capability-refresh',
-  acpApiClient: {
-    cancelChat: vi.fn(),
-  },
-  configureAcpUiRuntime: vi.fn(),
-}));
-
-vi.mock('@axhub/acp/ui', () => ({
+vi.mock('@axhub/acp/composer', () => ({
   AcpComposerSelectors: () => null,
   ComposerAttachments: () => null,
 }));
@@ -66,6 +63,8 @@ async function loadMessageExtraction() {
     canvasReferenceImageAttachmentAdapter: mod.canvasReferenceImageAttachmentAdapter,
     extractCanvasGenerationPromptFromMessage: mod.extractCanvasGenerationPromptFromMessage,
     extractCanvasGenerationReferenceImagesFromMessage: mod.extractCanvasGenerationReferenceImagesFromMessage,
+    resolveCanvasAcpRuntimeProviderOptions: mod.resolveCanvasAcpRuntimeProviderOptions,
+    resolveCanvasAcpSelectorDefaults: mod.resolveCanvasAcpSelectorDefaults,
   };
 }
 
@@ -139,5 +138,27 @@ describe('CanvasGenerationComposer message extraction', () => {
         filename: 'reference.png',
       },
     ]);
+  });
+
+  it('limits ACP selector providers to Claude Code, Codex, OpenCode, plus the user default provider', async () => {
+    const { resolveCanvasAcpSelectorDefaults } = await loadMessageExtraction();
+
+    expect(resolveCanvasAcpSelectorDefaults('acp:codex')).toEqual({
+      defaultProvider: 'codex',
+      defaultModel: 'gpt-5.5',
+      providerOptions: ['claude', 'codex', 'opencode'],
+    });
+    expect(resolveCanvasAcpSelectorDefaults('acp:gemini')).toEqual({
+      defaultProvider: 'gemini',
+      defaultModel: 'gemini-3-pro-preview',
+      providerOptions: ['claude', 'codex', 'opencode', 'gemini'],
+    });
+  });
+
+  it('falls back to fixed ACP provider options when the runtime context omits providerOptions', async () => {
+    const { resolveCanvasAcpRuntimeProviderOptions } = await loadMessageExtraction();
+
+    expect(resolveCanvasAcpRuntimeProviderOptions(undefined, 'codex')).toEqual(['claude', 'codex', 'opencode']);
+    expect(resolveCanvasAcpRuntimeProviderOptions(undefined, 'gemini')).toEqual(['claude', 'codex', 'opencode', 'gemini']);
   });
 });

@@ -366,6 +366,21 @@ export interface CloudPublishingLatestResponse {
     };
 }
 
+export interface CreatePlaceholderPrototypeResponse {
+    success: boolean;
+    projectId?: string;
+    name: string;
+    displayName?: string;
+    path?: string;
+    filePath?: string;
+    absoluteFilePath?: string;
+    canvasFilePath?: string;
+    absoluteCanvasFilePath?: string;
+    clientUrl?: string;
+    placeholder?: boolean;
+    placeholderGuide?: unknown;
+}
+
 export interface CloudPublishingApiError extends Error {
     code?: string;
     target?: CloudPublishTarget;
@@ -411,6 +426,19 @@ function buildProjectScopedUrl(path: string, options?: GetConfigOptions): string
 }
 
 export const apiService = {
+    async createPlaceholderPrototype(options?: GetConfigOptions): Promise<CreatePlaceholderPrototypeResponse> {
+        const response = await fetch(buildProjectScopedUrl('/api/prototypes/create-placeholder', options), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '创建原型失败');
+        }
+        return result;
+    },
+
     async startPlaceholderPrototypeGeneration(prototypeName: string) {
         const encodedPrototypeName = encodeURIComponent(prototypeName);
         const response = await fetch(`/api/prototypes/${encodedPrototypeName}/start-generation`, {

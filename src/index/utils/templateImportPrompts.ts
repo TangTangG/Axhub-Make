@@ -42,7 +42,7 @@ export function generateTemplateImportPrompt(params: {
 **目标**：
 - 优先放到当前项目 metadata 声明的 prototypes 目录：<prototypes>/${targetSlug}
 - 读取不到 metadata 声明时，使用当前项目的 ${targetPath}
-${targetPrototypeName ? '- 必须覆盖当前占位原型目录；不要创建新的原型目录，不要改用模板自带目录名' : '- 若目标目录已存在，停止并询问；不要覆盖或自动改名'}
+${targetPrototypeName ? '- 必须覆盖当前占位原型目录；不要创建新的原型目录，不要改用模板自带目录名' : '- 创建一个新原型；若目标目录已存在，停止并询问；不要覆盖或自动改名'}
 
 **要求**：
 1. 复制来源目录的全部内容，保持目录结构。

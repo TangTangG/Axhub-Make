@@ -387,6 +387,54 @@ describe('PresentationToolbar Genie host controls source', () => {
       themeResourceActionsSource.indexOf('<PencilRuler /> 批注'),
     );
   });
+
+  it('adds a top online edit action for drawio document and template previews', () => {
+    const source = readToolbarSource();
+    const documentResourceActionsSource = source.slice(
+      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
+    );
+
+    expect(source).toContain('drawioResourceEditAvailable?: boolean;');
+    expect(source).toContain('handleOpenDrawioResourceEditor: () => void | Promise<void>;');
+    expect(source).toContain('drawioResourceEditAvailable = false,');
+    expect(source).toContain('handleOpenDrawioResourceEditor,');
+    expect(documentResourceActionsSource).toContain('drawioResourceEditAvailable');
+    expect(documentResourceActionsSource).toContain('handleOpenDrawioResourceEditor');
+    expect(documentResourceActionsSource).toContain('在线编辑');
+    expect(documentResourceActionsSource.indexOf('在线编辑')).toBeGreaterThan(
+      documentResourceActionsSource.indexOf('打开'),
+    );
+  });
+
+  it('shows the document annotation action for commentable Markdown and HTML resources', () => {
+    const source = readToolbarSource();
+    const documentResourceActionsSource = source.slice(
+      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
+    );
+
+    expect(source).toContain('isDocumentCommentableResource');
+    expect(documentResourceActionsSource).toContain('const canCommentOnDocument = isDocumentCommentableResource(currentMarkdownItem);');
+    expect(documentResourceActionsSource).toContain('{canCommentOnDocument ? (');
+    expect(documentResourceActionsSource).toContain('<PencilRuler /> 批注');
+    expect(documentResourceActionsSource).toContain('<TooltipContent>{`批注${currentMarkdownLabel}`}</TooltipContent>');
+    expect(documentResourceActionsSource).not.toContain('<SquarePen /> 编辑');
+  });
+
+  it('reuses the page annotation host toolbar when HTML document annotation is active', () => {
+    const source = readToolbarSource();
+    const documentResourceActionsSource = source.slice(
+      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
+    );
+
+    expect(source).toContain('isHtmlCommentableResource');
+    expect(source).toContain('const isHtmlDocumentEditingContent = isDocumentEditingContent && isHtmlCommentableResource(currentMarkdownItem);');
+    expect(source).toContain('const isQuickEditActive = quickEditActive && (!isDocumentEditingContent || isHtmlDocumentEditingContent);');
+    expect(documentResourceActionsSource).toContain('if (isHtmlDocumentEditingContent && isQuickEditActive) {');
+    expect(documentResourceActionsSource).toContain('return activeQuickEditToolbarButtons;');
+  });
 });
 
 describe('PresentationToolbar multi-page preview source', () => {

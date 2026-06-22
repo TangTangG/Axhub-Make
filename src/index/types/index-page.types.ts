@@ -113,7 +113,7 @@ export interface CreateDialogActions {
     onClose: () => void;
     onAfterCreatePromptAction: () => void;
     onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
-    onUploadSuccess?: () => void | Promise<void>;
+    onUploadSuccess?: (result?: any) => void | Promise<void>;
 }
 
 export interface ExportState {
@@ -177,6 +177,7 @@ export interface NewSidebarState {
     sidebarTrees: Record<SidebarTreeTab, SidebarTreeNode[]>;
     webAgentPanelOpen?: boolean;
     aiPanelMode?: AiPanelMode;
+    prototypeStartPageActive?: boolean;
 }
 
 export interface NewSidebarActions {
@@ -265,6 +266,7 @@ export type NewSidebarProps = NewSidebarGroupedProps | NewSidebarLegacyProps;
 export interface PresentationAreaState {
     collapsed: boolean;
     selectedItem: ItemData | null;
+    prototypeStartDraftActive?: boolean;
     viewMode: ViewMode;
     activeTab: TabType;
     selectedDeviceId: string;
@@ -281,6 +283,7 @@ export interface PresentationAreaState {
         quickEditMode: SpecQuickEditMode;
     };
     markdownPromptCopying?: boolean;
+    drawioResourceEditAvailable?: boolean;
     reviewPanelOpen?: boolean;
     activeReviewKind?: ReviewKind;
     reviewMarkdown?: string;
@@ -341,7 +344,7 @@ export interface PresentationAreaState {
     themes?: ThemeResourceItem[];
     defaultThemeName?: string | null;
     onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;
-    onRefreshPrototypes?: () => Promise<ItemData[]>;
+    onRefreshPrototypes?: (preferredName?: string) => Promise<ItemData[]>;
 }
 
 export interface PresentationAreaActions {
@@ -364,6 +367,7 @@ export interface PresentationAreaActions {
     handleSaveDocEdit: () => void;
     handleExitDocEdit: () => void;
     handleSwitchDocQuickEditMode: (mode: SpecQuickEditMode) => void;
+    handleOpenDrawioResourceEditor: () => void | Promise<void>;
     handleCopyMarkdownPrompt: () => void | Promise<void>;
     handleReviewPanelToggle?: () => void | Promise<void>;
     handleReviewKindChange?: (kind: ReviewKind) => void;
@@ -424,7 +428,8 @@ export interface PresentationAreaActions {
     onCloseWebAgentPanel?: () => void;
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
     onOpenAISettings?: () => void;
-    onRefreshPrototypes?: () => Promise<ItemData[]>;
+    onCreatePrototypeForDraftStart?: () => Promise<ItemData | null>;
+    onRefreshPrototypes?: (preferredName?: string) => Promise<ItemData[]>;
     onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     onAddCanvasScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;
     onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;

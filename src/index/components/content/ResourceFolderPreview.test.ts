@@ -73,8 +73,9 @@ describe('ResourceFolderPreview helpers', () => {
     };
 
     expect(buildResourceFolderCanvasPayload(item)).toMatchObject({
-      type: 'doc',
-      resourceType: 'doc',
+      type: 'preview',
+      resourceType: 'preview',
+      sourceResourceType: 'doc',
       resourceId: 'assets/logo.png',
       name: 'assets/logo.png',
       displayName: 'Logo',
@@ -95,8 +96,9 @@ describe('ResourceFolderPreview helpers', () => {
     };
 
     expect(buildResourceFolderCanvasPayload(item)).toMatchObject({
-      type: 'doc',
-      resourceType: 'doc',
+      type: 'preview',
+      resourceType: 'preview',
+      sourceResourceType: 'doc',
       resourceId: 'docs/spec.md',
       previewKind: 'doc',
       embedViewMode: 'preview',

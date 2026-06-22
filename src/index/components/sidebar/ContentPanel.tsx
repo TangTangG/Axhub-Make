@@ -831,8 +831,9 @@ function resolvePrototypePageEmbedDisplayName(item: ItemData, pageTitle: string)
 function buildPrototypePageCanvasPayload(item: ItemData, page: { id: string; title: string }) {
     const resourceId = item.resourceId || item.name;
     return {
-        type: 'prototype',
-        resourceType: 'prototype',
+        type: 'preview',
+        resourceType: 'preview',
+        sourceResourceType: 'prototype',
         resourceId,
         name: item.name,
         displayName: resolvePrototypePageEmbedDisplayName(item, page.title),
@@ -2343,11 +2344,12 @@ export default function ContentPanel({
 	                    <DropdownMenuItem onSelect={(e) => {
 	                        e.preventDefault();
 	                        e.stopPropagation();
-	                        const resourceType = isDocItem ? 'doc' : 'prototype';
+	                        const sourceResourceType = isDocItem ? 'doc' : 'prototype';
 	                        const resourceId = item.resourceId || item.name;
 	                        const payload = {
-	                            type: resourceType,
-	                            resourceType: resourceType,
+	                            type: 'preview',
+	                            resourceType: 'preview',
+                                sourceResourceType,
 	                            resourceId: resourceId,
 	                            name: item.name,
 	                            displayName: item.displayName || item.name,
@@ -2357,7 +2359,7 @@ export default function ContentPanel({
 	                                ? (item.previewUrl || item.specUrl || '')
 	                                : (item.previewUrl || item.clientUrl || ''),
 	                            openUrl: buildResourceDeepLinkUrl({
-	                                resourceType: resourceType,
+	                                resourceType: sourceResourceType,
 	                                resourceId: resourceId,
 	                                view: isPrototypeItem ? 'demo' : undefined,
 	                                collapseSidebar: true,
@@ -2699,7 +2701,11 @@ export default function ContentPanel({
                             if (!isFolder && item) {
                                 const isDocItem = dataTab === 'docs';
                                 const isPrototypeItem = dataTab === 'prototypes';
-                                const resourceType = isDocItem ? 'doc' : 'prototype';
+                                const sourceResourceType = isDocItem
+                                    ? 'doc'
+                                    : dataTab === 'themes'
+                                        ? 'theme'
+                                        : 'prototype';
                                 const resourceId = (item as any).resourceId || item.name;
                                 const previewKind = isDocItem
                                     ? resolveCanvasDropPreviewKind([
@@ -2712,8 +2718,9 @@ export default function ContentPanel({
                                     ], 'none')
                                     : 'web';
                                 const payload = {
-                                    type: resourceType,
-                                    resourceType,
+                                    type: 'preview',
+                                    resourceType: 'preview',
+                                    sourceResourceType,
                                     resourceId,
                                     name: item.name,
                                     displayName: item.displayName || item.name,
@@ -2723,7 +2730,7 @@ export default function ContentPanel({
                                         ? (item.previewUrl || item.specUrl || '')
                                         : (item.previewUrl || item.clientUrl || ''),
                                     openUrl: buildResourceDeepLinkUrl({
-                                        resourceType,
+                                        resourceType: sourceResourceType,
                                         resourceId,
                                         view: isPrototypeItem ? 'demo' : undefined,
                                         collapseSidebar: true,

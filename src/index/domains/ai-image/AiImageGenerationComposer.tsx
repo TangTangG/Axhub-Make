@@ -5,7 +5,7 @@ import {
   useAui,
   type Unstable_SlashCommand,
 } from '@assistant-ui/react';
-import { ChevronDown, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { ChevronDown, CircleHelp, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { ComposerTriggerPopover } from '@/components/assistant-ui/composer-trigger-popover';
 import CanvasGenerationComposer, {
@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 import { getAiImageTaskStore, type AiImageTaskParams, type AiImageTaskRecord } from './aiImageStore';
 import { AI_IMAGE_SKILLS, appendAiImageSkillPrompt } from './aiImageSkills';
@@ -89,19 +90,14 @@ const QUALITY_OPTIONS = [
 ] as const;
 
 const SIZE_PRESETS = [
-  { label: '1:1', value: '1024x1024', width: 1024, height: 1024 },
-  { label: '3:2', value: '1536x1024', width: 1536, height: 1024 },
-  { label: '2:3', value: '1024x1536', width: 1024, height: 1536 },
-  { label: '4:3', value: '1365x1024', width: 1365, height: 1024 },
-  { label: '3:4', value: '1024x1365', width: 1024, height: 1365 },
-  { label: '9:16', value: '1024x1792', width: 1024, height: 1792 },
-  { label: '1:1(2k)', value: '2048x2048', width: 2048, height: 2048 },
-  { label: '16:9(2k)', value: '2048x1152', width: 2048, height: 1152 },
-  { label: '9:16(2k)', value: '1152x2048', width: 1152, height: 2048 },
-  { label: '16:9(4k)', value: '3840x2160', width: 3840, height: 2160 },
-  { label: '9:16(4k)', value: '2160x3840', width: 2160, height: 3840 },
+  { label: '移动端 1K', value: '1024x1536', width: 1024, height: 1536 },
+  { label: '移动端 2K', value: '1152x2048', width: 1152, height: 2048 },
+  { label: '移动端 4K', value: '2160x3840', width: 2160, height: 3840 },
+  { label: 'PC 端 1K', value: '1536x1024', width: 1536, height: 1024 },
+  { label: 'PC 端 2K', value: '2048x1152', width: 2048, height: 1152 },
+  { label: 'PC 端 4K', value: '3840x2160', width: 3840, height: 2160 },
   { label: '自定义', value: 'custom', width: null, height: null },
-  { label: 'auto', value: 'auto', width: null, height: null },
+  { label: '自动', value: 'auto', width: null, height: null },
 ] as const;
 
 const COUNT_OPTIONS = Array.from({ length: 10 }, (_, index) => index + 1);
@@ -111,6 +107,37 @@ const FORMAT_OPTIONS = [
   { label: 'JPEG', value: 'jpeg' },
   { label: 'WebP', value: 'webp' },
 ] as const;
+
+const IMAGE_FIELD_HINTS = {
+  size: '选择移动端或 PC 端的 1K、2K、4K 画布尺寸，也可使用自定义宽高。',
+  quality: '质量越高通常细节越好，但生成时间和消耗也可能更高。',
+  count: '选择后会按方案数量生成多个设计方向。',
+  format: '选择生成图片的输出格式。',
+  promptOptimization: '开启后会要求 AI 完整使用输入内容，不主动改写提示词。',
+} as const;
+
+function FieldLabelWithHint({ label, hint }: { label: string; hint: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+      <span>{label}</span>
+      <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className="inline-flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground"
+              aria-label={`${label}说明`}
+            >
+              <CircleHelp className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[260px] text-xs leading-5">
+            {hint}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </span>
+  );
+}
 
 const DEFAULT_PARAMS: AiImageTaskParams = {
   size: 'auto',
@@ -239,7 +266,7 @@ function ImageSettingsPopover({
 
           <div className="grid grid-cols-2 gap-3">
             <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">尺寸</span>
+              <FieldLabelWithHint label="尺寸" hint={IMAGE_FIELD_HINTS.size} />
               <Select
                 value={isCustomSize ? CUSTOM_SIZE_VALUE : params.size}
                 onValueChange={(value) => {
@@ -263,7 +290,7 @@ function ImageSettingsPopover({
             </label>
 
             <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">质量</span>
+              <FieldLabelWithHint label="质量" hint={IMAGE_FIELD_HINTS.quality} />
               <Select value={params.quality} onValueChange={(value) => updateParam('quality', value as AiImageTaskParams['quality'])}>
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
@@ -308,7 +335,7 @@ function ImageSettingsPopover({
 
           <div className="grid grid-cols-2 gap-3">
             <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">生成数量</span>
+              <FieldLabelWithHint label="方案数量" hint={IMAGE_FIELD_HINTS.count} />
               <Select value={String(params.n)} onValueChange={(value) => updateParam('n', Number(value))}>
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
@@ -316,7 +343,7 @@ function ImageSettingsPopover({
                 <SelectContent style={IMAGE_SETTINGS_SELECT_CONTENT_STYLE}>
                   {COUNT_OPTIONS.map((count) => (
                     <SelectItem key={count} value={String(count)}>
-                      {count} 张
+                      {count} 个
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -324,7 +351,7 @@ function ImageSettingsPopover({
             </label>
 
             <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">格式</span>
+              <FieldLabelWithHint label="格式" hint={IMAGE_FIELD_HINTS.format} />
               <Select value={params.output_format} onValueChange={(value) => updateParam('output_format', value as AiImageTaskParams['output_format'])}>
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
@@ -341,15 +368,17 @@ function ImageSettingsPopover({
           </div>
 
           <label
-            className="inline-flex items-center gap-2 text-xs font-medium text-foreground"
-            title="开启后会要求 AI 完整使用输入内容，不主动改写提示词。"
+            className="space-y-1.5 text-xs font-medium text-foreground"
           >
-            <Switch
-              checked={params.disable_prompt_optimization === true}
-              onCheckedChange={(checked) => updateParam('disable_prompt_optimization', checked === true)}
-              aria-label="禁止优化提示词"
-            />
-            <span>禁止优化提示词</span>
+            <FieldLabelWithHint label="禁止优化提示词" hint={IMAGE_FIELD_HINTS.promptOptimization} />
+            <div className="flex h-8 items-center gap-2">
+              <Switch
+                checked={params.disable_prompt_optimization === true}
+                onCheckedChange={(checked) => updateParam('disable_prompt_optimization', checked === true)}
+                aria-label="禁止优化提示词"
+              />
+              <span>开启</span>
+            </div>
           </label>
         </div>
       </PopoverContent>
@@ -530,7 +559,7 @@ export default function AiImageGenerationComposer({
   const activeFormatLabel = useMemo(() => (
     FORMAT_OPTIONS.find((item) => item.value === params.output_format)?.label || params.output_format.toUpperCase()
   ), [params.output_format]);
-  const activeCountLabel = useMemo(() => `${params.n} 张`, [params.n]);
+  const activeCountLabel = useMemo(() => `${params.n} 个`, [params.n]);
   const fallbackDimensions = useMemo(() => sizeToDimensions(params.size), [params.size]);
   const currentDimensions = useMemo(() => (
     params.size === CUSTOM_SIZE_VALUE ? customDimensions : fallbackDimensions
@@ -615,6 +644,7 @@ export default function AiImageGenerationComposer({
       topContent={topContent}
       workspacePath={assistantProjectPath}
       placeholder={placeholder}
+      preferredPromptClient={preferredPromptClient}
       ariaLabel="AI 图片生成提示词"
       sendTooltip="生成图片"
       addAttachmentTooltip="添加参考图"

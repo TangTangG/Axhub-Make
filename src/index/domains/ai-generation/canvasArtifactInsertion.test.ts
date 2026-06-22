@@ -150,7 +150,8 @@ describe('canvas artifact insertion helper', () => {
       type: 'embeddable',
       customData: {
         title: 'Home v2',
-        resourceType: 'prototype',
+        resourceType: 'preview',
+        sourceResourceType: 'prototype',
         resourceId: 'home',
         previewKind: 'web',
         embedViewMode: 'preview',
@@ -234,7 +235,8 @@ describe('canvas artifact insertion helper', () => {
       customData: {
         type: 'axhub-doc',
         title: 'Brief v2',
-        resourceType: 'doc',
+        resourceType: 'preview',
+        sourceResourceType: 'doc',
         resourceId: 'brief.md',
         previewKind: 'doc',
         embedViewMode: 'preview',
@@ -263,7 +265,8 @@ describe('canvas artifact insertion helper', () => {
       customData: {
         type: 'axhub-doc',
         title: 'Supply Chain Spec',
-        resourceType: 'doc',
+        resourceType: 'preview',
+        sourceResourceType: 'doc',
         resourceId: 'src/prototypes/erp-home/.spec/2026-06-10-supply-chain-home.md',
         previewKind: 'doc',
         embedViewMode: 'preview',
@@ -290,7 +293,8 @@ describe('canvas artifact insertion helper', () => {
 
     expect(result.elements[0].customData).toMatchObject({
       type: 'axhub-doc',
-      resourceType: 'doc',
+      resourceType: 'preview',
+      sourceResourceType: 'doc',
       resourceId: 'src/prototypes/erp-home/.spec/supply-chain.md',
       artifactResourceKey: 'document:src/prototypes/erp-home/.spec/supply-chain.md',
     });
@@ -373,7 +377,8 @@ describe('canvas artifact insertion helper', () => {
         type: 'axhub-drawio',
         title: 'Flow v1',
         previewKind: 'drawio',
-        resourceType: 'doc',
+        resourceType: 'preview',
+        sourceResourceType: 'doc',
         resourceId: 'flows/onboarding.drawio.svg',
         artifactResourceKey: 'drawio:flows/onboarding.drawio.svg',
         sourceArtifactId: 'artifact-drawio-a',

@@ -8,7 +8,7 @@ import {
   resolveCodexLocalImageGenerationConfig,
 } from './projectCore/index.ts';
 
-import { readJsonBody, sendJson, streamDirectoryAsZip } from './http.ts';
+import { getLocalNetworkHosts, readJsonBody, sendJson, streamDirectoryAsZip } from './http.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 
 const makePackageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -52,8 +52,11 @@ function buildConfigBootstrapResponse(params: {
     ? Store extends { getConfig: (...args: any[]) => infer Result } ? Result : any
     : any;
 }) {
+  const availableLANHosts = getLocalNetworkHosts();
   return {
     ...params.config,
+    server: normalizeProjectServerConfig(params.config?.server, availableLANHosts),
+    availableLANHosts,
     projectInfo: params.projectInfo,
     automation: params.serverConfig.automation,
     assistant: params.serverConfig.assistant,
@@ -77,6 +80,21 @@ class AiImageConfigTestError extends Error {
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeProjectServerConfig(server: unknown, availableLANHosts: string[]): Record<string, unknown> {
+  const raw = server && typeof server === 'object' && !Array.isArray(server)
+    ? server as Record<string, unknown>
+    : {};
+  const host = normalizeString(raw.host) || 'localhost';
+  const configuredLANHost = normalizeString(raw.lanHost);
+  const fallbackLANHost = availableLANHosts.find(Boolean) || '';
+  return {
+    ...raw,
+    host,
+    allowLAN: raw.allowLAN !== false,
+    ...(configuredLANHost || fallbackLANHost ? { lanHost: configuredLANHost || fallbackLANHost } : {}),
+  };
 }
 
 function normalizeImageTestBaseUrl(value: unknown, fallback: unknown): string {
@@ -410,8 +428,11 @@ export function handleConfigApi(
       return true;
     }
     const { config, projectInfo, serverConfig } = buildConfigContext();
+    const availableLANHosts = getLocalNetworkHosts();
     sendJson(res, {
       ...config,
+      server: normalizeProjectServerConfig(config?.server, availableLANHosts),
+      availableLANHosts,
       projectInfo,
       automation: serverConfig.automation,
       assistant: serverConfig.assistant,

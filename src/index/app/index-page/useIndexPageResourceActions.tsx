@@ -14,6 +14,7 @@ import {
     replaceDocNameInSelections,
     replaceSidebarItemTitle,
     replaceSidebarItemKey,
+    resolveDocRenameBaseName,
     sortResourceItemsByOrder,
 } from '../index-page.helpers';
 import {
@@ -30,7 +31,7 @@ import {
 } from './resourceActions.helpers';
 
 function buildCreatedPlaceholderPrototypeItem(result: any): ItemData | null {
-    const name = String(result?.name || '').trim();
+    const name = String(result?.name || result?.folderName || '').trim();
     if (!name) {
         return null;
     }
@@ -38,6 +39,8 @@ function buildCreatedPlaceholderPrototypeItem(result: any): ItemData | null {
     const clientUrl = String(result?.clientUrl || '').trim();
     const filePath = String(result?.filePath || '').trim();
     const absoluteFilePath = String(result?.absoluteFilePath || '').trim();
+    const canvasFilePath = String(result?.canvasFilePath || '').trim();
+    const absoluteCanvasFilePath = String(result?.absoluteCanvasFilePath || '').trim();
 
     return {
         name,
@@ -48,8 +51,10 @@ function buildCreatedPlaceholderPrototypeItem(result: any): ItemData | null {
         clientUrl: clientUrl || undefined,
         filePath: filePath || undefined,
         absoluteFilePath: absoluteFilePath || undefined,
+        canvasFilePath: canvasFilePath || undefined,
+        absoluteCanvasFilePath: absoluteCanvasFilePath || undefined,
         previewDisabled: !clientUrl,
-        placeholder: true,
+        ...(result?.placeholder === true ? { placeholder: true } : {}),
         ...(result?.placeholderGuide ? { placeholderGuide: result.placeholderGuide } : {}),
     };
 }
@@ -340,9 +345,20 @@ export function useIndexPageResourceActions(params: any) {
         setSelectedDoc(nextValue);
     }, []);
 
-    const handleCreateDialogUploadSuccess = useCallback(async () => {
+    const handleCreateDialogUploadSuccess = useCallback(async (result?: any) => {
         await Promise.all([loadData(), reloadSidebarAssets(), refreshDocsResources()]);
-    }, [loadData, refreshDocsResources, reloadSidebarAssets]);
+        const createdFromResult = buildCreatedPlaceholderPrototypeItem(result);
+        if (!createdFromResult) {
+            return;
+        }
+        const items = getSidebarTabItems?.('prototypes') || data?.prototypes || [];
+        const refreshedCreated = items.find((item: any) => item.name === createdFromResult.name);
+        const created = refreshedCreated || createdFromResult;
+        setSelectedItem(created);
+        setSidebarTab('prototype');
+        setActiveTab('prototypes');
+        setViewMode('demo');
+    }, [data?.prototypes, getSidebarTabItems, loadData, refreshDocsResources, reloadSidebarAssets, setActiveTab, setSelectedItem, setSidebarTab, setViewMode]);
 
     const clearThemeCreateDialogState = useCallback(() => {
         setThemeCreateDialogVisible(false);
@@ -602,8 +618,8 @@ export function useIndexPageResourceActions(params: any) {
     const handleRenameTemplateResource = useCallback(async (item: any, nextNameOverride?: string) => {
         const currentName = item.name;
         const dotIndex = currentName.lastIndexOf('.');
-        const currentBaseName = dotIndex > 0 ? currentName.slice(0, dotIndex) : currentName;
         const currentExt = dotIndex > 0 ? currentName.slice(dotIndex) : '';
+        const currentBaseName = resolveDocRenameBaseName(currentName, currentExt);
         let nextBaseName = typeof nextNameOverride === 'string' ? nextNameOverride : '';
         if (!nextBaseName) {
             const nextNameInput = await appDialog.prompt({
@@ -630,6 +646,7 @@ export function useIndexPageResourceActions(params: any) {
             if (currentExt && trimmedName.toLowerCase().endsWith(currentExt.toLowerCase())) {
                 trimmedName = trimmedName.slice(0, -currentExt.length).trim();
             }
+            trimmedName = resolveDocRenameBaseName(trimmedName);
             if (!trimmedName || trimmedName === currentBaseName) {
                 return;
             }
@@ -1076,8 +1093,8 @@ export function useIndexPageResourceActions(params: any) {
     const handleRenameDocItem = useCallback(async (item: ItemData, nextName: string) => {
         const currentName = item.name;
         const dotIndex = currentName.lastIndexOf('.');
-        const currentBaseName = dotIndex > 0 ? currentName.slice(0, dotIndex) : currentName;
         const currentExt = dotIndex > 0 ? currentName.slice(dotIndex) : '';
+        const currentBaseName = resolveDocRenameBaseName(currentName, currentExt);
         const hide = messageApi.loading('正在重命名...', 0);
         try {
             let trimmedName = String(nextName || '').trim();
@@ -1087,6 +1104,7 @@ export function useIndexPageResourceActions(params: any) {
             if (currentExt && trimmedName.toLowerCase().endsWith(currentExt.toLowerCase())) {
                 trimmedName = trimmedName.slice(0, -currentExt.length).trim();
             }
+            trimmedName = resolveDocRenameBaseName(trimmedName);
             if (!trimmedName || trimmedName === currentBaseName) {
                 return;
             }

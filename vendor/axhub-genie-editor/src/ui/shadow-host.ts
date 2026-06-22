@@ -425,6 +425,41 @@ const SHADOW_HOST_STYLES = /* css */ `
     z-index: 9996;
   }
 
+  @keyframes we-change-marker-task-pulse {
+    0% {
+      opacity: 0.9;
+      transform: scale(0.92);
+      box-shadow: 0 0 0 0 rgba(0, 143, 93, 0.2);
+    }
+    62% {
+      opacity: 0.28;
+      transform: scale(1.22);
+      box-shadow: 0 0 0 7px rgba(0, 143, 93, 0);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.28);
+      box-shadow: 0 0 0 8px rgba(0, 143, 93, 0);
+    }
+  }
+
+  @keyframes we-change-marker-task-sweep {
+    0% {
+      background-position: -34px 0;
+      opacity: 0;
+    }
+    18% {
+      opacity: 0.72;
+    }
+    72% {
+      opacity: 0.5;
+    }
+    100% {
+      background-position: 34px 0;
+      opacity: 0;
+    }
+  }
+
   .we-change-marker {
     position: fixed;
     transform: translate(-50%, -50%);
@@ -439,13 +474,34 @@ const SHADOW_HOST_STYLES = /* css */ `
     font-size: 11px;
     font-weight: 700;
     line-height: 1;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     box-shadow:
       0 8px 18px rgba(15, 23, 42, 0.22),
       0 0 0 2px rgba(255, 255, 255, 0.95);
     pointer-events: auto;
     cursor: pointer;
     transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+    isolation: isolate;
+    --we-change-marker-task-accent: #008F5D;
+  }
+
+  .we-change-marker::before,
+  .we-change-marker::after {
+    content: "";
+    position: absolute;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  .we-change-marker::before {
+    inset: -5px;
+    z-index: -1;
+  }
+
+  .we-change-marker::after {
+    inset: 2px;
+    z-index: 1;
   }
 
   .we-change-marker:hover,
@@ -458,8 +514,94 @@ const SHADOW_HOST_STYLES = /* css */ `
     outline: none;
   }
 
+  .we-change-marker--annotation-note {
+    transform: translate(8px, -50%);
+  }
+
+  .we-change-marker--annotation-note:hover,
+  .we-change-marker--annotation-note:focus-visible {
+    transform: translate(8px, -50%) scale(1.03);
+  }
+
+  .we-change-marker--task-editing {
+    --we-change-marker-task-accent: #008F5D;
+    cursor: progress;
+    box-shadow:
+      0 8px 18px rgba(15, 23, 42, 0.22),
+      0 0 0 2px rgba(255, 255, 255, 0.95),
+      0 0 0 5px rgba(0, 143, 93, 0.2),
+      0 0 18px rgba(0, 143, 93, 0.28);
+  }
+
+  .we-change-marker--task-editing::before {
+    opacity: 1;
+    border: 1px solid rgba(0, 143, 93, 0.72);
+    animation: we-change-marker-task-pulse 1.65s ease-out infinite;
+  }
+
+  .we-change-marker--task-editing::after {
+    background:
+      linear-gradient(
+        115deg,
+        transparent 0%,
+        transparent 39%,
+        rgba(255, 255, 255, 0.18) 47%,
+        rgba(0, 214, 143, 0.24) 51%,
+        transparent 62%,
+        transparent 100%
+      );
+    background-size: 42px 42px;
+    animation: we-change-marker-task-sweep 1.8s linear infinite;
+  }
+
+  .we-change-marker--task-error {
+    --we-change-marker-task-accent: #EF4444;
+    box-shadow:
+      0 8px 18px rgba(15, 23, 42, 0.22),
+      0 0 0 2px rgba(239, 68, 68, 0.9),
+      0 0 0 5px rgba(239, 68, 68, 0.16),
+      0 0 18px rgba(239, 68, 68, 0.2);
+  }
+
+  .we-change-marker--task-error::before {
+    inset: -4px;
+    opacity: 1;
+    border: 1px solid rgba(239, 68, 68, 0.68);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+  }
+
+  .we-change-marker--task-editing:hover,
+  .we-change-marker--task-editing:focus-visible {
+    box-shadow:
+      0 10px 22px rgba(15, 23, 42, 0.28),
+      0 0 0 2px rgba(255, 255, 255, 0.95),
+      0 0 0 5px rgba(0, 143, 93, 0.26),
+      0 0 20px rgba(0, 143, 93, 0.34);
+  }
+
+  .we-change-marker--task-error:hover,
+  .we-change-marker--task-error:focus-visible {
+    box-shadow:
+      0 10px 22px rgba(15, 23, 42, 0.28),
+      0 0 0 2px rgba(239, 68, 68, 0.94),
+      0 0 0 6px rgba(239, 68, 68, 0.2),
+      0 0 22px rgba(239, 68, 68, 0.24);
+  }
+
+  .we-change-marker__body {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    position: relative;
+    z-index: 2;
+  }
+
   .we-change-marker__tooltip {
     position: absolute;
+    z-index: 10;
     left: 50%;
     top: calc(100% + 8px);
     transform: translateX(-50%);
@@ -479,6 +621,16 @@ const SHADOW_HOST_STYLES = /* css */ `
   .we-change-marker:focus-visible .we-change-marker__tooltip {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+  }
+
+  .we-change-marker--annotation-note .we-change-marker__tooltip {
+    left: 0;
+    transform: translateY(-2px);
+  }
+
+  .we-change-marker--annotation-note:hover .we-change-marker__tooltip,
+  .we-change-marker--annotation-note:focus-visible .we-change-marker__tooltip {
+    transform: translateY(0);
   }
 
   .we-change-marker__details {

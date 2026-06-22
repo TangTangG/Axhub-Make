@@ -17,7 +17,10 @@
  */
 
 import { WEB_EDITOR_V2_DRAG_THRESHOLD_PX } from '../constants';
-import { getAxhubAnnotationShadowHitElementAtPoint } from '../utils/annotation-shadow-hit-test';
+import {
+  getAxhubAnnotationShadowHitElementAtPoint,
+  isAxhubAnnotationDirectActionEvent,
+} from '../utils/annotation-shadow-hit-test';
 import { Disposer } from '../utils/disposables';
 
 // =============================================================================
@@ -329,6 +332,10 @@ export function createEventController(options: EventControllerOptions): EventCon
   }
 
   function shouldEventBypassPageBlock(event: Event): boolean {
+    if (isAxhubAnnotationDirectActionEvent(event)) {
+      return true;
+    }
+
     if (!shouldAllowPageEvent) {
       return false;
     }

@@ -20,6 +20,7 @@ import {
 } from '../projectCore/index.ts';
 
 import { startMakeServer } from '../index.ts';
+import { getLocalNetworkHostsFromInterfaces } from '../http.ts';
 import { handleCanvasApi } from '../managementApi.canvas.ts';
 import { handleCodeReviewApi } from '../managementApi.codeReview.ts';
 import { handleEntriesCompatibilityApi } from '../managementApi.entries.ts';
@@ -149,6 +150,22 @@ describe('make-server HTTP server', () => {
 
     expect(httpSource).not.toContain("spawn('zip'");
     expect(httpSource).not.toContain('node:child_process');
+  });
+
+  it('discovers unique non-internal IPv4 LAN host candidates', () => {
+    expect(getLocalNetworkHostsFromInterfaces({
+      lo0: [
+        { family: 'IPv4', internal: true, address: '127.0.0.1' },
+      ],
+      en0: [
+        { family: 'IPv4', internal: false, address: '192.168.31.88' },
+        { family: 'IPv6', internal: false, address: 'fe80::1' },
+      ],
+      bridge100: [
+        { family: 'IPv4', internal: false, address: '192.168.31.88' },
+        { family: 'IPv4', internal: false, address: '10.0.8.42' },
+      ],
+    } as any)).toEqual(['192.168.31.88', '10.0.8.42']);
   });
 
   it('serves project registry APIs, active project resources, docs content, and entries compatibility', async () => {

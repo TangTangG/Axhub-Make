@@ -220,7 +220,7 @@ function resolveEmbedStrokeColor(strokeColor: unknown): string {
 
 function resolveEmbedKind(el: any): 'web' | 'doc' | 'theme' {
     if (el?.customData?.type === 'axhub-doc') return 'doc';
-    if (el?.customData?.type === 'axhub-theme' || el?.customData?.resourceType === 'theme') return 'theme';
+    if (el?.customData?.type === 'axhub-theme' || el?.customData?.sourceResourceType === 'theme' || el?.customData?.resourceType === 'theme') return 'theme';
     return 'web';
 }
 
@@ -234,7 +234,7 @@ function resolveEmbedPreviewUrl(el: any): string {
 
 function resolveEmbedOpenUrl(el: any): string {
     const previewUrl = resolveEmbedPreviewUrl(el);
-    if (el?.customData?.resourceType === 'prototype' && previewUrl) {
+    if ((el?.customData?.resourceType === 'prototype' || el?.customData?.sourceResourceType === 'prototype') && previewUrl) {
         return previewUrl;
     }
 

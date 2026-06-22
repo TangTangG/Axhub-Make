@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   appendCanvasGenerationPromptSettings,
+  appendDocumentStartPromptSettings,
   appendImageStartPromptSettings,
   appendPrototypeStartPromptSettings,
 } from './canvasGenerationPromptSettings';
@@ -19,7 +20,9 @@ describe('appendCanvasGenerationPromptSettings', () => {
 
     expect(prompt).toContain('做一个 CRM 工作台');
     expect(prompt).toContain('原型生成设置');
-    expect(prompt).toContain('- 页面数量：3 个');
+    expect(prompt).toContain('- 方案数量：3 个');
+    expect(prompt).toContain('加载本地 explore-options（多方案探索）技能提示');
+    expect(prompt).toContain('生成 3 个真实不同的可行原型方案');
     expect(prompt).toContain('- 设计系统：linear');
     expect(prompt).toContain('画布协作说明');
     expect(prompt).toContain('请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。');
@@ -65,11 +68,34 @@ describe('appendCanvasGenerationPromptSettings', () => {
 
     expect(prompt).toContain('做一个 CRM 工作台');
     expect(prompt).toContain('原型生成设置');
-    expect(prompt).toContain('- 页面数量：2 个');
+    expect(prompt).toContain('- 方案数量：2 个');
+    expect(prompt).toContain('生成 2 个真实不同的可行原型方案');
     expect(prompt).toContain('- 设计系统：linear');
     expect(prompt).not.toContain('画布协作说明');
     expect(prompt).not.toContain('canvas-workspace');
     expect(prompt).not.toContain('当前文件就是画布文件地址');
+  });
+
+  it('appends requirements exploration guidance for prototype start settings only when enabled', () => {
+    const prompt = appendPrototypeStartPromptSettings({
+      prompt: '做一个会员增长工作台',
+      settings: {
+        needsRequirementsAnalysis: true,
+      },
+    });
+
+    expect(prompt).toContain('原型生成设置');
+    expect(prompt).toContain('使用 $requirements-exploration 对当前需求做探索和完善');
+    expect(prompt).toContain('先补齐目标用户、核心任务、范围、关键流程和验收口径');
+    expect(prompt).not.toContain('画布协作说明');
+
+    const defaultPrompt = appendPrototypeStartPromptSettings({
+      prompt: '做一个会员增长工作台',
+      settings: {},
+    });
+
+    expect(defaultPrompt).toBe('做一个会员增长工作台');
+    expect(defaultPrompt).not.toContain('$requirements-exploration');
   });
 
   it('appends image start settings without canvas workspace instructions', () => {
@@ -87,10 +113,98 @@ describe('appendCanvasGenerationPromptSettings', () => {
     expect(prompt).toContain('图片生成设置');
     expect(prompt).toContain('- 尺寸：1536x1024');
     expect(prompt).toContain('- 质量：high');
-    expect(prompt).toContain('- 图片数量：2 张');
+    expect(prompt).toContain('- 方案数量：2 个');
+    expect(prompt).toContain('生成 2 个真实不同的可行设计方案');
     expect(prompt).toContain('- 格式：png');
     expect(prompt).not.toContain('画布协作说明');
     expect(prompt).not.toContain('canvas-workspace');
+  });
+
+  it('appends document start format and selected template path without inlining template content', () => {
+    const prompt = appendDocumentStartPromptSettings({
+      prompt: '写一份会员增长 PRD',
+      settings: {
+        format: 'html',
+        templateName: 'write-prd.md',
+      },
+    });
+
+    expect(prompt).toContain('写一份会员增长 PRD');
+    expect(prompt).toContain('文档生成设置');
+    expect(prompt).toContain('- 文档格式：HTML');
+    expect(prompt).toContain('- 文档模板：resources/templates/write-prd.md');
+    expect(prompt).not.toContain('请按以下模板组织内容');
+    expect(prompt).not.toContain('# PRD 模板');
+    expect(prompt).not.toContain('## 验收标准');
+    expect(prompt).not.toContain('画布协作说明');
+    expect(prompt).not.toContain('canvas-workspace');
+  });
+
+  it('appends selected HTML visual spec skill and requirements exploration guidance for document starts', () => {
+    const prompt = appendDocumentStartPromptSettings({
+      prompt: '写一份会员增长 PRD',
+      settings: {
+        format: 'html',
+        htmlVisualSpec: {
+          label: 'Guizang · 瑞士国际主义',
+          description: '网格、直角色块、发丝线、高饱和锚点色，适合事实、产品、分析和方法论。',
+          themeInstruction: '使用 guizang-ppt-skill 的 Style B 瑞士国际主义：网格、直角色块、发丝线和高饱和锚点色。',
+          skillName: 'guizang-ppt-skill',
+          githubUrl: 'https://github.com/op7418/guizang-ppt-skill',
+        },
+        needsRequirementsAnalysis: true,
+      },
+    });
+
+    expect(prompt).toContain('文档生成设置');
+    expect(prompt).toContain('- 文档格式：HTML');
+    expect(prompt).toContain('- HTML 视觉主题：Guizang · 瑞士国际主义。网格、直角色块、发丝线、高饱和锚点色，适合事实、产品、分析和方法论。使用技能 guizang-ppt-skill（https://github.com/op7418/guizang-ppt-skill，若已安装可忽略；若未安装，请在线读取该 GitHub 技能说明）。使用 guizang-ppt-skill 的 Style B 瑞士国际主义：网格、直角色块、发丝线和高饱和锚点色。');
+    expect(prompt).toContain('使用 $requirements-exploration 对当前需求做探索和完善');
+    expect(prompt).toContain('先补齐目标用户、核心任务、范围、关键流程和验收口径');
+    expect(prompt).not.toContain('画布协作说明');
+  });
+
+  it('omits HTML visual spec guidance for non-HTML document formats', () => {
+    const prompt = appendDocumentStartPromptSettings({
+      prompt: '整理需求',
+      settings: {
+        format: 'md',
+        htmlVisualSpec: {
+          label: 'Kami',
+          skillName: 'kami',
+          githubUrl: 'https://github.com/tw93/kami',
+        },
+      },
+    });
+
+    expect(prompt).toContain('- 文档格式：Markdown');
+    expect(prompt).not.toContain('HTML 视觉规范');
+    expect(prompt).not.toContain('https://github.com/tw93/kami');
+  });
+
+  it('keeps document template settings visible for md even when the template content is empty', () => {
+    const prompt = appendDocumentStartPromptSettings({
+      prompt: '整理需求',
+      settings: {
+        format: 'md',
+        templateName: 'write-prd.md',
+      },
+    });
+
+    expect(prompt).toContain('文档生成设置');
+    expect(prompt).toContain('- 文档格式：Markdown');
+    expect(prompt).toContain('- 文档模板：resources/templates/write-prd.md');
+    expect(prompt).not.toContain('请按以下模板组织内容');
+  });
+
+  it('omits document start settings when format and template are empty', () => {
+    const prompt = appendDocumentStartPromptSettings({
+      prompt: '整理需求',
+      settings: {},
+    });
+
+    expect(prompt).toBe('整理需求');
+    expect(prompt).not.toContain('文档生成设置');
   });
 
   it('omits unspecified image settings and hides the image block when no explicit setting remains', () => {
@@ -106,6 +220,7 @@ describe('appendCanvasGenerationPromptSettings', () => {
     expect(prompt).not.toContain('图片生成设置');
     expect(prompt).not.toContain('- 尺寸：auto');
     expect(prompt).not.toContain('- 质量：auto');
+    expect(prompt).not.toContain('- 方案数量：1 个');
     expect(prompt).not.toContain('- 图片数量：1 张');
     expect(prompt).not.toContain('- 格式：png');
     expect(prompt).not.toContain('- 设计系统：未指定');
@@ -123,7 +238,8 @@ describe('appendCanvasGenerationPromptSettings', () => {
     });
 
     expect(prompt).toContain('图片生成设置');
-    expect(prompt).toContain('- 图片数量：3 张');
+    expect(prompt).toContain('- 方案数量：3 个');
+    expect(prompt).toContain('生成 3 个真实不同的可行设计方案');
     expect(prompt).toContain('- 格式：webp');
     expect(prompt).not.toContain('- 尺寸：auto');
     expect(prompt).not.toContain('- 质量：auto');

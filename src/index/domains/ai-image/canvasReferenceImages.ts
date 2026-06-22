@@ -115,11 +115,14 @@ export function createCanvasReferenceSnapshot({
 }
 
 function isPrototypeElement(element: any): boolean {
-  return element?.customData?.resourceType === 'prototype';
+  return element?.customData?.sourceResourceType === 'prototype'
+    || element?.customData?.resourceType === 'prototype';
 }
 
 function isThemeElement(element: any): boolean {
-  return element?.customData?.resourceType === 'theme' || element?.customData?.type === 'axhub-theme';
+  return element?.customData?.sourceResourceType === 'theme'
+    || element?.customData?.resourceType === 'theme'
+    || element?.customData?.type === 'axhub-theme';
 }
 
 function resolveString(value: unknown): string {

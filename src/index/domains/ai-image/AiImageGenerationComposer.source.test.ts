@@ -44,7 +44,8 @@ describe('AiImageGenerationComposer source', () => {
     expect(sharedSource).not.toContain("import '@axhub/acp/react/styles.css';");
     expect(sharedSource).toContain('ax-acp-ui-scope');
     expect(source).toContain('ax-ai-image-composer-root');
-    expect(sharedSource).toContain("import { AcpComposerSelectors, ComposerAttachments } from '@axhub/acp/ui';");
+    expect(sharedSource).toContain("import { ComposerAttachments } from '@axhub/acp/composer';");
+    expect(sharedSource).toContain('function CanvasAcpComposerSelectors()');
     expect(sharedSource).toContain('<ComposerPrimitive.Root');
     expect(sharedSource).toContain('allowAttachments ? <ComposerAttachments /> : null');
     expect(sharedSource).toContain('allowAttachments ? <CanvasComposerAddAttachmentButton label={addAttachmentTooltip} /> : null');
@@ -76,7 +77,7 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('<CanvasGenerationComposer');
     expect(source).toContain('onSubmitPrompt={handleSubmitPrompt}');
     expect(source).toContain('allowAttachments={true}');
-    expect(sharedSource).toContain("import { AcpUiProvider, useAcpUiRuntimeContext } from '@axhub/acp/react';");
+    expect(sharedSource).toContain("import { ACP_CAPABILITY_REFRESH_EVENT, AcpUiProvider, acpApiClient, configureAcpUiRuntime, hydrateAcpCapabilityCacheFromDefaults, useAcpUiRuntimeContext } from '@axhub/acp/runtime';");
     expect(sharedSource).toContain('useChatRuntime<UIMessage>');
     expect(sharedSource).toContain('new CanvasGenerationMakeTransport');
     expect(sharedSource).toContain('<AcpUiProvider');
@@ -124,6 +125,12 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('QUALITY_OPTIONS.map');
     expect(source).toContain('SIZE_PRESETS.map');
     expect(source).toContain('COUNT_OPTIONS.map');
+    expect(source).toContain('移动端 1K');
+    expect(source).toContain('移动端 2K');
+    expect(source).toContain('移动端 4K');
+    expect(source).toContain('PC 端 1K');
+    expect(source).toContain('PC 端 2K');
+    expect(source).toContain('PC 端 4K');
     expect(source).toContain('sizeToDimensions(params.size)');
     expect(source).toContain('>W</span>');
     expect(source).toContain('value={currentDimensions.width}');
@@ -136,7 +143,11 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('style={IMAGE_SETTINGS_SELECT_CONTENT_STYLE}');
     expect(source).toContain('activeSizeLabel');
     expect(source).toContain('activeQualityLabel');
-    expect(source).toContain('`${params.n} 张`');
+    expect(source).toContain('`${params.n} 个`');
+    expect(source).toContain('方案数量');
+    expect(source).toContain('FieldLabelWithHint');
+    expect(source).toContain('CircleHelp');
+    expect(source).not.toContain('生成数量');
     expect(source).toContain('{activeSizeLabel} · {activeQualityLabel} · {activeCountLabel} · {activeFormatLabel}');
     expect(source).not.toContain('mr-auto');
     expect(source).not.toContain('max-w-[calc(100%-88px)]');
@@ -163,7 +174,7 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('禁止优化提示词');
     expect(source).toContain('checked={params.disable_prompt_optimization === true}');
     expect(source).toContain("updateParam('disable_prompt_optimization', checked === true)");
-    expect(source).toContain('title="开启后会要求 AI 完整使用输入内容，不主动改写提示词。"');
+    expect(source).toContain('开启后会要求 AI 完整使用输入内容，不主动改写提示词。');
     expect(source).not.toContain('rounded-md border bg-background px-3 py-2.5');
     expect(source).not.toContain('min-w-0 space-y-0.5');
   });
@@ -252,7 +263,7 @@ describe('AiImageGenerationComposer source', () => {
 
     expect(sharedSource).toContain('allowAttachments ? <ComposerAttachments /> : null');
     expect(sharedSource).toContain('allowAttachments ? <CanvasComposerAddAttachmentButton label={addAttachmentTooltip} /> : null');
-    expect(sharedSource).toContain('{shouldRenderInlineSelectors ? <AcpComposerSelectors /> : null}');
+    expect(sharedSource).toContain('{shouldRenderInlineSelectors ? <CanvasAcpComposerSelectors /> : null}');
     expect(sharedSource).toContain('{renderLeadingActions ? (');
     expect(sharedSource).toContain('{renderActions ? (');
     expect(sharedSource).toContain('className={footerLeadingActionsClassName}');
@@ -304,9 +315,10 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('initialLocalContextRefs={initialLocalContextRefs}');
     expect(source).toContain('localContextRefs: initialLocalContextRefs');
     expect(source).toContain('preferredPromptClient');
+    expect(source).toContain('preferredPromptClient={preferredPromptClient}');
     expect(source).toContain('sourcePrompt: prompt');
-    expect(sharedSource).toContain("import { AcpUiProvider, useAcpUiRuntimeContext } from '@axhub/acp/react';");
-    expect(sharedSource).toContain("import type { ContextBundleV2, ContextItem } from '@axhub/acp/runtime';");
+    expect(sharedSource).toContain("import { ACP_CAPABILITY_REFRESH_EVENT, AcpUiProvider, acpApiClient, configureAcpUiRuntime, hydrateAcpCapabilityCacheFromDefaults, useAcpUiRuntimeContext } from '@axhub/acp/runtime';");
+    expect(sharedSource).toContain("import type { AcpCapabilitySnapshot, ContextBundleV2, ContextItem } from '@axhub/acp/runtime';");
     expect(sharedSource).toContain('localContextRefsToAcpContextItems');
     expect(sharedSource).toContain('replaceContextItems(contextItems);');
     expect(sharedSource).toContain('const contextBundle = acpContext.consumeContextBundle();');
@@ -319,7 +331,7 @@ describe('AiImageGenerationComposer source', () => {
     const sharedSource = readSharedComposerSource();
 
     expect(sharedSource).toContain('allowAttachments ? <ComposerAttachments /> : null');
-    expect(sharedSource).toContain("import { AcpComposerSelectors, ComposerAttachments } from '@axhub/acp/ui';");
+    expect(sharedSource).toContain("import { ComposerAttachments } from '@axhub/acp/composer';");
     expect(sharedSource).not.toContain('ComposerAddAttachment,');
     expect(sharedSource).not.toContain('<ComposerAddAttachment');
     expect(sharedSource).toContain('CanvasGenerationMakeTransport');
@@ -349,7 +361,8 @@ describe('AiImageGenerationComposer source', () => {
     expect(sharedSource).toContain('showSelectors?: boolean;');
     expect(sharedSource).toContain('workspacePath?: string | null;');
     expect(sharedSource).toContain('showSelectors={showSelectors && !canvasAcpRuntime.needsFallback}');
-    expect(sharedSource).toContain('<AcpUiProvider defaultProvider="codex" workspacePath={workspacePath}>');
+    expect(sharedSource).toContain('providerOptions={acpSelectorDefaults.providerOptions}');
+    expect(sharedSource).toContain('showProviderSettings={false}');
     expect(sharedSource).toContain('provider: runtimeContext.provider');
     expect(sharedSource).toContain('model: runtimeContext.model');
     expect(sharedSource).toContain('mode: runtimeContext.modeId');

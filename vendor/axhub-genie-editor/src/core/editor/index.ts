@@ -11,6 +11,7 @@ import type {
   GenieEditorStatus,
   GenieEditorStatusListener,
   GenieEditorTextChange,
+  GenieEditorExternalEditingTargetRef,
   SelectedElementSummary,
   WebEditorElementKey,
   WebEditorRevertElementResponse,
@@ -286,7 +287,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
       disablePageAnimations: false,
       pageZoomEnabled: false,
       copySkillInstallPromptDisabled: true,
-      selectionModeActive: true,
+      selectionModeActive: resolvedOptions.ui.initialSelectionModeActive,
       fullExitAvailable: false,
     };
   }
@@ -366,7 +367,10 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     lastHandledAt: number | null;
   };
 
-  function resolveElementByKey(elementKey: string): Element | null {
+  function resolveElementByKey(
+    elementKey: string,
+    targetRef?: GenieEditorExternalEditingTargetRef | null,
+  ): Element | null {
     const selectedSummary = buildSelectedElementSummary();
     if (selectedSummary?.elementKey === elementKey && state.selectedElement?.isConnected) {
       return state.selectedElement;
@@ -377,6 +381,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
       genieBridge?.getTaskStateByElementKey?.(elementKey)?.locator ??
       state.externalEditingTaskByElementKey.get(elementKey)?.locator ??
       state.genieTaskByElementKey.get(elementKey)?.locator ??
+      targetRef?.locator ??
       null;
     if (!locator) return null;
 
@@ -523,10 +528,18 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     elementKey: string,
     nextState: EditingSetState,
     taskRef: Partial<ExternalEditingTaskRef> | null,
+    targetRef?: GenieEditorExternalEditingTargetRef | null,
   ) {
-    const targetElement = resolveElementByKey(elementKey);
+    const targetElement = resolveElementByKey(elementKey, targetRef);
     if (!targetElement) {
       throw new Error(`NOT_FOUND: Element not found for key: ${elementKey}`);
+    }
+    if (targetRef?.locator) {
+      changes.getOrCreateEditMeta(
+        elementKey,
+        targetRef.locator,
+        String(targetRef.label || '').trim() || elementKey,
+      );
     }
 
     if (!genieBridge?.setExternalEditingState || !genieBridge.clearExternalEditingState) {
@@ -575,7 +588,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     onSelectMarkedElement: (element, anchor) => {
       if (!element.isConnected) return;
       state.eventController?.setMode('selecting');
-      interaction?.handleSelect(element, DEFAULT_MODIFIERS, {
+      void interaction?.handleSelect(element, DEFAULT_MODIFIERS, {
         clientX: anchor.clientX,
         clientY: anchor.clientY,
       });
@@ -586,7 +599,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
   const textSession = createTextSessionService({
     state,
     ensureSelected: (element, modifiers) => {
-      interaction?.handleSelect(element, modifiers);
+      void interaction?.handleSelect(element, modifiers);
     },
     logPrefix: '[WebEditorV2]',
   });
@@ -841,6 +854,7 @@ export function createGenieEditor(options: GenieEditorInitOptions = {}): GenieEd
     getHostToolbarState,
     subscribeHostToolbarState,
     runHostToolbarAction,
+    setNodeEditingState,
     getCopyPromptText: () => summaries.buildCopyPrompt(),
   };
 }

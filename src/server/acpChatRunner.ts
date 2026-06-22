@@ -20,6 +20,7 @@ export interface AcpChatRequest {
   thoughtLevel?: string | null;
   permissionMode?: string | null;
   workspacePath?: string | null;
+  conversationStorePath?: string | null;
   mcpServers?: unknown[];
   builtinTools?: AcpBuiltinToolId[];
   builtinToolSettings?: Record<string, unknown>;
@@ -41,6 +42,7 @@ export interface AcpChatCommandRequest {
   thoughtLevel?: string | null;
   permissionMode?: string | null;
   mcpServers?: unknown[];
+  conversationStorePath?: string | null;
   builtinTools?: AcpBuiltinToolId[];
   builtinToolSettings?: Record<string, unknown>;
   context?: unknown;
@@ -370,22 +372,26 @@ async function* readSseJson(response: Response): AsyncGenerator<Record<string, u
   const decoder = new TextDecoder();
   let buffer = '';
 
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    let separator = findSseEventSeparator(buffer);
-    while (separator) {
-      const rawEvent = buffer.slice(0, separator.index);
-      buffer = buffer.slice(separator.index + separator.length);
-      for (const parsed of parseSseEvent(rawEvent)) {
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          yield parsed as Record<string, unknown>;
+      let separator = findSseEventSeparator(buffer);
+      while (separator) {
+        const rawEvent = buffer.slice(0, separator.index);
+        buffer = buffer.slice(separator.index + separator.length);
+        for (const parsed of parseSseEvent(rawEvent)) {
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            yield parsed as Record<string, unknown>;
+          }
         }
+        separator = findSseEventSeparator(buffer);
       }
-      separator = findSseEventSeparator(buffer);
     }
+  } catch (error) {
+    mapAcpChatRequestError(error);
   }
 
   buffer += decoder.decode();
@@ -426,6 +432,35 @@ function buildAbortSignal(options: AcpChatRunnerOptions): AbortSignal | undefine
   return AbortSignal.timeout(Math.round(options.timeoutMs));
 }
 
+function isAbortOrTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const name = normalizeString((error as { name?: unknown }).name);
+  const message = normalizeString((error as { message?: unknown }).message).toLowerCase();
+  return (
+    name === 'AbortError'
+    || name === 'TimeoutError'
+    || message.includes('aborted due to timeout')
+    || message.includes('operation was aborted')
+  );
+}
+
+function mapAcpChatRequestError(error: unknown): never {
+  if (error instanceof AcpChatRunError) {
+    throw error;
+  }
+  if (isAbortOrTimeoutError(error)) {
+    throw new AcpChatRunError('ACP 响应超时，请检查本地 ACP UI 或当前模型是否卡住。', {
+      code: 'ACP_CHAT_TIMEOUT',
+      statusCode: 504,
+    });
+  }
+  const message = error instanceof Error ? error.message : String(error || 'unknown error');
+  throw new AcpChatRunError(`ACP chat request failed: ${message}`, {
+    code: 'ACP_CHAT_REQUEST_FAILED',
+    statusCode: 502,
+  });
+}
+
 async function readResponseText(response: Response): Promise<string> {
   try {
     return (await response.text()).trim();
@@ -462,6 +497,7 @@ async function startAcpChatRequest(
     messages,
   };
   if (request.workspacePath !== undefined) body.workspacePath = request.workspacePath;
+  if (request.conversationStorePath !== undefined) body.conversationStorePath = request.conversationStorePath;
   if (request.model !== undefined) body.model = request.model;
   if (request.modeId !== undefined) body.modeId = request.modeId;
   if (request.thoughtLevel !== undefined) body.thoughtLevel = request.thoughtLevel;
@@ -473,12 +509,17 @@ async function startAcpChatRequest(
   if (request.system !== undefined) body.system = request.system;
   if (request.tools !== undefined) body.tools = request.tools;
 
-  const response = await fetchImpl(buildAcpChatUrl(request.acpApiBaseUrl), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: buildAbortSignal(options),
-  });
+  let response: Response;
+  try {
+    response = await fetchImpl(buildAcpChatUrl(request.acpApiBaseUrl), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: buildAbortSignal(options),
+    });
+  } catch (error) {
+    mapAcpChatRequestError(error);
+  }
 
   if (!response.ok) {
     const text = await readResponseText(response);
@@ -569,6 +610,7 @@ export async function runAcpChatCommand(
     threadId,
     provider: request.provider,
     workspacePath: request.workspacePath,
+    conversationStorePath: request.conversationStorePath,
     model: request.model,
     modeId: request.modeId,
     thoughtLevel: request.thoughtLevel,

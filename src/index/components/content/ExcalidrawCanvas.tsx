@@ -97,6 +97,7 @@ import type { GenieProvider } from '@/common/genie/types';
 type ExcalidrawAPI = NonNullable<Parameters<NonNullable<React.ComponentProps<typeof Excalidraw>['onExcalidrawAPI']>>[0]>;
 type ExcalidrawOpenPopup = ReturnType<ExcalidrawAPI['getAppState']>['openPopup'];
 type CanvasDropPreviewKind = 'web' | 'doc' | 'image' | 'none';
+type CanvasPreviewResourceType = 'preview' | 'prototype' | 'doc' | 'theme';
 type CanvasCommandName = 'canvas_get_state'
     | 'canvas_insert_elements'
     | 'canvas_insert_mermaid'
@@ -373,7 +374,7 @@ async function openEmbedItemInEditor(detail: any) {
 const MOBILE_KEYWORDS = ['mobile', 'phone', '手机', '移动', 'ios', 'android', 'app'];
 
 /** Determine smart default embed size + ratio preset from prototype metadata. */
-function getDefaultEmbedSize(payload: { type: string; name: string; displayName?: string; embedViewMode?: string }): {
+function getDefaultEmbedSize(payload: { type: string; name: string; displayName?: string; embedViewMode?: string; previewKind?: CanvasDropPreviewKind }): {
     width: number; height: number; embedSizePreset: EmbedSizePreset;
 } {
     if (!payload.embedViewMode || payload.embedViewMode === 'link') {
@@ -382,7 +383,7 @@ function getDefaultEmbedSize(payload: { type: string; name: string; displayName?
     }
     // Preview mode sizes:
     // Documents get a reading-friendly 4:3 ratio
-    if (payload.type === 'doc') {
+    if (payload.type === 'doc' || payload.previewKind === 'doc') {
         return { width: 720, height: 480, embedSizePreset: 'free' };
     }
     // Theme (design system) — moderate preview size
@@ -1052,9 +1053,9 @@ function resolveString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
-function resolveEmbeddableResourceType(element: any): 'prototype' | 'doc' | 'theme' | null {
+function resolveEmbeddableResourceType(element: any): CanvasPreviewResourceType | null {
     const resourceType = element?.customData?.resourceType;
-    if (resourceType === 'prototype' || resourceType === 'doc' || resourceType === 'theme') {
+    if (resourceType === 'preview' || resourceType === 'prototype' || resourceType === 'doc' || resourceType === 'theme') {
         return resourceType;
     }
     if (element?.customData?.type === 'axhub-doc') {
@@ -1068,16 +1069,19 @@ function resolveEmbeddableResourceType(element: any): 'prototype' | 'doc' | 'the
 
 function resolveEmbedLinkKind(element: any): LinkEmbedKind {
     const resourceType = resolveEmbeddableResourceType(element);
+    if (resourceType === 'preview') return 'preview';
     if (resourceType === 'doc') return 'doc';
     if (resourceType === 'theme') return 'theme';
-    return 'prototype';
+    if (resourceType === 'prototype') return 'prototype';
+    return 'preview';
 }
 
 function resolveEmbeddablePreviewUrl(element: any): string {
     const previewUrl = resolveString(element?.customData?.previewUrl) || resolveString(element?.link);
+    const sourceResourceType = resolveString(element?.customData?.sourceResourceType);
     return resolveCanvasEmbedPreviewUrl({
         previewUrl,
-        resourceType: resolveEmbeddableResourceType(element),
+        resourceType: sourceResourceType || resolveEmbeddableResourceType(element),
         runtimeOrigin: (window as any).__RUNTIME_ORIGIN__,
         currentOrigin: window.location.origin,
     });
@@ -1085,7 +1089,8 @@ function resolveEmbeddablePreviewUrl(element: any): string {
 
 function resolveEmbeddableOpenUrl(element: any): string {
     const previewUrl = resolveEmbeddablePreviewUrl(element);
-    if (resolveEmbeddableResourceType(element) === 'prototype' && previewUrl) {
+    const sourceResourceType = resolveString(element?.customData?.sourceResourceType);
+    if ((resolveEmbeddableResourceType(element) === 'prototype' || sourceResourceType === 'prototype') && previewUrl) {
         return previewUrl;
     }
 
@@ -1094,9 +1099,9 @@ function resolveEmbeddableOpenUrl(element: any): string {
         return storedOpenUrl;
     }
 
-    const resourceType = resolveEmbeddableResourceType(element);
+    const resourceType = resolveString(element?.customData?.sourceResourceType) || resolveEmbeddableResourceType(element);
     const resourceId = resolveString(element?.customData?.resourceId);
-    if (resourceType && resourceId) {
+    if ((resourceType === 'prototype' || resourceType === 'doc' || resourceType === 'theme') && resourceId) {
         return buildResourceDeepLinkUrl({
             resourceType,
             resourceId,
@@ -1120,7 +1125,9 @@ function normalizeEmbeddableLinkModeStroke(elements: readonly any[]): readonly a
             return el;
         }
         changed = true;
-        const isTheme = el.customData?.resourceType === 'theme' || el.customData?.type === 'axhub-theme';
+        const isTheme = el.customData?.sourceResourceType === 'theme'
+            || el.customData?.resourceType === 'theme'
+            || el.customData?.type === 'axhub-theme';
         const currentPreviewStrokeColor = typeof el.strokeColor === 'string' && el.strokeColor !== 'transparent'
             ? el.strokeColor
             : resolveEmbedPreviewStrokeColor(isTheme);
@@ -1141,7 +1148,8 @@ export function createEmbeddableFromDrop(
     excalidrawAPI: ExcalidrawAPI,
     payload: {
         type: string;
-        resourceType?: 'prototype' | 'doc' | 'theme';
+        resourceType?: 'preview' | 'prototype' | 'doc' | 'theme';
+        sourceResourceType?: 'prototype' | 'doc' | 'theme';
         resourceId?: string;
         name: string;
         displayName: string;
@@ -1157,29 +1165,30 @@ export function createEmbeddableFromDrop(
     viewportRect?: EmbedViewportRect | null,
     zoom = 1,
 ) {
-    // Preview mode is the default for new prototype/doc nodes; fall back to
+    // Preview mode is the default for new preview nodes; fall back to
     // link mode when the payload cannot render an inline preview.
     const requestedEmbedViewMode = payload.embedViewMode || 'preview';
     const embedViewMode = requestedEmbedViewMode === 'preview' && !isCanvasDropPayloadPreviewable(payload)
         ? 'link'
         : requestedEmbedViewMode;
 
-    const isDoc = payload.type === 'doc' || payload.resourceType === 'doc';
-    const isTheme = payload.type === 'theme' || payload.resourceType === 'theme';
-    const resourceType = payload.resourceType || (isDoc ? 'doc' : isTheme ? 'theme' : 'prototype');
+    const sourceResourceType = payload.sourceResourceType
+        || (payload.resourceType === 'prototype' || payload.resourceType === 'doc' || payload.resourceType === 'theme'
+            ? payload.resourceType
+            : payload.type === 'doc' || payload.type === 'theme' || payload.type === 'prototype'
+                ? payload.type
+                : undefined);
+    const isDoc = sourceResourceType === 'doc' || payload.previewKind === 'doc';
+    const isTheme = sourceResourceType === 'theme';
+    const resourceType = payload.resourceType || 'preview';
     const previewUrl = resolveCanvasEmbedPreviewUrl({
         previewUrl: payload.previewUrl,
-        resourceType,
+        resourceType: sourceResourceType || resourceType,
         runtimeOrigin: (window as any).__RUNTIME_ORIGIN__,
         currentOrigin: window.location.origin,
     });
     const resourceId = payload.resourceId || payload.name;
-    const link = payload.openUrl || buildResourceDeepLinkUrl({
-        resourceType,
-        resourceId,
-        view: isDoc || isTheme ? undefined : 'demo',
-        collapseSidebar: true,
-    });
+    const link = payload.openUrl || previewUrl || payload.previewUrl || '';
     const elementId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const screenshotUrl = previewUrl
         ? (payload.screenshotUrl
@@ -1192,10 +1201,11 @@ export function createEmbeddableFromDrop(
         : { width: embedSize.width, height: embedSize.height };
     const commonCustomData = {
         title: payload.displayName,
-        previewUrl: previewUrl || '',
+        previewUrl: previewUrl || payload.previewUrl || '',
         openUrl: link,
-        previewKind: payload.previewKind || (isDoc ? 'doc' : 'web'),
+        previewKind: payload.previewKind || 'web',
         resourceType,
+        sourceResourceType,
         resourceId,
         screenshotUrl: screenshotUrl || '',
         embedSizePreset: embedSize.embedSizePreset,
@@ -1251,7 +1261,8 @@ async function createImageElementFromDrop(
         displayName: string;
         previewUrl: string;
         openUrl?: string;
-        resourceType?: 'prototype' | 'doc' | 'theme';
+        resourceType?: 'preview' | 'prototype' | 'doc' | 'theme';
+        sourceResourceType?: 'prototype' | 'doc' | 'theme';
         resourceId?: string;
     },
     canvasX: number,
@@ -1334,7 +1345,8 @@ async function createImageElementFromDrop(
             previewUrl: imageUrl,
             openUrl: payload.openUrl || imageUrl,
             previewKind: 'image',
-            resourceType: payload.resourceType || 'doc',
+            resourceType: payload.resourceType || 'preview',
+            sourceResourceType: payload.sourceResourceType,
             resourceId: payload.resourceId || payload.name,
         },
     };

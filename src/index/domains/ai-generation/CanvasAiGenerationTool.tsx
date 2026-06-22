@@ -71,6 +71,7 @@ export interface CanvasAiGenerationRequest {
   source?: 'placeholder-start' | 'canvas-toolbar' | 'canvas-node';
   generatorId?: string;
   canvasFilePath?: string;
+  createdPrototype?: ItemData;
   referenceImages?: string[];
   localContextRefs?: CanvasLocalContextRef[];
   referencePlacement?: CanvasGeneratorPlacement;
@@ -188,6 +189,7 @@ function GenericCanvasAiGenerationComposer({
   onOpenAISettings,
   onSubmitPrompt,
   placement,
+  preferredPromptClient,
   scene,
   topContent,
 }: {
@@ -200,6 +202,7 @@ function GenericCanvasAiGenerationComposer({
   onOpenAISettings?: () => void;
   onSubmitPrompt: (request: CanvasAiSubmitRequest) => Promise<{ ok: boolean; text: string; error?: string }>;
   placement: { left: number; top: number; width: number };
+  preferredPromptClient?: PromptClientPreference;
   scene: CanvasAiScene;
   topContent?: React.ReactNode;
 }) {
@@ -224,6 +227,7 @@ function GenericCanvasAiGenerationComposer({
       topContent={topContent}
       workspacePath={assistantProjectPath}
       placeholder={placeholder}
+      preferredPromptClient={preferredPromptClient}
       ariaLabel="AI 生成提示词"
       sendTooltip="AI 生成"
       addAttachmentTooltip="添加参考"
@@ -843,6 +847,7 @@ export default function CanvasAiGenerationTool({
           themes={themes}
           defaultThemeName={defaultThemeName}
           onOpenAISettings={onOpenAISettings}
+          preferredPromptClient={preferredPromptClient}
           onSubmitPrompt={(request) => submitCanvasAssistantPrompt(request, {
             sceneSettings: request.sceneSettings,
           })}
@@ -861,6 +866,7 @@ export default function CanvasAiGenerationTool({
           initialLocalContextRefs={pendingInitialLocalContextRefs}
           onOpenAISettings={onOpenAISettings}
           onPasteReferenceImages={pasteCanvasReferenceImages}
+          preferredPromptClient={preferredPromptClient}
           onSubmitPrompt={(request) => submitCanvasAssistantPrompt(request)}
         />
       ) : null}

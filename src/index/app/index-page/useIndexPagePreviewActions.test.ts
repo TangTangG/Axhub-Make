@@ -311,7 +311,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('if (imageConfig.width === screenshotDefaultSize.width && imageConfig.height === screenshotDefaultSize.height)');
   });
 
-  it('does not reset screenshot styles before the export modal has ever opened', () => {
+  it('does not send obsolete screenshot style reset messages when closing the export modal', () => {
     const source = readPreviewRootSource();
     const resetEffect = getSourceSegment(
       source,
@@ -319,11 +319,9 @@ describe('useIndexPagePreviewActions source', () => {
       '    return {',
     );
 
-    expect(resetEffect).toContain('exportModalWasOpenRef');
-    expect(resetEffect).toContain('exportModalWasOpenRef.current = true;');
-    expect(resetEffect).toContain('if (!exportModalWasOpenRef.current) {');
-    expect(resetEffect).toContain('return;');
-    expect(resetEffect).toContain("targetIframe.contentWindow.postMessage({ type: 'RESET_SCREENSHOT_STYLES' }, getIframeOrigin(targetIframe));");
+    expect(resetEffect).not.toContain('exportModalWasOpenRef');
+    expect(resetEffect).not.toContain('RESET_SCREENSHOT_STYLES');
+    expect(resetEffect).not.toContain('getIframeOrigin(targetIframe)');
   });
 
   it('routes runtime-component clipboard writes through the shared clipboard helper', () => {
@@ -520,7 +518,8 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('exitQuickEditRuntime');
     expect(source).toContain("url.searchParams.set('axhubQuickEditContext', '1');");
     expect(source).not.toContain('desiredEditorModeRef');
-    expect(source).toContain("editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context))");
+    expect(source).toContain('const enableEditors = async (resolvedEditors: PrototypeEditorApi) => {');
+    expect(source).toContain("resolvedEditors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context))");
     expect(source).not.toContain('if (!isSinglePaneHostToolbarPreview) {\n                setHostToolbarState(null);\n            }');
   });
 
@@ -570,7 +569,8 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('catch (error) {');
     expect(source).toContain("error instanceof DOMException && error.name === 'SecurityError'");
     expect(source).toContain('const editors = readPreviewFrameEditorApi<PrototypeEditorApi>(iframe, \'DevTemplateBootstrap\');');
-    expect(source).toContain('const api = readPreviewFrameEditorApi<DocumentEditorApi>(iframe, \'SpecTemplateBootstrap\');');
+    expect(source).toContain("return readPreviewFrameEditorApi<DocumentEditorApi>(iframe, 'SpecTemplateBootstrap');");
+    expect(source).toContain("return editors ?? readPreviewFrameEditorApi<PrototypeEditorApi>(iframe, 'HtmlTemplateBootstrap');");
     expect(source).toMatch(/await Promise\.all\(getPreviewIframes\(\)\.map\(async \(iframe\) => \{[\s\S]*await postPrototypeEditorDisable\(iframe\);[\s\S]*const editors = getPrototypeEditorApi\(iframe\);/s);
     expect(source).toMatch(/documentEditorActiveRef\.current = false;[\s\S]*quickEditRuntimeActiveRef\.current = false;[\s\S]*setEditorStatus\(\{ mode: 'none' \}\);[\s\S]*setHostToolbarState\(null\);/s);
   });
@@ -598,8 +598,10 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("type: 'axhub.quickEdit.patch'");
     expect(source).toContain("type: 'axhub.quickEdit.error'");
     expect(source).toContain('getPrototypeEditorApi');
-    expect(source).toContain("editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context))");
-    expect(source).toContain("messageApi.warning('当前客户端页面尚未接入真正的快速编辑器，请确认预览页已加载 DevTemplateBootstrap')");
+    expect(source).toContain('const enableEditors = async (resolvedEditors: PrototypeEditorApi) => {');
+    expect(source).toContain("resolvedEditors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context))");
+    expect(source).toContain('editors = await ensureHtmlDocumentPreviewEditorApi(iframe);');
+    expect(source).toContain("messageApi.warning('当前客户端页面尚未接入真正的快速编辑器，请确认预览页已加载 DevTemplateBootstrap 或 HtmlTemplateBootstrap')");
     expect(source).toContain('projectId: selectedEditablePreviewResource?.projectId');
     expect(source).toContain('resourceId: selectedEditablePreviewResource?.resourceId || selectedEditablePreviewResource?.name');
     expect(source).toContain('resourceType,');
@@ -611,7 +613,10 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('SPEC_EDIT_PROMPT_REQUEST');
     expect(source).toContain('docEditState');
     expect(source).toContain('handleEnableDocEdit');
-    expect(source).toContain('isMarkdownEditableResource(currentMarkdownItem)');
+    expect(source).toContain('isDocumentCommentableResource(currentMarkdownItem)');
+    expect(source).toContain("messageApi.warning(`仅支持 Markdown 或 HTML ${currentMarkdownLabel}批注`);");
+    expect(source).toContain('isHtmlCommentableResource(currentMarkdownItem)');
+    expect(source).toContain('void enterHtmlDocumentEditor();');
     expect(source).not.toContain("currentMarkdownItem.name || currentMarkdownItem.filePath || currentMarkdownItem.absoluteFilePath");
     expect(source).toContain('handleSwitchDocQuickEditMode');
     expect(source).not.toContain('handleEnableSpecEdit');
@@ -719,14 +724,13 @@ describe('useIndexPagePreviewActions source', () => {
     expect(fallbackActionSource).not.toContain('getHostToolbarState: () => hostToolbarState ?? createDefaultHostToolbarState()');
   });
 
-  it('auto-connects local AI before executing host toolbar send actions', () => {
+  it('runs host toolbar send actions through the API path without a wake precheck', () => {
     const source = readPreviewActionsSource();
 
     expect(source).toContain('isHostToolbarAgentAwake');
     expect(source).not.toContain('isHostToolbarGenieAwake');
-    expect(source).toContain("requestedAction.type === 'send-to-genie' && !isHostToolbarAgentAwake(hostToolbarStateRef.current)");
-    expect(source).toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });");
-    expect(source).toContain('if (!wakeHandled || !isHostToolbarAgentAwake(hostToolbarStateRef.current)) {');
+    expect(source).not.toContain("requestedAction.type === 'send-to-genie' && !isHostToolbarAgentAwake(hostToolbarStateRef.current)");
+    expect(source).not.toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });");
     expect(source).toContain('return runResolvedHostToolbarAction(requestedAction);');
   });
 
@@ -750,11 +754,11 @@ describe('useIndexPagePreviewActions source', () => {
 
     expect(enterDocumentEditorSource).not.toContain('startAnnotationAcpRuntimeConnection();');
     expect(handleOpenWebEditorSource).not.toContain('startAnnotationAcpRuntimeConnection();');
-    expect(runHostToolbarActionSource).toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });");
+    expect(runHostToolbarActionSource).not.toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });");
     expect(runHostToolbarActionSource).toContain('return runResolvedHostToolbarAction(requestedAction);');
   });
 
-  it('maps annotation host toolbar AI actions to ACP runtime and ACP chat runs', () => {
+  it('maps annotation host toolbar AI actions to API direct ACP runs without opening the assistant panel', () => {
     const source = readPreviewRootSource();
     const runHostToolbarActionSource = getSourceSegment(
       source,
@@ -777,9 +781,23 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("messageApi.success('本地 AI 已连接');");
 
     expect(source).toContain('runAnnotationAcpChatPrompt');
-    expect(source).toContain('onSubmitAnnotationAssistantPrompt');
-    expect(source).toContain('await onSubmitAnnotationAssistantPrompt(assistantContextV1, prompt)');
-    expect(source).not.toContain("from '../../domains/ai-generation/aiRunClient'");
+    expect(source).toContain('onRunAnnotationAssistantPromptViaApi');
+    expect(source).toContain('getAnnotationActionEditingTargets');
+    expect(source).toContain("locator: action.locator ?? null");
+    expect(source).toContain("label: String(action.label || '').trim() || elementKey");
+    expect(source).toContain('await onRunAnnotationAssistantPromptViaApi({');
+    expect(source).toContain('context: assistantContextV1,');
+    expect(source).toContain('editingTargets: request.editingTargets');
+    expect(source).toMatch(
+      /await applyAnnotationEditingTaskState\(request\.editingTargets, 'editing', latestTaskRef\);\s*const submitted = await onRunAnnotationAssistantPromptViaApi/,
+    );
+    expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, 'editing', latestTaskRef);");
+    expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, 'completed', latestTaskRef);");
+    expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, 'error', latestTaskRef);");
+    expect(source).toContain('editors.setNodeEditingState(target.elementKey, nextState, taskRef, target.targetRef ?? null)');
+    expect(source).toContain('target.targetRef ?? null');
+    expect(source).not.toContain('await onSubmitAnnotationAssistantPrompt(assistantContextV1, prompt)');
+    expect(source).not.toContain('openAssistantWithContextAndSubmitPrompt');
     expect(source).not.toContain('runAiText({');
     expect(source).not.toContain("scene: 'annotation-quick-edit'");
     expect(source).toContain("if (nextAction.type === 'send-to-genie') {");
@@ -792,6 +810,21 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('acp.chat.submit');
     expect(source).not.toContain('acp.chat.interrupt');
     expect(source).not.toContain('/api/prompt/execute');
+  });
+
+  it('does not show a persistent sending toast for direct annotation API runs', () => {
+    const source = readPreviewRootSource();
+    const directRunSource = getSourceSegment(
+      source,
+      'const runAnnotationAcpChatPrompt = useCallback(async (input: string | null | undefined | AnnotationPromptRunRequest) => {',
+      'const copyHostToolbarPromptText = useCallback',
+    );
+
+    expect(directRunSource).not.toContain("messageApi.loading('正在发送给 AI...', 0)");
+    expect(directRunSource).toContain("messageApi.success('AI 已执行');");
+    expect(directRunSource).toContain('formatThrownError(error)');
+    expect(directRunSource).toContain('messageApi.error(`AI 执行失败：${formatThrownError(error)}`);');
+    expect(directRunSource).not.toContain("messageApi.error(error?.message || 'AI 执行失败');");
   });
 
   it('keeps explicit selection mode actions reflected in host toolbar state', () => {
@@ -847,14 +880,19 @@ describe('useIndexPagePreviewActions source', () => {
     );
 
     expect(source).toContain('buildCombinedPrototypePrompt');
-    expect(source).toContain('const collectPrototypePrompt = useCallback(async (pane: PreviewPane)');
-    expect(source).toContain('const collectSplitPrototypePrompts = useCallback(async ()');
+    expect(source).toContain('const collectPrototypePrompt = useCallback(async (');
+    expect(source).toContain('action?: GenieEditorHostToolbarAction | null,');
+    expect(source).toContain('const collectSplitPrototypePrompts = useCallback(async (');
+    expect(source).toContain('collectSplitPrototypePrompts(nextAction)');
     expect(runHostToolbarActionSource).toContain("previewConfig.previewMode === 'split'");
-    expect(runHostToolbarActionSource).toContain('const combinedPrompt = buildCombinedPrototypePrompt(await collectSplitPrototypePrompts());');
+    expect(runHostToolbarActionSource).toContain('const splitPrompts = await collectSplitPrototypePrompts(nextAction);');
+    expect(runHostToolbarActionSource).toContain('const combinedPrompt = buildCombinedPrototypePrompt(splitPrompts);');
     expect(runHostToolbarActionSource).toContain('return copyHostToolbarPromptText(combinedPrompt);');
-    expect(runHostToolbarActionSource).toContain('return runAnnotationAcpChatPrompt(combinedPrompt);');
+    expect(runHostToolbarActionSource).toContain('return runAnnotationAcpChatPrompt({');
+    expect(runHostToolbarActionSource).toContain('editingTargets: splitPrompts.flatMap((item) => item.editingTargets || []),');
+    expect(runHostToolbarActionSource).toContain('editingTargets: buildAnnotationEditingTargets(');
     expect(runHostToolbarActionSource).toMatch(
-      /if \(previewConfig\.previewMode === 'split'\) \{[\s\S]*?return runAnnotationAcpChatPrompt\(combinedPrompt\);[\s\S]*?\}\s*const promptText = editors\?\.getCopyPromptText\?\.\(\);/,
+      /if \(previewConfig\.previewMode === 'split'\) \{[\s\S]*?return runAnnotationAcpChatPrompt\(\{[\s\S]*?editingTargets: splitPrompts\.flatMap[\s\S]*?\}\);[\s\S]*?\}\s*const promptText = editors\?\.getCopyPromptText\?\.\(\);/,
     );
     expect(runHostToolbarActionSource).toMatch(
       /if \(previewConfig\.previewMode === 'split'\) \{[\s\S]*?return copyHostToolbarPromptText\(combinedPrompt\);[\s\S]*?\}\s*const promptText = editors\?\.getCopyPromptText\?\.\(\);/,
@@ -870,6 +908,24 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('action: PrototypePanePromptAction,');
     expect(source).toContain('runPrototypePanePromptAction,');
     expect(presentationBuilderSource).toContain('handleRunPrototypePanePromptAction: preview.runPrototypePanePromptAction');
+  });
+
+  it('wires drawio resource previews to the shared online Draw.io editor', () => {
+    const rootSource = readPreviewRootSource();
+    const presentationBuilderSource = readFileSync(resolve(__dirname, '../hooks/useIndexPagePresentationPropsBuilder.ts'), 'utf8');
+
+    expect(rootSource).toContain("from '../../domains/drawio/drawioResourceEditor'");
+    expect(rootSource).toContain('isDrawioResource(currentMarkdownItem)');
+    expect(rootSource).toContain('const drawioResourceEditAvailable = Boolean(');
+    expect(rootSource).toContain('const handleOpenDrawioResourceEditor = useCallback(() => {');
+    expect(rootSource).toContain('openDrawioResourceEditor({');
+    expect(rootSource).toContain('resource: currentMarkdownItem');
+    expect(rootSource).toContain('kind: currentMarkdownResource.kind');
+    expect(rootSource).toContain('onSaved: handleRefreshElement');
+    expect(rootSource).toContain('drawioResourceEditAvailable,');
+    expect(rootSource).toContain('handleOpenDrawioResourceEditor,');
+    expect(presentationBuilderSource).toContain('drawioResourceEditAvailable: preview.drawioResourceEditAvailable');
+    expect(presentationBuilderSource).toContain('handleOpenDrawioResourceEditor: preview.handleOpenDrawioResourceEditor');
   });
 
   it('clears stale host toolbar prompt state after clear-edits actions', () => {
@@ -1090,11 +1146,14 @@ describe('useIndexPagePreviewActions source', () => {
   it('uses Markdown preview URLs for document and template panes', () => {
     const source = readPreviewActionsSource();
 
-    expect(source).toContain("return selectedDoc?.previewUrl || selectedDoc?.specUrl || '';");
-    expect(source).toContain("return selectedTemplate?.previewUrl || selectedTemplate?.specUrl || '';");
+    expect(source).toContain("resolveMarkdownPreviewIframeUrl } from '../../utils/markdownPreview';");
+    expect(source).toContain("return resolveMarkdownPreviewIframeUrl(selectedDoc, 'doc');");
+    expect(source).toContain("return resolveMarkdownPreviewIframeUrl(selectedTemplate, 'template');");
+    expect(source).not.toContain("return selectedDoc?.previewUrl || selectedDoc?.specUrl || '';");
+    expect(source).not.toContain("return selectedTemplate?.previewUrl || selectedTemplate?.specUrl || '';");
   });
 
-  it('routes document editing through the spec-template text comment editor', () => {
+  it('routes Markdown document editing through the spec-template text comment editor', () => {
     const source = readPreviewActionsSource();
 
     expect(source).toContain("contentMode === 'doc' || contentMode === 'template'");
@@ -1107,8 +1166,25 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('documentHostToolbarUnsubscribeRef.current = editorApi.subscribeHostToolbarState?.((nextState) => {');
     expect(source).toContain('setHostToolbarState(resolveHostToolbarStateForDisplay(null, editorApi.getHostToolbarState?.() ?? createDefaultHostToolbarState(), isDarkMode));');
     expect(source).toContain('void enterDocumentEditor();');
+    expect(source).toContain('return readPreviewFrameEditorApi<DocumentEditorApi>(iframe, \'SpecTemplateBootstrap\');');
+    expect(source).not.toContain("return api ?? readPreviewFrameEditorApi<DocumentEditorApi>(iframe, 'HtmlTemplateBootstrap');");
     expect(source).toContain("setEditorStatus({ mode: 'quickEdit' });");
     expect(source).not.toContain("messageApi.warning('文档模式下无法进行编辑');");
+  });
+
+  it('routes HTML document annotation through the HTML page editor bridge', () => {
+    const source = readPreviewActionsSource();
+
+    expect(source).toContain('const currentDocumentIsHtml = Boolean(');
+    expect(source).toContain('isHtmlCommentableResource(currentMarkdownItem)');
+    expect(source).toContain('const enterHtmlDocumentEditor = useCallback(async () => {');
+    expect(source).toContain('if (isHtmlCommentableResource(currentMarkdownItem)) {');
+    expect(source).toContain('void enterHtmlDocumentEditor();');
+    expect(source).toContain('if (currentDocumentIsHtml) {');
+    expect(source).toContain('await enterHtmlDocumentEditor();');
+    expect(source).toContain("const selectedEditablePreviewResource = currentDocumentIsHtml");
+    expect(source).toContain("readPreviewFrameEditorApi<PrototypeEditorApi>(iframe, 'HtmlTemplateBootstrap')");
+    expect(source).not.toContain("readPreviewFrameEditorApi<DocumentEditorApi>(iframe, 'HtmlTemplateBootstrap')");
   });
 
   it('keeps document and prototype quick edit themes synchronized with the host theme', () => {
@@ -1119,7 +1195,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('const isDarkModeRef = useRef(isDarkMode);');
     expect(source).toContain('isDarkModeRef.current = isDarkMode;');
     expect(source).toContain('options: buildPrototypeEditorEnableOptions(context)');
-    expect(source).toContain("editors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context))");
+    expect(source).toContain("resolvedEditors.enable('webEditorV2', buildPrototypeEditorEnableOptions(context))");
     expect(source).toContain('assistantPanelOpen: assistantContextAppendAvailable');
     expect(source).toContain("requestedAction = action.type === 'toggle-dark-mode'");
     expect(source).toContain("setIsDarkMode?.(nextAction.darkMode)");
@@ -1262,7 +1338,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("type: 'axhub.quickEdit.export.captureScreenshot'");
     expect(source).toContain('const screenshotSize = resolveCurrentPreviewScreenshotSize(previewConfig, screenshotDefaultSize);');
     expect(requestCurrentScreenshotSegment).toContain('targetWidth: screenshotSize.width');
-    expect(requestCurrentScreenshotSegment).not.toContain('targetHeight: screenshotSize.height');
+    expect(requestCurrentScreenshotSegment).toContain('targetHeight: screenshotSize.height');
     expect(source).toContain('await copyImageDataUrlToClipboard(result.dataUrl);');
     expect(source).toContain("messageApi.success('截图已复制到剪贴板');");
     expect(source).toContain('handleCopyCurrentScreenshot,');
