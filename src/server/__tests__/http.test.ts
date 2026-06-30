@@ -1286,7 +1286,7 @@ describe('make-server HTTP server', () => {
       const requestPath = '/@fs/workspace/make14/node_modules/.vite/deps/@axhub_annotation.js?v=a8419558';
       const response = await fetch(`${server.origin}${requestPath}`, {
         headers: {
-          referer: `${server.origin}/prototypes/annotation-demo?genieToolbar=host`,
+          referer: `${server.origin}/prototypes/annotation-demo?agentToolbar=host`,
         },
       });
       const body = await response.text();

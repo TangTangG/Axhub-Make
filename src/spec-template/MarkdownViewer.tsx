@@ -20,7 +20,7 @@ import {
 } from '@axhub/commentary';
 import { SimpleEditor, type UploadFunction } from 'tiptap-editor';
 import { defaultThemeConfig } from '../theme';
-import type { GenieContextV1 } from '@/common/genie/types';
+import type { AssistantContextV1 } from '@/common/assistant-context/types';
 import {
     buildMarkdownCommentPrompt,
     resolveMarkdownQuickEditMeta,
@@ -60,7 +60,7 @@ type SpecQuickEditMode = 'none' | 'comment' | 'edit';
 interface SpecPromptRequestResult {
     prompt: string;
     targetPath?: string;
-    context?: GenieContextV1;
+    context?: AssistantContextV1;
 }
 
 export interface MarkdownViewerHandle {

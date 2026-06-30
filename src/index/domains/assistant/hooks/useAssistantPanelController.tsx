@@ -22,7 +22,7 @@ import {
     mergeAssistantContextForActiveFile,
     resolveAssistantCurrentFile,
     shouldSyncAssistantCurrentFile,
-} from '../../../utils/genieContext';
+} from '../../../utils/assistantContext';
 import type { CanvasElementContextInfo } from '../../../components/content/canvas-embeds/AnnotationOverlay';
 import { useAssistantBridge } from './useAssistantBridge';
 import { useAssistantRuntime } from './useAssistantRuntime';
@@ -44,11 +44,11 @@ import {
     setAssistantStoreThreadId,
 } from '../assistantResourceThread';
 import {
-    getGenieCurrentFilePath,
-    mergeGenieContextV1,
-    normalizeGenieCurrentFileV1,
-} from '@/common/genie/bridge';
-import type { GenieProvider } from '@/common/genie/types';
+    getAssistantCurrentFilePath,
+    mergeAssistantContextV1,
+    normalizeAssistantCurrentFileV1,
+} from '@/common/assistant-context/bridge';
+import type { AcpProvider } from '@/common/assistant-context/types';
 
 type AssistantTriggerSource = 'button' | 'event';
 type AssistantRuntimeState = Awaited<ReturnType<typeof apiService.getAssistantRuntime>>;
@@ -101,9 +101,9 @@ const LEGACY_ASSISTANT_OPEN_PARAMS = [
     'integrationWs',
     'integrationClientId',
     'integrationChannel',
-    'genieApiBaseUrl',
-    'genieIntegrationChannel',
-    'genieTargetClientId',
+    'agentApiBaseUrl',
+    'agentIntegrationChannel',
+    'agentTargetClientId',
     'editorClientId',
     'editorIntegrationWs',
     'editorApiBaseUrl',
@@ -755,7 +755,7 @@ export function useAssistantPanelController({
             currentTheme,
             currentDataTable,
         });
-        const currentFilePath = getGenieCurrentFilePath(currentFile);
+        const currentFilePath = getAssistantCurrentFilePath(currentFile);
         const currentFileDirectory = currentFilePath.replace(/\/[^/]+$/u, '');
         const currentMarkdownItem = currentMarkdownResource.item;
         const selectedResource = contentMode === 'doc' || contentMode === 'template'
@@ -920,7 +920,7 @@ export function useAssistantPanelController({
             contentMode: 'preview',
             currentMarkdownResource: { kind: 'doc', item: null },
         });
-        const currentFilePath = getGenieCurrentFilePath(currentFile);
+        const currentFilePath = getAssistantCurrentFilePath(currentFile);
         const currentFileDirectory = currentFilePath.replace(/\/[^/]+$/u, '');
 
         const baseContext: AssistantContextV1 = {
@@ -953,7 +953,7 @@ export function useAssistantPanelController({
             return baseContext;
         }
 
-        return mergeGenieContextV1(baseContext, externalContext) ?? baseContext;
+        return mergeAssistantContextV1(baseContext, externalContext) ?? baseContext;
     }, [activeTab, assistantRuntime?.projectPath]);
 
     useEffect(() => {
@@ -972,8 +972,8 @@ export function useAssistantPanelController({
                 return prev;
             }
 
-            const normalizedCurrentFile = normalizeGenieCurrentFileV1(assistantBaseContextV1.currentFile);
-            if (getGenieCurrentFilePath(prev.currentFile) !== normalizedCurrentFile.path) {
+            const normalizedCurrentFile = normalizeAssistantCurrentFileV1(assistantBaseContextV1.currentFile);
+            if (getAssistantCurrentFilePath(prev.currentFile) !== normalizedCurrentFile.path) {
                 return null;
             }
             if (
@@ -1671,7 +1671,7 @@ export function useAssistantPanelController({
         forceSyncAssistantRuntimeConfigToIframe,
     ]);
 
-    const handleOpenGenieWebAgent = useCallback((targetPath?: string, _provider?: GenieProvider) => {
+    const handleOpenAcpWebAgent = useCallback((targetPath?: string, _provider?: AcpProvider) => {
         void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe', null, {
             panelMode: 'general-ai',
         });
@@ -1799,7 +1799,7 @@ export function useAssistantPanelController({
             viewMode: 'demo',
             activeTab: 'prototypes',
         });
-        const targetPath = getGenieCurrentFilePath(itemContext.currentFile);
+        const targetPath = getAssistantCurrentFilePath(itemContext.currentFile);
         setAssistantExternalContext(itemContext);
         latestAssistantSyncContextRef.current = itemContext;
 
@@ -2085,7 +2085,7 @@ export function useAssistantPanelController({
         addImageAttachment,
         appendComposerText,
         handleToggleAssistant,
-        handleOpenGenieWebAgent,
+        handleOpenAcpWebAgent,
         openImageAiPanel,
         handleOpenImageAiPanelInNewWindow,
         hideAssistantPanelTemporarily,

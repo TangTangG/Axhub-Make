@@ -45,7 +45,7 @@ const CLI_AGENT_COMMANDS: Record<CLIAgent, string[]> = {
 
 const WEB_AGENT_COMMANDS: Record<WebAgent, string[]> = {
   opencode: [],
-  genie: ['npx'],
+  acp: ['npx'],
 };
 
 const LOCAL_APP_AGENT_COMMANDS: Record<LocalAppAgent, string[]> = {

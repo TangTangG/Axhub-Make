@@ -860,13 +860,13 @@ describe('make-server agent open API', () => {
     })).rejects.toThrow('OpenCode WebUI is temporarily disabled');
 
     const web = await openWebAgent({
-      agent: 'genie',
+      agent: 'acp',
       targetPath: projectRoot,
       availability: { status: 'installed', path: '/usr/local/bin/npx' } as any,
     });
     expect(web).toMatchObject({
       success: true,
-      agent: 'genie',
+      agent: 'acp',
       targetPath: projectRoot,
     });
     expect(web.command).toContain('npx @axhub/acp@latest');
@@ -936,12 +936,12 @@ describe('make-server agent open API', () => {
       statusCode: 404,
       body: { code: 'CLI_AGENT_MISSING', agent: 'codex' },
     });
-    expect(getMissingWebAgentOpenError('genie')).toMatchObject({
+    expect(getMissingWebAgentOpenError('acp')).toMatchObject({
       statusCode: 404,
       body: {
         error: '未检测到 ACP UI，请先安装后再试',
         code: 'WEB_AGENT_MISSING',
-        agent: 'genie',
+        agent: 'acp',
       },
     });
     expect(getMissingLocalAppOpenError('opencode')).toMatchObject({

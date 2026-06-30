@@ -90,7 +90,7 @@ describe('runtime proxy route ownership', () => {
   });
 
   it('uses prototype referers to route dev module graph requests to the runtime server', () => {
-    const headers = { referer: 'http://localhost:53817/prototypes/annotation-demo?genieToolbar=host' };
+    const headers = { referer: 'http://localhost:53817/prototypes/annotation-demo?agentToolbar=host' };
 
     expect(isRuntimeDevModuleRequest('/@fs/workspace/make14/node_modules/.vite/deps/@axhub_annotation.js?v=a8419558', headers)).toBe(true);
     expect(isRuntimeDevModuleRequest('/@vite/client', headers)).toBe(true);
@@ -132,7 +132,7 @@ describe('runtime proxy route ownership', () => {
 
   it('routes project-scoped runtime module graph files without hard-coding template directories', () => {
     expect(isRuntimeDevModuleRequest('/features/onboarding/wizard.tsx', {
-      referer: 'http://localhost:53817/prototypes/annotation-demo?genieToolbar=host',
+      referer: 'http://localhost:53817/prototypes/annotation-demo?agentToolbar=host',
     })).toBe(true);
     expect(isRuntimeDevModuleRequest('/new-template-space/assets/model.glb?url', {
       referer: 'http://localhost:53817/features/onboarding/wizard.tsx?projectId=make-project',
@@ -141,7 +141,7 @@ describe('runtime proxy route ownership', () => {
       referer: 'http://localhost:53817/features/onboarding/wizard.tsx?projectId=make-project',
     })).toBe(false);
     expect(isRuntimeDevModuleRequest('/features/onboarding/wizard', {
-      referer: 'http://localhost:53817/prototypes/annotation-demo?genieToolbar=host',
+      referer: 'http://localhost:53817/prototypes/annotation-demo?agentToolbar=host',
     })).toBe(false);
   });
 

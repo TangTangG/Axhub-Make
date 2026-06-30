@@ -31,8 +31,8 @@ import type {
   EditorRuntimeState,
   ExternalEditingTaskRef,
   MarkerAnchor,
-  PageGenieConversationState,
-  PersistedElementGenieTaskState,
+  PageAgentConversationState,
+  PersistedElementAgentTaskState,
 } from './state';
 import { filterUnprocessedTransactions as filterTransactionsAfterProcessed } from './state';
 import { normalizeMarkerAnchor } from './marker-anchor';
@@ -79,8 +79,8 @@ const CACHE_KEY_PREFIX = 'web-editor-v2-cache:';
 const MARKER_VISIBILITY_KEY_PREFIX = 'web-editor-v2-markers:';
 const COMMENT_SHORTCUT_SETTINGS_KEY_PREFIX = 'web-editor-v2-comment-shortcuts:';
 const UI_SETTINGS_KEY = 'web-editor-v2-ui-settings';
-const GENIE_CONVERSATION_KEY_PREFIX = 'web-editor-v2-genie-conversation:';
-const GENIE_TASKS_KEY_PREFIX = 'web-editor-v2-genie-tasks:';
+const AGENT_CONVERSATION_KEY_PREFIX = 'web-editor-v2-agent-conversation:';
+const AGENT_TASKS_KEY_PREFIX = 'web-editor-v2-agent-tasks:';
 const SCOPED_COMMENT_TASK_KEY_PREFIX = 'page-scope:';
 const ANNOTATION_PANEL_NODE_ID_ATTR = 'data-axhub-annotation-panel-node-id';
 
@@ -402,7 +402,7 @@ export function createPersistenceService(options: {
     try {
       const url = new URL(window.location.href);
       const params = new URLSearchParams(url.search);
-      for (const key of ['editor', 'axhubPane', 'axhubQuickEditContext', 'genieToolbar']) {
+      for (const key of ['editor', 'axhubPane', 'axhubQuickEditContext', 'agentToolbar']) {
         params.delete(key);
       }
       const sortedParams = new URLSearchParams();
@@ -637,7 +637,7 @@ export function createPersistenceService(options: {
       tasks[buildCommentTaskDocumentKey(elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
     }
     const allTasks = [
-      ...state.genieTaskByElementKey.values(),
+      ...state.agentTaskByElementKey.values(),
       ...state.externalEditingTaskByElementKey.values(),
     ];
     for (const task of allTasks) {
@@ -702,7 +702,7 @@ export function createPersistenceService(options: {
     const currentTasks = buildDocumentTasks();
     const currentTaskElementKeys = new Set([
       ...commentTaskStateByElementKey.keys(),
-      ...Array.from(state.genieTaskByElementKey.values()).map((task) => task.elementKey),
+      ...Array.from(state.agentTaskByElementKey.values()).map((task) => task.elementKey),
       ...Array.from(state.externalEditingTaskByElementKey.values()).map((task) => task.elementKey),
     ].map((elementKey) => String(elementKey ?? '').trim()).filter(Boolean));
     const currentImageKeys = new Set(
@@ -838,19 +838,19 @@ export function createPersistenceService(options: {
     }
   }
 
-  function resolveGenieConversationKey(scopeKey: string): string {
-    return `${GENIE_CONVERSATION_KEY_PREFIX}${scopeKey}`;
+  function resolveAgentConversationKey(scopeKey: string): string {
+    return `${AGENT_CONVERSATION_KEY_PREFIX}${scopeKey}`;
   }
 
-  function resolveGenieTasksKey(scopeKey: string): string {
-    return `${GENIE_TASKS_KEY_PREFIX}${scopeKey}`;
+  function resolveAgentTasksKey(scopeKey: string): string {
+    return `${AGENT_TASKS_KEY_PREFIX}${scopeKey}`;
   }
 
-  function sanitizePageGenieConversationState(
+  function sanitizePageAgentConversationState(
     value: unknown,
-  ): PageGenieConversationState | null {
+  ): PageAgentConversationState | null {
     if (!value || typeof value !== 'object') return null;
-    const record = value as Partial<PageGenieConversationState>;
+    const record = value as Partial<PageAgentConversationState>;
     const scopeKey = String(record.scopeKey ?? '').trim();
     const sessionId = String(record.sessionId ?? '').trim();
     if (!scopeKey || !sessionId) return null;
@@ -883,11 +883,11 @@ export function createPersistenceService(options: {
     };
   }
 
-  function sanitizePersistedElementGenieTaskState(
+  function sanitizePersistedElementAgentTaskState(
     value: unknown,
-  ): PersistedElementGenieTaskState | null {
+  ): PersistedElementAgentTaskState | null {
     if (!value || typeof value !== 'object') return null;
-    const record = value as Partial<PersistedElementGenieTaskState>;
+    const record = value as Partial<PersistedElementAgentTaskState>;
     const scopeKey = String(record.scopeKey ?? '').trim();
     const requestId = String(record.requestId ?? '').trim();
     if (!scopeKey || !requestId || !record.locator) return null;
@@ -902,7 +902,7 @@ export function createPersistenceService(options: {
     const lastEventAt = Number(record.lastEventAt ?? updatedAt);
 
     // Preserve origin if valid
-    const origin = record.origin === 'genie-run' || record.origin === 'external-editing'
+    const origin = record.origin === 'agent-run' || record.origin === 'external-editing'
       ? record.origin
       : undefined;
 
@@ -1012,46 +1012,46 @@ export function createPersistenceService(options: {
     }
   }
 
-  function readGenieConversationState(scopeKey: string): PageGenieConversationState | null {
+  function readAgentConversationState(scopeKey: string): PageAgentConversationState | null {
     const normalizedScopeKey = String(scopeKey ?? '').trim();
     if (!normalizedScopeKey) return null;
-    return sanitizePageGenieConversationState(
-      readStorageJson(resolveGenieConversationKey(normalizedScopeKey)),
+    return sanitizePageAgentConversationState(
+      readStorageJson(resolveAgentConversationKey(normalizedScopeKey)),
     );
   }
 
-  function writeGenieConversationState(
+  function writeAgentConversationState(
     scopeKey: string,
-    conversation: PageGenieConversationState,
+    conversation: PageAgentConversationState,
   ): void {
     const normalizedScopeKey = String(scopeKey ?? '').trim();
     if (!normalizedScopeKey) return;
-    const sanitized = sanitizePageGenieConversationState(conversation);
+    const sanitized = sanitizePageAgentConversationState(conversation);
     if (!sanitized) {
-      removeStorageKey(resolveGenieConversationKey(normalizedScopeKey));
+      removeStorageKey(resolveAgentConversationKey(normalizedScopeKey));
       return;
     }
-    writeStorageJson(resolveGenieConversationKey(normalizedScopeKey), sanitized);
+    writeStorageJson(resolveAgentConversationKey(normalizedScopeKey), sanitized);
   }
 
-  function clearGenieConversationState(scopeKey: string): void {
+  function clearAgentConversationState(scopeKey: string): void {
     const normalizedScopeKey = String(scopeKey ?? '').trim();
     if (!normalizedScopeKey) return;
-    removeStorageKey(resolveGenieConversationKey(normalizedScopeKey));
+    removeStorageKey(resolveAgentConversationKey(normalizedScopeKey));
   }
 
-  function readGenieTaskStates(scopeKey: string): PersistedElementGenieTaskState[] {
+  function readAgentTaskStates(scopeKey: string): PersistedElementAgentTaskState[] {
     const normalizedScopeKey = String(scopeKey ?? '').trim();
     if (!normalizedScopeKey) return [];
-    const raw = readStorageJson<unknown[]>(resolveGenieTasksKey(normalizedScopeKey));
+    const raw = readStorageJson<unknown[]>(resolveAgentTasksKey(normalizedScopeKey));
     if (!Array.isArray(raw)) return [];
     return raw
-      .map((entry) => sanitizePersistedElementGenieTaskState(entry))
-      .filter((entry): entry is PersistedElementGenieTaskState => {
+      .map((entry) => sanitizePersistedElementAgentTaskState(entry))
+      .filter((entry): entry is PersistedElementAgentTaskState => {
         if (!entry || entry.dismissed) return false;
         // External-editing tasks: accept any status, no sessionId/provider required
         if (entry.origin === 'external-editing') return true;
-        // Standard genie tasks: require running status + session + provider
+        // Standard agent tasks: require running status + session + provider
         return (
           (entry.status === 'pending' || entry.status === 'created') &&
           typeof entry.sessionId === 'string' &&
@@ -1062,20 +1062,20 @@ export function createPersistenceService(options: {
       });
   }
 
-  function writeGenieTaskStates(
+  function writeAgentTaskStates(
     scopeKey: string,
-    tasks: PersistedElementGenieTaskState[],
+    tasks: PersistedElementAgentTaskState[],
   ): void {
     const normalizedScopeKey = String(scopeKey ?? '').trim();
     if (!normalizedScopeKey) return;
     const sanitized = Array.isArray(tasks)
       ? tasks
-          .map((entry) => sanitizePersistedElementGenieTaskState(entry))
-          .filter((entry): entry is PersistedElementGenieTaskState => {
+          .map((entry) => sanitizePersistedElementAgentTaskState(entry))
+          .filter((entry): entry is PersistedElementAgentTaskState => {
             if (!entry || entry.dismissed) return false;
             // External-editing tasks: accept any status, no sessionId/provider required
             if (entry.origin === 'external-editing') return true;
-            // Standard genie tasks: require running status + session + provider
+            // Standard agent tasks: require running status + session + provider
             return (
               (entry.status === 'pending' || entry.status === 'created') &&
               typeof entry.sessionId === 'string' &&
@@ -1086,10 +1086,10 @@ export function createPersistenceService(options: {
           })
       : [];
     if (sanitized.length === 0) {
-      removeStorageKey(resolveGenieTasksKey(normalizedScopeKey));
+      removeStorageKey(resolveAgentTasksKey(normalizedScopeKey));
       return;
     }
-    writeStorageJson(resolveGenieTasksKey(normalizedScopeKey), sanitized);
+    writeStorageJson(resolveAgentTasksKey(normalizedScopeKey), sanitized);
   }
 
   function recordCommentTaskState(
@@ -1123,10 +1123,10 @@ export function createPersistenceService(options: {
     persistTaskDocument();
   }
 
-  function pruneExpiredGenieTaskStates(scopeKey: string): void {
+  function pruneExpiredAgentTaskStates(scopeKey: string): void {
     const normalizedScopeKey = String(scopeKey ?? '').trim();
     if (!normalizedScopeKey) return;
-    writeGenieTaskStates(normalizedScopeKey, readGenieTaskStates(normalizedScopeKey));
+    writeAgentTaskStates(normalizedScopeKey, readAgentTaskStates(normalizedScopeKey));
   }
 
   function writeCache(entries: CachedChangeEntry[], reason: PrototypeEditCommentsWriteReason = 'changes'): void {
@@ -1598,15 +1598,15 @@ export function createPersistenceService(options: {
     setCommentShortcutSettings,
     readUiSettings,
     setUiSettings,
-    readGenieConversationState,
-    writeGenieConversationState,
-    clearGenieConversationState,
-    readGenieTaskStates,
-    writeGenieTaskStates(scopeKey, tasks) {
-      writeGenieTaskStates(scopeKey, tasks);
+    readAgentConversationState,
+    writeAgentConversationState,
+    clearAgentConversationState,
+    readAgentTaskStates,
+    writeAgentTaskStates(scopeKey, tasks) {
+      writeAgentTaskStates(scopeKey, tasks);
       persistTaskDocument();
     },
-    pruneExpiredGenieTaskStates,
+    pruneExpiredAgentTaskStates,
     recordCommentTaskState,
     scheduleWrite,
     persistFromTransactions,

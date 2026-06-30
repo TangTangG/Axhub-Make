@@ -12,10 +12,10 @@ import type { TransactionChangeEvent } from '../transaction-manager';
 import type { CommentShortcutSettings } from './comment-shortcut-settings';
 import type {
   EditorRuntimeState,
-  ElementGenieTaskState,
+  ElementAgentTaskState,
   ExternalEditingTaskRef,
-  PageGenieConversationState,
-  PersistedElementGenieTaskState,
+  PageAgentConversationState,
+  PersistedElementAgentTaskState,
 } from './state';
 import type { CommentEntryMode } from '../../ui/selection-ui-mode';
 import type { WebEditorUiSettings } from './ui-settings';
@@ -88,7 +88,7 @@ export interface SessionActivityTarget {
   requestId?: string | null;
 }
 
-export interface GenieProviderAvailability {
+export interface AgentProviderAvailability {
   provider: string;
   installed: boolean;
   installHint?: string;
@@ -204,12 +204,12 @@ export interface EditorPersistenceService {
   setCommentShortcutSettings(settings: CommentShortcutSettings): void;
   readUiSettings(): WebEditorUiSettings;
   setUiSettings(settings: WebEditorUiSettings): void;
-  readGenieConversationState(scopeKey: string): PageGenieConversationState | null;
-  writeGenieConversationState(scopeKey: string, conversation: PageGenieConversationState): void;
-  clearGenieConversationState(scopeKey: string): void;
-  readGenieTaskStates(scopeKey: string): PersistedElementGenieTaskState[];
-  writeGenieTaskStates(scopeKey: string, tasks: PersistedElementGenieTaskState[]): void;
-  pruneExpiredGenieTaskStates(scopeKey: string): void;
+  readAgentConversationState(scopeKey: string): PageAgentConversationState | null;
+  writeAgentConversationState(scopeKey: string, conversation: PageAgentConversationState): void;
+  clearAgentConversationState(scopeKey: string): void;
+  readAgentTaskStates(scopeKey: string): PersistedElementAgentTaskState[];
+  writeAgentTaskStates(scopeKey: string, tasks: PersistedElementAgentTaskState[]): void;
+  pruneExpiredAgentTaskStates(scopeKey: string): void;
   recordCommentTaskState?(
     elementKey: WebEditorElementKey,
     state: PrototypeEditCommentTaskStatus,
@@ -251,7 +251,7 @@ export interface EditorInteractionService {
   revertElement(elementKey: WebEditorElementKey): Promise<WebEditorRevertElementResponse>;
 }
 
-export interface EditorGenieBridgeService {
+export interface EditorAgentBridgeService {
   start(): void;
   stop(): void;
   requestWake(): Promise<boolean>;
@@ -263,19 +263,19 @@ export interface EditorGenieBridgeService {
     targetClientId: string;
     provider: string;
   };
-  getCurrentConversationState(): PageGenieConversationState | null;
+  getCurrentConversationState(): PageAgentConversationState | null;
   subscribeSessionActivity(
     target: SessionActivityTarget,
     listener: SessionActivityListener,
   ): () => void;
   hasReusableConversation(): boolean;
   invalidateCurrentConversation?(): void;
-  getElementTaskState(element: Element | null): ElementGenieTaskState | null;
-  getVisibleTaskStates(): ElementGenieTaskState[];
-  getProviderAvailability(provider: string): GenieProviderAvailability | null;
-  getProviderAvailabilities(): GenieProviderAvailability[];
+  getElementTaskState(element: Element | null): ElementAgentTaskState | null;
+  getVisibleTaskStates(): ElementAgentTaskState[];
+  getProviderAvailability(provider: string): AgentProviderAvailability | null;
+  getProviderAvailabilities(): AgentProviderAvailability[];
   refreshProviderAvailabilities(providers?: readonly string[]): Promise<void>;
-  getTaskStateByElementKey?(elementKey: WebEditorElementKey | null | undefined): ElementGenieTaskState | null;
+  getTaskStateByElementKey?(elementKey: WebEditorElementKey | null | undefined): ElementAgentTaskState | null;
   resolveSelectableElement(element: Element | null): Element | null;
   isElementInteractionLocked(element: Element | null): boolean;
   dismissElementTaskState(
@@ -287,7 +287,7 @@ export interface EditorGenieBridgeService {
   setExternalEditingState?(
     element: Element,
     taskRef?: Partial<ExternalEditingTaskRef> | null,
-  ): ElementGenieTaskState | null;
+  ): ElementAgentTaskState | null;
   clearExternalEditingState?(
     element: Element,
     taskRef?: Partial<ExternalEditingTaskRef> | null,
@@ -296,17 +296,17 @@ export interface EditorGenieBridgeService {
     element: Element,
     terminalState: 'completed' | 'error',
     taskRef?: Partial<ExternalEditingTaskRef> | null,
-  ): ElementGenieTaskState | null;
+  ): ElementAgentTaskState | null;
   canInterruptElementTask(element: Element | null): boolean;
   interruptElementTask(element: Element): Promise<void>;
-  handleSendSelectionToGenie(element: Element): Promise<void>;
-  handleSyncCommentContextToGenie(
+  handleSendSelectionToAgent(element: Element): Promise<void>;
+  handleSyncCommentContextToAgent(
     element: Element | null,
     mode: 'append' | 'replace',
   ): Promise<void>;
-  handleSendPromptToGenieForElements(elements: Element[], prompt: string): Promise<void>;
-  handleSendPromptToGenieForElement(element: Element, prompt: string): Promise<void>;
-  rehydratePersistedGenieState(): void;
+  handleSendPromptToAgentForElements(elements: Element[], prompt: string): Promise<void>;
+  handleSendPromptToAgentForElement(element: Element, prompt: string): Promise<void>;
+  rehydratePersistedAgentState(): void;
 }
 
 export type IntegrationWsConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
@@ -335,7 +335,7 @@ export interface EditorServices {
   persistence: EditorPersistenceService;
   textSession: EditorTextSessionService;
   interaction: EditorInteractionService;
-  genieBridge: EditorGenieBridgeService;
+  agentBridge: EditorAgentBridgeService;
   integrationWs?: EditorIntegrationWsService;
   localActions: EditorLocalActionsService;
 }

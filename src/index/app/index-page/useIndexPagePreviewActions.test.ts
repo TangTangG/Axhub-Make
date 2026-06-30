@@ -413,7 +413,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain("const label = activeTab === 'components' ? '组件' : '原型'");
   });
 
-  it('strips Genie and editor WebSocket launch options from client prototype iframe URLs', () => {
+  it('strips legacy agent and editor WebSocket launch options from client prototype iframe URLs', () => {
     vi.stubGlobal('window', {
       location: {
         origin: 'http://admin.local:5173',
@@ -422,9 +422,9 @@ describe('useIndexPagePreviewActions source', () => {
 
     const url = new URL(buildProjectPrototypeIframeUrl({
       name: 'home',
-      clientUrl: 'http://client.local:4173/prototypes/home?genieIntegrationChannel=stale',
+      clientUrl: 'http://client.local:4173/prototypes/home?agentIntegrationChannel=stale',
     }, {
-      genieBridge: {
+      agentBridge: {
         apiBaseUrl: 'http://localhost:32124/api',
         integrationChannel: '/workspace/demo/project',
         projectPath: '/workspace/demo/project',
@@ -438,9 +438,9 @@ describe('useIndexPagePreviewActions source', () => {
       },
     } as any));
 
-    expect(url.searchParams.get('genieApiBaseUrl')).toBeNull();
-    expect(url.searchParams.get('genieIntegrationChannel')).toBeNull();
-    expect(url.searchParams.get('genieTargetClientId')).toBeNull();
+    expect(url.searchParams.get('agentApiBaseUrl')).toBeNull();
+    expect(url.searchParams.get('agentIntegrationChannel')).toBeNull();
+    expect(url.searchParams.get('agentTargetClientId')).toBeNull();
     expect(url.searchParams.get('cwd')).toBeNull();
     expect(url.searchParams.get('editorIntegrationWs')).toBeNull();
     expect(url.searchParams.get('editorApiBaseUrl')).toBeNull();
@@ -467,13 +467,13 @@ describe('useIndexPagePreviewActions source', () => {
 
   it('builds and clears prototype page hash URLs without disturbing launch query params', () => {
     const url = new URL(buildPrototypePageHashUrl(
-      'http://client.local/prototypes/orders?genieToolbar=host#page=old',
+      'http://client.local/prototypes/orders?agentToolbar=host#page=old',
       'orders-list',
     ));
 
-    expect(url.searchParams.get('genieToolbar')).toBe('host');
+    expect(url.searchParams.get('agentToolbar')).toBe('host');
     expect(url.hash).toBe('#page=orders-list');
-    expect(buildPrototypePageHashUrl(url.toString(), null)).toBe('http://client.local/prototypes/orders?genieToolbar=host');
+    expect(buildPrototypePageHashUrl(url.toString(), null)).toBe('http://client.local/prototypes/orders?agentToolbar=host');
   });
 
   it('uses the selected prototype page id when building demo iframe URLs', () => {
@@ -537,7 +537,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('const prototypeEditorLaunchOptions = useMemo(() => ({');
     expect(source).toContain('hostToolbar: true,');
     expect(source).not.toContain('assistantWebEditorClientId');
-    expect(source).not.toContain('genieBridge:');
+    expect(source).not.toContain('agentBridge:');
     expect(source).not.toContain('integrationWs:');
     expect(source).not.toContain('editorClientId');
   });
@@ -631,7 +631,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('handleSwitchSpecQuickEditMode');
     expect(source).toContain('handleCopyMarkdownPrompt');
     expect(source).toContain('resolveSpecQuickEditSwitchDecision');
-    expect(source).not.toContain("url.searchParams.set('genieToolbar', 'host');");
+    expect(source).not.toContain("url.searchParams.set('agentToolbar', 'host');");
     expect(source).not.toContain("url.searchParams.set('editor', 'webEditorV2');");
     expect(source).not.toContain("editorStatus.mode === 'webEditorV2'");
     expect(source).not.toContain("'specComment'");
@@ -966,7 +966,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(runHostToolbarActionSource).toContain('resolveHostToolbarStateForDisplay(hostToolbarStateRef.current, explicitSelectionState, isDarkMode)');
   });
 
-  it('does not keep Web Editor Genie request handling in the preview host', () => {
+  it('does not keep Web Editor Agent request handling in the preview host', () => {
     const source = readPreviewActionsSource();
 
     expect(source).not.toContain('AXHUB_WEB_EDITOR_GENIE_REQUEST');

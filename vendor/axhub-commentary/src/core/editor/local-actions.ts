@@ -152,7 +152,7 @@ export function createLocalActionsService(options: {
       options.changes.setImagesForElement(element, []);
     }
 
-    // Clear stale dirty entries that remain after Genie processing.
+    // Clear stale dirty entries that remain after Agent processing.
     // The marker may still be visible even though changeKinds is empty.
     if (meta) {
       options.changes.markElementEditsHandled(element);

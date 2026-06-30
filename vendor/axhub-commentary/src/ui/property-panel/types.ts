@@ -10,9 +10,9 @@ import type { DesignTokensService } from '../../core/design-tokens';
 import type { FloatingPosition } from '../floating-drag';
 import type { CommentEntryMode } from '../selection-ui-mode';
 import type { CommentShortcutSettings } from '../../core/editor/comment-shortcut-settings';
-import type { ElementGenieTaskState, PageGenieConversationState, PromptImageAttachment } from '../../core/editor/state';
+import type { ElementAgentTaskState, PageAgentConversationState, PromptImageAttachment } from '../../core/editor/state';
 import type {
-  GenieProviderAvailability,
+  AgentProviderAvailability,
   SessionActivityListener,
   SessionActivityTarget,
 } from '../../core/editor/contracts';
@@ -69,14 +69,14 @@ export interface PropertyPanelOptions {
   onRedo?: () => void;
   /** Copy prompt action */
   onCopyPrompt?: () => void | Promise<void>;
-  /** Send the generated prompt to Genie, routing to the active page or a new session */
-  onSendPromptToGenie?: (element?: Element | null) => void | Promise<void>;
-  /** Send the current element's prompt to Genie without including other elements */
-  onSendCurrentElementPromptToGenie?: (element: Element) => void | Promise<void>;
-  /** Interrupt the active Genie execution for the current element */
-  onAbortSendPromptToGenie?: (element?: Element | null) => void | Promise<void>;
-  /** Wake Genie after the host confirms the backend is ready */
-  onWakeGenie?: () => boolean | Promise<boolean>;
+  /** Send the generated prompt to Agent, routing to the active page or a new session */
+  onSendPromptToAgent?: (element?: Element | null) => void | Promise<void>;
+  /** Send the current element's prompt to Agent without including other elements */
+  onSendCurrentElementPromptToAgent?: (element: Element) => void | Promise<void>;
+  /** Interrupt the active Agent execution for the current element */
+  onAbortAgentPrompt?: (element?: Element | null) => void | Promise<void>;
+  /** Wake Agent after the host confirms the backend is ready */
+  onWakeAgent?: () => boolean | Promise<boolean>;
   /** Clear current edits + cache */
   onClearEdits?: (options?: { skipConfirm?: boolean }) => void | Promise<void>;
   /** Clear the current element's related edits, note, and local modifications */
@@ -90,7 +90,7 @@ export interface PropertyPanelOptions {
   showCopyPromptAction?: boolean;
   /** Whether toolbar chrome is rendered inline or delegated to the host */
   toolbarMode?: CommentaryToolbarMode;
-  /** Hide UI affordances that directly execute Genie/agent tasks. */
+  /** Hide UI affordances that directly execute Agent/agent tasks. */
   hideExecutionControls?: boolean;
   /** Notify host toolbar consumers whenever the runtime toolbar state changes */
   onHostToolbarStateChange?: (state: CommentaryHostToolbarState) => void;
@@ -104,41 +104,41 @@ export interface PropertyPanelOptions {
   getAnnotationEnableLoading?: () => boolean;
   /** Optional extension-specific single-line hint for running external editing tasks */
   externalEditingStatusDescription?: string;
-  /** Optional skill document source used when copying the Genie skill install prompt */
+  /** Optional skill document source used when copying the Agent skill install prompt */
   skillInstallSource?: string;
-  /** Whether the Genie bridge is currently online */
-  getGenieBridgeAvailable?: () => boolean;
-  /** Whether the Genie bridge websocket is connected and ready */
-  getGenieBridgeConnected?: () => boolean;
-  /** Whether the current Genie execution can be interrupted */
-  getCanAbortSendPromptToGenie?: (element?: Element | null) => boolean;
-  /** Whether the current page already has a reusable Genie conversation */
-  getHasReusableGenieConversation?: () => boolean;
-  /** Read the current page-level Genie conversation */
-  getCurrentGenieConversationState?: () => PageGenieConversationState | null;
-  /** Read the current Genie task state for an element */
-  getElementGenieTaskState?: (element: Element | null) => ElementGenieTaskState | null;
-  /** Read all visible Genie task states */
-  getVisibleElementGenieTaskStates?: () => ElementGenieTaskState[];
-  /** Read Genie provider availability for a single provider */
-  getGenieProviderAvailability?: (provider: string) => GenieProviderAvailability | null;
-  /** Read Genie provider availability for all supported providers */
-  getGenieProviderAvailabilities?: () => GenieProviderAvailability[];
-  /** Refresh Genie provider availability snapshots */
-  refreshGenieProviderAvailabilities?: (providers?: readonly string[]) => Promise<void>;
-  /** Subscribe to the current page Genie session activity stream */
+  /** Whether the Agent bridge is currently online */
+  getAgentBridgeAvailable?: () => boolean;
+  /** Whether the Agent bridge websocket is connected and ready */
+  getAgentBridgeConnected?: () => boolean;
+  /** Whether the current Agent execution can be interrupted */
+  getCanAbortAgentPrompt?: (element?: Element | null) => boolean;
+  /** Whether the current page already has a reusable Agent conversation */
+  getHasReusableAgentConversation?: () => boolean;
+  /** Read the current page-level Agent conversation */
+  getCurrentAgentConversationState?: () => PageAgentConversationState | null;
+  /** Read the current Agent task state for an element */
+  getElementAgentTaskState?: (element: Element | null) => ElementAgentTaskState | null;
+  /** Read all visible Agent task states */
+  getVisibleElementAgentTaskStates?: () => ElementAgentTaskState[];
+  /** Read Agent provider availability for a single provider */
+  getAgentProviderAvailability?: (provider: string) => AgentProviderAvailability | null;
+  /** Read Agent provider availability for all supported providers */
+  getAgentProviderAvailabilities?: () => AgentProviderAvailability[];
+  /** Refresh Agent provider availability snapshots */
+  refreshAgentProviderAvailabilities?: (providers?: readonly string[]) => Promise<void>;
+  /** Subscribe to the current page Agent session activity stream */
   subscribeSessionActivity?: (
     target: SessionActivityTarget,
     listener: SessionActivityListener,
   ) => () => void;
-  /** Dismiss the current Genie task terminal state for an element */
-  dismissElementGenieTaskState?: (element: Element) => void;
-  /** Dismiss all currently visible Genie task terminal states */
-  dismissVisibleElementGenieTaskStates?: () => void;
-  /** Pre-flight check to block prompt push into Genie */
-  getSendPromptToGenieBlockReason?: (element?: Element | null) => string | undefined;
-  /** Pre-flight check to block sending only the current element prompt into Genie */
-  getSendCurrentElementPromptToGenieBlockReason?: (element: Element | null) => string | undefined;
+  /** Dismiss the current Agent task terminal state for an element */
+  dismissElementAgentTaskState?: (element: Element) => void;
+  /** Dismiss all currently visible Agent task terminal states */
+  dismissVisibleElementAgentTaskStates?: () => void;
+  /** Pre-flight check to block prompt push into Agent */
+  getSendPromptToAgentBlockReason?: (element?: Element | null) => string | undefined;
+  /** Pre-flight check to block sending only the current element prompt into Agent */
+  getSendCurrentElementPromptToAgentBlockReason?: (element: Element | null) => string | undefined;
   /** Optional design-tool export support for the selected element */
   canExportSelectionToDesignTool?: (
     tool: WebEditorDesignAdjustmentTool,
@@ -245,7 +245,7 @@ export interface PropertyPanelOptions {
 
   /** Collapse the whole comment/editor tool */
   onRequestClose?: () => void;
-  /** Fully stop Genie editor and release the current page session */
+  /** Fully stop Agent editor and release the current page session */
   onRequestFullExit?: () => void | Promise<void>;
   /** Clear current selection and close transient prompt UI */
   onDismissSelection?: () => void;

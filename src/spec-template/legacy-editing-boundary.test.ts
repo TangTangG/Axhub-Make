@@ -126,7 +126,7 @@ describe('spec-template quick editing regression boundary', () => {
     expect(viewerSource).toContain('hideExecutionControls: true');
     expect(viewerSource).toContain("editor.runHostToolbarAction?.({ type: 'toggle-selection-mode', active: false })");
     expect(viewerSource).toContain('initialDarkMode');
-    expect(viewerSource).not.toContain('genieBridge');
+    expect(viewerSource).not.toContain('agentBridge');
     expect(viewerSource).not.toContain('integrationWs');
     expect(viewerSource).not.toContain('resolveDefaultEditorApiBaseUrl');
     expect(viewerSource).not.toContain('showCopyPromptAction: false');

@@ -9,7 +9,7 @@ import type {
   CommentaryState,
   CommentaryToolbarMode,
 } from '../../web-editor-types';
-import type { WebEditorGenieProvider } from '../../genie-bridge';
+import type { WebEditorAgentProvider } from '../../agent-bridge';
 import type { ShadowHostManager } from '../../ui/shadow-host';
 import type { Breadcrumbs } from '../../ui/breadcrumbs';
 import type { PropertyPanel } from '../../ui/property-panel';
@@ -78,7 +78,7 @@ export interface WebEditorV2IntegrationWsOptions {
 }
 export type CommentaryIntegrationWsOptions = WebEditorV2IntegrationWsOptions;
 
-export interface WebEditorV2GenieBridgeOptions {
+export interface WebEditorV2AgentBridgeOptions {
   enabled?: boolean;
   autoStartOnLaunch?: boolean;
   allowWake?: boolean;
@@ -93,15 +93,15 @@ export interface WebEditorV2GenieBridgeOptions {
   probeOnStart?: boolean;
   probeTimeoutMs?: number;
   projectPath?: string;
-  provider?: WebEditorGenieProvider;
+  provider?: WebEditorAgentProvider;
   onRequestWake?: () => void | Promise<void>;
 }
-export type CommentaryGenieBridgeOptions = WebEditorV2GenieBridgeOptions;
+export type CommentaryAgentBridgeOptions = WebEditorV2AgentBridgeOptions;
 
 export interface WebEditorV2InitOptions {
   ui?: WebEditorV2UiOptions;
   host?: CommentaryHostOptions;
-  genieBridge?: WebEditorV2GenieBridgeOptions;
+  agentBridge?: WebEditorV2AgentBridgeOptions;
   promptContext?: WebEditorV2PromptContextOptions;
   integrationWs?: WebEditorV2IntegrationWsOptions;
   interactionProfile?: WebEditorInteractionProfile;
@@ -123,7 +123,7 @@ export interface ResolvedWebEditorOptions {
       | 'onAnnotationMarkdownChange'
       | 'onDeleteAnnotationNode'
     >;
-  genieBridge: Required<WebEditorV2GenieBridgeOptions>;
+  agentBridge: Required<WebEditorV2AgentBridgeOptions>;
   promptContext: Required<WebEditorV2PromptContextOptions>;
   integrationWs: Required<WebEditorV2IntegrationWsOptions>;
   interactionProfile: WebEditorInteractionProfile;
@@ -131,9 +131,9 @@ export interface ResolvedWebEditorOptions {
 }
 
 export type EditChangeKind = 'text' | 'tweak' | 'style' | 'class';
-export type ElementGenieTaskStatus = 'pending' | 'created' | 'completed' | 'error';
-export type ElementGenieTaskRecovery = 'live' | 'snapshot' | 'storage';
-export type ElementGenieTaskOrigin = 'genie-run' | 'external-editing';
+export type ElementAgentTaskStatus = 'pending' | 'created' | 'completed' | 'error';
+export type ElementAgentTaskRecovery = 'live' | 'snapshot' | 'storage';
+export type ElementAgentTaskOrigin = 'agent-run' | 'external-editing';
 
 export interface ExternalEditingTaskRef {
   provider: string | null;
@@ -156,7 +156,7 @@ export interface PromptImageAttachment {
   assetPath?: string;
 }
 
-export interface PageGenieConversationState {
+export interface PageAgentConversationState {
   scopeKey: string;
   sessionId: string;
   provider: string | null;
@@ -170,7 +170,7 @@ export interface PageGenieConversationState {
   sessionUrl: string | null;
 }
 
-export interface ElementGenieTaskState {
+export interface ElementAgentTaskState {
   scopeKey: string;
   elementKey: WebEditorElementKey;
   locator: ElementLocator;
@@ -180,21 +180,21 @@ export interface ElementGenieTaskState {
   sessionPath: string | null;
   sessionUrl: string | null;
   provider: string | null;
-  status: ElementGenieTaskStatus;
+  status: ElementAgentTaskStatus;
   message: string;
   startedAt: number;
   updatedAt: number;
   dismissed: boolean;
-  recovery: ElementGenieTaskRecovery;
+  recovery: ElementAgentTaskRecovery;
   recoveryPending: boolean;
   lastEventAt: number;
   errorCode: string | null;
-  origin?: ElementGenieTaskOrigin;
+  origin?: ElementAgentTaskOrigin;
   taskRef?: ExternalEditingTaskRef | null;
 }
 
-export type PersistedElementGenieTaskState = Pick<
-  ElementGenieTaskState,
+export type PersistedElementAgentTaskState = Pick<
+  ElementAgentTaskState,
   | 'scopeKey'
   | 'elementKey'
   | 'locator'
@@ -213,7 +213,7 @@ export type PersistedElementGenieTaskState = Pick<
   | 'lastEventAt'
   | 'errorCode'
 > & {
-  origin?: ElementGenieTaskOrigin;
+  origin?: ElementAgentTaskOrigin;
 };
 
 export interface MarkerAnchor {
@@ -284,10 +284,10 @@ export interface EditorRuntimeState {
   inlineTextEditingActive: boolean;
   promptCardVisible: boolean;
   uiSettings: WebEditorUiSettings;
-  genieConversationByScopeKey: Map<string, PageGenieConversationState>;
-  genieTaskByElementKey: Map<WebEditorElementKey, ElementGenieTaskState>;
-  genieTaskByRequestId: Map<string, ElementGenieTaskState>;
-  externalEditingTaskByElementKey: Map<WebEditorElementKey, ElementGenieTaskState>;
+  agentConversationByScopeKey: Map<string, PageAgentConversationState>;
+  agentTaskByElementKey: Map<WebEditorElementKey, ElementAgentTaskState>;
+  agentTaskByRequestId: Map<string, ElementAgentTaskState>;
+  externalEditingTaskByElementKey: Map<WebEditorElementKey, ElementAgentTaskState>;
   textCommentManager: TextCommentManager | null;
   textCommentTargetElement: HTMLElement | null;
   activeTextComment: TextComment | null;
@@ -301,7 +301,7 @@ export const DEFAULT_MODIFIERS = {
   meta: false,
 } as const;
 
-export const DEFAULT_GENIE_PROBE_TIMEOUT_MS = 5_000;
+export const DEFAULT_AGENT_PROBE_TIMEOUT_MS = 5_000;
 
 function generateExternalClientId(): string {
   const prefix = 'web-editor-v2';
@@ -347,7 +347,7 @@ export function resolveWebEditorOptions(
       onAnnotationMarkdownChange: options.host?.onAnnotationMarkdownChange ?? undefined,
       onDeleteAnnotationNode: options.host?.onDeleteAnnotationNode ?? undefined,
     },
-    genieBridge: {
+    agentBridge: {
       enabled: false,
       autoStartOnLaunch: true,
       allowWake: true,
@@ -360,11 +360,11 @@ export function resolveWebEditorOptions(
       externalClientId: generateExternalClientId(),
       apiKey: '',
       probeOnStart: true,
-      probeTimeoutMs: DEFAULT_GENIE_PROBE_TIMEOUT_MS,
+      probeTimeoutMs: DEFAULT_AGENT_PROBE_TIMEOUT_MS,
       projectPath: '',
       provider: 'codex',
       onRequestWake: async () => undefined,
-      ...(options.genieBridge ?? {}),
+      ...(options.agentBridge ?? {}),
     },
     promptContext: {
       workspacePaths: options.promptContext?.workspacePaths ?? [],
@@ -425,9 +425,9 @@ export function createEditorRuntimeState(): EditorRuntimeState {
     inlineTextEditingActive: false,
     promptCardVisible: false,
     uiSettings: { ...DEFAULT_WEB_EDITOR_UI_SETTINGS },
-    genieConversationByScopeKey: new Map(),
-    genieTaskByElementKey: new Map(),
-    genieTaskByRequestId: new Map(),
+    agentConversationByScopeKey: new Map(),
+    agentTaskByElementKey: new Map(),
+    agentTaskByRequestId: new Map(),
     externalEditingTaskByElementKey: new Map(),
     textCommentManager: null,
     textCommentTargetElement: null,
@@ -456,9 +456,9 @@ export function resetEditorTransientState(state: EditorRuntimeState): void {
   state.commentShortcutDialogOpen = false;
   state.inlineTextEditingActive = false;
   state.promptCardVisible = false;
-  state.genieConversationByScopeKey.clear();
-  state.genieTaskByElementKey.clear();
-  state.genieTaskByRequestId.clear();
+  state.agentConversationByScopeKey.clear();
+  state.agentTaskByElementKey.clear();
+  state.agentTaskByRequestId.clear();
   state.externalEditingTaskByElementKey.clear();
   state.textCommentTargetElement = null;
   state.activeTextComment = null;
@@ -490,9 +490,9 @@ export function clearEditorRuntimeRefs(state: EditorRuntimeState): void {
   state.pendingHoverTransition = false;
   state.commentShortcutDialogOpen = false;
   state.promptCardVisible = false;
-  state.genieConversationByScopeKey.clear();
-  state.genieTaskByElementKey.clear();
-  state.genieTaskByRequestId.clear();
+  state.agentConversationByScopeKey.clear();
+  state.agentTaskByElementKey.clear();
+  state.agentTaskByRequestId.clear();
   state.externalEditingTaskByElementKey.clear();
   state.textCommentManager = null;
   state.textCommentTargetElement = null;

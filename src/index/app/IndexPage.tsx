@@ -37,12 +37,12 @@ import {
 import { getSelectedResourceTargetPath } from './index-page/previewActions.helpers';
 import { apiService } from '../services/index.api';
 import type { MakeClientUpdateStatus } from '../services/api';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import { DEFAULT_LOCAL_EXPORT_CAPABILITIES, DEFAULT_RESOURCE_WRITE_CAPABILITIES, normalizeProjectResourcesPayload } from '../services/projectResources';
 import type { PendingReturnTarget } from './hooks/useIndexPageSelectionSync';
 import { getExplicitLocalPath, stripIndexFilePath } from '../utils/localPath';
 import { copyToClipboard } from '../utils/clipboard';
-import { getAssistantContextCurrentFilePath, resolveAssistantCurrentFile } from '../utils/genieContext';
+import { getAssistantContextCurrentFilePath, resolveAssistantCurrentFile } from '../utils/assistantContext';
 import { buildMakeClientStartupFailurePrompt } from '../utils/projectSetupErrors';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../utils/excalidrawUiMode';
 import type { CanvasAiGenerationRequest } from '../domains/ai-generation/CanvasAiGenerationTool';
@@ -1086,11 +1086,11 @@ export default function IndexPage({
         restoreAssistantPanel,
     ]);
 
-    const handleOpenGenieWebAgent = useCallback((targetPath?: string, provider?: GenieProvider) => {
+    const handleOpenAcpWebAgent = useCallback((targetPath?: string, provider?: AcpProvider) => {
         assistantAutoOpenSuppressedProjectScopeRef.current = '';
         setAssistantAutoOpenDismissed(buildAssistantAutoOpenKeyForTarget(targetPath), false);
         setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');
-        assistantController.handleOpenGenieWebAgent(targetPath, provider);
+        assistantController.handleOpenAcpWebAgent(targetPath, provider);
     }, [
         assistantController,
         assistantAutoOpenPanelModeStorageKey,
@@ -1338,9 +1338,9 @@ export default function IndexPage({
         });
     }, [openFileInIDE, workspace.activeProjectId]);
 
-    const handleOpenCanvasGenie = useCallback(async () => {
-        await Promise.resolve(handleOpenGenieWebAgent());
-    }, [handleOpenGenieWebAgent]);
+    const handleOpenCanvasAgent = useCallback(async () => {
+        await Promise.resolve(handleOpenAcpWebAgent());
+    }, [handleOpenAcpWebAgent]);
 
     const handleRefreshCanvasPrototypeItems = useCallback(async (preferredName?: string) => {
         await workspace.loadData();
@@ -1775,7 +1775,7 @@ export default function IndexPage({
             setSelectedPrototypePageId,
             handleCreatePrototypeStartDraft,
             handleOpenProjectInIDE: ideActions.handleOpenProjectInIDE,
-            handleOpenGenieWebAgent: prototypeStartPageActive ? undefined : handleOpenGenieWebAgent,
+            handleOpenAcpWebAgent: prototypeStartPageActive ? undefined : handleOpenAcpWebAgent,
             handleOpenImageAiPanel: prototypeStartPageActive ? undefined : handleOpenImageAiPanel,
             handleOpenWebAgentInPanel: assistantController.openRawUrlInAssistantPanel,
             onExecutePrompt: handleExecutePromptAction,
@@ -1866,9 +1866,9 @@ export default function IndexPage({
             onAddCanvasScreenshotToAI: handleAddCanvasScreenshotToAssistant,
             onAddCanvasImageToAI: handleAddCanvasImageToAssistant,
             onOpenCanvasInIDE: handleOpenCanvasInIDE,
-            onOpenCanvasGenie: handleOpenCanvasGenie,
+            onOpenCanvasAgent: handleOpenCanvasAgent,
             handleOpenProjectInIDE: ideActions.handleOpenProjectInIDE,
-            onOpenGenieWebAgent: prototypeStartPageActive ? undefined : handleOpenGenieWebAgent,
+            onOpenAcpWebAgent: prototypeStartPageActive ? undefined : handleOpenAcpWebAgent,
             onOpenImageAiPanel: prototypeStartPageActive ? undefined : handleOpenImageAiPanel,
             onOpenWebAgentInPanel: assistantController.openRawUrlInAssistantPanel,
             onExecutePrompt: handleExecutePromptAction,

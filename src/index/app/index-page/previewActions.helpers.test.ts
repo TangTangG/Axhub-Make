@@ -118,7 +118,7 @@ describe('previewActions.helpers', () => {
     expect(url.origin).toBe('http://localhost:51720');
     expect(url.pathname).toBe('/prototypes/touch-and-talk-annotation-demo');
     expect(url.searchParams.get('variant')).toBe('dark');
-    expect(url.searchParams.get('genieToolbar')).toBe('host');
+    expect(url.searchParams.get('agentToolbar')).toBe('host');
     expect(url.hash).toBe('#page=more-scenarios');
   });
 
@@ -133,13 +133,13 @@ describe('previewActions.helpers', () => {
     const url = new URL(buildProjectPrototypeScreenshotIframeUrl({
       name: 'touch-and-talk-annotation-demo',
       displayName: '批注演示',
-      clientUrl: 'http://localhost:51723/prototypes/touch-and-talk-annotation-demo?genieToolbar=host',
+      clientUrl: 'http://localhost:51723/prototypes/touch-and-talk-annotation-demo?agentToolbar=host',
       previewUrl: 'http://localhost:51723/prototypes/touch-and-talk-annotation-demo',
     }, 'cover'));
 
     expect(url.origin).toBe('http://localhost:53817');
     expect(url.pathname).toBe('/prototypes/touch-and-talk-annotation-demo');
-    expect(url.searchParams.get('genieToolbar')).toBeNull();
+    expect(url.searchParams.get('agentToolbar')).toBeNull();
     expect(url.hash).toBe('#page=cover');
   });
 

@@ -163,10 +163,10 @@ function normalizeString(value: unknown): string {
 export function normalizeAcpChatProvider(value: unknown): string {
   const normalized = normalizeString(value).toLowerCase();
   if (!normalized) return DEFAULT_PROVIDER;
-  if (normalized === 'openai' || normalized === 'acp:codex' || normalized === 'genie:codex') return 'codex';
-  if (normalized === 'claudecode' || normalized === 'acp:claude' || normalized === 'genie:claude') return 'claude';
-  if (normalized === 'acp:gemini' || normalized === 'genie:gemini') return 'gemini';
-  if (normalized === 'acp:opencode' || normalized === 'genie:opencode') return 'opencode';
+  if (normalized === 'openai' || normalized === 'acp:codex') return 'codex';
+  if (normalized === 'claudecode' || normalized === 'acp:claude') return 'claude';
+  if (normalized === 'acp:gemini') return 'gemini';
+  if (normalized === 'acp:opencode') return 'opencode';
   return normalized;
 }
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { WEB_EDITOR_V2_COLORS } from '../../constants';
 import { locateElement } from '../../core/locator';
-import type { ElementGenieTaskState } from '../../core/editor/state';
+import type { ElementAgentTaskState } from '../../core/editor/state';
 import type { SessionActivityItem, SessionActivityListener, SessionActivityTarget } from '../../core/editor/contracts';
 import {
   appendRecentSessionActivities,
@@ -29,7 +29,7 @@ type OverlayActivityPresentation = {
   widthPx: number;
 };
 
-function resolveTaskTone(task: ElementGenieTaskState): {
+function resolveTaskTone(task: ElementAgentTaskState): {
   accent: string;
   border: string;
   glow: string;
@@ -106,7 +106,7 @@ export function computeOverlayActivityPresentation(size: {
 }
 
 export function shouldShowOverlayActivityFeed(options: {
-  task: Pick<ElementGenieTaskState, 'status' | 'origin'>;
+  task: Pick<ElementAgentTaskState, 'status' | 'origin'>;
   activityVisible: boolean;
   activityCount: number;
 }): boolean {
@@ -122,7 +122,7 @@ export function resolveTaskOverlayBackdropFilter(running: boolean): string {
 }
 
 export function pickOverlayActivityHostTask(
-  tasks: readonly Pick<ElementGenieTaskState, 'elementKey' | 'status' | 'origin' | 'updatedAt'>[],
+  tasks: readonly Pick<ElementAgentTaskState, 'elementKey' | 'status' | 'origin' | 'updatedAt'>[],
 ): string | null {
   const candidate = [...tasks]
     .filter((task) => (task.status === 'pending' || task.status === 'created') && task.origin !== 'external-editing')
@@ -195,8 +195,8 @@ function buildOverlayActivityFeedKey(options: {
   return null;
 }
 
-export interface ElementGenieTaskOverlaysProps {
-  tasks: ElementGenieTaskState[];
+export interface ElementAgentTaskOverlaysProps {
+  tasks: ElementAgentTaskState[];
   subscribeSessionActivity?: (
     target: SessionActivityTarget,
     listener: SessionActivityListener,
@@ -205,8 +205,8 @@ export interface ElementGenieTaskOverlaysProps {
   renderTick?: number;
 }
 
-export function ElementGenieTaskOverlays(
-  props: ElementGenieTaskOverlaysProps,
+export function ElementAgentTaskOverlays(
+  props: ElementAgentTaskOverlaysProps,
 ): React.ReactElement | null {
   const { tasks } = props;
   void props.renderTick;
@@ -485,10 +485,10 @@ export function ElementGenieTaskOverlays(
               }}
             >
               <div
-                className="we-runtime-genie-task__scanner"
+                className="we-runtime-agent-task__scanner"
                 style={{
-                  ['--we-runtime-genie-task-accent' as string]: tone.accent,
-                  ['--we-runtime-genie-task-scan-size' as string]: `${scanSize}px`,
+                  ['--we-runtime-agent-task-accent' as string]: tone.accent,
+                  ['--we-runtime-agent-task-scan-size' as string]: `${scanSize}px`,
                 }}
               />
             </div>

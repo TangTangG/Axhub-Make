@@ -635,7 +635,7 @@ export function handleAssistantPromptIde(
           error: `Unsupported web agent: ${rawAgent || '(empty)'}`,
           code: 'WEB_AGENT_UNSUPPORTED',
           projectId: context.project.id,
-          supported: ['opencode', 'genie'],
+          supported: ['opencode', 'acp'],
         }, { status: 400 });
         return;
       }

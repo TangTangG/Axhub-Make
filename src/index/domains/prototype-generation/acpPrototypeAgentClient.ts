@@ -1,4 +1,4 @@
-import type { GenieProvider as AcpPromptProvider } from '../../../common/genie/types';
+import type { AcpProvider as AcpPromptProvider } from '../../../common/assistant-context/types';
 import type { ContextBundleV2 } from '@axhub/acp/runtime';
 import { getGenerationArtifactHistoryStore } from '../ai-generation/generationArtifactHistoryStore';
 

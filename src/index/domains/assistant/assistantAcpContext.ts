@@ -1,8 +1,8 @@
 import {
-  getGenieCurrentFilePath,
-  normalizeGenieCurrentFileV1,
-} from '../../../common/genie/bridge';
-import type { GenieContextElementV1, GenieContextV1 } from '../../../common/genie/types';
+  getAssistantCurrentFilePath,
+  normalizeAssistantCurrentFileV1,
+} from '../../../common/assistant-context/bridge';
+import type { AssistantContextElementV1, AssistantContextV1 } from '../../../common/assistant-context/types';
 
 type AcpContextItemKind = 'file' | 'annotation';
 export type AcpPostMessageFilter = 'snapshot' | 'artifacts';
@@ -197,13 +197,13 @@ function resolveFileDisplayName(filePath: string, displayName?: string): string 
   return fileName.replace(/\.(?:[cm]?[tj]sx?|mdx?|json|excalidraw)$/i, '');
 }
 
-function getContextSource(context: GenieContextV1): string {
+function getContextSource(context: AssistantContextV1): string {
   const source = context.extensions?.source;
   return typeof source === 'string' && source.trim() ? source.trim() : 'axhub-runtime';
 }
 
-function buildFileItem(context: GenieContextV1): AcpContextFileItem | null {
-  const currentFile = normalizeGenieCurrentFileV1(context.currentFile);
+function buildFileItem(context: AssistantContextV1): AcpContextFileItem | null {
+  const currentFile = normalizeAssistantCurrentFileV1(context.currentFile);
   const filePath = normalizeContextPath(currentFile.path);
   if (!filePath) return null;
 
@@ -221,8 +221,8 @@ function buildFileItem(context: GenieContextV1): AcpContextFileItem | null {
 }
 
 function buildSelectedElementAnnotation(
-  item: GenieContextElementV1,
-  context: GenieContextV1,
+  item: AssistantContextElementV1,
+  context: AssistantContextV1,
   filePath: string,
 ): AcpContextAnnotationItem | null {
   const selector = String(item?.selector || '').trim();
@@ -252,7 +252,7 @@ function buildSelectedElementAnnotation(
   };
 }
 
-function buildCanvasCommentAnnotation(comment: any, context: GenieContextV1): AcpContextAnnotationItem | null {
+function buildCanvasCommentAnnotation(comment: any, context: AssistantContextV1): AcpContextAnnotationItem | null {
   const target = comment?.target || {};
   const elementId = String(target.elementId || '').trim();
   const filePath = normalizeContextPath(target.filePath);
@@ -284,12 +284,12 @@ function buildCanvasCommentAnnotation(comment: any, context: GenieContextV1): Ac
 }
 
 export function mapAssistantContextToAcpContextBundle(
-  context: GenieContextV1,
+  context: AssistantContextV1,
   now: Date = new Date(),
 ): AcpContextBundleV2 {
   const items: AcpContextItem[] = [];
   const fileItem = buildFileItem(context);
-  const filePath = fileItem?.path || getGenieCurrentFilePath(context.currentFile);
+  const filePath = fileItem?.path || getAssistantCurrentFilePath(context.currentFile);
   if (fileItem) {
     items.push(fileItem);
   }
@@ -317,7 +317,7 @@ export function mapAssistantContextToAcpContextBundle(
 }
 
 export function buildAcpContextPostMessage(
-  context: GenieContextV1,
+  context: AssistantContextV1,
   mode: 'replace' | 'append' = 'replace',
   requestId?: string,
   now: Date = new Date(),

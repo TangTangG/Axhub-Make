@@ -146,7 +146,7 @@ describe('PresentationToolbar cloud publishing source', () => {
     expect(exportMenuSegment.indexOf('复制截图')).toBeGreaterThan(exportMenuSegment.indexOf('设置'));
   });
 
-  it('keeps the publish menu available when the Genie host toolbar is visible', () => {
+  it('keeps the publish menu available when the Agent host toolbar is visible', () => {
     const source = readToolbarSource();
     const segment = source.slice(
       source.indexOf('const showExportMenuButton ='),
@@ -173,7 +173,7 @@ describe('PresentationToolbar cloud publishing source', () => {
   });
 });
 
-describe('PresentationToolbar Genie host controls source', () => {
+describe('PresentationToolbar Agent host controls source', () => {
   it('labels open-in-editor tooltips with the resolved IDE app name', () => {
     const source = readToolbarSource();
 
@@ -280,7 +280,7 @@ describe('PresentationToolbar Genie host controls source', () => {
     expect(hostControlsSource).not.toContain('disabled: !hostToolbarHasPrompt');
   });
 
-  it('labels the host more menu with ACP UI wording instead of Genie runtime wording', () => {
+  it('labels the host more menu with ACP UI wording instead of Agent runtime wording', () => {
     const source = readToolbarSource();
 
     expect(source).toContain('aria-label="更多 ACP UI 操作"');

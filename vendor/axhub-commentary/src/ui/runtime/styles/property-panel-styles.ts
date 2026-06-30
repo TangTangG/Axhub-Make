@@ -64,14 +64,14 @@ export const pageConfigPanelBodyStyle: React.CSSProperties = {
 };
 
 export const PROPERTY_PANEL_LOCAL_STYLES = `
-  @keyframes we-runtime-genie-spin {
+  @keyframes we-runtime-agent-spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
   }
 
-  @keyframes we-runtime-genie-task-scan {
+  @keyframes we-runtime-agent-task-scan {
     0% {
-      top: calc(-1 * var(--we-runtime-genie-task-scan-size, 88px));
+      top: calc(-1 * var(--we-runtime-agent-task-scan-size, 88px));
       opacity: 0;
     }
     12% {
@@ -687,34 +687,34 @@ export const PROPERTY_PANEL_LOCAL_STYLES = `
   .we-runtime-toolbar__spinner {
     position: absolute;
     inset: -150%;
-    animation: we-runtime-genie-spin linear infinite;
+    animation: we-runtime-agent-spin linear infinite;
   }
 
-  .we-runtime-genie-task__scanner {
+  .we-runtime-agent-task__scanner {
     position: absolute;
     left: 0;
     right: 0;
-    height: var(--we-runtime-genie-task-scan-size, 88px);
-    top: calc(-1 * var(--we-runtime-genie-task-scan-size, 88px));
+    height: var(--we-runtime-agent-task-scan-size, 88px);
+    top: calc(-1 * var(--we-runtime-agent-task-scan-size, 88px));
     display: flex;
     align-items: center;
     justify-content: center;
     background: linear-gradient(
       180deg,
       transparent 0%,
-      color-mix(in srgb, var(--we-runtime-genie-task-accent) 14%, transparent) 38%,
-      color-mix(in srgb, var(--we-runtime-genie-task-accent) 20%, transparent) 50%,
-      color-mix(in srgb, var(--we-runtime-genie-task-accent) 14%, transparent) 62%,
+      color-mix(in srgb, var(--we-runtime-agent-task-accent) 14%, transparent) 38%,
+      color-mix(in srgb, var(--we-runtime-agent-task-accent) 20%, transparent) 50%,
+      color-mix(in srgb, var(--we-runtime-agent-task-accent) 14%, transparent) 62%,
       transparent 100%
     );
-    animation: we-runtime-genie-task-scan 2.8s linear infinite;
+    animation: we-runtime-agent-task-scan 2.8s linear infinite;
   }
 
-  .we-runtime-genie-task__scanner::after {
+  .we-runtime-agent-task__scanner::after {
     content: "";
     width: 100%;
     height: 1px;
-    background: color-mix(in srgb, var(--we-runtime-genie-task-accent) 72%, white);
-    box-shadow: 0 0 14px color-mix(in srgb, var(--we-runtime-genie-task-accent) 64%, transparent);
+    background: color-mix(in srgb, var(--we-runtime-agent-task-accent) 72%, white);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--we-runtime-agent-task-accent) 64%, transparent);
   }
 `;

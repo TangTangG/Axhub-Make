@@ -69,7 +69,7 @@ import { ItemData, SidebarTreeNode, SidebarTreeTab, ViewMode } from '../../types
 import type { SelectedResourceFolder, UploadedResourceFile } from '../../types/index-page.types';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import type { ThemeResourceItem } from '../../domains/resources/resource.types';
 import OpenInDropdown from './OpenInDropdown';
 import type { ProjectListItem, ResourceWriteCapabilities } from '../../services/projectResources';
@@ -145,7 +145,7 @@ interface ContentPanelProps {
     preferredIDE: MainIDEPreference;
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
     onOpenImageAiPanel?: () => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
@@ -1785,7 +1785,7 @@ export default function ContentPanel({
     preferredIDE,
     ideAvailability,
     agentAvailability,
-    onOpenGenieWebAgent,
+    onOpenAcpWebAgent,
     onOpenImageAiPanel,
     onOpenWebAgentInPanel,
     onExecutePrompt,
@@ -3139,7 +3139,7 @@ export default function ContentPanel({
                             targetPath={openInTargetPath || undefined}
                             ideAvailability={ideAvailability}
                             agentAvailability={agentAvailability}
-                            onOpenGenieWebAgent={onOpenGenieWebAgent}
+                            onOpenAcpWebAgent={onOpenAcpWebAgent}
                             onOpenImageAiPanel={onOpenImageAiPanel}
                             onOpenWebAgentInPanel={onOpenWebAgentInPanel}
                             webAgentPanelOpen={webAgentPanelOpen}

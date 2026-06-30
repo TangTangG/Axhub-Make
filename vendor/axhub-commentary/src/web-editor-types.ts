@@ -1,4 +1,4 @@
-import type { WebEditorGenieAgent } from './core/editor/ui-settings';
+import type { WebEditorAgentProvider } from './core/editor/ui-settings';
 import type { CommentaryTweakValues } from './tweak/protocol';
 
 /**
@@ -613,7 +613,7 @@ export interface CommentaryEditedSnapshot {
 export type CommentaryToolbarMode = 'inline' | 'host';
 
 export interface CommentaryHostToolbarAgentOption {
-  value: WebEditorGenieAgent | null;
+  value: WebEditorAgentProvider | null;
   label: string;
   disabled?: boolean;
 }
@@ -642,7 +642,7 @@ export interface CommentaryHostToolbarState {
   propertyPanelTitle: string;
   modifiedCount: number;
   terminalTaskCount: number;
-  selectedAgent: WebEditorGenieAgent | null;
+  selectedAgent: WebEditorAgentProvider | null;
   agentOptions: CommentaryHostToolbarAgentOption[];
   darkMode: boolean;
   disablePageAnimations: boolean;
@@ -667,7 +667,7 @@ export type CommentaryHostToolbarAction =
   | { type: 'copy-prompt'; clipboard?: 'host' }
   | { type: 'clear-edits'; skipConfirm?: boolean }
   | { type: 'toggle-property-panel'; open?: boolean }
-  | { type: 'set-active-agent'; agent: WebEditorGenieAgent | null }
+  | { type: 'set-active-agent'; agent: WebEditorAgentProvider | null }
   | { type: 'disconnect-agent' }
   | { type: 'copy-skill-install-prompt' }
   | { type: 'copy-global-panel-prompt' }
@@ -900,7 +900,7 @@ export interface CommentaryApi {
   getStyleChanges: () => CommentaryStyleChangeSet;
   /** Read the full edited snapshot for host consumption */
   getEditedSnapshot: () => CommentaryEditedSnapshot;
-  /** Read the internal Genie/runtime debug state for diagnostics */
+  /** Read the internal Agent/runtime debug state for diagnostics */
   getDebugState?: () => CommentaryDebugState;
   /** Get current undo/redo counts */
   getHistoryCounts?: () => { undoCount: number; redoCount: number };

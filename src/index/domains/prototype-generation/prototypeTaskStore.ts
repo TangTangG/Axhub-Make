@@ -1,7 +1,7 @@
 import type { ItemData, PromptClientPreference } from '../../types';
 import type { ContextBundleV2 } from '@axhub/acp/runtime';
-import { toGenieProvider } from '../../../common/promptExecution';
-import type { GenieProvider as AcpPromptProvider } from '../../../common/genie/types';
+import { toAcpProvider } from '../../../common/promptExecution';
+import type { AcpProvider as AcpPromptProvider } from '../../../common/assistant-context/types';
 import {
   runAcpPrototypeAgent,
   type PrototypeGenerationAgentEvent,
@@ -85,7 +85,7 @@ function resolveProvider(preferredPromptClient?: PromptClientPreference, selecte
   ) {
     return normalizedProvider;
   }
-  return toGenieProvider(preferredPromptClient ?? null) || 'codex';
+  return toAcpProvider(preferredPromptClient ?? null) || 'codex';
 }
 
 function normalizeTargetPath(value: string | null | undefined): string | undefined {

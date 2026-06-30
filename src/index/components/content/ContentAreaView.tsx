@@ -30,7 +30,7 @@ import TemplateLibraryCard, { type TemplateLibraryCardItem } from '../dialogs/Te
 import PromptActionButton from '../PromptActionButton';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import type { PrototypeCreateDialogOpenOptions, SelectedResourceFolder } from '../../types/index-page.types';
 import type {
     MultiPageColumns,
@@ -531,7 +531,7 @@ interface ContentAreaProps {
     onAddToContext?: (elements: CanvasElementContextInfo[]) => void;
     onAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
     onOpenCanvasInIDE?: (canvasFilePath: string) => void | Promise<void>;
-    onOpenCanvasGenie?: () => void | Promise<void>;
+    onOpenCanvasAgent?: () => void | Promise<void>;
     onSelectResourceFolder?: (folder: any) => void;
     onSelectResourceFolderItem?: (item: ItemData) => void;
     onOpenResourceFolderInSystem?: (folderPath: string) => void | Promise<void>;
@@ -542,7 +542,7 @@ interface ContentAreaProps {
     webAgentPanelOpen?: boolean;
     aiPanelMode?: 'general-ai' | 'image-ai' | null;
     onOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
     onOpenImageAiPanel?: () => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
@@ -1878,7 +1878,7 @@ export default function ContentArea({
     webAgentPanelOpen,
     aiPanelMode,
     onOpenProjectInIDE,
-    onOpenGenieWebAgent,
+    onOpenAcpWebAgent,
     onOpenImageAiPanel,
     onExecutePrompt,
     onCloseAiPanel,
@@ -2620,7 +2620,7 @@ export default function ContentArea({
                             ideAvailability={ideAvailability}
                             agentAvailability={agentAvailability}
                             onOpenProjectInIDE={onOpenProjectInIDE}
-                            onOpenGenieWebAgent={onOpenGenieWebAgent}
+                            onOpenAcpWebAgent={onOpenAcpWebAgent}
                             webAgentPanelOpen={webAgentPanelOpen}
                             aiPanelMode={aiPanelMode}
                             onOpenImageAiPanel={onOpenImageAiPanel}
@@ -2701,7 +2701,7 @@ export default function ContentArea({
                                     ideAvailability={ideAvailability}
                                     agentAvailability={agentAvailability}
                                     onOpenProjectInIDE={onOpenProjectInIDE}
-                                    onOpenGenieWebAgent={onOpenGenieWebAgent}
+                                    onOpenAcpWebAgent={onOpenAcpWebAgent}
                                     webAgentPanelOpen={webAgentPanelOpen}
                                     aiPanelMode={aiPanelMode}
                                     onOpenImageAiPanel={onOpenImageAiPanel}

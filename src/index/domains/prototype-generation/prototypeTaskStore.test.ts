@@ -48,7 +48,7 @@ describe('prototype generation task store', () => {
 
     const result = await store.submit({
       prompt: '生成 CRM 原型',
-      preferredPromptClient: 'genie:codex',
+      preferredPromptClient: 'acp:codex',
       canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
       canvasName: 'prototypes/home/canvas',
       generatorElementId: 'generator-1',
@@ -102,7 +102,7 @@ describe('prototype generation task store', () => {
 
     const result = await store.submit({
       prompt: '生成当前原型',
-      preferredPromptClient: 'genie:codex',
+      preferredPromptClient: 'acp:codex',
       canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
       canvasName: 'prototypes/home/canvas',
       generatorElementId: 'generator-1',
@@ -144,7 +144,7 @@ describe('prototype generation task store', () => {
 
     const submitPromise = store.submit({
       prompt: '生成当前原型',
-      preferredPromptClient: 'genie:codex',
+      preferredPromptClient: 'acp:codex',
       canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
       canvasName: 'prototypes/home/canvas',
       generatorElementId: 'generator-1',

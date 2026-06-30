@@ -1,23 +1,23 @@
 import {
-  type GenieContextElementV1,
-  type GenieContextV1,
-  type GenieCurrentFileV1,
-  type GenieCurrentFileValueV1,
+  type AssistantContextElementV1,
+  type AssistantContextV1,
+  type AssistantCurrentFileV1,
+  type AssistantCurrentFileValueV1,
 } from './types';
 
-type GeniePromptContextArrayParams = {
+type AssistantPromptContextArrayParams = {
   workspacePaths?: unknown;
   relatedFiles?: unknown;
   extraContext?: unknown;
 };
 
-const GENIE_PROMPT_CONTEXT_ARRAY_KEYS = [
+const ASSISTANT_PROMPT_CONTEXT_ARRAY_KEYS = [
   'workspacePaths',
   'relatedFiles',
   'extraContext',
 ] as const;
 
-type GeniePromptContextArrayKey = (typeof GENIE_PROMPT_CONTEXT_ARRAY_KEYS)[number];
+type AssistantPromptContextArrayKey = (typeof ASSISTANT_PROMPT_CONTEXT_ARRAY_KEYS)[number];
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -49,7 +49,7 @@ function getFileName(path: string): string {
   return segments[segments.length - 1] || path;
 }
 
-function normalizeGenieContextElementV1(value: unknown): GenieContextElementV1 | null {
+function normalizeAssistantContextElementV1(value: unknown): AssistantContextElementV1 | null {
   if (!isRecord(value)) return null;
   const tag = normalizeString(value.tag);
   const selector = normalizeString(value.selector);
@@ -58,12 +58,12 @@ function normalizeGenieContextElementV1(value: unknown): GenieContextElementV1 |
   return { tag, selector, label };
 }
 
-function normalizeSelectedElements(value: unknown): GenieContextElementV1[] {
+function normalizeSelectedElements(value: unknown): AssistantContextElementV1[] {
   if (!Array.isArray(value)) return [];
-  const result: GenieContextElementV1[] = [];
+  const result: AssistantContextElementV1[] = [];
   const seen = new Set<string>();
   for (const item of value) {
-    const normalized = normalizeGenieContextElementV1(item);
+    const normalized = normalizeAssistantContextElementV1(item);
     if (!normalized) continue;
     const key = `${normalized.tag}::${normalized.selector}::${normalized.label}`;
     if (seen.has(key)) continue;
@@ -75,11 +75,11 @@ function normalizeSelectedElements(value: unknown): GenieContextElementV1[] {
 
 function normalizePromptContextArrayParams(
   value: unknown,
-): Partial<Record<GeniePromptContextArrayKey, string[]>> {
+): Partial<Record<AssistantPromptContextArrayKey, string[]>> {
   if (!isRecord(value)) return {};
 
-  const result: Partial<Record<GeniePromptContextArrayKey, string[]>> = {};
-  for (const key of GENIE_PROMPT_CONTEXT_ARRAY_KEYS) {
+  const result: Partial<Record<AssistantPromptContextArrayKey, string[]>> = {};
+  for (const key of ASSISTANT_PROMPT_CONTEXT_ARRAY_KEYS) {
     const normalized = normalizeStringArray(value[key]);
     if (normalized.length > 0) {
       result[key] = normalized;
@@ -89,14 +89,14 @@ function normalizePromptContextArrayParams(
 }
 
 function mergePromptContextArrayParams(
-  left: GeniePromptContextArrayParams | undefined,
-  right: GeniePromptContextArrayParams | undefined,
-): Partial<Record<GeniePromptContextArrayKey, string[]>> {
+  left: AssistantPromptContextArrayParams | undefined,
+  right: AssistantPromptContextArrayParams | undefined,
+): Partial<Record<AssistantPromptContextArrayKey, string[]>> {
   const normalizedLeft = normalizePromptContextArrayParams(left);
   const normalizedRight = normalizePromptContextArrayParams(right);
-  const result: Partial<Record<GeniePromptContextArrayKey, string[]>> = {};
+  const result: Partial<Record<AssistantPromptContextArrayKey, string[]>> = {};
 
-  for (const key of GENIE_PROMPT_CONTEXT_ARRAY_KEYS) {
+  for (const key of ASSISTANT_PROMPT_CONTEXT_ARRAY_KEYS) {
     const merged = dedupeStrings([
       ...(normalizedLeft[key] ?? []),
       ...(normalizedRight[key] ?? []),
@@ -111,7 +111,7 @@ function mergePromptContextArrayParams(
 
 function normalizeExtensions(
   value: unknown,
-  promptContext?: GeniePromptContextArrayParams,
+  promptContext?: AssistantPromptContextArrayParams,
 ): Record<string, unknown> | undefined {
   if (!isRecord(value) && !promptContext) return undefined;
 
@@ -162,10 +162,10 @@ function mergeExtensions(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-export function normalizeGenieCurrentFileV1(
+export function normalizeAssistantCurrentFileV1(
   value: unknown,
-  fallback: Partial<GenieCurrentFileV1> = {},
-): GenieCurrentFileV1 {
+  fallback: Partial<AssistantCurrentFileV1> = {},
+): AssistantCurrentFileV1 {
   const fallbackPath = normalizeString(fallback.path);
   const fallbackDisplayName = normalizeString(fallback.displayName);
 
@@ -189,25 +189,25 @@ export function normalizeGenieCurrentFileV1(
   return { path, displayName };
 }
 
-export function getGenieCurrentFilePath(value: unknown): string {
-  return normalizeGenieCurrentFileV1(value).path;
+export function getAssistantCurrentFilePath(value: unknown): string {
+  return normalizeAssistantCurrentFileV1(value).path;
 }
 
-export function getGenieCurrentFileDisplayName(value: unknown): string {
-  return normalizeGenieCurrentFileV1(value).displayName;
+export function getAssistantCurrentFileDisplayName(value: unknown): string {
+  return normalizeAssistantCurrentFileV1(value).displayName;
 }
 
-export function normalizeGenieContextV1(
+export function normalizeAssistantContextV1(
   value: unknown,
   options: {
-    fallbackCurrentFile?: GenieCurrentFileValueV1;
-    promptContext?: GeniePromptContextArrayParams;
+    fallbackCurrentFile?: AssistantCurrentFileValueV1;
+    promptContext?: AssistantPromptContextArrayParams;
   } = {},
-): GenieContextV1 | null {
+): AssistantContextV1 | null {
   if (!isRecord(value)) return null;
 
-  const currentFile = normalizeGenieCurrentFileV1(value.currentFile, {
-    ...normalizeGenieCurrentFileV1(options.fallbackCurrentFile),
+  const currentFile = normalizeAssistantCurrentFileV1(value.currentFile, {
+    ...normalizeAssistantCurrentFileV1(options.fallbackCurrentFile),
   });
 
   return {
@@ -219,10 +219,10 @@ export function normalizeGenieContextV1(
   };
 }
 
-export function mergeGenieContextV1(
-  base: GenieContextV1 | null | undefined,
-  patch: GenieContextV1 | null | undefined,
-): GenieContextV1 | null {
+export function mergeAssistantContextV1(
+  base: AssistantContextV1 | null | undefined,
+  patch: AssistantContextV1 | null | undefined,
+): AssistantContextV1 | null {
   if (!base && !patch) return null;
   if (!base) return patch ?? null;
   if (!patch) return base;
@@ -230,7 +230,7 @@ export function mergeGenieContextV1(
   return {
     version: '1',
     systemContext: patch.systemContext || base.systemContext,
-    currentFile: normalizeGenieCurrentFileV1(patch.currentFile, normalizeGenieCurrentFileV1(base.currentFile)),
+    currentFile: normalizeAssistantCurrentFileV1(patch.currentFile, normalizeAssistantCurrentFileV1(base.currentFile)),
     selectedElements: patch.selectedElements.length > 0 ? patch.selectedElements : base.selectedElements,
     extensions: mergeExtensions(base.extensions, patch.extensions),
   };

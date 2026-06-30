@@ -47,8 +47,7 @@ function normalizeString(value: unknown): string {
 export function normalizeAcpProviderKey(value: unknown): AcpProviderKey | null {
   const normalized = normalizeString(value)
     .toLowerCase()
-    .replace(/^acp:/u, '')
-    .replace(/^genie:/u, '');
+    .replace(/^acp:/u, '');
   if (!normalized) return null;
   const aliased = ACP_PROVIDER_ALIASES[normalized] || normalized;
   return ACP_PROVIDER_KEY_SET.has(aliased) ? aliased as AcpProviderKey : null;

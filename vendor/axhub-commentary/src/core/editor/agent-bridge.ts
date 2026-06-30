@@ -3,53 +3,53 @@ import { generateFullElementLabel, generateStableElementKey } from '../element-k
 import type {
   EditorChangesService,
   EditorFeedbackService,
-  EditorGenieBridgeService,
+  EditorAgentBridgeService,
   EditorPersistenceService,
   EditorSummariesService,
-  GenieProviderAvailability,
+  AgentProviderAvailability,
   SessionActivityItem,
   SessionActivityListener,
   SessionActivityTarget,
 } from './contracts';
 import type {
   EditorRuntimeState,
-  ElementGenieTaskRecovery,
-  ElementGenieTaskState,
-  ElementGenieTaskStatus,
+  ElementAgentTaskRecovery,
+  ElementAgentTaskState,
+  ElementAgentTaskStatus,
   ExternalEditingTaskRef,
-  PageGenieConversationState,
-  PersistedElementGenieTaskState,
+  PageAgentConversationState,
+  PersistedElementAgentTaskState,
   PromptImageAttachment,
   ResolvedWebEditorOptions,
 } from './state';
 import type { WebEditorElementKey } from '../../web-editor-types';
 import { resolveTextCommentElementMeta } from './text-comment-target';
 import {
-  GENIE_AGENT_RUN_TIMEOUT_MS,
-  GENIE_BRIDGE_CONFIG_ERROR,
-  GENIE_BRIDGE_LOG_PREFIX,
-  GENIE_BRIDGE_NOT_CONNECTED_ERROR,
-  GENIE_COMPLETED_TASK_AUTO_DISMISS_MS,
-  GENIE_CONTEXT_REQUEST_TIMEOUT_MS,
-  GENIE_CONVERSATION_MAX_SENDS,
-  GENIE_CONVERSATION_TTL_MS,
-  GENIE_DISCOVERY_TIMEOUT_MS,
-  GENIE_EXECUTION_CONFIG_ERROR,
-  GENIE_EXTERNAL_EDITING_TIMEOUT_MS,
-  GENIE_HEALTH_PATH,
-  GENIE_LOCAL_API_BASE_URL,
-  GENIE_LOCAL_HEALTH_URL,
-  GENIE_MAX_PROBE_ATTEMPTS,
-  GENIE_MAX_RECONNECT_ATTEMPTS,
-  GENIE_PAGE_OFFLINE_MESSAGE,
-  GENIE_PROBE_RETRY_DELAY_MS,
-  GENIE_PROVIDER_CHECK_TIMEOUT_MS,
-  GENIE_RECONNECT_DELAY_MS,
-  GENIE_SESSION_NOT_FOUND_CODES,
-  GENIE_STATE_QUERY_TIMEOUT_MS,
-  GENIE_SUPPORTED_UI_PROVIDERS,
-  GENIE_WAKE_WAIT_TIMEOUT_MS,
-} from './genie-bridge-internals/constants';
+  AGENT_RUN_TIMEOUT_MS,
+  AGENT_BRIDGE_CONFIG_ERROR,
+  AGENT_BRIDGE_LOG_PREFIX,
+  AGENT_BRIDGE_NOT_CONNECTED_ERROR,
+  AGENT_COMPLETED_TASK_AUTO_DISMISS_MS,
+  AGENT_CONTEXT_REQUEST_TIMEOUT_MS,
+  AGENT_CONVERSATION_MAX_SENDS,
+  AGENT_CONVERSATION_TTL_MS,
+  AGENT_DISCOVERY_TIMEOUT_MS,
+  AGENT_EXECUTION_CONFIG_ERROR,
+  AGENT_EXTERNAL_EDITING_TIMEOUT_MS,
+  AGENT_HEALTH_PATH,
+  AGENT_LOCAL_API_BASE_URL,
+  AGENT_LOCAL_HEALTH_URL,
+  AGENT_MAX_PROBE_ATTEMPTS,
+  AGENT_MAX_RECONNECT_ATTEMPTS,
+  AGENT_PAGE_OFFLINE_MESSAGE,
+  AGENT_PROBE_RETRY_DELAY_MS,
+  AGENT_PROVIDER_CHECK_TIMEOUT_MS,
+  AGENT_RECONNECT_DELAY_MS,
+  AGENT_SESSION_NOT_FOUND_CODES,
+  AGENT_STATE_QUERY_TIMEOUT_MS,
+  AGENT_SUPPORTED_UI_PROVIDERS,
+  AGENT_WAKE_WAIT_TIMEOUT_MS,
+} from './agent-bridge-internals/constants';
 import {
   collectUniqueStrings,
   createRequestId,
@@ -58,16 +58,16 @@ import {
   normalizeBaseUrl,
   normalizeString,
   parseTimestamp,
-} from './genie-bridge-internals/common';
+} from './agent-bridge-internals/common';
 import {
   buildDiscoveryChannelCandidates,
   buildDiscoveryTargetCandidates,
-  buildGenieWsUrl,
-  hasGenieServiceIdentity,
+  buildAgentWsUrl,
+  hasAgentServiceIdentity,
   parseEditorClientDescriptors,
   pickPreferredEditorClient,
   type EditorClientDescriptor,
-} from './genie-bridge-internals/discovery';
+} from './agent-bridge-internals/discovery';
 import {
   buildCurrentFileDisplayName,
   createBridgeError,
@@ -75,8 +75,8 @@ import {
   mapAgentErrorMessage,
   mapIntegrationErrorMessage,
   readAgentErrorCode,
-  type GenieBridgeError,
-} from './genie-bridge-internals/errors';
+  type AgentBridgeError,
+} from './agent-bridge-internals/errors';
 import {
   buildSessionActivityTargetKey,
   matchesSessionActivityTarget,
@@ -84,14 +84,14 @@ import {
   parseAgentStateSyncPayload,
   parseSessionActivityItem,
   parseSessionActivityItemFromAgentEvent,
-} from './genie-bridge-internals/session-activity';
+} from './agent-bridge-internals/session-activity';
 import type {
   AgentStateSyncPayload,
-  GenieWsMessage,
+  AgentWsMessage,
   PendingAssistantActivity,
-} from './genie-bridge-internals/types';
+} from './agent-bridge-internals/types';
 
-export { buildGenieWsUrl } from './genie-bridge-internals/discovery';
+export { buildAgentWsUrl } from './agent-bridge-internals/discovery';
 
 type PendingRequest = {
   kind: 'integration' | 'agent-run' | 'agent-abort';
@@ -124,7 +124,7 @@ type ActivitySubscriber = {
   listener: SessionActivityListener;
 };
 
-type GenieContextComment = {
+type AgentContextComment = {
   id: string;
   body: string;
   origin: 'web-editor-v2';
@@ -133,7 +133,7 @@ type GenieContextComment = {
   updatedAt: string;
 };
 
-type GenieCommentRecord = {
+type AgentCommentRecord = {
   id: string;
   type: 'file';
   path: string;
@@ -221,7 +221,7 @@ function pickMostRecentFrontendClient<T extends { lastSeenAt: number; connectedA
   })[0] ?? null;
 }
 
-function readFrontendClients(message: GenieWsMessage): IntegrationFrontendClient[] {
+function readFrontendClients(message: AgentWsMessage): IntegrationFrontendClient[] {
   const payload = message.payload;
   if (!payload || typeof payload !== 'object') return [];
 
@@ -246,7 +246,7 @@ function readFrontendClients(message: GenieWsMessage): IntegrationFrontendClient
   });
 }
 
-function readFrontendConnected(message: GenieWsMessage, targetClientId: string): boolean {
+function readFrontendConnected(message: AgentWsMessage, targetClientId: string): boolean {
   const payload = message.payload;
   if (!payload || typeof payload !== 'object') return false;
 
@@ -301,7 +301,7 @@ function pickPreferredEditorClientForContext(
   return pickPreferredEditorClient(items, []);
 }
 
-function readProjectPathFromAgentMessage(message: GenieWsMessage): string {
+function readProjectPathFromAgentMessage(message: AgentWsMessage): string {
   return normalizeString(
     (message as { projectPath?: unknown }).projectPath
       ?? message.result?.projectPath
@@ -309,15 +309,15 @@ function readProjectPathFromAgentMessage(message: GenieWsMessage): string {
   );
 }
 
-export function createGenieBridgeService(options: {
+export function createAgentBridgeService(options: {
   state: EditorRuntimeState;
   changes: EditorChangesService;
   feedback: EditorFeedbackService;
   persistence: EditorPersistenceService;
   summaries: EditorSummariesService;
-  bridgeOptions: ResolvedWebEditorOptions['genieBridge'];
+  bridgeOptions: ResolvedWebEditorOptions['agentBridge'];
   onAvailabilityChange?: (available: boolean) => void;
-}): EditorGenieBridgeService {
+}): EditorAgentBridgeService {
   let active = false;
   let connected = false;
   let frontendAvailable = false;
@@ -414,7 +414,7 @@ export function createGenieBridgeService(options: {
         return '';
       }
       const payload = await response.json().catch(() => null);
-      if (!payload || !hasGenieServiceIdentity(payload, response.headers) || payload.status !== 'ok') {
+      if (!payload || !hasAgentServiceIdentity(payload, response.headers) || payload.status !== 'ok') {
         return '';
       }
       return normalizeBaseUrl(apiBaseUrlCandidate);
@@ -424,7 +424,7 @@ export function createGenieBridgeService(options: {
   }
 
   async function discoverApiBaseUrl(): Promise<string> {
-    const localApiBaseUrl = await probeApiBaseUrl(GENIE_LOCAL_HEALTH_URL, GENIE_LOCAL_API_BASE_URL);
+    const localApiBaseUrl = await probeApiBaseUrl(AGENT_LOCAL_HEALTH_URL, AGENT_LOCAL_API_BASE_URL);
     if (localApiBaseUrl) {
       return localApiBaseUrl;
     }
@@ -434,7 +434,7 @@ export function createGenieBridgeService(options: {
     }
 
     return await probeApiBaseUrl(
-      GENIE_HEALTH_PATH,
+      AGENT_HEALTH_PATH,
       new URL('/api', window.location.href).toString(),
     );
   }
@@ -449,7 +449,7 @@ export function createGenieBridgeService(options: {
       return [];
     }
 
-    const requestTimeoutMs = getTimeoutMs(probeTimeoutMs, GENIE_DISCOVERY_TIMEOUT_MS);
+    const requestTimeoutMs = getTimeoutMs(probeTimeoutMs, AGENT_DISCOVERY_TIMEOUT_MS);
 
     return new Promise<EditorClientDescriptor[]>((resolve) => {
       let discoverySocket: WebSocket | null = null;
@@ -479,7 +479,7 @@ export function createGenieBridgeService(options: {
       }, requestTimeoutMs);
 
       try {
-        discoverySocket = new WebSocket(buildGenieWsUrl(normalizedApiBaseUrl, apiKey));
+        discoverySocket = new WebSocket(buildAgentWsUrl(normalizedApiBaseUrl, apiKey));
       } catch {
         window.clearTimeout(timeoutId);
         finalize([]);
@@ -487,7 +487,7 @@ export function createGenieBridgeService(options: {
       }
 
       discoverySocket.onopen = () => {
-        connectMessageRequestId = createRequestId('genie_discover_connect');
+        connectMessageRequestId = createRequestId('agent_discover_connect');
         try {
           discoverySocket?.send(JSON.stringify({
             type: 'integration.connect',
@@ -506,9 +506,9 @@ export function createGenieBridgeService(options: {
       };
 
       discoverySocket.onmessage = (event: MessageEvent<string>) => {
-        let parsed: GenieWsMessage | null = null;
+        let parsed: AgentWsMessage | null = null;
         try {
-          parsed = JSON.parse(event.data) as GenieWsMessage;
+          parsed = JSON.parse(event.data) as AgentWsMessage;
         } catch {
           return;
         }
@@ -516,7 +516,7 @@ export function createGenieBridgeService(options: {
         if (!parsed?.type) return;
 
         if (parsed.type === 'integration.connected' && parsed.requestId === connectMessageRequestId) {
-          listMessageRequestId = createRequestId('genie_discover_clients');
+          listMessageRequestId = createRequestId('agent_discover_clients');
           try {
             discoverySocket?.send(JSON.stringify({
               type: 'integration.editor.clients.list',
@@ -607,7 +607,7 @@ export function createGenieBridgeService(options: {
       return false;
     }
 
-    logInfo('Rediscovered Genie frontend target', {
+    logInfo('Rediscovered Agent frontend target', {
       reason,
       previous: {
         integrationChannel,
@@ -703,7 +703,7 @@ export function createGenieBridgeService(options: {
   }
 
   function resolveConfiguredProvider(): string {
-    return String(state.uiSettings.genieAgent ?? provider ?? 'codex').trim();
+    return String(state.uiSettings.agentProvider ?? provider ?? 'codex').trim();
   }
 
   async function refreshProviderAvailability(effectiveProvider: string): Promise<void> {
@@ -724,7 +724,7 @@ export function createGenieBridgeService(options: {
         const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
         const timeoutId = controller
           ? (typeof window !== 'undefined'
-            ? window.setTimeout(() => controller.abort(), GENIE_PROVIDER_CHECK_TIMEOUT_MS)
+            ? window.setTimeout(() => controller.abort(), AGENT_PROVIDER_CHECK_TIMEOUT_MS)
             : undefined)
           : undefined;
 
@@ -773,7 +773,7 @@ export function createGenieBridgeService(options: {
     await promise;
   }
 
-  function getProviderAvailability(providerName: string): GenieProviderAvailability | null {
+  function getProviderAvailability(providerName: string): AgentProviderAvailability | null {
     const normalizedProvider = normalizeString(providerName);
     if (!normalizedProvider) return null;
     const cached = providerAvailabilityCache.get(normalizedProvider);
@@ -787,8 +787,8 @@ export function createGenieBridgeService(options: {
     };
   }
 
-  function getProviderAvailabilities(): GenieProviderAvailability[] {
-    return GENIE_SUPPORTED_UI_PROVIDERS.map((providerName) => {
+  function getProviderAvailabilities(): AgentProviderAvailability[] {
+    return AGENT_SUPPORTED_UI_PROVIDERS.map((providerName) => {
       const cached = providerAvailabilityCache.get(providerName);
       return {
         provider: providerName,
@@ -796,12 +796,12 @@ export function createGenieBridgeService(options: {
         ...(cached?.installHint ? { installHint: cached.installHint } : {}),
         checkedAt: cached?.checkedAt ?? null,
         checking: providerAvailabilityInFlight.has(providerName),
-      } satisfies GenieProviderAvailability;
+      } satisfies AgentProviderAvailability;
     }).filter((item) => item.checkedAt !== null);
   }
 
   async function refreshProviderAvailabilities(providers?: readonly string[]): Promise<void> {
-    const targets = (providers?.length ? providers : GENIE_SUPPORTED_UI_PROVIDERS)
+    const targets = (providers?.length ? providers : AGENT_SUPPORTED_UI_PROVIDERS)
       .map((providerName) => normalizeString(providerName))
       .filter(Boolean);
     await Promise.all(targets.map((providerName) => refreshProviderAvailability(providerName)));
@@ -917,17 +917,17 @@ export function createGenieBridgeService(options: {
     );
   }
 
-  function getConversationState(scopeKey: string): PageGenieConversationState | null {
-    return state.genieConversationByScopeKey.get(scopeKey) ?? null;
+  function getConversationState(scopeKey: string): PageAgentConversationState | null {
+    return state.agentConversationByScopeKey.get(scopeKey) ?? null;
   }
 
   function getConversationStateForCurrentPage(
     providerOverride?: string | null,
-  ): PageGenieConversationState | null {
+  ): PageAgentConversationState | null {
     const scopeKey = resolveScopeKey();
     const conversation = resolveConversationLookupKeys(providerOverride)
       .map((candidate) => getConversationState(candidate))
-      .find((candidate): candidate is PageGenieConversationState => candidate !== null);
+      .find((candidate): candidate is PageAgentConversationState => candidate !== null);
     if (!conversation) {
       return null;
     }
@@ -940,7 +940,7 @@ export function createGenieBridgeService(options: {
     };
   }
 
-  function getCurrentConversationState(): PageGenieConversationState | null {
+  function getCurrentConversationState(): PageAgentConversationState | null {
     return getConversationStateForCurrentPage();
   }
 
@@ -955,33 +955,33 @@ export function createGenieBridgeService(options: {
   function persistConversationState(scopeKey: string): void {
     const conversation = getConversationState(scopeKey);
     if (!conversation) {
-      options.persistence.clearGenieConversationState(scopeKey);
+      options.persistence.clearAgentConversationState(scopeKey);
       return;
     }
-    options.persistence.writeGenieConversationState(scopeKey, conversation);
+    options.persistence.writeAgentConversationState(scopeKey, conversation);
   }
 
   function setConversationState(
     scopeKey: string,
-    conversation: PageGenieConversationState | null,
-  ): PageGenieConversationState | null {
+    conversation: PageAgentConversationState | null,
+  ): PageAgentConversationState | null {
     if (!conversation) {
-      state.genieConversationByScopeKey.delete(scopeKey);
-      options.persistence.clearGenieConversationState(scopeKey);
+      state.agentConversationByScopeKey.delete(scopeKey);
+      options.persistence.clearAgentConversationState(scopeKey);
       notifyTaskStateChange();
       return null;
     }
-    state.genieConversationByScopeKey.set(scopeKey, conversation);
+    state.agentConversationByScopeKey.set(scopeKey, conversation);
     persistConversationState(scopeKey);
     notifyTaskStateChange();
     return conversation;
   }
 
-  function isConversationReusable(conversation: PageGenieConversationState | null): boolean {
+  function isConversationReusable(conversation: PageAgentConversationState | null): boolean {
     if (!conversation?.sessionId || conversation.invalidated) {
       return false;
     }
-    if (conversation.sentCount >= GENIE_CONVERSATION_MAX_SENDS) {
+    if (conversation.sentCount >= AGENT_CONVERSATION_MAX_SENDS) {
       return false;
     }
     return Number.isFinite(conversation.expiresAt) && conversation.expiresAt > Date.now();
@@ -989,8 +989,8 @@ export function createGenieBridgeService(options: {
 
   function upsertConversationState(
     scopeKey: string,
-    patch: Partial<PageGenieConversationState> & Pick<PageGenieConversationState, 'sessionId'>,
-  ): PageGenieConversationState {
+    patch: Partial<PageAgentConversationState> & Pick<PageAgentConversationState, 'sessionId'>,
+  ): PageAgentConversationState {
     const currentConversation = getConversationState(scopeKey);
     const now = Date.now();
     const createdAt = Number.isFinite(Number(patch.createdAt))
@@ -999,7 +999,7 @@ export function createGenieBridgeService(options: {
     const lastUsedAt = Number.isFinite(Number(patch.lastUsedAt))
       ? Number(patch.lastUsedAt)
       : currentConversation?.lastUsedAt ?? createdAt;
-    const nextConversation: PageGenieConversationState = {
+    const nextConversation: PageAgentConversationState = {
       scopeKey,
       sessionId: String(patch.sessionId ?? currentConversation?.sessionId ?? '').trim(),
       provider: typeof patch.provider === 'string' && patch.provider.trim()
@@ -1022,7 +1022,7 @@ export function createGenieBridgeService(options: {
       ),
       expiresAt: Number.isFinite(Number(patch.expiresAt))
         ? Number(patch.expiresAt)
-        : createdAt + GENIE_CONVERSATION_TTL_MS,
+        : createdAt + AGENT_CONVERSATION_TTL_MS,
       invalidated: typeof patch.invalidated === 'boolean'
         ? patch.invalidated
         : currentConversation?.invalidated ?? false,
@@ -1037,7 +1037,7 @@ export function createGenieBridgeService(options: {
           ? null
           : currentConversation?.sessionUrl ?? null,
     };
-    return setConversationState(scopeKey, nextConversation) as PageGenieConversationState;
+    return setConversationState(scopeKey, nextConversation) as PageAgentConversationState;
   }
 
   function logInfo(message: string, detail?: unknown): void {
@@ -1052,10 +1052,10 @@ export function createGenieBridgeService(options: {
 
   function logWarn(message: string, detail?: unknown): void {
     if (detail === undefined) {
-      console.warn(`${GENIE_BRIDGE_LOG_PREFIX} ${message}`);
+      console.warn(`${AGENT_BRIDGE_LOG_PREFIX} ${message}`);
       return;
     }
-    console.warn(`${GENIE_BRIDGE_LOG_PREFIX} ${message}`, detail);
+    console.warn(`${AGENT_BRIDGE_LOG_PREFIX} ${message}`, detail);
   }
 
   function notifyStatusChange(): void {
@@ -1125,7 +1125,7 @@ export function createGenieBridgeService(options: {
   function expireExternalEditingTask(elementKey: WebEditorElementKey): void {
     clearExternalEditingTimeoutTimer(elementKey);
     const currentTask = state.externalEditingTaskByElementKey.get(elementKey)
-      ?? state.genieTaskByElementKey.get(elementKey)
+      ?? state.agentTaskByElementKey.get(elementKey)
       ?? null;
     if (
       !currentTask
@@ -1137,7 +1137,7 @@ export function createGenieBridgeService(options: {
     }
 
     const now = Date.now();
-    const timedOutTask: ElementGenieTaskState = {
+    const timedOutTask: ElementAgentTaskState = {
       ...currentTask,
       status: 'error',
       message: '状态未知，AI 修改超时',
@@ -1150,7 +1150,7 @@ export function createGenieBridgeService(options: {
     upsertTaskState(timedOutTask);
   }
 
-  function syncExternalEditingTimeout(task: ElementGenieTaskState): void {
+  function syncExternalEditingTimeout(task: ElementAgentTaskState): void {
     if (task.origin !== 'external-editing') return;
     if (!isTaskRunning(task) || task.dismissed) {
       clearExternalEditingTimeoutTimer(task.elementKey);
@@ -1159,12 +1159,12 @@ export function createGenieBridgeService(options: {
 
     clearExternalEditingTimeoutTimer(task.elementKey);
     const elapsedMs = Math.max(0, Date.now() - task.updatedAt);
-    const remainingMs = Math.max(0, GENIE_EXTERNAL_EDITING_TIMEOUT_MS - elapsedMs);
+    const remainingMs = Math.max(0, AGENT_EXTERNAL_EDITING_TIMEOUT_MS - elapsedMs);
     const expectedRequestId = task.requestId;
     const expectedUpdatedAt = task.updatedAt;
     const timerId = window.setTimeout(() => {
       const currentTask = state.externalEditingTaskByElementKey.get(task.elementKey)
-        ?? state.genieTaskByElementKey.get(task.elementKey)
+        ?? state.agentTaskByElementKey.get(task.elementKey)
         ?? null;
       if (
         !currentTask
@@ -1200,14 +1200,14 @@ export function createGenieBridgeService(options: {
     }
     const timerId = window.setTimeout(() => {
       dismissCompletedTaskStates(normalizedRequestId);
-    }, GENIE_COMPLETED_TASK_AUTO_DISMISS_MS);
+    }, AGENT_COMPLETED_TASK_AUTO_DISMISS_MS);
     completedTaskDismissTimerByRequestId.set(normalizedRequestId, timerId);
   }
 
   function persistTaskStates(scopeKey: string): void {
     const now = Date.now();
     const TERMINAL_STATE_TTL_MS = 30 * 60 * 1000; // 30min
-    const tasks = Array.from(state.genieTaskByElementKey.values())
+    const tasks = Array.from(state.agentTaskByElementKey.values())
       .filter(
         (task) => {
           if (task.scopeKey !== scopeKey || task.dismissed) return false;
@@ -1235,7 +1235,7 @@ export function createGenieBridgeService(options: {
           return false;
         },
       )
-      .map<PersistedElementGenieTaskState>((task) => ({
+      .map<PersistedElementAgentTaskState>((task) => ({
         scopeKey: task.scopeKey,
         elementKey: task.elementKey,
         locator: task.locator,
@@ -1255,7 +1255,7 @@ export function createGenieBridgeService(options: {
         errorCode: task.errorCode,
         origin: task.origin,
       }));
-    options.persistence.writeGenieTaskStates(scopeKey, tasks);
+    options.persistence.writeAgentTaskStates(scopeKey, tasks);
   }
 
   function setActivePromptRun(nextRun: ActivePromptRun | null): void {
@@ -1292,13 +1292,13 @@ export function createGenieBridgeService(options: {
     return currentRun;
   }
 
-  function isVisibleTask(task: ElementGenieTaskState | null | undefined): task is ElementGenieTaskState {
+  function isVisibleTask(task: ElementAgentTaskState | null | undefined): task is ElementAgentTaskState {
     return Boolean(task && !task.dismissed && !task.recoveryPending);
   }
 
   function getExternalEditingTaskStateByKey(
     elementKey: WebEditorElementKey | null | undefined,
-  ): ElementGenieTaskState | null {
+  ): ElementAgentTaskState | null {
     if (!elementKey) return null;
     const task = state.externalEditingTaskByElementKey.get(elementKey) ?? null;
     return isVisibleTask(task) ? task : null;
@@ -1306,11 +1306,11 @@ export function createGenieBridgeService(options: {
 
   function getDisplayTaskStateByKey(
     elementKey: WebEditorElementKey | null | undefined,
-  ): ElementGenieTaskState | null {
+  ): ElementAgentTaskState | null {
     return getElementTaskStateByKey(elementKey) ?? getExternalEditingTaskStateByKey(elementKey);
   }
 
-  function getElementTaskState(element: Element | null): ElementGenieTaskState | null {
+  function getElementTaskState(element: Element | null): ElementAgentTaskState | null {
     if (!element || !element.isConnected) return null;
     const textCommentMeta = resolveTextCommentElementMeta(state, element);
     if (textCommentMeta) {
@@ -1323,35 +1323,35 @@ export function createGenieBridgeService(options: {
 
   function getElementTaskStateByKey(
     elementKey: WebEditorElementKey | null | undefined,
-  ): ElementGenieTaskState | null {
+  ): ElementAgentTaskState | null {
     if (!elementKey) return null;
-    const task = state.genieTaskByElementKey.get(elementKey) ?? null;
+    const task = state.agentTaskByElementKey.get(elementKey) ?? null;
     return task?.dismissed ? null : task;
   }
 
-  function getTaskStateByRequestId(requestId: string | null | undefined): ElementGenieTaskState | null {
+  function getTaskStateByRequestId(requestId: string | null | undefined): ElementAgentTaskState | null {
     if (!requestId) return null;
-    return state.genieTaskByRequestId.get(requestId)
-      ?? Array.from(state.genieTaskByElementKey.values()).find((task) => task.requestId === requestId)
+    return state.agentTaskByRequestId.get(requestId)
+      ?? Array.from(state.agentTaskByElementKey.values()).find((task) => task.requestId === requestId)
       ?? null;
   }
 
-  function getTaskStatesByRequestId(requestId: string | null | undefined): ElementGenieTaskState[] {
+  function getTaskStatesByRequestId(requestId: string | null | undefined): ElementAgentTaskState[] {
     if (!requestId) return [];
-    return Array.from(state.genieTaskByElementKey.values())
+    return Array.from(state.agentTaskByElementKey.values())
       .filter((task) => task.requestId === requestId)
       .sort((a, b) => a.startedAt - b.startedAt);
   }
 
   function reindexTaskStateByRequestId(requestId: string | null | undefined): void {
     if (!requestId) return;
-    const nextTask = Array.from(state.genieTaskByElementKey.values())
+    const nextTask = Array.from(state.agentTaskByElementKey.values())
       .find((task) => task.requestId === requestId);
     if (nextTask) {
-      state.genieTaskByRequestId.set(requestId, nextTask);
+      state.agentTaskByRequestId.set(requestId, nextTask);
       return;
     }
-    state.genieTaskByRequestId.delete(requestId);
+    state.agentTaskByRequestId.delete(requestId);
   }
 
   function resolveElementTaskMeta(element: Element): {
@@ -1447,12 +1447,12 @@ export function createGenieBridgeService(options: {
   }
 
   function isTaskRunning(
-    task: Pick<ElementGenieTaskState, 'status'> | Pick<PersistedElementGenieTaskState, 'status'> | null | undefined,
+    task: Pick<ElementAgentTaskState, 'status'> | Pick<PersistedElementAgentTaskState, 'status'> | null | undefined,
   ): boolean {
     return task?.status === 'pending' || task?.status === 'created';
   }
 
-  function shouldTrapDescendantSelection(task: ElementGenieTaskState | null | undefined): boolean {
+  function shouldTrapDescendantSelection(task: ElementAgentTaskState | null | undefined): boolean {
     if (!task || task.dismissed) {
       return false;
     }
@@ -1480,7 +1480,7 @@ export function createGenieBridgeService(options: {
     return false;
   }
 
-  function syncTrackedTargetsForTask(task: ElementGenieTaskState): void {
+  function syncTrackedTargetsForTask(task: ElementAgentTaskState): void {
     if (!shouldTrapDescendantSelection(task)) return;
     let taskRoot: Element | null = null;
     try {
@@ -1557,14 +1557,14 @@ export function createGenieBridgeService(options: {
   }
 
   function upsertTaskState(
-    task: ElementGenieTaskState,
+    task: ElementAgentTaskState,
     options: {
       clearPreviousRequestId?: string | null;
     } = {},
-  ): ElementGenieTaskState {
-    const previousByElementKey = state.genieTaskByElementKey.get(task.elementKey);
-    state.genieTaskByElementKey.set(task.elementKey, task);
-    state.genieTaskByRequestId.set(task.requestId, task);
+  ): ElementAgentTaskState {
+    const previousByElementKey = state.agentTaskByElementKey.get(task.elementKey);
+    state.agentTaskByElementKey.set(task.elementKey, task);
+    state.agentTaskByRequestId.set(task.requestId, task);
     if (previousByElementKey && previousByElementKey.requestId !== task.requestId) {
       reindexTaskStateByRequestId(previousByElementKey.requestId);
     }
@@ -1579,15 +1579,15 @@ export function createGenieBridgeService(options: {
     return task;
   }
 
-  function removeTaskStateByRequestId(requestId: string): ElementGenieTaskState | null {
+  function removeTaskStateByRequestId(requestId: string): ElementAgentTaskState | null {
     const currentTasks = getTaskStatesByRequestId(requestId);
     if (currentTasks.length === 0) return null;
     for (const currentTask of currentTasks) {
       if (currentTask.origin === 'external-editing') {
         clearExternalEditingTimeoutTimer(currentTask.elementKey);
       }
-      if (state.genieTaskByElementKey.get(currentTask.elementKey)?.requestId === requestId) {
-        state.genieTaskByElementKey.delete(currentTask.elementKey);
+      if (state.agentTaskByElementKey.get(currentTask.elementKey)?.requestId === requestId) {
+        state.agentTaskByElementKey.delete(currentTask.elementKey);
       }
     }
     const scopeKeys = Array.from(new Set(currentTasks.map((task) => task.scopeKey)));
@@ -1602,21 +1602,21 @@ export function createGenieBridgeService(options: {
 
   function updateTaskStateByRequestId(
     requestId: string,
-    patch: Partial<ElementGenieTaskState> & {
-      status?: ElementGenieTaskStatus;
+    patch: Partial<ElementAgentTaskState> & {
+      status?: ElementAgentTaskStatus;
       message?: string;
     },
     options: {
       reviveDismissed?: boolean;
     } = {},
-  ): ElementGenieTaskState | null {
+  ): ElementAgentTaskState | null {
     const currentTasks = getTaskStatesByRequestId(requestId);
     if (currentTasks.length === 0) return null;
 
-    let firstUpdatedTask: ElementGenieTaskState | null = null;
+    let firstUpdatedTask: ElementAgentTaskState | null = null;
     for (const currentTask of currentTasks) {
       const nextRequestId = patch.requestId ?? currentTask.requestId;
-      const nextTask: ElementGenieTaskState = {
+      const nextTask: ElementAgentTaskState = {
         ...currentTask,
         ...patch,
         requestId: nextRequestId,
@@ -1663,9 +1663,9 @@ export function createGenieBridgeService(options: {
     upsertTaskState(dismissedTask);
   }
 
-  function getVisibleTaskStates(): ElementGenieTaskState[] {
-    const tasksByElementKey = new Map<WebEditorElementKey, ElementGenieTaskState>();
-    for (const task of Array.from(state.genieTaskByElementKey.values()).filter(isVisibleTask)) {
+  function getVisibleTaskStates(): ElementAgentTaskState[] {
+    const tasksByElementKey = new Map<WebEditorElementKey, ElementAgentTaskState>();
+    for (const task of Array.from(state.agentTaskByElementKey.values()).filter(isVisibleTask)) {
       tasksByElementKey.set(task.elementKey, task);
     }
     for (const task of Array.from(state.externalEditingTaskByElementKey.values()).filter(isVisibleTask)) {
@@ -1688,7 +1688,7 @@ export function createGenieBridgeService(options: {
       message: string;
       errorCode: string | null;
     },
-  ): ElementGenieTaskState | null {
+  ): ElementAgentTaskState | null {
     return updateTaskStateByRequestId(requestId, {
       status: patch.status,
       provider:
@@ -1754,19 +1754,19 @@ export function createGenieBridgeService(options: {
   function setExternalEditingState(
     element: Element,
     taskRef?: Partial<ExternalEditingTaskRef> | null,
-  ): ElementGenieTaskState | null {
+  ): ElementAgentTaskState | null {
     if (!element?.isConnected) return null;
     const meta = resolveElementTaskMeta(element);
     const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
     const existingTask = state.externalEditingTaskByElementKey.get(meta.elementKey)
-      ?? state.genieTaskByElementKey.get(meta.elementKey)
+      ?? state.agentTaskByElementKey.get(meta.elementKey)
       ?? null;
     const now = Date.now();
     const fallbackProvider = String(resolveConfiguredProvider() || '').trim() || null;
     const scopeKey = existingTask?.origin === 'external-editing'
       ? existingTask.scopeKey
       : resolveExternalEditingScopeKey();
-    const nextTask: ElementGenieTaskState = {
+    const nextTask: ElementAgentTaskState = {
       scopeKey,
       elementKey: meta.elementKey,
       locator: meta.locator,
@@ -1802,7 +1802,7 @@ export function createGenieBridgeService(options: {
     const meta = resolveElementTaskMeta(element);
     const deleted = state.externalEditingTaskByElementKey.delete(meta.elementKey);
     // Also clean up from the persisted task store
-    const persistedTask = state.genieTaskByElementKey.get(meta.elementKey);
+    const persistedTask = state.agentTaskByElementKey.get(meta.elementKey);
     if (persistedTask?.origin === 'external-editing') {
       removeTaskStateByRequestId(persistedTask.requestId);
     }
@@ -1817,12 +1817,12 @@ export function createGenieBridgeService(options: {
     element: Element,
     terminalState: 'completed' | 'error',
     taskRef?: Partial<ExternalEditingTaskRef> | null,
-  ): ElementGenieTaskState | null {
+  ): ElementAgentTaskState | null {
     if (!element?.isConnected) return null;
     const meta = resolveElementTaskMeta(element);
     const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
     const existingTask = state.externalEditingTaskByElementKey.get(meta.elementKey)
-      ?? state.genieTaskByElementKey.get(meta.elementKey)
+      ?? state.agentTaskByElementKey.get(meta.elementKey)
       ?? null;
     const now = Date.now();
     const fallbackProvider = String(resolveConfiguredProvider() || '').trim() || null;
@@ -1831,7 +1831,7 @@ export function createGenieBridgeService(options: {
       : resolveExternalEditingScopeKey();
 
     const isCompleted = terminalState === 'completed';
-    const nextTask: ElementGenieTaskState = {
+    const nextTask: ElementAgentTaskState = {
       scopeKey,
       elementKey: meta.elementKey,
       locator: meta.locator,
@@ -1871,7 +1871,7 @@ export function createGenieBridgeService(options: {
           state.externalEditingTaskByElementKey.delete(meta.elementKey);
           removeTaskStateByRequestId(dismissRequestId);
         }
-      }, GENIE_COMPLETED_TASK_AUTO_DISMISS_MS);
+      }, AGENT_COMPLETED_TASK_AUTO_DISMISS_MS);
     }
 
     return nextTask;
@@ -1899,31 +1899,31 @@ export function createGenieBridgeService(options: {
 
   function assertBridgeConnected(): void {
     if (!hasRequiredConfig()) {
-      throw new Error(GENIE_BRIDGE_CONFIG_ERROR);
+      throw new Error(AGENT_BRIDGE_CONFIG_ERROR);
     }
 
     if (!connected || !socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error(GENIE_BRIDGE_NOT_CONNECTED_ERROR);
+      throw new Error(AGENT_BRIDGE_NOT_CONNECTED_ERROR);
     }
   }
 
   function assertFrontendAvailable(): void {
     assertBridgeConnected();
     if (!available) {
-      throw new Error(GENIE_PAGE_OFFLINE_MESSAGE);
+      throw new Error(AGENT_PAGE_OFFLINE_MESSAGE);
     }
   }
 
   function assertAgentRunReady(): void {
     assertBridgeConnected();
     if (!hasAgentRunConfig()) {
-      throw new Error(GENIE_EXECUTION_CONFIG_ERROR);
+      throw new Error(AGENT_EXECUTION_CONFIG_ERROR);
     }
   }
 
   function mapAgentStatePayloadToTask(payload: AgentStateSyncPayload): {
-    taskStatus: ElementGenieTaskStatus;
-    recovery: ElementGenieTaskRecovery;
+    taskStatus: ElementAgentTaskStatus;
+    recovery: ElementAgentTaskRecovery;
     message: string;
   } {
     if (payload.isLoading) {
@@ -1954,7 +1954,7 @@ export function createGenieBridgeService(options: {
     };
   }
 
-  function restoreActivePromptRunFromTask(task: ElementGenieTaskState): void {
+  function restoreActivePromptRunFromTask(task: ElementAgentTaskState): void {
     if (!isTaskRunning(task) || !task.requestId) return;
     activePromptRuns.set(task.requestId, {
       requestId: task.requestId,
@@ -1981,7 +1981,7 @@ export function createGenieBridgeService(options: {
       provider: string;
       taskRequestIds: string[];
     }>();
-    for (const task of state.genieTaskByRequestId.values()) {
+    for (const task of state.agentTaskByRequestId.values()) {
       if (
         task.dismissed
         || !isTaskRunning(task)
@@ -2013,15 +2013,15 @@ export function createGenieBridgeService(options: {
   function sendStateQueries(): void {
     const targets = buildStateSyncTargets();
     if (targets.length === 0 || !socket || socket.readyState !== WebSocket.OPEN) {
-      logInfo('Skipping Genie state sync query', {
+      logInfo('Skipping Agent state sync query', {
         reason: targets.length === 0 ? 'no-running-tasks' : 'socket-not-open',
         runningTaskCount: targets.length,
       });
       return;
     }
     for (const target of targets) {
-      const requestId = createRequestId('genie_agent_state_query');
-      logInfo('Sending Genie state sync query', {
+      const requestId = createRequestId('agent_state_query');
+      logInfo('Sending Agent state sync query', {
         requestId,
         sessionId: target.sessionId,
         provider: target.provider,
@@ -2042,7 +2042,7 @@ export function createGenieBridgeService(options: {
         for (const taskRequestId of pendingTarget.taskRequestIds) {
           const removedTask = removeTaskStateByRequestId(taskRequestId);
           if (removedTask) {
-            logWarn('Dropped restored Genie task after state sync timeout', {
+            logWarn('Dropped restored Agent task after state sync timeout', {
               requestId: taskRequestId,
               sessionId: removedTask.sessionId,
               scopeKey: removedTask.scopeKey,
@@ -2050,7 +2050,7 @@ export function createGenieBridgeService(options: {
             clearActivePromptRun(taskRequestId);
           }
         }
-      }, GENIE_STATE_QUERY_TIMEOUT_MS);
+      }, AGENT_STATE_QUERY_TIMEOUT_MS);
       stateQueryByRequestId.set(requestId, {
         ...target,
         timeoutId,
@@ -2060,13 +2060,13 @@ export function createGenieBridgeService(options: {
 
   function sendStateSubscribe(sessionId: string, provider: string): void {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      logWarn('Skipping Genie state subscribe because socket is not open', {
+      logWarn('Skipping Agent state subscribe because socket is not open', {
         sessionId,
         provider,
       });
       return;
     }
-    const requestId = createRequestId('genie_agent_state_subscribe');
+    const requestId = createRequestId('agent_state_subscribe');
     stateSubscribeByRequestId.set(requestId, {
       sessionId,
       provider,
@@ -2079,7 +2079,7 @@ export function createGenieBridgeService(options: {
         provider,
       },
     });
-    logInfo('Sending Genie state subscribe', {
+    logInfo('Sending Agent state subscribe', {
       requestId,
       sessionId,
       provider,
@@ -2089,11 +2089,11 @@ export function createGenieBridgeService(options: {
   function updateTasksFromStateSyncPayload(
     payload: AgentStateSyncPayload,
     taskRequestIds?: string[],
-  ): ElementGenieTaskState[] {
+  ): ElementAgentTaskState[] {
     const mapped = mapAgentStatePayloadToTask(payload);
     const requestIds = taskRequestIds?.length
       ? taskRequestIds
-      : Array.from(state.genieTaskByRequestId.values())
+      : Array.from(state.agentTaskByRequestId.values())
           .filter(
             (task) =>
               !task.dismissed
@@ -2102,7 +2102,7 @@ export function createGenieBridgeService(options: {
               && task.provider === payload.provider,
           )
           .map((task) => task.requestId);
-    const updatedTasks: ElementGenieTaskState[] = [];
+    const updatedTasks: ElementAgentTaskState[] = [];
 
     for (const requestId of requestIds) {
       const nextTask = updateTaskStateByRequestId(requestId, {
@@ -2126,7 +2126,7 @@ export function createGenieBridgeService(options: {
       }
     }
 
-    logInfo('Applied Genie state sync payload', {
+    logInfo('Applied Agent state sync payload', {
       sessionId: payload.sessionId,
       provider: payload.provider,
       phase: payload.phase,
@@ -2138,9 +2138,9 @@ export function createGenieBridgeService(options: {
     return updatedTasks;
   }
 
-  function invalidateConversationForTask(task: ElementGenieTaskState | null, errorCode: string | null): void {
+  function invalidateConversationForTask(task: ElementAgentTaskState | null, errorCode: string | null): void {
     if (!task) return;
-    if (!errorCode || !GENIE_SESSION_NOT_FOUND_CODES.has(errorCode)) {
+    if (!errorCode || !AGENT_SESSION_NOT_FOUND_CODES.has(errorCode)) {
       return;
     }
     const conversation = getConversationState(task.scopeKey);
@@ -2180,16 +2180,16 @@ export function createGenieBridgeService(options: {
       options.changes.markElementEditsHandled(taskElement);
     }
     options.persistence.flushPendingWrite();
-    logInfo('Marked element edits as handled after Genie handoff', { source, requestId });
+    logInfo('Marked element edits as handled after Agent handoff', { source, requestId });
   }
 
-  function rehydratePersistedGenieState(): void {
+  function rehydratePersistedAgentState(): void {
     const scopeKey = resolveScopeKey();
     const lookupKeys = resolveConversationLookupKeys();
-    let persistedConversation: PageGenieConversationState | null = null;
+    let persistedConversation: PageAgentConversationState | null = null;
     let restoredConversationScopeKey: string | null = null;
     for (const candidateScopeKey of lookupKeys) {
-      const candidateConversation = options.persistence.readGenieConversationState(candidateScopeKey);
+      const candidateConversation = options.persistence.readAgentConversationState(candidateScopeKey);
       if (!candidateConversation) continue;
       persistedConversation = candidateConversation;
       restoredConversationScopeKey = candidateScopeKey;
@@ -2202,10 +2202,10 @@ export function createGenieBridgeService(options: {
       });
       for (const candidateScopeKey of lookupKeys) {
         if (candidateScopeKey !== scopeKey && candidateScopeKey === restoredConversationScopeKey) {
-          options.persistence.clearGenieConversationState(candidateScopeKey);
+          options.persistence.clearAgentConversationState(candidateScopeKey);
         }
       }
-      logInfo('Restored persisted Genie conversation', {
+      logInfo('Restored persisted Agent conversation', {
         scopeKey,
         sessionId: persistedConversation.sessionId,
         provider: persistedConversation.provider,
@@ -2214,20 +2214,20 @@ export function createGenieBridgeService(options: {
         invalidated: persistedConversation.invalidated,
       });
     } else {
-      logInfo('No persisted Genie conversation found', { scopeKey });
+      logInfo('No persisted Agent conversation found', { scopeKey });
     }
 
     for (const candidateScopeKey of lookupKeys) {
-      options.persistence.pruneExpiredGenieTaskStates(candidateScopeKey);
+      options.persistence.pruneExpiredAgentTaskStates(candidateScopeKey);
     }
-    let persistedTasks: PersistedElementGenieTaskState[] = [];
+    let persistedTasks: PersistedElementAgentTaskState[] = [];
     for (const candidateScopeKey of lookupKeys) {
-      const candidateTasks = options.persistence.readGenieTaskStates(candidateScopeKey);
+      const candidateTasks = options.persistence.readAgentTaskStates(candidateScopeKey);
       if (candidateTasks.length === 0) continue;
       persistedTasks = candidateTasks;
       break;
     }
-    logInfo('Read persisted Genie task states', {
+    logInfo('Read persisted Agent task states', {
       scopeKey,
       count: persistedTasks.length,
       items: persistedTasks.map((task) => ({
@@ -2249,7 +2249,7 @@ export function createGenieBridgeService(options: {
           || typeof persistedTask.provider !== 'string'
           || persistedTask.provider.trim().length === 0
         ) {
-          logWarn('Skipping persisted Genie task restore', {
+          logWarn('Skipping persisted Agent task restore', {
             requestId: persistedTask.requestId,
             sessionId: persistedTask.sessionId,
             provider: persistedTask.provider,
@@ -2274,7 +2274,7 @@ export function createGenieBridgeService(options: {
       } catch {
         // Ignore stale locators and keep the persisted locator as a fallback.
       }
-      const task: ElementGenieTaskState = {
+      const task: ElementAgentTaskState = {
         ...persistedTask,
         scopeKey: isExternalEditing ? resolveExternalEditingScopeKey() : scopeKey,
         elementKey,
@@ -2294,7 +2294,7 @@ export function createGenieBridgeService(options: {
       if (isTaskRunning(task) && !isExternalEditing) {
         restoreActivePromptRunFromTask(task);
       }
-      logInfo('Restored persisted Genie task', {
+      logInfo('Restored persisted Agent task', {
         requestId: task.requestId,
         sessionId: task.sessionId,
         provider: task.provider,
@@ -2306,9 +2306,9 @@ export function createGenieBridgeService(options: {
     }
 
     // Schedule cleanup of unverified recovery-pending tasks after 30s.
-    // If Genie Bridge socket is never connected, these would otherwise persist forever.
+    // If Agent Bridge socket is never connected, these would otherwise persist forever.
     const RECOVERY_PENDING_STALENESS_MS = 30_000;
-    const recoveryPendingRequestIds = Array.from(state.genieTaskByElementKey.values())
+    const recoveryPendingRequestIds = Array.from(state.agentTaskByElementKey.values())
       .filter((task) => task.recoveryPending && task.origin !== 'external-editing')
       .map((task) => task.requestId);
     if (recoveryPendingRequestIds.length > 0) {
@@ -2407,7 +2407,7 @@ export function createGenieBridgeService(options: {
     });
   }
 
-  function rejectPendingRequest(requestId: string, error: string | GenieBridgeError, code?: unknown): void {
+  function rejectPendingRequest(requestId: string, error: string | AgentBridgeError, code?: unknown): void {
     const pending = pendingRequests.get(requestId);
     if (!pending) return;
     window.clearTimeout(pending.timeoutId);
@@ -2473,7 +2473,7 @@ export function createGenieBridgeService(options: {
 
   function sendSocketMessage(message: Record<string, unknown>): void {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error(GENIE_BRIDGE_NOT_CONNECTED_ERROR);
+      throw new Error(AGENT_BRIDGE_NOT_CONNECTED_ERROR);
     }
     logDebug('Sending WS message', message);
     socket.send(JSON.stringify(message));
@@ -2481,10 +2481,10 @@ export function createGenieBridgeService(options: {
 
   function scheduleReconnect(): void {
     if (!active || !hasRequiredConfig() || reconnectTimerId !== null) return;
-    if (reconnectAttemptCount >= GENIE_MAX_RECONNECT_ATTEMPTS) {
+    if (reconnectAttemptCount >= AGENT_MAX_RECONNECT_ATTEMPTS) {
       logWarn('Reconnect aborted: retry limit reached', {
         attempts: reconnectAttemptCount,
-        maxAttempts: GENIE_MAX_RECONNECT_ATTEMPTS,
+        maxAttempts: AGENT_MAX_RECONNECT_ATTEMPTS,
         integrationChannel,
         targetClientId,
       });
@@ -2493,15 +2493,15 @@ export function createGenieBridgeService(options: {
     reconnectAttemptCount += 1;
     logInfo('Scheduling reconnect', {
       attempt: reconnectAttemptCount,
-      maxAttempts: GENIE_MAX_RECONNECT_ATTEMPTS,
-      delayMs: GENIE_RECONNECT_DELAY_MS,
+      maxAttempts: AGENT_MAX_RECONNECT_ATTEMPTS,
+      delayMs: AGENT_RECONNECT_DELAY_MS,
       integrationChannel,
       targetClientId,
     });
     reconnectTimerId = window.setTimeout(() => {
       reconnectTimerId = null;
       connectSocket();
-    }, GENIE_RECONNECT_DELAY_MS);
+    }, AGENT_RECONNECT_DELAY_MS);
   }
 
   function resetProbeRetries(): void {
@@ -2512,11 +2512,11 @@ export function createGenieBridgeService(options: {
   function scheduleProbeRetry(reason: string): void {
     if (!active || !hasRequiredConfig() || probeRetryTimerId !== null) return;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    if (probeAttemptCount >= GENIE_MAX_PROBE_ATTEMPTS) {
+    if (probeAttemptCount >= AGENT_MAX_PROBE_ATTEMPTS) {
       logWarn('Probe retry aborted: retry limit reached', {
         reason,
         attempts: probeAttemptCount,
-        maxAttempts: GENIE_MAX_PROBE_ATTEMPTS,
+        maxAttempts: AGENT_MAX_PROBE_ATTEMPTS,
         integrationChannel,
         targetClientId,
       });
@@ -2527,8 +2527,8 @@ export function createGenieBridgeService(options: {
     logInfo('Scheduling availability probe retry', {
       reason,
       attempt: probeAttemptCount,
-      maxAttempts: GENIE_MAX_PROBE_ATTEMPTS,
-      delayMs: GENIE_PROBE_RETRY_DELAY_MS,
+      maxAttempts: AGENT_MAX_PROBE_ATTEMPTS,
+      delayMs: AGENT_PROBE_RETRY_DELAY_MS,
       integrationChannel,
       targetClientId,
     });
@@ -2539,7 +2539,7 @@ export function createGenieBridgeService(options: {
         .then(() => {
           void probeFrontendPresence();
         });
-    }, GENIE_PROBE_RETRY_DELAY_MS);
+    }, AGENT_PROBE_RETRY_DELAY_MS);
   }
 
   function handleSocketClose(currentSocket: WebSocket): void {
@@ -2652,9 +2652,9 @@ export function createGenieBridgeService(options: {
   }
 
   function handleSocketMessage(event: MessageEvent<string>): void {
-    let parsed: GenieWsMessage | null = null;
+    let parsed: AgentWsMessage | null = null;
     try {
-      parsed = JSON.parse(event.data) as GenieWsMessage;
+      parsed = JSON.parse(event.data) as AgentWsMessage;
     } catch {
       logWarn('Received non-JSON WS message', event.data);
       return;
@@ -2686,7 +2686,7 @@ export function createGenieBridgeService(options: {
       clearProbeTimeout();
       const frontendClients = readFrontendClients(parsed);
       if (!targetClientId) {
-        const matchedClient = pickFrontendClientForContext(frontendClients, buildGenieContext(null));
+        const matchedClient = pickFrontendClientForContext(frontendClients, buildAgentContext(null));
         if (matchedClient?.clientId) {
           applyResolvedBridgeConfig({ targetClientId: matchedClient.clientId });
         }
@@ -2781,7 +2781,7 @@ export function createGenieBridgeService(options: {
       stateQueryByRequestId.delete(parsed.requestId);
       const snapshot = parseAgentStateSyncPayload(parsed.payload);
       if (!snapshot) return;
-      logInfo('Received Genie state snapshot', {
+      logInfo('Received Agent state snapshot', {
         requestId: parsed.requestId,
         querySessionId: queryTarget.sessionId,
         queryProvider: queryTarget.provider,
@@ -2797,7 +2797,7 @@ export function createGenieBridgeService(options: {
 
     if (parsed.type === 'agent.state.subscribed' && parsed.requestId) {
       if (!stateSubscribeByRequestId.has(parsed.requestId)) return;
-      logInfo('Genie state subscribe acknowledged', {
+      logInfo('Agent state subscribe acknowledged', {
         requestId: parsed.requestId,
       });
       stateSubscribeByRequestId.delete(parsed.requestId);
@@ -2807,7 +2807,7 @@ export function createGenieBridgeService(options: {
     if (parsed.type === 'agent.state.changed') {
       const snapshot = parseAgentStateSyncPayload(parsed.payload);
       if (!snapshot) return;
-      logInfo('Received Genie state change', snapshot);
+      logInfo('Received Agent state change', snapshot);
       updateTasksFromStateSyncPayload(snapshot);
       return;
     }
@@ -2827,7 +2827,7 @@ export function createGenieBridgeService(options: {
       if (stateQueryTarget) {
         window.clearTimeout(stateQueryTarget.timeoutId);
         stateQueryByRequestId.delete(parsed.requestId);
-        logWarn('State sync query rejected by Genie', {
+        logWarn('State sync query rejected by Agent', {
           requestId: parsed.requestId,
           sessionId: stateQueryTarget.sessionId,
           provider: stateQueryTarget.provider,
@@ -2845,7 +2845,7 @@ export function createGenieBridgeService(options: {
       const stateSubscribeTarget = stateSubscribeByRequestId.get(parsed.requestId);
       if (stateSubscribeTarget) {
         stateSubscribeByRequestId.delete(parsed.requestId);
-        logWarn('State sync subscribe rejected by Genie', {
+        logWarn('State sync subscribe rejected by Agent', {
           requestId: parsed.requestId,
           sessionId: stateSubscribeTarget.sessionId,
           provider: stateSubscribeTarget.provider,
@@ -3093,8 +3093,8 @@ export function createGenieBridgeService(options: {
 
     let nextSocket: WebSocket;
     try {
-      const wsUrl = buildGenieWsUrl(apiBaseUrl, apiKey);
-      logInfo('Opening Genie bridge socket', {
+      const wsUrl = buildAgentWsUrl(apiBaseUrl, apiKey);
+      logInfo('Opening Agent bridge socket', {
         wsUrl,
         integrationChannel,
         targetClientId,
@@ -3104,7 +3104,7 @@ export function createGenieBridgeService(options: {
     } catch (error) {
       notifyAvailability(false);
       scheduleReconnect();
-      logWarn('Failed to create Genie bridge socket', error);
+      logWarn('Failed to create Agent bridge socket', error);
       return;
     }
 
@@ -3117,7 +3117,7 @@ export function createGenieBridgeService(options: {
       });
       clearReconnectTimer();
       reconnectAttemptCount = 0;
-      connectRequestId = createRequestId('genie_connect');
+      connectRequestId = createRequestId('agent_connect');
       try {
         sendSocketMessage({
           type: 'integration.connect',
@@ -3151,8 +3151,8 @@ export function createGenieBridgeService(options: {
   async function probeFrontendPresence(): Promise<void> {
     if (!active || !hasRequiredConfig()) return;
 
-    const requestId = createRequestId('genie_probe');
-    const timeoutMs = getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS);
+    const requestId = createRequestId('agent_probe');
+    const timeoutMs = getTimeoutMs(probeTimeoutMs, AGENT_CONTEXT_REQUEST_TIMEOUT_MS);
 
     probeRequestId = requestId;
     clearProbeTimeout();
@@ -3192,7 +3192,7 @@ export function createGenieBridgeService(options: {
   }
 
   function stop(): void {
-    logInfo('Stopping Genie bridge service');
+    logInfo('Stopping Agent bridge service');
     active = false;
     bridgeDiscoveryPromise = null;
     removeVisibilityListener();
@@ -3263,7 +3263,7 @@ export function createGenieBridgeService(options: {
 
     installVisibilityListener();
     connectSocket();
-    const wakeSucceeded = await waitForBridgeConnection(GENIE_WAKE_WAIT_TIMEOUT_MS);
+    const wakeSucceeded = await waitForBridgeConnection(AGENT_WAKE_WAIT_TIMEOUT_MS);
     if (!wakeSucceeded) {
       stop();
       return false;
@@ -3279,7 +3279,7 @@ export function createGenieBridgeService(options: {
       return false;
     }
 
-    const deadline = Date.now() + getTimeoutMs(timeoutMs, GENIE_WAKE_WAIT_TIMEOUT_MS);
+    const deadline = Date.now() + getTimeoutMs(timeoutMs, AGENT_WAKE_WAIT_TIMEOUT_MS);
 
     return await new Promise((resolve) => {
       const check = () => {
@@ -3299,7 +3299,7 @@ export function createGenieBridgeService(options: {
   }
 
   function start(): void {
-    logInfo('Starting Genie bridge service', {
+    logInfo('Starting Agent bridge service', {
       enabled,
       apiBaseUrl,
       integrationChannel,
@@ -3354,10 +3354,10 @@ export function createGenieBridgeService(options: {
     return typeof window !== 'undefined' ? window.location.href : '';
   }
 
-  function buildGenieContextComments(
+  function buildAgentContextComments(
     element: Element | null,
     mode: 'append' | 'replace' = 'append',
-  ): GenieContextComment[] {
+  ): AgentContextComment[] {
     const currentFilePath = options.summaries.resolveCurrentFilePath();
     const pageUrl = readPageUrl();
     const updatedAt = new Date().toISOString();
@@ -3387,7 +3387,7 @@ export function createGenieBridgeService(options: {
     });
   }
 
-  function buildGenieCommentRecords(comments: GenieContextComment[]): GenieCommentRecord[] {
+  function buildAgentCommentRecords(comments: AgentContextComment[]): AgentCommentRecord[] {
     return comments.flatMap((comment) => {
       const filePath = typeof comment.target?.filePath === 'string' ? comment.target.filePath.trim() : '';
       const body = String(comment.body || '').trim();
@@ -3409,8 +3409,8 @@ export function createGenieBridgeService(options: {
     element: Element | null,
     mode: 'append' | 'replace',
   ) {
-    const comments = buildGenieContextComments(element, mode);
-    const commentRecords = buildGenieCommentRecords(comments);
+    const comments = buildAgentContextComments(element, mode);
+    const commentRecords = buildAgentCommentRecords(comments);
     const currentFilePath = comments.length > 0 ? options.summaries.resolveCurrentFilePath() : '';
     const targetPath = comments.length > 0 ? options.summaries.resolveTargetPath() : '';
     return {
@@ -3436,10 +3436,10 @@ export function createGenieBridgeService(options: {
     };
   }
 
-  function buildGenieContext(selectedElement: Element | null) {
+  function buildAgentContext(selectedElement: Element | null) {
     const currentFilePath = options.summaries.resolveCurrentFilePath();
     const targetPath = options.summaries.resolveTargetPath();
-    const comments = buildGenieContextComments(selectedElement);
+    const comments = buildAgentContextComments(selectedElement);
     const selectedElements = (() => {
       if (!selectedElement) return [];
       const textCommentMeta = resolveTextCommentElementMeta(state, selectedElement);
@@ -3489,7 +3489,7 @@ export function createGenieBridgeService(options: {
     };
   }
 
-  async function handleSyncCommentContextToGenie(
+  async function handleSyncCommentContextToAgent(
     element: Element | null,
     mode: 'append' | 'replace',
   ): Promise<void> {
@@ -3497,7 +3497,7 @@ export function createGenieBridgeService(options: {
 
     try {
       const context = buildCommentCommentsOnlyContext(element, mode);
-      logInfo('Syncing comment comments to Genie context', {
+      logInfo('Syncing comment comments to Agent context', {
         integrationChannel,
         targetClientId,
         mode,
@@ -3507,10 +3507,10 @@ export function createGenieBridgeService(options: {
         await resolveOnlineFrontendTargetForContext(context, 'comment_context');
       }
 
-      const requestId = createRequestId('genie_comment_context');
+      const requestId = createRequestId('agent_comment_context');
       const request = createPendingRequest(
         requestId,
-        getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS),
+        getTimeoutMs(probeTimeoutMs, AGENT_CONTEXT_REQUEST_TIMEOUT_MS),
         'integration',
       );
 
@@ -3530,7 +3530,7 @@ export function createGenieBridgeService(options: {
       }
 
       await request;
-      logInfo('Comment comments synced to Genie context', {
+      logInfo('Comment comments synced to Agent context', {
         requestId,
         integrationChannel,
         targetClientId,
@@ -3538,7 +3538,7 @@ export function createGenieBridgeService(options: {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logWarn('Failed to sync comment comments to Genie context', {
+      logWarn('Failed to sync comment comments to Agent context', {
         message,
         integrationChannel,
         targetClientId,
@@ -3548,12 +3548,12 @@ export function createGenieBridgeService(options: {
     }
   }
 
-  async function handleSendSelectionToGenie(element: Element): Promise<void> {
+  async function handleSendSelectionToAgent(element: Element): Promise<void> {
     if (!enabled) return;
 
     try {
-      const context = buildGenieContext(element);
-      logInfo('Sending selected element context to Genie', {
+      const context = buildAgentContext(element);
+      logInfo('Sending selected element context to Agent', {
         tagName: element.tagName,
         integrationChannel,
         targetClientId,
@@ -3563,10 +3563,10 @@ export function createGenieBridgeService(options: {
         await resolveOnlineFrontendTargetForContext(context, 'selected_element_context');
       }
 
-      const requestId = createRequestId('genie_context');
+      const requestId = createRequestId('agent_context');
       const request = createPendingRequest(
         requestId,
-        getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS),
+        getTimeoutMs(probeTimeoutMs, AGENT_CONTEXT_REQUEST_TIMEOUT_MS),
         'integration',
       );
 
@@ -3603,7 +3603,7 @@ export function createGenieBridgeService(options: {
     }
   }
 
-  async function handleSendPromptToGenieForElements(elements: Element[], prompt: string): Promise<void> {
+  async function handleSendPromptToAgentForElements(elements: Element[], prompt: string): Promise<void> {
     if (!enabled) return;
 
     try {
@@ -3635,7 +3635,7 @@ export function createGenieBridgeService(options: {
       ).trim();
       const sessionIdToReuse = reusableConversation?.sessionId ?? null;
       const startedAt = Date.now();
-      logInfo('Sending prompt to Genie input', {
+      logInfo('Sending prompt to Agent input', {
         elementCount: targetMetas.length,
         elementKeys: targetMetas.map((meta) => meta.elementKey),
         scopeKey,
@@ -3653,10 +3653,10 @@ export function createGenieBridgeService(options: {
       assertAgentRunReady();
       assertProviderAvailable(effectiveProvider);
 
-      const requestId = createRequestId('genie_agent_run');
+      const requestId = createRequestId('agent_run');
       const request = createPendingRequest(
         requestId,
-        GENIE_AGENT_RUN_TIMEOUT_MS,
+        AGENT_RUN_TIMEOUT_MS,
         'agent-run',
         '等待 AI 执行完成超时，请稍后查看 AI 会话。',
       );
@@ -3751,7 +3751,7 @@ export function createGenieBridgeService(options: {
           targetClientId,
         });
       } else {
-        logWarn('Failed to send prompt to Genie', {
+        logWarn('Failed to send prompt to Agent', {
           message,
           integrationChannel,
           targetClientId,
@@ -3764,8 +3764,8 @@ export function createGenieBridgeService(options: {
     }
   }
 
-  async function handleSendPromptToGenieForElement(element: Element, prompt: string): Promise<void> {
-    await handleSendPromptToGenieForElements([element], prompt);
+  async function handleSendPromptToAgentForElement(element: Element, prompt: string): Promise<void> {
+    await handleSendPromptToAgentForElements([element], prompt);
   }
 
   async function interruptElementTask(element: Element): Promise<void> {
@@ -3791,10 +3791,10 @@ export function createGenieBridgeService(options: {
 
     assertBridgeConnected();
 
-    const abortRequestId = createRequestId('genie_agent_abort');
+    const abortRequestId = createRequestId('agent_abort');
     const request = createPendingRequest(
       abortRequestId,
-      getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS),
+      getTimeoutMs(probeTimeoutMs, AGENT_CONTEXT_REQUEST_TIMEOUT_MS),
       'agent-abort',
       '等待 AI 中断超时，请稍后查看 AI 会话。',
       { linkedRunRequestId: currentRun.requestId },
@@ -3827,7 +3827,7 @@ export function createGenieBridgeService(options: {
       await request;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logWarn('Failed to interrupt Genie prompt run', {
+      logWarn('Failed to interrupt Agent prompt run', {
         message,
         integrationChannel,
         targetClientId,
@@ -3917,10 +3917,10 @@ export function createGenieBridgeService(options: {
       return Boolean(currentRun && currentRun.sessionId && !currentRun.abortRequestId);
     },
     interruptElementTask,
-    handleSendSelectionToGenie,
-    handleSyncCommentContextToGenie,
-    handleSendPromptToGenieForElements,
-    handleSendPromptToGenieForElement,
-    rehydratePersistedGenieState,
+    handleSendSelectionToAgent,
+    handleSyncCommentContextToAgent,
+    handleSendPromptToAgentForElements,
+    handleSendPromptToAgentForElement,
+    rehydratePersistedAgentState,
   };
 }

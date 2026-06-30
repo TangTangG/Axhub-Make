@@ -2,14 +2,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  getGenieCurrentFilePath,
-  mergeGenieContextV1,
-  normalizeGenieContextV1,
+  getAssistantCurrentFilePath,
+  mergeAssistantContextV1,
+  normalizeAssistantContextV1,
 } from './bridge';
 
-describe('normalizeGenieContextV1', () => {
+describe('normalizeAssistantContextV1', () => {
   it('normalizes string currentFile values into object form', () => {
-    const context = normalizeGenieContextV1({
+    const context = normalizeAssistantContextV1({
       version: '1',
       systemContext: 'tenant:acme',
       currentFile: 'src/prototypes/home/index.tsx',
@@ -29,7 +29,7 @@ describe('normalizeGenieContextV1', () => {
   });
 
   it('dedupes prompt context arrays through the host bridge adapter', () => {
-    const context = normalizeGenieContextV1(
+    const context = normalizeAssistantContextV1(
       {
         version: '1',
         systemContext: '',
@@ -63,9 +63,9 @@ describe('normalizeGenieContextV1', () => {
   });
 });
 
-describe('mergeGenieContextV1', () => {
+describe('mergeAssistantContextV1', () => {
   it('keeps homepage current file context while merging new selection context', () => {
-    const merged = mergeGenieContextV1(
+    const merged = mergeAssistantContextV1(
       {
         version: '1',
         systemContext: '',
@@ -100,7 +100,7 @@ describe('mergeGenieContextV1', () => {
       },
     );
 
-    expect(getGenieCurrentFilePath(merged?.currentFile)).toBe('src/prototypes/home/index.tsx');
+    expect(getAssistantCurrentFilePath(merged?.currentFile)).toBe('src/prototypes/home/index.tsx');
     expect(merged?.selectedElements).toHaveLength(1);
     expect(merged?.extensions).toEqual({
       source: 'axhub-runtime',
@@ -111,8 +111,8 @@ describe('mergeGenieContextV1', () => {
   });
 });
 
-describe('Web Editor Genie request bridge cleanup', () => {
-  it('does not expose Web Editor Genie request messages from common Genie helpers', () => {
+describe('Web Editor Agent request bridge cleanup', () => {
+  it('does not expose Web Editor Agent request messages from common Assistant context helpers', () => {
     const bridgeSource = readFileSync(resolve(__dirname, './bridge.ts'), 'utf8');
     const typesSource = readFileSync(resolve(__dirname, './types.ts'), 'utf8');
 
@@ -124,7 +124,7 @@ describe('Web Editor Genie request bridge cleanup', () => {
     expect(typesSource).not.toContain('WebEditorGenieRequestPayload');
   });
 
-  it('does not keep the obsolete browser prompt-execute helper in common Genie helpers', () => {
+  it('does not keep the obsolete browser prompt-execute helper in common Assistant context helpers', () => {
     const typesSource = readFileSync(resolve(__dirname, './types.ts'), 'utf8');
 
     expect(typesSource).not.toContain('GenieExecutePromptRequest');

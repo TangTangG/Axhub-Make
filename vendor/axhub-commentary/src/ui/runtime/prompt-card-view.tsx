@@ -20,14 +20,14 @@ import {
   triggerDesignToolExportAction,
 } from '../design-tool-export-action';
 import {
-  getGeniePromptBubbleActionState,
-  isGeniePromptActionVisible,
-  triggerGeniePromptAction,
-} from '../genie-prompt-action';
+  getAgentPromptBubbleActionState,
+  isAgentPromptActionVisible,
+  triggerAgentPromptAction,
+} from '../agent-prompt-action';
 import { executePromptCardCurrentElementAction } from './prompt-card-actions';
-import { CloseToolIcon, GenieSparkleIcon, IconActionButton } from './action-buttons';
+import { CloseToolIcon, AgentSparkleIcon, IconActionButton } from './action-buttons';
 import { resolveExternalEditingStatusDescription } from './external-editing-status-hint';
-import { deriveGenieUiState } from './genie-ui-state';
+import { deriveAgentUiState } from './agent-ui-state';
 import { PromptImageStrip } from './prompt-image-strip';
 import { PromptCardDesignEditor } from './prompt-card-design-editor';
 import { resolveRuntimePopupContainer } from './popup-container';
@@ -196,13 +196,13 @@ export function buildPromptCardTaskErrorMessage(options: {
 export function dismissPromptCardTerminalState(options: {
   currentTarget: Element | null;
   currentTaskTerminal: boolean;
-  dismissElementGenieTaskState?: (element: Element) => void;
+  dismissElementAgentTaskState?: (element: Element) => void;
   onDismissSelection?: () => void;
 }): boolean {
   const {
     currentTarget,
     currentTaskTerminal,
-    dismissElementGenieTaskState,
+    dismissElementAgentTaskState,
     onDismissSelection,
   } = options;
 
@@ -210,7 +210,7 @@ export function dismissPromptCardTerminalState(options: {
     return false;
   }
 
-  dismissElementGenieTaskState?.(currentTarget);
+  dismissElementAgentTaskState?.(currentTarget);
   onDismissSelection?.();
   return true;
 }
@@ -230,14 +230,14 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       propertyPanelEnabled,
       styleDesignEnabled,
       bubbleStyleEditorOpen,
-      genieVisualState,
+      agentVisualState,
       onBubbleStyleEditorOpenChange,
-      onSendCurrentElementPromptToGenie,
-      onWakeGenie,
-      onGenieVisualStateChange,
-      getGenieBridgeConnected,
-      getHasReusableGenieConversation,
-      getSendCurrentElementPromptToGenieBlockReason,
+      onSendCurrentElementPromptToAgent,
+      onWakeAgent,
+      onAgentVisualStateChange,
+      getAgentBridgeConnected,
+      getHasReusableAgentConversation,
+      getSendCurrentElementPromptToAgentBlockReason,
       canExportSelectionToDesignTool,
       onExportSelectionToDesignTool,
       getExportSelectionToDesignToolBlockReason,
@@ -661,12 +661,12 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       };
     }, [onHoverSelectionSuppressedChange, onSelectionInteractionLockChange]);
 
-    const genieAvailable = isGeniePromptActionVisible({
+    const agentAvailable = isAgentPromptActionVisible({
       currentTarget,
       uiMode,
       toolMinimized,
-      onSendToGenie: hideContextAppendAction ? undefined : options.onSendToGenie,
-      getGenieBridgeAvailable: options.getGenieBridgeAvailable,
+      onAppendElementToAgentContext: hideContextAppendAction ? undefined : options.onAppendElementToAgentContext,
+      getAgentBridgeAvailable: options.getAgentBridgeAvailable,
       getAssistantPanelOpen: options.getAssistantPanelOpen,
     });
     const designToolExportAction = getDesignToolExportActionState({
@@ -680,41 +680,41 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     });
     const textCommentMode = interactionProfile === 'text-comment';
     const {
-      currentTask: currentGenieTask,
+      currentTask: currentAgentTask,
       currentTaskRunning,
       currentTaskTerminal,
       pageTaskRunning,
       pageTaskSessionReady,
       hasReusableConversation,
       effectiveVisualState,
-    } = deriveGenieUiState({
+    } = deriveAgentUiState({
       currentTarget,
-      visualState: genieVisualState,
-      getElementGenieTaskState: options.getElementGenieTaskState,
-      getVisibleElementGenieTaskStates: options.getVisibleElementGenieTaskStates,
-      getHasReusableGenieConversation,
-      getGenieBridgeConnected,
+      visualState: agentVisualState,
+      getElementAgentTaskState: options.getElementAgentTaskState,
+      getVisibleElementAgentTaskStates: options.getVisibleElementAgentTaskStates,
+      getHasReusableAgentConversation,
+      getAgentBridgeConnected,
     });
     const dismissTerminalTaskAndSelection = React.useCallback(
       () => dismissPromptCardTerminalState({
         currentTarget,
         currentTaskTerminal,
-        dismissElementGenieTaskState: options.dismissElementGenieTaskState,
+        dismissElementAgentTaskState: options.dismissElementAgentTaskState,
         onDismissSelection,
       }),
-      [currentTarget, currentTaskTerminal, onDismissSelection, options.dismissElementGenieTaskState],
+      [currentTarget, currentTaskTerminal, onDismissSelection, options.dismissElementAgentTaskState],
     );
-    const currentTaskSessionHref = currentGenieTask?.sessionUrl
-      ?? (currentGenieTask?.sessionId ? `/session/${currentGenieTask.sessionId}` : '');
+    const currentTaskSessionHref = currentAgentTask?.sessionUrl
+      ?? (currentAgentTask?.sessionId ? `/session/${currentAgentTask.sessionId}` : '');
     const currentTaskDescription = resolveExternalEditingStatusDescription(
-      currentGenieTask,
+      currentAgentTask,
       options.externalEditingStatusDescription,
     );
-    const currentTaskErrorMessage = currentGenieTask?.status === 'error'
+    const currentTaskErrorMessage = currentAgentTask?.status === 'error'
       ? buildPromptCardTaskErrorMessage({
         currentTaskDescription,
-        sessionId: currentGenieTask.sessionId,
-        taskRef: currentGenieTask.taskRef,
+        sessionId: currentAgentTask.sessionId,
+        taskRef: currentAgentTask.taskRef,
       })
       : '';
     const styleSummaryLines = compactPromptStyleSummaryLines(
@@ -722,22 +722,22 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     );
     const currentElementHasDraftChanges = noteDirty || textDirty;
     const currentElementBlockReason = (() => {
-      const reason = getSendCurrentElementPromptToGenieBlockReason?.(currentTarget);
+      const reason = getSendCurrentElementPromptToAgentBlockReason?.(currentTarget);
       if (reason === '当前元素没有可发送给 AI 的编辑' && currentElementHasDraftChanges) {
         return undefined;
       }
       return reason;
     })();
-    const currentElementPromptAction = getGeniePromptBubbleActionState({
+    const currentElementPromptAction = getAgentPromptBubbleActionState({
       visualState: effectiveVisualState,
       sending: sendingCurrentElementPrompt,
       pageTaskRunning,
       pageTaskSessionReady,
       currentTaskRunning,
-      onSendCurrentElementPromptToGenie,
-      canWakeGenie: Boolean(onWakeGenie),
-      getGenieBridgeConnected,
-      getSendCurrentElementPromptToGenieBlockReason: () => currentElementBlockReason,
+      onSendCurrentElementPromptToAgent,
+      canWakeAgent: Boolean(onWakeAgent),
+      getAgentBridgeConnected,
+      getSendCurrentElementPromptToAgentBlockReason: () => currentElementBlockReason,
       hasReusableConversation,
     });
 
@@ -764,22 +764,22 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       };
     }, [currentTaskTerminal, dismissTerminalTaskAndSelection, promptVisible, uiMode]);
 
-    const wakeGenieForCurrentElementAction = React.useCallback(async (): Promise<boolean> => {
+    const wakeAgentForCurrentElementAction = React.useCallback(async (): Promise<boolean> => {
       if (hideExecutionControls) {
         return true;
       }
-      const connected = getGenieBridgeConnected?.();
-      if (connected !== false && genieVisualState === 'awake') {
+      const connected = getAgentBridgeConnected?.();
+      if (connected !== false && agentVisualState === 'awake') {
         return true;
       }
-      if (!onWakeGenie) {
+      if (!onWakeAgent) {
         return connected !== false;
       }
 
       try {
-        const wakeResult = await onWakeGenie();
+        const wakeResult = await onWakeAgent();
         if (wakeResult === true) {
-          onGenieVisualStateChange?.('awake');
+          onAgentVisualStateChange?.('awake');
           return true;
         }
       } catch {
@@ -787,15 +787,15 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       }
       return false;
     }, [
-      genieVisualState,
-      getGenieBridgeConnected,
+      agentVisualState,
+      getAgentBridgeConnected,
       hideExecutionControls,
-      onGenieVisualStateChange,
-      onWakeGenie,
+      onAgentVisualStateChange,
+      onWakeAgent,
     ]);
 
     const handleConfirmSendCurrentElementPrompt = React.useCallback(async () => {
-      const ready = await wakeGenieForCurrentElementAction();
+      const ready = await wakeAgentForCurrentElementAction();
       if (!ready) return;
 
       setSendingCurrentElementPrompt(true);
@@ -805,7 +805,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
           onConfirmText,
           onConfirmNote: onConfirmNoteWithSelectedSkills,
           onDismissSelection,
-          onSendCurrentElementPromptToGenie,
+          onSendCurrentElementPromptToAgent,
         });
         if (sent) {
           clearSelectedSkills();
@@ -821,9 +821,9 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       onConfirmNoteWithSelectedSkills,
       onConfirmText,
       onDismissSelection,
-      onSendCurrentElementPromptToGenie,
+      onSendCurrentElementPromptToAgent,
       selectedSkills,
-      wakeGenieForCurrentElementAction,
+      wakeAgentForCurrentElementAction,
     ]);
 
     const handlePromptKeyDown = React.useCallback(
@@ -874,18 +874,18 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     );
     const styleEditorToggleTitle = bubbleStyleEditorOpen ? '关闭样式编辑' : '打开样式编辑';
     const promptCardSendActionTitle = currentElementPromptAction.title;
-    const genieSelectionShortcutSettings = options.getCommentShortcutSettings?.();
-    const genieSelectionShortcutLabels = genieSelectionShortcutSettings?.enabled
-      ? genieSelectionShortcutSettings.shortcuts
+    const agentSelectionShortcutSettings = options.getCommentShortcutSettings?.();
+    const agentSelectionShortcutLabels = agentSelectionShortcutSettings?.enabled
+      ? agentSelectionShortcutSettings.shortcuts
         .filter((shortcut): shortcut is NonNullable<typeof shortcut> => Boolean(shortcut))
         .map((shortcut) => formatModifierShortcutLabel(shortcut))
       : [];
-    const genieSelectionShortcutHint = genieSelectionShortcutLabels.length > 0
-      ? `，长按 ${genieSelectionShortcutLabels.join(' / ')} 也可唤起`
+    const agentSelectionShortcutHint = agentSelectionShortcutLabels.length > 0
+      ? `，长按 ${agentSelectionShortcutLabels.join(' / ')} 也可唤起`
       : '';
-    const genieSelectionActionTitle = currentTaskRunning
+    const agentSelectionActionTitle = currentTaskRunning
       ? '添加到 AI 对话'
-      : `添加到 AI 对话${genieSelectionShortcutHint}`;
+      : `添加到 AI 对话${agentSelectionShortcutHint}`;
     const showContextAppendExecutionControls = !hideExecutionControls;
     const notePlaceholder = resolvePromptCardNotePlaceholder();
     const promptCardCloseActionTitle = '关闭并保存 (Cmd/Ctrl + Enter / Esc)';
@@ -941,16 +941,16 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
         </style>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {showContextAppendExecutionControls && genieAvailable ? (
+            {showContextAppendExecutionControls && agentAvailable ? (
               <IconActionButton
-                title={genieSelectionActionTitle}
-                icon={<GenieSparkleIcon />}
+                title={agentSelectionActionTitle}
+                icon={<AgentSparkleIcon />}
                 tone="dark"
                 disabled={!currentTarget || currentTaskRunning}
                 onClick={() => {
-                  triggerGeniePromptAction({
+                  triggerAgentPromptAction({
                     currentTarget: promptTarget,
-                    onSendToGenie: options.onSendToGenie,
+                    onAppendElementToAgentContext: options.onAppendElementToAgentContext,
                   });
                 }}
               />
@@ -1405,27 +1405,27 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
               ))}
             </div>
           ) : null}
-          {currentGenieTask ? (
+          {currentAgentTask ? (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '2px 4px 0', marginTop: -2 }}>
-              {currentGenieTask.status === 'completed' ? (
+              {currentAgentTask.status === 'completed' ? (
                 <CheckCircleFilled style={{ color: '#22c55e', fontSize: 13, marginTop: 3 }} />
-              ) : currentGenieTask.status === 'error' ? (
+              ) : currentAgentTask.status === 'error' ? (
                 <ExclamationCircleFilled style={{ color: '#ef4444', fontSize: 13, marginTop: 3 }} />
               ) : (
-                <div style={{ marginTop: 2 }}><GenieSparkleIcon /></div>
+                <div style={{ marginTop: 2 }}><AgentSparkleIcon /></div>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                  <span style={{ fontSize: 12, fontWeight: 500, color: currentGenieTask.status === 'error' ? '#ef4444' : EDITOR_CHROME.textPrimary }}>
-                    {currentGenieTask.status === 'pending'
+                  <span style={{ fontSize: 12, fontWeight: 500, color: currentAgentTask.status === 'error' ? '#ef4444' : EDITOR_CHROME.textPrimary }}>
+                    {currentAgentTask.status === 'pending'
                       ? 'AI 准备中'
-                      : currentGenieTask.status === 'created'
+                      : currentAgentTask.status === 'created'
                         ? 'AI 正在修改'
-                        : currentGenieTask.status === 'completed'
+                        : currentAgentTask.status === 'completed'
                           ? 'AI 修改完成'
                           : 'AI 修改失败'}
                   </span>
-                  {currentGenieTask.status === 'error' && currentTaskErrorMessage ? (
+                  {currentAgentTask.status === 'error' && currentTaskErrorMessage ? (
                     <IconActionButton
                       title="复制错误信息"
                       icon={<CopyOutlined />}
@@ -1456,7 +1456,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                     }}
                   >
                     {currentTaskDescription}
-                    {currentGenieTask.sessionId ? ` · Session ${currentGenieTask.sessionId}` : ''}
+                    {currentAgentTask.sessionId ? ` · Session ${currentAgentTask.sessionId}` : ''}
                   </span>
                 ) : null}
               </div>

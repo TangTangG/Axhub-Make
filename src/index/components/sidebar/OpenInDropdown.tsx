@@ -47,7 +47,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { toast } from 'sonner';
 import { apiService } from '../../services/api';
 import { cn } from '@/lib/utils';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 
 interface OpenInDropdownProps {
     handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
@@ -57,7 +57,7 @@ interface OpenInDropdownProps {
     targetPath?: string | null;
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     webAgentPanelOpen?: boolean;
     aiPanelMode?: 'general-ai' | 'image-ai' | null;
@@ -95,7 +95,7 @@ type LocalAppOpenOption =
 
 const WEB_AI_OPEN_OPTION = {
     label: '对话 AI',
-    webAgent: 'genie' as const,
+    webAgent: 'acp' as const,
 };
 
 const IMAGE_AI_OPEN_OPTION = {
@@ -106,11 +106,11 @@ const resolveStoredWebOpenMethod = (method: OpenMethod) => {
     if (method.type !== 'web') {
         return null;
     }
-    if (method.value === 'genie') {
-        return { agent: 'genie' as const };
+    if (method.value === 'acp') {
+        return { agent: 'acp' as const };
     }
     if (method.value === 'claude' || method.value === 'codex' || method.value === 'gemini' || method.value === 'opencode') {
-        return { agent: 'genie' as const, provider: method.value as GenieProvider };
+        return { agent: 'acp' as const, provider: method.value as AcpProvider };
     }
     return null;
 };
@@ -122,7 +122,7 @@ export default function OpenInDropdown({
     targetProjectId,
     targetPath,
     ideAvailability,
-    onOpenGenieWebAgent,
+    onOpenAcpWebAgent,
     webAgentPanelOpen,
     aiPanelMode,
     onOpenImageAiPanel,
@@ -170,7 +170,7 @@ export default function OpenInDropdown({
     const shouldUpdateDefaultOpenMethod = !buttonActive;
     const storedWebOpenMethod = resolveStoredWebOpenMethod(openMethod);
     const displayOpenMethod = buttonActive && !storedWebOpenMethod
-        ? { type: 'web' as const, value: 'genie' }
+        ? { type: 'web' as const, value: 'acp' }
         : openMethod;
 
     const getIDEIcon = (ide: MainIDE) => {
@@ -199,7 +199,7 @@ export default function OpenInDropdown({
 
     const getWebAgentIcon = (agent: WebAgent) => {
         if (agent === 'opencode') return <OpenCode size={14} />;
-        if (agent === 'genie') return <Sparkles className="h-3.5 w-3.5" />;
+        if (agent === 'acp') return <Sparkles className="h-3.5 w-3.5" />;
         return <SquareTerminal className="h-3.5 w-3.5" />;
     };
 
@@ -276,14 +276,14 @@ export default function OpenInDropdown({
         }
     };
 
-    const handleOpenWithWebAgent = async (agent: WebAgent, provider?: GenieProvider) => {
+    const handleOpenWithWebAgent = async (agent: WebAgent, provider?: AcpProvider) => {
         if (openLoading) return;
 
-        if (agent === 'genie' && onOpenGenieWebAgent) {
+        if (agent === 'acp' && onOpenAcpWebAgent) {
             void savePreference({ type: 'web', value: provider || agent }).catch(() => {});
             setOpenLoading(true);
             try {
-                await Promise.resolve(onOpenGenieWebAgent(openTargetPath, provider));
+                await Promise.resolve(onOpenAcpWebAgent(openTargetPath, provider));
             } finally {
                 setOpenLoading(false);
             }

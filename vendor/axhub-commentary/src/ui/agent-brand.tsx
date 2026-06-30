@@ -2,15 +2,15 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { LoadingOutlined } from '@ant-design/icons';
 
-export type GenieBrandState = 'awake' | 'sleeping' | 'working' | 'dragging';
-export type GenieBrandThemeMode = 'light' | 'dark';
+export type AgentBrandState = 'awake' | 'sleeping' | 'working' | 'dragging';
+export type AgentBrandThemeMode = 'light' | 'dark';
 
-export interface GenieDragVelocity {
+export interface AgentDragVelocity {
   x: number;
   y: number;
 }
 
-export interface GenieBrandPalette {
+export interface AgentBrandPalette {
   activeColor: string;
   inactiveColor: string;
   activeBackground: string;
@@ -19,22 +19,22 @@ export interface GenieBrandPalette {
   sleepingHoverShadow: string;
 }
 
-export interface GenieBrandButtonProps
+export interface AgentBrandButtonProps
   extends Omit<
     React.ButtonHTMLAttributes<HTMLButtonElement>,
     'disabled' | 'onClick' | 'title'
   > {
-  state: GenieBrandState;
+  state: AgentBrandState;
   size?: number;
   disabled?: boolean;
   loading?: boolean;
   title?: string;
-  themeMode?: GenieBrandThemeMode;
-  dragVelocity?: GenieDragVelocity;
+  themeMode?: AgentBrandThemeMode;
+  dragVelocity?: AgentDragVelocity;
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
 }
 
-export function getGenieBrandPalette(themeMode: GenieBrandThemeMode): GenieBrandPalette {
+export function getAgentBrandPalette(themeMode: AgentBrandThemeMode): AgentBrandPalette {
   return themeMode === 'dark'
     ? {
         activeColor: '#00d68f',
@@ -59,11 +59,11 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function AIFace(props: {
-  state: GenieBrandState;
-  themeMode: GenieBrandThemeMode;
+  state: AgentBrandState;
+  themeMode: AgentBrandThemeMode;
   hovered: boolean;
   mousePos: { x: number; y: number };
-  dragVelocity: GenieDragVelocity;
+  dragVelocity: AgentDragVelocity;
   size: number;
 }) {
   const { state, themeMode, hovered, mousePos, dragVelocity, size } = props;
@@ -72,7 +72,7 @@ function AIFace(props: {
   const isActive = state !== 'sleeping';
   const isWorking = state === 'working';
   const isDragging = state === 'dragging';
-  const { activeColor, inactiveColor } = getGenieBrandPalette(themeMode);
+  const { activeColor, inactiveColor } = getAgentBrandPalette(themeMode);
 
   React.useEffect(() => {
     if (!isActive) {
@@ -142,7 +142,7 @@ function AIFace(props: {
       height={iconSize}
       viewBox="0 0 24 24"
       aria-hidden="true"
-      data-genie-face-state={state}
+      data-agent-face-state={state}
       style={{
         position: 'relative',
         zIndex: 1,
@@ -401,8 +401,8 @@ function AIFace(props: {
   );
 }
 
-function SleepingZzz(props: { themeMode: GenieBrandThemeMode }) {
-  const { inactiveColor } = getGenieBrandPalette(props.themeMode);
+function SleepingZzz(props: { themeMode: AgentBrandThemeMode }) {
+  const { inactiveColor } = getAgentBrandPalette(props.themeMode);
   return (
     <div
       aria-hidden="true"
@@ -446,8 +446,8 @@ function SleepingZzz(props: { themeMode: GenieBrandThemeMode }) {
   );
 }
 
-export const GenieBrandButton = React.forwardRef<HTMLButtonElement, GenieBrandButtonProps>(
-  function GenieBrandButton(props, ref) {
+export const AgentBrandButton = React.forwardRef<HTMLButtonElement, AgentBrandButtonProps>(
+  function AgentBrandButton(props, ref) {
     const {
       state,
       size = 36,
@@ -469,7 +469,7 @@ export const GenieBrandButton = React.forwardRef<HTMLButtonElement, GenieBrandBu
     const isDark = themeMode === 'dark';
     const isActive = state !== 'sleeping';
     const isWorking = state === 'working';
-    const palette = getGenieBrandPalette(themeMode);
+    const palette = getAgentBrandPalette(themeMode);
 
     const handleMouseMove = React.useCallback(
       (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -502,7 +502,7 @@ export const GenieBrandButton = React.forwardRef<HTMLButtonElement, GenieBrandBu
         title={title}
         disabled={disabled}
         data-we-no-drag="true"
-        data-genie-state={state}
+        data-agent-state={state}
         data-theme={themeMode}
         onClick={onClick}
         onMouseEnter={(event) => {
@@ -546,7 +546,7 @@ export const GenieBrandButton = React.forwardRef<HTMLButtonElement, GenieBrandBu
         {isActive ? (
           <>
             <motion.div
-              key="genie-face-glow"
+              key="agent-face-glow"
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
@@ -562,8 +562,8 @@ export const GenieBrandButton = React.forwardRef<HTMLButtonElement, GenieBrandBu
             />
             {isWorking ? (
               <motion.div
-                key="genie-working-ring"
-                data-genie-working-ring="true"
+                key="agent-working-ring"
+                data-agent-working-ring="true"
                 initial={{ opacity: 0.8, scale: 1 }}
                 animate={{ opacity: 0, scale: 1.6 }}
                 exit={{ opacity: 0 }}
@@ -610,4 +610,4 @@ export const GenieBrandButton = React.forwardRef<HTMLButtonElement, GenieBrandBu
     );
   },
 );
-GenieBrandButton.displayName = 'GenieBrandButton';
+AgentBrandButton.displayName = 'AgentBrandButton';

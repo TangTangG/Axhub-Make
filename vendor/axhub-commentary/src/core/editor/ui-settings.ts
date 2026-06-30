@@ -1,15 +1,15 @@
 import { isMobileDevice } from '../../utils/mobile-detect';
 
-export type WebEditorGenieAgent = 'claude' | 'codex' | 'gemini' | 'opencode';
+export type WebEditorAgentProvider = 'claude' | 'codex' | 'gemini' | 'opencode';
 export type WebEditorDesignAdjustmentTool = 'figma' | 'axure' | 'pencil';
 export type WebEditorInteractionProfile = 'design' | 'text-comment';
-export type CommentaryGenieAgent = WebEditorGenieAgent;
+export type CommentaryAgentProvider = WebEditorAgentProvider;
 export type CommentaryDesignAdjustmentTool = WebEditorDesignAdjustmentTool;
 export type CommentaryInteractionProfile = WebEditorInteractionProfile;
 
 export interface WebEditorUiSettings {
-  genieAgent: WebEditorGenieAgent | null;
-  genieAwake: boolean;
+  agentProvider: WebEditorAgentProvider | null;
+  agentAwake: boolean;
   designAdjustmentTool: WebEditorDesignAdjustmentTool | null;
   styleDesignEnabled: boolean;
   darkMode: boolean;
@@ -21,8 +21,8 @@ export interface WebEditorUiSettings {
 export type CommentaryUiSettings = WebEditorUiSettings;
 
 export const DEFAULT_WEB_EDITOR_UI_SETTINGS: WebEditorUiSettings = {
-  genieAgent: null,
-  genieAwake: false,
+  agentProvider: null,
+  agentAwake: false,
   designAdjustmentTool: null,
   styleDesignEnabled: true,
   darkMode: false,
@@ -30,7 +30,7 @@ export const DEFAULT_WEB_EDITOR_UI_SETTINGS: WebEditorUiSettings = {
   pageZoomEnabled: false,
 };
 
-const GENIE_AGENT_SET: ReadonlySet<WebEditorGenieAgent> = new Set([
+const AGENT_PROVIDER_SET: ReadonlySet<WebEditorAgentProvider> = new Set([
   'claude',
   'codex',
   'gemini',
@@ -53,14 +53,14 @@ export function sanitizeWebEditorUiSettings(value: unknown): WebEditorUiSettings
   }
 
   const record = value as Partial<Record<keyof WebEditorUiSettings, unknown>>;
-  const genieAgent = normalizeString(record.genieAgent);
+  const agentProvider = normalizeString(record.agentProvider);
   const designAdjustmentTool = normalizeString(record.designAdjustmentTool);
 
   return {
-    genieAgent: GENIE_AGENT_SET.has(genieAgent as WebEditorGenieAgent)
-      ? (genieAgent as WebEditorGenieAgent)
+    agentProvider: AGENT_PROVIDER_SET.has(agentProvider as WebEditorAgentProvider)
+      ? (agentProvider as WebEditorAgentProvider)
       : null,
-    genieAwake: Boolean(record.genieAwake),
+    agentAwake: Boolean(record.agentAwake),
     designAdjustmentTool: DESIGN_ADJUSTMENT_TOOL_SET.has(
       designAdjustmentTool as WebEditorDesignAdjustmentTool,
     )

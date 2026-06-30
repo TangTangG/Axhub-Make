@@ -3,7 +3,7 @@ export async function executePromptCardCurrentElementAction(options: {
   onConfirmText: () => Promise<void>;
   onConfirmNote: () => Promise<void>;
   onDismissSelection?: () => void;
-  onSendCurrentElementPromptToGenie?: ((
+  onSendCurrentElementPromptToAgent?: ((
     element: Element,
   ) => void | Promise<void>) | undefined;
 }): Promise<boolean> {
@@ -12,16 +12,16 @@ export async function executePromptCardCurrentElementAction(options: {
     onConfirmText,
     onConfirmNote,
     onDismissSelection,
-    onSendCurrentElementPromptToGenie,
+    onSendCurrentElementPromptToAgent,
   } = options;
 
-  if (!currentTarget || !onSendCurrentElementPromptToGenie) {
+  if (!currentTarget || !onSendCurrentElementPromptToAgent) {
     return false;
   }
 
   await onConfirmText();
   await onConfirmNote();
-  const sendPromise = Promise.resolve(onSendCurrentElementPromptToGenie(currentTarget));
+  const sendPromise = Promise.resolve(onSendCurrentElementPromptToAgent(currentTarget));
   onDismissSelection?.();
   await sendPromise;
   return true;

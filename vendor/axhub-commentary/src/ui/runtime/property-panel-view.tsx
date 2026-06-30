@@ -33,7 +33,7 @@ import {
 } from 'antd';
 import type { MenuProps } from 'antd';
 import { setPageZoomEnabled } from '../../utils/page-zoom-toggle';
-import { GenieBrandButton } from '../genie-brand';
+import { AgentBrandButton } from '../agent-brand';
 import {
   installFloatingDrag,
   type FloatingDragMetrics,
@@ -53,15 +53,15 @@ import {
   sanitizeCommentShortcutSettings,
   type CommentShortcutSettings,
 } from '../../core/editor/comment-shortcut-settings';
-import { getGeniePromptToolbarActionState } from '../genie-prompt-action';
+import { getAgentPromptToolbarActionState } from '../agent-prompt-action';
 import { resolveExternalEditingStatusDescription } from './external-editing-status-hint';
 import {
   CloseToolIcon,
-  GenieSparkleIcon,
-  GenieToolbarIconButton,
-  GenieToolbarShell,
+  AgentSparkleIcon,
+  AgentToolbarIconButton,
+  AgentToolbarShell,
 } from './action-buttons';
-import { deriveGenieUiState } from './genie-ui-state';
+import { deriveAgentUiState } from './agent-ui-state';
 import { ShortcutCaptureCard, shortcutCaptureHintStyle } from './shortcut-capture-card';
 import { notifyRuntimeMessage } from './runtime-feedback';
 import {
@@ -82,7 +82,7 @@ import {
   COMPACT_TOOLBAR_WIDTH,
   EDITOR_CHROME,
   FLOATING_CLAMP_MARGIN,
-  GENIE_BRAND_BUTTON_SIZE,
+  AGENT_BRAND_BUTTON_SIZE,
   HEADER_CONTROL_SIZE,
   HEADER_HORIZONTAL_PADDING,
   HEADER_VERTICAL_PADDING,
@@ -98,18 +98,18 @@ import type {
   CommentaryHostToolbarState,
 } from '../../web-editor-types';
 
-const GENIE_WAKE_FAILURE_MESSAGE = 'AI 唤醒失败，请在终端执行 npx @axhub/genie@latest，再重试';
-const GENIE_WAKE_TIMEOUT_MS = 12000;
-const GENIE_INTERRUPT_TIMEOUT_MS = 12000;
+const AGENT_WAKE_FAILURE_MESSAGE = 'AI 唤醒失败，请在终端执行 npx @axhub/genie@latest，再重试';
+const AGENT_WAKE_TIMEOUT_MS = 12000;
+const AGENT_INTERRUPT_TIMEOUT_MS = 12000;
 const EXPLORE_OPTIONS_SKILL_PATH = '.agents/skills/explore-options/SKILL.md';
 const CLAUDE_EXPLORE_OPTIONS_SKILL_PATH = '.claude/skills/explore-options/SKILL.md';
-const GENIE_MENU_AGENT_OPTIONS = [
+const AGENT_MENU_OPTIONS = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
   { value: 'gemini', label: 'Gemini' },
   { value: 'opencode', label: 'OpenCode' },
 ] as const;
-const GENIE_AGENT_DEFAULT_MENU_KEY = 'genie-agent:default';
+const AGENT_DEFAULT_MENU_KEY = 'agent-provider:default';
 const PROPERTY_PANEL_HELP_TOOLTIP =
   '可以直接把需求发给你正在用的 IDE 或本地 agent，也可以先在页面上批注，让它帮你生成或整理设计决策。';
 const SELECTION_MODE_TOGGLE_SHORTCUT_LABEL = 'Ctrl / Cmd + S';
@@ -215,12 +215,12 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
           inlineTextEditing = false,
           uiSettings: propUiSettings,
           interactionProfile,
-          genieVisualState,
-          genieProviderAvailabilities,
+          agentVisualState,
+          agentProviderAvailabilities,
           onPropertyPanelOpenChange,
-          onGenieVisualStateChange,
+          onAgentVisualStateChange,
           onUiSettingsChange,
-          onRefreshGenieProviderAvailabilities,
+          onRefreshAgentProviderAvailabilities,
           onHoverSelectionSuppressedChange,
           onSelectionInteractionLockChange,
           onUiModeChange,
@@ -278,10 +278,10 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       Math.max(0, options.getModifiedElementCount?.() ?? 0),
     );
     const [actionBusy, setActionBusy] = React.useState(false);
-    const [geniePromptSending, setGeniePromptSending] = React.useState(false);
-    const [geniePromptInterrupting, setGeniePromptInterrupting] = React.useState(false);
-    const [genieWakeChecking, setGenieWakeChecking] = React.useState(false);
-    const [genieMenuOpen, setGenieMenuOpen] = React.useState(false);
+    const [agentPromptSending, setAgentPromptSending] = React.useState(false);
+    const [agentPromptInterrupting, setAgentPromptInterrupting] = React.useState(false);
+    const [agentWakeChecking, setAgentWakeChecking] = React.useState(false);
+    const [agentMenuOpen, setAgentMenuOpen] = React.useState(false);
     const [sessionActivityCardOpen, setSessionActivityCardOpen] = React.useState(false);
     const [sessionActivities, setSessionActivities] = React.useState<SessionActivityItem[]>([]);
     const [toolbarPosition, setToolbarPosition] = React.useState<FloatingPosition | null>(null);
@@ -305,23 +305,23 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     const [capturingShortcutIndex, setCapturingShortcutIndex] = React.useState<number | null>(null);
     const [panelRefreshKey, setPanelRefreshKey] = React.useState(0);
     const [tweakRevision, setTweakRevision] = React.useState(0);
-    const [geniePromptSendingElementKey, setGeniePromptSendingElementKey] = React.useState<
+    const [agentPromptSendingElementKey, setAgentPromptSendingElementKey] = React.useState<
       string | null
     >(null);
     const [settingsPopoverOpen, setSettingsPopoverOpen] = React.useState(false);
     const [keyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = React.useState(false);
     const [annotationToolbarTick, setAnnotationToolbarTick] = React.useState(0);
-    const [genieProviderRefreshPending, setGenieProviderRefreshPending] = React.useState(false);
+    const [agentProviderRefreshPending, setAgentProviderRefreshPending] = React.useState(false);
     const uiSettings = React.useMemo(
       () => options.getUiSettings?.() ?? propUiSettings,
       [options, panelRefreshKey, propUiSettings],
     );
-    const genieProviderAvailabilityMap = React.useMemo(
+    const agentProviderAvailabilityMap = React.useMemo(
       () =>
         new Map(
-          genieProviderAvailabilities.map((item) => [item.provider, item] as const),
+          agentProviderAvailabilities.map((item) => [item.provider, item] as const),
         ),
-      [genieProviderAvailabilities],
+      [agentProviderAvailabilities],
     );
     React.useEffect(() => {
       inlineTextEditingRef.current = inlineTextEditing;
@@ -349,7 +349,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     );
     const hasPageTweakEntries = pageTweakEntries.length > 0;
     const {
-      currentTask: currentGenieTask,
+      currentTask: currentAgentTask,
       currentTaskRunning,
       currentTaskSessionReady,
       currentTaskTerminal,
@@ -357,52 +357,52 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       pageTaskSessionReady,
       hasReusableConversation,
       effectiveVisualState,
-    } = deriveGenieUiState({
+    } = deriveAgentUiState({
       currentTarget,
-      visualState: uiSettings.genieAwake ? 'awake' : genieVisualState,
-      getElementGenieTaskState: options.getElementGenieTaskState,
-      getVisibleElementGenieTaskStates: options.getVisibleElementGenieTaskStates,
-      getHasReusableGenieConversation: options.getHasReusableGenieConversation,
-      getGenieBridgeConnected: options.getGenieBridgeConnected,
+      visualState: uiSettings.agentAwake ? 'awake' : agentVisualState,
+      getElementAgentTaskState: options.getElementAgentTaskState,
+      getVisibleElementAgentTaskStates: options.getVisibleElementAgentTaskStates,
+      getHasReusableAgentConversation: options.getHasReusableAgentConversation,
+      getAgentBridgeConnected: options.getAgentBridgeConnected,
     });
-    const visibleExecutionTerminalTaskCount = (options.getVisibleElementGenieTaskStates?.() ?? []).filter(
+    const visibleExecutionTerminalTaskCount = (options.getVisibleElementAgentTaskStates?.() ?? []).filter(
       (task) => task.status === 'completed' || task.status === 'error',
     ).length;
     const visibleTerminalTaskCount = hideExecutionControls ? 0 : visibleExecutionTerminalTaskCount;
-    const currentGenieConversation = options.getCurrentGenieConversationState?.() ?? null;
+    const currentAgentConversation = options.getCurrentAgentConversationState?.() ?? null;
     const sessionActivityTarget = React.useMemo(
       () =>
         resolveSessionActivityTarget({
-          requestId: currentGenieTask?.requestId ?? null,
-          sessionId: currentGenieTask?.sessionId ?? null,
-          provider: currentGenieTask?.provider ?? null,
-          conversationSessionId: currentGenieConversation?.sessionId ?? null,
-          conversationProvider: currentGenieConversation?.provider ?? null,
+          requestId: currentAgentTask?.requestId ?? null,
+          sessionId: currentAgentTask?.sessionId ?? null,
+          provider: currentAgentTask?.provider ?? null,
+          conversationSessionId: currentAgentConversation?.sessionId ?? null,
+          conversationProvider: currentAgentConversation?.provider ?? null,
         }),
       [
-        currentGenieConversation?.provider,
-        currentGenieConversation?.sessionId,
-        currentGenieTask?.provider,
-        currentGenieTask?.requestId,
-        currentGenieTask?.sessionId,
+        currentAgentConversation?.provider,
+        currentAgentConversation?.sessionId,
+        currentAgentTask?.provider,
+        currentAgentTask?.requestId,
+        currentAgentTask?.sessionId,
       ],
     );
     const activeTaskCanInterrupt = Boolean(
-      options.getCanAbortSendPromptToGenie?.(currentTarget),
+      options.getCanAbortAgentPrompt?.(currentTarget),
     );
     const currentTaskIsSending = Boolean(
-      geniePromptSending &&
-        currentGenieTask &&
-        geniePromptSendingElementKey &&
-        currentGenieTask.elementKey === geniePromptSendingElementKey,
+      agentPromptSending &&
+        currentAgentTask &&
+        agentPromptSendingElementKey &&
+        currentAgentTask.elementKey === agentPromptSendingElementKey,
     );
     React.useEffect(() => {
-      if (!geniePromptSending) return;
+      if (!agentPromptSending) return;
       if (currentTaskRunning && hasReusableConversation) {
-        setGeniePromptSending(false);
-        setGeniePromptSendingElementKey(null);
+        setAgentPromptSending(false);
+        setAgentPromptSendingElementKey(null);
       }
-    }, [currentTaskRunning, geniePromptSending, hasReusableConversation]);
+    }, [currentTaskRunning, agentPromptSending, hasReusableConversation]);
 
     React.useEffect(() => {
       if (!sessionActivityCardOpen) {
@@ -421,18 +421,18 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     }, [options, sessionActivityCardOpen, sessionActivityTarget]);
 
     React.useEffect(() => {
-      if (!genieMenuOpen || typeof document === 'undefined') {
+      if (!agentMenuOpen || typeof document === 'undefined') {
         return;
       }
 
       const handleDocumentPointerDown = (event: PointerEvent) => {
         const target = event.target;
         if (!(target instanceof Element)) {
-          setGenieMenuOpen(false);
+          setAgentMenuOpen(false);
           return;
         }
 
-        if (target.closest('.we-runtime-genie-menu-dropdown')) {
+        if (target.closest('.we-runtime-agent-menu-dropdown')) {
           return;
         }
 
@@ -440,14 +440,14 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
           return;
         }
 
-        setGenieMenuOpen(false);
+        setAgentMenuOpen(false);
       };
 
       document.addEventListener('pointerdown', handleDocumentPointerDown, true);
       return () => {
         document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
       };
-    }, [genieMenuOpen]);
+    }, [agentMenuOpen]);
 
     const visibleSessionActivities = React.useMemo(
       () => limitVisibleSessionActivities(sessionActivities),
@@ -608,75 +608,75 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       [syncPanelMetaState],
     );
 
-    const genieAwake = effectiveVisualState === 'awake';
+    const agentAwake = effectiveVisualState === 'awake';
 
-    const wakeGenieForAction = React.useCallback(async (): Promise<boolean> => {
-      if (genieWakeChecking) {
+    const wakeAgentForAction = React.useCallback(async (): Promise<boolean> => {
+      if (agentWakeChecking) {
         return false;
       }
 
-      if (genieAwake && options.getGenieBridgeConnected?.() !== false) {
+      if (agentAwake && options.getAgentBridgeConnected?.() !== false) {
         return true;
       }
 
-      if (!options.onWakeGenie) {
-        return options.getGenieBridgeConnected?.() !== false;
+      if (!options.onWakeAgent) {
+        return options.getAgentBridgeConnected?.() !== false;
       }
 
-      setGenieWakeChecking(true);
+      setAgentWakeChecking(true);
       const createWakeTimeout = () =>
         new Promise<false>((resolve) => {
-          window.setTimeout(() => resolve(false), GENIE_WAKE_TIMEOUT_MS);
+          window.setTimeout(() => resolve(false), AGENT_WAKE_TIMEOUT_MS);
         });
       try {
-        const wakeResult = await Promise.race([options.onWakeGenie(), createWakeTimeout()]);
+        const wakeResult = await Promise.race([options.onWakeAgent(), createWakeTimeout()]);
         if (wakeResult !== true) {
-          notifyRuntimeMessage('warning', GENIE_WAKE_FAILURE_MESSAGE);
+          notifyRuntimeMessage('warning', AGENT_WAKE_FAILURE_MESSAGE);
           return false;
         }
-        onGenieVisualStateChange('awake');
+        onAgentVisualStateChange('awake');
         return true;
       } catch {
-        notifyRuntimeMessage('warning', GENIE_WAKE_FAILURE_MESSAGE);
+        notifyRuntimeMessage('warning', AGENT_WAKE_FAILURE_MESSAGE);
         return false;
       } finally {
-        setGenieWakeChecking(false);
+        setAgentWakeChecking(false);
       }
-    }, [genieAwake, genieWakeChecking, onGenieVisualStateChange, options]);
+    }, [agentAwake, agentWakeChecking, onAgentVisualStateChange, options]);
 
-    const handleConfirmSendPromptToGenie = React.useCallback(async () => {
-      if (!options.onSendPromptToGenie) return;
-      const ready = await wakeGenieForAction();
+    const handleConfirmSendPromptToAgent = React.useCallback(async () => {
+      if (!options.onSendPromptToAgent) return;
+      const ready = await wakeAgentForAction();
       if (!ready) return;
 
-      setGeniePromptSending(true);
-      setGeniePromptSendingElementKey(currentGenieTask?.elementKey ?? null);
-      setGeniePromptInterrupting(false);
+      setAgentPromptSending(true);
+      setAgentPromptSendingElementKey(currentAgentTask?.elementKey ?? null);
+      setAgentPromptInterrupting(false);
       try {
-        await options.onSendPromptToGenie(currentTarget);
+        await options.onSendPromptToAgent(currentTarget);
       } catch {
         // The bridge already surfaces user-facing feedback.
       } finally {
-        setGeniePromptSending(false);
-        setGeniePromptInterrupting(false);
-        setGeniePromptSendingElementKey(null);
+        setAgentPromptSending(false);
+        setAgentPromptInterrupting(false);
+        setAgentPromptSendingElementKey(null);
         syncPanelMetaState();
       }
-    }, [currentGenieTask?.elementKey, currentTarget, options, syncPanelMetaState, wakeGenieForAction]);
+    }, [currentAgentTask?.elementKey, currentTarget, options, syncPanelMetaState, wakeAgentForAction]);
 
-    const handleInterruptSendPromptToGenie = React.useCallback(async () => {
-      if (!options.onAbortSendPromptToGenie) return;
-      setGeniePromptInterrupting(true);
+    const handleInterruptSendPromptToAgent = React.useCallback(async () => {
+      if (!options.onAbortAgentPrompt) return;
+      setAgentPromptInterrupting(true);
       const createInterruptTimeout = () =>
         new Promise<void>((resolve) => {
-          window.setTimeout(() => resolve(), GENIE_INTERRUPT_TIMEOUT_MS);
+          window.setTimeout(() => resolve(), AGENT_INTERRUPT_TIMEOUT_MS);
         });
       try {
-        await Promise.race([options.onAbortSendPromptToGenie(currentTarget), createInterruptTimeout()]);
+        await Promise.race([options.onAbortAgentPrompt(currentTarget), createInterruptTimeout()]);
       } catch {
         // The bridge already surfaces user-facing feedback.
       } finally {
-        setGeniePromptInterrupting(false);
+        setAgentPromptInterrupting(false);
       }
     }, [currentTarget, options]);
 
@@ -710,15 +710,15 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     const previousPageZoomActiveRef = React.useRef(pageZoomActive);
     const themeMode = uiSettings.darkMode ? 'dark' : 'light';
 
-    const handleGenieBrandClick = React.useCallback(async () => {
-      await wakeGenieForAction();
-    }, [wakeGenieForAction]);
+    const handleAgentBrandClick = React.useCallback(async () => {
+      await wakeAgentForAction();
+    }, [wakeAgentForAction]);
 
     React.useEffect(() => {
-      if (!genieAwake) {
-        setGenieMenuOpen(false);
+      if (!agentAwake) {
+        setAgentMenuOpen(false);
       }
-    }, [genieAwake]);
+    }, [agentAwake]);
 
     const handleShortcutDraftChange = React.useCallback(
       (updater: (prev: CommentShortcutSettings) => CommentShortcutSettings) => {
@@ -1081,39 +1081,39 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
 
     const copyReason = options.getCopyPromptBlockReason?.();
     const copyBlocked = !options.onCopyPrompt || !!copyReason;
-    const geniePromptToolbarAction = getGeniePromptToolbarActionState({
+    const agentPromptToolbarAction = getAgentPromptToolbarActionState({
       toolMinimized,
       visualState: effectiveVisualState,
-      waking: genieWakeChecking,
+      waking: agentWakeChecking,
       sending: currentTaskIsSending,
-      interrupting: geniePromptInterrupting,
+      interrupting: agentPromptInterrupting,
       hasReusableConversation,
       pageTaskRunning,
       pageTaskSessionReady,
       currentTaskRunning,
       currentTaskSessionReady,
       canInterrupt: activeTaskCanInterrupt,
-      canWakeGenie: Boolean(options.onWakeGenie),
-      onSendPromptToGenie: options.onSendPromptToGenie,
-      getGenieBridgeConnected: options.getGenieBridgeConnected,
-      getSendPromptToGenieBlockReason: () =>
-        options.getSendPromptToGenieBlockReason?.(currentTarget),
+      canWakeAgent: Boolean(options.onWakeAgent),
+      onSendPromptToAgent: options.onSendPromptToAgent,
+      getAgentBridgeConnected: options.getAgentBridgeConnected,
+      getSendPromptToAgentBlockReason: () =>
+        options.getSendPromptToAgentBlockReason?.(currentTarget),
     });
-    const geniePromptCanInterrupt = activeTaskCanInterrupt;
-    const genieShellAwake =
-      geniePromptToolbarAction.robotState === 'awake' ||
-      geniePromptToolbarAction.robotState === 'working';
-    const genieBrandState =
-      toolbarDragging && genieShellAwake
+    const agentPromptCanInterrupt = activeTaskCanInterrupt;
+    const agentShellAwake =
+      agentPromptToolbarAction.robotState === 'awake' ||
+      agentPromptToolbarAction.robotState === 'working';
+    const agentBrandState =
+      toolbarDragging && agentShellAwake
         ? 'dragging'
-        : geniePromptToolbarAction.robotState === 'waking'
+        : agentPromptToolbarAction.robotState === 'waking'
           ? effectiveVisualState
-          : geniePromptToolbarAction.robotState;
+          : agentPromptToolbarAction.robotState;
     const currentTaskSessionHref =
-      currentGenieTask?.sessionUrl ??
-      (currentGenieTask?.sessionId ? `/session/${currentGenieTask.sessionId}` : '');
+      currentAgentTask?.sessionUrl ??
+      (currentAgentTask?.sessionId ? `/session/${currentAgentTask.sessionId}` : '');
     const currentTaskDescription = resolveExternalEditingStatusDescription(
-      currentGenieTask,
+      currentAgentTask,
       options.externalEditingStatusDescription,
     );
     const handleOpenCurrentTaskSession = React.useCallback(() => {
@@ -1121,10 +1121,10 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       window.open(currentTaskSessionHref, '_blank', 'noopener,noreferrer');
     }, [currentTaskSessionHref]);
     const handleDismissCurrentTaskState = React.useCallback(() => {
-      if (!currentTarget || !options.dismissElementGenieTaskState) return;
-      options.dismissElementGenieTaskState(currentTarget);
+      if (!currentTarget || !options.dismissElementAgentTaskState) return;
+      options.dismissElementAgentTaskState(currentTarget);
     }, [currentTarget, options]);
-    const genieTaskStatusCard = currentGenieTask ? (
+    const agentTaskStatusCard = currentAgentTask ? (
       <div
         style={{
           display: 'flex',
@@ -1133,34 +1133,34 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
           padding: '12px 14px',
           borderRadius: 18,
           border:
-            currentGenieTask.status === 'error'
+            currentAgentTask.status === 'error'
               ? '1px solid rgba(239, 68, 68, 0.24)'
-              : currentGenieTask.status === 'completed'
+              : currentAgentTask.status === 'completed'
                 ? '1px solid rgba(34, 197, 94, 0.24)'
                 : '1px solid rgba(0, 143, 93, 0.22)',
           background:
-            currentGenieTask.status === 'error'
+            currentAgentTask.status === 'error'
               ? 'rgba(127, 29, 29, 0.14)'
-              : currentGenieTask.status === 'completed'
+              : currentAgentTask.status === 'completed'
                 ? 'rgba(20, 83, 45, 0.14)'
                 : 'rgba(0, 143, 93, 0.08)',
           boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.03)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {currentGenieTask.status === 'completed' ? (
+          {currentAgentTask.status === 'completed' ? (
             <CheckCircleFilled style={{ color: '#22c55e' }} />
-          ) : currentGenieTask.status === 'error' ? (
+          ) : currentAgentTask.status === 'error' ? (
             <ExclamationCircleFilled style={{ color: '#ef4444' }} />
           ) : (
-            <GenieSparkleIcon />
+            <AgentSparkleIcon />
           )}
           <span style={{ fontSize: 12, fontWeight: 700, color: EDITOR_CHROME.textPrimary }}>
-            {currentGenieTask.status === 'pending'
+            {currentAgentTask.status === 'pending'
               ? 'AI 准备中'
-              : currentGenieTask.status === 'created'
+              : currentAgentTask.status === 'created'
                 ? 'AI 正在修改'
-                : currentGenieTask.status === 'completed'
+                : currentAgentTask.status === 'completed'
                   ? 'AI 修改完成'
                   : 'AI 修改失败'}
           </span>
@@ -1176,7 +1176,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
           }}
         >
           {currentTaskDescription}
-          {currentGenieTask.sessionId ? ` · Session ${currentGenieTask.sessionId}` : ''}
+          {currentAgentTask.sessionId ? ` · Session ${currentAgentTask.sessionId}` : ''}
         </span>
         <Space size={8} wrap>
           {!hideExecutionControls && currentTaskRunning ? (
@@ -1184,22 +1184,22 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
               size="small"
               danger
               icon={<StopOutlined />}
-              disabled={!geniePromptCanInterrupt || geniePromptInterrupting}
-              loading={geniePromptInterrupting}
+              disabled={!agentPromptCanInterrupt || agentPromptInterrupting}
+              loading={agentPromptInterrupting}
               onClick={() => {
-                void handleInterruptSendPromptToGenie();
+                void handleInterruptSendPromptToAgent();
               }}
             >
               中断
             </Button>
           ) : null}
-          {!hideExecutionControls && currentGenieTask.status === 'error' ? (
+          {!hideExecutionControls && currentAgentTask.status === 'error' ? (
             <Button
               size="small"
               icon={<ReloadOutlined />}
-              disabled={geniePromptToolbarAction.sendDisabled || actionBusy}
+              disabled={agentPromptToolbarAction.sendDisabled || actionBusy}
               onClick={() => {
-                void handleConfirmSendPromptToGenie();
+                void handleConfirmSendPromptToAgent();
               }}
             >
               重试
@@ -1329,11 +1329,11 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
 
     const showCopyPromptAction = options.showCopyPromptAction !== false;
     const copyToolbarButton =
-      showCopyPromptAction && !genieShellAwake ? (
-        <GenieToolbarIconButton
+      showCopyPromptAction && !agentShellAwake ? (
+        <AgentToolbarIconButton
           title={copyReason ?? '复制 Prompt'}
           icon={<CopyOutlined />}
-          awake={genieShellAwake}
+          awake={agentShellAwake}
           disabled={actionBusy || copyBlocked}
           onClick={() => {
             void runAction(options.onCopyPrompt);
@@ -1341,8 +1341,8 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         />
       ) : null;
     const copyPromptVisible = Boolean(copyToolbarButton);
-    const inlineSendVisible = !hideExecutionControls && geniePromptToolbarAction.sendVisible;
-    const hostSendVisible = geniePromptToolbarAction.sendVisible;
+    const inlineSendVisible = !hideExecutionControls && agentPromptToolbarAction.sendVisible;
+    const hostSendVisible = agentPromptToolbarAction.sendVisible;
 
     const sessionActivityCardContent = (
       <div
@@ -1370,10 +1370,10 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
               size="small"
               danger
               icon={<StopOutlined />}
-              disabled={!geniePromptCanInterrupt || geniePromptInterrupting}
-              loading={geniePromptInterrupting}
+              disabled={!agentPromptCanInterrupt || agentPromptInterrupting}
+              loading={agentPromptInterrupting}
               onClick={() => {
-                void handleInterruptSendPromptToGenie();
+                void handleInterruptSendPromptToAgent();
               }}
             >
               停止执行
@@ -1433,7 +1433,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     // session-activity subscription optimisation is complete.
     // The sessionActivityCardContent and subscription logic above are
     // intentionally kept for future re-enablement.
-    const geniePrimaryMenuLabel = geniePromptToolbarAction.sendTitle.includes('追加')
+    const agentPrimaryMenuLabel = agentPromptToolbarAction.sendTitle.includes('追加')
       ? '追加'
       : '快速执行';
     const clearAllEditsDisabled =
@@ -1443,10 +1443,10 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       modifiedCount + visibleTerminalTaskCount <= 0 ||
       !options.onClearEdits;
     const clearAllEditsToolbarButton = clearAllEditsDisabled ? (
-      <GenieToolbarIconButton
+      <AgentToolbarIconButton
         title="清空全部编辑"
         icon={<DeleteOutlined />}
-        awake={genieShellAwake}
+        awake={agentShellAwake}
         disabled
       />
     ) : (
@@ -1461,30 +1461,30 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         onConfirm={() => runAction(() => options.onClearEdits?.({ skipConfirm: true }))}
       >
         <span style={{ display: 'inline-flex' }}>
-          <GenieToolbarIconButton
+          <AgentToolbarIconButton
             title="清空全部编辑"
             icon={<DeleteOutlined />}
-            awake={genieShellAwake}
+            awake={agentShellAwake}
           />
         </span>
       </Popconfirm>
     );
 
-    const genieSendToolbarButton = inlineSendVisible ? (
-      <GenieToolbarIconButton
+    const agentSendToolbarButton = inlineSendVisible ? (
+      <AgentToolbarIconButton
         title={
-          geniePromptToolbarAction.sendDisabled
-            ? geniePromptToolbarAction.sendTitle
-            : geniePrimaryMenuLabel
+          agentPromptToolbarAction.sendDisabled
+            ? agentPromptToolbarAction.sendTitle
+            : agentPrimaryMenuLabel
         }
-        ariaLabel={geniePrimaryMenuLabel}
+        ariaLabel={agentPrimaryMenuLabel}
         icon={<CaretRightFilled />}
-        awake={genieShellAwake}
-        active={!geniePromptToolbarAction.sendDisabled}
-        disabled={geniePromptToolbarAction.sendDisabled || actionBusy}
-        loading={geniePromptToolbarAction.sendLoading}
+        awake={agentShellAwake}
+        active={!agentPromptToolbarAction.sendDisabled}
+        disabled={agentPromptToolbarAction.sendDisabled || actionBusy}
+        loading={agentPromptToolbarAction.sendLoading}
         onClick={() => {
-          void handleConfirmSendPromptToGenie();
+          void handleConfirmSendPromptToAgent();
         }}
       />
     ) : null;
@@ -1521,90 +1521,90 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       }
     }, []);
 
-    const handleRefreshGenieProviders = React.useCallback(async () => {
-      if (!onRefreshGenieProviderAvailabilities) return;
-      setGenieProviderRefreshPending(true);
+    const handleRefreshAgentProviders = React.useCallback(async () => {
+      if (!onRefreshAgentProviderAvailabilities) return;
+      setAgentProviderRefreshPending(true);
       try {
-        await onRefreshGenieProviderAvailabilities(
-          GENIE_MENU_AGENT_OPTIONS.map((item) => item.value),
+        await onRefreshAgentProviderAvailabilities(
+          AGENT_MENU_OPTIONS.map((item) => item.value),
         );
       } finally {
-        setGenieProviderRefreshPending(false);
+        setAgentProviderRefreshPending(false);
       }
-    }, [onRefreshGenieProviderAvailabilities]);
+    }, [onRefreshAgentProviderAvailabilities]);
 
-    const genieAgentMenuItems: NonNullable<MenuProps['items']> = GENIE_MENU_AGENT_OPTIONS.map((item) => {
-      const availability = genieProviderAvailabilityMap.get(item.value) ?? null;
+    const agentProviderMenuItems: NonNullable<MenuProps['items']> = AGENT_MENU_OPTIONS.map((item) => {
+      const availability = agentProviderAvailabilityMap.get(item.value) ?? null;
       const agentInstalled = availability?.installed !== false;
       return {
-        key: `genie-agent:${item.value}`,
+        key: `agent-provider:${item.value}`,
         label: `${item.label}${agentInstalled ? '' : '（未安装）'}`,
         disabled: !agentInstalled,
       };
     });
-    const selectedGenieAgentMenuKey = uiSettings.genieAgent
-      ? `genie-agent:${uiSettings.genieAgent}`
-      : GENIE_AGENT_DEFAULT_MENU_KEY;
+    const selectedAgentMenuKey = uiSettings.agentProvider
+      ? `agent-provider:${uiSettings.agentProvider}`
+      : AGENT_DEFAULT_MENU_KEY;
 
-    const genieExecutionMenuItems: NonNullable<MenuProps['items']> = hideExecutionControls ? [] : [
+    const agentExecutionMenuItems: NonNullable<MenuProps['items']> = hideExecutionControls ? [] : [
       {
-        key: 'genie-agent-submenu',
+        key: 'agent-provider-submenu',
         label: '执行 Agent',
-        popupClassName: 'we-runtime-genie-menu-submenu-popup',
+        popupClassName: 'we-runtime-agent-menu-submenu-popup',
         children: [
           {
-            key: GENIE_AGENT_DEFAULT_MENU_KEY,
+            key: AGENT_DEFAULT_MENU_KEY,
             label: '默认',
           },
-          ...genieAgentMenuItems,
+          ...agentProviderMenuItems,
         ],
       },
     ];
 
-    const genieMenuItems: MenuProps['items'] = [
-      ...genieExecutionMenuItems,
+    const agentMenuItems: MenuProps['items'] = [
+      ...agentExecutionMenuItems,
       {
-        key: 'close-genie-service',
+        key: 'disconnect-agent-service',
         label: '断开链接',
         icon: <CloseOutlined />,
-        disabled: actionBusy || genieProviderRefreshPending,
+        disabled: actionBusy || agentProviderRefreshPending,
       },
       {
         key: 'stop-work',
         label: '停止工作',
         icon: <StopOutlined />,
-        disabled: geniePromptToolbarAction.interruptDisabled || genieProviderRefreshPending,
+        disabled: agentPromptToolbarAction.interruptDisabled || agentProviderRefreshPending,
       },
       {
         key: 'copy-skill',
         label: '技能说明',
         icon: <CopyOutlined />,
-        disabled: actionBusy || genieProviderRefreshPending,
+        disabled: actionBusy || agentProviderRefreshPending,
       },
     ];
-    const handleGenieMenuClick = React.useCallback<NonNullable<MenuProps['onClick']>>(
+    const handleAgentMenuClick = React.useCallback<NonNullable<MenuProps['onClick']>>(
       ({ key }) => {
-        if (key === GENIE_AGENT_DEFAULT_MENU_KEY) {
-          onUiSettingsChange({ ...uiSettings, genieAgent: null });
+        if (key === AGENT_DEFAULT_MENU_KEY) {
+          onUiSettingsChange({ ...uiSettings, agentProvider: null });
           return;
         }
-        if (String(key).startsWith('genie-agent:')) {
-          const nextAgent = String(key).replace('genie-agent:', '').trim();
-          if (nextAgent && nextAgent !== uiSettings.genieAgent) {
-            onUiSettingsChange({ ...uiSettings, genieAgent: nextAgent as typeof uiSettings.genieAgent });
+        if (String(key).startsWith('agent-provider:')) {
+          const nextAgent = String(key).replace('agent-provider:', '').trim();
+          if (nextAgent && nextAgent !== uiSettings.agentProvider) {
+            onUiSettingsChange({ ...uiSettings, agentProvider: nextAgent as typeof uiSettings.agentProvider });
           }
           return;
         }
-        setGenieMenuOpen(false);
+        setAgentMenuOpen(false);
         switch (key) {
           case 'copy-skill':
             void handleCopySkillInstallPrompt();
             return;
-          case 'close-genie-service':
-            onGenieVisualStateChange('sleeping');
+          case 'disconnect-agent-service':
+            onAgentVisualStateChange('sleeping');
             return;
           case 'stop-work':
-            void handleInterruptSendPromptToGenie();
+            void handleInterruptSendPromptToAgent();
             return;
           default:
             return;
@@ -1612,8 +1612,8 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       },
       [
         handleCopySkillInstallPrompt,
-        handleInterruptSendPromptToGenie,
-        onGenieVisualStateChange,
+        handleInterruptSendPromptToAgent,
+        onAgentVisualStateChange,
         onUiSettingsChange,
         uiSettings,
       ],
@@ -1655,7 +1655,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         ),
       },
       {
-        key: 'fully-exit-genie-editor',
+        key: 'fully-exit-commentary',
         label: '完全退出 AI 编辑',
         action: () => {
           setSettingsPopoverOpen(false);
@@ -1761,21 +1761,21 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         content={settingsCardContent}
       >
         <span style={{ display: 'inline-flex' }}>
-          <GenieToolbarIconButton
+          <AgentToolbarIconButton
             title="设置"
             icon={<SettingOutlined />}
-            awake={genieShellAwake}
+            awake={agentShellAwake}
             disabled={actionBusy}
           />
         </span>
       </Popover>
     );
     const closeToolbarButton = (
-      <GenieToolbarIconButton
+      <AgentToolbarIconButton
         title="关闭工具栏"
         icon={<CloseToolIcon />}
         ariaLabel="关闭工具栏"
-        awake={genieShellAwake}
+        awake={agentShellAwake}
         disabled={actionBusy}
         onClick={minimizeTool}
       />
@@ -1803,11 +1803,11 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     );
 
     const propertyPanelToggleButton = (
-      <GenieToolbarIconButton
+      <AgentToolbarIconButton
         title={propertyPanelOpen ? '关闭设计决策' : '打开设计决策'}
         icon={<SlidersOutlined />}
         ariaLabel="设计决策"
-        awake={genieShellAwake}
+        awake={agentShellAwake}
         active={propertyPanelOpen}
         disabled={actionBusy}
         onClick={() => onPropertyPanelOpenChange(!propertyPanelOpen)}
@@ -1827,8 +1827,8 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     const hostToolbarState = React.useMemo<CommentaryHostToolbarState>(() => {
       const agentOptions = [
         { value: null, label: '默认' },
-        ...GENIE_MENU_AGENT_OPTIONS.map((item) => {
-          const availability = genieProviderAvailabilityMap.get(item.value) ?? null;
+        ...AGENT_MENU_OPTIONS.map((item) => {
+          const availability = agentProviderAvailabilityMap.get(item.value) ?? null;
           return {
             value: item.value,
             label: item.label,
@@ -1843,18 +1843,18 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       return {
         toolbarMode,
         visible: isHostToolbarMode,
-        robotState: geniePromptToolbarAction.robotState,
-        robotTitle: geniePromptToolbarAction.robotTitle,
-        robotDisabled: geniePromptToolbarAction.robotDisabled,
-        robotLoading: geniePromptToolbarAction.robotLoading,
+        robotState: agentPromptToolbarAction.robotState,
+        robotTitle: agentPromptToolbarAction.robotTitle,
+        robotDisabled: agentPromptToolbarAction.robotDisabled,
+        robotLoading: agentPromptToolbarAction.robotLoading,
         sendVisible: hostSendVisible,
-        sendTitle: geniePromptToolbarAction.sendTitle,
-        sendDisabled: geniePromptToolbarAction.sendDisabled || actionBusy,
-        sendLoading: geniePromptToolbarAction.sendLoading,
-        interruptVisible: !hideExecutionControls && geniePromptToolbarAction.interruptVisible,
-        interruptTitle: geniePromptToolbarAction.interruptTitle,
-        interruptDisabled: geniePromptToolbarAction.interruptDisabled,
-        interruptLoading: geniePromptToolbarAction.interruptLoading,
+        sendTitle: agentPromptToolbarAction.sendTitle,
+        sendDisabled: agentPromptToolbarAction.sendDisabled || actionBusy,
+        sendLoading: agentPromptToolbarAction.sendLoading,
+        interruptVisible: !hideExecutionControls && agentPromptToolbarAction.interruptVisible,
+        interruptTitle: agentPromptToolbarAction.interruptTitle,
+        interruptDisabled: agentPromptToolbarAction.interruptDisabled,
+        interruptLoading: agentPromptToolbarAction.interruptLoading,
         copyPromptVisible: copyPromptVisible,
         copyPromptTitle: copyReason ?? '复制 Prompt',
         copyPromptDisabled: actionBusy || copyBlocked,
@@ -1864,12 +1864,12 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         propertyPanelTitle: propertyPanelOpen ? '关闭设计决策' : '打开设计决策',
         modifiedCount,
         terminalTaskCount: visibleTerminalTaskCount,
-        selectedAgent: hideExecutionControls ? null : uiSettings.genieAgent,
+        selectedAgent: hideExecutionControls ? null : uiSettings.agentProvider,
         agentOptions: hideExecutionControls ? [] : agentOptions,
         darkMode: uiSettings.darkMode,
         disablePageAnimations: uiSettings.disablePageAnimations,
         pageZoomEnabled: uiSettings.pageZoomEnabled,
-      copySkillInstallPromptDisabled: actionBusy || genieProviderRefreshPending,
+      copySkillInstallPromptDisabled: actionBusy || agentProviderRefreshPending,
         selectionModeActive: selectionModeActive,
         fullExitAvailable: Boolean(options.onRequestFullExit),
         annotationEnabled,
@@ -1890,9 +1890,9 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       copyBlocked,
       copyPromptVisible,
       copyReason,
-      geniePromptToolbarAction,
-      genieProviderAvailabilityMap,
-      genieProviderRefreshPending,
+      agentPromptToolbarAction,
+      agentProviderAvailabilityMap,
+      agentProviderRefreshPending,
       hideExecutionControls,
       hostSendVisible,
       isHostToolbarMode,
@@ -1907,7 +1907,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       toolbarMode,
       uiSettings.disablePageAnimations,
       uiSettings.darkMode,
-      uiSettings.genieAgent,
+      uiSettings.agentProvider,
       uiSettings.pageZoomEnabled,
       visibleTerminalTaskCount,
     ]);
@@ -1930,20 +1930,20 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       async (action: CommentaryHostToolbarAction): Promise<boolean> => {
         switch (action.type) {
           case 'wake-agent':
-            if (geniePromptToolbarAction.robotDisabled) return false;
-            await handleGenieBrandClick();
+            if (agentPromptToolbarAction.robotDisabled) return false;
+            await handleAgentBrandClick();
             return true;
           case 'send-to-agent':
-            if (!hostSendVisible || geniePromptToolbarAction.sendDisabled || actionBusy) {
+            if (!hostSendVisible || agentPromptToolbarAction.sendDisabled || actionBusy) {
               return false;
             }
-            await handleConfirmSendPromptToGenie();
+            await handleConfirmSendPromptToAgent();
             return true;
           case 'interrupt-agent':
-            if (!geniePromptToolbarAction.interruptVisible || geniePromptToolbarAction.interruptDisabled) {
+            if (!agentPromptToolbarAction.interruptVisible || agentPromptToolbarAction.interruptDisabled) {
               return false;
             }
-            await handleInterruptSendPromptToGenie();
+            await handleInterruptSendPromptToAgent();
             return true;
           case 'copy-prompt':
             if (!copyPromptVisible || actionBusy || copyBlocked) return false;
@@ -1969,19 +1969,19 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
             const nextAgent = action.agent;
             if (
               nextAgent &&
-              !GENIE_MENU_AGENT_OPTIONS.some((item) => item.value === nextAgent)
+              !AGENT_MENU_OPTIONS.some((item) => item.value === nextAgent)
             ) {
               return false;
             }
-            onUiSettingsChange({ ...uiSettings, genieAgent: nextAgent });
+            onUiSettingsChange({ ...uiSettings, agentProvider: nextAgent });
             return true;
           }
           case 'disconnect-agent':
-            setGenieWakeChecking(false);
-            setGeniePromptInterrupting(false);
-            setGeniePromptSending(false);
-            setGeniePromptSendingElementKey(null);
-            onGenieVisualStateChange('sleeping');
+            setAgentWakeChecking(false);
+            setAgentPromptInterrupting(false);
+            setAgentPromptSending(false);
+            setAgentPromptSendingElementKey(null);
+            onAgentVisualStateChange('sleeping');
             return true;
           case 'copy-skill-install-prompt':
             await handleCopySkillInstallPrompt();
@@ -2042,16 +2042,16 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         clearAllEditsDisabled,
         copyBlocked,
         copyPromptVisible,
-        geniePromptToolbarAction,
-        handleConfirmSendPromptToGenie,
+        agentPromptToolbarAction,
+        handleConfirmSendPromptToAgent,
         handleCopyGlobalPanelPrompt,
         handleCopySkillInstallPrompt,
-        handleGenieBrandClick,
-        handleInterruptSendPromptToGenie,
+        handleAgentBrandClick,
+        handleInterruptSendPromptToAgent,
         handleTogglePageZoom,
         hostSendVisible,
         onDismissSelection,
-        onGenieVisualStateChange,
+        onAgentVisualStateChange,
         onHoverSelectionSuppressedChange,
         onPropertyPanelOpenChange,
         onSelectionInteractionLockChange,
@@ -2196,8 +2196,8 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     ) : null;
 
     const expandedToolbar = (
-      <GenieToolbarShell
-        awake={genieShellAwake}
+      <AgentToolbarShell
+        awake={agentShellAwake}
         dragHandleRef={toolbarHeaderRef}
         style={{
           alignSelf: 'flex-start',
@@ -2221,42 +2221,42 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
               trigger={['click']}
               placement="topLeft"
               align={{ offset: [0, -6] }}
-              open={genieAwake && genieMenuOpen}
+              open={agentAwake && agentMenuOpen}
               getPopupContainer={resolveRuntimePopupContainer}
-              overlayClassName="we-runtime-genie-menu-dropdown"
+              overlayClassName="we-runtime-agent-menu-dropdown"
               menu={{
-                items: genieMenuItems,
-                onClick: handleGenieMenuClick,
-                selectedKeys: [selectedGenieAgentMenuKey],
+                items: agentMenuItems,
+                onClick: handleAgentMenuClick,
+                selectedKeys: [selectedAgentMenuKey],
                 triggerSubMenuAction: 'hover',
               }}
               onOpenChange={(open) => {
-                if (!genieAwake || genieWakeChecking) return;
+                if (!agentAwake || agentWakeChecking) return;
                 if (open) {
-                  void handleRefreshGenieProviders();
+                  void handleRefreshAgentProviders();
                 }
-                setGenieMenuOpen(open);
+                setAgentMenuOpen(open);
               }}
             >
               <div ref={collapseActionRef} style={{ display: 'inline-flex', alignItems: 'center' }}>
-                <GenieBrandButton
-                  state={genieBrandState}
-                  size={GENIE_BRAND_BUTTON_SIZE}
-                  title={geniePromptToolbarAction.robotTitle}
-                  disabled={geniePromptToolbarAction.robotDisabled}
-                  loading={geniePromptToolbarAction.robotLoading}
+                <AgentBrandButton
+                  state={agentBrandState}
+                  size={AGENT_BRAND_BUTTON_SIZE}
+                  title={agentPromptToolbarAction.robotTitle}
+                  disabled={agentPromptToolbarAction.robotDisabled}
+                  loading={agentPromptToolbarAction.robotLoading}
                   themeMode={themeMode}
                   dragVelocity={{
                     x: toolbarDragVelocity.velocityX,
                     y: toolbarDragVelocity.velocityY,
                   }}
                   onClick={() => {
-                    void handleGenieBrandClick();
+                    void handleAgentBrandClick();
                   }}
                 />
               </div>
             </Dropdown>
-            {genieSendToolbarButton}
+            {agentSendToolbarButton}
           </Space>
           <Space
             size={4}
@@ -2269,7 +2269,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
             {closeToolbarButton}
           </Space>
         </div>
-      </GenieToolbarShell>
+      </AgentToolbarShell>
     );
 
     const minimizedToolbar = (
@@ -2334,7 +2334,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
             transition: 'background-color 220ms ease, color 220ms ease, transform 220ms ease',
           }}
         >
-          <GenieSparkleIcon />
+          <AgentSparkleIcon />
         </span>
         {modifiedCount > 0 ? (
           <span

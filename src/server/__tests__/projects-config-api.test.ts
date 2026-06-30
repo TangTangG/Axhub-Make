@@ -102,7 +102,7 @@ describe('make-server project config APIs', () => {
       server: { host: 'localhost', allowLAN: true },
       projectInfo: { name: 'Project Config' },
       automation: {
-        defaultPromptClient: 'genie:claude',
+        defaultPromptClient: 'acp:claude',
         defaultIDE: 'cursor',
       },
       assistant: {
@@ -628,7 +628,22 @@ describe('make-server project config APIs', () => {
     try {
       await saveAndExpectDefaultPromptClient('acp:opencode');
       await saveAndExpectDefaultPromptClient('opencode');
-      await saveAndExpectDefaultPromptClient('genie:opencode');
+
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          automation: {
+            defaultPromptClient: 'genie:opencode',
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
+      expect(serverConfig.automation.defaultPromptClient).toBe('acp:opencode');
+      const config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(config.automation.defaultPromptClient).toBe('acp:opencode');
     } finally {
       await server.close();
     }

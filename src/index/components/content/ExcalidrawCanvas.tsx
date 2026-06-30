@@ -90,7 +90,7 @@ import type { ItemData, PromptClientPreference } from '../../types';
 import type { ThemeResourceItem } from '../../domains/resources/resource.types';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 
 type ExcalidrawAPI = NonNullable<Parameters<NonNullable<React.ComponentProps<typeof Excalidraw>['onExcalidrawAPI']>>[0]>;
 type ExcalidrawOpenPopup = ReturnType<ExcalidrawAPI['getAppState']>['openPopup'];
@@ -166,7 +166,7 @@ interface ExcalidrawCanvasProps {
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
     onOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
     webAgentPanelOpen?: boolean;
     aiPanelMode?: 'general-ai' | 'image-ai' | null;
     onOpenImageAiPanel?: () => void | Promise<void>;
@@ -1408,7 +1408,7 @@ export default function ExcalidrawCanvas({
     onAnnotationsChange,
     onOpenCanvasInIDE,
     assistantProjectPath,
-    onOpenGenieWebAgent,
+    onOpenAcpWebAgent,
     aiPanelMode,
     onOpenImageAiPanel,
     onCloseAiPanel,
@@ -1469,8 +1469,8 @@ export default function ExcalidrawCanvas({
             handleCloseCanvasAiPanel();
             return;
         }
-        onOpenGenieWebAgent?.(aiOpenTargetPath);
-    }, [aiOpenTargetPath, generalAiActive, handleCloseCanvasAiPanel, onOpenGenieWebAgent]);
+        onOpenAcpWebAgent?.(aiOpenTargetPath);
+    }, [aiOpenTargetPath, generalAiActive, handleCloseCanvasAiPanel, onOpenAcpWebAgent]);
 
     // View state saver — persists zoom/scroll to localStorage with its own debounce
     const viewStateSaverRef = useRef(createViewStateSaver(() => currentNameRef.current));

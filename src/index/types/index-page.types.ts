@@ -1,7 +1,7 @@
 import type { MutableRefObject, RefObject } from 'react';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../common/ide';
 import type { RuntimeAgentAvailability } from '../../common/agent';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import type { CloudPublishTarget, ReviewResult } from '../services/api';
 import type {
     PreviewConfig,
@@ -254,7 +254,7 @@ export interface NewSidebarActions {
     onSidebarTreePersist: (tab: SidebarTreeTab, tree: SidebarTreeNode[]) => void | Promise<void>;
     handleVersionManagement: (item: ItemData) => void;
     handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
     onOpenImageAiPanel?: () => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
@@ -440,9 +440,9 @@ export interface PresentationAreaActions {
     onAddCanvasElementToContext?: (items: CanvasElementContextInfo[]) => void;
     onCanvasAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
     onOpenCanvasInIDE?: (canvasFilePath: string) => void | Promise<void>;
-    onOpenCanvasGenie?: () => void | Promise<void>;
+    onOpenCanvasAgent?: () => void | Promise<void>;
     handleOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
     onOpenImageAiPanel?: () => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;

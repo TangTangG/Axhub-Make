@@ -9,12 +9,12 @@ import {
   getAssistantContextCurrentFilePath,
   resolveAssistantCurrentFile,
   shouldSyncAssistantCurrentFile,
-} from './genieContext';
+} from './assistantContext';
 
-describe('genieContext helpers', () => {
-  it('keeps ACP UI assistant URLs free of serialized context and Genie integration params', () => {
+describe('assistantContext helpers', () => {
+  it('keeps ACP UI assistant URLs free of serialized context and Agent integration params', () => {
     const result = new URL(buildAssistantContextUrl(
-      'https://acp.example.com/acp-ui?workspacePath=%2Fworkspace%2Fdemo%2Fproject&prompt=old&integrationWs=1&genieIntegrationChannel=make&genieTargetClientId=make',
+      'https://acp.example.com/acp-ui?workspacePath=%2Fworkspace%2Fdemo%2Fproject&prompt=old&integrationWs=1&agentIntegrationChannel=make&agentTargetClientId=make',
       {
         version: '1',
         systemContext: '',
@@ -36,8 +36,8 @@ describe('genieContext helpers', () => {
     expect(result.searchParams.get('context')).toBeNull();
     expect(result.searchParams.get('prompt')).toBeNull();
     expect(result.searchParams.get('integrationWs')).toBeNull();
-    expect(result.searchParams.get('genieIntegrationChannel')).toBeNull();
-    expect(result.searchParams.get('genieTargetClientId')).toBeNull();
+    expect(result.searchParams.get('agentIntegrationChannel')).toBeNull();
+    expect(result.searchParams.get('agentTargetClientId')).toBeNull();
     expect(result.searchParams.get('slashCommands')).toBeNull();
   });
 

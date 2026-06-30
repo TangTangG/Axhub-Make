@@ -12,7 +12,7 @@ describe('dev template editor bridge launch options', () => {
     expect(enableStart).toBeGreaterThan(-1);
     expect(enableEnd).toBeGreaterThan(enableStart);
     expect(enableSource).toContain('event.data.options');
-    expect(enableSource).not.toContain('genieBridge');
+    expect(enableSource).not.toContain('agentBridge');
     expect(enableSource).not.toContain('integrationWs');
     expect(enableSource).toContain('mobileMode');
     expect(enableSource).toContain('commentPageScope');

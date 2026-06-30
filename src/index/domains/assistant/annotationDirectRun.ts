@@ -1,6 +1,6 @@
 import { getAcpProviderOption } from '../../../common/acpModelConfig';
 import type { AssistantContextV1 } from '../../types';
-import { getAssistantContextCurrentFilePath } from '../../utils/genieContext';
+import { getAssistantContextCurrentFilePath } from '../../utils/assistantContext';
 import { runAiStream, type AiRunSseEvent, type AiRunStreamResult } from '../ai-generation/aiRunClient';
 import { mapAssistantContextToAcpContextBundle } from './assistantAcpContext';
 import {

@@ -77,7 +77,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         preferredIDE,
         ideAvailability,
         agentAvailability,
-        onOpenGenieWebAgent,
+        onOpenAcpWebAgent,
         onOpenImageAiPanel,
         onOpenWebAgentInPanel,
         onExecutePrompt,
@@ -297,7 +297,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 preferredIDE={preferredIDE}
                 ideAvailability={ideAvailability}
                 agentAvailability={agentAvailability}
-                onOpenGenieWebAgent={onOpenGenieWebAgent}
+                onOpenAcpWebAgent={onOpenAcpWebAgent}
                 onOpenImageAiPanel={onOpenImageAiPanel}
                 onOpenWebAgentInPanel={onOpenWebAgentInPanel}
                 onExecutePrompt={onExecutePrompt}

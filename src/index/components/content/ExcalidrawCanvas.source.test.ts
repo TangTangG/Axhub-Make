@@ -322,7 +322,7 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).not.toContain('<OpenInDropdown');
     expect(source).not.toContain('variant="canvas-icon"');
     expect(source).toContain('onOpenImageAiPanel?.();');
-    expect(source).toContain('onOpenGenieWebAgent?.(aiOpenTargetPath);');
+    expect(source).toContain('onOpenAcpWebAgent?.(aiOpenTargetPath);');
     expect(source).not.toContain('生成记录');
     expect(source).not.toContain('onOpenAiImageHistory');
     expect(source).not.toContain("import AiImageHistoryDialog from '../../domains/ai-image/AiImageHistoryDialog';");
@@ -352,7 +352,7 @@ describe('ExcalidrawCanvas source', () => {
     expect(propsSource).toContain('preferredIDE?: MainIDEPreference;');
     expect(propsSource).toContain('ideAvailability?: IDEAvailabilityMap;');
     expect(propsSource).toContain('agentAvailability?: RuntimeAgentAvailability;');
-    expect(propsSource).toContain('onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;');
+    expect(propsSource).toContain('onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;');
     expect(propsSource).toContain('webAgentPanelOpen?: boolean;');
     expect(propsSource).toContain('aiPanelMode?: \'general-ai\' | \'image-ai\' | null;');
     expect(propsSource).toContain('onOpenImageAiPanel?: () => void | Promise<void>;');
@@ -363,7 +363,7 @@ describe('ExcalidrawCanvas source', () => {
     expect(propsSource).toContain('onOpenAISettings?: () => void;');
 
     for (const prop of [
-      'onOpenGenieWebAgent,',
+      'onOpenAcpWebAgent,',
       'aiPanelMode,',
       'onOpenImageAiPanel,',
       'onCloseAiPanel,',

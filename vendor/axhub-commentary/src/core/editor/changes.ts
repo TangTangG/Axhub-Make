@@ -558,7 +558,7 @@ export function createChangesService(options: {
   function resolveChangeMarkerTaskState(elementKey: WebEditorElementKey): ChangeMarkerTaskState | null {
     const task =
       state.externalEditingTaskByElementKey.get(elementKey)
-      ?? state.genieTaskByElementKey.get(elementKey)
+      ?? state.agentTaskByElementKey.get(elementKey)
       ?? null;
     if (!task || task.dismissed) return null;
     if (task.status === 'pending' || task.status === 'created') return 'editing';
@@ -577,7 +577,7 @@ export function createChangesService(options: {
     if (meta.changeKinds.length > 0) return;
     if (hasRecordedTweak(meta)) return;
     // Prune editMeta entries with no substantive content.
-    // This removes ghost markers that linger after Genie processing.
+    // This removes ghost markers that linger after Agent processing.
     // Note: processedEditTimestampsByKey is intentionally preserved —
     // it's needed by filterTransactionsAfterProcessed to avoid
     // re-caching already-handled transactions from the undo stack.
@@ -855,7 +855,7 @@ export function createChangesService(options: {
     state.processedEditTimestampsByKey.delete(meta.elementKey);
     state.pendingMarkerAnchors.delete(meta.elementKey);
     state.externalEditingTaskByElementKey.delete(meta.elementKey);
-    state.genieTaskByElementKey.delete(meta.elementKey);
+    state.agentTaskByElementKey.delete(meta.elementKey);
     if (state.selectedElement === element) {
       state.selectionAnchor = null;
     }

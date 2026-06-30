@@ -160,13 +160,13 @@ describe('getManualChunkName', () => {
     ).toBe('vendor-export');
     expect(
       getManualChunkName('/repo/packages/axhub-commentary/src/index.ts'),
-    ).toBe('vendor-genie');
+    ).toBe('vendor-commentary');
     expect(
       getManualChunkName('/repo/vendor/axhub-commentary/dist/index.mjs'),
-    ).toBe('vendor-genie');
+    ).toBe('vendor-commentary');
     expect(
       getManualChunkName('/repo/node_modules/.pnpm/@axhub/commentary@file+vendor+@axhub/commentary/node_modules/@axhub/commentary/dist/index.mjs'),
-    ).toBe('vendor-genie');
+    ).toBe('vendor-commentary');
     expect(
       getManualChunkName('/repo/node_modules/.pnpm/@axhub+excalidraw@file+vendor+axhub-excalidraw/node_modules/@axhub/excalidraw/index.js'),
     ).toBe('vendor-excalidraw');

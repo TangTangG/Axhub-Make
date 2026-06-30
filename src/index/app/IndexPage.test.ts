@@ -325,7 +325,7 @@ describe('IndexPage source', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const openCanvasSource = source.slice(
       source.indexOf('const handleOpenCanvasInIDE = useCallback'),
-      source.indexOf('const handleOpenCanvasGenie = useCallback'),
+      source.indexOf('const handleOpenCanvasAgent = useCallback'),
     );
 
     expect(openCanvasSource).toContain('copyText: targetPath ? `[画布](${targetPath})` : undefined');
@@ -621,17 +621,17 @@ describe('IndexPage source', () => {
 
   it('does not expose a dedicated canvas OpenCode WebUI opener', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
-    const genieStart = source.indexOf('const handleOpenCanvasGenie = useCallback(async () =>');
-    const genieEnd = source.indexOf('const buildCanvasAssistantContext = useCallback', genieStart);
-    const genieSource = source.slice(genieStart, genieEnd);
+    const agentStart = source.indexOf('const handleOpenCanvasAgent = useCallback(async () =>');
+    const agentEnd = source.indexOf('const buildCanvasAssistantContext = useCallback', agentStart);
+    const agentSource = source.slice(agentStart, agentEnd);
 
     expect(source).not.toContain('handleOpenCanvasOpenCode');
     expect(source).not.toContain('onOpenCanvasOpenCode');
-    expect(source).not.toContain("assistantController.handleOpenGenieWebAgent(undefined, 'opencode')");
-    expect(genieStart).toBeGreaterThan(-1);
-    expect(genieEnd).toBeGreaterThan(genieStart);
-    expect(genieSource).not.toContain('canvasFilePath');
-    expect(genieSource).toContain('handleOpenGenieWebAgent()');
+    expect(source).not.toContain("assistantController.handleOpenAcpWebAgent(undefined, 'opencode')");
+    expect(agentStart).toBeGreaterThan(-1);
+    expect(agentEnd).toBeGreaterThan(agentStart);
+    expect(agentSource).not.toContain('canvasFilePath');
+    expect(agentSource).toContain('handleOpenAcpWebAgent()');
   });
 
   it('syncs canvas annotation comments with the assistant current file path', () => {
@@ -655,8 +655,8 @@ describe('IndexPage source', () => {
     expect(source).toContain('getAssistantAutoOpenPanelMode');
     expect(source).toContain('setAssistantAutoOpenDismissed');
     expect(source).toContain('setAssistantAutoOpenPanelMode');
-    expect(source).toContain("import type { GenieProvider } from '@/common/genie/types';");
-    expect(source).toMatch(/import\s+\{[^}]*getAssistantContextCurrentFilePath[^}]*\}\s+from '..\/utils\/genieContext';/s);
+    expect(source).toContain("import type { AcpProvider } from '@/common/assistant-context/types';");
+    expect(source).toMatch(/import\s+\{[^}]*getAssistantContextCurrentFilePath[^}]*\}\s+from '..\/utils\/assistantContext';/s);
     expect(source).toContain("const onlineOpenAutoTriggeredRef = useRef('');");
     expect(source).toContain("const onlineOpenAutoRestorePendingRef = useRef('');");
     expect(source).toContain('const assistantCurrentFilePath = getAssistantContextCurrentFilePath(assistantController.assistantContextV1);');
@@ -665,7 +665,7 @@ describe('IndexPage source', () => {
     expect(source).toContain('buildAssistantAutoOpenDismissedStorageKey(assistantAutoOpenProjectScope)');
     expect(source).toContain('const assistantAutoOpenPanelModeStorageKey = useMemo(() => (');
     expect(source).toContain('buildAssistantAutoOpenPanelModeStorageKey(assistantAutoOpenProjectScope)');
-    expect(source).toContain('const handleOpenGenieWebAgent = useCallback((targetPath?: string, provider?: GenieProvider) => {');
+    expect(source).toContain('const handleOpenAcpWebAgent = useCallback((targetPath?: string, provider?: AcpProvider) => {');
     expect(source).toContain('setAssistantAutoOpenDismissed(buildAssistantAutoOpenKeyForTarget(targetPath), false);');
     expect(source).toContain("setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');");
     expect(source).toContain('setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);');
@@ -922,7 +922,7 @@ describe('IndexPage source', () => {
     expect(sidebarBuilderCall).toContain('prototypeStartPageActive,');
     expect(sidebarBuilderCall).toContain('webAgentPanelOpen: prototypeStartPageActive ? false : assistantController.assistantVisible,');
     expect(sidebarBuilderCall).toContain('aiPanelMode: prototypeStartPageActive ? null : assistantController.aiPanelMode,');
-    expect(sidebarBuilderCall).toContain('handleOpenGenieWebAgent: prototypeStartPageActive ? undefined : handleOpenGenieWebAgent,');
+    expect(sidebarBuilderCall).toContain('handleOpenAcpWebAgent: prototypeStartPageActive ? undefined : handleOpenAcpWebAgent,');
     expect(sidebarBuilderCall).toContain('handleOpenImageAiPanel: prototypeStartPageActive ? undefined : handleOpenImageAiPanel,');
     expect(presentationBuilderCall).toContain('assistantVisible: prototypeStartPageActive ? false : assistantController.assistantVisible,');
     expect(presentationBuilderCall).toContain('webAgentPanelOpen: prototypeStartPageActive ? false : assistantController.assistantVisible,');

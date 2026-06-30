@@ -7,7 +7,7 @@ import type { ViewportRect } from '../../overlay/canvas-overlay';
 import { resolveMarkerAnchorRect } from './marker-anchor';
 import type {
   EditorChangesService,
-  EditorGenieBridgeService,
+  EditorAgentBridgeService,
   EditorInteractionService,
   EditorPersistenceService,
   EditorTextSessionService,
@@ -28,11 +28,11 @@ export function createInteractionService(options: {
   changes: EditorChangesService;
   persistence: EditorPersistenceService;
   textSession: EditorTextSessionService;
-  genieBridge: EditorGenieBridgeService;
+  agentBridge: EditorAgentBridgeService;
   logPrefix: string;
   onStatusChange?: () => void;
 }): EditorInteractionService {
-  const { state, genieBridge } = options;
+  const { state, agentBridge } = options;
 
   function syncShadowHostMount(anchorElement: Element | null): void {
     state.shadowHost?.setMountContainer?.(anchorElement);
@@ -68,7 +68,7 @@ export function createInteractionService(options: {
   }
 
   function handleHover(element: Element | null): void {
-    if (element && genieBridge.isElementInteractionLocked(element)) {
+    if (element && agentBridge.isElementInteractionLocked(element)) {
       element = null;
     }
     const prevElement = state.hoveredElement;
@@ -103,7 +103,7 @@ export function createInteractionService(options: {
     modifiers: EventModifiers,
     selectionAnchor?: { clientX: number; clientY: number },
   ): void {
-    if (genieBridge.isElementInteractionLocked(element)) {
+    if (agentBridge.isElementInteractionLocked(element)) {
       return;
     }
     if (state.activeTextComment) {
@@ -140,7 +140,7 @@ export function createInteractionService(options: {
     modifiers: EventModifiers,
     selectionAnchor?: { clientX: number; clientY: number },
   ): Promise<void> {
-    if (genieBridge.isElementInteractionLocked(element)) {
+    if (agentBridge.isElementInteractionLocked(element)) {
       return;
     }
 
@@ -216,7 +216,7 @@ export function createInteractionService(options: {
     const hideChrome = !state.selectionChromeVisible;
     const hoverRect = hideChrome ? null : suppressHover ? null : rects.hover;
     const selectionRect = hideChrome || textCommentActive ? null : rects.selection;
-    const selectionLocked = genieBridge.isElementInteractionLocked(state.selectedElement);
+    const selectionLocked = agentBridge.isElementInteractionLocked(state.selectedElement);
     const inlineTextEditing = Boolean(state.inlineTextEditingActive);
     const selectionEffect =
       !hideChrome && !!selectionRect
@@ -279,7 +279,7 @@ export function createInteractionService(options: {
         ) ?? null;
     }
 
-    target = genieBridge.resolveSelectableElement(target);
+    target = agentBridge.resolveSelectableElement(target);
 
     if (!target || !target.isConnected) return false;
 

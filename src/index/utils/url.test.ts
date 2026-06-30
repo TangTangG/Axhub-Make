@@ -27,7 +27,7 @@ describe('url helpers', () => {
 	    }, 'prototypes')).toBe('custom/screens/home');
   });
 
-  it('strips Genie bridge and editor WebSocket launch options from editor URLs', () => {
+  it('strips Agent bridge and editor WebSocket launch options from editor URLs', () => {
     vi.stubGlobal('window', {
       location: {
         origin: 'http://admin.local:5173',
@@ -39,12 +39,12 @@ describe('url helpers', () => {
       displayName: 'Home',
       jsUrl: '',
       specUrl: '',
-      clientUrl: 'http://client.local:4173/prototypes/home?genieApiBaseUrl=http://stale/api&editorClientId=stale-client',
+      clientUrl: 'http://client.local:4173/prototypes/home?agentApiBaseUrl=http://stale/api&editorClientId=stale-client',
     }, 'demo', {
       width: 390,
       mobileMode: true,
       hostToolbar: true,
-      genieBridge: {
+      agentBridge: {
         apiBaseUrl: 'http://localhost:32124/api',
         integrationChannel: '/workspace/demo/project',
         projectPath: '/workspace/demo/project',
@@ -59,9 +59,9 @@ describe('url helpers', () => {
       },
     } as any));
 
-    expect(url.searchParams.get('genieApiBaseUrl')).toBeNull();
-    expect(url.searchParams.get('genieIntegrationChannel')).toBeNull();
-    expect(url.searchParams.get('genieTargetClientId')).toBeNull();
+    expect(url.searchParams.get('agentApiBaseUrl')).toBeNull();
+    expect(url.searchParams.get('agentIntegrationChannel')).toBeNull();
+    expect(url.searchParams.get('agentTargetClientId')).toBeNull();
     expect(url.searchParams.get('cwd')).toBeNull();
     expect(url.searchParams.get('provider')).toBeNull();
     expect(url.searchParams.get('editorIntegrationWs')).toBeNull();
@@ -70,7 +70,7 @@ describe('url helpers', () => {
     expect(url.searchParams.get('editorClientId')).toBeNull();
     expect(url.searchParams.get('editorSessionId')).toBeNull();
     expect(url.searchParams.get('editorMobileMode')).toBe('true');
-    expect(url.searchParams.get('genieToolbar')).toBe('host');
+    expect(url.searchParams.get('agentToolbar')).toBe('host');
     expect(url.searchParams.get('width')).toBe('390');
   });
 

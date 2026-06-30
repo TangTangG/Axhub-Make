@@ -340,7 +340,7 @@ describe('make-server assistant runtime API', () => {
     expect(handleAssistantPromptIde).toBeTypeOf('function');
   });
 
-  it('probes configured ACP UI through the page and chat endpoints without Genie health', async () => {
+  it('probes configured ACP UI through the page and chat endpoints without legacy health', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
     const assistant = await startAcpUiServer({ cors: true });

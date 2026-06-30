@@ -19,14 +19,14 @@ describe('prompt card current element action', () => {
     const onConfirmText = vi.fn().mockResolvedValue(undefined);
     const onConfirmNote = vi.fn().mockResolvedValue(undefined);
     const onDismissSelection = vi.fn();
-    const onSendCurrentElementPromptToGenie = vi.fn(() => sendDeferred.promise);
+    const onSendCurrentElementPromptToAgent = vi.fn(() => sendDeferred.promise);
 
     const resultPromise = executePromptCardCurrentElementAction({
       currentTarget: target,
       onConfirmText,
       onConfirmNote,
       onDismissSelection,
-      onSendCurrentElementPromptToGenie,
+      onSendCurrentElementPromptToAgent,
     });
 
     await Promise.resolve();
@@ -35,7 +35,7 @@ describe('prompt card current element action', () => {
 
     expect(onConfirmText).toHaveBeenCalledTimes(1);
     expect(onConfirmNote).toHaveBeenCalledTimes(1);
-    expect(onSendCurrentElementPromptToGenie).toHaveBeenCalledWith(target);
+    expect(onSendCurrentElementPromptToAgent).toHaveBeenCalledWith(target);
     expect(onDismissSelection).toHaveBeenCalledTimes(1);
 
     sendDeferred.resolve();

@@ -14,7 +14,7 @@
 import type { ViewportRect } from '../overlay/canvas-overlay';
 import { createSparkleIcon } from './icons';
 import { Disposer } from '../utils/disposables';
-import type { ElementGenieTaskState } from '../core/editor/state';
+import type { ElementAgentTaskState } from '../core/editor/state';
 import type { CommentShortcutSettings } from '../core/editor/comment-shortcut-settings';
 
 // =============================================================================
@@ -33,19 +33,19 @@ export interface BreadcrumbsOptions {
   /** Callback when a breadcrumb item is clicked */
   onSelect: (element: Element) => void;
   /** Optional: add current selection into host assistant conversation context */
-  onSendToGenie?: (element: Element) => void | Promise<void>;
+  onAppendElementToAgentContext?: (element: Element) => void | Promise<void>;
   /** Whether the host assistant panel is open and can receive context chips */
   getAssistantPanelOpen?: () => boolean;
-  /** Whether Genie is currently online and ready to receive context */
-  getGenieBridgeAvailable?: () => boolean;
-  /** Hide UI affordances that directly execute Genie/agent tasks. */
+  /** Whether Agent is currently online and ready to receive context */
+  getAgentBridgeAvailable?: () => boolean;
+  /** Hide UI affordances that directly execute Agent/agent tasks. */
   hideExecutionControls?: boolean;
-  /** Read the current Genie task state for an element */
-  getElementGenieTaskState?: (element: Element | null) => ElementGenieTaskState | null;
-  /** Read all visible Genie task states */
-  getVisibleElementGenieTaskStates?: () => ElementGenieTaskState[];
-  /** Dismiss the current Genie task terminal state for an element */
-  dismissElementGenieTaskState?: (element: Element) => void;
+  /** Read the current Agent task state for an element */
+  getElementAgentTaskState?: (element: Element | null) => ElementAgentTaskState | null;
+  /** Read all visible Agent task states */
+  getVisibleElementAgentTaskStates?: () => ElementAgentTaskState[];
+  /** Dismiss the current Agent task terminal state for an element */
+  dismissElementAgentTaskState?: (element: Element) => void;
   /** Optional extension-specific single-line hint for running external editing tasks */
   externalEditingStatusDescription?: string;
   /** Read the current style edit summary lines for the selected element */
@@ -309,9 +309,9 @@ export function createBreadcrumbs(options: BreadcrumbsOptions): Breadcrumbs {
     const assistantPanelOpen = options.getAssistantPanelOpen?.();
     const contextAppendAvailable = typeof assistantPanelOpen === 'boolean'
       ? assistantPanelOpen
-      : Boolean(options.getGenieBridgeAvailable?.() ?? false);
+      : Boolean(options.getAgentBridgeAvailable?.() ?? false);
 
-    if (currentTarget && options.onSendToGenie && contextAppendAvailable) {
+    if (currentTarget && options.onAppendElementToAgentContext && contextAppendAvailable) {
       const sendBtn = document.createElement('button');
       sendBtn.type = 'button';
       sendBtn.className = 'we-crumb-send-btn';
@@ -368,7 +368,7 @@ export function createBreadcrumbs(options: BreadcrumbsOptions): Breadcrumbs {
     if (sendBtn instanceof HTMLButtonElement) {
       event.preventDefault();
       if (currentTarget?.isConnected) {
-        void options.onSendToGenie?.(currentTarget);
+        void options.onAppendElementToAgentContext?.(currentTarget);
       }
       return;
     }

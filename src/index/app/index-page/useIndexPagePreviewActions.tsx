@@ -17,7 +17,7 @@ import {
     readExportModalPreferences,
     type ExportModalTabKey,
 } from '../../utils/exportModalPreferences';
-import { getAssistantContextCurrentFilePath } from '../../utils/genieContext';
+import { getAssistantContextCurrentFilePath } from '../../utils/assistantContext';
 import type {
     ElementLocator,
     CommentaryHostToolbarAction,

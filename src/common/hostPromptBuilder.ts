@@ -1,7 +1,7 @@
 /**
  * Host-side prompt builder.
  *
- * Centralizes all host-level prompt customization so the genie-editor
+ * Centralizes all host-level prompt customization so the Commentary
  * package stays generic while the host can inject project-specific
  * context (skill paths, extra constraints, etc.).
  */

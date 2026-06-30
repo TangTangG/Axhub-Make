@@ -142,22 +142,14 @@ const PROMPT_CLIENT_VALUES = new Set<ServerPromptClientPreference>([
 const LEGACY_PROMPT_CLIENT_VALUES: Record<string, ServerPromptClientPreference> = {
   codex: 'acp:codex',
   openai: 'acp:codex',
-  'genie:codex': 'acp:codex',
   claude: 'acp:claude',
   claudecode: 'acp:claude',
-  'genie:claude': 'acp:claude',
   gemini: 'acp:gemini',
-  'genie:gemini': 'acp:gemini',
   opencode: 'acp:opencode',
-  'genie:opencode': 'acp:opencode',
   cursor: 'acp:cursor',
-  'genie:cursor': 'acp:cursor',
   qoder: 'acp:qoder',
-  'genie:qoder': 'acp:qoder',
   codebuddy: 'acp:codebuddy',
-  'genie:codebuddy': 'acp:codebuddy',
   reasonix: 'acp:reasonix',
-  'genie:reasonix': 'acp:reasonix',
 };
 
 const IDE_VALUES = new Set<ServerIDEPreference>([

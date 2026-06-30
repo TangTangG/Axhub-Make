@@ -85,7 +85,7 @@ describe('ACP chat runner', () => {
 
     const result = await mod.runAcpChatCommand({
       acpApiBaseUrl: 'http://acp.local/api/',
-      provider: 'genie:codex',
+      provider: 'acp:codex',
       workspacePath: '/workspace',
       conversationStorePath: '/workspace/src/prototypes/home/.spec/acp/conversations.json',
       prompt: 'Run the requested task.',

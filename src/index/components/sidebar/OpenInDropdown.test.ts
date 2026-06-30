@@ -55,12 +55,12 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain('打开浏览器内置的 Web AI 面板。');
     expect(source).toContain('WEB_AI_OPEN_OPTION');
     expect(source).not.toContain('ONLINE_WEB_AGENT_OPTIONS');
-    expect(source).not.toContain('genieProvider?: GenieProvider;');
+    expect(source).not.toContain('genieProvider?: AcpProvider;');
     expect(onlineOptionsSource).not.toContain("webAgent: 'opencode'");
     expect(onlineOptionsSource).not.toContain("label: 'OpenCode'");
     expect(onlineOptionsSource).toContain("label: '对话 AI'");
     expect(onlineOptionsSource).toContain("label: '生图 AI'");
-    expect(onlineOptionsSource).toContain("webAgent: 'genie'");
+    expect(onlineOptionsSource).toContain("webAgent: 'acp'");
     expect(source).not.toContain("availabilitySource: 'cli'");
     expect(source).not.toContain("availabilityKey: 'claudecode'");
     expect(source).not.toContain("availabilityKey: 'codex'");
@@ -106,13 +106,13 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain('px-2 pb-1 pt-2 first:pt-1');
     expect(source).toContain('text-[11px] font-medium leading-4 text-muted-foreground');
     expect(source).toContain('className="-mx-1 my-1.5"');
-    expect(source).toContain("if (agent === 'genie' && onOpenGenieWebAgent)");
-    expect(source).toContain('onOpenGenieWebAgent(openTargetPath, provider)');
+    expect(source).toContain("if (agent === 'acp' && onOpenAcpWebAgent)");
+    expect(source).toContain('onOpenAcpWebAgent(openTargetPath, provider)');
     expect(source).toContain('await Promise.resolve(onOpenImageAiPanel?.());');
     expect(source).toContain("void savePreference({ type: 'web', value: provider || agent })");
-    expect(source).not.toContain("if (agent === 'opencode' && onOpenGenieWebAgent)");
+    expect(source).not.toContain("if (agent === 'opencode' && onOpenAcpWebAgent)");
     expect(source).not.toContain("void savePreference({ type: 'web', value: 'opencode' })");
-    expect(source).not.toContain("onOpenGenieWebAgent(openTargetPath, 'opencode')");
+    expect(source).not.toContain("onOpenAcpWebAgent(openTargetPath, 'opencode')");
     expect(source).not.toContain('const WEB_AGENT_READY_ATTEMPTS = 20;');
     expect(source).not.toContain('async function waitForWebAgentUrlReady(url: string): Promise<boolean>');
     expect(source).not.toContain('const ready = await waitForWebAgentUrlReady(readinessUrl);');
@@ -295,7 +295,7 @@ describe('OpenInDropdown source', () => {
 
     expect(source).toContain('const resolveStoredWebOpenMethod = (method: OpenMethod)');
     expect(source).toContain("method.value === 'claude' || method.value === 'codex' || method.value === 'gemini' || method.value === 'opencode'");
-    expect(source).toContain("return { agent: 'genie' as const, provider: method.value as GenieProvider };");
+    expect(source).toContain("return { agent: 'acp' as const, provider: method.value as AcpProvider };");
     expect(source).toContain('const storedWebOpenMethod = resolveStoredWebOpenMethod(openMethod);');
     expect(source).toContain('void handleOpenWithWebAgent(storedWebOpenMethod.agent, storedWebOpenMethod.provider);');
     expect(source).not.toContain('void handleOpenWithWebAgent(openMethod.value as WebAgent);');
@@ -352,7 +352,7 @@ describe('OpenInDropdown source', () => {
     expect(source).not.toContain("buttonActive ? 'AI 已打开' : cardTitle");
     expect(source).toContain('openTargetPath');
     expect(source).toContain('handleOpenProjectInIDE(ide, openTargetPath, projectId)');
-    expect(source).toContain('onOpenGenieWebAgent(openTargetPath, provider)');
+    expect(source).toContain('onOpenAcpWebAgent(openTargetPath, provider)');
     expect(source).toContain('apiService.openCLIAgent({ agent, projectId, targetPath: openTargetPath })');
     expect(source).not.toContain('apiService.openWebAgent({');
   });
@@ -512,14 +512,14 @@ describe('OpenInDropdown source', () => {
       presentationBuilderSource,
       indexPageTypesSource,
     ]) {
-      expect(source).toContain("import type { GenieProvider } from '@/common/genie/types';");
-      expect(source).toMatch(/(?:on|handle)OpenGenieWebAgent\?: \(targetPath\?: string, provider\?: GenieProvider\) => void \| Promise<void>;/);
+      expect(source).toContain("import type { AcpProvider } from '@/common/assistant-context/types';");
+      expect(source).toMatch(/(?:on|handle)OpenAcpWebAgent\?: \(targetPath\?: string, provider\?: AcpProvider\) => void \| Promise<void>;/);
     }
 
-    expect(presentationAreaSource).toContain('onOpenGenieWebAgent={props.onOpenGenieWebAgent}');
+    expect(presentationAreaSource).toContain('onOpenAcpWebAgent={props.onOpenAcpWebAgent}');
 
-    expect(dropdownSource).toContain('const handleOpenWithWebAgent = async (agent: WebAgent, provider?: GenieProvider) => {');
-    expect(dropdownSource).toContain('onOpenGenieWebAgent(openTargetPath, provider)');
-    expect(dropdownSource).not.toContain('genieProvider?: GenieProvider;');
+    expect(dropdownSource).toContain('const handleOpenWithWebAgent = async (agent: WebAgent, provider?: AcpProvider) => {');
+    expect(dropdownSource).toContain('onOpenAcpWebAgent(openTargetPath, provider)');
+    expect(dropdownSource).not.toContain('genieProvider?: AcpProvider;');
   });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GenieContextV1 } from '@/common/genie/types';
+import type { AssistantContextV1 } from '@/common/assistant-context/types';
 import {
     type AcpContextItem,
     type AssistantPreviewMcpConfig,
@@ -229,7 +229,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         })
     ), [postAcpRequestWithRetry]);
 
-    const syncContext = useCallback((context: GenieContextV1, mode: 'replace' | 'append' = 'replace') => {
+    const syncContext = useCallback((context: AssistantContextV1, mode: 'replace' | 'append' = 'replace') => {
         const iframe = iframeRef.current;
         if (!iframe || !iframe.contentWindow) {
             return false;
@@ -244,7 +244,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         }
     }, [resolveTargetOrigin]);
 
-    const syncContextWithAck = useCallback((context: GenieContextV1, mode: 'replace' | 'append' = 'replace') => {
+    const syncContextWithAck = useCallback((context: AssistantContextV1, mode: 'replace' | 'append' = 'replace') => {
         const requestId = createAcpContextRequestId();
         return postAcpRequestWithRetry({
             request: {
@@ -257,7 +257,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         });
     }, [postAcpRequestWithRetry]);
 
-    const syncContextWithRetry = useCallback((context: GenieContextV1, mode: 'replace' | 'append' = 'replace') => {
+    const syncContextWithRetry = useCallback((context: AssistantContextV1, mode: 'replace' | 'append' = 'replace') => {
         syncContext(context, mode);
         if (mode === 'replace') {
             window.setTimeout(() => syncContext(context, mode), 160);

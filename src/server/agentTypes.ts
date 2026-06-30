@@ -28,7 +28,7 @@ export const CLI_AGENT_OPTIONS = [
 
 export const WEB_AGENT_OPTIONS = [
   { value: 'opencode', label: 'OpenCode' },
-  { value: 'genie', label: 'ACP UI' },
+  { value: 'acp', label: 'ACP UI' },
 ] as const;
 
 export const LOCAL_APP_AGENT_OPTIONS = [
@@ -53,7 +53,7 @@ export const CLI_AGENT_APP_NAMES: Record<CLIAgent, string> = {
 
 export const WEB_AGENT_APP_NAMES: Record<WebAgent, string> = {
   opencode: 'OpenCode',
-  genie: 'ACP UI',
+  acp: 'ACP UI',
 };
 
 export const LOCAL_APP_AGENT_APP_NAMES: Record<LocalAppAgent, string> = {

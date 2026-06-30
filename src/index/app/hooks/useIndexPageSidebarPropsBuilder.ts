@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import type { SettingsDialogInitialTab } from '../../components/SettingsDialog';
 import type { ItemData, TabType, ViewMode } from '../../types';
 import type {
@@ -91,7 +91,7 @@ interface UseIndexPageSidebarPropsBuilderParams {
         setSelectedPrototypePageId?: Dispatch<SetStateAction<string | null>>;
         handleCreatePrototypeStartDraft?: () => void;
         handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
-        handleOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+        handleOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
         handleOpenImageAiPanel?: () => void | Promise<void>;
         handleOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
         onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
@@ -251,7 +251,7 @@ export function useIndexPageSidebarPropsBuilder({
             onSidebarTreePersist: deps.resources.handleSidebarTreePersist,
             handleVersionManagement: deps.resources.handleVersionManagement,
             handleOpenProjectInIDE: deps.handleOpenProjectInIDE,
-            onOpenGenieWebAgent: prototypeStartPageActive ? undefined : deps.handleOpenGenieWebAgent,
+            onOpenAcpWebAgent: prototypeStartPageActive ? undefined : deps.handleOpenAcpWebAgent,
             onOpenImageAiPanel: prototypeStartPageActive ? undefined : deps.handleOpenImageAiPanel,
             onOpenWebAgentInPanel: deps.handleOpenWebAgentInPanel,
             onExecutePrompt: deps.onExecutePrompt,

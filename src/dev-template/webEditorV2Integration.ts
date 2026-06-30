@@ -81,7 +81,7 @@ function normalizeBooleanFlag(value: unknown): boolean | undefined {
 
 function isDebugTitleEnabled(search: string): boolean {
   const params = new URLSearchParams(search);
-  const normalized = normalizeString(params.get('genieDebugTitle')).toLowerCase();
+  const normalized = normalizeString(params.get('editorDebugTitle')).toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(normalized);
 }
 
@@ -1207,7 +1207,7 @@ export function readHostToolbarModeFromSearch(
   search: string,
 ): CommentaryToolbarMode | undefined {
   const params = new URLSearchParams(search);
-  return normalizeString(params.get('genieToolbar')).toLowerCase() === 'host'
+  return normalizeString(params.get('agentToolbar')).toLowerCase() === 'host'
     ? 'host'
     : undefined;
 }
@@ -1359,7 +1359,7 @@ function buildCommentPageScope(
   indexDeepLink: boolean,
 ): string {
   const scopeParams = new URLSearchParams(url.search);
-  for (const key of ['editor', 'axhubPane', 'axhubQuickEditContext', 'genieToolbar']) {
+  for (const key of ['editor', 'axhubPane', 'axhubQuickEditContext', 'agentToolbar']) {
     scopeParams.delete(key);
   }
   if (indexDeepLink) {
@@ -1632,11 +1632,11 @@ export const createWebEditorV2Controller = (
       const {
         ui: _ignoredUi,
         mobileMode: _ignoredMobileMode,
-        genieBridge: _ignoredGenieBridge,
+        agentBridge: _ignoredAgentBridge,
         integrationWs: _ignoredIntegrationWs,
         ...editorOptions
       } = options as WebEditorV2InitOptions & {
-        genieBridge?: unknown;
+        agentBridge?: unknown;
         integrationWs?: unknown;
       };
 

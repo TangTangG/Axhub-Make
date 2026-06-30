@@ -1,11 +1,11 @@
 export { createCommentary, createWebEditorV2 } from './editor/index';
 export type {
-  CommentaryGenieBridgeOptions,
+  CommentaryAgentBridgeOptions,
   CommentaryIntegrationWsOptions,
   CommentaryInitOptions,
   CommentaryPromptContextOptions,
   CommentaryUiOptions,
-  WebEditorV2GenieBridgeOptions,
+  WebEditorV2AgentBridgeOptions,
   WebEditorV2IntegrationWsOptions,
   WebEditorV2InitOptions,
   WebEditorV2PromptContextOptions,

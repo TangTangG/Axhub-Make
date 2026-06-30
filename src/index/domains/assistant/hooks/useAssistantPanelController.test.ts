@@ -30,7 +30,7 @@ describe('useAssistantPanelController source', () => {
     expect(baseContextSource).toContain('currentTheme,');
   });
 
-  it('syncs ACP context through iframe postMessage without starting the Genie integration bridge', () => {
+  it('syncs ACP context through iframe postMessage without starting the Agent integration bridge', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(source).toContain('useAssistantBridge(assistantIframeSrc, assistantBridgeOptions)');
@@ -41,7 +41,7 @@ describe('useAssistantPanelController source', () => {
     expect(source).not.toContain("updateContext(latestContext, 'replace')");
   });
 
-  it('does not keep Genie WebSocket integration state for ACP UI', () => {
+  it('does not keep Agent WebSocket integration state for ACP UI', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(source).not.toContain('assistantBridgeRef');
@@ -66,7 +66,7 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain('? buildImagePlaygroundUrlForRuntime(resolvedRuntime)');
     expect(source).toContain('const runtimeForUrl = runtimeOverride || assistantRuntime;');
     expect(source).toContain('const sourceUrl = targetUrl || buildAssistantIframeUrlForRuntime(runtimeForUrl, conversationStorePath);');
-    expect(source).toContain('const handleOpenGenieWebAgent = useCallback((targetPath?: string, _provider?: GenieProvider) => {');
+    expect(source).toContain('const handleOpenAcpWebAgent = useCallback((targetPath?: string, _provider?: AcpProvider) => {');
     expect(source).toContain("void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe', null, {");
     expect(source).toContain("panelMode: 'general-ai',");
     expect(source).toContain("const openImageAiPanel = useCallback(() => {");
@@ -353,7 +353,7 @@ describe('useAssistantPanelController source', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
     const toggleSource = source.slice(
       source.indexOf('const handleToggleAssistant = useCallback(() => {'),
-      source.indexOf('const handleOpenGenieWebAgent = useCallback', source.indexOf('const handleToggleAssistant = useCallback(() => {')),
+      source.indexOf('const handleOpenAcpWebAgent = useCallback', source.indexOf('const handleToggleAssistant = useCallback(() => {')),
     );
 
     expect(toggleSource).toContain('if (assistantVisible) {');
@@ -659,7 +659,7 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain("if (options.collectArtifacts === true && submitResult.threadId) {");
   });
 
-  it('does not expose Web Editor Genie request handling for ACP UI', () => {
+  it('does not expose Web Editor Agent request handling for ACP UI', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(source).not.toContain('handleWebEditorGenieRequest');
@@ -690,12 +690,12 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain('assistantContextCommentsSignatureRef');
   });
 
-  it('can open a non-Genie web agent URL directly in the sidebar iframe', () => {
+  it('can open a non-ACP web agent URL directly in the sidebar iframe', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(source).toContain('const openRawUrlInAssistantPanel = useCallback((url: string) => {');
     expect(source).toContain('setAssistantIframeOverrideUrl(nextUrl);');
-    expect(source).toContain('handleOpenGenieWebAgent');
+    expect(source).toContain('handleOpenAcpWebAgent');
     expect(source).toContain('openRawUrlInAssistantPanel');
     expect(source).not.toContain('stopAssistantIntegrationBridge');
   });

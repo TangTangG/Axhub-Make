@@ -31,18 +31,18 @@ const WORKSPACE_CHUNK_RULES: Array<{ marker: string; chunkName: string }> = [
   { marker: '/packages/excalidraw/', chunkName: 'vendor-excalidraw' },
   { marker: '/packages/tiptap-editor/', chunkName: 'vendor-editor' },
   { marker: '/packages/axhub-export-core/', chunkName: 'vendor-export' },
-  { marker: '/packages/axhub-commentary/', chunkName: 'vendor-genie' },
+  { marker: '/packages/axhub-commentary/', chunkName: 'vendor-commentary' },
   { marker: '/vendor/axhub-excalidraw/', chunkName: 'vendor-excalidraw' },
   { marker: '/vendor/tiptap-editor/', chunkName: 'vendor-editor' },
   { marker: '/vendor/axhub-export-core/', chunkName: 'vendor-export' },
-  { marker: '/vendor/axhub-commentary/', chunkName: 'vendor-genie' },
+  { marker: '/vendor/axhub-commentary/', chunkName: 'vendor-commentary' },
 ];
 
 const WORKSPACE_PACKAGE_CHUNKS = new Map<string, string>([
   ['@axhub/excalidraw', 'vendor-excalidraw'],
   ['tiptap-editor', 'vendor-editor'],
   ['axhub-export-core', 'vendor-export'],
-  ['@axhub/commentary', 'vendor-genie'],
+  ['@axhub/commentary', 'vendor-commentary'],
 ]);
 
 export function normalizeModuleId(id: string) {

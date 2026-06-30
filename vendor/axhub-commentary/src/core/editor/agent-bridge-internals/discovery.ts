@@ -1,8 +1,8 @@
 import {
-  GENIE_BRIDGE_CONFIG_ERROR,
-  GENIE_DEFAULT_INTEGRATION_CHANNEL,
-  GENIE_DEFAULT_TARGET_CLIENT_ID,
-  GENIE_SERVICE_ID,
+  AGENT_BRIDGE_CONFIG_ERROR,
+  AGENT_DEFAULT_INTEGRATION_CHANNEL,
+  AGENT_DEFAULT_TARGET_CLIENT_ID,
+  AGENT_SERVICE_ID,
 } from './constants';
 import {
   collectUniqueStrings,
@@ -23,13 +23,13 @@ export type EditorClientDescriptor = {
   capabilities: string[];
 };
 
-export function hasGenieServiceIdentity(
+export function hasAgentServiceIdentity(
   payload: unknown,
   headers?: Pick<Headers, 'get'> | null,
 ): boolean {
   const serviceId = normalizeString((payload as { service?: { id?: unknown } } | null)?.service?.id);
   const appIdentifier = normalizeString(headers?.get('X-App-Identifier') ?? headers?.get('x-app-identifier'));
-  return serviceId === GENIE_SERVICE_ID || appIdentifier === GENIE_SERVICE_ID;
+  return serviceId === AGENT_SERVICE_ID || appIdentifier === AGENT_SERVICE_ID;
 }
 
 export function parseEditorClientDescriptors(value: unknown): EditorClientDescriptor[] {
@@ -75,7 +75,7 @@ export function pickPreferredEditorClient(
     return rightTimestamp - leftTimestamp;
   });
 
-  const defaultClient = sortedItems.find((item) => item.clientId === GENIE_DEFAULT_TARGET_CLIENT_ID);
+  const defaultClient = sortedItems.find((item) => item.clientId === AGENT_DEFAULT_TARGET_CLIENT_ID);
   if (defaultClient) {
     return defaultClient;
   }
@@ -90,23 +90,23 @@ export function pickPreferredEditorClient(
 export function buildDiscoveryChannelCandidates(currentChannel: string): string[] {
   return collectUniqueStrings(
     currentChannel,
-    readWindowSearchParam('genieIntegrationChannel', 'integrationChannel'),
-    GENIE_DEFAULT_INTEGRATION_CHANNEL,
+    readWindowSearchParam('agentIntegrationChannel', 'integrationChannel'),
+    AGENT_DEFAULT_INTEGRATION_CHANNEL,
   );
 }
 
 export function buildDiscoveryTargetCandidates(currentTargetClientId: string): string[] {
   return collectUniqueStrings(
     currentTargetClientId,
-    readWindowSearchParam('genieTargetClientId', 'integrationClientId'),
-    GENIE_DEFAULT_TARGET_CLIENT_ID,
+    readWindowSearchParam('agentTargetClientId', 'integrationClientId'),
+    AGENT_DEFAULT_TARGET_CLIENT_ID,
   );
 }
 
-export function buildGenieWsUrl(apiBaseUrl: string, apiKey?: string): string {
+export function buildAgentWsUrl(apiBaseUrl: string, apiKey?: string): string {
   const trimmed = normalizeBaseUrl(apiBaseUrl);
   if (!trimmed) {
-    throw new Error(GENIE_BRIDGE_CONFIG_ERROR);
+    throw new Error(AGENT_BRIDGE_CONFIG_ERROR);
   }
 
   const url = new URL(trimmed);

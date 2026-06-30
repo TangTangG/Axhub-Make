@@ -12,8 +12,8 @@ import {
 } from './theme';
 import { resolveRuntimePopupContainer } from './popup-container';
 import type {
-  GenieToolbarIconButtonProps,
-  GenieToolbarShellProps,
+  AgentToolbarIconButtonProps,
+  AgentToolbarShellProps,
   IconActionButtonProps,
   IconActionTone,
   TooltipButtonProps,
@@ -63,7 +63,7 @@ function SvgIcon(props: {
   );
 }
 
-export function GenieSparkleIcon(): React.ReactElement {
+export function AgentSparkleIcon(): React.ReactElement {
   return (
     <SvgIcon>
       <path d="M8 2.5l1.4 4.1L13.5 8l-4.1 1.4L8 13.5 6.6 9.4 2.5 8l4.1-1.4L8 2.5z" />
@@ -139,7 +139,7 @@ export function IconActionButton(props: IconActionButtonProps): React.ReactEleme
   );
 }
 
-export function GenieToolbarIconButton(props: GenieToolbarIconButtonProps): React.ReactElement {
+export function AgentToolbarIconButton(props: AgentToolbarIconButtonProps): React.ReactElement {
   const { title, icon, awake, active = false, disabled = false, loading = false, onClick, ariaLabel } = props;
   const [hovered, setHovered] = React.useState(false);
   const mobile = isMobileDevice();
@@ -195,7 +195,7 @@ export function GenieToolbarIconButton(props: GenieToolbarIconButtonProps): Reac
   );
 }
 
-export function GenieToolbarShell(props: GenieToolbarShellProps): React.ReactElement {
+export function AgentToolbarShell(props: AgentToolbarShellProps): React.ReactElement {
   const { awake, children, dragHandleRef, fullWidth = false, style } = props;
   const shellBorderColor = EDITOR_CHROME.toolbarShellBorder;
   const shellSurfaceShadow = EDITOR_CHROME.toolbarShellInset;

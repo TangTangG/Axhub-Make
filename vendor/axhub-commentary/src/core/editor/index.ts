@@ -23,7 +23,7 @@ import { generateFullElementLabel, generateStableElementKey } from '../element-k
 import type { EditorServices } from './contracts';
 import { createChangesService } from './changes';
 import { createFeedbackService } from './feedback';
-import { createGenieBridgeService } from './genie-bridge';
+import { createAgentBridgeService } from './agent-bridge';
 import { createEditorIntegrationWsService } from './integration-ws';
 import { createInteractionService } from './interaction';
 import { createLifecycleService } from './lifecycle';
@@ -42,12 +42,12 @@ import { createTextSessionService } from './text-session';
 import { pushMobileModeOverride } from '../../utils/mobile-detect';
 
 export type {
-  CommentaryGenieBridgeOptions,
+  CommentaryAgentBridgeOptions,
   CommentaryIntegrationWsOptions,
   CommentaryUiOptions,
   CommentaryInitOptions,
   CommentaryPromptContextOptions,
-  WebEditorV2GenieBridgeOptions,
+  WebEditorV2AgentBridgeOptions,
   WebEditorV2IntegrationWsOptions,
   WebEditorV2UiOptions,
   WebEditorV2InitOptions,
@@ -55,9 +55,9 @@ export type {
 } from './state';
 export type {
   CommentaryDesignAdjustmentTool,
-  CommentaryGenieAgent,
+  CommentaryAgentProvider,
   CommentaryUiSettings,
-  WebEditorGenieAgent,
+  WebEditorAgentProvider,
   WebEditorDesignAdjustmentTool,
   WebEditorUiSettings,
 } from './ui-settings';
@@ -81,7 +81,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     }
   })();
   const resolvedProjectPath = String(
-    resolvedOptions.genieBridge.projectPath || hostResourceProjectPath,
+    resolvedOptions.agentBridge.projectPath || hostResourceProjectPath,
   ).trim();
   const summaries = createEditorSummariesService({
     state,
@@ -97,7 +97,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
   });
   let persistence: ReturnType<typeof createPersistenceService> | null = null;
   let interaction: ReturnType<typeof createInteractionService> | null = null;
-  let genieBridge: ReturnType<typeof createGenieBridgeService> | null = null;
+  let agentBridge: ReturnType<typeof createAgentBridgeService> | null = null;
   let destroyed = false;
 
   function buildSelectedElementSummary(): SelectedElementSummary | null {
@@ -155,7 +155,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       }
     }
 
-    for (const task of genieBridge?.getVisibleTaskStates() ?? []) {
+    for (const task of agentBridge?.getVisibleTaskStates() ?? []) {
       if (task.status === 'completed' || task.status === 'error') {
         clearableElementKeys.add(task.elementKey);
       }
@@ -187,15 +187,15 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
 
   function getDebugState(): CommentaryDebugState {
     const selectedElement = buildSelectedElementSummary();
-    const currentConversation = genieBridge?.getCurrentConversationState() ?? null;
-    const currentTask = genieBridge?.getElementTaskState(state.selectedElement) ?? null;
-    const visibleTasks = genieBridge?.getVisibleTaskStates() ?? [];
-    const bridgeConfig = genieBridge?.getDebugInfo?.() ?? null;
+    const currentConversation = agentBridge?.getCurrentConversationState() ?? null;
+    const currentTask = agentBridge?.getElementTaskState(state.selectedElement) ?? null;
+    const visibleTasks = agentBridge?.getVisibleTaskStates() ?? [];
+    const bridgeConfig = agentBridge?.getDebugInfo?.() ?? null;
     const integrationWsDebugState = services.integrationWs?.getDebugState() ?? null;
 
     return {
-      available: genieBridge?.isAvailable() ?? false,
-      connected: genieBridge?.isConnected() ?? false,
+      available: agentBridge?.isAvailable() ?? false,
+      connected: agentBridge?.isConnected() ?? false,
       integrationWsStatus: integrationWsDebugState?.status ?? 'disconnected',
       integrationWsUrl: integrationWsDebugState?.url ?? null,
       integrationWsLastError: integrationWsDebugState?.lastError ?? null,
@@ -212,7 +212,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
             sessionUrl: currentConversation.sessionUrl,
           }
         : null,
-      hasReusableConversation: genieBridge?.hasReusableConversation() ?? false,
+      hasReusableConversation: agentBridge?.hasReusableConversation() ?? false,
       currentElementTask: currentTask
         ? {
             elementKey: currentTask.elementKey,
@@ -392,9 +392,9 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
 
     const locator =
       state.editMetaByKey.get(elementKey)?.locator ??
-      genieBridge?.getTaskStateByElementKey?.(elementKey)?.locator ??
+      agentBridge?.getTaskStateByElementKey?.(elementKey)?.locator ??
       state.externalEditingTaskByElementKey.get(elementKey)?.locator ??
-      state.genieTaskByElementKey.get(elementKey)?.locator ??
+      state.agentTaskByElementKey.get(elementKey)?.locator ??
       targetRef?.locator ??
       null;
     if (!locator) return null;
@@ -411,7 +411,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     const nodeKeys = new Set<string>([
       ...state.editMetaByKey.keys(),
       ...state.processedEditTimestampsByKey.keys(),
-      ...state.genieTaskByElementKey.keys(),
+      ...state.agentTaskByElementKey.keys(),
       ...state.externalEditingTaskByElementKey.keys(),
     ]);
 
@@ -419,9 +419,9 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       .map((elementKey) => {
         const meta = state.editMetaByKey.get(elementKey) ?? null;
         const task =
-          genieBridge?.getTaskStateByElementKey?.(elementKey) ??
+          agentBridge?.getTaskStateByElementKey?.(elementKey) ??
           state.externalEditingTaskByElementKey.get(elementKey) ??
-          state.genieTaskByElementKey.get(elementKey) ??
+          state.agentTaskByElementKey.get(elementKey) ??
           null;
         const lastHandledAtRaw = state.processedEditTimestampsByKey.get(elementKey);
         const lastHandledAt = Number.isFinite(Number(lastHandledAtRaw))
@@ -556,20 +556,20 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       );
     }
 
-    if (!genieBridge?.setExternalEditingState || !genieBridge.clearExternalEditingState) {
+    if (!agentBridge?.setExternalEditingState || !agentBridge.clearExternalEditingState) {
       throw new Error('NOT_IMPLEMENTED: External editing state control is unavailable');
     }
 
     if (nextState === 'editing') {
-      genieBridge.setExternalEditingState(targetElement, taskRef);
+      agentBridge.setExternalEditingState(targetElement, taskRef);
     } else if (nextState === 'idle') {
-      genieBridge.clearExternalEditingState(targetElement, taskRef);
+      agentBridge.clearExternalEditingState(targetElement, taskRef);
     } else if (nextState === 'completed' || nextState === 'error') {
-      if (!genieBridge.setExternalEditingTerminalState) {
+      if (!agentBridge.setExternalEditingTerminalState) {
         // Fallback: treat completed as idle (clear), treat error as idle (clear)
-        genieBridge.clearExternalEditingState(targetElement, taskRef);
+        agentBridge.clearExternalEditingState(targetElement, taskRef);
       } else {
-        genieBridge.setExternalEditingTerminalState(targetElement, nextState, taskRef);
+        agentBridge.setExternalEditingTerminalState(targetElement, nextState, taskRef);
       }
     }
     notifyStatusChange();
@@ -628,21 +628,21 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
 
   let flushPendingCommentContextSync: (() => void) | null = null;
 
-  genieBridge = createGenieBridgeService({
+  agentBridge = createAgentBridgeService({
     state,
     changes,
     feedback,
     persistence,
     summaries,
     bridgeOptions: {
-      ...resolvedOptions.genieBridge,
+      ...resolvedOptions.agentBridge,
       projectPath: resolvedProjectPath,
     },
     onAvailabilityChange: (available) => {
-      if (genieBridge?.isConnected() && !state.uiSettings.genieAwake) {
+      if (agentBridge?.isConnected() && !state.uiSettings.agentAwake) {
         state.uiSettings = {
           ...state.uiSettings,
-          genieAwake: true,
+          agentAwake: true,
         };
       }
       if (available) {
@@ -664,7 +664,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     getSessionId: () => {
       const integrationSessionId = String(resolvedOptions.integrationWs.sessionId ?? '').trim();
       if (integrationSessionId) return integrationSessionId;
-      return genieBridge?.getCurrentConversationState()?.sessionId ?? null;
+      return agentBridge?.getCurrentConversationState()?.sessionId ?? null;
     },
     getEditedSnapshotPayload,
     listEditorNodes,
@@ -681,7 +681,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     changes,
     persistence,
     textSession,
-    genieBridge,
+    agentBridge,
     logPrefix: '[WebEditorV2]',
     onStatusChange: notifyStatusChange,
   });
@@ -703,7 +703,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     persistence,
     textSession,
     interaction,
-    genieBridge,
+    agentBridge,
     integrationWs,
     localActions,
   };
@@ -803,13 +803,13 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
   async function clearAllEdits(): Promise<void> {
     if (destroyed) return;
     await localActions.handleClearEdits({ skipConfirm: true });
-    for (const task of genieBridge?.getVisibleTaskStates() ?? []) {
+    for (const task of agentBridge?.getVisibleTaskStates() ?? []) {
       if (task.status !== 'completed' && task.status !== 'error') {
         continue;
       }
       const element = resolveElementByKey(task.elementKey);
       if (element?.isConnected) {
-        genieBridge?.dismissElementTaskState(element);
+        agentBridge?.dismissElementTaskState(element);
       }
     }
     notifyStatusChange();

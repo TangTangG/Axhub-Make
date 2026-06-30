@@ -5,7 +5,7 @@ import type { PropertyPanel, PropertyPanelOptions, PropertyPanelTab } from '../p
 import type { FloatingPosition } from '../floating-drag';
 import type { CommentEntryMode } from '../selection-ui-mode';
 import type { CommentShortcutSettings, ModifierShortcutKey } from '../../core/editor/comment-shortcut-settings';
-import type { GenieProviderAvailability } from '../../core/editor/contracts';
+import type { AgentProviderAvailability } from '../../core/editor/contracts';
 import type {
   WebEditorInteractionProfile,
   WebEditorDesignAdjustmentTool,
@@ -158,12 +158,12 @@ export interface PropertyPanelViewProps extends SharedNoteActions, SharedTextAct
   inlineTextEditing?: boolean;
   uiSettings: WebEditorUiSettings;
   interactionProfile: WebEditorInteractionProfile;
-  genieVisualState: 'sleeping' | 'awake';
-  genieProviderAvailabilities: GenieProviderAvailability[];
+  agentVisualState: 'sleeping' | 'awake';
+  agentProviderAvailabilities: AgentProviderAvailability[];
   onPropertyPanelOpenChange: (open: boolean) => void;
-  onGenieVisualStateChange: (state: 'sleeping' | 'awake') => void;
+  onAgentVisualStateChange: (state: 'sleeping' | 'awake') => void;
   onUiSettingsChange: (settings: WebEditorUiSettings) => void;
-  onRefreshGenieProviderAvailabilities?: (providers?: readonly string[]) => Promise<void>;
+  onRefreshAgentProviderAvailabilities?: (providers?: readonly string[]) => Promise<void>;
   onHoverSelectionSuppressedChange: (hovered: boolean) => void;
   onSelectionInteractionLockChange: (locked: boolean) => void;
   onUiModeChange: (mode: CommentEntryMode) => void;
@@ -197,16 +197,16 @@ export interface PromptCardViewProps extends SharedNoteActions, SharedTextAction
   propertyPanelEnabled: boolean;
   styleDesignEnabled: boolean;
   bubbleStyleEditorOpen: boolean;
-  genieVisualState: 'sleeping' | 'awake';
+  agentVisualState: 'sleeping' | 'awake';
   hideExecutionControls?: boolean;
   hideContextAppendAction?: boolean;
   onBubbleStyleEditorOpenChange: (open: boolean) => void;
-  onSendCurrentElementPromptToGenie?: (element: Element) => void | Promise<void>;
-  onWakeGenie?: () => boolean | Promise<boolean>;
-  onGenieVisualStateChange?: (state: 'sleeping' | 'awake') => void;
-  getGenieBridgeConnected?: (() => boolean) | undefined;
-  getHasReusableGenieConversation?: (() => boolean) | undefined;
-  getSendCurrentElementPromptToGenieBlockReason?: ((element: Element | null) => string | undefined) | undefined;
+  onSendCurrentElementPromptToAgent?: (element: Element) => void | Promise<void>;
+  onWakeAgent?: () => boolean | Promise<boolean>;
+  onAgentVisualStateChange?: (state: 'sleeping' | 'awake') => void;
+  getAgentBridgeConnected?: (() => boolean) | undefined;
+  getHasReusableAgentConversation?: (() => boolean) | undefined;
+  getSendCurrentElementPromptToAgentBlockReason?: ((element: Element | null) => string | undefined) | undefined;
   canExportSelectionToDesignTool?: (
     tool: WebEditorDesignAdjustmentTool,
     element: Element | null,
@@ -244,7 +244,7 @@ export interface PromptCardSize {
   height: number;
 }
 
-export type GeniePromptRoute = 'frontend' | 'agent-run';
+export type AgentPromptRoute = 'frontend' | 'agent-run';
 export type IconActionTone = 'neutral' | 'accent' | 'danger' | 'dark';
 
 export interface IconActionButtonProps {
@@ -257,7 +257,7 @@ export interface IconActionButtonProps {
   style?: React.CSSProperties;
 }
 
-export interface GenieToolbarIconButtonProps {
+export interface AgentToolbarIconButtonProps {
   title: string;
   icon: React.ReactNode;
   awake: boolean;
@@ -268,7 +268,7 @@ export interface GenieToolbarIconButtonProps {
   ariaLabel?: string;
 }
 
-export interface GenieToolbarShellProps {
+export interface AgentToolbarShellProps {
   awake: boolean;
   children: React.ReactNode;
   dragHandleRef?: React.Ref<HTMLDivElement>;

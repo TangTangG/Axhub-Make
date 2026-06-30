@@ -1,7 +1,7 @@
-import type { ElementGenieTaskState } from '../../core/editor/state';
+import type { ElementAgentTaskState } from '../../core/editor/state';
 
 export function resolveExternalEditingStatusDescription(
-  task: ElementGenieTaskState | null | undefined,
+  task: ElementAgentTaskState | null | undefined,
   configuredDescription?: string | null,
 ): string {
   const fallback = String(task?.message ?? '').trim();

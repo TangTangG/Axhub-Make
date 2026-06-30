@@ -221,7 +221,7 @@ describe('useIndexPageSidebarPropsBuilder', () => {
   });
 
   it('disables manual assistant opening on the prototype start page', () => {
-    const handleOpenGenieWebAgent = vi.fn();
+    const handleOpenAcpWebAgent = vi.fn();
     const handleOpenImageAiPanel = vi.fn();
     const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
       state: {
@@ -230,14 +230,14 @@ describe('useIndexPageSidebarPropsBuilder', () => {
         aiPanelMode: 'general-ai',
       },
       deps: {
-        handleOpenGenieWebAgent,
+        handleOpenAcpWebAgent,
         handleOpenImageAiPanel,
       },
     }));
 
     expect(props.state.webAgentPanelOpen).toBe(false);
     expect(props.state.aiPanelMode).toBeNull();
-    expect(props.actions.onOpenGenieWebAgent).toBeUndefined();
+    expect(props.actions.onOpenAcpWebAgent).toBeUndefined();
     expect(props.actions.onOpenImageAiPanel).toBeUndefined();
   });
 

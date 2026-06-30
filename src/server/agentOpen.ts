@@ -53,7 +53,7 @@ const CLI_AGENT_COMMANDS: Record<CLIAgent, CommandSpec> = {
 
 const WEB_AGENT_COMMANDS: Record<WebAgent, CommandSpec> = {
   opencode: { command: '', args: [], displayCommand: '' },
-  genie: { command: 'npx', args: ['@axhub/acp@latest'], displayCommand: 'npx @axhub/acp@latest' },
+  acp: { command: 'npx', args: ['@axhub/acp@latest'], displayCommand: 'npx @axhub/acp@latest' },
 };
 
 const OPENCODE_WEB_HOSTNAME = 'localhost';

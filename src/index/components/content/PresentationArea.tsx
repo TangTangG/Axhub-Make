@@ -208,7 +208,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         onAddCanvasImageToAI={props.onAddCanvasImageToAI}
                         onAnnotationsChange={props.onCanvasAnnotationsChange}
                         onOpenCanvasInIDE={props.onOpenCanvasInIDE}
-                        onOpenCanvasGenie={props.onOpenCanvasGenie}
+                        onOpenCanvasAgent={props.onOpenCanvasAgent}
                         onSelectResourceFolder={props.onSelectResourceFolder}
                         onSelectResourceFolderItem={props.onSelectResourceFolderItem}
                         onOpenResourceFolderInSystem={props.onOpenResourceFolderInSystem}
@@ -219,7 +219,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         webAgentPanelOpen={props.webAgentPanelOpen}
                         aiPanelMode={props.aiPanelMode}
                         onOpenProjectInIDE={props.handleOpenProjectInIDE}
-                        onOpenGenieWebAgent={props.onOpenGenieWebAgent}
+                        onOpenAcpWebAgent={props.onOpenAcpWebAgent}
                         onOpenImageAiPanel={props.onOpenImageAiPanel}
                         onOpenWebAgentInPanel={props.onOpenWebAgentInPanel}
                         onExecutePrompt={props.onExecutePrompt}

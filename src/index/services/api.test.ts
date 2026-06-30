@@ -100,7 +100,7 @@ describe('apiService source', () => {
 
     expect(source).not.toContain('executePrompt(');
     expect(source).not.toContain('executeGeniePrompt');
-    expect(source).not.toContain("from '@/common/genie/execute'");
+    expect(source).not.toContain("from '@/common/assistant-context/execute'");
     expect(source).not.toContain('PromptExecuteRequest');
     expect(source).not.toContain('PromptExecuteResponse');
   });

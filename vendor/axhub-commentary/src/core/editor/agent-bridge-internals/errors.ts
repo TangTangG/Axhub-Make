@@ -1,17 +1,17 @@
 import {
-  GENIE_PAGE_OFFLINE_MESSAGE,
+  AGENT_PAGE_OFFLINE_MESSAGE,
 } from './constants';
 import { normalizeString } from './common';
-import type { GenieWsMessage } from './types';
+import type { AgentWsMessage } from './types';
 
-export type GenieBridgeError = Error & {
+export type AgentBridgeError = Error & {
   code?: string;
   silentToast?: boolean;
 };
 
 export function mapIntegrationErrorMessage(code: unknown, message: unknown): string {
   if (code === 'FRONTEND_NOT_ONLINE') {
-    return GENIE_PAGE_OFFLINE_MESSAGE;
+    return AGENT_PAGE_OFFLINE_MESSAGE;
   }
 
   const normalizedMessage = typeof message === 'string' ? message.trim() : '';
@@ -35,7 +35,7 @@ export function mapAgentErrorMessage(message: unknown): string {
   return 'AI 执行失败，请稍后重试。';
 }
 
-export function readAgentErrorCode(message: GenieWsMessage): string | null {
+export function readAgentErrorCode(message: AgentWsMessage): string | null {
   if (typeof message.errorCode === 'string' && message.errorCode.trim()) {
     return message.errorCode.trim();
   }
@@ -54,15 +54,15 @@ export function createBridgeError(
     code?: string;
     silentToast?: boolean;
   } = {},
-): GenieBridgeError {
-  const error = new Error(message) as GenieBridgeError;
+): AgentBridgeError {
+  const error = new Error(message) as AgentBridgeError;
   error.code = options.code;
   error.silentToast = options.silentToast;
   return error;
 }
 
 export function isSilentBridgeError(error: unknown): boolean {
-  return Boolean(error && typeof error === 'object' && 'silentToast' in error && (error as GenieBridgeError).silentToast);
+  return Boolean(error && typeof error === 'object' && 'silentToast' in error && (error as AgentBridgeError).silentToast);
 }
 
 export function buildCurrentFileDisplayName(targetPath: string | null, filePath: string): string {

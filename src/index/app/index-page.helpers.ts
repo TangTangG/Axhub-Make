@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { GenieContextV1 } from '@/common/genie/types';
+import type { AssistantContextV1 } from '@/common/assistant-context/types';
 import type { CanvasItem, ItemData, SidebarTreeNode, SidebarTreeTab, TabType } from '../types';
 import {
     STORAGE_KEY_ASSISTANT_AUTO_OPEN_DISMISSED,
@@ -26,7 +26,7 @@ export interface OpenAssistantUrlEventDetail {
 export interface SpecPromptRequestResult {
     prompt: string;
     targetPath?: string;
-    context?: GenieContextV1;
+    context?: AssistantContextV1;
 }
 
 export type MarkdownQuickEditMode = 'comment' | 'edit';

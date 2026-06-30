@@ -7,7 +7,7 @@
  * target elements with the Commentary.
  */
 
-const STYLE_TAG_ID = '__genie_no_animations__';
+const STYLE_TAG_ID = '__commentary_no_animations__';
 
 const DISABLE_ANIMATIONS_CSS = `
 /* Commentary: page animations disabled */

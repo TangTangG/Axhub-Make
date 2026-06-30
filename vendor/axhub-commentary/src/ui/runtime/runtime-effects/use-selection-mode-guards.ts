@@ -113,7 +113,7 @@ export function useSelectionModeGuards(params: {
           propertyPanelOptions?.getChangeMarkersVisible?.() ?? true;
         propertyPanelOptions?.onChangeMarkersVisible?.(false, { persist: false });
         propertyPanelOptions?.onSelectionChromeVisibleChange?.(false);
-        propertyPanelOptions?.dismissVisibleElementGenieTaskStates?.();
+        propertyPanelOptions?.dismissVisibleElementAgentTaskStates?.();
       }
 
       syncSelectionModeAvailability();
@@ -132,7 +132,7 @@ export function useSelectionModeGuards(params: {
           propertyPanelOptions?.getChangeMarkersVisible?.() ?? true;
         propertyPanelOptions?.onChangeMarkersVisible?.(false, { persist: false });
         propertyPanelOptions?.onSelectionChromeVisibleChange?.(false);
-        propertyPanelOptions?.dismissVisibleElementGenieTaskStates?.();
+        propertyPanelOptions?.dismissVisibleElementAgentTaskStates?.();
       } else {
         selectionNeedsExplicitReactivateRef.current = false;
         if (selectionModeActiveRef.current) {

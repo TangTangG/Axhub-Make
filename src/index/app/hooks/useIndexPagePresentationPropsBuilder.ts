@@ -4,7 +4,7 @@ import type { AiPanelMode, PresentationAreaGroupedProps, PrototypeCreateDialogOp
 import type { ViewMode } from '../../types';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
 import type { CanvasElementContextInfo } from '../../components/content/canvas-embeds/AnnotationOverlay';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import type { CanvasAiGenerationRequest, CanvasAiGenerationResult } from '../../domains/ai-generation/CanvasAiGenerationTool';
 import type { AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
 import type { SettingsDialogInitialTab } from '../../components/SettingsDialog';
@@ -79,9 +79,9 @@ interface UseIndexPagePresentationPropsBuilderParams {
         onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;
         onCanvasAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
         onOpenCanvasInIDE?: (canvasFilePath: string) => void | Promise<void>;
-        onOpenCanvasGenie?: () => void | Promise<void>;
+        onOpenCanvasAgent?: () => void | Promise<void>;
         handleOpenProjectInIDE?: (ideOverride?: any, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
-        onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+        onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
         onOpenImageAiPanel?: () => void | Promise<void>;
         onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
         onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
@@ -254,9 +254,9 @@ export function useIndexPagePresentationPropsBuilder({
             onAddCanvasImageToAI: actions.onAddCanvasImageToAI,
             onCanvasAnnotationsChange: actions.onCanvasAnnotationsChange,
             onOpenCanvasInIDE: actions.onOpenCanvasInIDE,
-            onOpenCanvasGenie: actions.onOpenCanvasGenie,
+            onOpenCanvasAgent: actions.onOpenCanvasAgent,
             handleOpenProjectInIDE: actions.handleOpenProjectInIDE,
-            onOpenGenieWebAgent: actions.onOpenGenieWebAgent,
+            onOpenAcpWebAgent: actions.onOpenAcpWebAgent,
             onOpenImageAiPanel: actions.onOpenImageAiPanel,
             onOpenWebAgentInPanel: actions.onOpenWebAgentInPanel,
             onExecutePrompt: actions.onExecutePrompt,

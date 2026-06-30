@@ -244,10 +244,10 @@ function generationArtifactsEndpoint(value: string): string {
 function resolvePromptGenerationProvider(preferredPromptClient?: PromptClientPreference): string {
   const normalized = String(preferredPromptClient || '').trim().toLowerCase();
   if (!normalized) return 'codex';
-  if (normalized === 'openai' || normalized === 'acp:codex' || normalized === 'genie:codex') return 'codex';
-  if (normalized === 'claudecode' || normalized === 'acp:claude' || normalized === 'genie:claude') return 'claude';
-  if (normalized === 'acp:gemini' || normalized === 'genie:gemini') return 'gemini';
-  if (normalized === 'acp:opencode' || normalized === 'genie:opencode') return 'opencode';
+  if (normalized === 'openai' || normalized === 'acp:codex') return 'codex';
+  if (normalized === 'claudecode' || normalized === 'acp:claude') return 'claude';
+  if (normalized === 'acp:gemini') return 'gemini';
+  if (normalized === 'acp:opencode') return 'opencode';
   return normalized.startsWith('local:') ? 'codex' : normalized;
 }
 

@@ -29,7 +29,7 @@ beforeEach(() => {
 });
 
 describe('createWebEditorV2Controller launch options', () => {
-  it('ignores enable-time Genie bridge and editor integration options before creating the editor', async () => {
+  it('ignores enable-time Agent bridge and editor integration options before creating the editor', async () => {
     const start = vi.fn();
     const stop = vi.fn();
 
@@ -63,7 +63,7 @@ describe('createWebEditorV2Controller launch options', () => {
       toolbarMode: 'host',
       initialDarkMode: true,
       mobileMode: true,
-      genieBridge: {
+      agentBridge: {
         apiBaseUrl: 'http://localhost:32124/api',
         integrationChannel: '/workspace/demo/project',
         projectPath: '/workspace/demo/project',
@@ -81,7 +81,7 @@ describe('createWebEditorV2Controller launch options', () => {
         mobileMode: true,
       }),
     );
-    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('agentBridge');
     expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
   });
@@ -122,7 +122,7 @@ describe('createWebEditorV2Controller launch options', () => {
     const controller = createWebEditorV2Controller();
     await controller.enable({
       toolbarMode: 'host',
-      genieBridge: {
+      agentBridge: {
         apiBaseUrl: 'http://localhost:32124/api',
         integrationChannel: 'axhub',
         targetClientId: '',
@@ -136,7 +136,7 @@ describe('createWebEditorV2Controller launch options', () => {
     } as any);
 
     expect(fetchRuntime).not.toHaveBeenCalledWith('/api/assistant/runtime?autoStart=false', expect.anything());
-    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('agentBridge');
     expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
   });
@@ -144,8 +144,8 @@ describe('createWebEditorV2Controller launch options', () => {
 
 describe('readHostToolbarModeFromSearch', () => {
   it('enables host toolbar mode only for explicit host requests', () => {
-    expect(readHostToolbarModeFromSearch('?genieToolbar=host')).toBe('host');
-    expect(readHostToolbarModeFromSearch('?genieToolbar=inline')).toBeUndefined();
+    expect(readHostToolbarModeFromSearch('?agentToolbar=host')).toBe('host');
+    expect(readHostToolbarModeFromSearch('?agentToolbar=inline')).toBeUndefined();
     expect(readHostToolbarModeFromSearch('')).toBeUndefined();
   });
 });
@@ -265,7 +265,7 @@ describe('resolveHostResourceContextFromLocation', () => {
     expect(
       resolveHostResourceContextFromLocation(
         '/prototypes/touch-and-talk-annotation-demo',
-        'http://localhost:53817/prototypes/touch-and-talk-annotation-demo?genieToolbar=host#page=common-tips',
+        'http://localhost:53817/prototypes/touch-and-talk-annotation-demo?agentToolbar=host#page=common-tips',
       )?.meta,
     ).toEqual({
       group: 'prototypes',
@@ -327,7 +327,7 @@ describe('resolveHostResourceContextFromLocation', () => {
 });
 
 describe('createWebEditorV2Controller', () => {
-  it('uses neutral editor debug title wording instead of the old Genie runtime label', async () => {
+  it('uses neutral editor debug title wording instead of the old Agent runtime label', async () => {
     const start = vi.fn();
     const stop = vi.fn();
     const setIntervalMock = vi.fn(() => 1);
@@ -356,7 +356,7 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieDebugTitle=1',
+        search: '?editorDebugTitle=1',
         pathname: '/prototypes/home',
         href: 'http://localhost:51720/prototypes/home',
       },
@@ -413,7 +413,7 @@ describe('createWebEditorV2Controller', () => {
     vi.stubGlobal('window', {
       location: {
         search:
-          '?genieApiBaseUrl=http://localhost:32124/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1&cwd=%2Fworkspace%2Fdemo%2Fproject&provider=codex&editorIntegrationWs=1&editorApiBaseUrl=http://localhost:32124/api&editorIntegrationChannel=make&editorClientId=make-editor-abcd&editorSessionId=session-001&editorMobileMode=true',
+          '?agentApiBaseUrl=http://localhost:32124/api&agentIntegrationChannel=make&agentTargetClientId=frontend-1&cwd=%2Fworkspace%2Fdemo%2Fproject&provider=codex&editorIntegrationWs=1&editorApiBaseUrl=http://localhost:32124/api&editorIntegrationChannel=make&editorClientId=make-editor-abcd&editorSessionId=session-001&editorMobileMode=true',
         pathname: '/prototypes/home',
         href: 'http://localhost:51720/prototypes/home?editor=webEditorV2',
       },
@@ -454,7 +454,7 @@ describe('createWebEditorV2Controller', () => {
         }),
       }),
     );
-    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('agentBridge');
     expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
 
     const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
@@ -684,7 +684,7 @@ describe('createWebEditorV2Controller', () => {
     await controller.enable();
 
     expect(fetchMock).not.toHaveBeenCalledWith('/api/assistant/runtime?autoStart=false', expect.anything());
-    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('agentBridge');
     expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
   });
@@ -2157,9 +2157,9 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieToolbar=host',
+        search: '?agentToolbar=host',
         pathname: '/prototypes/annotation-demo',
-        href: 'http://localhost:51721/prototypes/annotation-demo?genieToolbar=host#page=agent-read',
+        href: 'http://localhost:51721/prototypes/annotation-demo?agentToolbar=host#page=agent-read',
         protocol: 'http:',
         hostname: 'localhost',
       },
@@ -2684,9 +2684,9 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieToolbar=host',
+        search: '?agentToolbar=host',
         pathname: '/prototypes/annotation-demo',
-        href: 'http://localhost:53817/prototypes/annotation-demo?genieToolbar=host#page=prototype-as-prd',
+        href: 'http://localhost:53817/prototypes/annotation-demo?agentToolbar=host#page=prototype-as-prd',
         protocol: 'http:',
         hostname: 'localhost',
       },
@@ -2833,7 +2833,7 @@ describe('createWebEditorV2Controller', () => {
     vi.stubGlobal('window', {
       location: {
         search:
-          '?genieApiBaseUrl=http://localhost:32124/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1',
+          '?agentApiBaseUrl=http://localhost:32124/api&agentIntegrationChannel=make&agentTargetClientId=frontend-1',
         pathname: '/prototypes/home',
         href: 'http://localhost:51720/prototypes/home?editor=webEditorV2',
         protocol: 'http:',
@@ -2889,9 +2889,9 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieToolbar=host',
+        search: '?agentToolbar=host',
         pathname: '/prototypes/home',
-        href: 'http://localhost:51720/prototypes/home?genieToolbar=host',
+        href: 'http://localhost:51720/prototypes/home?agentToolbar=host',
         protocol: 'http:',
         hostname: 'localhost',
       },
@@ -3143,9 +3143,9 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieToolbar=host#page=voice-annotation',
+        search: '?agentToolbar=host#page=voice-annotation',
         pathname: '/prototypes/touch-and-talk-annotation-demo',
-        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?genieToolbar=host#page=voice-annotation',
+        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?agentToolbar=host#page=voice-annotation',
         protocol: 'http:',
         hostname: 'localhost',
       },
@@ -3197,9 +3197,9 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieToolbar=host#page=common-tips',
+        search: '?agentToolbar=host#page=common-tips',
         pathname: '/prototypes/touch-and-talk-annotation-demo',
-        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?genieToolbar=host#page=common-tips',
+        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?agentToolbar=host#page=common-tips',
         protocol: 'http:',
         hostname: 'localhost',
       },

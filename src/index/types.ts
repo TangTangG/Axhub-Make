@@ -1,5 +1,5 @@
 import { MainIDEPreference } from '../common/ide';
-import type { GenieCurrentFileValueV1 } from '../common/genie/types';
+import type { AssistantCurrentFileValueV1 } from '../common/assistant-context/types';
 
 export interface DeviceConfig {
     id: string;
@@ -62,17 +62,8 @@ export type AcpPromptClient =
     | 'acp:qoder'
     | 'acp:codebuddy'
     | 'acp:reasonix';
-export type GeniePromptClient =
-    | 'genie:claude'
-    | 'genie:cursor'
-    | 'genie:codex'
-    | 'genie:gemini'
-    | 'genie:opencode'
-    | 'genie:qoder'
-    | 'genie:codebuddy'
-    | 'genie:reasonix';
 export type LocalPromptClient = 'local:cursor' | 'local:qoder';
-export type PromptClient = AcpPromptClient | GeniePromptClient | LocalPromptClient;
+export type PromptClient = AcpPromptClient | LocalPromptClient;
 export type PromptClientPreference = PromptClient | null;
 
 export interface AutomationConfig {
@@ -160,7 +151,7 @@ export interface AssistantContextElementV1 {
 export interface AssistantContextV1 {
     version: '1';
     systemContext: string;
-    currentFile: GenieCurrentFileValueV1;
+    currentFile: AssistantCurrentFileValueV1;
     selectedElements: AssistantContextElementV1[];
     extensions?: Record<string, unknown>;
 }

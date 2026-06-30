@@ -4,7 +4,7 @@ import type { ViewportRect } from '../../overlay/canvas-overlay';
 import type { CommentEntryMode } from '../selection-ui-mode';
 import { isMobileDevice } from '../../utils/mobile-detect';
 import { panelContainerStyle, WEB_EDITOR_POPUP_ROOT_STYLES } from './styles';
-import { ElementGenieTaskOverlays } from './element-genie-task-overlays';
+import { ElementAgentTaskOverlays } from './element-agent-task-overlays';
 import { PromptCardView } from './prompt-card-view';
 import { PropertyPanelView } from './property-panel-view';
 import { syncDraftAgainstSaved } from './shared-state';
@@ -157,11 +157,11 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
       interactionProfile,
     ),
   );
-  const [genieVisualState, setGenieVisualState] = React.useState<'sleeping' | 'awake'>(() =>
+  const [agentVisualState, setAgentVisualState] = React.useState<'sleeping' | 'awake'>(() =>
     normalizeRuntimeUiSettings(
       propertyPanelOptions?.getUiSettings?.() ?? DEFAULT_WEB_EDITOR_UI_SETTINGS,
       interactionProfile,
-    ).genieAwake
+    ).agentAwake
       ? 'awake'
       : 'sleeping',
   );
@@ -240,9 +240,9 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
   }, [onThemeModeChange, uiSettings.darkMode]);
 
   React.useEffect(() => {
-    const nextVisualState = uiSettings.genieAwake ? 'awake' : 'sleeping';
-    setGenieVisualState((prev) => (prev === nextVisualState ? prev : nextVisualState));
-  }, [uiSettings.genieAwake]);
+    const nextVisualState = uiSettings.agentAwake ? 'awake' : 'sleeping';
+    setAgentVisualState((prev) => (prev === nextVisualState ? prev : nextVisualState));
+  }, [uiSettings.agentAwake]);
 
   React.useEffect(() => {
     selectionGuards.toolMinimizedRef.current = toolMinimized;
@@ -257,16 +257,16 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
   const taskStateProvider = React.useMemo(
     () => ({
       getCurrentTask: (element: Element | null) =>
-        propertyPanelOptions?.getElementGenieTaskState?.(element)
-        ?? breadcrumbsOptions?.getElementGenieTaskState?.(element)
+        propertyPanelOptions?.getElementAgentTaskState?.(element)
+        ?? breadcrumbsOptions?.getElementAgentTaskState?.(element)
         ?? null,
       getVisibleTasks: () =>
-        propertyPanelOptions?.getVisibleElementGenieTaskStates?.()
-        ?? breadcrumbsOptions?.getVisibleElementGenieTaskStates?.()
+        propertyPanelOptions?.getVisibleElementAgentTaskStates?.()
+        ?? breadcrumbsOptions?.getVisibleElementAgentTaskStates?.()
         ?? [],
       dismissTask: (element: Element) => {
-        propertyPanelOptions?.dismissElementGenieTaskState?.(element);
-        breadcrumbsOptions?.dismissElementGenieTaskState?.(element);
+        propertyPanelOptions?.dismissElementAgentTaskState?.(element);
+        breadcrumbsOptions?.dismissElementAgentTaskState?.(element);
       },
     }),
     [breadcrumbsOptions, propertyPanelOptions],
@@ -601,17 +601,17 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
     [interactionProfile, propertyPanelOptions],
   );
 
-  const handleGenieVisualStateChange = React.useCallback(
+  const handleAgentVisualStateChange = React.useCallback(
     (nextState: 'sleeping' | 'awake') => {
-      setGenieVisualState(nextState);
+      setAgentVisualState(nextState);
       setUiSettings((prev) => {
         const nextAwake = nextState === 'awake';
-        if (prev.genieAwake === nextAwake) {
+        if (prev.agentAwake === nextAwake) {
           return prev;
         }
         const sanitized = normalizeRuntimeUiSettings({
             ...prev,
-            genieAwake: nextAwake,
+            agentAwake: nextAwake,
           }, interactionProfile);
         propertyPanelOptions?.onUiSettingsChange?.(sanitized);
         return sanitized;
@@ -620,9 +620,9 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
     [interactionProfile, propertyPanelOptions],
   );
 
-  const currentGenieTask = taskStateProvider.getCurrentTask(currentTarget);
+  const currentAgentTask = taskStateProvider.getCurrentTask(currentTarget);
   const currentTaskRunning =
-    currentGenieTask?.status === 'pending' || currentGenieTask?.status === 'created';
+    currentAgentTask?.status === 'pending' || currentAgentTask?.status === 'created';
   const canEditNote = Boolean(propertyPanelOptions?.onAiNoteChange);
   const annotationDocumentEditUrl = React.useMemo(() => {
     const resolver =
@@ -840,15 +840,15 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
     propertyPanelOptions.onDismissSelection?.();
   }, [propertyPanelOptions, syncSavedAnnotationMarkdown, syncSavedImages, syncSavedNote, syncSavedText]);
 
-  const handleSendCurrentElementPromptToGenie = React.useMemo(() => {
-    if (!propertyPanelOptions?.onSendCurrentElementPromptToGenie) {
+  const handleSendCurrentElementPromptToAgent = React.useMemo(() => {
+    if (!propertyPanelOptions?.onSendCurrentElementPromptToAgent) {
       return undefined;
     }
 
     return async (element: Element) => {
       await commitDraftText(element);
       await commitDraftNote(element);
-      await propertyPanelOptions.onSendCurrentElementPromptToGenie?.(element);
+      await propertyPanelOptions.onSendCurrentElementPromptToAgent?.(element);
     };
   }, [commitDraftNote, commitDraftText, propertyPanelOptions]);
 
@@ -1048,7 +1048,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
   return (
     <div style={panelContainerStyle}>
       <style>{WEB_EDITOR_POPUP_ROOT_STYLES}</style>
-      <ElementGenieTaskOverlays
+      <ElementAgentTaskOverlays
         tasks={blockingLayerOpen ? [] : taskStateProvider.getVisibleTasks()}
         subscribeSessionActivity={propertyPanelOptions?.subscribeSessionActivity}
         onDismissTask={taskStateProvider.dismissTask}
@@ -1069,7 +1069,7 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
           propertyPanelEnabled={propertyPanelVisible}
           styleDesignEnabled={uiSettings.styleDesignEnabled}
           bubbleStyleEditorOpen={bubbleStyleEditorOpen}
-          genieVisualState={genieVisualState}
+          agentVisualState={agentVisualState}
           hideExecutionControls={Boolean(
             breadcrumbsOptions.hideExecutionControls ?? propertyPanelOptions?.hideExecutionControls,
           )}
@@ -1077,13 +1077,13 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
             breadcrumbsOptions.hideExecutionControls ?? propertyPanelOptions?.hideExecutionControls,
           )}
           onBubbleStyleEditorOpenChange={setBubbleStyleEditorOpen}
-          onSendCurrentElementPromptToGenie={handleSendCurrentElementPromptToGenie}
-          onWakeGenie={propertyPanelOptions?.onWakeGenie}
-          onGenieVisualStateChange={handleGenieVisualStateChange}
-          getGenieBridgeConnected={propertyPanelOptions?.getGenieBridgeConnected}
-          getHasReusableGenieConversation={propertyPanelOptions?.getHasReusableGenieConversation}
-          getSendCurrentElementPromptToGenieBlockReason={
-            propertyPanelOptions?.getSendCurrentElementPromptToGenieBlockReason
+          onSendCurrentElementPromptToAgent={handleSendCurrentElementPromptToAgent}
+          onWakeAgent={propertyPanelOptions?.onWakeAgent}
+          onAgentVisualStateChange={handleAgentVisualStateChange}
+          getAgentBridgeConnected={propertyPanelOptions?.getAgentBridgeConnected}
+          getHasReusableAgentConversation={propertyPanelOptions?.getHasReusableAgentConversation}
+          getSendCurrentElementPromptToAgentBlockReason={
+            propertyPanelOptions?.getSendCurrentElementPromptToAgentBlockReason
           }
           canExportSelectionToDesignTool={propertyPanelOptions?.canExportSelectionToDesignTool}
           onExportSelectionToDesignTool={propertyPanelOptions?.onExportSelectionToDesignTool}
@@ -1144,15 +1144,15 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
           inlineTextEditing={inlineTextEditing}
           uiSettings={uiSettings}
           interactionProfile={interactionProfile}
-          genieVisualState={genieVisualState}
-          genieProviderAvailabilities={
-            propertyPanelOptions?.getGenieProviderAvailabilities?.() ?? []
+          agentVisualState={agentVisualState}
+          agentProviderAvailabilities={
+            propertyPanelOptions?.getAgentProviderAvailabilities?.() ?? []
           }
           onPropertyPanelOpenChange={setPropertyPanelOpen}
-          onGenieVisualStateChange={handleGenieVisualStateChange}
+          onAgentVisualStateChange={handleAgentVisualStateChange}
           onUiSettingsChange={handleUiSettingsChange}
-          onRefreshGenieProviderAvailabilities={
-            propertyPanelOptions?.refreshGenieProviderAvailabilities
+          onRefreshAgentProviderAvailabilities={
+            propertyPanelOptions?.refreshAgentProviderAvailabilities
           }
           onHoverSelectionSuppressedChange={selectionGuards.handlePanelHoverSelectionSuppressedChange}
           onSelectionInteractionLockChange={selectionGuards.handlePanelSelectionInteractionLockChange}

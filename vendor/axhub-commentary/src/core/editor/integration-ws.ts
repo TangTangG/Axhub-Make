@@ -1,4 +1,4 @@
-import { buildGenieWsUrl } from './genie-bridge';
+import { buildAgentWsUrl } from './agent-bridge';
 import type { EditorIntegrationWsService } from './contracts';
 import type { ExternalEditingTaskRef, ResolvedWebEditorOptions } from './state';
 import type { CommentaryExternalEditingTargetRef } from '../../web-editor-types';
@@ -465,7 +465,7 @@ export function createEditorIntegrationWsService(options: {
     if (!active || socket || !hasRequiredConfig()) return;
 
     let nextSocket: WebSocket;
-    const nextUrl = buildGenieWsUrl(apiBaseUrl, apiKey);
+    const nextUrl = buildAgentWsUrl(apiBaseUrl, apiKey);
     lastSocketUrl = nextUrl;
     try {
       nextSocket = new WebSocket(nextUrl);

@@ -1,9 +1,9 @@
 import {
-  getGenieCurrentFilePath,
-  mergeGenieContextV1,
-  normalizeGenieCurrentFileV1,
-} from '../../common/genie/bridge';
-import type { GenieCurrentFileV1 } from '../../common/genie/types';
+  getAssistantCurrentFilePath,
+  mergeAssistantContextV1,
+  normalizeAssistantCurrentFileV1,
+} from '../../common/assistant-context/bridge';
+import type { AssistantCurrentFileV1 } from '../../common/assistant-context/types';
 import type { AssistantContextV1, CanvasItem, ItemData, TabType, ViewMode } from '../types';
 import type { CanvasElementContextInfo } from '../components/content/canvas-embeds/AnnotationOverlay';
 import type { DataTableResourceItem, ThemeResourceItem } from '../domains/resources/resource.types';
@@ -98,7 +98,7 @@ function resolveDataTableResourcePath(item: DataTableResourceItem | null | undef
   return normalizePathValue(item.path) || normalizePathValue(item.absoluteFilePath);
 }
 
-export function resolveAssistantCurrentFile(params: ResolveAssistantCurrentFileParams): GenieCurrentFileV1 {
+export function resolveAssistantCurrentFile(params: ResolveAssistantCurrentFileParams): AssistantCurrentFileV1 {
   const {
     selectedItem,
     viewMode,
@@ -111,28 +111,28 @@ export function resolveAssistantCurrentFile(params: ResolveAssistantCurrentFileP
 
   if (contentMode === 'doc' || contentMode === 'template') {
     const markdownPath = resolveMarkdownResourcePath(currentMarkdownResource.item);
-    return normalizeGenieCurrentFileV1(markdownPath, {
+    return normalizeAssistantCurrentFileV1(markdownPath, {
       displayName: currentMarkdownResource.item?.displayName || currentMarkdownResource.item?.name || '',
     });
   }
 
   if (contentMode === 'canvas') {
     const canvasPath = resolveCanvasResourcePath(currentCanvas);
-    return normalizeGenieCurrentFileV1(canvasPath, {
+    return normalizeAssistantCurrentFileV1(canvasPath, {
       displayName: currentCanvas?.displayName || currentCanvas?.name || '',
     });
   }
 
   if (contentMode === 'theme') {
     const themePath = resolveThemeResourcePath(currentTheme);
-    return normalizeGenieCurrentFileV1(themePath, {
+    return normalizeAssistantCurrentFileV1(themePath, {
       displayName: currentTheme?.displayName || currentTheme?.name || '',
     });
   }
 
   if (contentMode === 'data') {
     const dataPath = resolveDataTableResourcePath(currentDataTable);
-    return normalizeGenieCurrentFileV1(dataPath, {
+    return normalizeAssistantCurrentFileV1(dataPath, {
       displayName: currentDataTable?.tableName || currentDataTable?.fileName || '',
     });
   }
@@ -142,7 +142,7 @@ export function resolveAssistantCurrentFile(params: ResolveAssistantCurrentFileP
     ? prototypeBasePath ? `${prototypeBasePath}/canvas.excalidraw` : ''
     : ensureIndexFilePath(prototypeBasePath);
 
-  return normalizeGenieCurrentFileV1(currentFilePath, {
+  return normalizeAssistantCurrentFileV1(currentFilePath, {
     displayName: selectedItem?.displayName || selectedItem?.name || '',
   });
 }
@@ -155,13 +155,13 @@ export function mergeAssistantContextForActiveFile(
     return baseContext;
   }
 
-  const baseCurrentFilePath = getGenieCurrentFilePath(baseContext.currentFile);
-  const externalCurrentFilePath = getGenieCurrentFilePath(externalContext.currentFile);
+  const baseCurrentFilePath = getAssistantCurrentFilePath(baseContext.currentFile);
+  const externalCurrentFilePath = getAssistantCurrentFilePath(externalContext.currentFile);
   if (!baseCurrentFilePath || baseCurrentFilePath !== externalCurrentFilePath) {
     return baseContext;
   }
 
-  return mergeGenieContextV1(baseContext, externalContext) ?? baseContext;
+  return mergeAssistantContextV1(baseContext, externalContext) ?? baseContext;
 }
 
 export function shouldSyncAssistantCurrentFile(
@@ -176,7 +176,7 @@ export function shouldSyncAssistantCurrentFile(
 export function buildAssistantCurrentFileSyncContext(context: AssistantContextV1): AssistantContextV1 {
   return {
     ...context,
-    currentFile: normalizeGenieCurrentFileV1(context.currentFile),
+    currentFile: normalizeAssistantCurrentFileV1(context.currentFile),
     selectedElements: [],
   };
 }
@@ -245,7 +245,7 @@ export function buildAssistantContextWithCanvasElements(
 
   return {
     ...context,
-    currentFile: normalizeGenieCurrentFileV1(context.currentFile),
+    currentFile: normalizeAssistantCurrentFileV1(context.currentFile),
     selectedElements: [],
     extensions,
   };
@@ -269,7 +269,7 @@ export function buildAssistantContextWithCanvasComments(
 
   return {
     ...context,
-    currentFile: normalizeGenieCurrentFileV1(context.currentFile),
+    currentFile: normalizeAssistantCurrentFileV1(context.currentFile),
     selectedElements: Array.isArray(context.selectedElements) ? context.selectedElements : [],
     extensions,
   };
@@ -285,7 +285,7 @@ export function getAssistantCanvasCommentsSignature(context: Pick<AssistantConte
 }
 
 export function getAssistantContextCurrentFilePath(context: Pick<AssistantContextV1, 'currentFile'>): string {
-  return getGenieCurrentFilePath(context.currentFile);
+  return getAssistantCurrentFilePath(context.currentFile);
 }
 
 function removeLegacyAssistantUrlParams(url: URL): void {
@@ -300,9 +300,9 @@ function removeLegacyAssistantUrlParams(url: URL): void {
     'integrationWs',
     'integrationClientId',
     'integrationChannel',
-    'genieApiBaseUrl',
-    'genieIntegrationChannel',
-    'genieTargetClientId',
+    'agentApiBaseUrl',
+    'agentIntegrationChannel',
+    'agentTargetClientId',
     'editorClientId',
     'editorIntegrationWs',
     'editorApiBaseUrl',

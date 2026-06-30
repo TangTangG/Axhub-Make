@@ -93,10 +93,10 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     : {};
   const options = resolveWebEditorOptions(rawOptions);
   if (
-    rawOptions.genieBridge &&
-    !Object.prototype.hasOwnProperty.call(rawOptions.genieBridge, 'enableContextAppend')
+    rawOptions.agentBridge &&
+    !Object.prototype.hasOwnProperty.call(rawOptions.agentBridge, 'enableContextAppend')
   ) {
-    (options.genieBridge as { enableContextAppend?: boolean }).enableContextAppend = undefined;
+    (options.agentBridge as { enableContextAppend?: boolean }).enableContextAppend = undefined;
   }
   let inlineTextEditingElement: HTMLElement | null = null;
   let pendingCommentContextSync = false;
@@ -106,7 +106,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     return options.ui.toolbarMode === 'host' && typeof options.ui.onHostToolbarAction === 'function';
   }
 
-  function buildHostSendToGenieAction(element?: Element | null): CommentaryHostToolbarAction {
+  function buildHostSendToAgentAction(element?: Element | null): CommentaryHostToolbarAction {
     const meta = services.changes.getMetaForElement(element ?? null);
     return meta?.elementKey
       ? {
@@ -171,7 +171,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
   }
 
   function sendCommentContextSync(element: Element | null, mode: 'append' | 'replace'): void {
-    void services.genieBridge.handleSyncCommentContextToGenie(element, mode).then(() => {
+    void services.agentBridge.handleSyncCommentContextToAgent(element, mode).then(() => {
       if (mode === 'replace') {
         pendingCommentContextSync = false;
       }
@@ -191,7 +191,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
   }
 
   function flushPendingCommentContextSync(): void {
-    if (!options.genieBridge.enabled || !services.genieBridge.isAvailable()) {
+    if (!options.agentBridge.enabled || !services.agentBridge.isAvailable()) {
       return;
     }
     if (!pendingCommentContextSync && !hasCommentContextToSync()) {
@@ -203,10 +203,10 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
 
   function syncCommentContextAfterNoteSave(element: Element | null, note: string): void {
     const mode = String(note ?? '').trim() ? 'append' : 'replace';
-    if (!options.genieBridge.enabled) {
+    if (!options.agentBridge.enabled) {
       return;
     }
-    if (!services.genieBridge.isAvailable()) {
+    if (!services.agentBridge.isAvailable()) {
       pendingCommentContextSync = true;
       return;
     }
@@ -280,7 +280,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
   }
 
   function resolveVisibleRunningTaskTarget(): Element | null {
-    const runningTasks = services.genieBridge.getVisibleTaskStates()
+    const runningTasks = services.agentBridge.getVisibleTaskStates()
       .filter((task) => task.status === 'pending' || task.status === 'created')
       .sort((a, b) => Number(b.startedAt ?? 0) - Number(a.startedAt ?? 0));
 
@@ -300,7 +300,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
 
   function resolveInterruptTarget(preferredElement?: Element | null): Element | null {
     const preferredTarget = resolvePromptTarget(preferredElement);
-    if (preferredTarget && services.genieBridge.canInterruptElementTask(preferredTarget)) {
+    if (preferredTarget && services.agentBridge.canInterruptElementTask(preferredTarget)) {
       return preferredTarget;
     }
     return resolveVisibleRunningTaskTarget();
@@ -310,15 +310,15 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Transaction apply error:`, error);
   }
 
-  function dismissVisibleElementGenieTaskStates(): void {
-    const tasks = services.genieBridge.getVisibleTaskStates();
+  function dismissVisibleElementAgentTaskStates(): void {
+    const tasks = services.agentBridge.getVisibleTaskStates();
     for (const task of tasks) {
       try {
         const element = locateElement(task.locator);
         if (!element?.isConnected) {
           continue;
         }
-        services.genieBridge.dismissElementTaskState(element);
+        services.agentBridge.dismissElementTaskState(element);
       } catch {
         // Ignore stale locators while clearing visible task states.
       }
@@ -334,7 +334,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
       }
     }
 
-    for (const task of services.genieBridge.getVisibleTaskStates()) {
+    for (const task of services.agentBridge.getVisibleTaskStates()) {
       if (task.status === 'completed' || task.status === 'error') {
         clearableElementKeys.add(task.elementKey);
       }
@@ -350,7 +350,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
   function cleanupMountedRuntime(): void {
     inlineTextEditingElement = null;
     services.integrationWs?.stop();
-    services.genieBridge.stop();
+    services.agentBridge.stop();
 
     routeChangeCleanup?.();
     routeChangeCleanup = null;
@@ -852,7 +852,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
 
       void Promise.resolve(services.persistence.restoreCachedChanges())
         .then(() => {
-          services.genieBridge.rehydratePersistedGenieState();
+          services.agentBridge.rehydratePersistedAgentState();
           ensureMarkersVisible();
           services.persistence.persistFromTransactions();
           state.propertyPanel?.refresh();
@@ -860,7 +860,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         })
         .catch((error) => {
           console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to restore cached changes:`, error);
-          services.genieBridge.rehydratePersistedGenieState();
+          services.agentBridge.rehydratePersistedAgentState();
           ensureMarkersVisible();
           services.persistence.persistFromTransactions();
         });
@@ -902,7 +902,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         allowNativeTextSelection: isTextComment,
         onHover: isTextComment ? () => {} : services.interaction.handleHover,
         onSelect: (event) => {
-          const target = services.genieBridge.resolveSelectableElement(event.element);
+          const target = services.agentBridge.resolveSelectableElement(event.element);
           if (!target?.isConnected) return;
           void services.interaction.handleSelect(target, event.modifiers, {
             clientX: event.clientX,
@@ -913,22 +913,22 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           ? undefined
           : (event) => {
               if (!services.textSession.isEditable(event.element)) return;
-              if (services.genieBridge.isElementInteractionLocked(event.element)) return;
+              if (services.agentBridge.isElementInteractionLocked(event.element)) return;
               state.breadcrumbs?.enterInlineTextEdit?.();
               state.propertyPanel?.enterInlineTextEdit?.();
             },
         onDeselect: services.interaction.handleDeselect,
         resolveTargetForHover: isTextComment
           ? undefined
-          : (target) => services.genieBridge.resolveSelectableElement(target),
+          : (target) => services.agentBridge.resolveSelectableElement(target),
         findTargetForSelect: isTextComment
           ? undefined
           : (_x, _y, modifiers, event) => {
               const target = state.selectionEngine?.findBestTargetFromEvent(event, modifiers) ?? null;
-              return services.genieBridge.resolveSelectableElement(target);
+              return services.agentBridge.resolveSelectableElement(target);
             },
         getSelectedElement: () => state.selectedElement,
-        isElementInteractionLocked: (element) => services.genieBridge.isElementInteractionLocked(element),
+        isElementInteractionLocked: (element) => services.agentBridge.isElementInteractionLocked(element),
       });
       if (!options.ui.initialSelectionModeActive) {
         state.eventController.setMode('interaction', { allowPageInteraction: true });
@@ -1034,7 +1034,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             services.persistence.setUiSettings(settings);
           },
           onLocateElement: (element) => {
-            const target = services.genieBridge.resolveSelectableElement(element) ?? element;
+            const target = services.agentBridge.resolveSelectableElement(element) ?? element;
             if (!target?.isConnected) return;
             services.interaction.clearSelection();
             state.eventController?.setMode('hover');
@@ -1051,12 +1051,12 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           getAnnotationEnabled: options.ui.getAnnotationEnabled,
           getAnnotationEnableAvailable: options.ui.getAnnotationEnableAvailable,
           getAnnotationEnableLoading: options.ui.getAnnotationEnableLoading,
-          onWakeGenie: shouldDelegateAiActionToHost()
+          onWakeAgent: shouldDelegateAiActionToHost()
             ? () => runHostAiAction({ type: 'wake-agent' })
-            : options.genieBridge.allowWake !== false
+            : options.agentBridge.allowWake !== false
             ? async () => {
                 try {
-                  return await services.genieBridge.requestWake();
+                  return await services.agentBridge.requestWake();
                 } catch (error) {
                   const message = error instanceof Error ? error.message : String(error);
                   if (message) {
@@ -1066,9 +1066,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
                 }
               }
             : undefined,
-          onSendPromptToGenie: async (element) => {
+          onSendPromptToAgent: async (element) => {
             if (shouldDelegateAiActionToHost()) {
-              const handled = await runHostAiAction(buildHostSendToGenieAction(element));
+              const handled = await runHostAiAction(buildHostSendToAgentAction(element));
               if (!handled) {
                 throw new Error('宿主暂未处理 AI 执行请求。');
               }
@@ -1078,11 +1078,11 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             if (targetElements.length === 0) {
               throw new Error('当前没有可发送给 AI 的编辑元素。');
             }
-            const prompt = services.genieBridge.hasReusableConversation()
+            const prompt = services.agentBridge.hasReusableConversation()
               ? services.summaries.buildAppendSaveRunPrompt()
               : services.summaries.buildSaveRunPrompt();
             try {
-              await services.genieBridge.handleSendPromptToGenieForElements(
+              await services.agentBridge.handleSendPromptToAgentForElements(
                 targetElements,
                 prompt,
               );
@@ -1090,9 +1090,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
               state.positionTracker?.forceUpdate(true);
             }
           },
-          onSendCurrentElementPromptToGenie: async (element) => {
+          onSendCurrentElementPromptToAgent: async (element) => {
             if (shouldDelegateAiActionToHost()) {
-              const handled = await runHostAiAction(buildHostSendToGenieAction(element));
+              const handled = await runHostAiAction(buildHostSendToAgentAction(element));
               if (!handled) {
                 throw new Error('宿主暂未处理 AI 执行请求。');
               }
@@ -1101,19 +1101,19 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             if (!element?.isConnected) {
               throw new Error('当前元素已失效，请重新选择后再试。');
             }
-            const prompt = services.genieBridge.hasReusableConversation()
+            const prompt = services.agentBridge.hasReusableConversation()
               ? services.summaries.buildAppendSaveRunPromptForElement(element)
               : services.summaries.buildSaveRunPromptForElement(element);
             if (!prompt) {
               throw new Error('当前元素没有可发送给 AI 的编辑。');
             }
             try {
-              await services.genieBridge.handleSendPromptToGenieForElement(element, prompt);
+              await services.agentBridge.handleSendPromptToAgentForElement(element, prompt);
             } finally {
               state.positionTracker?.forceUpdate(true);
             }
           },
-          onAbortSendPromptToGenie: async (element) => {
+          onAbortAgentPrompt: async (element) => {
             if (shouldDelegateAiActionToHost()) {
               await runHostAiAction({ type: 'interrupt-agent' });
               return;
@@ -1122,19 +1122,19 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             if (!targetElement) {
               throw new Error('当前没有可中断的 AI 编辑元素。');
             }
-            await services.genieBridge.interruptElementTask(targetElement);
+            await services.agentBridge.interruptElementTask(targetElement);
           },
           onRequestClose: services.interaction.clearSelection,
           onRequestFullExit: options.ui.onRequestFullExit,
           onClearEdits: async (clearOptions) => {
             await services.localActions.handleClearEdits(clearOptions);
-            services.genieBridge.invalidateCurrentConversation?.();
-            dismissVisibleElementGenieTaskStates();
+            services.agentBridge.invalidateCurrentConversation?.();
+            dismissVisibleElementAgentTaskStates();
           },
           onClearCurrentElementEdits: async (element) => {
             const didClear = await services.localActions.handleClearElementEdits(element);
             if (didClear) {
-              services.genieBridge.dismissElementTaskState(element, { includeRunning: true });
+              services.agentBridge.dismissElementTaskState(element, { includeRunning: true });
             }
             return didClear;
           },
@@ -1149,31 +1149,31 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           hideExecutionControls: options.ui.hideExecutionControls,
           externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
-          getGenieBridgeAvailable: () => services.genieBridge.isAvailable(),
-          getGenieBridgeConnected: () => services.genieBridge.isConnected(),
-          getCanAbortSendPromptToGenie: (element) =>
-            services.genieBridge.canInterruptElementTask(resolveInterruptTarget(element)),
-          getHasReusableGenieConversation: () => services.genieBridge.hasReusableConversation(),
-          getCurrentGenieConversationState: () => services.genieBridge.getCurrentConversationState(),
-          getElementGenieTaskState: (element) => services.genieBridge.getElementTaskState(element),
-          getVisibleElementGenieTaskStates: () => services.genieBridge.getVisibleTaskStates(),
-          getGenieProviderAvailability: (provider) =>
-            services.genieBridge.getProviderAvailability(provider),
-          getGenieProviderAvailabilities: () => services.genieBridge.getProviderAvailabilities(),
-          refreshGenieProviderAvailabilities: (providers) =>
-            services.genieBridge.refreshProviderAvailabilities(providers),
+          getAgentBridgeAvailable: () => services.agentBridge.isAvailable(),
+          getAgentBridgeConnected: () => services.agentBridge.isConnected(),
+          getCanAbortAgentPrompt: (element) =>
+            services.agentBridge.canInterruptElementTask(resolveInterruptTarget(element)),
+          getHasReusableAgentConversation: () => services.agentBridge.hasReusableConversation(),
+          getCurrentAgentConversationState: () => services.agentBridge.getCurrentConversationState(),
+          getElementAgentTaskState: (element) => services.agentBridge.getElementTaskState(element),
+          getVisibleElementAgentTaskStates: () => services.agentBridge.getVisibleTaskStates(),
+          getAgentProviderAvailability: (provider) =>
+            services.agentBridge.getProviderAvailability(provider),
+          getAgentProviderAvailabilities: () => services.agentBridge.getProviderAvailabilities(),
+          refreshAgentProviderAvailabilities: (providers) =>
+            services.agentBridge.refreshProviderAvailabilities(providers),
           subscribeSessionActivity: (target, listener) =>
-            services.genieBridge.subscribeSessionActivity(target, listener),
-          dismissElementGenieTaskState: (element) => services.genieBridge.dismissElementTaskState(element),
-          dismissVisibleElementGenieTaskStates,
-          getSendPromptToGenieBlockReason: (element) => {
+            services.agentBridge.subscribeSessionActivity(target, listener),
+          dismissElementAgentTaskState: (element) => services.agentBridge.dismissElementTaskState(element),
+          dismissVisibleElementAgentTaskStates,
+          getSendPromptToAgentBlockReason: (element) => {
             const targetElements = resolvePromptTargets(element);
             if (targetElements.length === 0) {
               return '当前没有可发送给 AI 的编辑元素';
             }
             return services.summaries.getSaveRunPromptBlockReason();
           },
-          getSendCurrentElementPromptToGenieBlockReason: (element) => {
+          getSendCurrentElementPromptToAgentBlockReason: (element) => {
             if (!element?.isConnected) {
               return '当前元素已失效，请重新选择后再试。';
             }
@@ -1201,7 +1201,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             if (!targetElement) {
               return '当前没有可导出的元素';
             }
-            if (services.genieBridge.isElementInteractionLocked(targetElement)) {
+            if (services.agentBridge.isElementInteractionLocked(targetElement)) {
               return '当前元素正在由 AI 更新';
             }
             return getDesignToolExportBlockReason(targetElement);
@@ -1316,17 +1316,17 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
                 dock: 'top',
                 onSelect: selectElementWithCenterAnchor,
                 getAssistantPanelOpen: options.ui.getAssistantPanelOpen,
-                getGenieBridgeAvailable: () => services.genieBridge.isAvailable(),
+                getAgentBridgeAvailable: () => services.agentBridge.isAvailable(),
                 hideExecutionControls: options.ui.hideExecutionControls,
                 getCommentShortcutSettings: () => state.commentShortcutSettings,
-                getElementGenieTaskState: (element) => services.genieBridge.getElementTaskState(element),
-                getVisibleElementGenieTaskStates: () => services.genieBridge.getVisibleTaskStates(),
-                dismissElementGenieTaskState: (element) => services.genieBridge.dismissElementTaskState(element),
+                getElementAgentTaskState: (element) => services.agentBridge.getElementTaskState(element),
+                getVisibleElementAgentTaskStates: () => services.agentBridge.getVisibleTaskStates(),
+                dismissElementAgentTaskState: (element) => services.agentBridge.dismissElementTaskState(element),
                 externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
-                onSendToGenie: options.genieBridge.enableContextAppend
+                onAppendElementToAgentContext: options.agentBridge.enableContextAppend
                   ? (element) => {
                       if (!element.isConnected) return;
-                      void services.genieBridge.handleSendSelectionToGenie(element);
+                      void services.agentBridge.handleSendSelectionToAgent(element);
                     }
                   : undefined,
                 getElementStyleSummaryLines: (element) =>
@@ -1373,8 +1373,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
 
       state.active = true;
       state.panelOnlyMode = false;
-      if (options.genieBridge.autoStartOnLaunch !== false) {
-        services.genieBridge.start();
+      if (options.agentBridge.autoStartOnLaunch !== false) {
+        services.agentBridge.start();
       }
       services.integrationWs?.start();
       onStatusChange?.();
@@ -1394,7 +1394,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
   function cleanupInteractionComponents(): void {
     inlineTextEditingElement = null;
     services.integrationWs?.stop();
-    services.genieBridge.stop();
+    services.agentBridge.stop();
 
     routeChangeCleanup?.();
     routeChangeCleanup = null;
@@ -1562,10 +1562,10 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           getAnnotationEnabled: options.ui.getAnnotationEnabled,
           getAnnotationEnableAvailable: options.ui.getAnnotationEnableAvailable,
           getAnnotationEnableLoading: options.ui.getAnnotationEnableLoading,
-          onWakeGenie: undefined,
-          onSendPromptToGenie: async () => {},
-          onSendCurrentElementPromptToGenie: async () => {},
-          onAbortSendPromptToGenie: () => {},
+          onWakeAgent: undefined,
+          onSendPromptToAgent: async () => {},
+          onSendCurrentElementPromptToAgent: async () => {},
+          onAbortAgentPrompt: () => {},
           onRequestClose: () => {},
           onRequestFullExit: options.ui.onRequestFullExit,
           onClearEdits: async () => {},
@@ -1576,21 +1576,21 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           hideExecutionControls: options.ui.hideExecutionControls,
           externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
-          getGenieBridgeAvailable: () => false,
-          getGenieBridgeConnected: () => false,
-          getCanAbortSendPromptToGenie: () => false,
-          getHasReusableGenieConversation: () => false,
-          getCurrentGenieConversationState: () => null,
-          getElementGenieTaskState: () => null,
-          getVisibleElementGenieTaskStates: () => [],
-          getGenieProviderAvailability: () => null,
-          getGenieProviderAvailabilities: () => [],
-          refreshGenieProviderAvailabilities: () => Promise.resolve(),
+          getAgentBridgeAvailable: () => false,
+          getAgentBridgeConnected: () => false,
+          getCanAbortAgentPrompt: () => false,
+          getHasReusableAgentConversation: () => false,
+          getCurrentAgentConversationState: () => null,
+          getElementAgentTaskState: () => null,
+          getVisibleElementAgentTaskStates: () => [],
+          getAgentProviderAvailability: () => null,
+          getAgentProviderAvailabilities: () => [],
+          refreshAgentProviderAvailabilities: () => Promise.resolve(),
           subscribeSessionActivity: () => () => undefined,
-          dismissElementGenieTaskState: () => {},
-          dismissVisibleElementGenieTaskStates: () => {},
-          getSendPromptToGenieBlockReason: () => '属性面板仅预览模式，不可发送',
-          getSendCurrentElementPromptToGenieBlockReason: () => '属性面板仅预览模式，不可发送',
+          dismissElementAgentTaskState: () => {},
+          dismissVisibleElementAgentTaskStates: () => {},
+          getSendPromptToAgentBlockReason: () => '属性面板仅预览模式，不可发送',
+          getSendCurrentElementPromptToAgentBlockReason: () => '属性面板仅预览模式，不可发送',
           canExportSelectionToDesignTool: () => false,
           onExportSelectionToDesignTool: async () => {},
           getExportSelectionToDesignToolBlockReason: () => '属性面板仅预览模式，不可导出',

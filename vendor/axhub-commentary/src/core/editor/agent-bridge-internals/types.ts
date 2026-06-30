@@ -2,7 +2,7 @@ import type {
   SessionActivityKind,
 } from '../contracts';
 
-export type GenieWsMessage = {
+export type AgentWsMessage = {
   type?: string;
   requestId?: string;
   payload?: Record<string, unknown>;

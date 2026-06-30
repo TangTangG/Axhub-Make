@@ -14,7 +14,7 @@ describe('usePrototypeEditorBridgeActions source', () => {
     expect(source).not.toContain('assistantProjectPath');
     expect(source).not.toContain('assistantWebEditorClientId');
     expect(source).not.toContain('runtimeOverride');
-    expect(source).not.toContain('genieBridge:');
+    expect(source).not.toContain('agentBridge:');
     expect(source).not.toContain('integrationWs:');
     expect(source).not.toContain('initialSelectionModeActive');
     expect(source).toContain("toolbarMode: 'host'");
