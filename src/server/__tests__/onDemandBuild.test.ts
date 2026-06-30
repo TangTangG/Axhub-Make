@@ -80,6 +80,21 @@ function writeFakeBuildToolchain(projectRoot: string) {
   );
 }
 
+function writeFakeAnnotationRuntimePackage(projectRoot: string) {
+  writeFakePackage(
+    projectRoot,
+    '@axhub/annotation',
+    { type: 'module', main: 'index.js' },
+    [
+      'import React from "react";',
+      'export function AnnotationViewer() {',
+      '  return React.createElement("div", null, "Annotation Runtime");',
+      '}',
+      '',
+    ].join('\n'),
+  );
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -101,6 +116,27 @@ describe('buildOnDemand', () => {
 
     expect(result.jsCode).toContain('UserComponent');
     expect(result.jsCode).toContain('Hello');
+    expect(result.metadata.usesAnnotationRuntime).toBe(false);
+  });
+
+  it('reports when an entry bundles the annotation runtime', async () => {
+    const root = createTempProject();
+    writeFakeAnnotationRuntimePackage(root);
+    writeFile(
+      path.join(root, 'src', 'entry.tsx'),
+      [
+        'import React from "react";',
+        'import { AnnotationViewer } from "@axhub/annotation";',
+        'export default function Entry() {',
+        '  return React.createElement(AnnotationViewer, { source: { format: "axhub-annotation-source", data: { version: 1, nodes: [] } } });',
+        '}',
+        '',
+      ].join('\n'),
+    );
+
+    const result = await buildOnDemand(root, path.join(root, 'src', 'entry.tsx'));
+
+    expect(result.metadata.usesAnnotationRuntime).toBe(true);
   });
 
   it('loads Vite build when package resolution points at a CJS entry with dynamic exports', async () => {
@@ -111,6 +147,45 @@ describe('buildOnDemand', () => {
 
     expect(result.jsCode).toContain('UserComponent');
     expect(result.jsCode).toContain('Hello');
+  });
+
+  it('uses the annotation-source markdown inlining plugin for export builds', async () => {
+    const root = createTempProject();
+    writeFakePackage(
+      root,
+      'vite',
+      { main: 'index.cjs' },
+      [
+        'module.exports.defineConfig = (config) => config;',
+        'Object.assign(module.exports, { mergeConfig: (config) => config });',
+        'module.exports.build = async (config) => {',
+        '  const pluginNames = (config.plugins || []).map((plugin) => plugin && plugin.name);',
+        '  if (!pluginNames.includes("axhub-annotation-source-markdown")) {',
+        '    throw new Error(`missing annotation source markdown plugin: ${pluginNames.join(",")}`);',
+        '  }',
+        '  return {',
+        '    output: [{ type: "chunk", fileName: "entry.js", code: "var UserComponent = function Entry(){ return \\"Hello\\"; };" }],',
+        '  };',
+        '};',
+        '',
+      ].join('\n'),
+    );
+    writeFakePackage(
+      root,
+      '@vitejs/plugin-react',
+      { type: 'module', main: 'index.js' },
+      'export default function react() { return { name: "fake-react" }; }\n',
+    );
+    writeFakePackage(
+      root,
+      '@tailwindcss/vite',
+      { type: 'module', main: 'index.js' },
+      'export default function tailwindcss() { return { name: "fake-tailwind" }; }\n',
+    );
+
+    const result = await buildOnDemand(root, path.join(root, 'src', 'entry.tsx'));
+
+    expect(result.jsCode).toContain('UserComponent');
   });
 
   it('works from a plain tsx process where Vite resolves to its CJS entry', () => {

@@ -16,6 +16,8 @@ describe('dev template editor bridge launch options', () => {
     expect(enableSource).not.toContain('integrationWs');
     expect(enableSource).toContain('mobileMode');
     expect(enableSource).toContain('commentPageScope');
+    expect(enableSource).toContain('annotationApiBaseUrl');
+    expect(enableSource).toContain('annotationProjectId');
     expect(enableSource).toContain('readPrototypeEditorBridgeCommentPageScope');
     expect(enableSource).toContain("editorModeManager?.api.enable('webEditorV2'");
   });

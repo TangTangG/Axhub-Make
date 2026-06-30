@@ -37,6 +37,8 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
   ];
   const transientViteRetryKey = '__axhub_quick_edit_transient_vite_retry__';
   const transientViteRetryWindowMs = 10_000;
+  const ignoredPrototypeErrorsKey = '__axhub_prototype_runtime_ignored_errors__';
+  const ignoredPrototypeErrorLimit = 100;
   let transientViteRecoveryPromise = null;
 
   function buildResourcePayload(extra) {
@@ -73,10 +75,10 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
     }
   }
 
-  function normalizeError(input, meta) {
-    const nextMeta = meta && typeof meta === 'object' ? meta : {};
-    const error = input && typeof input === 'object' ? input : null;
-    const componentStack = String(nextMeta.componentStack || '').replace(/^\s*\n/u, '');
+	  function normalizeError(input, meta) {
+	    const nextMeta = meta && typeof meta === 'object' ? meta : {};
+	    const error = input && typeof input === 'object' ? input : null;
+	    const componentStack = String(nextMeta.componentStack || '').replace(/^\s*\n/u, '');
     const message = String(
       nextMeta.message
       || (error && (error.message || error.reason))
@@ -94,11 +96,16 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
       resourceType: String(nextMeta.resourceType || context.resourceType || 'prototype'),
       resourceId: String(nextMeta.resourceId || context.resourceId || ''),
       resourcePath: String(nextMeta.resourcePath || window.location.pathname || ''),
-      url: String(window.location.href || ''),
-      userAgent: String(navigator.userAgent || ''),
-      timestamp: new Date().toISOString(),
-    };
-  }
+	      url: String(window.location.href || ''),
+	      userAgent: String(navigator.userAgent || ''),
+	      timestamp: new Date().toISOString(),
+	      loaderFile: String(nextMeta.loaderFile || ''),
+	      entryFile: String(nextMeta.entryFile || ''),
+	      vitePlugin: String(nextMeta.vitePlugin || nextMeta.plugin || ''),
+	      frame: String(nextMeta.frame || ''),
+	      httpStatus: nextMeta.httpStatus ?? '',
+	    };
+	  }
 
   function formatLocation(errorInfo) {
     if (!errorInfo.sourceFile) return '';
@@ -135,17 +142,86 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
       'url: ' + errorInfo.url,
       'userAgent: ' + errorInfo.userAgent,
       'timestamp: ' + errorInfo.timestamp,
-      'resourceType: ' + errorInfo.resourceType,
-      'resourceId: ' + errorInfo.resourceId,
-      'resourcePath: ' + errorInfo.resourcePath,
-    ];
-    if (errorInfo.stack) {
-      parts.push('stack:\n' + errorInfo.stack);
-    }
+	      'resourceType: ' + errorInfo.resourceType,
+	      'resourceId: ' + errorInfo.resourceId,
+	      'resourcePath: ' + errorInfo.resourcePath,
+	    ];
+	    if (errorInfo.loaderFile) {
+	      parts.push('loaderFile: ' + errorInfo.loaderFile);
+	    }
+	    if (errorInfo.entryFile) {
+	      parts.push('entryFile: ' + errorInfo.entryFile);
+	    }
+	    if (errorInfo.vitePlugin) {
+	      parts.push('vitePlugin: ' + errorInfo.vitePlugin);
+	    }
+	    if (errorInfo.httpStatus !== '' && errorInfo.httpStatus !== undefined) {
+	      parts.push('httpStatus: ' + errorInfo.httpStatus);
+	    }
+	    if (errorInfo.frame) {
+	      parts.push('frame:\n' + errorInfo.frame);
+	    }
+	    if (errorInfo.stack) {
+	      parts.push('stack:\n' + errorInfo.stack);
+	    }
     if (errorInfo.componentStack) {
       parts.push('componentStack:\n' + errorInfo.componentStack);
     }
     return parts.join('\n');
+  }
+
+  function getPrototypeErrorPageScope(errorInfo) {
+    try {
+      const url = new URL(errorInfo.url || window.location.href, window.location.href);
+      return url.pathname + url.search + url.hash;
+    } catch {
+      return String(errorInfo.resourcePath || window.location.href || '');
+    }
+  }
+
+  function getPrototypeErrorFingerprint(errorInfo) {
+    return [
+      String(errorInfo.resourceType || 'prototype'),
+      String(errorInfo.resourceId || ''),
+      getPrototypeErrorPageScope(errorInfo),
+      String(errorInfo.type || ''),
+      String(errorInfo.message || ''),
+      String(errorInfo.sourceFile || ''),
+      String(errorInfo.line ?? ''),
+      String(errorInfo.column ?? ''),
+      String(errorInfo.componentStack || '').slice(0, 500),
+    ].join('\n');
+  }
+
+  function getIgnoredPrototypeErrors() {
+    try {
+      const rawValue = window.localStorage?.getItem(ignoredPrototypeErrorsKey);
+      if (!rawValue) return [];
+      const parsedValue = JSON.parse(rawValue);
+      if (!Array.isArray(parsedValue)) return [];
+      return parsedValue.filter((value) => typeof value === 'string');
+    } catch {
+      return [];
+    }
+  }
+
+  function setIgnoredPrototypeErrors(values) {
+    try {
+      window.localStorage?.setItem(ignoredPrototypeErrorsKey, JSON.stringify(values.slice(0, ignoredPrototypeErrorLimit)));
+    } catch {
+      // Ignore storage failures; the dialog can still be closed manually.
+    }
+  }
+
+  function isPrototypeErrorIgnored(errorInfo) {
+    const fingerprint = getPrototypeErrorFingerprint(errorInfo);
+    return getIgnoredPrototypeErrors().includes(fingerprint);
+  }
+
+  function ignorePrototypeError(errorInfo) {
+    const fingerprint = getPrototypeErrorFingerprint(errorInfo);
+    const existing = getIgnoredPrototypeErrors().filter((value) => value !== fingerprint);
+    setIgnoredPrototypeErrors([fingerprint, ...existing]);
   }
 
   function writeTextWithCopyEvent(text) {
@@ -219,6 +295,9 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
   }
 
   function renderPrototypeErrorDialog(errorInfo) {
+    if (isPrototypeErrorIgnored(errorInfo)) {
+      return null;
+    }
     latestPrototypeError = errorInfo;
     if (errorDialog) {
       if (errorDialogSummary) {
@@ -258,6 +337,7 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
     Object.assign(title.style, {
       fontWeight: '700',
       fontSize: '16px',
+      paddingRight: '30px',
       marginBottom: '8px',
     });
 
@@ -297,7 +377,25 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
       void copyPrototypeError(copyButton);
     });
 
-    const closeButton = createButton('关闭');
+    const closeButton = createButton('×');
+    closeButton.setAttribute('aria-label', '关闭');
+    Object.assign(closeButton.style, {
+      position: 'absolute',
+      top: '10px',
+      right: '10px',
+      width: '30px',
+      minHeight: '30px',
+      padding: '0',
+      borderColor: 'transparent',
+      borderRadius: '999px',
+      background: 'transparent',
+      color: '#4b5563',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontSize: '20px',
+      lineHeight: '1',
+    });
     closeButton.addEventListener('click', () => {
       dialog.remove();
       errorDialog = null;
@@ -305,18 +403,28 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
       errorDialogDetails = null;
     });
 
-    const reloadButton = createButton('重新加载');
+    const ignoreButton = createButton('忽略');
+    ignoreButton.addEventListener('click', () => {
+      ignorePrototypeError(latestPrototypeError || errorInfo);
+      dialog.remove();
+      errorDialog = null;
+      errorDialogSummary = null;
+      errorDialogDetails = null;
+    });
+
+    const reloadButton = createButton('刷新');
     reloadButton.addEventListener('click', () => {
       window.location.reload();
     });
 
     actions.appendChild(copyButton);
-    actions.appendChild(closeButton);
+    actions.appendChild(ignoreButton);
     actions.appendChild(reloadButton);
     dialog.appendChild(title);
     dialog.appendChild(summary);
     dialog.appendChild(details);
     dialog.appendChild(actions);
+    dialog.appendChild(closeButton);
     document.documentElement.appendChild(dialog);
     errorDialog = dialog;
     errorDialogSummary = summary;
@@ -361,11 +469,236 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
     return transientViteResourcePatterns.some((pattern) => normalizedText.includes(pattern));
   }
 
-  function isHtmlProxyResourceIssue(resourceUrl) {
-    return String(resourceUrl || '').includes('html-proxy&index=');
-  }
+	  function isHtmlProxyResourceIssue(resourceUrl) {
+	    return String(resourceUrl || '').includes('html-proxy&index=');
+	  }
 
-  function getCurrentPathname() {
+	  function isPreviewLoaderResourceIssue(resourceUrl) {
+	    return String(resourceUrl || '').includes('__axhub-preview-loader.js');
+	  }
+
+	  function toAbsoluteResourceUrl(resourceUrl) {
+	    try {
+	      return new URL(String(resourceUrl || ''), window.location.href).href;
+	    } catch {
+	      return String(resourceUrl || '');
+	    }
+	  }
+
+	  function normalizeResponseStatus(response) {
+	    const status = Number(response?.status || 0);
+	    return status > 0 ? status : '';
+	  }
+
+	  function getFetchFunction() {
+	    return typeof window.fetch === 'function'
+	      ? window.fetch.bind(window)
+	      : (typeof fetch === 'function' ? fetch : null);
+	  }
+
+	  function extractPreviewEntryFromLoader(loaderText, loaderUrl) {
+	    const source = String(loaderText || '');
+	    const importMatch = source.match(/import\s+PreviewComponent\s+from\s+["']([^"']+)["']/u);
+	    const importPath = importMatch?.[1] || '';
+	    if (importPath) {
+	      try {
+	        return new URL(importPath, loaderUrl || window.location.href).href;
+	      } catch {
+	        return importPath;
+	      }
+	    }
+	    try {
+	      const parsedUrl = new URL(loaderUrl, window.location.href);
+	      parsedUrl.pathname = parsedUrl.pathname.replace(/\/__axhub-preview-loader\.js$/u, '/index.tsx');
+	      parsedUrl.search = '';
+	      parsedUrl.hash = '';
+	      return parsedUrl.href;
+	    } catch {
+	      return String(loaderUrl || '').replace(/\/__axhub-preview-loader\.js(?:[?#].*)?$/u, '/index.tsx');
+	    }
+	  }
+
+	  function decodeHtmlEntities(value) {
+	    return String(value || '')
+	      .replace(/&quot;/g, '"')
+	      .replace(/&#34;/g, '"')
+	      .replace(/&#x22;/gi, '"')
+	      .replace(/&apos;/g, "'")
+	      .replace(/&#39;/g, "'")
+	      .replace(/&#x27;/gi, "'")
+	      .replace(/&lt;/g, '<')
+	      .replace(/&gt;/g, '>')
+	      .replace(/&amp;/g, '&');
+	  }
+
+	  function extractJsonObjectAt(text, startIndex) {
+	    let depth = 0;
+	    let inString = false;
+	    let quote = '';
+	    let escaped = false;
+	    for (let index = startIndex; index < text.length; index += 1) {
+	      const char = text[index];
+	      if (inString) {
+	        if (escaped) {
+	          escaped = false;
+	        } else if (char === '\\') {
+	          escaped = true;
+	        } else if (char === quote) {
+	          inString = false;
+	          quote = '';
+	        }
+	        continue;
+	      }
+	      if (char === '"' || char === "'") {
+	        inString = true;
+	        quote = char;
+	        continue;
+	      }
+	      if (char === '{') {
+	        depth += 1;
+	      } else if (char === '}') {
+	        depth -= 1;
+	        if (depth === 0) {
+	          return text.slice(startIndex, index + 1);
+	        }
+	      }
+	    }
+	    return '';
+	  }
+
+	  function parseViteErrorPayload(htmlText) {
+	    const html = String(htmlText || '');
+	    const prefixMatch = /const\s+error\s*=/u.exec(html);
+	    if (!prefixMatch || prefixMatch.index === undefined) {
+	      return null;
+	    }
+	    const objectStart = html.indexOf('{', prefixMatch.index + prefixMatch[0].length);
+	    if (objectStart < 0) {
+	      return null;
+	    }
+	    const jsonText = extractJsonObjectAt(html, objectStart);
+	    if (!jsonText) {
+	      return null;
+	    }
+	    try {
+	      return JSON.parse(decodeHtmlEntities(jsonText));
+	    } catch {
+	      return null;
+	    }
+	  }
+
+	  function createViteTransformErrorMeta(viteError, loaderUrl, entryUrl, status) {
+	    const loc = viteError && typeof viteError.loc === 'object' ? viteError.loc : {};
+	    const sourceFile = String(loc?.file || viteError?.id || entryUrl || '');
+	    return {
+	      type: 'vite-transform-error',
+	      message: '原型编译失败: ' + String(viteError?.message || 'Vite transform failed'),
+	      sourceFile,
+	      line: loc?.line ?? '',
+	      column: loc?.column ?? '',
+	      stack: String(viteError?.stack || ''),
+	      loaderFile: loaderUrl,
+	      entryFile: entryUrl,
+	      vitePlugin: String(viteError?.plugin || ''),
+	      frame: String(viteError?.frame || ''),
+	      httpStatus: status,
+	    };
+	  }
+
+	  async function diagnosePreviewLoaderFailure(loaderUrl) {
+	    const fetcher = getFetchFunction();
+	    const absoluteLoaderUrl = toAbsoluteResourceUrl(loaderUrl);
+	    if (!fetcher) {
+	      return {
+	        type: 'preview-entry-load',
+	        message: '原型入口模块加载失败: 无法获取预览加载器诊断信息',
+	        sourceFile: absoluteLoaderUrl,
+	        loaderFile: absoluteLoaderUrl,
+	      };
+	    }
+
+	    let loaderResponse;
+	    let loaderText = '';
+	    try {
+	      loaderResponse = await fetcher(absoluteLoaderUrl, { cache: 'no-store' });
+	      loaderText = typeof loaderResponse?.text === 'function' ? await loaderResponse.text() : '';
+	    } catch (error) {
+	      return {
+	        type: 'preview-loader-http-error',
+	        message: '预览加载器加载失败: ' + absoluteLoaderUrl,
+	        sourceFile: absoluteLoaderUrl,
+	        loaderFile: absoluteLoaderUrl,
+	        stack: String(error?.stack || error || ''),
+	      };
+	    }
+
+	    const loaderStatus = normalizeResponseStatus(loaderResponse);
+	    if (!loaderResponse?.ok) {
+	      return {
+	        type: 'preview-loader-http-error',
+	        message: '预览加载器加载失败: HTTP ' + (loaderStatus || 'error'),
+	        sourceFile: absoluteLoaderUrl,
+	        loaderFile: absoluteLoaderUrl,
+	        httpStatus: loaderStatus,
+	      };
+	    }
+
+	    const entryUrl = extractPreviewEntryFromLoader(loaderText, absoluteLoaderUrl);
+	    let entryResponse;
+	    let entryText = '';
+	    try {
+	      entryResponse = await fetcher(entryUrl, { cache: 'no-store' });
+	      entryText = typeof entryResponse?.text === 'function' ? await entryResponse.text() : '';
+	    } catch (error) {
+	      return {
+	        type: 'preview-entry-http-error',
+	        message: '原型入口模块加载失败: ' + entryUrl,
+	        sourceFile: entryUrl,
+	        loaderFile: absoluteLoaderUrl,
+	        entryFile: entryUrl,
+	        stack: String(error?.stack || error || ''),
+	      };
+	    }
+
+	    const entryStatus = normalizeResponseStatus(entryResponse);
+	    const viteError = parseViteErrorPayload(entryText);
+	    if (viteError) {
+	      return createViteTransformErrorMeta(viteError, absoluteLoaderUrl, entryUrl, entryStatus);
+	    }
+	    if (!entryResponse?.ok) {
+	      return {
+	        type: 'preview-entry-http-error',
+	        message: '原型入口模块加载失败: HTTP ' + (entryStatus || 'error'),
+	        sourceFile: entryUrl,
+	        loaderFile: absoluteLoaderUrl,
+	        entryFile: entryUrl,
+	        httpStatus: entryStatus,
+	      };
+	    }
+
+	    return {
+	      type: 'preview-module-graph-load',
+	      message: '原型模块依赖加载失败: 入口模块可访问，但其依赖加载或执行失败',
+	      sourceFile: entryUrl,
+	      loaderFile: absoluteLoaderUrl,
+	      entryFile: entryUrl,
+	    };
+	  }
+
+	  function diagnoseAndReportPreviewLoaderFailure(resourceMeta) {
+	    diagnosePreviewLoaderFailure(resourceMeta.sourceFile)
+	      .then((meta) => {
+	        autoReportPrototypeError(meta.message, {
+	          ...resourceMeta,
+	          ...meta,
+	        });
+	      })
+	      .catch(() => {
+	        autoReportPrototypeError(resourceMeta.message, resourceMeta);
+	      });
+	  }
+
+	  function getCurrentPathname() {
     try {
       return window.location.pathname || new URL(window.location.href).pathname;
     } catch {
@@ -873,15 +1206,19 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
   };
   prototypeRuntime.reportError = reportPrototypeError;
 
-  window.addEventListener('error', (event) => {
-    const resourceMeta = getResourceLoadMeta(event.target);
-    if (resourceMeta) {
-      if (resourceMeta.tagName === 'SCRIPT' && tryRecoverTransientViteResource(resourceMeta.sourceFile)) {
-        return;
-      }
-      autoReportPrototypeError(event.error || resourceMeta.message, resourceMeta);
-      return;
-    }
+	  window.addEventListener('error', (event) => {
+	    const resourceMeta = getResourceLoadMeta(event.target);
+	    if (resourceMeta) {
+	      if (resourceMeta.tagName === 'SCRIPT' && tryRecoverTransientViteResource(resourceMeta.sourceFile)) {
+	        return;
+	      }
+	      if (resourceMeta.tagName === 'SCRIPT' && isPreviewLoaderResourceIssue(resourceMeta.sourceFile)) {
+	        diagnoseAndReportPreviewLoaderFailure(resourceMeta);
+	        return;
+	      }
+	      autoReportPrototypeError(event.error || resourceMeta.message, resourceMeta);
+	      return;
+	    }
     autoReportPrototypeError(event.error || event.message, {
       type: 'window-error',
       message: event.message,

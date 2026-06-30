@@ -36,6 +36,7 @@ import {
 } from './index-page.helpers';
 import { getSelectedResourceTargetPath } from './index-page/previewActions.helpers';
 import { apiService } from '../services/index.api';
+import type { MakeClientUpdateStatus } from '../services/api';
 import type { GenieProvider } from '@/common/genie/types';
 import { DEFAULT_LOCAL_EXPORT_CAPABILITIES, DEFAULT_RESOURCE_WRITE_CAPABILITIES, normalizeProjectResourcesPayload } from '../services/projectResources';
 import type { PendingReturnTarget } from './hooks/useIndexPageSelectionSync';
@@ -67,6 +68,12 @@ type PrototypeRouteInfo = {
 
 const PROTOTYPE_ROUTE_PAGE_ID_RE = /^[a-z0-9-]+$/u;
 const MAKE_STATE_DIR_NOT_WRITABLE = 'MAKE_STATE_DIR_NOT_WRITABLE';
+const MAKE_CLIENT_UPDATE_REMINDER_DISMISSED_PREFIX = 'axhub.make.clientUpdateReminder.dismissed';
+
+type MakeClientUpdateReminderTarget = {
+    projectId: string;
+    targetVersion: string;
+};
 
 function normalizePrototypeRoutePageId(value: unknown): string {
     const id = typeof value === 'string' ? value.trim() : '';
@@ -150,6 +157,32 @@ function buildMakeStatePermissionPrompt(health: unknown): string {
     ].join('\n');
 }
 
+function buildMakeClientUpdateReminderDismissedKey(projectId: string, targetVersion: string): string {
+    return `${MAKE_CLIENT_UPDATE_REMINDER_DISMISSED_PREFIX}.${encodeURIComponent(projectId)}.${encodeURIComponent(targetVersion)}`;
+}
+
+function readMakeClientUpdateReminderDismissed(projectId: string, targetVersion: string): boolean {
+    if (!projectId || !targetVersion || typeof window === 'undefined') {
+        return false;
+    }
+    try {
+        return window.localStorage.getItem(buildMakeClientUpdateReminderDismissedKey(projectId, targetVersion)) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function writeMakeClientUpdateReminderDismissed(projectId: string, targetVersion: string): void {
+    if (!projectId || !targetVersion || typeof window === 'undefined') {
+        return;
+    }
+    try {
+        window.localStorage.setItem(buildMakeClientUpdateReminderDismissedKey(projectId, targetVersion), '1');
+    } catch {
+        // Ignore storage failures; the update entry remains available without the one-time dismissal memory.
+    }
+}
+
 export default function IndexPage({
     isDarkMode,
     setIsDarkMode,
@@ -166,6 +199,9 @@ export default function IndexPage({
     const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
     const [settingsDialogInitialTab, setSettingsDialogInitialTab] = useState<SettingsDialogInitialTab>('project');
     const [settingsDialogAIContext, setSettingsDialogAIContext] = useState<SettingsDialogAIContext | null>(null);
+    const [makeClientUpdateAvailable, setMakeClientUpdateAvailable] = useState(false);
+    const [makeClientUpdateReminderVisible, setMakeClientUpdateReminderVisible] = useState(false);
+    const [versionCollaborationDrawerOpen, setVersionCollaborationDrawerOpen] = useState(false);
     const [viewMode, setViewMode] = useState<ViewMode>('demo');
     const [activeTab, setActiveTab] = useState<TabType>('prototypes');
     const [selectedItem, setSelectedItem] = useState<ItemData | null>(null);
@@ -183,6 +219,8 @@ export default function IndexPage({
     const assistantAutoOpenSuppressedProjectScopeRef = useRef('');
     const closedPrototypePlaceholderAutoCloseKeyRef = useRef('');
     const openedPrototypeWaitingGenerationKeyRef = useRef('');
+    const makeClientUpdateReminderTargetRef = useRef<MakeClientUpdateReminderTarget | null>(null);
+    const makeClientUpdateReminderPendingSeenProjectIdRef = useRef('');
     const initialResourceDeepLink = useMemo(() => parseResourceDeepLink(), []);
     const [initialResourceDeepLinkHandled, setInitialResourceDeepLinkHandled] = useState(() => !initialResourceDeepLink);
     const handleInitialResourceDeepLinkHandled = useCallback(() => {
@@ -195,11 +233,104 @@ export default function IndexPage({
         }
     }, [prototypeStartDraftActive, selectedItem, sidebarTab, viewMode]);
 
+    const markMakeClientUpdateReminderSeen = useCallback(() => {
+        const activeProjectId = String(workspace.activeProjectId || '').trim();
+        const reminderTarget = makeClientUpdateReminderTargetRef.current;
+        if (reminderTarget && reminderTarget.projectId === activeProjectId) {
+            writeMakeClientUpdateReminderDismissed(reminderTarget.projectId, reminderTarget.targetVersion);
+            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+        } else if (activeProjectId) {
+            makeClientUpdateReminderPendingSeenProjectIdRef.current = activeProjectId;
+        }
+        setMakeClientUpdateReminderVisible(false);
+    }, [workspace.activeProjectId]);
+
     const openSettingsDialog = useCallback((tab: SettingsDialogInitialTab = 'project', aiContext?: SettingsDialogAIContext | null) => {
+        if (tab === 'update') {
+            markMakeClientUpdateReminderSeen();
+        }
         setSettingsDialogInitialTab(tab);
         setSettingsDialogAIContext(tab === 'ai' ? aiContext || null : null);
         setSettingsDialogOpen(true);
+    }, [markMakeClientUpdateReminderSeen]);
+
+    const openVersionCollaborationFromSettings = useCallback(() => {
+        setSettingsDialogOpen(false);
+        setVersionCollaborationDrawerOpen(true);
     }, []);
+
+    const handleMakeClientUpdateAvailabilityChange = useCallback((status: MakeClientUpdateStatus | null) => {
+        const updateAvailable = status?.updateAvailable === true;
+        setMakeClientUpdateAvailable(updateAvailable);
+        const projectId = String(status?.projectId || workspace.activeProjectId || '').trim();
+        const targetVersion = String(status?.targetVersion || '').trim();
+        if (!updateAvailable || !projectId || !targetVersion) {
+            makeClientUpdateReminderTargetRef.current = null;
+            if (makeClientUpdateReminderPendingSeenProjectIdRef.current === projectId) {
+                makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+            }
+            setMakeClientUpdateReminderVisible(false);
+            return;
+        }
+        makeClientUpdateReminderTargetRef.current = { projectId, targetVersion };
+        if (makeClientUpdateReminderPendingSeenProjectIdRef.current === projectId) {
+            writeMakeClientUpdateReminderDismissed(projectId, targetVersion);
+            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+            setMakeClientUpdateReminderVisible(false);
+            return;
+        }
+        setMakeClientUpdateReminderVisible(updateAvailable && !readMakeClientUpdateReminderDismissed(projectId, targetVersion));
+    }, [workspace.activeProjectId]);
+
+    useEffect(() => {
+        const activeProjectId = workspace.activeProjectId;
+        if (!activeProjectId || workspace.projectSetupRequired) {
+            setMakeClientUpdateAvailable(false);
+            setMakeClientUpdateReminderVisible(false);
+            makeClientUpdateReminderTargetRef.current = null;
+            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+            return;
+        }
+
+        let cancelled = false;
+        void apiService.getMakeClientUpdateStatus(activeProjectId)
+            .then((status) => {
+                if (!cancelled) {
+                    const updateAvailable = status.updateAvailable === true;
+                    setMakeClientUpdateAvailable(updateAvailable);
+                    if (updateAvailable && status.targetVersion) {
+                        makeClientUpdateReminderTargetRef.current = { projectId: activeProjectId, targetVersion: status.targetVersion };
+                        if (makeClientUpdateReminderPendingSeenProjectIdRef.current === activeProjectId) {
+                            writeMakeClientUpdateReminderDismissed(activeProjectId, status.targetVersion);
+                            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+                            setMakeClientUpdateReminderVisible(false);
+                            return;
+                        }
+                        setMakeClientUpdateReminderVisible(updateAvailable && !readMakeClientUpdateReminderDismissed(activeProjectId, status.targetVersion));
+                    } else {
+                        makeClientUpdateReminderTargetRef.current = null;
+                        if (makeClientUpdateReminderPendingSeenProjectIdRef.current === activeProjectId) {
+                            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+                        }
+                        setMakeClientUpdateReminderVisible(false);
+                    }
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setMakeClientUpdateAvailable(false);
+                    setMakeClientUpdateReminderVisible(false);
+                    makeClientUpdateReminderTargetRef.current = null;
+                    if (makeClientUpdateReminderPendingSeenProjectIdRef.current === activeProjectId) {
+                        makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+                    }
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [workspace.activeProjectId, workspace.projectSetupRequired]);
 
     const handleExcalidrawPropertyPanelModeChange = useCallback((mode: ExcalidrawPropertyPanelMode) => {
         setExcalidrawPropertyPanelMode(mode);
@@ -417,6 +548,8 @@ export default function IndexPage({
             ignoredArtifactPaths?: string[];
             provider?: string | null;
             model?: string | null;
+            mode?: string | null;
+            thought?: string | null;
         },
     ) => {
         const prompt = String(promptText || '').trim();
@@ -447,6 +580,7 @@ export default function IndexPage({
         prompt: string;
         onPrepared?: (payload: any) => void | Promise<void>;
         onAccepted?: (payload: any) => void | Promise<void>;
+        signal?: AbortSignal;
     }) => {
         const prompt = String(request.prompt || '').trim();
         if (!prompt) {
@@ -471,6 +605,7 @@ export default function IndexPage({
             onFirstRun: (message) => messageApi.info(message),
             onPrepared: request.onPrepared,
             onAccepted: request.onAccepted,
+            signal: request.signal,
         });
     }, [
         assistantController.assistantProjectPath,
@@ -656,6 +791,7 @@ export default function IndexPage({
     ]);
 
     const preview = useIndexPagePreviewActions({
+        projectId: workspace.activeProjectId,
         activeTab,
         collapsed,
         setCollapsed,
@@ -775,8 +911,8 @@ export default function IndexPage({
         }
         if (contentMode === 'doc' && resources.selectedDoc) {
             return {
-                resourceType: 'doc',
-                resourceId: resources.selectedDoc.resourceId || resources.selectedDoc.name,
+                resourceType: resources.selectedDoc.projectDocumentPath ? 'project-doc' : 'doc',
+                resourceId: resources.selectedDoc.projectDocumentPath || resources.selectedDoc.resourceId || resources.selectedDoc.name,
                 projectId: activeProjectId || undefined,
             };
         }
@@ -1329,6 +1465,7 @@ export default function IndexPage({
                     source: request.source || 'canvas-node',
                     generatorId: request.generatorId,
                     canvasFilePath: isPrototypePlaceholderStart ? undefined : request.canvasFilePath,
+                    attachments: request.attachments || [],
                     referenceImages: request.referenceImages || [],
                     localContextRefs: isPrototypePlaceholderStart ? [] : request.localContextRefs || [],
                     provider: request.provider,
@@ -1367,6 +1504,10 @@ export default function IndexPage({
                 waitUntil: 'started',
                 collectArtifacts: true,
                 ignoredArtifactPaths: request.canvasFilePath ? [request.canvasFilePath] : [],
+                provider: request.provider,
+                model: request.model,
+                mode: request.mode,
+                thought: request.thought,
             },
         );
         if (!result) {
@@ -1589,6 +1730,8 @@ export default function IndexPage({
             projectTitle: workspace.projectTitle,
             activeProjectId: workspace.activeProjectId,
             projectSetupRequired: workspace.projectSetupRequired,
+            makeClientUpdateAvailable,
+            makeClientUpdateReminderVisible,
             projects: workspace.projects,
             resourceWriteCapabilities,
             localExportCapabilities,
@@ -1611,6 +1754,7 @@ export default function IndexPage({
             setPreferredIDE: preferences.setPreferredIDE,
             setIsDarkMode,
             openSettingsDialog,
+            setVersionCollaborationDrawerOpen,
             setActiveTab,
             setSidebarTab,
             setViewMode,
@@ -1621,6 +1765,7 @@ export default function IndexPage({
             stopProjectDevServer: workspace.stopProjectDevServer,
             addProjectFromLocalPath: workspace.addProjectFromLocalPath,
             createBlankMakeProject: workspace.createBlankMakeProject,
+            cloneMakeProject: workspace.cloneMakeProject,
             copyMakeProject: workspace.copyMakeProject,
             loadProjects: workspace.loadProjects,
             setCreateDialogVisible,
@@ -1662,10 +1807,12 @@ export default function IndexPage({
             isDarkMode,
             contentMode,
             docsItems: workspace.docsItems,
+            sidebarTrees: workspace.sidebarTrees,
             selectedDoc: resources.selectedDoc,
             selectedResourceFolder: resources.selectedResourceFolder,
             selectedTemplate: resources.selectedTemplate,
             selectedCanvas: resources.selectedCanvas,
+            canvasItems: workspace.canvasItems,
             selectedTheme: resources.selectedTheme,
             selectedDataTable: resources.selectedDataTable,
             defaultThemeName: resources.defaultThemeName,
@@ -1835,12 +1982,25 @@ export default function IndexPage({
             open: preview.cloudPublishSettingsOpen,
             initialTarget: preview.cloudPublishSettingsInitialTarget,
             onOpenChange: preview.setCloudPublishSettingsOpen,
-            onSaved: () => undefined,
+            onSaved: preview.handleCloudPublishSettingsSaved,
+        },
+        axhubPublishDialog: {
+            open: preview.axhubPublishDialogOpen,
+            targetPath: preview.currentPublishResourcePath,
+            projectId: workspace.activeProjectId,
+            onOpenChange: preview.setAxhubPublishDialogOpen,
+            onPublished: preview.handleAxhubPublished,
         },
         settingsDialogOpen,
         settingsDialogInitialTab,
         settingsDialogAIContext,
         setSettingsDialogOpen,
+        makeClientUpdateReminderVisible,
+        onMakeClientUpdateReminderSeen: markMakeClientUpdateReminderSeen,
+        onMakeClientUpdateAvailabilityChange: handleMakeClientUpdateAvailabilityChange,
+        onOpenVersionCollaborationFromSettings: openVersionCollaborationFromSettings,
+        versionCollaborationDrawerOpen,
+        setVersionCollaborationDrawerOpen,
         onSettingsSaved: preferences.handleSettingsSaved,
         excalidrawPropertyPanelMode,
         setExcalidrawPropertyPanelMode,

@@ -22,13 +22,13 @@ export interface AcpAnnotationModelPreference {
 
 export const ACP_PROVIDER_OPTIONS: readonly AcpProviderOption[] = [
   { provider: 'claude', client: 'acp:claude', label: 'Claude Code', defaultAnnotationModel: 'sonnet' },
-  { provider: 'codex', client: 'acp:codex', label: 'Codex', defaultAnnotationModel: 'gpt-5.5' },
+  { provider: 'codex', client: 'acp:codex', label: 'Codex CLI', defaultAnnotationModel: 'gpt-5.5' },
   { provider: 'gemini', client: 'acp:gemini', label: 'Gemini CLI', defaultAnnotationModel: 'gemini-3-pro-preview' },
   { provider: 'opencode', client: 'acp:opencode', label: 'OpenCode', defaultAnnotationModel: 'opencode/big-pickle' },
-  { provider: 'cursor', client: 'acp:cursor', label: 'Cursor', defaultAnnotationModel: 'default' },
-  { provider: 'qoder', client: 'acp:qoder', label: 'Qoder', defaultAnnotationModel: 'auto' },
-  { provider: 'codebuddy', client: 'acp:codebuddy', label: 'CodeBuddy', defaultAnnotationModel: 'default' },
-  { provider: 'reasonix', client: 'acp:reasonix', label: 'Reasonix', defaultAnnotationModel: 'deepseek-v4-pro/deepseek-v4-pro' },
+  { provider: 'cursor', client: 'acp:cursor', label: 'Cursor CLI', defaultAnnotationModel: 'default' },
+  { provider: 'qoder', client: 'acp:qoder', label: 'Qoder CLI', defaultAnnotationModel: 'auto' },
+  { provider: 'codebuddy', client: 'acp:codebuddy', label: 'CodeBuddy CLI', defaultAnnotationModel: 'default' },
+  { provider: 'reasonix', client: 'acp:reasonix', label: 'Reasonix CLI', defaultAnnotationModel: 'deepseek-v4-pro/deepseek-v4-pro' },
 ] as const;
 
 export const ACP_PROVIDER_KEYS = ACP_PROVIDER_OPTIONS.map((option) => option.provider) as AcpProviderKey[];

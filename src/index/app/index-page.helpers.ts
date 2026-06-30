@@ -391,15 +391,16 @@ export function normalizeDocItem(
     projectId: string | null = null,
 ): ItemData {
     const normalizedName = normalizeMarkdownResourceName('doc', String(doc?.name || '').trim());
-    const displayName = getDocDisplayName(normalizedName);
     const sourcePath = String(doc?.path || '').trim();
     const absoluteFilePath = String(doc?.absoluteFilePath || '').trim();
+    const routeName = normalizeMarkdownResourceName('doc', sourcePath) || normalizedName;
+    const displayName = getDocDisplayName(getDocFileName(normalizedName));
     const isMarkdown = [
         normalizedName,
         sourcePath,
         absoluteFilePath,
     ].some(hasMarkdownExtension);
-    const directDocsFileUrl = !isMarkdown ? buildDocsFileUrl(normalizedName, projectId) : '';
+    const directDocsFileUrl = !isMarkdown ? buildDocsFileUrl(routeName, projectId) : '';
     const markdownUrl = directDocsFileUrl || buildMarkdownFileUrl(absoluteFilePath || sourcePath);
     return {
         name: normalizedName,

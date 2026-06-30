@@ -26,8 +26,9 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
 
     const isCanvasMode = props.contentMode === 'canvas' || props.viewMode === 'canvas';
     const isResourceFolderPreview = props.contentMode === 'doc' && Boolean(props.selectedResourceFolder);
-    const isPrototypeStartDraft = props.prototypeStartDraftActive === true && !props.selectedItem;
-    const isPrototypeStartPlaceholder = props.selectedItem?.placeholder === true && props.viewMode === 'demo';
+    const isPreviewContentMode = props.contentMode === 'preview';
+    const isPrototypeStartDraft = isPreviewContentMode && props.prototypeStartDraftActive === true && !props.selectedItem;
+    const isPrototypeStartPlaceholder = isPreviewContentMode && props.selectedItem?.placeholder === true && props.viewMode === 'demo';
     const shouldShowPresentationToolbar = !isCanvasMode
         && !isResourceFolderPreview
         && !isPrototypeStartDraft
@@ -103,12 +104,13 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     handleExportHtml={props.handleExportHtml}
                     handlePublishCloudTarget={props.handlePublishCloudTarget}
                     handleOpenCloudPublishSettings={props.handleOpenCloudPublishSettings}
+                    handleOpenAxhubPublishDialog={props.handleOpenAxhubPublishDialog}
                     currentPublishResourcePath={props.currentPublishResourcePath}
+                    visibleCloudPublishTargets={props.visibleCloudPublishTargets}
                     latestCloudPublishUrl={props.latestCloudPublishUrl}
                     handleCopyLatestCloudPublishUrl={props.handleCopyLatestCloudPublishUrl}
                     setIsExportModalOpen={props.setIsExportModalOpen}
                     handleQuickCopyEditablePrototype={props.handleQuickCopyEditablePrototype}
-                    handleQuickCopyRuntimeComponent={props.handleQuickCopyRuntimeComponent}
                     handleOpenAxureUsageGuide={props.handleOpenAxureUsageGuide}
                     handleOpenIdeFile={props.handleOpenIdeFile}
                     handleOpenDocInIDE={props.handleOpenDocInIDE}
@@ -123,6 +125,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     quickEditRuntimeStatus={props.quickEditRuntimeStatus}
                     exportAvailability={props.exportAvailability}
                     hostToolbarState={props.hostToolbarState}
+                    prototypeDecisionDataAvailable={props.prototypeDecisionDataAvailable}
                     handleRunHostToolbarAction={props.handleRunHostToolbarAction}
                     handleRunQuickEditSaveAction={props.handleRunQuickEditSaveAction}
                     contentMode={props.contentMode}
@@ -173,6 +176,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         onEnterSelectedPrototypePreview={props.handleEnterSelectedPrototypePreview}
                         contentMode={props.contentMode}
                         docsItems={props.docsItems}
+                        sidebarTrees={props.sidebarTrees}
                         selectedDoc={props.selectedDoc}
                         selectedResourceFolder={props.selectedResourceFolder}
                         selectedTemplate={props.selectedTemplate}
@@ -191,6 +195,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         collapsed={props.collapsed}
                         setCollapsed={props.setCollapsed}
                         selectedCanvas={props.selectedCanvas}
+                        canvasItems={props.canvasItems}
                         excalidrawPropertyPanelMode={props.excalidrawPropertyPanelMode}
                         setExcalidrawPropertyPanelMode={props.setExcalidrawPropertyPanelMode}
                         excalidrawPropertyPanelPosition={props.excalidrawPropertyPanelPosition}

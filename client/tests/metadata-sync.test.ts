@@ -80,6 +80,16 @@ describe('make-project metadata sync', () => {
     expect(captureThemeSource).not.toContain('pnpm --filter');
   });
 
+  it('keeps AGENTS, CLAUDE, and the project-info template on the same baseline', () => {
+    const agents = fs.readFileSync(path.join(makeProjectRoot, 'AGENTS.md'), 'utf8');
+    const claude = fs.readFileSync(path.join(makeProjectRoot, 'CLAUDE.md'), 'utf8');
+    const template = fs.readFileSync(path.join(makeProjectRoot, 'AGENTS.template.md'), 'utf8');
+    const templateBaseline = template.replace('{{PROJECT_INFO_SECTION}}\n\n', '');
+
+    expect(claude).toBe(agents);
+    expect(templateBaseline).toBe(agents);
+  });
+
   it('keeps generated project metadata ignored in the reusable client template', () => {
     const ignoreRules = fs.readFileSync(path.join(makeProjectRoot, '.gitignore'), 'utf8');
 
@@ -367,7 +377,9 @@ export default function EditedPrototype() {
         { id: 'content-annotation', title: '内容标注' },
         { id: 'state-annotation', title: '状态标注' },
         { id: 'prototype-directory', title: '原型目录' },
-        { id: 'generate-annotation', title: '生成标注' },
+        { id: 'generate-annotation', title: '开启标注' },
+        { id: 'edit-comments', title: '编辑标注' },
+        { id: 'agent-read', title: 'Agent 读取' },
       ],
       defaultPageId: 'prototype-as-prd',
     });
@@ -402,11 +414,11 @@ export default function EditedPrototype() {
     });
     expect(Object.keys(metadata.resources)).toEqual([
       'prototypes',
-      'docs',
       'themes',
     ]);
     expect((metadata.resources as any).components).toBeUndefined();
     expect((metadata.resources as any).canvas).toBeUndefined();
+    expect((metadata.resources as any).docs).toBeUndefined();
     expect((metadata.resources as any).data).toBeUndefined();
     expect((metadata.resources as any).templates).toBeUndefined();
     expect(metadata.resources.prototypes.map((item: any) => item.id)).toEqual([
@@ -437,10 +449,6 @@ export default function EditedPrototype() {
     });
     expect(metadata.resources.prototypes.find((item: any) => item.id === 'ref-app-home')).not.toHaveProperty('spec');
     expect(metadata.resources.prototypes.find((item: any) => item.id === 'express-home')).not.toHaveProperty('spec');
-    expect(metadata.resources.docs.map((item: any) => item.id)).toEqual([
-      'project-overview',
-    ]);
-    expect(metadata.resources.docs.every((item: any) => path.isAbsolute(item.path))).toBe(true);
     expect(metadata.resources.themes.map((item: any) => item.id)).toEqual(['antd-new']);
     expect(metadata.resources.themes[0]).toMatchObject({
       id: 'antd-new',
@@ -461,15 +469,17 @@ export default function EditedPrototype() {
       },
     });
     expect(metadata.capabilities).not.toHaveProperty('resourceWrites');
+    expect(metadata.navigation).not.toHaveProperty('docs');
+    expect(metadata.orders).not.toHaveProperty('data');
+    expect(metadata.orders).not.toHaveProperty('templates');
     expect(metadata.resourceWriteTargets).toEqual({
       prototypes: { type: 'project-relative-path', path: 'src/prototypes' },
-      docs: { type: 'project-relative-path', path: 'src/resources' },
       themes: { type: 'project-relative-path', path: 'src/themes' },
       media: { type: 'project-relative-path', path: 'src/resources/assets' },
     });
   });
 
-  it('includes image, pdf, office, html, and nested markdown resources from src/resources', () => {
+  it('does not index local files from src/resources in project metadata', () => {
     const projectRoot = createFixtureProject();
     writeFile(path.join(projectRoot, 'src/resources/assets/logo.png'), 'png-bytes\n');
     writeFile(path.join(projectRoot, 'src/resources/data/colors.json'), '{"primary":"#1677ff"}\n');
@@ -487,52 +497,11 @@ export default function EditedPrototype() {
       clientOrigin: 'http://localhost:51720',
     });
 
-    expect(metadata.resources.docs.map((item: any) => item.id)).toEqual([
-      'assets/logo.png',
-      'data/colors.json',
-      'project-overview',
-      'test-files/nested/nested-image.png',
-      'test-files/nested/nested-note',
-      'test-files/sample',
-      'test-files/sample-image.png',
-      'test-files/sample.docx',
-      'test-files/sample.html',
-      'test-files/sample.pdf',
-      'test-files/sample.pptx',
-      'test-files/sample.xlsx',
-    ]);
-    expect(metadata.resources.docs.find((item: any) => item.id === 'assets/logo.png')).toMatchObject({
-      name: 'assets/logo.png',
-      title: 'assets/logo',
-      path: path.join(projectRoot, 'src', 'resources', 'assets', 'logo.png'),
-    });
-    expect(metadata.resources.docs.find((item: any) => item.id === 'test-files/sample')).toMatchObject({
-      name: 'test-files/sample',
-      title: 'Sample Markdown',
-      path: path.join(projectRoot, 'src', 'resources', 'test-files', 'sample.md'),
-    });
-    expect(metadata.resources.docs.find((item: any) => item.id === 'test-files/sample.pdf')).toMatchObject({
-      name: 'test-files/sample.pdf',
-      title: 'test-files/sample',
-      path: path.join(projectRoot, 'src', 'resources', 'test-files', 'sample.pdf'),
-    });
-    expect(metadata.navigation.docs).toEqual([
-      'assets/logo.png',
-      'data/colors.json',
-      'project-overview',
-      'test-files/nested/nested-image.png',
-      'test-files/nested/nested-note',
-      'test-files/sample',
-      'test-files/sample-image.png',
-      'test-files/sample.docx',
-      'test-files/sample.html',
-      'test-files/sample.pdf',
-      'test-files/sample.pptx',
-      'test-files/sample.xlsx',
-    ]);
+    expect(metadata.resources).not.toHaveProperty('docs');
+    expect(metadata.navigation).not.toHaveProperty('docs');
   });
 
-  it('ignores resources README and dot-prefixed files or directories', () => {
+  it('keeps ignored resource file rules out of project metadata entirely', () => {
     const projectRoot = createFixtureProject();
     writeFile(path.join(projectRoot, 'src/resources/README.md'), '# Resources\n');
     writeFile(path.join(projectRoot, 'src/resources/.draft.md'), '# Draft\n');
@@ -543,14 +512,8 @@ export default function EditedPrototype() {
       clientOrigin: 'http://localhost:51720',
     });
 
-    expect(metadata.resources.docs.map((item: any) => item.id)).toEqual([
-      'assets/visible.png',
-      'project-overview',
-    ]);
-    expect(metadata.navigation.docs).toEqual([
-      'assets/visible.png',
-      'project-overview',
-    ]);
+    expect(metadata.resources).not.toHaveProperty('docs');
+    expect(metadata.navigation).not.toHaveProperty('docs');
   });
 
   it('sorts design-md themes by getdesign.md download counts before unknown themes', () => {

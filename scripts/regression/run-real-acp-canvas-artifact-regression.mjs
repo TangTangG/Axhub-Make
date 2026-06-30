@@ -32,19 +32,18 @@ const REQUIRED_ARTIFACT_PREVIEW_KIND = {
   drawio: 'drawio',
   document: 'doc',
 };
-const CANVAS_AI_COMPOSER_ROOT_SELECTOR = '[data-axhub-ai-generation-composer], [data-axhub-prototype-composer]';
+const CANVAS_AI_LAUNCHER_SELECTOR = '[data-axhub-canvas-start-ai-launcher]';
+const CANVAS_AI_COMPOSER_ROOT_SELECTOR = '[data-axhub-canvas-start-composer]';
 const CANVAS_AI_COMPOSER_SELECTOR = [
-  '[data-axhub-ai-generation-composer] textarea',
-  '[data-axhub-prototype-composer] textarea',
-  'textarea[aria-label="AI 生成提示词"]',
-  'textarea[aria-label="AI 原型生成提示词"]',
+  '[data-axhub-canvas-start-composer] textarea',
+  'textarea[aria-label="画布 AI 输入"]',
 ].join(', ');
 const PROTOTYPE_PLACEHOLDER_COMPOSER_SELECTOR = 'textarea[aria-label="原型起始页 AI 输入"]';
 const REAL_ACP_VISUAL_AI_CONTEXT = [
   '你是 Axhub Make 的前端回归测试员，熟悉中文 UI、画布、右侧 ACP UI iframe 和 AI 生成流程。',
   '优先根据截图里的可见控件和文案完成操作，不要依赖隐藏 DOM 或调试接口。',
   '本测试必须像真实用户一样从页面输入提示词、发送给右侧 ACP，并通过画布上可见的产物节点确认结果。',
-  '关键可见文案包括：画布、AI 生成、AI 生成提示词、发送、ACP UI、生成记录、原型、Drawio、文档。',
+  '关键可见文案包括：画布、画布 AI 输入、发送、ACP UI、生成记录、原型、Drawio、文档。',
 ].join('\n');
 
 function sleep(ms) {
@@ -548,7 +547,7 @@ function summarizeArtifactKindCoverage(records, requiredKinds = REQUIRED_ARTIFAC
 function getRealAcpEntryMetadata(entryMode) {
   return entryMode === REAL_ACP_ENTRY_PLACEHOLDER_START
     ? { source: 'placeholder-start', label: 'prototype placeholder start page' }
-    : { source: 'canvas-toolbar', label: 'canvas start page' };
+    : { source: 'canvas-start', label: 'canvas start page' };
 }
 
 function buildRealAcpPrompt({ runId, prototypeName }) {
@@ -738,26 +737,21 @@ async function installBrowserEventRecorder(page) {
             : null,
         };
       };
-      const recordCanvasGeneratorCount = (reason) => {
-        const elements = window.__AXHUB_EXCALIDRAW_API__?.getSceneElements?.() || [];
-        const generators = elements.filter((element) => (
-          !element?.isDeleted
-          && element.customData?.type === 'axhub-ai-generation'
-        ));
+      const recordCanvasComposerState = (reason) => {
+        const launcher = document.querySelector('[data-axhub-canvas-start-ai-launcher]');
+        const composer = document.querySelector('[data-axhub-canvas-start-composer]');
+        const textarea = document.querySelector('textarea[aria-label="画布 AI 输入"]');
         appendEvent({
-          channel: 'canvas.generator-count',
+          channel: 'canvas.composer-state',
           at: Date.now(),
           origin: window.location.origin,
           data: {
-            type: 'canvas.generator-count',
+            type: 'canvas.composer-state',
             payload: {
               reason,
-              count: generators.length,
-              generators: generators.map((element) => ({
-                id: String(element.id || ''),
-                scene: String(element.customData?.scene || ''),
-                source: String(element.customData?.source || ''),
-              })),
+              launcher: summarizeElement(launcher),
+              composer: summarizeElement(composer),
+              textarea: summarizeElement(textarea),
             },
           },
         });
@@ -851,8 +845,8 @@ async function installBrowserEventRecorder(page) {
                 },
               });
               if (parsed?.type === 'canvas.reload') {
-                recordCanvasGeneratorCount('before canvas.reload handling');
-                window.setTimeout(() => recordCanvasGeneratorCount('after canvas.reload handling'), 300);
+                recordCanvasComposerState('before canvas.reload handling');
+                window.setTimeout(() => recordCanvasComposerState('after canvas.reload handling'), 300);
               }
             });
             socket.addEventListener('close', () => {
@@ -1344,16 +1338,30 @@ async function waitForVisibleComposerTextarea(page, selector, description = 'AI 
   );
 }
 
-async function openCanvasAiComposerFromUnifiedInsertEvent(page) {
-  await page.evaluate(() => {
-    document.dispatchEvent(new CustomEvent('axhub:insertAiGeneration', {
-      detail: { scene: 'page', source: 'real-acp-regression' },
-    }));
-  });
+async function openCanvasAiComposerFromCanvasStartLauncher(page) {
+  await page.evaluate((launcherSelector) => {
+    const isVisible = (element) => {
+      const rect = element.getBoundingClientRect?.();
+      const style = window.getComputedStyle?.(element);
+      return Boolean(
+        rect
+        && rect.width > 0
+        && rect.height > 0
+        && style?.display !== 'none'
+        && style?.visibility !== 'hidden'
+        && Number(style?.opacity || 1) > 0
+      );
+    };
+    const launcher = Array.from(document.querySelectorAll(launcherSelector)).find(isVisible);
+    if (!launcher) {
+      throw new Error('Canvas AI start launcher is not visible.');
+    }
+    launcher.click();
+  }, CANVAS_AI_LAUNCHER_SELECTOR);
 
   await pollPageCondition(
     page,
-    'canvas AI generator composer',
+    'canvas start AI composer',
     (composerSelector) => {
       const isVisible = (element) => {
         const rect = element.getBoundingClientRect?.();
@@ -1368,12 +1376,7 @@ async function openCanvasAiComposerFromUnifiedInsertEvent(page) {
         );
       };
       const composer = Array.from(document.querySelectorAll(composerSelector)).find(isVisible);
-      const elements = window.__AXHUB_EXCALIDRAW_API__?.getSceneElements?.() || [];
-      const generator = elements.find((element) => (
-        !element?.isDeleted
-        && element.customData?.type === 'axhub-ai-generation'
-      ));
-      return Boolean(composer && generator);
+      return Boolean(composer);
     },
     CANVAS_AI_COMPOSER_SELECTOR,
     45_000,
@@ -1441,20 +1444,20 @@ async function runRealAcpVisualStep(visualAiAgent, diagnostics, name, prompt) {
 }
 
 async function openCanvasAiComposerWithRealUserFlow({ page, visualAiAgent, diagnostics }) {
-  await openCanvasAiComposerFromUnifiedInsertEvent(page);
+  await openCanvasAiComposerFromCanvasStartLauncher(page);
 
   if (visualAiAgent) {
     await runRealAcpVisualStep(
       visualAiAgent,
       diagnostics,
-      'visual_open_canvas_ai_composer_from_inserted_node',
-      '在当前 Make 画布里确认画布上出现 AI 生成输入框。不要寻找顶部 AI 添加节点入口；这个入口已经被移除。',
+      'visual_open_canvas_ai_composer_from_canvas_start_launcher',
+      '在当前 Make 画布里确认底部画布 AI 输入框已经打开。不要寻找顶部 AI 添加节点入口，也不要等待画布里出现旧 AI 生成占位节点。',
     );
   }
 
   await pollPageCondition(
     page,
-    'canvas AI generator composer opened by real user flow',
+    'canvas start AI composer opened by real user flow',
     (composerSelector) => {
       const isVisible = (element) => {
         const rect = element.getBoundingClientRect?.();
@@ -1719,15 +1722,8 @@ async function collectSubmissionState(page, label = '') {
         rect: rectFor(element),
       }))
       .filter((surface) => surface.text);
-    const elements = window.__AXHUB_EXCALIDRAW_API__?.getSceneElements?.() || [];
-    const generators = elements
-      .filter((element) => !element?.isDeleted && element.customData?.type === 'axhub-ai-generation')
-      .map((element) => ({
-        id: element.id,
-        scene: element.customData?.scene || '',
-        source: element.customData?.source || '',
-        isSelected: Boolean(window.__AXHUB_EXCALIDRAW_API__?.getAppState?.()?.selectedElementIds?.[element.id]),
-      }));
+    const canvasStartLauncher = document.querySelector('[data-axhub-canvas-start-ai-launcher]');
+    const canvasStartComposer = document.querySelector('[data-axhub-canvas-start-composer]');
     return {
       label: stateLabel,
       at: Date.now(),
@@ -1742,7 +1738,8 @@ async function collectSubmissionState(page, label = '') {
       sendButtons,
       assistantIframes,
       messageSurfaces,
-      generators,
+      canvasStartLauncher: canvasStartLauncher ? rectFor(canvasStartLauncher) : null,
+      canvasStartComposer: canvasStartComposer ? rectFor(canvasStartComposer) : null,
     };
   }, label).catch((error) => ({
     label,

@@ -84,11 +84,14 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         onCloseAiPanel,
         onCloseWebAgentPanel,
         onSettingsClick,
+        onVersionCollaborationClick,
         onOpenAISettings,
         onToggleTheme,
         projectTitle,
         activeProjectId,
         projectSetupRequired,
+        makeClientUpdateAvailable,
+        makeClientUpdateReminderVisible,
         projects,
         resourceWriteCapabilities,
         lanAccessAllowed,
@@ -98,6 +101,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         onProjectStop,
         onAddProject,
         onCreateBlankMakeProject,
+        onCloneMakeProject,
         onCopyMakeProject,
         onRefreshProjects,
         handleOpenProjectInIDE,
@@ -179,6 +183,10 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
             : currentTreeTab === 'themes'
                 ? themesAsItemData
                 : canvasAsItemData;
+    const selectedResourceFolderTreeTab = selectedResourceFolder?.treeTab || 'docs';
+    const currentSelectedFolder = selectedResourceFolder && selectedResourceFolderTreeTab === currentTreeTab
+        ? selectedResourceFolder
+        : null;
 
     const currentSelectedItem = sidebarTab === 'document'
         ? selectedDoc
@@ -230,6 +238,8 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 projectTitle={projectTitle}
                 activeProjectId={activeProjectId}
                 projectSetupRequired={projectSetupRequired}
+                makeClientUpdateAvailable={makeClientUpdateAvailable}
+                makeClientUpdateReminderVisible={makeClientUpdateReminderVisible}
                 projects={projects}
                 resourceWriteCapabilities={resourceWriteCapabilities}
                 lanAccessAllowed={lanAccessAllowed}
@@ -239,6 +249,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 onProjectStop={onProjectStop}
                 onAddProject={onAddProject}
                 onCreateBlankMakeProject={onCreateBlankMakeProject}
+                onCloneMakeProject={onCloneMakeProject}
                 onCopyMakeProject={onCopyMakeProject}
                 onRefreshProjects={onRefreshProjects}
                 tree={sidebarTrees[currentTreeTab] || []}
@@ -247,7 +258,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 items={currentItems}
                 selectedItem={currentSelectedItem}
                 selectedPrototypePageId={sidebarTab === 'prototype' ? selectedPrototypePageId : null}
-                selectedFolder={sidebarTab === 'document' ? selectedResourceFolder : null}
+                selectedFolder={currentSelectedFolder}
                 onItemClick={(item) => {
                     if (sidebarTab === 'document') {
                         onSelectDoc(item);
@@ -266,7 +277,9 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                     }
                     void onPrototypeViewSelect(item, 'demo');
                 }}
-                onFolderClick={sidebarTab === 'document' ? onSelectResourceFolder : undefined}
+                onFolderClick={currentTreeTab === 'docs' || currentTreeTab === 'canvas' || currentTreeTab === 'themes'
+                    ? (folder) => onSelectResourceFolder?.(folder, currentTreeTab, { preserveViewMode: viewMode === 'canvas' })
+                    : undefined}
                 onSearch={setSearchText}
                 searchText={searchText}
                 onCreateFile={onCreatePlaceholderPrototype}
@@ -301,6 +314,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 handleVersionManagement={versionHandler}
                 handleDeleteItem={deleteHandler}
                 onSettingsClick={onSettingsClick}
+                onVersionCollaborationClick={onVersionCollaborationClick}
                 onToggleTheme={onToggleTheme}
                 selectedTheme={selectedTheme}
                 defaultThemeName={defaultThemeName}

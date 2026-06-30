@@ -34,6 +34,7 @@ const bundledCanvasFigSyncPath = path.join(tmpDir, 'canvas-fig-sync.mjs');
 const makeClientTemplateSourceDir = path.join(makeServerRoot, 'client');
 const makeClientTemplatePackageJsonPath = path.join(makeClientTemplateSourceDir, 'package.json');
 const makeClientTemplateSourcePath = path.join(makeServerRoot, 'src/common/makeClientTemplate.ts');
+const makeClientTemplateReleaseNotesFileName = 'RELEASE_NOTES.md';
 const makeClientTemplateZipName = 'axhub-make-client-template.zip';
 const includeOpenCodeWebUi = false;
 const npmPackagePackedSizeLimit = 35 * 1024 * 1024;
@@ -534,6 +535,70 @@ export function syncDefaultMakeClientTemplateVersion({
   return { changed: true, sourceFile, templateVersion: normalizedVersion };
 }
 
+function readReleaseNotesDeclaredVersion(releaseNotes) {
+  const firstLine = String(releaseNotes || '').split(/\r?\n/u)[0]?.trim() || '';
+  const match = firstLine.match(/^#\s+Axhub Make Client\s+([0-9A-Za-z][0-9A-Za-z.+-]*)\s*$/u);
+  return match?.[1] || '';
+}
+
+export function readMakeClientTemplateReleaseNotes({
+  sourceClientDir = makeClientTemplateSourceDir,
+  templateVersion,
+} = {}) {
+  const normalizedVersion = normalizeTemplateVersion(templateVersion);
+  if (!normalizedVersion) {
+    throw new Error('templateVersion is required to read Make client template release notes');
+  }
+  const releaseNotesPath = path.join(sourceClientDir, makeClientTemplateReleaseNotesFileName);
+  if (!fs.existsSync(releaseNotesPath)) {
+    throw new Error(`Make client template release notes file is required: ${releaseNotesPath}`);
+  }
+  const releaseNotes = fs.readFileSync(releaseNotesPath, 'utf8').trim();
+  if (!releaseNotes) {
+    throw new Error(`Make client template release notes file must not be empty: ${releaseNotesPath}`);
+  }
+  if (readReleaseNotesDeclaredVersion(releaseNotes) !== normalizedVersion) {
+    throw new Error(`Make client template release notes must mention template version ${normalizedVersion}`);
+  }
+  return releaseNotes;
+}
+
+export function syncDefaultMakeClientTemplateReleaseNotes({
+  sourceFile = makeClientTemplateSourcePath,
+  templateVersion,
+  releaseNotes,
+} = {}) {
+  const normalizedVersion = normalizeTemplateVersion(templateVersion);
+  if (!normalizedVersion) {
+    throw new Error('templateVersion is required to sync the default Make client template release notes');
+  }
+  const normalizedReleaseNotes = String(releaseNotes || '').trim();
+  if (!normalizedReleaseNotes) {
+    throw new Error('releaseNotes is required to sync the default Make client template release notes');
+  }
+  if (readReleaseNotesDeclaredVersion(normalizedReleaseNotes) !== normalizedVersion) {
+    throw new Error(`Make client template release notes must mention template version ${normalizedVersion}`);
+  }
+  const source = fs.readFileSync(sourceFile, 'utf8');
+  const nextExport = `export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = ${JSON.stringify(normalizedReleaseNotes)};`;
+  const pattern = /export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = (?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`);/u;
+  let nextSource = '';
+  if (pattern.test(source)) {
+    nextSource = source.replace(pattern, nextExport);
+  } else {
+    const versionPattern = /export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = ['"][^'"]+['"];\n/u;
+    if (!versionPattern.test(source)) {
+      throw new Error(`DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION export was not found: ${sourceFile}`);
+    }
+    nextSource = source.replace(versionPattern, (match) => `${match}${nextExport}\n`);
+  }
+  if (nextSource === source) {
+    return { changed: false, sourceFile, templateVersion: normalizedVersion };
+  }
+  fs.writeFileSync(sourceFile, nextSource, 'utf8');
+  return { changed: true, sourceFile, templateVersion: normalizedVersion };
+}
+
 export function createMakeClientTemplateZip({
   sourceClientDir = makeClientTemplateSourceDir,
   outputDir = artifactsDir,
@@ -860,6 +925,25 @@ export function createExecutableBundleArgs(target, executablePath, entryPath) {
   ];
 }
 
+function shouldCodesignExecutableTarget(target) {
+  return String(target.bunTarget || '').startsWith('bun-darwin-');
+}
+
+export function finalizeExecutableBundle(target, executablePath, {
+  sanitizeFile = sanitizeLocalMachinePathsInFile,
+  runCommand = run,
+} = {}) {
+  const sanitizeResult = sanitizeFile(executablePath);
+  const codesigned = shouldCodesignExecutableTarget(target);
+  if (codesigned) {
+    runCommand('codesign', ['--force', '--sign', '-', executablePath]);
+  }
+  return {
+    ...sanitizeResult,
+    codesigned,
+  };
+}
+
 function createPlatformArtifact(target, executablePath, sourcePackage, canvasFigSyncScriptPath = bundledCanvasFigSyncPath) {
   const artifactBaseName = `axhub-make-${sourcePackage.version}-${target.id}`;
   const artifactDir = path.join(artifactsDir, artifactBaseName);
@@ -891,7 +975,7 @@ function createPlatformArtifact(target, executablePath, sourcePackage, canvasFig
 
 function buildSanitizedExecutableTarget(target, entryPath) {
   const executablePath = bundleExecutableTarget(target, entryPath);
-  sanitizeLocalMachinePathsInFile(executablePath);
+  finalizeExecutableBundle(target, executablePath);
   return executablePath;
 }
 
@@ -1008,6 +1092,14 @@ function prepareTemplateRelease(options = {}) {
   if (versionSync.changed) {
     logStep(`Synced DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION to ${templateVersion}`);
   }
+  const releaseNotes = readMakeClientTemplateReleaseNotes({ templateVersion });
+  const releaseNotesSync = syncDefaultMakeClientTemplateReleaseNotes({
+    templateVersion,
+    releaseNotes,
+  });
+  if (releaseNotesSync.changed) {
+    logStep(`Synced DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES for ${templateVersion}`);
+  }
 
   fs.rmSync(templateReleaseRoot, { recursive: true, force: true });
   fs.mkdirSync(templateReleaseRoot, { recursive: true });
@@ -1021,6 +1113,7 @@ function prepareTemplateRelease(options = {}) {
   const manifest = {
     packageName: sourcePackage.name,
     templateVersion,
+    releaseNotes,
     tagName: templateMetadata.tagName,
     preparedAt: new Date().toISOString(),
     templateSourceDir: makeClientTemplateSourceDir,

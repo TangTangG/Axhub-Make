@@ -43,7 +43,7 @@ import {
   registerProject,
   startTestServer,
   writeJson,
-  writeProjectMetadata,
+  writeProjectMetadata as writeBaseProjectMetadata,
 } from './projects-api.helpers';
 import { getMakeClientMarkerPath } from '../projectCore/index.ts';
 import { buildSystemOpenCommand } from '../managementApi.workspace.ts';
@@ -64,6 +64,12 @@ function writeMakeClientMarkerForProject(projectRoot: string, id: string, name: 
     repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
     project: { id, name },
   });
+}
+
+function writeProjectMetadata(projectRoot: string, overrides: Record<string, unknown> = {}) {
+  const result = writeBaseProjectMetadata(projectRoot, overrides);
+  fs.rmSync(path.join(projectRoot, 'src/resources/spec.md'), { force: true });
+  return result;
 }
 
 function writeResourceProject(projectRoot: string) {
@@ -89,7 +95,7 @@ function writeResourceProject(projectRoot: string) {
       },
     },
     resourceWriteTargets: {
-      docs: { type: 'project-relative-path', path: 'content/resources' },
+      docs: { type: 'project-relative-path', path: 'src/resources' },
     },
   });
 }
@@ -108,13 +114,462 @@ function findNode(nodes: any[], predicate: (node: any) => boolean): any | null {
 }
 
 describe('make-server resource sidebar filesystem tree API', () => {
+  it('scans the default src/resources tree when no docs resource root is declared', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'default-resource-tree-client', 'Default Resource Tree Client');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'default-resource-tree-client', name: 'Default Resource Tree Client' },
+      resources: {
+        prototypes: [],
+        docs: [
+          { id: 'stale', name: 'stale.md', title: 'Stale' },
+        ],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: ['stale'] },
+      orders: { themes: [], data: [], templates: [] },
+      resourceWriteTargets: {},
+    });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/assets/icons'), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/templates/nested'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/README.md'), '# Resources\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/assets/icons/logo.png'), 'png', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/templates/prd-template.md'), '# PRD\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/templates/nested/visual.html'), '<h1>Visual</h1>\n', 'utf8');
+    writeJson(path.join(projectRoot, '.axhub/make/sidebar-tree.json'), {
+      version: 1,
+      updatedAt: '2026-05-19T00:00:00.000Z',
+      prototypes: [],
+      docs: [
+        { id: 'item-docs-prd-template', kind: 'item', title: 'PRD 模板', itemKey: 'docs/prd-template.md' },
+      ],
+      themesTree: [],
+      themes: [],
+      data: [],
+      templates: [],
+    });
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const response = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.tree).toEqual([
+        expect.objectContaining({
+          id: 'folder-docs-assets',
+          kind: 'folder',
+          title: 'assets',
+          path: 'assets',
+          folderPath: 'assets',
+          children: [
+            expect.objectContaining({
+              id: 'folder-docs-assets-icons',
+              kind: 'folder',
+              title: 'icons',
+              path: 'assets/icons',
+              folderPath: 'assets/icons',
+              children: [
+                expect.objectContaining({
+                  kind: 'item',
+                  title: 'logo',
+                  itemKey: 'docs/assets/icons/logo.png',
+                  path: 'assets/icons/logo.png',
+                }),
+              ],
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          id: 'folder-docs-templates',
+          kind: 'folder',
+          title: 'templates',
+          path: 'templates',
+          folderPath: 'templates',
+          children: [
+            expect.objectContaining({
+              id: 'folder-docs-templates-nested',
+              kind: 'folder',
+              title: 'nested',
+              path: 'templates/nested',
+              folderPath: 'templates/nested',
+              children: [
+                expect.objectContaining({
+                  kind: 'item',
+                  title: 'visual',
+                  itemKey: 'docs/templates/nested/visual.html',
+                  path: 'templates/nested/visual.html',
+                }),
+              ],
+            }),
+            expect.objectContaining({
+              kind: 'item',
+              title: 'prd-template',
+              itemKey: 'docs/templates/prd-template.md',
+              path: 'templates/prd-template.md',
+            }),
+          ],
+        }),
+      ]);
+      expect(findNode(body.tree, (node) => node.title === 'PRD 模板')).toBeNull();
+      expect(JSON.stringify(body.tree)).not.toContain('README.md');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('serves an empty default src/resources tree instead of stale persisted docs', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'empty-default-resource-tree-client', 'Empty Default Resource Tree Client');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'empty-default-resource-tree-client', name: 'Empty Default Resource Tree Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      resourceWriteTargets: {},
+    });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/README.md'), '# Resources\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/.gitkeep'), '', 'utf8');
+    writeJson(path.join(projectRoot, '.axhub/make/sidebar-tree.json'), {
+      version: 1,
+      updatedAt: '2026-05-19T00:00:00.000Z',
+      prototypes: [],
+      docs: [
+        { id: 'item-docs-stale', kind: 'item', title: 'Stale', itemKey: 'docs/stale.md' },
+      ],
+      themesTree: [],
+      themes: [],
+      data: [],
+      templates: [],
+    });
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const response = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.tree).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('moves files in the default src/resources tree when the resource tree is persisted', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'default-resource-move-client', 'Default Resource Move Client');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'default-resource-move-client', name: 'Default Resource Move Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      resourceWriteTargets: {},
+    });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/templates'), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/archive'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/templates/prd-template.md'), '# PRD\n', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const current = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`).then((response) => response.json());
+      const archive = findNode(current.tree, (node) => node.folderPath === 'archive');
+      const templates = findNode(current.tree, (node) => node.folderPath === 'templates');
+      const template = findNode(current.tree, (node) => node.itemKey === 'docs/templates/prd-template.md');
+      expect(archive).toBeTruthy();
+      expect(templates).toBeTruthy();
+      expect(template).toBeTruthy();
+
+      const update = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tree: [
+            {
+              ...archive,
+              children: [template],
+            },
+            {
+              ...templates,
+              children: [],
+            },
+          ],
+        }),
+      });
+      const body = await update.json();
+
+      expect(update.status).toBe(200);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/templates/prd-template.md'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/prd-template.md'), 'utf8')).toBe('# PRD\n');
+      expect(findNode(body.tree, (node) => node.itemKey === 'docs/archive/prd-template.md')).toBeTruthy();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('opens files from the default src/resources tree through the local filesystem opener', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'default-resource-open-client', 'Default Resource Open Client');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'default-resource-open-client', name: 'Default Resource Open Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      resourceWriteTargets: {},
+    });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/assets'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/assets/logo.png'), 'png', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const response = await fetch(`${server.origin}/api/workspace/resources/open-system`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'assets/logo.png' }),
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        success: true,
+        type: 'docs',
+        path: 'assets/logo.png',
+        kind: 'file',
+      });
+      const openCommand = buildSystemOpenCommand(path.join(projectRoot, 'src/resources/assets'));
+      expect(runLocalCommandMock).toHaveBeenCalledWith(
+        openCommand.command,
+        openCommand.args,
+        expect.objectContaining({ timeoutMs: 10000 }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('keeps create, upload, rename, copy, delete, and move operations in sync with the default src/resources tree', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'default-resource-ops-client', 'Default Resource Ops Client');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'default-resource-ops-client', name: 'Default Resource Ops Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      capabilities: {
+        quickEdit: true,
+        quickEditMode: 'clientRuntime',
+        figmaExport: true,
+        axureExport: true,
+        resourceWrites: {
+          docCreate: true,
+        },
+      },
+      resourceWriteTargets: {},
+    });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/archive'), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/templates'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/templates/base.md'), '# Base\n', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const createdFolder = await fetch(`${server.origin}/api/workspace/navigation/folders?tab=docs`, {
+        method: 'POST',
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(createdFolder.status).toBe(201);
+      expect(createdFolder.body.createdFolderId).toBe('folder-docs-new-folder');
+      expect(fs.statSync(path.join(projectRoot, 'src/resources/new-folder')).isDirectory()).toBe(true);
+
+      const uploadBody = new FormData();
+      uploadBody.set('projectId', 'default-resource-ops-client');
+      uploadBody.set('targetFolder', 'new-folder');
+      uploadBody.set('file', new Blob(['# Uploaded\n'], { type: 'text/markdown' }), 'uploaded.md');
+      const uploaded = await fetch(`${server.origin}/api/docs/upload`, {
+        method: 'POST',
+        body: uploadBody,
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(uploaded.status).toBe(201);
+      expect(uploaded.body.files[0]).toMatchObject({
+        name: 'uploaded.md',
+        displayName: 'Uploaded',
+        path: 'new-folder/uploaded.md',
+      });
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/new-folder/uploaded.md'), 'utf8')).toBe('# Uploaded\n');
+
+      const renamed = await fetch(`${server.origin}/api/docs/${encodeURIComponent('new-folder/uploaded.md')}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'default-resource-ops-client', newBaseName: 'renamed-note' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(renamed.status).toBe(200);
+      expect(renamed.body.name).toBe('renamed-note.md');
+      expect(renamed.body.path).toBe('new-folder/renamed-note.md');
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/new-folder/uploaded.md'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/new-folder/renamed-note.md'), 'utf8')).toBe('# Uploaded\n');
+
+      const copied = await fetch(`${server.origin}/api/docs/${encodeURIComponent('new-folder/renamed-note.md')}/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'default-resource-ops-client', displayName: 'Copied Note' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(copied.status).toBe(201);
+      expect(copied.body.name).toBe('copied-note.md');
+      expect(copied.body.path).toBe('new-folder/copied-note.md');
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/new-folder/copied-note.md'), 'utf8')).toBe('# Uploaded\n');
+
+      const deleted = await fetch(`${server.origin}/api/docs/${encodeURIComponent('new-folder/copied-note.md')}`, {
+        method: 'DELETE',
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(deleted.status).toBe(200);
+      expect(deleted.body.success).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/new-folder/copied-note.md'))).toBe(false);
+
+      const current = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`).then((response) => response.json());
+      const archive = findNode(current.tree, (node) => node.folderPath === 'archive');
+      const newFolder = findNode(current.tree, (node) => node.folderPath === 'new-folder');
+      const movedDoc = findNode(current.tree, (node) => node.itemKey === 'docs/new-folder/renamed-note.md');
+      const templates = findNode(current.tree, (node) => node.folderPath === 'templates');
+      expect(archive).toBeTruthy();
+      expect(newFolder).toBeTruthy();
+      expect(movedDoc).toBeTruthy();
+      expect(templates).toBeTruthy();
+
+      const moved = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tree: [
+            {
+              ...archive,
+              children: [movedDoc],
+            },
+            {
+              ...newFolder,
+              children: [],
+            },
+            templates,
+          ],
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(moved.status).toBe(200);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/new-folder/renamed-note.md'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/renamed-note.md'), 'utf8')).toBe('# Uploaded\n');
+      expect(findNode(moved.body.tree, (node) => node.itemKey === 'docs/archive/renamed-note.md')).toBeTruthy();
+
+      const imageUploadBody = new FormData();
+      imageUploadBody.set('projectId', 'default-resource-ops-client');
+      imageUploadBody.set('targetFolder', 'new-folder');
+      imageUploadBody.set('file', new Blob(['PNGDATA'], { type: 'image/png' }), 'icon.png');
+      const uploadedImage = await fetch(`${server.origin}/api/docs/upload`, {
+        method: 'POST',
+        body: imageUploadBody,
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(uploadedImage.status).toBe(201);
+      expect(uploadedImage.body.files[0]).toMatchObject({
+        name: 'icon.png',
+        path: 'new-folder/icon.png',
+      });
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/new-folder/icon.png'), 'utf8')).toBe('PNGDATA');
+
+      const renamedImage = await fetch(`${server.origin}/api/docs/${encodeURIComponent('new-folder/icon.png')}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'default-resource-ops-client', newBaseName: 'brand-icon' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(renamedImage.status).toBe(200);
+      expect(renamedImage.body.name).toBe('brand-icon.png');
+      expect(renamedImage.body.path).toBe('new-folder/brand-icon.png');
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/new-folder/icon.png'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/new-folder/brand-icon.png'), 'utf8')).toBe('PNGDATA');
+
+      const copiedImage = await fetch(`${server.origin}/api/docs/${encodeURIComponent('new-folder/brand-icon.png')}/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'default-resource-ops-client', displayName: 'Brand Icon Copy' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(copiedImage.status).toBe(201);
+      expect(copiedImage.body.name).toBe('brand-icon-copy.png');
+      expect(copiedImage.body.path).toBe('new-folder/brand-icon-copy.png');
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/new-folder/brand-icon-copy.png'), 'utf8')).toBe('PNGDATA');
+
+      const deletedImage = await fetch(`${server.origin}/api/docs/${encodeURIComponent('new-folder/brand-icon-copy.png')}`, {
+        method: 'DELETE',
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(deletedImage.status).toBe(200);
+      expect(deletedImage.body.success).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/new-folder/brand-icon-copy.png'))).toBe(false);
+
+      const currentAfterImage = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`).then((response) => response.json());
+      const archiveAfterImage = findNode(currentAfterImage.tree, (node) => node.folderPath === 'archive');
+      const newFolderAfterImage = findNode(currentAfterImage.tree, (node) => node.folderPath === 'new-folder');
+      const imageToMove = findNode(currentAfterImage.tree, (node) => node.itemKey === 'docs/new-folder/brand-icon.png');
+      const templatesAfterImage = findNode(currentAfterImage.tree, (node) => node.folderPath === 'templates');
+      expect(archiveAfterImage).toBeTruthy();
+      expect(newFolderAfterImage).toBeTruthy();
+      expect(imageToMove).toBeTruthy();
+      expect(templatesAfterImage).toBeTruthy();
+
+      const movedImage = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tree: [
+            {
+              ...archiveAfterImage,
+              children: [
+                ...(archiveAfterImage.children ?? []),
+                imageToMove,
+              ],
+            },
+            {
+              ...newFolderAfterImage,
+              children: [],
+            },
+            templatesAfterImage,
+          ],
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(movedImage.status).toBe(200);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/new-folder/brand-icon.png'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/brand-icon.png'), 'utf8')).toBe('PNGDATA');
+      expect(findNode(movedImage.body.tree, (node) => node.itemKey === 'docs/archive/brand-icon.png')).toBeTruthy();
+    } finally {
+      await server.close();
+    }
+  });
+
   it('scans real resource folders for the resource tab', async () => {
     const projectRoot = createTempRoot();
     writeResourceProject(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'content/resources/research'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/README.md'), '# Resource Guide\n', 'utf8');
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/overview.md'), '# Overview\n', 'utf8');
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/research/notes.md'), '# Notes\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/research'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/README.md'), '# Resource Guide\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/overview.md'), '# Overview\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/research/notes.md'), '# Notes\n', 'utf8');
 
     const server = await startTestServer(projectRoot);
     try {
@@ -154,10 +609,10 @@ describe('make-server resource sidebar filesystem tree API', () => {
   it('generates stable unique ids for non-ASCII resource paths', async () => {
     const projectRoot = createTempRoot();
     writeResourceProject(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'content/resources'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/原型.md'), '# Prototype\n', 'utf8');
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/资源.md'), '# Resources\n', 'utf8');
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/设计.md'), '# Design\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src/resources'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/原型.md'), '# Prototype\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/资源.md'), '# Resources\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/设计.md'), '# Design\n', 'utf8');
 
     const server = await startTestServer(projectRoot);
     try {
@@ -187,7 +642,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
 
       expect(response.status).toBe(201);
       expect(body.createdFolderId).toBe('folder-docs-new-folder');
-      expect(fs.statSync(path.join(projectRoot, 'content/resources/new-folder')).isDirectory()).toBe(true);
+      expect(fs.statSync(path.join(projectRoot, 'src/resources/new-folder')).isDirectory()).toBe(true);
       expect(body.tree).toEqual([
         expect.objectContaining({
           id: 'folder-docs-new-folder',
@@ -205,8 +660,8 @@ describe('make-server resource sidebar filesystem tree API', () => {
   it('opens resource files and folders through the local filesystem opener', async () => {
     const projectRoot = createTempRoot();
     writeResourceProject(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'content/resources/research'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/research/notes.md'), '# Notes\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/research'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/research/notes.md'), '# Notes\n', 'utf8');
 
     const server = await startTestServer(projectRoot);
     try {
@@ -223,7 +678,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
         path: 'research/notes.md',
         kind: 'file',
       });
-      const fileOpenCommand = buildSystemOpenCommand(path.join(projectRoot, 'content/resources/research'));
+      const fileOpenCommand = buildSystemOpenCommand(path.join(projectRoot, 'src/resources/research'));
       expect(runLocalCommandMock).toHaveBeenCalledWith(
         fileOpenCommand.command,
         fileOpenCommand.args,
@@ -244,7 +699,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
         path: 'research',
         kind: 'directory',
       });
-      const folderOpenCommand = buildSystemOpenCommand(path.join(projectRoot, 'content/resources/research'));
+      const folderOpenCommand = buildSystemOpenCommand(path.join(projectRoot, 'src/resources/research'));
       expect(runLocalCommandMock).toHaveBeenCalledWith(
         folderOpenCommand.command,
         folderOpenCommand.args,
@@ -272,7 +727,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
       navigation: { prototypes: [], docs: [] },
       orders: { themes: ['brand'], data: [], templates: [] },
       resourceWriteTargets: {
-        docs: { type: 'project-relative-path', path: 'content/resources' },
+        docs: { type: 'project-relative-path', path: 'src/resources' },
         themes: { type: 'project-relative-path', path: 'content/themes' },
       },
     });
@@ -308,8 +763,8 @@ describe('make-server resource sidebar filesystem tree API', () => {
   it('rejects unsafe resource filesystem open paths', async () => {
     const projectRoot = createTempRoot();
     writeResourceProject(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'content/resources/.hidden'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/.hidden/secret.md'), '# Secret\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/.hidden'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/.hidden/secret.md'), '# Secret\n', 'utf8');
 
     const server = await startTestServer(projectRoot);
     try {
@@ -359,10 +814,10 @@ describe('make-server resource sidebar filesystem tree API', () => {
   it('moves resource files and folders when the resource tree is persisted', async () => {
     const projectRoot = createTempRoot();
     writeResourceProject(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'content/resources/research'), { recursive: true });
-    fs.mkdirSync(path.join(projectRoot, 'content/resources/archive'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/overview.md'), '# Overview\n', 'utf8');
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/research/notes.md'), '# Notes\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/research'), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/archive'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/overview.md'), '# Overview\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/research/notes.md'), '# Notes\n', 'utf8');
 
     const server = await startTestServer(projectRoot);
     try {
@@ -391,10 +846,10 @@ describe('make-server resource sidebar filesystem tree API', () => {
       const body = await update.json();
 
       expect(update.status).toBe(200);
-      expect(fs.existsSync(path.join(projectRoot, 'content/resources/overview.md'))).toBe(false);
-      expect(fs.existsSync(path.join(projectRoot, 'content/resources/research'))).toBe(false);
-      expect(fs.readFileSync(path.join(projectRoot, 'content/resources/archive/overview.md'), 'utf8')).toBe('# Overview\n');
-      expect(fs.readFileSync(path.join(projectRoot, 'content/resources/archive/research/notes.md'), 'utf8')).toBe('# Notes\n');
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/overview.md'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/research'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/overview.md'), 'utf8')).toBe('# Overview\n');
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/research/notes.md'), 'utf8')).toBe('# Notes\n');
       expect(findNode(body.tree, (node) => node.itemKey === 'docs/archive/overview.md')).toBeTruthy();
       expect(findNode(body.tree, (node) => node.folderPath === 'archive/research')).toBeTruthy();
     } finally {
@@ -405,8 +860,8 @@ describe('make-server resource sidebar filesystem tree API', () => {
   it('moves resource files into folder nodes that only carry a folder title', async () => {
     const projectRoot = createTempRoot();
     writeResourceProject(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'content/resources/archive'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/overview.md'), '# Overview\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/archive'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/overview.md'), '# Overview\n', 'utf8');
 
     const server = await startTestServer(projectRoot);
     try {
@@ -434,8 +889,8 @@ describe('make-server resource sidebar filesystem tree API', () => {
 
       expect(update.status).toBe(200);
       expect(body.success).toBe(true);
-      expect(fs.existsSync(path.join(projectRoot, 'content/resources/overview.md'))).toBe(false);
-      expect(fs.readFileSync(path.join(projectRoot, 'content/resources/archive/overview.md'), 'utf8')).toBe('# Overview\n');
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/overview.md'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/overview.md'), 'utf8')).toBe('# Overview\n');
       expect(findNode(body.tree, (node) => node.itemKey === 'docs/archive/overview.md')).toBeTruthy();
     } finally {
       await server.close();
@@ -445,9 +900,9 @@ describe('make-server resource sidebar filesystem tree API', () => {
   it('deletes empty resource folders but rejects non-empty folder removal', async () => {
     const projectRoot = createTempRoot();
     writeResourceProject(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'content/resources/empty'), { recursive: true });
-    fs.mkdirSync(path.join(projectRoot, 'content/resources/filled'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/filled/notes.md'), '# Notes\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/empty'), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/filled'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/filled/notes.md'), '# Notes\n', 'utf8');
 
     const server = await startTestServer(projectRoot);
     try {
@@ -467,7 +922,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
         code: 'DIRECTORY_NOT_EMPTY',
         folderPath: 'filled',
       });
-      expect(fs.existsSync(path.join(projectRoot, 'content/resources/filled/notes.md'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/filled/notes.md'))).toBe(true);
 
       const removeEmpty = current.tree.filter((node: any) => node.folderPath !== 'empty');
       const accepted = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`, {
@@ -477,7 +932,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
       });
 
       expect(accepted.status).toBe(200);
-      expect(fs.existsSync(path.join(projectRoot, 'content/resources/empty'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/empty'))).toBe(false);
     } finally {
       await server.close();
     }
@@ -486,8 +941,8 @@ describe('make-server resource sidebar filesystem tree API', () => {
   it('deletes resource folders that only contain hidden files', async () => {
     const projectRoot = createTempRoot();
     writeResourceProject(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'content/resources/assets/icons'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'content/resources/assets/icons/.DS_Store'), 'finder', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/assets/icons'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/assets/icons/.DS_Store'), 'finder', 'utf8');
 
     const server = await startTestServer(projectRoot);
     try {
@@ -502,7 +957,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
 
       expect(accepted.status).toBe(200);
       expect(body.success).toBe(true);
-      expect(fs.existsSync(path.join(projectRoot, 'content/resources/assets'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/assets'))).toBe(false);
     } finally {
       await server.close();
     }
@@ -511,7 +966,7 @@ describe('make-server resource sidebar filesystem tree API', () => {
   it('rejects unsafe resource tree paths', async () => {
     const projectRoot = createTempRoot();
     writeResourceProject(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'content/resources'), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources'), { recursive: true });
 
     const server = await startTestServer(projectRoot);
     try {
@@ -866,9 +1321,6 @@ describe('make-server resource sidebar filesystem tree API', () => {
       expect(response.status).toBe(200);
       expect(findNode(body.tree, (node) => node.itemKey === 'docs/overview.md')).toBeTruthy();
       expect(JSON.stringify(body.tree)).not.toContain('README.md');
-
-      const stored = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub/make/sidebar-tree.json'), 'utf8'));
-      expect(JSON.stringify(stored.docs)).not.toContain('README.md');
     } finally {
       await server.close();
     }

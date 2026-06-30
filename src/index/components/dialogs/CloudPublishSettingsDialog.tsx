@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, Save, X } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { apiService, type CloudPublishTarget, type CloudPublishingConfigPayload } from '../../services/api';
+import { apiService, type CloudPublishTarget, type CloudPublishingConfigPayload, type CloudPublishingConfigResponse } from '../../services/api';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
     Dialog,
     DialogContent,
@@ -14,14 +15,46 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-type CloudPublishSettingsForm = Required<CloudPublishingConfigPayload>;
-type CloudPublishSettingsTab = CloudPublishTarget | 'publish-settings';
+interface CloudPublishSettingsForm {
+    vercel: {
+        token: string;
+        projectName: string;
+        teamId: string;
+    };
+    cloudflarePages: {
+        apiToken: string;
+        accountId: string;
+        projectName: string;
+        productionBranch: string;
+    };
+    s3: {
+        accessKeyId: string;
+        secretAccessKey: string;
+        region: string;
+        bucket: string;
+        prefix: string;
+        baseUrl: string;
+        endpoint: string;
+    };
+    githubPages: {
+        repository: string;
+        branch: string;
+        sourceDirectory: string;
+        pathPrefix: string;
+    };
+    publishSettings: {
+        includeSource: boolean;
+        visibleTargets: CloudPublishTarget[];
+    };
+}
+type ConfigurableCloudPublishTarget = Exclude<CloudPublishTarget, 'axhub'>;
+type CloudPublishSettingsTab = ConfigurableCloudPublishTarget | 'publish-settings';
 
 interface CloudPublishSettingsDialogProps {
     open: boolean;
-    initialTarget: CloudPublishTarget;
+    initialTarget: CloudPublishSettingsTab;
     onOpenChange: (open: boolean) => void;
-    onSaved?: () => void;
+    onSaved?: (config: CloudPublishingConfigResponse) => void;
 }
 
 const EMPTY_FORM: CloudPublishSettingsForm = {
@@ -49,11 +82,21 @@ const EMPTY_FORM: CloudPublishSettingsForm = {
         repository: '',
         branch: 'gh-pages',
         sourceDirectory: '/',
+        pathPrefix: '',
     },
     publishSettings: {
         includeSource: false,
+        visibleTargets: ['axhub'],
     },
 };
+
+const PUBLISH_PLATFORM_OPTIONS: Array<{ id: CloudPublishTarget; label: string }> = [
+    { id: 'axhub', label: 'Axhub' },
+    { id: 's3', label: '对象存储' },
+    { id: 'vercel', label: 'Vercel' },
+    { id: 'cloudflare-pages', label: 'Cloudflare Pages' },
+    { id: 'github-pages', label: 'GitHub Pages' },
+];
 
 function cloneForm(form: CloudPublishSettingsForm): CloudPublishSettingsForm {
     return {
@@ -223,7 +266,7 @@ export default function CloudPublishSettingsDialog({
         }));
     };
 
-    const updatePublishSettings = (field: keyof CloudPublishSettingsForm['publishSettings'], value: boolean) => {
+    const updatePublishSettings = (field: 'includeSource', value: boolean) => {
         setForm((previous) => ({
             ...previous,
             publishSettings: {
@@ -231,6 +274,24 @@ export default function CloudPublishSettingsDialog({
                 [field]: value,
             },
         }));
+    };
+
+    const toggleVisibleTarget = (target: CloudPublishTarget, visible: boolean) => {
+        setForm((previous) => {
+            const currentTargets = previous.publishSettings.visibleTargets || ['axhub'];
+            const nextTargets = visible
+                ? [...currentTargets, target]
+                : currentTargets.filter((item) => item !== target);
+            return {
+                ...previous,
+                publishSettings: {
+                    ...previous.publishSettings,
+                    visibleTargets: PUBLISH_PLATFORM_OPTIONS
+                        .map((option) => option.id)
+                        .filter((targetId) => nextTargets.includes(targetId)),
+                },
+            };
+        });
     };
 
     const payload = useMemo<CloudPublishingConfigPayload>(() => ({
@@ -258,9 +319,11 @@ export default function CloudPublishSettingsDialog({
             repository: form.githubPages.repository,
             branch: form.githubPages.branch || 'gh-pages',
             sourceDirectory: form.githubPages.sourceDirectory || '/',
+            pathPrefix: form.githubPages.pathPrefix,
         },
         publishSettings: {
             includeSource: form.publishSettings.includeSource === true,
+            visibleTargets: form.publishSettings.visibleTargets,
         },
     }), [form]);
 
@@ -268,9 +331,9 @@ export default function CloudPublishSettingsDialog({
         if (saving) return;
         setSaving(true);
         try {
-            await apiService.saveCloudPublishingConfig(payload);
+            const savedConfig = await apiService.saveCloudPublishingConfig(payload);
             toast.success('云服务发布设置已保存');
-            onSaved?.();
+            onSaved?.(savedConfig);
             onOpenChange(false);
         } catch (error: any) {
             toast.error(error?.message || '保存云服务发布配置失败');
@@ -289,12 +352,7 @@ export default function CloudPublishSettingsDialog({
                 }} className="flex min-h-0 flex-1 flex-col">
                     <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
                         <TabsList className="h-8 rounded-md bg-muted/70 p-0.5">
-                            <TabsTrigger value="s3" className="h-7 px-3 text-xs">
-                                <span className="inline-flex items-baseline gap-1.5">
-                                    <span>对象存储</span>
-                                    <span className="text-[10px] font-normal text-muted-foreground">S3 Compatible</span>
-                                </span>
-                            </TabsTrigger>
+                            <TabsTrigger value="s3" className="h-7 px-3 text-xs">对象存储</TabsTrigger>
                             <TabsTrigger value="vercel" className="h-7 px-3 text-xs">Vercel</TabsTrigger>
                             <TabsTrigger value="cloudflare-pages" className="h-7 px-3 text-xs">Cloudflare Pages</TabsTrigger>
                             <TabsTrigger value="github-pages" className="h-7 px-3 text-xs">GitHub Pages</TabsTrigger>
@@ -362,7 +420,7 @@ export default function CloudPublishSettingsDialog({
                                         name="prefix"
                                         value={form.s3.prefix}
                                         placeholder="home"
-                                        description="可选；上传时会作为对象 key 前缀，例如 home/index.html。"
+                                        description="可选；填写后会固定作为对象 key 前缀，例如 home/index.html。留空时会按当前发布资源自动生成目录。"
                                         onChange={(value) => updateS3('prefix', value)}
                                     />
                                     <FieldInput
@@ -372,7 +430,7 @@ export default function CloudPublishSettingsDialog({
                                         value={form.s3.baseUrl}
                                         required
                                         placeholder="https://webpp.oss-cn-hangzhou.aliyuncs.com"
-                                        description="发布成功 URL 使用访问地址 + 对象前缀/index.html。"
+                                        description="发布成功 URL 使用访问地址 + 实际对象前缀/index.html。"
                                         onChange={(value) => updateS3('baseUrl', value)}
                                     />
                                     <FieldInput
@@ -433,8 +491,7 @@ export default function CloudPublishSettingsDialog({
                                         label="Project Name"
                                         name="projectName"
                                         value={form.cloudflarePages.projectName}
-                                        required
-                                        description="Cloudflare Pages 项目需要先在控制台创建。"
+                                        description="可选；留空时会按当前发布资源自动生成项目名。Cloudflare Pages 项目需要先在控制台创建，不同原型可以发布到不同 Cloudflare Pages 项目。"
                                         onChange={(value) => updateCloudflarePages('projectName', value)}
                                     />
                                     <FieldInput
@@ -471,9 +528,37 @@ export default function CloudPublishSettingsDialog({
                                         description="GitHub Pages branch source 仅支持 / 或 /docs。"
                                         onChange={(value) => updateGitHubPages('sourceDirectory', value)}
                                     />
+                                    <FieldInput
+                                        label="Path Prefix"
+                                        name="pathPrefix"
+                                        value={form.githubPages.pathPrefix}
+                                        placeholder="home"
+                                        description="可选；留空时会按当前发布资源自动生成子目录，不同原型可以发布到同一个 GitHub Pages 站点的不同路径。"
+                                        onChange={(value) => updateGitHubPages('pathPrefix', value)}
+                                    />
                                 </TabsContent>
 
                                 <TabsContent value="publish-settings" className="m-0 grid gap-4">
+                                    <div className="rounded-md border">
+                                        <div className="space-y-3 px-4 py-3">
+                                            <div className="space-y-1">
+                                                <div className="text-sm font-medium">发布平台</div>
+                                                <p className="text-xs text-muted-foreground">默认勾选 Axhub；勾选后会显示在发布菜单中。</p>
+                                            </div>
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                                {PUBLISH_PLATFORM_OPTIONS.map((target) => (
+                                                    <label key={target.id} className="inline-flex items-center gap-2 text-sm">
+                                                        <Checkbox
+                                                            checked={form.publishSettings.visibleTargets.includes(target.id)}
+                                                            onCheckedChange={(checked) => toggleVisibleTarget(target.id, checked === true)}
+                                                            className="data-[state=checked]:text-white"
+                                                        />
+                                                        <span className="font-medium text-foreground">{target.label}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
                                     <div className="rounded-md border">
                                         <div className="flex items-start justify-between gap-4 px-4 py-3">
                                             <div className="space-y-1">

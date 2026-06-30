@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { isPathInside, resolveProjectPath, type ProjectMetadata } from './projectCore/index.ts';
 
-import { readJsonBody, sendFile, sendJson } from './http.ts';
+import { readJsonBody, sendCorsJson, sendCorsPreflight, sendFile, sendJson } from './http.ts';
 
 const COMMENT_FILE_NAME = 'prototype-comments.json';
 const SPEC_DIR_NAME = '.spec';
@@ -304,15 +304,20 @@ export function handlePrototypeCommentsApi(
   if (handleAssetRequest(req, res, context, url)) return true;
   if (url.pathname !== '/api/prototype-comments') return false;
 
+  if (req.method === 'OPTIONS') {
+    sendCorsPreflight(res);
+    return true;
+  }
+
   const resolved = resolvePrototypeCommentsPath(context.project.root, url.searchParams.get('targetPath'), context.metadata);
   if (isResolveError(resolved)) {
-    sendJson(res, { error: resolved.error }, { status: resolved.status });
+    sendCorsJson(res, { error: resolved.error }, { status: resolved.status });
     return true;
   }
 
   if (req.method === 'GET') {
     if (!fs.existsSync(resolved.commentFilePath)) {
-      sendJson(res, {
+      sendCorsJson(res, {
         exists: false,
         document: null,
         path: resolved.projectRelativeCommentPath,
@@ -321,13 +326,13 @@ export function handlePrototypeCommentsApi(
     }
     try {
       const document = JSON.parse(fs.readFileSync(resolved.commentFilePath, 'utf8'));
-      sendJson(res, {
+      sendCorsJson(res, {
         exists: true,
         document: hydrateImageData(document, resolved, url),
         path: resolved.projectRelativeCommentPath,
       });
     } catch (error) {
-      sendJson(res, { error: error instanceof Error ? error.message : 'Invalid comment file' }, { status: 400 });
+      sendCorsJson(res, { error: error instanceof Error ? error.message : 'Invalid comment file' }, { status: 400 });
     }
     return true;
   }
@@ -339,17 +344,17 @@ export function handlePrototypeCommentsApi(
         const document = persistImageAssets(normalized, resolved);
         fs.mkdirSync(resolved.specDir, { recursive: true });
         fs.writeFileSync(resolved.commentFilePath, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
-        sendJson(res, {
+        sendCorsJson(res, {
           ok: true,
           exists: true,
           document,
           path: resolved.projectRelativeCommentPath,
         });
       })
-      .catch((error) => sendJson(res, { error: error?.message || 'Failed to write comments' }, { status: 400 }));
+      .catch((error) => sendCorsJson(res, { error: error?.message || 'Failed to write comments' }, { status: 400 }));
     return true;
   }
 
-  sendJson(res, { error: 'Method not allowed' }, { status: 405 });
+  sendCorsJson(res, { error: 'Method not allowed' }, { status: 405 });
   return true;
 }

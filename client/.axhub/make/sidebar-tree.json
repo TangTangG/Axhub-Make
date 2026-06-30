@@ -1,7 +1,19 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-22T14:32:04.943Z",
+  "updatedAt": "2026-06-30T03:36:52.335Z",
   "prototypes": [
+    {
+      "id": "item-prototypes-untitled",
+      "kind": "item",
+      "title": "untitled",
+      "itemKey": "prototypes/untitled"
+    },
+    {
+      "id": "item:prototypes:annotation-demo-copy",
+      "kind": "item",
+      "title": "标注演示 Axure",
+      "itemKey": "prototypes/annotation-demo-copy"
+    },
     {
       "id": "item:prototypes:beginner-guide",
       "kind": "item",

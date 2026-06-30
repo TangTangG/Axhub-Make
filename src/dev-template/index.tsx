@@ -344,6 +344,12 @@ if (typeof window !== 'undefined') {
           initialDarkMode: Boolean(launchOptions.initialDarkMode),
           assistantPanelOpen: Boolean(launchOptions.assistantPanelOpen),
           commentPageScope: readPrototypeEditorBridgeCommentPageScope(event.data),
+          annotationApiBaseUrl: typeof launchOptions.annotationApiBaseUrl === 'string'
+            ? launchOptions.annotationApiBaseUrl
+            : undefined,
+          annotationProjectId: typeof launchOptions.annotationProjectId === 'string'
+            ? launchOptions.annotationProjectId
+            : undefined,
         }));
         ensurePrototypeEditorHostToolbarBridge();
         postPrototypeEditorState({
@@ -387,6 +393,12 @@ if (typeof window !== 'undefined') {
           initialDarkMode: Boolean(launchOptions.initialDarkMode),
           assistantPanelOpen: Boolean(launchOptions.assistantPanelOpen),
           commentPageScope: readPrototypeEditorBridgeCommentPageScope(event.data),
+          annotationApiBaseUrl: typeof launchOptions.annotationApiBaseUrl === 'string'
+            ? launchOptions.annotationApiBaseUrl
+            : undefined,
+          annotationProjectId: typeof launchOptions.annotationProjectId === 'string'
+            ? launchOptions.annotationProjectId
+            : undefined,
         }));
         ensurePrototypeEditorHostToolbarBridge();
         postPrototypeEditorState({

@@ -18,14 +18,12 @@ export const DETERMINISTIC_UPDATED_AT = '2026-05-03T00:00:00.000Z';
 
 export const resourceLayout = {
   prototypes: ['src/prototypes'],
-  docs: ['src/resources'],
   themes: ['src/themes'],
   media: ['src/resources/assets'],
 };
 
 export const resourceWriteTargets = {
   prototypes: { type: 'project-relative-path', path: resourceLayout.prototypes[0] },
-  docs: { type: 'project-relative-path', path: resourceLayout.docs[0] },
   themes: { type: 'project-relative-path', path: resourceLayout.themes[0] },
   media: { type: 'project-relative-path', path: resourceLayout.media[0] },
 };
@@ -559,32 +557,6 @@ function collectPrototypes(projectRoot, clientOrigin, options = {}) {
   return items.sort(sortById);
 }
 
-function collectDocs(projectRoot, options = {}) {
-  const docs = [];
-  for (const root of resourceLayout.docs.map((dir) => path.resolve(projectRoot, dir))) {
-    for (const filePath of listFiles(root, () => true)) {
-      const relativePath = toPosix(path.relative(root, filePath));
-      if (isIgnoredResourceRelativePath(relativePath)) continue;
-      const isMarkdown = path.extname(filePath).toLowerCase() === '.md';
-      const id = isMarkdown ? relativePath.replace(/\.md$/iu, '') : relativePath;
-      docs.push({
-        id,
-        name: id,
-        title: isMarkdown
-          ? titleFromMarkdown(filePath, path.basename(filePath, '.md'))
-          : relativePath.replace(/\.[^.]+$/u, ''),
-        path: options.includeAbsoluteFilePaths === false
-          ? toPosix(path.relative(projectRoot, filePath))
-          : path.resolve(filePath),
-        description: '',
-        updatedAt: DETERMINISTIC_UPDATED_AT,
-      });
-    }
-  }
-
-  return docs.sort(sortById);
-}
-
 function collectThemes(projectRoot, clientOrigin) {
   const items = [];
   for (const root of resourceLayout.themes.map((dir) => path.resolve(projectRoot, dir))) {
@@ -625,7 +597,6 @@ export function buildMakeProjectMetadata(projectRoot, options = {}) {
   const clientOrigin = String(options.clientOrigin ?? DEFAULT_CLIENT_ORIGIN).replace(/\/+$/u, '');
   const projectIdentity = readMakeClientProjectIdentity(projectRoot);
   const prototypes = collectPrototypes(projectRoot, clientOrigin, options);
-  const docs = collectDocs(projectRoot, options);
   const themes = collectThemes(projectRoot, clientOrigin);
 
   return {
@@ -636,12 +607,10 @@ export function buildMakeProjectMetadata(projectRoot, options = {}) {
     },
     resources: {
       prototypes,
-      docs,
       themes,
     },
     navigation: {
       prototypes: prototypes.map((item) => item.id),
-      docs: docs.map((item) => item.id),
     },
     orders: {
       themes: themes.map((item) => item.id),

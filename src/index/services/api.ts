@@ -50,22 +50,30 @@ export interface MakeClientUpdateBlockedReason {
     message: string;
 }
 
+export interface MakeClientUpdateBackupRecord {
+    backupRoot: string;
+    backupZipPath: string;
+    manifestPath: string;
+    currentVersion: string;
+    targetVersion: string;
+    createdAt: string;
+    completedAt: string;
+    plannedFilesCount: number;
+    writtenFilesCount: number;
+    restoreAvailable: boolean;
+    zipAvailable: boolean;
+}
+
 export interface MakeClientUpdateStatus {
     projectId: string;
     projectRoot: string;
     currentVersion: string;
     targetVersion: string;
+    releaseNotes?: string;
     updateAvailable: boolean;
     canApply: boolean;
-    git: {
-        available: boolean;
-        isRepository: boolean;
-        hasCommits: boolean;
-        clean: boolean;
-        head?: string;
-        dirtyFiles: string[];
-        error?: string;
-    };
+    backupPolicy: 'zip-before-overwrite';
+    lastBackup: MakeClientUpdateBackupRecord | null;
     template: {
         version: string;
         sources: Array<{
@@ -78,19 +86,135 @@ export interface MakeClientUpdateStatus {
     blockedReasons: MakeClientUpdateBlockedReason[];
 }
 
+export interface MakeClientUpdatePostUpdateWarning {
+    error: string;
+    code: string;
+    phase?: string;
+    details?: Record<string, unknown>;
+}
+
 export interface MakeClientUpdateApplyResult {
     success: true;
     projectId: string;
     projectRoot: string;
     currentVersion: string;
     targetVersion: string;
-    preUpdateHead: string;
     backupRoot: string;
+    backupZipPath: string;
+    manifestPath: string;
+    backupRecord: MakeClientUpdateBackupRecord;
     plannedFiles: string[];
     writtenFiles: string[];
     templateUrl: string;
-    installMethod: 'npm' | 'skipped';
+    installMethod: 'npm' | 'pnpm' | 'skipped';
     metadataSynced: boolean;
+    postUpdateWarning?: MakeClientUpdatePostUpdateWarning;
+}
+
+export type GitWorkspacePromptScene =
+    | 'create-remote'
+    | 'auth-failed'
+    | 'branch-management'
+    | 'merge-required'
+    | 'conflict-required'
+    | 'push-rejected';
+
+export interface GitWorkspaceRemoteConfig {
+    url?: string;
+    defaultBranch?: string;
+}
+
+export interface GitWorkspaceChangeItem {
+    id: string;
+    name: string;
+    fileCount: number;
+}
+
+export interface GitWorkspaceChangeGroup {
+    key: 'prototypes' | 'resources' | 'themes' | 'skills' | 'rules' | 'other';
+    label: string;
+    fileCount: number;
+    items: GitWorkspaceChangeItem[];
+}
+
+export interface GitWorkspaceStatusResponse {
+    available: boolean;
+    gitAvailable?: boolean;
+    isGitRepo?: boolean;
+    hasCommits?: boolean;
+    code?: string;
+    errorCode?: string;
+    message?: string;
+    projectId?: string;
+    projectRoot?: string;
+    currentBranch?: string;
+    currentCommit?: {
+        hash: string;
+        shortHash: string;
+        message: string;
+        author: string;
+        email: string;
+        timestamp: number;
+        date: string;
+    } | null;
+    isHistoricalVersion?: boolean;
+    hasChanges?: boolean;
+    changedFilesCount?: number;
+    changeSummary: {
+        totalFiles: number;
+        groups: GitWorkspaceChangeGroup[];
+    };
+    remote?: GitWorkspaceRemoteConfig;
+    branchOverview?: {
+        localBranches: string[];
+        remoteBranches: string[];
+    };
+    remoteComparison?: {
+        available: boolean;
+        branch?: string;
+        targetRef?: string;
+        reason?: string;
+        incoming: {
+            totalFiles: number;
+            groups: GitWorkspaceChangeGroup[];
+        };
+        outgoing: {
+            totalFiles: number;
+            groups: GitWorkspaceChangeGroup[];
+        };
+    };
+}
+
+export interface GitWorkspaceActionResponse {
+    success: boolean;
+    projectId?: string;
+    currentBranch?: string;
+    remote?: GitWorkspaceRemoteConfig;
+    prompt?: string;
+    promptScene?: GitWorkspacePromptScene;
+    message?: string;
+    code?: string;
+    error?: string;
+    branchOverview?: {
+        localBranches: string[];
+        remoteBranches: string[];
+    };
+}
+
+interface SetGitWorkspaceRemoteRequest {
+    url: string;
+    defaultBranch?: string;
+}
+
+interface CreateGitWorkspaceRemoteRepositoryRequest {
+    url?: string;
+    repositoryName?: string;
+    visibility?: 'private' | 'public';
+}
+
+interface GetGitWorkspacePromptRequest {
+    scene: GitWorkspacePromptScene;
+    reason?: string;
 }
 
 interface SaveServerPreferencesRequest {
@@ -291,7 +415,7 @@ export interface ExportIndexBundle {
     };
 }
 
-export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages';
+export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages' | 'axhub';
 
 export interface CloudPublishingConfigPayload {
     vercel?: {
@@ -318,9 +442,11 @@ export interface CloudPublishingConfigPayload {
         repository?: string;
         branch?: string;
         sourceDirectory?: string;
+        pathPrefix?: string;
     };
     publishSettings?: {
         includeSource?: boolean;
+        visibleTargets?: CloudPublishTarget[];
     };
 }
 
@@ -335,6 +461,7 @@ export interface CloudPublishingConfigResponse {
         cloudflarePages: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['cloudflarePages']>>;
         s3: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['s3']>>;
         githubPages: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['githubPages']>>;
+        axhub: CloudPublishingConfigured<Record<string, never>>;
         publishSettings: NonNullable<CloudPublishingConfigPayload['publishSettings']>;
     };
 }
@@ -342,6 +469,7 @@ export interface CloudPublishingConfigResponse {
 export interface CloudPublishRequest {
     target: CloudPublishTarget;
     path: string;
+    axhubProjectId?: number;
 }
 
 export interface CloudPublishResponse {
@@ -363,6 +491,89 @@ export interface CloudPublishingLatestResponse {
         cloudflarePages: CloudPublishLatestItem | null;
         s3: CloudPublishLatestItem | null;
         githubPages: CloudPublishLatestItem | null;
+        axhub: CloudPublishLatestItem | null;
+    };
+}
+
+export interface AxhubUserInfo {
+    uid?: number;
+    userName?: string;
+    name?: string;
+    role?: string;
+    avatar?: string;
+    vipType?: number;
+    expirationTime?: string | null;
+    isPlus: boolean;
+    diskSpace?: number;
+    svnUsedSpace?: number;
+    htmlUsedSpace?: number;
+    freeDiskSpace?: number;
+    scopes?: string[];
+    serverUrl?: string;
+    tokenPrefix?: string;
+}
+
+export interface AxhubHtmlProject {
+    pid: number;
+    name: string;
+    path: string;
+    software: number;
+    shareMode?: number;
+    createTime?: string;
+    updateTime?: string;
+    generateTime?: string;
+    generateStatus?: number;
+    htmlUsedSpace?: number;
+}
+
+export interface AxhubStatusResponse {
+    connected: boolean;
+    hasPendingSession: boolean;
+    provider?: 'online' | 'enterprise';
+    onlineBaseUrl: string;
+    serverUrl?: string;
+    tokenPrefix?: string;
+    name?: string;
+    role?: string;
+    scopes?: string[];
+    me?: AxhubUserInfo;
+}
+
+export interface AxhubConnectResponse {
+    authorizeUrl: string;
+    state: string;
+}
+
+export interface AxhubEnterpriseConnectRequest {
+    serverUrl: string;
+    token: string;
+}
+
+export interface AxhubEnterpriseConnectResponse extends AxhubStatusResponse {
+    provider: 'enterprise';
+    serverUrl: string;
+    tokenPrefix: string;
+    me: AxhubUserInfo;
+}
+
+export interface AxhubHtmlProjectsResponse {
+    projects: AxhubHtmlProject[];
+}
+
+export interface AxhubHtmlProjectResponse {
+    project: AxhubHtmlProject;
+}
+
+export interface AxhubPublishResponse {
+    url: string;
+    path: string;
+    project: {
+        pid: number;
+        name: string;
+        path: string;
+        url: string;
+        htmlUsedSpace: number;
+        generateTime: string;
     };
 }
 
@@ -397,6 +608,7 @@ function createCloudPublishingApiError(result: any, fallback: string): CloudPubl
         || result?.target === 'cloudflare-pages'
         || result?.target === 's3'
         || result?.target === 'github-pages'
+        || result?.target === 'axhub'
     ) {
         error.target = result.target;
     }
@@ -423,6 +635,16 @@ function buildProjectScopedUrl(path: string, options?: GetConfigOptions): string
     const query = new URLSearchParams();
     query.set('projectId', projectId);
     return `${path}?${query.toString()}`;
+}
+
+async function readApiJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const error = new Error((result as any)?.error || fallbackMessage) as Error & Record<string, unknown>;
+        Object.assign(error, result);
+        throw error;
+    }
+    return result as T;
 }
 
 export const apiService = {
@@ -622,7 +844,7 @@ export const apiService = {
         return result;
     },
 
-    async saveCloudPublishingConfig(payload: CloudPublishingConfigPayload) {
+    async saveCloudPublishingConfig(payload: CloudPublishingConfigPayload): Promise<CloudPublishingConfigResponse> {
         const response = await fetch('/api/cloud-publishing/config', {
             method: 'POST',
             headers: {
@@ -658,6 +880,98 @@ export const apiService = {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             throw createCloudPublishingApiError(result, '云服务发布失败');
+        }
+        return result;
+    },
+
+    async getAxhubStatus(): Promise<AxhubStatusResponse> {
+        const response = await fetch('/api/axhub/status');
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '读取 Axhub 授权状态失败');
+        }
+        return result;
+    },
+
+    async connectAxhub(): Promise<AxhubConnectResponse> {
+        const response = await fetch('/api/axhub/connect', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '创建 Axhub 授权链接失败');
+        }
+        return result;
+    },
+
+    async connectAxhubEnterprise(payload: AxhubEnterpriseConnectRequest): Promise<AxhubEnterpriseConnectResponse> {
+        const response = await fetch('/api/axhub/connect-enterprise', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '连接企业版失败');
+        }
+        return result;
+    },
+
+    async disconnectAxhub(): Promise<{ success: boolean }> {
+        const response = await fetch('/api/axhub/disconnect', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '断开 Axhub 授权失败');
+        }
+        return result;
+    },
+
+    async getAxhubHtmlProjects(keyword?: string): Promise<AxhubHtmlProjectsResponse> {
+        const query = keyword?.trim() ? `?keyword=${encodeURIComponent(keyword.trim())}` : '';
+        const response = await fetch(`/api/axhub/html-projects${query}`);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '加载 Axhub HTML 项目失败');
+        }
+        return result;
+    },
+
+    async createAxhubHtmlProject(name: string): Promise<AxhubHtmlProjectResponse> {
+        const response = await fetch('/api/axhub/html-projects', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '创建 Axhub HTML 项目失败');
+        }
+        return result;
+    },
+
+    async publishAxhubHtmlProject(payload: { pid: number; path: string; projectId?: string | null }): Promise<AxhubPublishResponse> {
+        const response = await fetch('/api/axhub/publish', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '发布到 Axhub 失败');
         }
         return result;
     },
@@ -708,6 +1022,95 @@ export const apiService = {
             throw error;
         }
         return result;
+    },
+
+    async getGitWorkspaceStatus(options: { gitVersion?: string } = {}): Promise<GitWorkspaceStatusResponse> {
+        const query = new URLSearchParams();
+        if (options.gitVersion) query.set('gitVersion', options.gitVersion);
+        const url = query.toString() ? `/api/git/workspace/status?${query.toString()}` : '/api/git/workspace/status';
+        const response = await fetch(url, { cache: 'no-store' });
+        return readApiJsonResponse<GitWorkspaceStatusResponse>(response, '加载版本状态失败');
+    },
+
+    async initGitWorkspace(): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '初始化本地仓库失败');
+    },
+
+    async commitGitWorkspace(message: string): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/commit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message }),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '提交版本失败');
+    },
+
+    async switchGitWorkspaceBranch(branch: string): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/branch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ branch }),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '切换分支失败');
+    },
+
+    async setGitWorkspaceRemote(payload: SetGitWorkspaceRemoteRequest): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/remote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '连接在线仓库失败');
+    },
+
+    async fetchGitWorkspace(): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/fetch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '刷新在线仓库状态失败');
+    },
+
+    async syncDownGitWorkspace(): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/sync-down', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '同步下来失败');
+    },
+
+    async pushGitWorkspace(): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '同步到在线失败');
+    },
+
+    async createGitWorkspaceRemoteRepository(payload: CreateGitWorkspaceRemoteRepositoryRequest): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/create-remote-repository', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '创建在线仓库失败');
+    },
+
+    async getGitWorkspacePrompt(payload: GetGitWorkspacePromptRequest): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '生成 AI 提示词失败');
     },
 
     async saveServerPreferences(payload: SaveServerPreferencesRequest) {

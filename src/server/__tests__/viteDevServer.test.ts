@@ -145,6 +145,13 @@ describe('make-server Vite dev middleware', () => {
         plugin.name === 'axhub-canvas-hot-update-filter'
         && typeof plugin.handleHotUpdate === 'function'
       ))).toBe(true);
+      const hotUpdateFilter = firstConfig.plugins?.find((plugin) => (
+        plugin.name === 'axhub-canvas-hot-update-filter'
+      ));
+      await expect(Promise.resolve((hotUpdateFilter?.handleHotUpdate as any)?.({
+        file: path.join(makeServerRoot, 'client/src/prototypes/home/annotation-source.json'),
+        modules: [{ id: 'annotation-source' }],
+      }))).resolves.toEqual([]);
       expect(firstConfig.cacheDir?.startsWith(expectedCachePrefix)).toBe(true);
       expect(secondConfig.cacheDir?.startsWith(expectedCachePrefix)).toBe(true);
       expect(secondConfig.cacheDir).not.toBe(firstConfig.cacheDir);

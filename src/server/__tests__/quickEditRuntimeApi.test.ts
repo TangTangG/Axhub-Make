@@ -17,6 +17,7 @@ describe('quick edit runtime script', () => {
     const appendedElements: any[] = [];
     const copiedPlainTexts: string[] = [];
     const sessionValues = new Map<string, string>();
+    const localValues = new Map<string, string>();
     const addListener = (key: string, listener: (...args: any[]) => void) => {
       const nextListeners = listeners.get(key) || [];
       nextListeners.push(listener);
@@ -90,6 +91,15 @@ describe('quick edit runtime script', () => {
         }),
         removeItem: vi.fn((key: string) => {
           sessionValues.delete(key);
+        }),
+      },
+      localStorage: {
+        getItem: vi.fn((key: string) => localValues.get(key) ?? null),
+        setItem: vi.fn((key: string, value: string) => {
+          localValues.set(key, String(value));
+        }),
+        removeItem: vi.fn((key: string) => {
+          localValues.delete(key);
         }),
       },
       fetch: vi.fn(),
@@ -186,6 +196,19 @@ describe('quick edit runtime script', () => {
       token,
       createdAt: expect.any(Number),
     });
+  }
+
+  function findByText(element: any, text: string): any {
+    if (element.textContent === text) {
+      return element;
+    }
+    for (const child of element.children || []) {
+      const found = findByText(child, text);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
   }
 
   it('posts runtimeReady from a client page so make-server can detect the runtime handshake', () => {
@@ -627,6 +650,105 @@ describe('quick edit runtime script', () => {
     expect(appendedElements[0].textContent).toContain('/src/prototypes/home/index.tsx:12:8');
   });
 
+  it('renders prototype error dialog with a top-right close button, ignore action, and refresh label', () => {
+    const { appendedElements, windowStub } = createRuntimeHarness();
+
+    windowStub.axhub.prototypeRuntime.reportError(new Error('Render exploded'), {
+      type: 'react-render',
+      sourceFile: '/src/prototypes/home/index.tsx',
+      line: 12,
+      column: 8,
+      resourceType: 'prototype',
+      resourceId: 'home',
+    });
+
+    const dialog = appendedElements[0];
+    expect(dialog.textContent).toContain('忽略');
+    expect(dialog.textContent).toContain('刷新');
+    expect(dialog.textContent).not.toContain('重新加载');
+    expect(dialog.textContent).not.toContain('关闭');
+    expect(dialog.style.padding).toBe('18px');
+
+    const closeButton = findByText(dialog, '×');
+    expect(closeButton).toBeTruthy();
+    expect(closeButton.getAttribute('aria-label')).toBe('关闭');
+    expect(closeButton.style.position).toBe('absolute');
+    expect(closeButton.style.top).toBe('10px');
+    expect(closeButton.style.right).toBe('10px');
+
+    const title = findByText(dialog, '原型运行错误');
+    expect(title).toBeTruthy();
+    expect(title.style.paddingRight).toBe('30px');
+
+    const refreshButton = findByText(dialog, '刷新');
+    expect(refreshButton).toBeTruthy();
+    refreshButton.listeners.get('click')?.[0]?.({});
+    expect(windowStub.location.reload).toHaveBeenCalledTimes(1);
+
+    closeButton.listeners.get('click')?.[0]?.({});
+    expect(appendedElements).toHaveLength(0);
+  });
+
+  it('persists ignored prototype runtime errors locally and suppresses matching reports', () => {
+    const { appendedElements, windowStub } = createRuntimeHarness();
+    const reportHomeError = () => windowStub.axhub.prototypeRuntime.reportError(new Error('Render exploded'), {
+      type: 'react-render',
+      sourceFile: '/src/prototypes/home/index.tsx',
+      line: 12,
+      column: 8,
+      resourceType: 'prototype',
+      resourceId: 'home',
+    });
+
+    reportHomeError();
+    const ignoreButton = findByText(appendedElements[0], '忽略');
+    expect(ignoreButton).toBeTruthy();
+    ignoreButton.listeners.get('click')?.[0]?.({});
+
+    expect(appendedElements).toHaveLength(0);
+    expect(windowStub.localStorage.setItem).toHaveBeenCalledWith(
+      '__axhub_prototype_runtime_ignored_errors__',
+      expect.any(String),
+    );
+
+    reportHomeError();
+    expect(appendedElements).toHaveLength(0);
+
+    windowStub.axhub.prototypeRuntime.reportError(new Error('Different crash'), {
+      type: 'react-render',
+      sourceFile: '/src/prototypes/home/index.tsx',
+      line: 12,
+      column: 8,
+      resourceType: 'prototype',
+      resourceId: 'home',
+    });
+    expect(appendedElements).toHaveLength(1);
+  });
+
+  it('scopes ignored prototype runtime errors to the current prototype URL', () => {
+    const { appendedElements, windowStub } = createRuntimeHarness();
+    const reportError = () => windowStub.axhub.prototypeRuntime.reportError(new Error('Render exploded'), {
+      type: 'react-render',
+      sourceFile: '/src/prototypes/home/index.tsx',
+      line: 12,
+      column: 8,
+      resourceType: 'prototype',
+      resourceId: 'home',
+    });
+
+    reportError();
+    const ignoreButton = findByText(appendedElements[0], '忽略');
+    expect(ignoreButton).toBeTruthy();
+    ignoreButton.listeners.get('click')?.[0]?.({});
+    expect(appendedElements).toHaveLength(0);
+
+    windowStub.location.href = 'http://localhost:51720/prototypes/other-home';
+    windowStub.location.pathname = '/prototypes/other-home';
+    reportError();
+
+    expect(appendedElements).toHaveLength(1);
+  });
+
   it('copies prototype error diagnostics without calling the iframe Clipboard API', () => {
     const writeText = vi.fn(async () => {
       throw new Error("Failed to execute 'writeText' on 'Clipboard': Permissions policy violation.");
@@ -808,6 +930,113 @@ describe('quick edit runtime script', () => {
       '/@vite/client',
     ]);
     expect(appendedElements).toHaveLength(0);
+  });
+
+  it('reports the Vite transform error behind a repeated preview-loader failure', async () => {
+    const loaderUrl = 'http://localhost:51720/prototypes/ref-app-home/__axhub-preview-loader.js';
+    const entryUrl = 'http://localhost:51720/prototypes/ref-app-home/index.tsx';
+    const viteError = {
+      message: '/project/src/prototypes/ref-app-home/index.tsx: Did not expect a type annotation here. (432:18)',
+      stack: 'SyntaxError: Did not expect a type annotation here',
+      id: '/project/src/prototypes/ref-app-home/index.tsx',
+      frame: '430| foo\n431| bar\n432| ) : null\n   |   ^',
+      plugin: 'vite:react-babel',
+      loc: { line: 432, column: 18 },
+    };
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/@vite/client') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
+      if (input === loaderUrl) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `import PreviewComponent from "${entryUrl}";\n`,
+        };
+      }
+      if (input === entryUrl) {
+        return {
+          ok: false,
+          status: 500,
+          text: async () => `<script type="module">const error = ${JSON.stringify(viteError)};</script>`,
+        };
+      }
+      throw new Error(`Unexpected fetch url: ${input}`);
+    });
+    const { appendedElements, copiedPlainTexts, emit, windowStub } = createRuntimeHarness({ fetch: fetchMock });
+    windowStub.sessionStorage.setItem(
+      '__axhub_quick_edit_transient_vite_retry__',
+      JSON.stringify({
+        token: '/prototypes/ref-app-home::preview-loader:/prototypes/ref-app-home/__axhub-preview-loader.js',
+        createdAt: Date.now(),
+      }),
+    );
+
+    emit('window:error', {
+      target: {
+        tagName: 'SCRIPT',
+        src: loaderUrl,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(appendedElements).toHaveLength(1);
+    });
+    expect(windowStub.location.reload).not.toHaveBeenCalled();
+    expect(appendedElements[0].textContent).toContain('原型编译失败');
+    expect(appendedElements[0].textContent).toContain('/project/src/prototypes/ref-app-home/index.tsx:432:18');
+    expect(appendedElements[0].textContent).not.toContain('资源加载失败: ' + loaderUrl);
+
+    const copyButton = findByText(appendedElements[0], '复制错误给 AI');
+    await copyButton.addEventListener.mock.calls.find(([type]: [string]) => type === 'click')?.[1]();
+    const diagnostic = copiedPlainTexts[0];
+    expect(diagnostic).toContain('type: vite-transform-error');
+    expect(diagnostic).toContain('loaderFile: ' + loaderUrl);
+    expect(diagnostic).toContain('entryFile: ' + entryUrl);
+    expect(diagnostic).toContain('vitePlugin: vite:react-babel');
+    expect(diagnostic).toContain('frame:\n430| foo');
+  });
+
+  it('labels repeated preview-loader failures without an entry transform error as module graph failures', async () => {
+    const loaderUrl = 'http://localhost:51720/prototypes/ref-app-home/__axhub-preview-loader.js';
+    const entryUrl = 'http://localhost:51720/prototypes/ref-app-home/index.tsx';
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/@vite/client') {
+        return { ok: true, status: 200, text: async () => '' };
+      }
+      if (input === loaderUrl) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `import PreviewComponent from "${entryUrl}";\n`,
+        };
+      }
+      if (input === entryUrl) {
+        return { ok: true, status: 200, text: async () => 'export default function Demo() {}' };
+      }
+      throw new Error(`Unexpected fetch url: ${input}`);
+    });
+    const { appendedElements, emit, windowStub } = createRuntimeHarness({ fetch: fetchMock });
+    windowStub.sessionStorage.setItem(
+      '__axhub_quick_edit_transient_vite_retry__',
+      JSON.stringify({
+        token: '/prototypes/ref-app-home::preview-loader:/prototypes/ref-app-home/__axhub-preview-loader.js',
+        createdAt: Date.now(),
+      }),
+    );
+
+    emit('window:error', {
+      target: {
+        tagName: 'SCRIPT',
+        src: loaderUrl,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(appendedElements).toHaveLength(1);
+    });
+    expect(appendedElements[0].textContent).toContain('原型模块依赖加载失败');
+    expect(appendedElements[0].textContent).toContain(entryUrl);
   });
 
   it('updates the existing prototype error dialog when a later error is reported', () => {

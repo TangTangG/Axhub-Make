@@ -1,9 +1,17 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 function readSource() {
   return readFileSync(resolve(__dirname, './SettingsDialog.tsx'), 'utf8');
+}
+
+function readVersionCollaborationPanelSource() {
+  return readFileSync(resolve(__dirname, './VersionCollaborationPanel.tsx'), 'utf8');
+}
+
+function readWorkspaceVersionCollaborationDrawerSource() {
+  return readFileSync(resolve(__dirname, './WorkspaceVersionCollaborationDrawer.tsx'), 'utf8');
 }
 
 describe('SettingsDialog source', () => {
@@ -16,7 +24,7 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('initialAcpFailureSource?: string;');
     expect(source).toContain('initialAcpFailureMessage?: string;');
     expect(source).toContain('export interface SettingsDialogAIContext');
-    expect(source).toContain("export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'project', initialAcpRuntime = null, initialAcpFailureSource = '', initialAcpFailureMessage = '' }: SettingsDialogProps)");
+    expect(source).toContain("export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdateReminderVisible, onMakeClientUpdateReminderSeen, onMakeClientUpdateAvailabilityChange, onOpenVersionCollaboration, initialTab = 'project', initialAcpRuntime = null, initialAcpFailureSource = '', initialAcpFailureMessage = '' }: SettingsDialogProps)");
     expect(source).toContain("const [activeTab, setActiveTab] = useState<SettingsDialogInitialTab>(initialTab);");
     expect(source).toContain('setActiveTab(initialTab);');
   });
@@ -93,20 +101,224 @@ describe('SettingsDialog source', () => {
     expect(updateTabSource).toContain('当前客户端版本');
     expect(updateTabSource).toContain('服务端最新版本');
     expect(updateTabSource).toContain('项目路径');
-    expect(updateTabSource).toContain('Git 状态');
+    expect(updateTabSource).toContain('版本说明');
+    expect(updateTabSource).toContain('makeClientUpdateStatus?.releaseNotes');
+    expect(updateTabSource).toContain('whitespace-pre-wrap');
+    expect(updateTabSource).not.toContain('数据备份方式');
+    expect(updateTabSource).not.toContain('自动压缩包备份');
+    expect(updateTabSource).not.toContain('更新方式');
+    expect(source).not.toContain('Git 保护');
+    expect(updateTabSource).not.toContain('Git 状态');
+    expect(updateTabSource).not.toContain('工作区有改动');
     expect(updateTabSource).toContain('检测更新');
     expect(updateTabSource).toContain('开始更新');
-    expect(updateTabSource).toContain('MAKE_CLIENT_UPDATE_STEPS.map');
-    expect(source).toContain('检测版本');
-    expect(source).toContain('下载模板');
-    expect(source).toContain('创建备份');
-    expect(source).toContain('覆盖文件');
-    expect(source).toContain('写入版本');
-    expect(source).toContain('安装依赖/同步元数据');
+    expect(updateTabSource).toContain('更新前会自动备份本次覆盖的文件。你也可以先通过 Git 提交一版作为额外备份。');
+    expect(updateTabSource).toContain('打开版本管理');
+    expect(updateTabSource).toContain('{makeClientUpdateAvailable && !makeClientUpdateApplying ? (');
+    expect(source).toContain('onOpenVersionCollaboration?: () => void;');
+    expect(source).toContain('handleOpenVersionCollaboration');
+    expect(source).toContain('onOpenVersionCollaboration?.();');
+    expect(updateTabSource).toContain('正在更新项目');
+    expect(updateTabSource).toContain('正在执行完整模板更新流程，请保持此窗口打开。');
+    expect(updateTabSource).toContain('更新失败时会保留错误诊断和备份位置，方便继续处理。');
+    expect(updateTabSource).toContain('makeClientUpdateResult.postUpdateWarning');
+    expect(updateTabSource).toContain('项目模板文件已更新完成。依赖安装或项目清单同步需要稍后重试。');
+    expect(updateTabSource).toContain('后续步骤需要处理');
+    expect(source).toContain('项目模板已更新完成；依赖安装或清单同步需要稍后重试');
+    expect(updateTabSource).not.toContain('MAKE_CLIENT_UPDATE_STEPS.map');
+    expect(source).not.toContain('检测版本');
+    expect(source).not.toContain('下载模板');
+    expect(source).not.toContain('创建备份中');
+    expect(source).not.toContain('覆盖文件中');
+    expect(source).not.toContain('写入版本');
+    expect(source).not.toContain('安装依赖/同步元数据');
     expect(updateTabSource).toContain('复制给 AI 处理');
+    expect(updateTabSource).toContain('backupRoot');
+    expect(updateTabSource).toContain('备份位置');
+    expect(updateTabSource).toContain('backupZipPath');
+    expect(updateTabSource).toContain('备份压缩包');
+    expect(updateTabSource).toContain('上次更新记录');
+    expect(updateTabSource).toContain('版本变化');
+    expect(updateTabSource).toContain('覆盖文件');
+    expect(updateTabSource).toContain('复制给 AI 处理/还原');
+    expect(source).toContain('我不懂命令行、Node.js、npm 或 pnpm。请你把每一步都说清楚');
+    expect(source).not.toContain('我不懂命令行、Git、Node.js、npm 或 pnpm');
+    expect(source).toContain("const visibleMakeClientUpdateBlocker = makeClientUpdateAvailable ? getVisibleMakeClientUpdateBlocker(makeClientUpdateStatus) : '';");
+    expect(source).toContain('const latestMakeClientUpdateBackup = makeClientUpdateResult?.backupRecord || makeClientUpdateStatus?.lastBackup || null;');
+    expect(updateTabSource).not.toContain('当前项目没有可用的 Git 版本记录，会先备份再覆盖官方文件');
+    expect(source).toContain('getVisibleMakeClientUpdateBlocker');
+    expect(source).toContain('makeClientUpdateCanApply');
     expect(source).toContain('buildMakeClientUpdateFailurePrompt');
     expect(source).toContain('formatMakeClientUpdateError');
+    expect(source).not.toContain('formatMakeClientUpdateGitStatus');
+    expect(source).not.toContain('isMakeClientUpdateGitReady');
+    expect(source).not.toContain('isMakeClientUpdateBackupMode');
     expect(updateTabSource).not.toContain('回退');
+  });
+
+  it('marks unread project updates in the settings tab switcher', () => {
+    const source = readSource();
+    const updateTriggerSource = source.slice(
+      source.indexOf('<TabsTrigger value="update"'),
+      source.indexOf('</TabsTrigger>', source.indexOf('<TabsTrigger value="update"')),
+    );
+
+    expect(source).toContain('const makeClientUpdateAvailable = makeClientUpdateStatus?.updateAvailable === true;');
+    expect(source).toContain('makeClientUpdateReminderVisible?: boolean;');
+    expect(source).toContain('onMakeClientUpdateReminderSeen?: () => void;');
+    expect(updateTriggerSource).toContain('relative');
+    expect(updateTriggerSource).toContain('{makeClientUpdateReminderVisible ? (');
+    expect(updateTriggerSource).toContain('aria-label="有项目更新"');
+    expect(updateTriggerSource).toContain('bg-destructive');
+    expect(source).toContain("if (value === 'update') {");
+    expect(source).toContain('onMakeClientUpdateReminderSeen?.();');
+  });
+
+  it('notifies the page when make client update availability changes', () => {
+    const source = readSource();
+
+    expect(source).toContain('onMakeClientUpdateAvailabilityChange?: (status: MakeClientUpdateStatus | null) => void;');
+    expect(source).toContain('onMakeClientUpdateAvailabilityChange,');
+    expect(source).toContain('onMakeClientUpdateAvailabilityChange?.(status);');
+    expect(source).toContain('onMakeClientUpdateAvailabilityChange?.(null);');
+  });
+
+  it('keeps version and collaboration out of project settings tabs', () => {
+    const source = readSource();
+
+    expect(source).not.toContain("import { VersionCollaborationPanel } from './VersionCollaborationPanel';");
+    expect(source).not.toContain('<TabsTrigger value="version-collaboration"');
+    expect(source).not.toContain('<TabsContent value="version-collaboration"');
+    expect(source).not.toContain('<VersionCollaborationPanel />');
+    expect(source).not.toContain("activeTab === 'update' || activeTab === 'version-collaboration'");
+  });
+
+  it('hosts version and collaboration in a standalone drawer with local and online tabs', () => {
+    const panelSource = readVersionCollaborationPanelSource();
+    const drawerPath = resolve(__dirname, './WorkspaceVersionCollaborationDrawer.tsx');
+    const drawerSource = readWorkspaceVersionCollaborationDrawerSource();
+    const apiSource = readFileSync(resolve(__dirname, '../services/api.ts'), 'utf8');
+
+    expect(existsSync(drawerPath)).toBe(true);
+    expect(drawerSource).toContain('export default function WorkspaceVersionCollaborationDrawer');
+    expect(drawerSource).toContain('<Sheet');
+    expect(drawerSource).toContain('<SheetTitle className="sr-only">版本和协作</SheetTitle>');
+    expect(drawerSource).not.toContain('<h2');
+    expect(drawerSource).toContain('<TabsTrigger value="local"');
+    expect(drawerSource).toContain('本地仓库');
+    expect(drawerSource).not.toContain('本地版本');
+    expect(drawerSource).toContain('<TabsTrigger value="online"');
+    expect(drawerSource).toContain('在线仓库');
+    expect(drawerSource).not.toContain('在线版本');
+    expect(drawerSource).toContain('<TabsTrigger value="skills"');
+    expect(drawerSource).toContain('管理技能');
+    expect(drawerSource).toContain('<VersionCollaborationPanel activeTab="local" />');
+    expect(drawerSource).toContain('<VersionCollaborationPanel activeTab="online" />');
+    expect(drawerSource).toContain('<VersionCollaborationPanel activeTab="skills" />');
+
+    expect(panelSource).toContain('export function VersionCollaborationPanel({ activeTab = \'all\' }');
+    expect(panelSource).toContain('{ activeTab?: VersionCollaborationTab }');
+    expect(panelSource).toContain('apiService.getGitWorkspaceStatus');
+    expect(panelSource).toContain('apiService.initGitWorkspace');
+    expect(panelSource).toContain('apiService.commitGitWorkspace');
+    expect(panelSource).toContain('apiService.setGitWorkspaceRemote');
+    expect(panelSource).toContain('apiService.fetchGitWorkspace');
+    expect(panelSource).toContain('apiService.syncDownGitWorkspace');
+    expect(panelSource).toContain('apiService.pushGitWorkspace');
+    expect(panelSource).toContain('apiService.switchGitWorkspaceBranch');
+    expect(panelSource).toContain('apiService.createGitWorkspaceRemoteRepository');
+    expect(panelSource).not.toContain('apiService.getGitWorkspacePrompt');
+    expect(panelSource).toContain('信息');
+    expect(panelSource).toContain('更改文件');
+    expect(panelSource).toContain('提交版本');
+    expect(panelSource).not.toContain('<h3 className="text-base font-semibold text-foreground">本地仓库</h3>');
+    expect(panelSource).not.toContain('<h3 className="text-base font-semibold text-foreground">在线仓库</h3>');
+    expect(panelSource).toContain('当前分支');
+    expect(panelSource).toContain('localBranchOptions');
+    expect(panelSource).toContain('handleSwitchBranch');
+    expect(panelSource).toContain('<SelectValue placeholder="选择分支" />');
+    expect(panelSource).toContain('切换分支失败');
+    expect(panelSource).not.toContain('项目路径');
+    expect(panelSource).toContain('flattenChangeGroups');
+    expect(panelSource).toContain('groupLabel');
+    expect(panelSource).toContain("const shouldShowGroupLabel = item.groupKey !== 'other';");
+    expect(panelSource).toContain('{shouldShowGroupLabel ? (');
+    expect(panelSource).toContain('更改文件');
+    expect(panelSource).not.toContain('已经更改的内容');
+    expect(panelSource).not.toContain('{group.label}');
+    expect(panelSource).not.toContain('{group.fileCount} 个文件');
+    expect(panelSource).toContain('一键初始化');
+    expect(panelSource).toContain('提交版本');
+    expect(panelSource).toContain('连接已有仓库');
+    expect(panelSource).toContain('创建新仓库');
+    expect(panelSource).toContain('仓库名称');
+    expect(panelSource).toContain("const [onlineMode, setOnlineMode] = useState<'connect' | 'create'>('connect');");
+    expect(panelSource).toContain('setCreateRepositoryName');
+    expect(panelSource).toContain('同步下来');
+    expect(panelSource).toContain('同步到在线');
+    expect(panelSource).toContain('const hasConfiguredRemote = Boolean(status?.remote?.url);');
+    expect(panelSource).toContain('const incomingChangeItems = useMemo(');
+    expect(panelSource).toContain('const outgoingChangeItems = useMemo(');
+    expect(panelSource).toContain('renderOnlineRemoteSetupCard()');
+    expect(panelSource).toContain('renderOnlineInfoCard()');
+    expect(panelSource).toContain('线上分支');
+    expect(panelSource).toContain('线上有更新');
+    expect(panelSource).toContain('本地待同步');
+    expect(panelSource).toContain('incomingChangeItems.length > 0 ? (');
+    expect(panelSource).toContain('outgoingChangeItems.length > 0 ? (');
+    expect(panelSource).toContain('hasConfiguredRemote ? (');
+    expect(panelSource).not.toContain('<SectionCard title="同步">');
+    expect(panelSource).toContain('复制给 AI 处理');
+    expect(panelSource).toContain('GIT_REPO_BEGINNER_GUIDE_SKILL_URL');
+    expect(panelSource).toContain('INSTALL_GIT_REPO_SKILL_PROMPT');
+    expect(panelSource).toContain('https://github.com/lintendo/Axhub-Skills/blob/main/skills/git-repo-beginner-guide/SKILL.md');
+    expect(panelSource).toContain('版本管理、团队协作、异地办公，以及在多台设备间同步项目');
+    expect(panelSource).toContain('<SectionCard title="管理技能">');
+    expect(panelSource).toContain('复制提示词');
+    expect(panelSource).not.toContain('branchPromptAction');
+    expect(panelSource).not.toContain('handleCopyBranchPrompt');
+    expect(panelSource).not.toContain('分支管理');
+    expect(panelSource).not.toContain('复制分支处理提示词');
+    expect(panelSource).toContain("const [commitMessage, setCommitMessage] = useState('');");
+    expect(panelSource).toContain('showLocalPanel');
+    expect(panelSource).toContain('showOnlinePanel');
+    expect(panelSource).toContain('isRepositoryReady ? (');
+    expect(panelSource).toContain('renderRepositoryNotReadyHint');
+    expect(panelSource).toContain('本地仓库初始化后，才能连接或同步在线仓库。');
+    expect(panelSource).toContain("当前项目还没有可用的本地版本记录");
+    expect(panelSource).not.toContain('CHANGE_GROUP_PLACEHOLDER');
+    expect(panelSource).not.toContain('remote.provider');
+    expect(panelSource).not.toContain('remoteProvider');
+    expect(panelSource).toContain('MAX_VISIBLE_CHANGE_ITEM_ROWS');
+    expect(panelSource).toContain('getVisibleChangeItems');
+    expect(panelSource).toContain('remainingCount');
+    expect(panelSource).toContain('查看更多');
+    expect(panelSource).toContain('+{visibleChangeItems.remainingCount}');
+    expect(panelSource).toContain('getVisibleChangeItems(items, visibleItemCount)');
+    expect(panelSource).toContain('data-change-item-measure-list');
+    expect(panelSource).toContain('data-change-item-measure-chip');
+    expect(panelSource).toContain('data-change-item-measure-summary');
+    expect(panelSource).toContain('measureCandidateVisibleRows');
+    expect(panelSource).toContain('const listContainerRef = useRef<HTMLDivElement | null>(null);');
+    expect(panelSource).toContain('const visibleItemCountRef = useRef(items.length);');
+    expect(panelSource).toContain('if (visibleItemCountRef.current !== nextVisibleItemCount)');
+    expect(panelSource).toContain('observer?.observe(listContainer);');
+    expect(panelSource).not.toContain('observer?.observe(measureList);');
+    expect(panelSource).toContain('pointer-events-none absolute left-0 top-0 flex h-0 w-full flex-wrap items-center gap-1.5 overflow-hidden opacity-0');
+    expect(panelSource).toContain('flex flex-wrap items-center gap-1.5 overflow-hidden');
+    expect(panelSource).not.toContain('留空时使用当前分支');
+    expect(panelSource).not.toContain('placeholder={status?.currentBranch || \'main\'}');
+    expect(panelSource).not.toContain('setDefaultBranch(nextStatus.remote?.defaultBranch || nextStatus.currentBranch || \'\')');
+    expect(panelSource).not.toContain("querySelectorAll<HTMLElement>('[data-change-item-chip]')");
+    expect(panelSource).not.toContain('key={`measure:${item.id}`}');
+
+    expect(apiSource).toContain('export interface GitWorkspaceRemoteConfig');
+    expect(apiSource).toContain('url?: string;');
+    expect(apiSource).toContain('defaultBranch?: string;');
+    expect(apiSource).toContain("async getGitWorkspaceStatus(options: { gitVersion?: string } = {})");
+    expect(apiSource).toContain("async switchGitWorkspaceBranch(branch: string)");
+    expect(apiSource).toContain("async createGitWorkspaceRemoteRepository(payload: CreateGitWorkspaceRemoteRepositoryRequest)");
+    expect(apiSource).not.toContain('remote.provider');
   });
 
   it('renders local AI execution agent preferences as a provider table above image settings', () => {
@@ -170,7 +382,7 @@ describe('SettingsDialog source', () => {
       expect(acpConfigSource).toContain(`provider: '${provider}'`);
       expect(acpConfigSource).toContain(`client: 'acp:${provider}'`);
     }
-    for (const label of ['Claude Code', 'Codex', 'Gemini CLI', 'OpenCode', 'Cursor', 'Qoder', 'CodeBuddy', 'Reasonix']) {
+    for (const label of ['Claude Code', 'Codex CLI', 'Gemini CLI', 'OpenCode', 'Cursor CLI', 'Qoder CLI', 'CodeBuddy CLI', 'Reasonix CLI']) {
       expect(acpConfigSource).toContain(`label: '${label}'`);
     }
     expect(source).not.toContain("value: 'genie:codex'");

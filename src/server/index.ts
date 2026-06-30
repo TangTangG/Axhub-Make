@@ -42,6 +42,7 @@ import { getLocalIP, getRequestUrl, sendJson } from './http.ts';
 import { getMakeClientDevStatus } from './makeClientProject.ts';
 import { handleManagementApi } from './managementApi.ts';
 import type { CommandExecutor } from './managementApi.cloudPublishing.ts';
+import type { GitWorkspaceCommandExecutor } from './managementApi.git.ts';
 import { releaseListeningProcessesOnPort } from './portOccupancy.ts';
 import {
   isRuntimeDevModuleRequest,
@@ -65,7 +66,9 @@ export interface StartMakeServerOptions {
   devMode?: boolean;
   logFile?: string;
   diagnosticLog?: DiagnosticLog;
+  axhubOnlineBaseUrl?: string;
   cloudPublishingCommandExecutor?: CommandExecutor;
+  gitWorkspaceCommandExecutor?: GitWorkspaceCommandExecutor;
 }
 
 export interface RunningMakeServer {
@@ -458,7 +461,9 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         },
         devMode,
         diagnosticLog: options.diagnosticLog,
+        axhubOnlineBaseUrl: options.axhubOnlineBaseUrl,
         cloudPublishingCommandExecutor: options.cloudPublishingCommandExecutor,
+        gitWorkspaceCommandExecutor: options.gitWorkspaceCommandExecutor,
       })) {
         return;
       }

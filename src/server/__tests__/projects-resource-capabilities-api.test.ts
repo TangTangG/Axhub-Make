@@ -78,6 +78,41 @@ describe('make-server project resource capability APIs', () => {
     }
   });
 
+  it('enables document resource writes for the default src/resources tree', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'default-docs-capability-client', name: 'Default Docs Capability Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      resourceWriteTargets: {},
+    });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources'), { recursive: true });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'default-docs-capability-client', 'Default Docs Capability Client');
+
+      const resources = await fetch(`${server.origin}/api/projects/default-docs-capability-client/resources`)
+        .then((response) => response.json());
+
+      expect(resources.capabilities.resourceWrites).toMatchObject({
+        docCreate: true,
+        docImport: true,
+        templateCreate: false,
+        templateDuplicate: false,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('disables create/upload/import routes that need a resource write adapter', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {

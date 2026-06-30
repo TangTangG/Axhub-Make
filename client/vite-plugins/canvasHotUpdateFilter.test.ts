@@ -22,6 +22,8 @@ describe('canvasHotUpdateFilterPlugin', () => {
     expect(isCanvasHotUpdateFile('src/prototypes/home/canvas-assets/embed.png')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/generation-artifacts.json')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/review.md')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/annotation-source.json')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/annotation-source.json?import&t=123')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/index.tsx')).toBe(false);
   });
 
@@ -42,9 +44,33 @@ describe('canvasHotUpdateFilterPlugin', () => {
       modules: [{ id: 'history' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
+      file: '/project/src/prototypes/home/annotation-source.json',
+      modules: [{ id: 'annotation-source' }],
+    })).toEqual([]);
+    expect(await handleHotUpdate({
       file: '/project/src/prototypes/home/index.tsx',
       modules: [{ id: 'index' }],
     })).toBeUndefined();
+  });
+
+  it('invalidates annotation source modules while suppressing browser reloads', async () => {
+    const plugin = canvasHotUpdateFilterPlugin();
+    const handleHotUpdate = plugin.handleHotUpdate as any;
+    const annotationModule = { id: 'annotation-source' };
+    const otherModule = { id: 'canvas' };
+    const invalidateModule = vi.fn();
+
+    expect(await handleHotUpdate({
+      file: '/project/src/prototypes/home/annotation-source.json',
+      modules: [annotationModule, otherModule],
+      server: {
+        moduleGraph: { invalidateModule },
+      },
+      timestamp: 123,
+    })).toEqual([]);
+
+    expect(invalidateModule).toHaveBeenCalledWith(annotationModule, undefined, 123, true);
+    expect(invalidateModule).toHaveBeenCalledWith(otherModule, undefined, 123, true);
   });
 
   it('drops Vite full reload payloads caused by canvas data files', async () => {
@@ -70,6 +96,10 @@ describe('canvasHotUpdateFilterPlugin', () => {
       type: 'full-reload',
       triggeredBy: '/project/src/prototypes/home/.spec/review.md',
     });
+    server.ws.send({
+      type: 'full-reload',
+      triggeredBy: '/project/src/prototypes/home/annotation-source.json',
+    });
 
     expect(hotSend).not.toHaveBeenCalled();
     expect(wsSend).not.toHaveBeenCalled();
@@ -84,6 +114,69 @@ describe('canvasHotUpdateFilterPlugin', () => {
     expect(wsSend).toHaveBeenCalledTimes(1);
   });
 
+  it('drops Vite update payloads caused only by annotation source modules', async () => {
+    const hotSend = vi.fn();
+    const server = {
+      hot: { send: hotSend },
+      ws: { send: vi.fn() },
+    };
+    const plugin = canvasHotUpdateFilterPlugin();
+
+    await runConfigureServer(plugin, server);
+
+    server.hot.send({
+      type: 'update',
+      updates: [{
+        type: 'js-update',
+        timestamp: 1,
+        path: '/src/prototypes/home/annotation-source.json?import&t=123',
+        acceptedPath: '/src/prototypes/home/annotation-source.json?import&t=123',
+      }],
+    });
+
+    expect(hotSend).not.toHaveBeenCalled();
+  });
+
+  it('keeps non-canvas Vite updates when they are batched with annotation source modules', async () => {
+    const hotSend = vi.fn();
+    const server = {
+      hot: { send: hotSend },
+      ws: { send: vi.fn() },
+    };
+    const plugin = canvasHotUpdateFilterPlugin();
+
+    await runConfigureServer(plugin, server);
+
+    server.hot.send({
+      type: 'update',
+      updates: [
+        {
+          type: 'js-update',
+          timestamp: 1,
+          path: '/src/prototypes/home/annotation-source.json?import&t=123',
+          acceptedPath: '/src/prototypes/home/annotation-source.json?import&t=123',
+        },
+        {
+          type: 'js-update',
+          timestamp: 1,
+          path: '/src/prototypes/home/index.tsx',
+          acceptedPath: '/src/prototypes/home/index.tsx',
+        },
+      ],
+    });
+
+    expect(hotSend).toHaveBeenCalledTimes(1);
+    expect(hotSend.mock.calls[0]?.[0]).toEqual({
+      type: 'update',
+      updates: [{
+        type: 'js-update',
+        timestamp: 1,
+        path: '/src/prototypes/home/index.tsx',
+        acceptedPath: '/src/prototypes/home/index.tsx',
+      }],
+    });
+  });
+
   it('identifies only canvas-triggered full reload payloads as droppable', () => {
     expect(shouldDropCanvasFullReloadPayload({
       type: 'full-reload',
@@ -96,6 +189,10 @@ describe('canvasHotUpdateFilterPlugin', () => {
     expect(shouldDropCanvasFullReloadPayload({
       type: 'full-reload',
       triggeredBy: '/project/src/prototypes/home/.spec/generation-artifacts.json',
+    })).toBe(true);
+    expect(shouldDropCanvasFullReloadPayload({
+      type: 'full-reload',
+      triggeredBy: '/project/src/prototypes/home/annotation-source.json',
     })).toBe(true);
     expect(shouldDropCanvasFullReloadPayload({
       type: 'full-reload',

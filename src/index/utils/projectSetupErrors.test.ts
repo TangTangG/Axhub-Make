@@ -14,6 +14,12 @@ describe('project setup errors', () => {
       phase: 'install',
       error: 'npm install failed',
     })).toBe('安装依赖失败：依赖安装失败');
+
+    expect(formatMakeClientProjectError({
+      code: 'MAKE_CLIENT_GIT_CLONE_FAILED',
+      phase: 'clone',
+      error: 'Permission denied (publickey)',
+    })).toBe('克隆项目失败：Git 克隆失败');
   });
 
   it('builds a novice-friendly prompt from make client startup diagnostics', () => {
@@ -48,12 +54,12 @@ describe('project setup errors', () => {
     expect(prompt).toContain('修复后请帮我重新启动客户端');
   });
 
-  it('formats make client update blockers and failed phases', () => {
+  it('formats make client update failed phases without Git-specific blockers', () => {
     expect(formatMakeClientUpdateError({
-      code: 'MAKE_CLIENT_UPDATE_GIT_DIRTY',
-      phase: 'git-check',
-      error: 'worktree dirty',
-    })).toBe('Git 安全检查失败：更新前需要先提交或处理当前文件改动');
+      code: 'MAKE_CLIENT_UPDATE_NOT_AVAILABLE',
+      phase: 'version',
+      error: 'already latest',
+    })).toBe('写入版本失败：当前客户端模板已是最新版本');
 
     expect(formatMakeClientUpdateError({
       code: 'MAKE_CLIENT_METADATA_SYNC_FAILED',
@@ -67,8 +73,9 @@ describe('project setup errors', () => {
       projectRoot: '/workspace/example/demo-project',
       currentVersion: '0.1.0',
       targetVersion: '0.1.6',
-      preUpdateHead: 'abc1234',
       backupRoot: '/workspace/example/demo-project/.axhub/make/backups/client-update-20260605',
+      backupZipPath: '/workspace/example/demo-project/.axhub/make/backups/client-update-20260605/client-update-backup.zip',
+      manifestPath: '/workspace/example/demo-project/.axhub/make/backups/client-update-20260605/manifest.json',
       templateUrl: 'https://example.com/template.zip',
       code: 'MAKE_CLIENT_METADATA_SYNC_FAILED',
       phase: 'metadata',
@@ -88,15 +95,21 @@ describe('project setup errors', () => {
     expect(prompt).toContain('项目目录：/workspace/example/demo-project');
     expect(prompt).toContain('当前版本：0.1.0');
     expect(prompt).toContain('目标版本：0.1.6');
-    expect(prompt).toContain('更新前 Git commit：abc1234');
     expect(prompt).toContain('备份目录：/workspace/example/demo-project/.axhub/make/backups/client-update-20260605');
+    expect(prompt).toContain('备份压缩包：/workspace/example/demo-project/.axhub/make/backups/client-update-20260605/client-update-backup.zip');
+    expect(prompt).toContain('备份日志：/workspace/example/demo-project/.axhub/make/backups/client-update-20260605/manifest.json');
     expect(prompt).toContain('模板来源：https://example.com/template.zip');
-    expect(prompt).toContain('已写入文件：package.json');
-    expect(prompt).toContain('src/prototypes/beginner-guide/index.tsx');
-    expect(prompt).toContain('计划写入文件：package.json');
+    expect(prompt).toContain('已写入文件数：2');
+    expect(prompt).toContain('计划写入文件数：2');
+    expect(prompt).toContain('关键已写入文件：package.json');
     expect(prompt).toContain('.axhub/make/client.json');
+    expect(prompt).not.toContain('src/prototypes/beginner-guide/index.tsx');
     expect(prompt).toContain('服务端原始错误：metadata sync exploded');
     expect(prompt).toContain('不要直接删除我的用户原型、资源、运行记录或备份目录');
-    expect(prompt).toContain('可以基于更新前 Git commit、备份目录和已写入文件清单判断修复或回退');
+    expect(prompt).toContain('请检查备份目录、备份压缩包、备份日志和文件数量是否完整');
+    expect(prompt).toContain('如需完整文件清单，请读取备份日志 manifest.json，不要把清单整段复制到提示词里');
+    expect(prompt).toContain('可以基于备份目录、manifest.json、original/ 和关键文件判断修复或还原');
+    expect(prompt).not.toContain('Git');
+    expect(prompt).not.toContain('回退');
   });
 });

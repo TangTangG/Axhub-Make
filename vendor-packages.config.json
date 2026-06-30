@@ -19,9 +19,9 @@
       "buildCommand": ["pnpm", "build"]
     },
     {
-      "packageName": "axhub-genie-editor",
-      "sourceDir": "../../packages/axhub-genie-editor",
-      "outputDir": "vendor/axhub-genie-editor",
+      "packageName": "@axhub/commentary",
+      "sourceDir": "../../packages/axhub-commentary",
+      "outputDir": "vendor/axhub-commentary",
       "runtimeEntry": "dist/index.mjs",
       "typesEntry": "src/index.ts",
       "copy": ["dist", "src", "package.json"],

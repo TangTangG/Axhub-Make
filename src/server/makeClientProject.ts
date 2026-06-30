@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { unzipSync } from 'fflate';
+import { unzipSync, zipSync, type Zippable } from 'fflate';
 
 import {
   DEFAULT_MAKE_CLIENT_REPOSITORY,
@@ -28,6 +28,7 @@ import {
 import { buildLocalCommandEnv, runLocalCommand } from './localCommand.ts';
 import type { DiagnosticLog } from './diagnosticLog.ts';
 import {
+  DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES,
   DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION,
   makeClientTemplateMirrorDownloadUrl,
   makeClientTemplatePrimaryDownloadUrl,
@@ -35,7 +36,7 @@ import {
 
 export type MakeClientPhase =
   | 'template'
-  | 'git-check'
+  | 'clone'
   | 'download-template'
   | 'backup'
   | 'overwrite'
@@ -86,13 +87,21 @@ export interface MakeClientDevResult {
   reused: boolean;
   phase: MakeClientPhase;
   runtime: AxhubServerInfo;
+  runtimePatched?: boolean;
 }
 
-type MakeClientDependencyInstallMethod = 'skipped' | 'pnpm' | 'npm';
+export type MakeClientDependencyInstallMethod = 'skipped' | 'pnpm' | 'npm';
 
 interface MakeClientDevInternalResult extends MakeClientDevResult {
   installMethod: MakeClientDependencyInstallMethod;
 }
+
+const MAKE_CLIENT_RUNTIME_PATCH_FILES = [
+  'vite-plugins/clientPreviewPlugin.ts',
+  'vite-plugins/canvasHotUpdateFilter.ts',
+  'vite-plugins/utils/moduleSpecifierQuery.ts',
+  'vite-plugins/utils/previewTitle.ts',
+];
 
 export interface MakeClientDevStatus {
   projectId: string;
@@ -112,23 +121,25 @@ export interface MakeClientStopResult {
 
 export interface MakeClientUpdateBlockedReason {
   code:
-    | 'GIT_UNAVAILABLE'
-    | 'GIT_REPOSITORY_REQUIRED'
-    | 'GIT_COMMIT_REQUIRED'
-    | 'GIT_WORKTREE_DIRTY'
     | 'NO_UPDATE_AVAILABLE'
     | 'TEMPLATE_SOURCE_UNAVAILABLE';
   message: string;
 }
 
-export interface MakeClientUpdateGitStatus {
-  available: boolean;
-  isRepository: boolean;
-  hasCommits: boolean;
-  clean: boolean;
-  head?: string;
-  dirtyFiles: string[];
-  error?: string;
+export type MakeClientUpdateBackupPolicy = 'zip-before-overwrite';
+
+export interface MakeClientUpdateBackupRecord {
+  backupRoot: string;
+  backupZipPath: string;
+  manifestPath: string;
+  currentVersion: string;
+  targetVersion: string;
+  createdAt: string;
+  completedAt: string;
+  plannedFilesCount: number;
+  writtenFilesCount: number;
+  restoreAvailable: boolean;
+  zipAvailable: boolean;
 }
 
 export interface MakeClientUpdateStatus {
@@ -136,14 +147,23 @@ export interface MakeClientUpdateStatus {
   projectRoot: string;
   currentVersion: string;
   targetVersion: string;
+  releaseNotes?: string;
   updateAvailable: boolean;
   canApply: boolean;
-  git: MakeClientUpdateGitStatus;
+  backupPolicy: MakeClientUpdateBackupPolicy;
+  lastBackup: MakeClientUpdateBackupRecord | null;
   template: {
     version: string;
     sources: MakeClientTemplateSource[];
   };
   blockedReasons: MakeClientUpdateBlockedReason[];
+}
+
+export interface MakeClientUpdatePostUpdateWarning {
+  error: string;
+  code: string;
+  phase?: MakeClientPhase;
+  details?: Record<string, unknown>;
 }
 
 export interface MakeClientUpdateApplyResult {
@@ -152,13 +172,16 @@ export interface MakeClientUpdateApplyResult {
   projectRoot: string;
   currentVersion: string;
   targetVersion: string;
-  preUpdateHead: string;
   backupRoot: string;
+  backupZipPath: string;
+  manifestPath: string;
+  backupRecord: MakeClientUpdateBackupRecord;
   plannedFiles: string[];
   writtenFiles: string[];
   templateUrl: string;
-  installMethod: 'npm' | 'skipped';
+  installMethod: MakeClientDependencyInstallMethod;
   metadataSynced: boolean;
+  postUpdateWarning?: MakeClientUpdatePostUpdateWarning;
 }
 
 export const MAKE_CLIENT_ERROR_STATUS: Record<string, number> = {
@@ -168,11 +191,8 @@ export const MAKE_CLIENT_ERROR_STATUS: Record<string, number> = {
   MAKE_CLIENT_TEMPLATE_UNAVAILABLE: 500,
   MAKE_CLIENT_INSTALL_FAILED: 500,
   MAKE_CLIENT_METADATA_SYNC_FAILED: 500,
-  MAKE_CLIENT_UPDATE_GIT_UNAVAILABLE: 409,
-  MAKE_CLIENT_UPDATE_NOT_GIT_REPOSITORY: 409,
-  MAKE_CLIENT_UPDATE_NO_COMMITS: 409,
-  MAKE_CLIENT_UPDATE_GIT_DIRTY: 409,
   MAKE_CLIENT_UPDATE_NOT_AVAILABLE: 409,
+  MAKE_CLIENT_GIT_CLONE_FAILED: 409,
   MAKE_CLIENT_DEV_TIMEOUT: 504,
   PNPM_NOT_FOUND: 500,
   INVALID_MAKE_PROJECT_FOLDER_NAME: 400,
@@ -248,6 +268,7 @@ const TEMPLATE_COPY_ALLOWED_AXHUB_MAKE_FILES = new Set([
 ]);
 const PROJECT_COPY_IGNORED_NAMES = new Set([
   '.git',
+  '.git-versions',
   'dist',
   '.vite',
   '.cache',
@@ -581,6 +602,83 @@ function rewriteCopiedProjectMetadata(params: {
     name: params.projectName,
   };
   writeJsonFile(metadataPath, metadata);
+}
+
+function rewriteProjectMetadataIdentity(projectRoot: string, projectId: string, projectName: string): void {
+  const metadataPath = getProjectMetadataPath(projectRoot);
+  const rawMetadata = readJsonRecord(metadataPath);
+  const metadata = rawMetadata && typeof rawMetadata === 'object' && !Array.isArray(rawMetadata)
+    ? rawMetadata as Record<string, unknown>
+    : {};
+  const project = metadata.project && typeof metadata.project === 'object' && !Array.isArray(metadata.project)
+    ? metadata.project as Record<string, unknown>
+    : {};
+  metadata.schemaVersion = 1;
+  metadata.project = {
+    ...project,
+    id: projectId,
+    name: projectName,
+  };
+  writeJsonFile(metadataPath, metadata);
+}
+
+function buildMakeClientGitClonePrompt(params: {
+  gitUrl: string;
+  projectRoot: string;
+  projectName: string;
+  errorMessage: string;
+}): string {
+  return [
+    '请帮我克隆并接入 Axhub Make 客户端项目。',
+    '',
+    `Git 地址：${params.gitUrl}`,
+    `目标目录：${params.projectRoot}`,
+    `项目名称：${params.projectName || path.basename(params.projectRoot)}`,
+    '',
+    '请先确认 Git 是否可用，并根据这个地址判断需要 HTTPS 登录、SSH key、访问令牌或仓库权限。',
+    '如果需要授权，请引导我完成授权；如果 clone 成功，请确认项目目录里存在 .axhub/make/client.json，并运行 npm install --include=dev 与 npm run metadata:sync。',
+    '如果仓库不是 Axhub Make 客户端项目，请说明需要补齐 .axhub/make/client.json、package.json scripts.dev 和 metadata:sync 后再回到 Axhub Make 选择已有项目。',
+    '',
+    '错误摘要：',
+    params.errorMessage || 'Git clone failed',
+  ].join('\n');
+}
+
+function attachMakeClientGitClonePrompt(
+  error: unknown,
+  params: {
+    gitUrl: string;
+    projectRoot: string;
+    projectName: string;
+  },
+): unknown {
+  const errorMessage = commandErrorMessage(error);
+  const promptDetails = {
+    gitUrl: params.gitUrl,
+    projectRoot: params.projectRoot,
+    promptScene: 'git-clone',
+    prompt: buildMakeClientGitClonePrompt({
+      ...params,
+      errorMessage,
+    }),
+  };
+  if (error instanceof MakeClientProjectError) {
+    error.phase = error.phase || 'clone';
+    error.details = {
+      ...(error.details || {}),
+      ...promptDetails,
+    };
+    return error;
+  }
+  return new MakeClientProjectError(
+    'MAKE_CLIENT_GIT_CLONE_FAILED',
+    errorMessage || 'Git clone failed',
+    {
+      status: 409,
+      phase: 'clone',
+      details: promptDetails,
+    },
+  );
 }
 
 function templateErrorMessage(error: unknown): string {
@@ -974,6 +1072,16 @@ async function ensureMakeClientDependencies(
     });
     return 'npm';
   } catch (npmError) {
+    if (isNpmArboristNullPropertyError(npmError)) {
+      try {
+        await runMakeClientCommand(runner, npmCommand(), ['install', '--include=dev', '--legacy-peer-deps'], projectRoot, 'install', {
+          timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
+        });
+        return 'npm';
+      } catch {
+        // Fall through to pnpm with the original npm error preserved in diagnostics.
+      }
+    }
     try {
       await runMakeClientCommand(runner, 'pnpm', ['install', '--prod=false'], projectRoot, 'install', {
         timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
@@ -997,6 +1105,10 @@ async function ensureMakeClientDependencies(
       );
     }
   }
+}
+
+function isNpmArboristNullPropertyError(error: unknown): boolean {
+  return /Cannot read (?:properties|property) of null \(reading '[^']+'\)/iu.test(commandErrorMessage(error));
 }
 
 function resolveMakeClientDevCommand(installMethod: MakeClientDependencyInstallMethod, projectRoot: string): { command: string; args: string[] } {
@@ -1077,6 +1189,42 @@ function isInsideRoot(root: string, candidate: string): boolean {
   return relative === '' || (Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function resolveEmbeddedMakeClientRuntimeFile(relativePath: string): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client', ...relativePath.split('/'));
+}
+
+function hasMakeClientRuntimePatchSurface(projectRoot: string): boolean {
+  return MAKE_CLIENT_RUNTIME_PATCH_FILES.some((relativePath) => {
+    const targetPath = path.resolve(projectRoot, ...relativePath.split('/'));
+    return isInsideRoot(projectRoot, targetPath) && fs.existsSync(targetPath);
+  });
+}
+
+function syncMakeClientRuntimePatchFiles(projectRoot: string): { patched: boolean; files: string[] } {
+  if (!hasMakeClientRuntimePatchSurface(projectRoot)) {
+    return { patched: false, files: [] };
+  }
+  const writtenFiles: string[] = [];
+  for (const relativePath of MAKE_CLIENT_RUNTIME_PATCH_FILES) {
+    const sourcePath = resolveEmbeddedMakeClientRuntimeFile(relativePath);
+    const targetPath = path.resolve(projectRoot, ...relativePath.split('/'));
+    if (!isInsideRoot(projectRoot, targetPath) || !fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      continue;
+    }
+    const source = fs.readFileSync(sourcePath);
+    const target = fs.existsSync(targetPath) && fs.statSync(targetPath).isFile()
+      ? fs.readFileSync(targetPath)
+      : null;
+    if (target && Buffer.compare(source, target) === 0) {
+      continue;
+    }
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, source);
+    writtenFiles.push(relativePath);
+  }
+  return { patched: writtenFiles.length > 0, files: writtenFiles };
+}
+
 function readJsonRecord(filePath: string): Record<string, unknown> {
   if (!fs.existsSync(filePath)) {
     return {};
@@ -1155,72 +1303,12 @@ async function runGit(
   return String(result.stdout || '').trim();
 }
 
-async function getMakeClientUpdateGitStatus(
-  runner: MakeClientCommandRunner,
-  projectRoot: string,
-): Promise<MakeClientUpdateGitStatus> {
-  try {
-    await runGit(runner, projectRoot, ['--version']);
-  } catch (error: any) {
-    return {
-      available: false,
-      isRepository: false,
-      hasCommits: false,
-      clean: false,
-      dirtyFiles: [],
-      error: commandErrorMessage(error),
-    };
-  }
-
-  try {
-    const insideWorkTree = await runGit(runner, projectRoot, ['rev-parse', '--is-inside-work-tree']);
-    if (insideWorkTree !== 'true') {
-      return {
-        available: true,
-        isRepository: false,
-        hasCommits: false,
-        clean: false,
-        dirtyFiles: [],
-      };
-    }
-  } catch {
-    return {
-      available: true,
-      isRepository: false,
-      hasCommits: false,
-      clean: false,
-      dirtyFiles: [],
-    };
-  }
-
-  let head = '';
-  try {
-    head = await runGit(runner, projectRoot, ['rev-parse', '--verify', 'HEAD']);
-  } catch {
-    return {
-      available: true,
-      isRepository: true,
-      hasCommits: false,
-      clean: false,
-      dirtyFiles: [],
-    };
-  }
-
-  const status = await runGit(runner, projectRoot, ['status', '--porcelain']);
-  const dirtyFiles = status.split('\n').map((line) => line.trim()).filter(Boolean);
-  return {
-    available: true,
-    isRepository: true,
-    hasCommits: true,
-    clean: dirtyFiles.length === 0,
-    head,
-    dirtyFiles,
-  };
+function makeClientUpdateBackupsRoot(projectRoot: string): string {
+  return path.join(projectRoot, '.axhub', 'make', 'backups');
 }
 
 function buildMakeClientUpdateBlockedReasons(params: {
   updateAvailable: boolean;
-  git: MakeClientUpdateGitStatus;
   templateSources: MakeClientTemplateSource[];
 }): MakeClientUpdateBlockedReason[] {
   const reasons: MakeClientUpdateBlockedReason[] = [];
@@ -1230,16 +1318,16 @@ function buildMakeClientUpdateBlockedReasons(params: {
   if (params.templateSources.length === 0) {
     reasons.push({ code: 'TEMPLATE_SOURCE_UNAVAILABLE', message: '没有可用的 Make 客户端模板源' });
   }
-  if (!params.git.available) {
-    reasons.push({ code: 'GIT_UNAVAILABLE', message: '已完成版本检测；更新前需要先安装或修复 Git' });
-  } else if (!params.git.isRepository) {
-    reasons.push({ code: 'GIT_REPOSITORY_REQUIRED', message: '更新前需要先初始化 Git 仓库' });
-  } else if (!params.git.hasCommits) {
-    reasons.push({ code: 'GIT_COMMIT_REQUIRED', message: '更新前需要至少有一个本地 Git commit' });
-  } else if (!params.git.clean) {
-    reasons.push({ code: 'GIT_WORKTREE_DIRTY', message: '更新前需要提交或暂存当前未保存的文件改动' });
-  }
   return reasons;
+}
+
+async function collectRemoteMakeClientUpdateTemplateFiles(targetVersion: string): Promise<string[]> {
+  const extractedTemplate = await extractMakeClientUpdateTemplate(targetVersion);
+  try {
+    return collectMakeClientUpdateTemplateFiles(extractedTemplate.templateRoot);
+  } finally {
+    fs.rmSync(extractedTemplate.tempParent, { recursive: true, force: true });
+  }
 }
 
 export async function getMakeClientUpdateStatus(
@@ -1253,11 +1341,8 @@ export async function getMakeClientUpdateStatus(
   const targetVersion = DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION;
   const templateSources = makeClientTemplateSources({ version: targetVersion });
   const updateAvailable = isTemplateUpdateAvailable(currentVersion, targetVersion);
-  const runner = options.commandRunner || defaultCommandRunner();
-  const git = await getMakeClientUpdateGitStatus(runner, root);
   const blockedReasons = buildMakeClientUpdateBlockedReasons({
     updateAvailable,
-    git,
     templateSources,
   });
   return {
@@ -1265,9 +1350,11 @@ export async function getMakeClientUpdateStatus(
     projectRoot: root,
     currentVersion,
     targetVersion,
+    ...(DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES ? { releaseNotes: DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES } : {}),
     updateAvailable,
     canApply: blockedReasons.length === 0,
-    git,
+    backupPolicy: 'zip-before-overwrite',
+    lastBackup: readLatestMakeClientUpdateBackupRecord(root),
     template: {
       version: targetVersion,
       sources: templateSources,
@@ -1276,26 +1363,10 @@ export async function getMakeClientUpdateStatus(
   };
 }
 
-function makeClientUpdateGitError(reason: MakeClientUpdateBlockedReason): MakeClientProjectError {
-  if (reason.code === 'GIT_UNAVAILABLE') {
-    return new MakeClientProjectError('MAKE_CLIENT_UPDATE_GIT_UNAVAILABLE', reason.message, { status: 409, phase: 'git-check' });
-  }
-  if (reason.code === 'GIT_REPOSITORY_REQUIRED') {
-    return new MakeClientProjectError('MAKE_CLIENT_UPDATE_NOT_GIT_REPOSITORY', reason.message, { status: 409, phase: 'git-check' });
-  }
-  if (reason.code === 'GIT_COMMIT_REQUIRED') {
-    return new MakeClientProjectError('MAKE_CLIENT_UPDATE_NO_COMMITS', reason.message, { status: 409, phase: 'git-check' });
-  }
-  if (reason.code === 'GIT_WORKTREE_DIRTY') {
-    return new MakeClientProjectError('MAKE_CLIENT_UPDATE_GIT_DIRTY', reason.message, { status: 409, phase: 'git-check' });
-  }
-  return new MakeClientProjectError('MAKE_CLIENT_UPDATE_NOT_AVAILABLE', reason.message, { status: 409, phase: 'git-check' });
-}
-
 function assertMakeClientUpdateCanApply(status: MakeClientUpdateStatus): void {
   const blockingReason = status.blockedReasons[0];
   if (blockingReason) {
-    throw makeClientUpdateGitError(blockingReason);
+    throw new MakeClientProjectError('MAKE_CLIENT_UPDATE_NOT_AVAILABLE', blockingReason.message, { status: 409, phase: 'version' });
   }
 }
 
@@ -1408,7 +1479,7 @@ function createMakeClientUpdateBackupRoot(projectRoot: string): string {
     .replace(/[-:]/gu, '')
     .replace(/\..*$/u, '')
     .replace('T', '-');
-  return path.join(projectRoot, '.axhub', 'make', 'backups', `client-update-${stamp}-${process.pid}`);
+  return path.join(makeClientUpdateBackupsRoot(projectRoot), `client-update-${stamp}-${process.pid}`);
 }
 
 function backupExistingMakeClientUpdateFiles(projectRoot: string, backupRoot: string, plannedFiles: string[]): void {
@@ -1428,9 +1499,85 @@ function backupExistingMakeClientUpdateFiles(projectRoot: string, backupRoot: st
 function writeMakeClientUpdateManifest(
   backupRoot: string,
   manifest: Record<string, unknown>,
-): void {
+): string {
   fs.mkdirSync(backupRoot, { recursive: true });
-  fs.writeFileSync(path.join(backupRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  const manifestPath = path.join(backupRoot, 'manifest.json');
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  return manifestPath;
+}
+
+function buildMakeClientUpdateBackupZipEntries(sourceRoot: string, currentDir = sourceRoot, relativeDir = ''): Zippable {
+  const entries: Zippable = {};
+  if (!fs.existsSync(currentDir)) return entries;
+  for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+    const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+    const sourcePath = path.join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      Object.assign(entries, buildMakeClientUpdateBackupZipEntries(sourceRoot, sourcePath, relativePath));
+      continue;
+    }
+    if (entry.isFile()) {
+      entries[relativePath.split(path.sep).join('/')] = new Uint8Array(fs.readFileSync(sourcePath));
+    }
+  }
+  return entries;
+}
+
+function createMakeClientUpdateBackupZip(backupRoot: string): string {
+  const zipPath = path.join(backupRoot, 'client-update-backup.zip');
+  fs.rmSync(zipPath, { force: true });
+  const entries: Zippable = {};
+  const manifestPath = path.join(backupRoot, 'manifest.json');
+  if (fs.existsSync(manifestPath)) {
+    entries['manifest.json'] = new Uint8Array(fs.readFileSync(manifestPath));
+  }
+  Object.assign(entries, buildMakeClientUpdateBackupZipEntries(path.join(backupRoot, 'original'), path.join(backupRoot, 'original'), 'original'));
+  fs.writeFileSync(zipPath, Buffer.from(zipSync(entries, { level: 6 })));
+  return zipPath;
+}
+
+function makeClientUpdateBackupRecordFromManifest(backupRoot: string): MakeClientUpdateBackupRecord | null {
+  const manifestPath = path.join(backupRoot, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) return null;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    const currentVersion = typeof manifest.currentVersion === 'string' ? manifest.currentVersion : '';
+    const targetVersion = typeof manifest.targetVersion === 'string' ? manifest.targetVersion : '';
+    const createdAt = typeof manifest.createdAt === 'string' ? manifest.createdAt : '';
+    const completedAt = typeof manifest.completedAt === 'string' ? manifest.completedAt : '';
+    if (!currentVersion || !targetVersion || !createdAt || !completedAt) return null;
+    const plannedFiles = Array.isArray(manifest.plannedFiles) ? manifest.plannedFiles : [];
+    const writtenFiles = Array.isArray(manifest.writtenFiles) ? manifest.writtenFiles : [];
+    const backupZipPath = typeof manifest.backupZipPath === 'string'
+      ? manifest.backupZipPath
+      : path.join(backupRoot, 'client-update-backup.zip');
+    return {
+      backupRoot,
+      backupZipPath,
+      manifestPath,
+      currentVersion,
+      targetVersion,
+      createdAt,
+      completedAt,
+      plannedFilesCount: plannedFiles.length,
+      writtenFilesCount: writtenFiles.length,
+      restoreAvailable: fs.existsSync(path.join(backupRoot, 'original')),
+      zipAvailable: fs.existsSync(backupZipPath),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readLatestMakeClientUpdateBackupRecord(projectRoot: string): MakeClientUpdateBackupRecord | null {
+  const backupsRoot = makeClientUpdateBackupsRoot(projectRoot);
+  if (!fs.existsSync(backupsRoot)) return null;
+  const records = fs.readdirSync(backupsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('client-update-'))
+    .map((entry) => makeClientUpdateBackupRecordFromManifest(path.join(backupsRoot, entry.name)))
+    .filter((record): record is MakeClientUpdateBackupRecord => Boolean(record))
+    .sort((left, right) => right.completedAt.localeCompare(left.completedAt));
+  return records[0] || null;
 }
 
 function writeMakeClientUpdateTemplateFiles(params: {
@@ -1478,14 +1625,82 @@ function writeMakeClientUpdateTemplateFiles(params: {
   return writtenFiles;
 }
 
-async function installMakeClientDependenciesWithNpm(
+function hasPnpmLockfile(projectRoot: string): boolean {
+  return fs.existsSync(path.join(projectRoot, 'pnpm-lock.yaml'));
+}
+
+function hasNpmLockfile(projectRoot: string): boolean {
+  return fs.existsSync(path.join(projectRoot, 'package-lock.json'))
+    || fs.existsSync(path.join(projectRoot, 'npm-shrinkwrap.json'));
+}
+
+function readPackageManagerName(projectRoot: string): string {
+  const packageManager = String(readJsonRecord(path.join(projectRoot, 'package.json')).packageManager || '').trim();
+  const match = packageManager.match(/^([a-z][a-z0-9-]*)@/iu);
+  return (match?.[1] || '').toLowerCase();
+}
+
+function preferredMakeClientInstallMethods(projectRoot: string): Array<'pnpm' | 'npm'> {
+  const packageManagerName = readPackageManagerName(projectRoot);
+  if (packageManagerName === 'pnpm' || hasPnpmLockfile(projectRoot) && !hasNpmLockfile(projectRoot)) {
+    return ['pnpm', 'npm'];
+  }
+  return ['npm', 'pnpm'];
+}
+
+async function installMakeClientDependenciesWithMethod(
   runner: MakeClientCommandRunner,
   projectRoot: string,
-): Promise<'npm'> {
-  await runMakeClientCommand(runner, npmCommand(), ['install', '--include=dev'], projectRoot, 'install', {
-    timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
-  });
+  method: 'pnpm' | 'npm',
+): Promise<'pnpm' | 'npm'> {
+  if (method === 'pnpm') {
+    await runMakeClientCommand(runner, 'pnpm', ['install', '--prod=false'], projectRoot, 'install', {
+      timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
+    });
+    return 'pnpm';
+  }
+  try {
+    await runMakeClientCommand(runner, npmCommand(), ['install', '--include=dev'], projectRoot, 'install', {
+      timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
+    });
+  } catch (npmError) {
+    if (!isNpmArboristNullPropertyError(npmError)) {
+      throw npmError;
+    }
+    await runMakeClientCommand(runner, npmCommand(), ['install', '--include=dev', '--legacy-peer-deps'], projectRoot, 'install', {
+      timeoutMs: DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS,
+    });
+  }
   return 'npm';
+}
+
+async function installMakeClientDependenciesForUpdate(
+  runner: MakeClientCommandRunner,
+  projectRoot: string,
+): Promise<'pnpm' | 'npm'> {
+  const errors: Partial<Record<'pnpm' | 'npm', string>> = {};
+  for (const method of preferredMakeClientInstallMethods(projectRoot)) {
+    try {
+      return await installMakeClientDependenciesWithMethod(runner, projectRoot, method);
+    } catch (error) {
+      errors[method] = commandErrorMessage(error);
+    }
+  }
+  throw new MakeClientProjectError(
+    'MAKE_CLIENT_INSTALL_FAILED',
+    [
+      errors.npm ? `${npmCommand()} install failed: ${errors.npm}` : '',
+      errors.pnpm ? `pnpm install failed: ${errors.pnpm}` : '',
+    ].filter(Boolean).join('\n') || 'Make client dependency install failed',
+    {
+      status: 500,
+      phase: 'install',
+      details: {
+        ...(errors.npm ? { npm: errors.npm } : {}),
+        ...(errors.pnpm ? { pnpm: errors.pnpm } : {}),
+      },
+    },
+  );
 }
 
 async function syncMakeClientMetadataWithNpm(
@@ -1495,10 +1710,105 @@ async function syncMakeClientMetadataWithNpm(
   await runMakeClientCommand(runner, npmCommand(), ['run', 'metadata:sync'], projectRoot, 'metadata');
 }
 
+function makeClientUpdatePostUpdateWarning(error: unknown): MakeClientUpdatePostUpdateWarning {
+  if (error instanceof MakeClientProjectError) {
+    return {
+      error: error.message,
+      code: error.code,
+      ...(error.phase ? { phase: error.phase } : {}),
+      ...(error.details ? { details: error.details } : {}),
+    };
+  }
+  const looseError = error as { message?: string; code?: string; phase?: MakeClientPhase; details?: Record<string, unknown> } | null;
+  return {
+    error: looseError?.message || commandErrorMessage(error) || 'Make client post-update task failed',
+    code: looseError?.code || 'MAKE_CLIENT_POST_UPDATE_FAILED',
+    ...(looseError?.phase ? { phase: looseError.phase } : {}),
+    ...(looseError?.details ? { details: looseError.details } : {}),
+  };
+}
+
+function hasWrittenMakeClientTargetVersion(projectRoot: string, targetVersion: string, writtenFiles: string[]): boolean {
+  if (!writtenFiles.includes('.axhub/make/client.json')) {
+    return false;
+  }
+  const marker = readMakeClientMarker(projectRoot);
+  return marker?.templateVersion === targetVersion;
+}
+
+function finalizeMakeClientUpdateBackup(params: {
+  backupRoot: string;
+  projectId: string;
+  projectRoot: string;
+  currentVersion: string;
+  targetVersion: string;
+  backupPolicy: MakeClientUpdateBackupPolicy;
+  plannedFiles: string[];
+  writtenFiles: string[];
+  templateUrl: string;
+  installMethod: MakeClientDependencyInstallMethod;
+  metadataSynced: boolean;
+  createdAt: string;
+  postUpdateWarning?: MakeClientUpdatePostUpdateWarning;
+}): {
+  backupZipPath: string;
+  manifestPath: string;
+  backupRecord: MakeClientUpdateBackupRecord;
+} {
+  const completedAt = new Date().toISOString();
+  let backupZipPath = path.join(params.backupRoot, 'client-update-backup.zip');
+  let manifestPath = writeMakeClientUpdateManifest(params.backupRoot, {
+    projectId: params.projectId,
+    projectRoot: params.projectRoot,
+    currentVersion: params.currentVersion,
+    targetVersion: params.targetVersion,
+    backupPolicy: params.backupPolicy,
+    plannedFiles: params.plannedFiles,
+    writtenFiles: params.writtenFiles,
+    templateUrl: params.templateUrl,
+    installMethod: params.installMethod,
+    metadataSynced: params.metadataSynced,
+    backupZipPath,
+    createdAt: params.createdAt,
+    completedAt,
+    ...(params.postUpdateWarning ? { postUpdateWarning: params.postUpdateWarning } : {}),
+  });
+  backupZipPath = createMakeClientUpdateBackupZip(params.backupRoot);
+  manifestPath = writeMakeClientUpdateManifest(params.backupRoot, {
+    projectId: params.projectId,
+    projectRoot: params.projectRoot,
+    currentVersion: params.currentVersion,
+    targetVersion: params.targetVersion,
+    backupPolicy: params.backupPolicy,
+    plannedFiles: params.plannedFiles,
+    writtenFiles: params.writtenFiles,
+    templateUrl: params.templateUrl,
+    installMethod: params.installMethod,
+    metadataSynced: params.metadataSynced,
+    backupZipPath,
+    createdAt: params.createdAt,
+    completedAt,
+    ...(params.postUpdateWarning ? { postUpdateWarning: params.postUpdateWarning } : {}),
+  });
+  const backupRecord = makeClientUpdateBackupRecordFromManifest(params.backupRoot);
+  if (!backupRecord) {
+    throw new MakeClientProjectError(
+      'MAKE_CLIENT_TEMPLATE_UNAVAILABLE',
+      'Make client update backup manifest is incomplete',
+      { status: 500, phase: 'backup' },
+    );
+  }
+  return {
+    backupZipPath,
+    manifestPath,
+    backupRecord,
+  };
+}
+
 function attachMakeClientUpdateContext(
   error: unknown,
   context: Partial<Omit<MakeClientUpdateApplyResult, 'success' | 'metadataSynced' | 'installMethod'>> & {
-    installMethod?: 'npm' | 'skipped';
+    installMethod?: MakeClientDependencyInstallMethod;
     metadataSynced?: boolean;
   },
 ): never {
@@ -1526,20 +1836,22 @@ export async function applyMakeClientUpdate(
   const status = await getMakeClientUpdateStatus(projectId, root, { commandRunner: runner });
   assertMakeClientUpdateCanApply(status);
 
-  const preUpdateHead = status.git.head || await runGit(runner, root, ['rev-parse', 'HEAD']);
   let extractedTemplate: Awaited<ReturnType<typeof extractMakeClientUpdateTemplate>> | null = null;
   let backupRoot = '';
+  let backupZipPath = '';
+  let manifestPath = '';
   let plannedFiles: string[] = [];
   let writtenFiles: string[] = [];
   let templateUrl = '';
-  let installMethod: 'npm' | 'skipped' = 'skipped';
+  let installMethod: MakeClientDependencyInstallMethod = 'skipped';
   const updateContext = () => ({
     projectId,
     projectRoot: root,
     currentVersion: status.currentVersion,
     targetVersion: status.targetVersion,
-    preUpdateHead,
     backupRoot,
+    backupZipPath,
+    manifestPath,
     plannedFiles,
     writtenFiles,
     templateUrl,
@@ -1559,15 +1871,16 @@ export async function applyMakeClientUpdate(
 
     backupRoot = createMakeClientUpdateBackupRoot(root);
     backupExistingMakeClientUpdateFiles(root, backupRoot, plannedFiles);
-    writeMakeClientUpdateManifest(backupRoot, {
+    const createdAt = new Date().toISOString();
+    manifestPath = writeMakeClientUpdateManifest(backupRoot, {
       projectId,
       projectRoot: root,
       currentVersion: status.currentVersion,
       targetVersion: status.targetVersion,
-      preUpdateHead,
+      backupPolicy: status.backupPolicy,
       plannedFiles,
       templateUrl,
-      createdAt: new Date().toISOString(),
+      createdAt,
     });
 
     writtenFiles = writeMakeClientUpdateTemplateFiles({
@@ -1579,24 +1892,38 @@ export async function applyMakeClientUpdate(
       targetVersion: status.targetVersion,
     });
 
-    if (packageChanged || !hasInstalledMakeClientDependencies(root)) {
-      installMethod = await installMakeClientDependenciesWithNpm(runner, root);
+    let metadataSynced = false;
+    let postUpdateWarning: MakeClientUpdatePostUpdateWarning | undefined;
+    try {
+      if (packageChanged || !hasInstalledMakeClientDependencies(root)) {
+        installMethod = await installMakeClientDependenciesForUpdate(runner, root);
+      }
+      await syncMakeClientMetadataWithNpm(runner, root);
+      metadataSynced = true;
+    } catch (postUpdateError) {
+      if (!hasWrittenMakeClientTargetVersion(root, status.targetVersion, writtenFiles)) {
+        throw postUpdateError;
+      }
+      postUpdateWarning = makeClientUpdatePostUpdateWarning(postUpdateError);
     }
-    await syncMakeClientMetadataWithNpm(runner, root);
 
-    writeMakeClientUpdateManifest(backupRoot, {
+    const finalizedBackup = finalizeMakeClientUpdateBackup({
+      backupRoot,
       projectId,
       projectRoot: root,
       currentVersion: status.currentVersion,
       targetVersion: status.targetVersion,
-      preUpdateHead,
+      backupPolicy: status.backupPolicy,
       plannedFiles,
       writtenFiles,
       templateUrl,
       installMethod,
-      metadataSynced: true,
-      completedAt: new Date().toISOString(),
+      metadataSynced,
+      createdAt,
+      ...(postUpdateWarning ? { postUpdateWarning } : {}),
     });
+    backupZipPath = finalizedBackup.backupZipPath;
+    manifestPath = finalizedBackup.manifestPath;
 
     return {
       success: true,
@@ -1604,13 +1931,16 @@ export async function applyMakeClientUpdate(
       projectRoot: root,
       currentVersion: status.currentVersion,
       targetVersion: status.targetVersion,
-      preUpdateHead,
       backupRoot,
+      backupZipPath,
+      manifestPath,
+      backupRecord: finalizedBackup.backupRecord,
       plannedFiles,
       writtenFiles,
       templateUrl,
       installMethod,
-      metadataSynced: true,
+      metadataSynced,
+      ...(postUpdateWarning ? { postUpdateWarning } : {}),
     };
   } catch (error) {
     attachMakeClientUpdateContext(error, updateContext());
@@ -1908,10 +2238,14 @@ async function ensureMakeClientDevServerInternal(
   const shouldFinishProgress = !options.progressLogger;
   try {
     validateExistingMakeClientProject(root);
+    const runtimePatch = progressLogger.runSync('runtime-patch', '同步客户端运行时补丁', () => syncMakeClientRuntimePatchFiles(root));
+    if (runtimePatch.patched) {
+      clearRuntimeServerInfo(root);
+    }
     tryEnsureAdminServerInfo(root, options.adminServerInfo, { homeDir: options.serverInfoHomeDir });
 
     const existingRuntime = readServerInfo(root, 'runtime');
-    if (isLiveMakeClientRuntime(existingRuntime, root)) {
+    if (!runtimePatch.patched && isLiveMakeClientRuntime(existingRuntime, root)) {
       progressLogger.runSync('reuse-runtime', '复用已启动客户端', () => undefined);
       const result = {
         success: true as const,
@@ -1919,12 +2253,13 @@ async function ensureMakeClientDevServerInternal(
         phase: 'ready' as const,
         runtime: existingRuntime,
         installMethod: 'skipped' as const,
+        ...(runtimePatch.patched ? { runtimePatched: true as const } : {}),
       };
       if (shouldFinishProgress) progressLogger.finish('success');
       return result;
     }
 
-    const discoveredRuntime = await discoverMakeClientRuntime(root, options);
+    const discoveredRuntime = runtimePatch.patched ? null : await discoverMakeClientRuntime(root, options);
     if (discoveredRuntime) {
       progressLogger.runSync('reuse-runtime', '复用已发现客户端', () => undefined);
       const result = {
@@ -1933,6 +2268,7 @@ async function ensureMakeClientDevServerInternal(
         phase: 'ready' as const,
         runtime: discoveredRuntime,
         installMethod: 'skipped' as const,
+        ...(runtimePatch.patched ? { runtimePatched: true as const } : {}),
       };
       if (shouldFinishProgress) progressLogger.finish('success');
       return result;
@@ -1991,6 +2327,7 @@ async function ensureMakeClientDevServerInternal(
       phase: 'ready' as const,
       runtime,
       installMethod,
+      ...(runtimePatch.patched ? { runtimePatched: true as const } : {}),
     };
     if (shouldFinishProgress) progressLogger.finish('success');
     return result;
@@ -2129,6 +2466,132 @@ export async function copyMakeClientProject(
       Object.assign(error, { progress: progressLogger.snapshot() });
     }
     throw error;
+  }
+}
+
+export async function cloneMakeClientProject(
+  params: {
+    parentRoot: string;
+    folderName: string;
+    projectName?: string;
+    gitUrl: string;
+  },
+  options: MakeClientOrchestrationOptions = {},
+): Promise<{
+  projectRoot: string;
+  marker: MakeClientMarker;
+  dev: MakeClientDevResult;
+  progress: MakeClientProgressSnapshot;
+  prompt?: string;
+}> {
+  const parentRoot = path.resolve(params.parentRoot);
+  if (!fs.existsSync(parentRoot) || !fs.statSync(parentRoot).isDirectory()) {
+    throw new MakeClientProjectError('INVALID_MAKE_PROJECT_FOLDER_NAME', 'Parent folder does not exist', { status: 400 });
+  }
+  const folderName = assertSafeMakeClientFolderName(params.folderName);
+  const gitUrl = String(params.gitUrl || '').trim();
+  if (!gitUrl) {
+    throw new MakeClientProjectError(
+      'MAKE_CLIENT_GIT_CLONE_FAILED',
+      'Missing Git URL',
+      { status: 400, phase: 'clone' },
+    );
+  }
+  const projectRoot = path.join(parentRoot, folderName);
+  if (fs.existsSync(projectRoot)) {
+    throw new MakeClientProjectError('MAKE_PROJECT_TARGET_NOT_EMPTY', 'Target folder already exists', { status: 409 });
+  }
+
+  const runner = options.commandRunner || defaultCommandRunner();
+  const runCommand = runner.runCommand || runLocalCommand;
+  const progressLogger = options.progressLogger || createMakeClientProgressLogger('create', {
+    projectRoot,
+    projectId: folderName,
+  });
+  const shouldFinishProgress = !options.progressLogger;
+  let clonedProject = false;
+  const clonePromptParams = {
+    gitUrl,
+    projectRoot,
+    projectName: params.projectName || folderName,
+  };
+
+  try {
+    await progressLogger.run('clone', '克隆项目', async () => {
+      try {
+        await runCommand('git', ['clone', gitUrl, projectRoot], {
+          cwd: parentRoot,
+          maxBuffer: 1024 * 1024 * 20,
+          timeoutMs: DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS,
+        });
+        clonedProject = true;
+      } catch (error) {
+        const errorMessage = commandErrorMessage(error);
+        throw new MakeClientProjectError(
+          'MAKE_CLIENT_GIT_CLONE_FAILED',
+          errorMessage || 'Git clone failed',
+          {
+            status: 409,
+            phase: 'clone',
+            details: {
+              gitUrl: clonePromptParams.gitUrl,
+              projectRoot: clonePromptParams.projectRoot,
+              promptScene: 'git-clone',
+              prompt: buildMakeClientGitClonePrompt({
+                ...clonePromptParams,
+                errorMessage,
+              }),
+            },
+          },
+        );
+      }
+    });
+
+    const sourceMarker = progressLogger.runSync('write-project', '写入项目', () => {
+      const marker = validateExistingMakeClientProject(projectRoot);
+      const projectName = typeof params.projectName === 'string'
+        ? params.projectName.trim()
+        : marker.project.name;
+      const nextMarker = writeMakeClientMarker(projectRoot, {
+        ...marker,
+        repository: gitUrl,
+        project: {
+          id: folderName,
+          name: projectName,
+        },
+      });
+      rewriteProjectMetadataIdentity(projectRoot, folderName, projectName);
+      ensureMakeClientScripts(projectRoot);
+      return nextMarker;
+    });
+
+    const dev = await ensureMakeClientDevServer(projectRoot, {
+      ...options,
+      commandRunner: runner,
+      progressLogger,
+    });
+    if (shouldFinishProgress) progressLogger.finish('success');
+    return {
+      projectRoot,
+      marker: sourceMarker,
+      dev,
+      progress: progressLogger.snapshot(),
+    };
+  } catch (error) {
+    if (!clonedProject || error instanceof MakeClientProjectError && error.phase === 'clone') {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+    if (shouldFinishProgress) progressLogger.finish('failed', error);
+    const thrownError = clonedProject
+      ? attachMakeClientGitClonePrompt(error, clonePromptParams)
+      : error;
+    if (error && typeof error === 'object') {
+      Object.assign(error, { progress: progressLogger.snapshot() });
+    }
+    if (thrownError && typeof thrownError === 'object') {
+      Object.assign(thrownError, { progress: progressLogger.snapshot() });
+    }
+    throw thrownError;
   }
 }
 

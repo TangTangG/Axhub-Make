@@ -64,7 +64,10 @@
 
 - 如果页面使用 `@axhub/annotation` 的 `AnnotationViewer`，必须在当前导出入口文件里静态导入本地标注源，例如 `import annotationSourceDocument from './annotation-source.json'`。
 - `AnnotationViewer` 的 `source` 必须直接使用该本地 JSON 导入，确保 on-demand Axure bundle 会把标注数据一起打进 Runtime 组件代码。
+- 目录 Markdown 文档节点可以使用 `markdownPath`，例如 `docs/prd-03-status.md`；该路径必须相对当前原型目录，并指向同一原型目录内的文件。
+- 导出时目录 Markdown 必须走构建期内联：Vite/on-demand build 读取 `markdownPath` 对应 `.md` 文件并写入节点 `markdown`，发布包运行时不得再请求 `.md` 文件。
 - 不要依赖运行后再请求 `annotation-source.json`，也不要只把标注源放在目录或外部文档里。
+- 不要要求导出包额外携带 `docs/*.md` 才能阅读目录文档；可读正文必须已经包含在 bundle 内联数据中。
 - Axure Runtime 组件运行后，对外读取入口是 `window.__AXHUB_ANNOTATION_SOURCE__`；该快照包含 `directory` 和已合并 Markdown 正文的 `nodes`，不是原始 `markdownMap`。
 
 推荐写法：
@@ -89,6 +92,7 @@ import annotationSourceDocument from './annotation-source.json';
 - 文件头包含 `@mode axure` 和相关 rules 路径。
 - 默认导出符合当前导出检查逻辑。
 - 如果使用 `AnnotationViewer`，当前文件已静态导入并传入 `annotation-source.json`。
+- 如果目录节点使用 `markdownPath`，导出预览中已能直接阅读正文，且网络面板不依赖额外 `.md` 文件请求。
 
 ## 非目标
 

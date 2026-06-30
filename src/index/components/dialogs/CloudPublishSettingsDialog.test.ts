@@ -7,7 +7,7 @@ function readDialogSource() {
 }
 
 describe('CloudPublishSettingsDialog source', () => {
-  it('uses Axure-style top tabs with S3-compatible object storage first', () => {
+  it('uses Axure-style top tabs with concise object storage first', () => {
     const source = readDialogSource();
     const s3TabIndex = source.indexOf('value="s3"');
     const vercelTabIndex = source.indexOf('value="vercel"');
@@ -30,19 +30,31 @@ describe('CloudPublishSettingsDialog source', () => {
     expect(source).toContain('value="cloudflare-pages"');
     expect(source).toContain('Cloudflare Pages');
     expect(source).toContain('value="s3"');
-    expect(source).toContain('S3');
+    expect(source).not.toContain('S3 Compatible');
     expect(source).toContain('value="github-pages"');
     expect(source).toContain('GitHub Pages');
     expect(source).toContain('value="publish-settings"');
     expect(source).toContain('发布设置');
   });
 
-  it('defaults cloud publishing to exclude source files and exposes a toggle', () => {
+  it('defaults cloud publishing to Axhub only, excludes source files, and exposes toggles', () => {
     const source = readDialogSource();
 
     expect(source).toContain("import { Switch } from '@/components/ui/switch';");
+    expect(source).toContain("import { Checkbox } from '@/components/ui/checkbox';");
     expect(source).toContain('publishSettings: {');
     expect(source).toContain('includeSource: false');
+    expect(source).toContain("visibleTargets: ['axhub']");
+    expect(source).toContain('发布平台');
+    expect(source).toContain("toggleVisibleTarget(target.id, checked === true)");
+    expect(source).toContain("visibleTargets.includes(target.id)");
+    expect(source).toContain("{ id: 'axhub', label: 'Axhub' }");
+    expect(source).toContain('默认勾选 Axhub');
+    expect(source).not.toContain('Axhub 是固定入口');
+    expect(source).toContain('对象存储');
+    expect(source).toContain('Vercel');
+    expect(source).toContain('Cloudflare Pages');
+    expect(source).toContain('GitHub Pages');
     expect(source).toContain('包含源码');
     expect(source).toContain("updatePublishSettings('includeSource', checked)");
   });
@@ -52,7 +64,7 @@ describe('CloudPublishSettingsDialog source', () => {
 
     expect(source).toContain('支持阿里云 OSS、腾讯云 COS、华为云 OBS 等国内主流兼容 S3 标准的云服务');
     expect(source).toContain('对象存储');
-    expect(source).toContain('S3 Compatible');
+    expect(source).not.toContain('S3 Compatible');
     expect(source).toContain('访问密钥 ID');
     expect(source).toContain('Access Key ID');
     expect(source).toContain('访问密钥 Secret');
@@ -63,6 +75,7 @@ describe('CloudPublishSettingsDialog source', () => {
     expect(source).toContain('Bucket');
     expect(source).toContain('对象前缀');
     expect(source).toContain('Prefix');
+    expect(source).toContain('留空时会按当前发布资源自动生成目录');
     expect(source).toContain('访问地址');
     expect(source).toContain('Base URL');
     expect(source).toContain('上传入口');
@@ -92,5 +105,35 @@ describe('CloudPublishSettingsDialog source', () => {
     expect(source).toContain('gh-pages');
     expect(source).toContain('publishSettings');
     expect(source).toContain('includeSource');
+  });
+
+  it('marks Cloudflare Pages Project Name as optional and documents the automatic resource-based fallback', () => {
+    const source = readDialogSource();
+    const cloudflareSection = source.slice(
+      source.indexOf('<TabsContent value="cloudflare-pages"'),
+      source.indexOf('<TabsContent value="github-pages"'),
+    );
+    const projectNameField = cloudflareSection.slice(
+      cloudflareSection.indexOf('label="Project Name"'),
+      cloudflareSection.indexOf('label="Production Branch"'),
+    );
+
+    expect(projectNameField).toContain('label="Project Name"');
+    expect(projectNameField).not.toContain('required');
+    expect(projectNameField).toContain('留空时会按当前发布资源自动生成项目名');
+    expect(projectNameField).toContain('不同原型可以发布到不同 Cloudflare Pages 项目');
+  });
+
+  it('documents the optional GitHub Pages path prefix fallback', () => {
+    const source = readDialogSource();
+    const githubPagesSection = source.slice(
+      source.indexOf('<TabsContent value="github-pages"'),
+      source.indexOf('<TabsContent value="publish-settings"'),
+    );
+
+    expect(githubPagesSection).toContain('label="Path Prefix"');
+    expect(githubPagesSection).toContain('name="pathPrefix"');
+    expect(githubPagesSection).toContain('留空时会按当前发布资源自动生成子目录');
+    expect(githubPagesSection).toContain('不同原型可以发布到同一个 GitHub Pages 站点的不同路径');
   });
 });

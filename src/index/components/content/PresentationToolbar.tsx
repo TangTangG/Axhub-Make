@@ -51,9 +51,9 @@ import { cn } from '@/lib/utils';
 import { MAIN_IDE_APP_NAMES, resolveVisibleIDEPreference } from '../../../common/ide';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type {
-    GenieEditorHostToolbarAction,
-    GenieEditorHostToolbarState,
-} from 'axhub-genie-editor';
+    CommentaryHostToolbarAction,
+    CommentaryHostToolbarState,
+} from '@axhub/commentary';
 import { isDocumentCommentableResource, isHtmlCommentableResource, isMarkdownEditableResource } from '../../app/index-page.helpers';
 import { hasExplicitLocalPath } from '../../utils/localPath';
 import { SPEC_QUICK_EDIT_SEGMENT_OPTIONS, type SpecQuickEditMode } from '../../utils/specQuickEdit';
@@ -63,7 +63,7 @@ import type {
     PreviewScaleMode,
     PreviewSinglePreset,
 } from '../../domains/device/preview-layout';
-import type { ExportAvailability, QuickEditRuntimeStatus, QuickEditSaveAction } from '../../types/index-page.types';
+import type { ConfigurableCloudPublishTarget, ExportAvailability, QuickEditRuntimeStatus, QuickEditSaveAction } from '../../types/index-page.types';
 import type { CloudPublishTarget } from '../../services/api';
 
 function PreviewSplitIcon() {
@@ -143,7 +143,7 @@ interface PresentationToolbarProps {
     handleChangePreviewScaleMode: (mode: PreviewScaleMode) => void;
     handleOpenWebEditor: () => void;
     handleExitWebEditor: () => void;
-    handleEnableDocEdit: () => void;
+    handleEnableDocEdit: (mode?: SpecQuickEditMode) => void;
     handleSaveDocEdit: () => void;
     handleExitDocEdit: () => void;
     handleSwitchDocQuickEditMode: (mode: SpecQuickEditMode) => void;
@@ -156,13 +156,14 @@ interface PresentationToolbarProps {
     handleExportMake: () => void;
     handleExportHtml: (options?: { includeSource?: boolean }) => void;
     handlePublishCloudTarget: (target: CloudPublishTarget) => void | Promise<void>;
-    handleOpenCloudPublishSettings: (target?: CloudPublishTarget) => void;
+    handleOpenCloudPublishSettings: (target?: ConfigurableCloudPublishTarget | 'publish-settings') => void;
+    handleOpenAxhubPublishDialog: () => void | Promise<void>;
     currentPublishResourcePath?: string;
+    visibleCloudPublishTargets?: CloudPublishTarget[];
     latestCloudPublishUrl: string;
     handleCopyLatestCloudPublishUrl: () => void | Promise<void>;
     setIsExportModalOpen: (open: boolean) => void;
     handleQuickCopyEditablePrototype: () => void;
-    handleQuickCopyRuntimeComponent: () => void;
     handleOpenAxureUsageGuide: () => void;
     handleOpenIdeFile: () => void | Promise<void>;
     handleOpenDocInIDE: () => void | Promise<void>;
@@ -181,8 +182,9 @@ interface PresentationToolbarProps {
     markdownPromptCopying?: boolean;
     quickEditRuntimeStatus?: QuickEditRuntimeStatus;
     exportAvailability?: ExportAvailability;
-    hostToolbarState?: GenieEditorHostToolbarState | null;
-    handleRunHostToolbarAction?: (action: GenieEditorHostToolbarAction) => void | Promise<boolean>;
+    hostToolbarState?: CommentaryHostToolbarState | null;
+    prototypeDecisionDataAvailable?: boolean;
+    handleRunHostToolbarAction?: (action: CommentaryHostToolbarAction) => void | Promise<boolean>;
     handleRunQuickEditSaveAction?: (action: QuickEditSaveAction) => void | Promise<boolean>;
     contentMode?: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
     selectedDoc?: ItemData | null;
@@ -233,12 +235,13 @@ export default function PresentationToolbar({
     handleExportHtml,
     handlePublishCloudTarget,
     handleOpenCloudPublishSettings,
+    handleOpenAxhubPublishDialog,
     currentPublishResourcePath = '',
+    visibleCloudPublishTargets = ['axhub'],
     latestCloudPublishUrl,
     handleCopyLatestCloudPublishUrl,
     setIsExportModalOpen,
     handleQuickCopyEditablePrototype,
-    handleQuickCopyRuntimeComponent,
     handleOpenAxureUsageGuide,
     handleOpenIdeFile,
     handleOpenDocInIDE,
@@ -253,6 +256,7 @@ export default function PresentationToolbar({
     quickEditRuntimeStatus = 'idle',
     exportAvailability,
     hostToolbarState = null,
+    prototypeDecisionDataAvailable = false,
     handleRunHostToolbarAction,
     handleRunQuickEditSaveAction,
     contentMode = 'preview',
@@ -277,6 +281,7 @@ export default function PresentationToolbar({
     const htmlExportDisabledReason = exportAvailability?.htmlExportDisabledReason || '';
     const makeExportDisabledReason = exportAvailability?.makeExportDisabledReason || '';
     const hasCurrentPublishResource = Boolean(currentPublishResourcePath);
+    const visibleCloudPublishTargetSet = new Set(visibleCloudPublishTargets);
     const currentMarkdownItem = contentMode === 'template' ? selectedTemplate : selectedDoc;
     const currentMarkdownLabel = contentMode === 'template' ? '模板' : '文档';
     const showMakeExportEntry = activeTab === 'prototypes'
@@ -387,11 +392,14 @@ export default function PresentationToolbar({
         && Boolean(onReviewPanelToggle)
         && !isQuickEditActive
         && !docEditState.enabled;
+    const canShowPrototypeDecisionActions = !isPreviewContent || prototypeDecisionDataAvailable;
     const showStandalonePropertyPanelAction = contentMode !== 'theme'
         && Boolean(onStandalonePanelToggle)
+        && canShowPrototypeDecisionActions
         && !isQuickEditActive
         && !docEditState.enabled;
-    const showHostPropertyPanelAction = contentMode !== 'theme';
+    const showHostPropertyPanelAction = contentMode !== 'theme'
+        && canShowPrototypeDecisionActions;
 
     const [hostActionMenuOpen, setHostActionMenuOpen] = React.useState(false);
     const [hostAgentMenuOpen, setHostAgentMenuOpen] = React.useState(false);
@@ -466,16 +474,16 @@ export default function PresentationToolbar({
             handleExitDocEdit();
             return;
         }
-        handleEnableDocEdit();
+        handleEnableDocEdit('comment');
     };
 
-    const runHostAction = (action: GenieEditorHostToolbarAction) => {
+    const runHostAction = (action: CommentaryHostToolbarAction) => {
         void handleRunHostToolbarAction?.(action);
     };
     const runQuickEditSaveAction = (action: QuickEditSaveAction) => {
         void handleRunQuickEditSaveAction?.(action);
     };
-    const getHostMenuActionHandlers = (action: GenieEditorHostToolbarAction) => ({
+    const getHostMenuActionHandlers = (action: CommentaryHostToolbarAction) => ({
         onMouseDown: (event: React.MouseEvent<HTMLElement>) => {
             if (event.button !== 0 || event.ctrlKey) {
                 return;
@@ -526,7 +534,7 @@ export default function PresentationToolbar({
         key: string,
         label: string,
         icon: React.ReactNode,
-        action: GenieEditorHostToolbarAction,
+        action: CommentaryHostToolbarAction,
         options?: {
             disabled?: boolean;
             active?: boolean;
@@ -670,7 +678,7 @@ export default function PresentationToolbar({
                             role="menuitem"
                             disabled={hostToolbarState.robotDisabled || hostToolbarState.robotLoading}
                             {...getHostMenuActionHandlers({
-                                type: hostLocalAgentConnected ? 'disconnect-genie' : 'wake-genie',
+                                type: hostLocalAgentConnected ? 'disconnect-agent' : 'wake-agent',
                             })}
                             className={cn(
                                 hostMenuItemClass,
@@ -680,6 +688,21 @@ export default function PresentationToolbar({
                             <Code2 className={hostMenuIconClass} />
                             {hostLocalAgentConnected ? '已链接本地 Agent' : '链接本地 Agent'}
                         </button>
+                        {hostToolbarState.annotationEnableAvailable || hostToolbarState.annotationEnabled ? (
+                            <button
+                                type="button"
+                                role="menuitem"
+                                disabled={hostToolbarState.annotationEnableLoading || hostToolbarState.annotationEnableDisabled}
+                                {...getHostMenuActionHandlers({ type: 'enable-annotation' })}
+                                className={cn(
+                                    hostMenuItemClass,
+                                    hostToolbarState.annotationEnabled && 'text-brand hover:bg-brand/5 hover:text-brand',
+                                )}
+                            >
+                                <FileText className={hostMenuIconClass} />
+                                {hostToolbarState.annotationEnabled ? '需求标注已开启' : '开启需求标注'}
+                            </button>
+                        ) : null}
                         <button
                             type="button"
                             role="menuitem"
@@ -701,7 +724,7 @@ export default function PresentationToolbar({
                                 type="button"
                                 role="menuitem"
                                 disabled={hostToolbarState.interruptDisabled || hostToolbarState.interruptLoading}
-                                {...getHostMenuActionHandlers({ type: 'interrupt-genie' })}
+                                {...getHostMenuActionHandlers({ type: 'interrupt-agent' })}
                                 className={hostMenuItemClass}
                             >
                                 <Square className={hostMenuIconClass} /> 中断执行
@@ -752,7 +775,7 @@ export default function PresentationToolbar({
                                 role="menuitemradio"
                                 aria-checked={agent.value === hostToolbarState.selectedAgent}
                                 disabled={agent.disabled}
-                                {...getHostMenuActionHandlers({ type: 'set-genie-agent', agent: agent.value })}
+                                {...getHostMenuActionHandlers({ type: 'set-active-agent', agent: agent.value })}
                                 className={hostMenuItemClass}
                             >
                                 {agent.value === hostToolbarState.selectedAgent ? (
@@ -784,7 +807,7 @@ export default function PresentationToolbar({
                 'host-send',
                 'AI 执行',
                 <Send />,
-                { type: 'send-to-genie' },
+                { type: 'send-to-agent' },
                 {
                     visible: showHostExecutionControls && hostToolbarState.sendVisible,
                     disabled: hostToolbarState.sendDisabled,
@@ -884,7 +907,7 @@ export default function PresentationToolbar({
                         <TooltipProvider>
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Button variant="ghost" size="xs" className={toolbarTextButtonClass} onClick={handleEnableDocEdit}>
+                                    <Button variant="ghost" size="xs" className={toolbarTextButtonClass} onClick={() => handleEnableDocEdit('comment')}>
                                         <PencilRuler /> 批注
                                     </Button>
                                 </TooltipTrigger>
@@ -896,7 +919,7 @@ export default function PresentationToolbar({
                         <TooltipProvider>
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Button variant="ghost" size="xs" className={toolbarTextButtonClass} onClick={handleEnableDocEdit}>
+                                    <Button variant="ghost" size="xs" className={toolbarTextButtonClass} onClick={() => handleEnableDocEdit('edit')}>
                                         <FileText /> 编辑
                                     </Button>
                                 </TooltipTrigger>
@@ -1341,7 +1364,7 @@ export default function PresentationToolbar({
                         className="gap-2 h-7 text-sm"
                     >
                         <Download className="h-3.5 w-3.5" />
-                        {makeExportDisabledReason ? `导出 Make（${makeExportDisabledReason}）` : '导出 Make'}
+                        {makeExportDisabledReason ? `导出 Figma Make（${makeExportDisabledReason}）` : '导出 Figma Make'}
                     </DropdownMenuItem>
                 ) : null}
                 <DropdownMenuSeparator />
@@ -1354,7 +1377,7 @@ export default function PresentationToolbar({
                     title={exportAvailability?.axureDisabledReason || ''}
                     className="gap-2 h-7 text-sm"
                 >
-                    <Download className="h-3.5 w-3.5" /> 导出到 Axure
+                    <Download className="h-3.5 w-3.5" /> 导出带交互原型
                 </DropdownMenuItem>
                 <DropdownMenuItem
                     onClick={handleQuickCopyEditablePrototype}
@@ -1363,14 +1386,6 @@ export default function PresentationToolbar({
                     className="gap-2 h-7 text-sm"
                 >
                     <Copy className="h-3.5 w-3.5" /> 复制可编辑原型
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                    onClick={handleQuickCopyRuntimeComponent}
-                    disabled={Boolean(axureSourceDisabledReason)}
-                    title={axureSourceDisabledReason}
-                    className="gap-2 h-7 text-sm"
-                >
-                    <Copy className="h-3.5 w-3.5" /> 复制 runtime 组件
                 </DropdownMenuItem>
                 <DropdownMenuItem
                     onClick={handleOpenAxureUsageGuide}
@@ -1402,46 +1417,63 @@ export default function PresentationToolbar({
                 <DropdownMenuLabel className="px-2 py-1 text-[11px] font-normal text-muted-foreground">
                     云服务
                 </DropdownMenuLabel>
-                <DropdownMenuItem
-                    onClick={() => handlePublishCloudTarget('s3')}
-                    disabled={!hasCurrentPublishResource}
-                    className="gap-2 h-7 text-sm"
-                >
-                    <Send className="h-3.5 w-3.5" /> 发布到 S3 对象存储
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                    onClick={() => handlePublishCloudTarget('vercel')}
-                    disabled={!hasCurrentPublishResource}
-                    className="gap-2 h-7 text-sm"
-                >
-                    <Send className="h-3.5 w-3.5" /> 发布到 Vercel
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                    onClick={() => handlePublishCloudTarget('cloudflare-pages')}
-                    disabled={!hasCurrentPublishResource}
-                    className="gap-2 h-7 text-sm"
-                >
-                    <Send className="h-3.5 w-3.5" /> 发布到 Cloudflare Pages
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                    onClick={() => handlePublishCloudTarget('github-pages')}
-                    disabled={!hasCurrentPublishResource}
-                    className="gap-2 h-7 text-sm"
-                >
-                    <Send className="h-3.5 w-3.5" /> 发布到 GitHub Pages
-                </DropdownMenuItem>
+                {visibleCloudPublishTargetSet.has('axhub') ? (
+                    <DropdownMenuItem
+                        onClick={() => handleOpenAxhubPublishDialog()}
+                        disabled={!hasCurrentPublishResource}
+                        className="gap-2 h-7 text-sm"
+                    >
+                        <Cloud className="h-3.5 w-3.5" /> 发布到 Axhub
+                    </DropdownMenuItem>
+                ) : null}
+                {visibleCloudPublishTargetSet.has('s3') ? (
+                    <DropdownMenuItem
+                        onClick={() => handlePublishCloudTarget('s3')}
+                        disabled={!hasCurrentPublishResource}
+                        className="gap-2 h-7 text-sm"
+                    >
+                        <Send className="h-3.5 w-3.5" /> 发布到对象存储
+                    </DropdownMenuItem>
+                ) : null}
+                {visibleCloudPublishTargetSet.has('vercel') ? (
+                    <DropdownMenuItem
+                        onClick={() => handlePublishCloudTarget('vercel')}
+                        disabled={!hasCurrentPublishResource}
+                        className="gap-2 h-7 text-sm"
+                    >
+                        <Send className="h-3.5 w-3.5" /> 发布到 Vercel
+                    </DropdownMenuItem>
+                ) : null}
+                {visibleCloudPublishTargetSet.has('cloudflare-pages') ? (
+                    <DropdownMenuItem
+                        onClick={() => handlePublishCloudTarget('cloudflare-pages')}
+                        disabled={!hasCurrentPublishResource}
+                        className="gap-2 h-7 text-sm"
+                    >
+                        <Send className="h-3.5 w-3.5" /> 发布到 Cloudflare Pages
+                    </DropdownMenuItem>
+                ) : null}
+                {visibleCloudPublishTargetSet.has('github-pages') ? (
+                    <DropdownMenuItem
+                        onClick={() => handlePublishCloudTarget('github-pages')}
+                        disabled={!hasCurrentPublishResource}
+                        className="gap-2 h-7 text-sm"
+                    >
+                        <Send className="h-3.5 w-3.5" /> 发布到 GitHub Pages
+                    </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem
                     onClick={() => handleCopyLatestCloudPublishUrl()}
                     disabled={!latestCloudPublishUrl || !hasCurrentPublishResource}
                     className="gap-2 h-7 text-sm"
                 >
-                    <Copy className="h-3.5 w-3.5" /> 最近发布地址
+                    <Copy className="h-3.5 w-3.5" /> 复制发布地址
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                    onClick={() => handleOpenCloudPublishSettings()}
+                    onClick={() => handleOpenCloudPublishSettings('publish-settings')}
                     className="gap-2 h-7 text-sm"
                 >
-                    <Settings2 className="h-3.5 w-3.5" /> 设置
+                    <Settings2 className="h-3.5 w-3.5" /> 更多平台与设置
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem

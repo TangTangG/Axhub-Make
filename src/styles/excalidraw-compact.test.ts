@@ -100,13 +100,12 @@ describe('excalidraw compact canvas styles', () => {
         expect(iconRule).toContain('height: var(--axhub-excalidraw-prominent-icon-size) !important;');
     });
 
-    it('hides native image crop hints only for unified generator placeholders', () => {
+    it('does not keep selected AI generator placeholder hint overrides after removing the old composer node', () => {
         const css = readCompactCss();
 
-        expect(css).toContain('[data-axhub-ai-generation-generator-selected=\'true\'] .excalidraw .HintViewer');
+        expect(css).not.toContain('[data-axhub-ai-generation-generator-selected=\'true\'] .excalidraw .HintViewer');
         expect(css).not.toContain('[data-axhub-ai-image-generator-selected=\'true\'] .excalidraw .HintViewer');
         expect(css).not.toContain('[data-axhub-prototype-generator-selected=\'true\'] .excalidraw .HintViewer');
-        expect(css).toContain('display: none !important;');
     });
 
     it('keeps the injected prototype toolbar button on the same hover surface as native tools', () => {

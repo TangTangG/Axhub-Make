@@ -30,6 +30,13 @@ const PREVIEW_TYPES = new Set<ResourceType>(['prototypes', 'themes']);
 const PROTOTYPE_CANVAS_ASSETS_DIR = 'canvas-assets';
 const PREVIEW_LOADER_FILE = '__axhub-preview-loader.js';
 const DEFAULT_ADMIN_ORIGIN = 'http://localhost:53817';
+const REACT_REFRESH_PREAMBLE_MARKER = 'data-axhub-react-refresh-preamble';
+const REACT_REFRESH_PREAMBLE_SCRIPT = `<script type="module" ${REACT_REFRESH_PREAMBLE_MARKER}>
+import { injectIntoGlobalHook } from "/@react-refresh";
+injectIntoGlobalHook(window);
+window.$RefreshReg$ = () => {};
+window.$RefreshSig$ = () => (type) => type;
+</script>`;
 
 function escapeRegExp(input: string) {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -146,19 +153,49 @@ function handleHtmlProxyModuleRequestWithProjectContext(
   next();
 }
 
-function normalizeRoute(
-  url: string,
-  projectRoot = process.cwd(),
-): { type: ResourceType; name: string; action: 'preview' | 'spec'; assetPath?: string } | null {
-  const pathname = (url.split('?')[0] || '').replace(/\/index\.html$/u, '').replace(/\.html$/u, '');
-  const parts = pathname.split('/').filter(Boolean).map((part) => {
+function decodePathParts(pathname: string): string[] {
+  return pathname.split('/').filter(Boolean).map((part) => {
     try {
       return decodeURIComponent(part);
     } catch {
       return part;
     }
   });
-  if (parts.some((part) => part.includes('/') || part.includes('\\') || part.includes('\0'))) {
+}
+
+function isSafePathPart(part: string): boolean {
+  return Boolean(part) && !part.includes('/') && !part.includes('\\') && !part.includes('\0');
+}
+
+function hasPreviewEntry(projectRoot: string, type: ResourceType, nameParts: string[]): boolean {
+  if (!PREVIEW_TYPES.has(type) || nameParts.length === 0 || nameParts.some((part) => !isSafePathPart(part) || part === '..')) {
+    return false;
+  }
+  const resourceDir = path.resolve(projectRoot, 'src', type, ...nameParts);
+  return fs.existsSync(path.join(resourceDir, 'index.tsx'))
+    || fs.existsSync(path.join(resourceDir, 'index.ts'));
+}
+
+function stripPreviewEntryHtmlSuffix(pathname: string, suffixPattern: RegExp, projectRoot: string): string {
+  if (!suffixPattern.test(pathname)) {
+    return pathname;
+  }
+  const previewPathname = pathname.replace(suffixPattern, '');
+  const previewParts = decodePathParts(previewPathname);
+  const previewType = previewParts[0] as ResourceType;
+  const previewNameParts = previewParts.slice(1);
+  return hasPreviewEntry(projectRoot, previewType, previewNameParts) ? previewPathname : pathname;
+}
+
+function normalizeRoute(
+  url: string,
+  projectRoot = process.cwd(),
+): { type: ResourceType; name: string; action: 'preview' | 'spec'; assetPath?: string } | null {
+  const rawPathname = url.split('?')[0] || '';
+  let pathname = stripPreviewEntryHtmlSuffix(rawPathname, /\/index\.html$/iu, projectRoot);
+  pathname = stripPreviewEntryHtmlSuffix(pathname, /\.html$/iu, projectRoot);
+  const parts = decodePathParts(pathname);
+  if (parts.some((part) => !isSafePathPart(part))) {
     return null;
   }
   const type = parts[0] as ResourceType;
@@ -166,7 +203,7 @@ function normalizeRoute(
     return null;
   }
   const lastPart = parts[parts.length - 1] || '';
-  const isAssetRequest = /\.(css|png|jpe?g|webp|svg|gif|avif|ico|json|txt|woff2?|ttf|otf|eot)$/iu.test(lastPart);
+  const isAssetRequest = /\.(css|html?|png|jpe?g|webp|svg|gif|avif|ico|json|txt|woff2?|ttf|otf|eot)$/iu.test(lastPart);
   const action = parts[parts.length - 1] === 'spec' ? 'spec' : 'preview';
   let nameParts = action === 'spec' || isAssetRequest ? parts.slice(1, -1) : parts.slice(1);
   let assetParts = isAssetRequest ? [lastPart] : [];
@@ -319,6 +356,22 @@ export function injectQuickEditRuntimeScript(html: string, serverOrigin: string 
   return html.includes('</body>')
     ? html.replace('</body>', `  ${tag}\n</body>`)
     : `${html}\n${tag}`;
+}
+
+export function injectReactRefreshPreambleScript(html: string): string {
+  if (
+    html.includes(REACT_REFRESH_PREAMBLE_MARKER)
+    || (
+      html.includes('injectIntoGlobalHook(window)')
+      && html.includes('window.$RefreshReg$')
+      && html.includes('/@react-refresh')
+    )
+  ) {
+    return html;
+  }
+  return html.includes('</head>')
+    ? html.replace('</head>', `  ${REACT_REFRESH_PREAMBLE_SCRIPT}\n</head>`)
+    : `${REACT_REFRESH_PREAMBLE_SCRIPT}\n${html}`;
 }
 
 export function injectPreviewScrollbarStyle(html: string): string {
@@ -537,12 +590,21 @@ if (import.meta.hot) {
 `;
 }
 
-function createPreviewLoaderScriptTag(type: ResourceType, name: string, requestUrl: string): string {
+function createPreviewLoaderScriptTag(
+  type: ResourceType,
+  name: string,
+  requestUrl: string,
+): string {
   const src = appendPreviewLoaderSearchParams(createPreviewLoaderPath(type, name), requestUrl);
   return `<script type="module" src="${src}"></script>`;
 }
 
-function replacePreviewLoaderPlaceholder(html: string, type: ResourceType, name: string, requestUrl: string): string {
+function replacePreviewLoaderPlaceholder(
+  html: string,
+  type: ResourceType,
+  name: string,
+  requestUrl: string,
+): string {
   const scriptTag = createPreviewLoaderScriptTag(type, name, requestUrl);
   const inlineModulePattern = /(\s*)<script\b[^>]*type=["']module["'][^>]*>\s*\{\{PREVIEW_LOADER\}\}\s*<\/script>/u;
   if (inlineModulePattern.test(html)) {
@@ -562,6 +624,8 @@ function sendPreviewFile(res: {
   const ext = path.extname(filePath).toLowerCase();
   const contentTypes: Record<string, string> = {
     '.css': 'text/css; charset=utf-8',
+    '.html': 'text/html; charset=utf-8',
+    '.htm': 'text/html; charset=utf-8',
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
@@ -610,6 +674,18 @@ function isCssModuleRequest(
   try {
     const pathname = new URL(referer).pathname;
     return /\.(?:[cm]?[jt]sx?|mjs)$/iu.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
+function requiresViteCssTransform(filePath: string): boolean {
+  if (path.extname(filePath).toLowerCase() !== '.css') {
+    return false;
+  }
+  try {
+    const source = fs.readFileSync(filePath, 'utf8');
+    return /@import\s+(?:url\(\s*)?["']tailwindcss(?:\/[^"')]*)?["']/u.test(source);
   } catch {
     return false;
   }
@@ -822,6 +898,10 @@ export function clientPreviewPlugin(): Plugin {
               assetPath: route.assetPath,
               resourceDir: previewSource.resourceDir,
             });
+            if (assetPath && requiresViteCssTransform(assetPath)) {
+              next();
+              return;
+            }
             if (assetPath && sendPreviewFile(res, assetPath)) {
               return;
             }
@@ -867,7 +947,7 @@ export function clientPreviewPlugin(): Plugin {
             createPreviewTransformUrl(route.type, route.name),
             html,
           );
-          res.end(transformedHtml);
+          res.end(injectReactRefreshPreambleScript(transformedHtml));
         } catch (error) {
           next(error);
         }

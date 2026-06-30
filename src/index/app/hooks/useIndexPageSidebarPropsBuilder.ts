@@ -32,6 +32,8 @@ interface UseIndexPageSidebarPropsBuilderParams {
         projectTitle: string;
         activeProjectId: string | null;
         projectSetupRequired?: boolean;
+        makeClientUpdateAvailable?: boolean;
+        makeClientUpdateReminderVisible?: boolean;
         projects: any[];
         resourceWriteCapabilities: ResourceWriteCapabilities;
         localExportCapabilities: LocalExportCapabilities;
@@ -55,6 +57,7 @@ interface UseIndexPageSidebarPropsBuilderParams {
         setPreferredIDE: (ide: MainIDEPreference) => void;
         setIsDarkMode: (dark: boolean) => void;
         openSettingsDialog: (tab?: SettingsDialogInitialTab) => void;
+        setVersionCollaborationDrawerOpen: Dispatch<SetStateAction<boolean>>;
         setActiveTab: Dispatch<SetStateAction<TabType>>;
         setSidebarTab: Dispatch<SetStateAction<SidebarTab>>;
         setViewMode: Dispatch<SetStateAction<ViewMode>>;
@@ -68,6 +71,12 @@ interface UseIndexPageSidebarPropsBuilderParams {
             parentRoot: string;
             folderName: string;
             projectName?: string;
+        }) => Promise<unknown>;
+        cloneMakeProject: (params: {
+            parentRoot: string;
+            folderName: string;
+            projectName?: string;
+            gitUrl: string;
         }) => Promise<unknown>;
         copyMakeProject: (params: {
             parentRoot: string;
@@ -130,6 +139,8 @@ export function useIndexPageSidebarPropsBuilder({
             projectTitle: state.projectTitle,
             activeProjectId: state.activeProjectId,
             projectSetupRequired: state.projectSetupRequired,
+            makeClientUpdateAvailable: state.makeClientUpdateAvailable,
+            makeClientUpdateReminderVisible: state.makeClientUpdateReminderVisible,
             projects: state.projects,
             resourceWriteCapabilities: state.resourceWriteCapabilities,
             localExportCapabilities: state.localExportCapabilities,
@@ -206,7 +217,8 @@ export function useIndexPageSidebarPropsBuilder({
             handleDeleteCanvasItem: deps.resources.handleDeleteCanvasItem,
             handleCopyCanvasPath: deps.resources.handleCopyCanvasPath,
             onCreateFolder: deps.resources.handleCreateFolder,
-            onSettingsClick: () => deps.openSettingsDialog('project'),
+            onSettingsClick: (tab = 'project') => deps.openSettingsDialog(tab),
+            onVersionCollaborationClick: () => deps.setVersionCollaborationDrawerOpen(true),
             onToggleTheme: () => deps.setIsDarkMode(!state.isDarkMode),
             onTitleChange: deps.resources.handleProjectTitleChange,
             onProjectSwitch: deps.switchProject,
@@ -221,6 +233,11 @@ export function useIndexPageSidebarPropsBuilder({
             },
             onCreateBlankMakeProject: async (params) => {
                 const result = await deps.createBlankMakeProject(params);
+                resetToPrototypeStartView();
+                return result;
+            },
+            onCloneMakeProject: async (params) => {
+                const result = await deps.cloneMakeProject(params);
                 resetToPrototypeStartView();
                 return result;
             },

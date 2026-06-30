@@ -35,6 +35,7 @@ export interface CanvasDocumentPromptSettings {
 
 export type CanvasGenerationPromptSettings =
   | CanvasPrototypePromptSettings
+  | CanvasImagePromptSettings
   | CanvasDocumentPromptSettings
   | undefined;
 
@@ -45,8 +46,25 @@ export interface CanvasGenerationPromptCanvasContext {
   source?: string;
 }
 
+export type CanvasGenerationFinalGuide = 'update-canvas' | 'local-ai-acknowledgement' | 'none';
+
+export const CANVAS_UPDATE_FINAL_GUIDE = '请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。';
+export const LOCAL_AI_COPY_FINAL_GUIDE = '请回复了解并等待用户发送需求。';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function asCanvasPrototypePromptSettings(settings: Record<string, unknown>): CanvasPrototypePromptSettings {
+  return settings as CanvasPrototypePromptSettings;
+}
+
+function asCanvasImagePromptSettings(settings: Record<string, unknown>): CanvasImagePromptSettings {
+  return settings as CanvasImagePromptSettings;
+}
+
+function asCanvasDocumentPromptSettings(settings: Record<string, unknown>): CanvasDocumentPromptSettings {
+  return settings as CanvasDocumentPromptSettings;
 }
 
 function formatOptionalValue(value: unknown, fallback = '未指定'): string {
@@ -135,14 +153,22 @@ function deriveCanvasNameFromFilePath(filePath: string): string {
     : '';
 }
 
+function resolveCanvasGenerationFinalGuide(finalGuide: CanvasGenerationFinalGuide = 'update-canvas'): string {
+  if (finalGuide === 'none') return '';
+  return finalGuide === 'local-ai-acknowledgement'
+    ? LOCAL_AI_COPY_FINAL_GUIDE
+    : CANVAS_UPDATE_FINAL_GUIDE;
+}
+
 function formatCanvasWorkspaceInstructionLines(canvasContext?: CanvasGenerationPromptCanvasContext): string[] {
   const canvasFilePath = normalizeCanvasContextValue(canvasContext?.canvasFilePath);
   const canvasName = normalizeCanvasContextValue(canvasContext?.canvasName) || deriveCanvasNameFromFilePath(canvasFilePath);
-  const generatorElementId = normalizeCanvasContextValue(canvasContext?.generatorElementId);
   const source = normalizeCanvasContextValue(canvasContext?.source);
+  const generatorElementId = source === 'canvas-start'
+    ? ''
+    : normalizeCanvasContextValue(canvasContext?.generatorElementId);
 
   return [
-    '请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。',
     ...(canvasFilePath ? [`- 当前画布文件：${canvasFilePath}`] : []),
     ...(canvasName ? [`- 当前画布名称：${canvasName}`] : []),
     ...(generatorElementId ? [`- 当前 AI 生成节点 ID：${generatorElementId}`] : []),
@@ -150,7 +176,7 @@ function formatCanvasWorkspaceInstructionLines(canvasContext?: CanvasGenerationP
     ...(canvasFilePath || canvasName || generatorElementId ? [
       '- 直接编辑并保存当前画布 JSON 文件，保留已有 elements、files、appState，不要只创建资源文件或只回复说明。',
       '- 将本次生成的原型页面、图片、流程图、文档等产物落到当前画布；每个产物节点的 customData.generatedBy 必须为 `axhub-ai-generation`，customData.aiArtifact.kind 必须写明产物类型。',
-      '- 如果画布里存在当前 AI 生成节点，优先在它附近替换或追加结果节点，并保留 sourceTaskId/sourceArtifactId 等可追踪字段。',
+      ...(generatorElementId ? ['- 如果画布里存在当前 AI 生成节点，优先在它附近替换或追加结果节点，并保留 sourceTaskId/sourceArtifactId 等可追踪字段。'] : []),
       '- 完成前必须重新读取画布文件，确认需要的产物节点已经写入并且 JSON 可解析。',
     ] : []),
   ];
@@ -163,6 +189,27 @@ export function appendCanvasWorkspaceInstruction(
   return appendSettingsBlock(prompt, '画布协作说明：', [
     ...formatCanvasWorkspaceInstructionLines(canvasContext),
   ]);
+}
+
+export function appendCanvasGenerationFinalGuide({
+  prompt,
+  finalGuide = 'update-canvas',
+}: {
+  prompt: string;
+  finalGuide?: CanvasGenerationFinalGuide;
+}): string {
+  const guide = resolveCanvasGenerationFinalGuide(finalGuide);
+  const knownGuides = new Set([CANVAS_UPDATE_FINAL_GUIDE, LOCAL_AI_COPY_FINAL_GUIDE]);
+  const lines = prompt.trim().split('\n');
+  while (lines.length > 0 && knownGuides.has(lines[lines.length - 1].trim())) {
+    lines.pop();
+  }
+  while (lines.length > 0 && lines[lines.length - 1].trim().length === 0) {
+    lines.pop();
+  }
+  const basePrompt = lines.join('\n').trim();
+  if (!guide) return basePrompt;
+  return basePrompt ? `${basePrompt}\n\n${guide}` : guide;
 }
 
 export function appendPrototypeStartPromptSettings({
@@ -226,11 +273,13 @@ export function appendCanvasGenerationPromptSettings({
   prompt,
   settings,
   canvasContext,
+  finalGuide = 'update-canvas',
 }: {
   scene: CanvasAiScene;
   prompt: string;
-  settings: CanvasGenerationPromptSettings;
+  settings: CanvasGenerationPromptSettings | unknown;
   canvasContext?: CanvasGenerationPromptCanvasContext;
+  finalGuide?: CanvasGenerationFinalGuide;
 }): string {
   const promptWithSettings = (() => {
     if (!isRecord(settings)) return prompt;
@@ -238,19 +287,32 @@ export function appendCanvasGenerationPromptSettings({
     if (scene === 'page') {
       return appendPrototypeStartPromptSettings({
         prompt,
-        settings,
+        settings: asCanvasPrototypePromptSettings(settings),
+      });
+    }
+
+    if (scene === 'design') {
+      return appendImageStartPromptSettings({
+        prompt,
+        settings: asCanvasImagePromptSettings(settings),
       });
     }
 
     if (scene === 'document') {
       return appendDocumentStartPromptSettings({
         prompt,
-        settings,
+        settings: asCanvasDocumentPromptSettings(settings),
       });
     }
 
     return prompt;
   })();
 
-  return appendCanvasWorkspaceInstruction(promptWithSettings, canvasContext);
+  const promptWithCanvasWorkspace = finalGuide === 'update-canvas'
+    ? appendCanvasWorkspaceInstruction(promptWithSettings, canvasContext)
+    : promptWithSettings;
+  return appendCanvasGenerationFinalGuide({
+    prompt: promptWithCanvasWorkspace,
+    finalGuide,
+  });
 }

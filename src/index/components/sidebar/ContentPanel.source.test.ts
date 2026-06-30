@@ -64,9 +64,11 @@ describe('ContentPanel make client project setup source', () => {
       source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
     );
 
-    expect(source).toContain("type ProjectSetupMode = 'menu' | 'blank' | 'copy';");
+    expect(source).toContain("type ProjectSetupMode = 'menu' | 'blank' | 'clone' | 'copy';");
     expect(dialogPropsSource).toContain('hasActiveProject?: boolean;');
     expect(dialogPropsSource).toContain('copyingProject: boolean;');
+    expect(dialogPropsSource).toContain('cloningProject: boolean;');
+    expect(dialogPropsSource).toContain('onCloneProject: (params: {');
     expect(dialogPropsSource).toContain('onCopyProject: (params: {');
     expect(dialogSource).toContain("hasActiveProject ? (");
     expect(dialogSource).toContain('复制当前项目');
@@ -76,6 +78,8 @@ describe('ContentPanel make client project setup source', () => {
     expect(dialogSource).toContain('复制并启动');
     expect(dialogRenderSource).toContain('hasActiveProject={Boolean(activeProjectId)}');
     expect(dialogRenderSource).toContain('copyingProject={isCopyingProject}');
+    expect(dialogRenderSource).toContain('cloningProject={isCloningProject}');
+    expect(dialogRenderSource).toContain('onCloneProject={handleCloneMakeProject}');
     expect(dialogRenderSource).toContain('onCopyProject={handleCopyMakeProject}');
     expect(source).toContain("const [projectSetupInitialMode, setProjectSetupInitialMode] = useState<'menu'>('menu');");
     expect(source).not.toContain("setProjectSetupInitialMode('copy');");
@@ -208,15 +212,16 @@ describe('ContentPanel make client project setup source', () => {
       source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
     );
 
-    expect(dialogSource.match(/onSetupComplete\(\);/gu)).toHaveLength(3);
+    expect(dialogSource.match(/onSetupComplete\(\);/gu)).toHaveLength(4);
     expect(renderSource).toContain("onTabChange('prototype');");
   });
 
   it('does not show blue borders or focus rings on setup option buttons', () => {
     const source = readContentPanelSource();
+    const menuStart = source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? (');
     const menuSource = source.slice(
-      source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? ('),
-      source.indexOf('</div>', source.indexOf('选择已有项目')),
+      menuStart,
+      source.indexOf('</div>', source.indexOf('选择已有项目', menuStart)),
     );
 
     expect(menuSource).not.toContain('border-primary');
@@ -261,8 +266,8 @@ describe('ContentPanel make client project setup source', () => {
     expect(existingOptionSource).toContain('mirrorTemplateDownloadUrl');
     expect(existingOptionSource.match(/onClick=\{stopProjectSetupLinkPropagation\}/gu)).toHaveLength(2);
     expect(existingOptionSource.match(/onKeyDown=\{stopProjectSetupLinkPropagation\}/gu)).toHaveLength(2);
-    expect(menuSource).not.toContain('仓库');
-    expect(menuSource).not.toContain('开发服务');
+    expect(existingOptionSource).not.toContain('仓库');
+    expect(existingOptionSource).not.toContain('开发服务');
   });
 
   it('does not show client version labels in project setup options', () => {
@@ -294,7 +299,7 @@ describe('ContentPanel make client project setup source', () => {
       source.indexOf('export default function ContentPanel'),
     );
 
-    expect(dialogSource).toContain("const showProjectSetupFooter = setupMode === 'blank' || setupMode === 'copy' || !dismissDisabled;");
+    expect(dialogSource).toContain("const showProjectSetupFooter = setupMode === 'blank' || setupMode === 'clone' || setupMode === 'copy' || !dismissDisabled;");
     expect(dialogSource).toContain('{showProjectSetupFooter ? (');
     expect(dialogSource).toContain('<DialogFooter className="border-t p-3 sm:justify-between sm:space-x-0">');
     expect(dialogSource).toContain('</DialogFooter>\n                    ) : null}');
@@ -378,6 +383,42 @@ describe('ContentPanel make client project setup source', () => {
     expect(dialogSource).toContain('if (manualFolderName && !options.force) {');
     expect(dialogSource).toContain('setManualFolderName(true);');
     expect(source).toContain("fetch('/api/projects/make/folder-name-suggestion'");
+  });
+
+  it('adds a Git clone setup mode with URL input and collaboration-focused menu copy', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+    const cloneOptionSource = dialogSource.slice(
+      dialogSource.indexOf('Git 链接克隆'),
+      dialogSource.indexOf('{hasActiveProject ? (', dialogSource.indexOf('Git 链接克隆')),
+    );
+    const renderSource = source.slice(
+      source.indexOf('<ProjectSetupDialog'),
+      source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
+    );
+
+    expect(source).toContain("const MAKE_CLIENT_CLONE_PENDING_LABEL = '克隆并启动项目';");
+    expect(source).toContain("const MAKE_CLIENT_CLONE_FAILED_LABEL = '克隆项目失败';");
+    expect(dialogSource).toContain("const [gitUrl, setGitUrl] = useState('');");
+    expect(dialogSource).toContain("setSetupMode('clone');");
+    expect(dialogSource).toContain('Git 链接克隆');
+    expect(cloneOptionSource).toContain('适合团队协作、异地办公或在多台设备间同步项目，从共享仓库拉取完整项目。');
+    expect(cloneOptionSource).not.toContain('交给 AI 处理');
+    expect(dialogSource).toContain('htmlFor="make-project-git-url"');
+    expect(dialogSource).toContain('id="make-project-git-url"');
+    expect(dialogSource).toContain('value={gitUrl}');
+    expect(dialogSource).toContain('onChange={(event) => setGitUrl(event.target.value)}');
+    expect(dialogSource).toContain('const handleCloneMakeProject = async () => {');
+    expect(dialogSource).toContain("setRunningPhase('cloning')");
+    expect(dialogSource).toContain('gitUrl: normalizedGitUrl,');
+    expect(dialogSource).toContain('setFailedDiagnostic(readProjectSetupPromptFromError(error) || buildMakeClientCloneAiPrompt');
+    expect(dialogSource).toContain("setupMode === 'clone'");
+    expect(dialogSource).toContain('克隆并启动');
+    expect(dialogSource).toContain('disabled={busy || !parentRoot.trim() || !folderName.trim() || (setupMode === \'clone\' && !gitUrl.trim())}');
+    expect(renderSource).toContain('onCloneProject={handleCloneMakeProject}');
   });
 
   it('remembers the last selected blank project parent directory in browser storage', () => {
@@ -466,6 +507,7 @@ describe('ContentPanel chrome styles source', () => {
   it('labels the top-left settings entry as settings instead of project settings', () => {
     const source = readContentPanelSource();
     const settingsItemIndex = source.indexOf('onSelect={handleSettingsMenuSelect}');
+    const versionCollaborationItemIndex = source.indexOf('onSelect={handleVersionCollaborationMenuSelect}');
     const menuSource = source.slice(
       source.lastIndexOf('<DropdownMenuContent align="start"', settingsItemIndex),
       source.indexOf('<DropdownMenuSeparator />', settingsItemIndex),
@@ -473,7 +515,42 @@ describe('ContentPanel chrome styles source', () => {
 
     expect(menuSource).toContain('<Settings className="h-3.5 w-3.5" />');
     expect(menuSource).toContain('设置');
+    expect(source).toContain('GitBranch,');
+    expect(menuSource).toContain('<GitBranch className="h-3.5 w-3.5" />');
+    expect(menuSource).toContain('版本和协作');
     expect(menuSource).not.toContain('项目设置');
+    expect(versionCollaborationItemIndex).toBeGreaterThan(settingsItemIndex);
+  });
+
+  it('shows unread update badges on the menu trigger and settings menu without tagging project rows', () => {
+    const source = readContentPanelSource();
+    const triggerAnchor = source.indexOf('<Menu className="h-4 w-4" />');
+    const triggerSource = source.slice(
+      source.lastIndexOf('<DropdownMenuTrigger asChild>', triggerAnchor),
+      source.indexOf('</DropdownMenuTrigger>', triggerAnchor),
+    );
+    const menuSource = source.slice(
+      source.indexOf('<DropdownMenuContent align="start" className="text-sm min-w-[132px]">'),
+      source.indexOf('<DropdownMenuItem className="h-7 gap-2 text-sm" onClick={onToggleTheme}>'),
+    );
+    const switcherSource = source.slice(
+      source.indexOf('<DropdownMenu open={projectSwitcherMenuOpen}'),
+      source.indexOf('</DropdownMenuContent>', source.indexOf('<DropdownMenu open={projectSwitcherMenuOpen}')),
+    );
+
+    expect(source).toContain('makeClientUpdateAvailable?: boolean;');
+    expect(source).toContain('makeClientUpdateReminderVisible?: boolean;');
+    expect(source).toContain('makeClientUpdateAvailable,');
+    expect(source).toContain('makeClientUpdateReminderVisible,');
+    expect(triggerSource).toContain('relative');
+    expect(triggerSource).toContain('{makeClientUpdateReminderVisible ? (');
+    expect(triggerSource).toContain('aria-label="有项目更新"');
+    expect(menuSource).toContain('{makeClientUpdateReminderVisible ? (');
+    expect(menuSource).toContain('aria-label="有项目更新"');
+    expect(menuSource).toContain('bg-destructive');
+    expect(source).toContain("onSettingsClick(makeClientUpdateReminderVisible ? 'update' : 'project');");
+    expect(switcherSource).not.toContain('{active && makeClientUpdateAvailable ? (');
+    expect(switcherSource).not.toContain('border-destructive/30');
   });
 });
 
@@ -483,8 +560,9 @@ describe('ContentPanel resource folder selection source', () => {
 
     expect(source).toContain('selectedFolder?: SelectedResourceFolder | null;');
     expect(source).toContain('onFolderClick?: (folder: SidebarTreeNode) => void;');
+    expect(source).toContain('const canSelectFolders = typeof onFolderClick === \'function\';');
     expect(source).toContain('const isFolderSelected =');
-    expect(source).toContain("dataTab === 'docs'");
+    expect(source).toContain('&& canSelectFolders');
     expect(source).toContain('onFolderClick?.(node);');
     expect(source).toContain('selected={isFolderSelected || isSelected}');
   });
@@ -492,14 +570,44 @@ describe('ContentPanel resource folder selection source', () => {
   it('toggles resource folders from the row without reselecting them while collapsing', () => {
     const source = readContentPanelSource();
     const folderClickSource = source.slice(
-      source.indexOf("if (dataTab === 'docs') {"),
-      source.indexOf("if (item) {", source.indexOf("if (dataTab === 'docs') {")),
+      source.indexOf('if (canSelectFolders) {'),
+      source.indexOf("if (item) {", source.indexOf('if (canSelectFolders) {')),
     );
 
+    expect(folderClickSource).toContain('if (dataTab === \'docs\') {');
     expect(folderClickSource).toContain('const isCollapsingFolder = isExpanded;');
     expect(folderClickSource).toContain('toggleFolder(node.id);');
     expect(folderClickSource).toContain('if (!isCollapsingFolder) {');
     expect(folderClickSource).toContain('onFolderClick?.(node);');
+  });
+
+  it('lets canvas resource folders become active while keeping document paste targeting document-only', () => {
+    const source = readContentPanelSource();
+    const folderClickSource = source.slice(
+      source.indexOf('if (canSelectFolders) {'),
+      source.indexOf("if (item) {", source.indexOf('if (canSelectFolders) {')),
+    );
+
+    expect(folderClickSource).toContain('if (dataTab === \'docs\') {');
+    expect(folderClickSource).toContain('setDocumentPasteTargetFromFolder(node);');
+    expect(folderClickSource).toContain('onFolderClick?.(node);');
+    expect(folderClickSource.indexOf("if (dataTab === 'docs') {"))
+      .toBeLessThan(folderClickSource.indexOf('setDocumentPasteTargetFromFolder(node);'));
+    expect(folderClickSource.indexOf('setDocumentPasteTargetFromFolder(node);'))
+      .toBeLessThan(folderClickSource.indexOf('onFolderClick?.(node);'));
+  });
+
+  it('passes folder selection callbacks for document, canvas, and design resource trees', () => {
+    const source = readFileSync(resolve(__dirname, './NewSidebar.tsx'), 'utf8');
+    const contentPanelPropsSource = source.slice(
+      source.indexOf('<ContentPanel'),
+      source.indexOf('onSearch={setSearchText}'),
+    );
+
+    expect(source).toContain('const currentSelectedFolder = selectedResourceFolder && selectedResourceFolderTreeTab === currentTreeTab');
+    expect(contentPanelPropsSource).toContain("currentTreeTab === 'docs' || currentTreeTab === 'canvas' || currentTreeTab === 'themes'");
+    expect(contentPanelPropsSource).toContain("onSelectResourceFolder?.(folder, currentTreeTab, { preserveViewMode: viewMode === 'canvas' })");
+    expect(contentPanelPropsSource).not.toContain("sidebarTab === 'document' ? onSelectResourceFolder : undefined");
   });
 
   it('keeps folders collapsed by default when a tree first loads', () => {
@@ -639,8 +747,8 @@ describe('ContentPanel document paste upload source', () => {
   it('tracks the document paste target from root and folder focus without switching to file paths', () => {
     const source = readContentPanelSource();
     const folderClickSource = source.slice(
-      source.indexOf("if (dataTab === 'docs') {"),
-      source.indexOf("if (item) {", source.indexOf("if (dataTab === 'docs') {")),
+      source.indexOf('if (canSelectFolders) {'),
+      source.indexOf("if (item) {", source.indexOf('if (canSelectFolders) {')),
     );
     const itemClickSource = source.slice(
       source.indexOf("if (item) {", source.indexOf('const renderTreeNodes =')),
@@ -1051,7 +1159,7 @@ describe('ContentPanel settings menu source', () => {
     expect(source).toContain('initialMode={projectSetupInitialMode}');
   });
 
-  it('opens project settings from the dropdown select event after the menu closes', () => {
+  it('opens settings from the dropdown select event after the menu closes and jumps to updates when needed', () => {
     const source = readContentPanelSource();
     const menuSource = source.slice(
       source.indexOf('<DropdownMenuContent align="start"'),
@@ -1060,8 +1168,23 @@ describe('ContentPanel settings menu source', () => {
 
     expect(source).toContain('const handleSettingsMenuSelect = useCallback(() => {');
     expect(source).toContain('window.setTimeout(() => {');
-    expect(source).toContain('onSettingsClick();');
+    expect(source).toContain("onSettingsClick(makeClientUpdateReminderVisible ? 'update' : 'project');");
     expect(menuSource).toContain('onSelect={handleSettingsMenuSelect}');
     expect(menuSource).not.toContain('onClick={onSettingsClick}');
+  });
+
+  it('opens version and collaboration from the dropdown select event after the menu closes', () => {
+    const source = readContentPanelSource();
+    const menuSource = source.slice(
+      source.indexOf('<DropdownMenuContent align="start"'),
+      source.indexOf('<DropdownMenuItem className="h-7 gap-2 text-sm" onClick={onToggleTheme}>'),
+    );
+
+    expect(source).toContain('onVersionCollaborationClick: () => void;');
+    expect(source).toContain('const handleVersionCollaborationMenuSelect = useCallback(() => {');
+    expect(source).toContain('onVersionCollaborationClick();');
+    expect(menuSource).toContain('onSelect={handleVersionCollaborationMenuSelect}');
+    expect(menuSource).toContain('版本和协作');
+    expect(menuSource).not.toContain('onClick={onVersionCollaborationClick}');
   });
 });

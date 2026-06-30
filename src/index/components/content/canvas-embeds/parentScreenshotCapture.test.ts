@@ -8,6 +8,24 @@ class FakeHTMLElement {
   style: Record<string, string> = {
     width: '',
     height: '',
+    minHeight: '',
+    overflow: '',
+    margin: '',
+    marginTop: '',
+    marginRight: '',
+    marginBottom: '',
+    marginLeft: '',
+    padding: '',
+    paddingTop: '',
+    paddingRight: '',
+    paddingBottom: '',
+    paddingLeft: '',
+    display: '',
+    alignItems: '',
+    justifyContent: '',
+    placeItems: '',
+    transform: '',
+    transformOrigin: '',
   };
   private attributes = new Map<string, string>();
 
@@ -184,6 +202,92 @@ describe('captureSameOriginIframeScreenshot', () => {
     expect(rootElement.style.height).toBe('old-root-height');
     expect(rootElement.style.minHeight).toBe('');
     expect(rootElement.style.overflow).toBe('');
+  });
+
+  it('flattens centering layout styles while capturing so screenshots start at the viewport origin', async () => {
+    const iframe = createSameOriginIframe();
+    const doc = iframe.contentDocument;
+    const rootElement = doc.getElementById('root');
+    doc.documentElement.style.margin = '8px';
+    doc.documentElement.style.padding = '12px';
+    doc.body.style.margin = '16px';
+    doc.body.style.padding = '20px';
+    doc.body.style.display = 'grid';
+    doc.body.style.placeItems = 'center';
+    doc.body.style.alignItems = 'center';
+    doc.body.style.justifyContent = 'center';
+    rootElement.style.marginTop = '24px';
+    rootElement.style.marginLeft = '32px';
+    rootElement.style.display = 'grid';
+    rootElement.style.placeItems = 'center';
+    rootElement.style.alignItems = 'center';
+    rootElement.style.justifyContent = 'center';
+    snapdomToPng.mockImplementation(async () => {
+      expect(doc.documentElement.style.margin).toBe('0');
+      expect(doc.documentElement.style.padding).toBe('0');
+      expect(doc.body.style.margin).toBe('0');
+      expect(doc.body.style.padding).toBe('0');
+      expect(doc.body.style.display).toBe('block');
+      expect(doc.body.style.placeItems).toBe('initial');
+      expect(doc.body.style.alignItems).toBe('initial');
+      expect(doc.body.style.justifyContent).toBe('initial');
+      expect(rootElement.style.marginTop).toBe('0');
+      expect(rootElement.style.marginLeft).toBe('0');
+      expect(rootElement.style.placeItems).toBe('initial');
+      expect(rootElement.style.alignItems).toBe('initial');
+      expect(rootElement.style.justifyContent).toBe('initial');
+      return createFakeImage();
+    });
+
+    const resultPromise = captureSameOriginIframeScreenshot({
+      iframe: iframe as unknown as HTMLIFrameElement,
+      width: 1440,
+      height: 900,
+    });
+    await vi.runAllTimersAsync();
+    await resultPromise;
+
+    expect(doc.documentElement.style.margin).toBe('8px');
+    expect(doc.documentElement.style.padding).toBe('12px');
+    expect(doc.body.style.margin).toBe('16px');
+    expect(doc.body.style.padding).toBe('20px');
+    expect(doc.body.style.display).toBe('grid');
+    expect(doc.body.style.placeItems).toBe('center');
+    expect(doc.body.style.alignItems).toBe('center');
+    expect(doc.body.style.justifyContent).toBe('center');
+    expect(rootElement.style.marginTop).toBe('24px');
+    expect(rootElement.style.marginLeft).toBe('32px');
+    expect(rootElement.style.display).toBe('grid');
+    expect(rootElement.style.placeItems).toBe('center');
+    expect(rootElement.style.alignItems).toBe('center');
+    expect(rootElement.style.justifyContent).toBe('center');
+  });
+
+  it('keeps root padding intact while flattening outer page chrome for capture', async () => {
+    const iframe = createSameOriginIframe();
+    const doc = iframe.contentDocument;
+    const rootElement = doc.getElementById('root');
+    rootElement.style.padding = '28px';
+    rootElement.style.paddingTop = '30px';
+    rootElement.style.paddingLeft = '32px';
+    snapdomToPng.mockImplementation(async () => {
+      expect(rootElement.style.padding).toBe('28px');
+      expect(rootElement.style.paddingTop).toBe('30px');
+      expect(rootElement.style.paddingLeft).toBe('32px');
+      return createFakeImage();
+    });
+
+    const resultPromise = captureSameOriginIframeScreenshot({
+      iframe: iframe as unknown as HTMLIFrameElement,
+      width: 1440,
+      height: 900,
+    });
+    await vi.runAllTimersAsync();
+    await resultPromise;
+
+    expect(rootElement.style.padding).toBe('28px');
+    expect(rootElement.style.paddingTop).toBe('30px');
+    expect(rootElement.style.paddingLeft).toBe('32px');
   });
 
   it('captures the iframe app root instead of the iframe shell', async () => {

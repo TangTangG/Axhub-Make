@@ -251,6 +251,34 @@ describe('annotation direct API run thread reuse', () => {
     expect(params.mcpServers).toBeUndefined();
   });
 
+  it('passes the abort signal through to the AI stream request', async () => {
+    const storage = createStorage();
+    const controller = new AbortController();
+
+    await submitAnnotationPromptViaApi({
+      context: {
+        currentFile: {
+          path: 'src/prototypes/home/index.tsx',
+          displayName: 'Home',
+        },
+        selectedElements: [],
+        extensions: {},
+      } as any,
+      prompt: '把卡片标题调短。',
+      projectPath: '/workspace/project',
+      projectScope: 'project-a',
+      provider: 'codex',
+      preferredPromptClient: 'acp:codex',
+      signal: controller.signal,
+      storage,
+      now: () => 1_700_000_000_000,
+      createRunId: () => 'run-abortable',
+    });
+
+    const params = vi.mocked(runAiStream).mock.calls[0]?.[0] as any;
+    expect(params.signal).toBe(controller.signal);
+  });
+
   it('reuses the prototype thread for 48 hours and fewer than 40 sends without extending expiry', () => {
     const storage = createStorage();
     const now = 1_700_000_000_000;

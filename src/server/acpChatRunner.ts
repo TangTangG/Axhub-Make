@@ -15,6 +15,8 @@ export interface AcpChatRequest {
   id?: string;
   threadId?: string;
   provider?: unknown;
+  scene?: string;
+  allowToolErrorDiagnostics?: boolean;
   model?: string | null;
   modeId?: string | null;
   thoughtLevel?: string | null;
@@ -37,6 +39,7 @@ export interface AcpChatCommandRequest {
   provider?: unknown;
   workspacePath: string;
   prompt: unknown;
+  allowToolErrorDiagnostics?: boolean;
   model?: string | null;
   modeId?: string | null;
   thoughtLevel?: string | null;
@@ -87,6 +90,8 @@ export interface AcpChatRunResult {
   id: string;
   threadId: string;
   provider: string;
+  scene?: string;
+  allowToolErrorDiagnostics?: boolean;
   output: string;
   reasoning: string;
   toolOutputs: AcpToolOutputChunk[];
@@ -265,6 +270,8 @@ function createInitialResult(params: {
   id: string;
   threadId: string;
   provider: string;
+  scene?: string;
+  allowToolErrorDiagnostics?: boolean;
   runtimeHeaders: AcpRuntimeHeaders;
 }): AcpChatRunResult {
   return {
@@ -272,6 +279,8 @@ function createInitialResult(params: {
     id: params.id,
     threadId: params.threadId,
     provider: params.runtimeHeaders.provider || params.provider,
+    ...(params.scene ? { scene: params.scene } : {}),
+    ...(params.allowToolErrorDiagnostics ? { allowToolErrorDiagnostics: true } : {}),
     output: '',
     reasoning: '',
     toolOutputs: [],
@@ -405,8 +414,16 @@ async function* readSseJson(response: Response): AsyncGenerator<Record<string, u
 }
 
 function createFailureFromResult(result: AcpChatRunResult): AcpChatRunError | null {
+  const finishReason = normalizeString(result.finishReason).toLowerCase();
+  const hasSuccessfulFinish = ['stop', 'complete', 'completed', 'success', 'done'].includes(finishReason);
   const toolError = result.errors.find((error) => error.type === 'tool-output-error');
   if (toolError) {
+    if (
+      hasSuccessfulFinish
+      && result.allowToolErrorDiagnostics === true
+    ) {
+      return null;
+    }
     return new AcpChatRunError(toolError.message, {
       code: 'ACP_CHAT_TOOL_OUTPUT_ERROR',
       statusCode: 502,
@@ -415,6 +432,9 @@ function createFailureFromResult(result: AcpChatRunResult): AcpChatRunError | nu
   }
   const streamError = result.errors.find((error) => error.type === 'error');
   if (streamError) {
+    if (hasSuccessfulFinish) {
+      return null;
+    }
     return new AcpChatRunError(streamError.message, {
       code: 'ACP_CHAT_STREAM_ERROR',
       statusCode: 502,
@@ -533,6 +553,8 @@ async function startAcpChatRequest(
     id,
     threadId,
     provider,
+    scene: normalizeString(request.scene),
+    allowToolErrorDiagnostics: request.allowToolErrorDiagnostics,
     runtimeHeaders: captureRuntimeHeaders(response.headers),
   });
   result.provider = result.runtimeHeaders.provider || provider;
@@ -609,6 +631,8 @@ export async function runAcpChatCommand(
     id,
     threadId,
     provider: request.provider,
+    scene: request.scene,
+    allowToolErrorDiagnostics: request.allowToolErrorDiagnostics,
     workspacePath: request.workspacePath,
     conversationStorePath: request.conversationStorePath,
     model: request.model,

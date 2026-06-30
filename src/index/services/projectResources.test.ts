@@ -539,6 +539,32 @@ describe('project resource frontend adapter', () => {
     ]);
   });
 
+  it('keeps nested markdown files under templates selectable as regular docs', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        docs: [
+          {
+            id: 'templates/prd-template',
+            name: 'templates/prd-template',
+            title: 'PRD Template',
+            path: '/workspace/axhub-make/client/src/resources/templates/prd-template.md',
+          },
+        ],
+      },
+    }, null);
+
+    expect(bundle.docs).toEqual([
+      expect.objectContaining({
+        name: 'templates/prd-template',
+        displayName: 'PRD Template',
+        specUrl: '/api/projects/make-project/docs/templates%2Fprd-template/content',
+        previewUrl: '/spec-template.html?url=%2Fapi%2Fprojects%2Fmake-project%2Fdocs%2Ftemplates%252Fprd-template%2Fcontent',
+        absoluteFilePath: '/workspace/axhub-make/client/src/resources/templates/prd-template.md',
+      }),
+    ]);
+  });
+
   it('falls back to project doc content endpoints when no Markdown file path is available', () => {
     const bundle = normalizeProjectResourcesPayload({
       project: { id: 'client-project', name: 'Client Project' },

@@ -24,6 +24,7 @@ src/prototypes/<name>/
 ├── style.css      # 可选
 ├── components/    # 可选：原型内部共享组件
 ├── pages/         # 可选：多页面原型页面组件
+├── docs/          # 可选：目录 Markdown 文档
 └── assets/        # 可选：原型专属素材
 ```
 
@@ -31,6 +32,11 @@ src/prototypes/<name>/
 - 原型目录名使用小写字母、数字、连字符，如 `order-review`。
 - 当目录名为 `untitled`、`untitled-*` 或显示名为「未命名」时，开始生成实际内容前应更新为有意义的目录名和 `@name`。
 - 本项目当前不产出独立 `components` 资源；原型内部组件放在对应原型目录下的 `components/`。
+- 原型目录文档放在当前原型的 `docs/` 下，例如 `src/prototypes/order-review/docs/prd-03-status.md`。
+- `annotation-source.json` 的目录文档节点优先使用相对当前原型目录的 `markdownPath`，例如 `"markdownPath": "docs/prd-03-status.md"`；不要写绝对路径、`..` 或跨原型引用。
+- 普通预览和 `@axhub/annotation` 阅读页不显示目录文档编辑入口；编辑 URL 由 Make 批注宿主回调生成，不写进 annotation 包或目录节点数据。
+- 只有 Make 批注/编辑工具启用、且当前选中的是带安全本地 `markdownPath` 的目录 Markdown 正文子节点时，批注气泡卡片才显示“文档编辑”按钮。
+- 导出/发布时会构建期内联 `markdownPath` 正文，不依赖运行时请求 `.md` 文件。
 
 每个原型的 `index.tsx` 顶部建议包含面向用户的中文 `@name`，用于预览列表展示名：
 

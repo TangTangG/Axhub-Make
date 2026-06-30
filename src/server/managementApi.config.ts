@@ -9,6 +9,7 @@ import {
 } from './projectCore/index.ts';
 
 import { getLocalNetworkHosts, readJsonBody, sendJson, streamDirectoryAsZip } from './http.ts';
+import { syncProjectAgentInstructions } from './projectAgentInstructions.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 
 const makePackageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -391,6 +392,7 @@ export function handleConfigApi(
         }
         if (hasProjectConfigFields) {
           const currentProjectConfig = handlers.readProjectConfig(requestProjectRoot);
+          let effectiveProject = activeProject;
           const projectConfig: Record<string, unknown> = {
             ...currentProjectConfig,
             server: {
@@ -409,7 +411,7 @@ export function handleConfigApi(
             } else {
               delete projectConfig.projectInfo;
             }
-            handlers.updateRegisteredProjectTitle(options, activeProject, nextProjectName);
+            effectiveProject = handlers.updateRegisteredProjectTitle(options, activeProject, nextProjectName);
           }
           if (nextConfig.projectDefaults && typeof nextConfig.projectDefaults === 'object') {
             projectConfig.projectDefaults = nextConfig.projectDefaults;
@@ -419,6 +421,12 @@ export function handleConfigApi(
           delete projectConfig.ai;
           fs.mkdirSync(path.dirname(configPath), { recursive: true });
           fs.writeFileSync(configPath, JSON.stringify(projectConfig, null, 2), 'utf8');
+          syncProjectAgentInstructions({
+            projectRoot: requestProjectRoot,
+            projectName: handlers.toProjectIdentity(effectiveProject).name,
+            projectDescription: (projectConfig.projectInfo as Record<string, unknown> | undefined)?.description as string | undefined,
+            defaultThemeName: (projectConfig.projectDefaults as Record<string, unknown> | undefined)?.defaultTheme as string | undefined,
+          });
         }
         sendJson(res, {
           success: true,

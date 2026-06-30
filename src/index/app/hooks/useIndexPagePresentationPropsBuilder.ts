@@ -20,9 +20,11 @@ interface UseIndexPagePresentationPropsBuilderParams {
         isDarkMode: boolean;
         contentMode: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
         docsItems?: any[];
+        sidebarTrees?: any;
         selectedDoc: any;
         selectedResourceFolder?: any;
         selectedCanvas: any;
+        canvasItems?: any[];
         selectedTemplate: any;
         selectedTheme: any;
         selectedDataTable: any;
@@ -109,6 +111,7 @@ export function useIndexPagePresentationPropsBuilder({
             selectedDeviceId: preview.selectedDeviceId,
             previewConfig: preview.previewConfig,
             deviceSegmentOptions: preview.deviceSegmentOptions,
+            visibleCloudPublishTargets: preview.visibleCloudPublishTargets,
             qrCodeVisible: preview.qrCodeVisible,
             quickEditAvailable: preview.quickEditAvailable,
             quickEditActive: preview.editorStatus.mode === 'quickEdit',
@@ -128,6 +131,7 @@ export function useIndexPagePresentationPropsBuilder({
             exportAvailability: preview.exportAvailability,
             editorMode: preview.editorStatus.mode,
             hostToolbarState: preview.hostToolbarState,
+            prototypeDecisionDataAvailable: preview.prototypeDecisionDataAvailable,
             allowLAN: state.lanAccessAllowed !== false,
             assistantVisible: state.assistantVisible,
             containerRef: preview.containerRef,
@@ -145,9 +149,11 @@ export function useIndexPagePresentationPropsBuilder({
             elementIframeSize: preview.elementIframeSize,
             contentMode: state.contentMode,
             docsItems: state.docsItems || [],
+            sidebarTrees: state.sidebarTrees,
             selectedDoc: state.selectedDoc,
             selectedResourceFolder: state.selectedResourceFolder,
             selectedCanvas: state.selectedCanvas,
+            canvasItems: state.canvasItems || [],
             selectedTemplate: state.selectedTemplate,
             isDarkMode: state.isDarkMode,
             selectedTheme: state.selectedTheme,
@@ -218,6 +224,7 @@ export function useIndexPagePresentationPropsBuilder({
             handleExportHtml: preview.handleExportHtml,
             handlePublishCloudTarget: preview.handlePublishCloudTarget,
             handleOpenCloudPublishSettings: preview.handleOpenCloudPublishSettings,
+            handleOpenAxhubPublishDialog: preview.handleOpenAxhubPublishDialog,
             currentPublishResourcePath: preview.currentPublishResourcePath,
             latestCloudPublishUrl: preview.latestCloudPublishUrl,
             handleCopyLatestCloudPublishUrl: preview.handleCopyLatestCloudPublishUrl,

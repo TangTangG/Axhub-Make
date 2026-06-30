@@ -93,6 +93,19 @@ describe('make-server CLI args', () => {
     });
   });
 
+  it('accepts an explicit Axhub online base URL for local or production publishing targets', () => {
+    const homeDir = useMakeHomeDir();
+    const cwd = createProjectRoot();
+
+    expect(parseCliArgs([
+      '--axhub-online-base-url',
+      'https://axhub.im/',
+    ], cwd)).toMatchObject({
+      projectRoot: getGlobalMakeStateDir(homeDir),
+      axhubOnlineBaseUrl: 'https://axhub.im',
+    });
+  });
+
   it('returns help without requiring a project root', () => {
     const homeDir = useMakeHomeDir();
     const cwd = createProjectRoot();
@@ -168,6 +181,8 @@ describe('make-server CLI args', () => {
 
     expect(() => parseCliArgs(['--port'], cwd)).toThrow(/Missing value for --port/);
     expect(() => parseCliArgs(['--port', 'abc'], cwd)).toThrow(/Invalid --port/);
+    expect(() => parseCliArgs(['--axhub-online-base-url'], cwd)).toThrow(/Missing value for --axhub-online-base-url/);
+    expect(() => parseCliArgs(['--axhub-online-base-url', 'localhost:3001'], cwd)).toThrow(/Invalid --axhub-online-base-url/);
   });
 
   it('detects when cli.ts is executed as the process entrypoint', () => {
@@ -209,6 +224,26 @@ describe('make-server CLI args', () => {
       stdio: 'ignore',
     });
     expect(unref).toHaveBeenCalled();
+  });
+
+  it('passes the explicit Axhub online base URL to the make server', async () => {
+    const homeDir = useMakeHomeDir();
+    const legacyProjectRoot = createProjectRoot();
+    startMakeServerMock.mockResolvedValue({
+      close: vi.fn(),
+      host: 'localhost',
+      origin: 'http://localhost:53817',
+      port: DEFAULT_MAKE_SERVER_PORT,
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runCli([legacyProjectRoot, '--axhub-online-base-url', 'https://axhub.im/', '--no-open']);
+
+    expect(startMakeServerMock).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: getGlobalMakeStateDir(homeDir),
+      axhubOnlineBaseUrl: 'https://axhub.im',
+      open: false,
+    }));
   });
 
   it('does not open the browser when --no-open is passed', async () => {

@@ -120,11 +120,7 @@ function isIgnoredResourceRelativePath(relativePath: string): boolean {
   return normalized.split('/').some((segment) => segment.startsWith('.'));
 }
 
-function getDocsResourceRoot(projectRoot: string, metadata: ProjectMetadata): string {
-  const target = metadata.resourceWriteTargets?.docs;
-  if (target?.type === 'project-relative-path' && target.path) {
-    return resolveProjectPath(projectRoot, target.path);
-  }
+function getDocsResourceRoot(projectRoot: string): string {
   return path.join(projectRoot, 'src/resources');
 }
 
@@ -144,7 +140,7 @@ function hasDeclaredResourceRoot(metadata: ProjectMetadata, type: 'docs' | 'them
 function getResourceRootByType(projectRoot: string, metadata: ProjectMetadata, type: 'docs' | 'themes'): string {
   return type === 'themes'
     ? getThemeResourceRoot(projectRoot, metadata)
-    : getDocsResourceRoot(projectRoot, metadata);
+    : getDocsResourceRoot(projectRoot);
 }
 
 function normalizeResourceRelativePath(value: unknown): string | null {
@@ -242,6 +238,17 @@ function scanResourceSidebarTree(resourceRoot: string, relativePath = ''): Sideb
 
   const byTitle = (a: SidebarTreeNode, b: SidebarTreeNode) => a.title.localeCompare(b.title);
   return [...folders.sort(byTitle), ...files.sort(byTitle)];
+}
+
+function shouldUseFilesystemResourceRoot(
+  projectRoot: string,
+  metadata: ProjectMetadata,
+  type: 'docs' | 'themes',
+): boolean {
+  if (type === 'docs') {
+    return true;
+  }
+  return hasDeclaredResourceRoot(metadata, type);
 }
 
 function collectResourceFolderPaths(nodes: SidebarTreeNode[]): Set<string> {
@@ -789,7 +796,6 @@ function collectDocItemKeys(projectRoot: string): Set<string> {
       if (entry.name.startsWith('.')) continue;
       const absolutePath = path.join(currentDir, entry.name);
       const rel = normalizePath(path.relative(docsDir, absolutePath));
-      if (rel.startsWith('templates/') || rel === 'templates') continue;
       if (isIgnoredResourceRelativePath(rel)) continue;
       if (entry.isDirectory()) {
         walk(absolutePath);
@@ -802,20 +808,6 @@ function collectDocItemKeys(projectRoot: string): Set<string> {
 
   walk(docsDir);
   return new Set(keys.sort((a, b) => a.localeCompare(b)));
-}
-
-function collectMetadataDocItemKeys(metadata: ProjectMetadata): Set<string> {
-  const keys = new Set<string>();
-  for (const doc of metadata.resources.docs) {
-    const candidates = [doc.id, doc.name]
-      .map((value) => String(value || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''))
-      .filter(Boolean);
-    for (const candidate of candidates) {
-      if (isIgnoredResourceRelativePath(candidate)) continue;
-      keys.add(`docs/${candidate}`);
-    }
-  }
-  return keys;
 }
 
 function collectCanvasItemKeys(projectRoot: string): Set<string> {
@@ -870,10 +862,6 @@ function collectPrototypeItemKeys(projectRoot: string, metadata?: ProjectMetadat
 
 function resolveAllowedItemKeys(projectRoot: string, tab: SidebarTreeTab, metadata?: ProjectMetadata): Set<string> {
   if (tab === 'docs') {
-    const metadataDocKeys = metadata ? collectMetadataDocItemKeys(metadata) : new Set<string>();
-    if (metadataDocKeys.size > 0) {
-      return metadataDocKeys;
-    }
     return collectDocItemKeys(projectRoot);
   }
   if (tab === 'canvas') {
@@ -1007,8 +995,8 @@ export function handleWorkspaceApi(
       return true;
     }
     if (req.method === 'GET') {
-      if (tab === 'docs' && hasDeclaredResourceRoot(context.metadata, 'docs')) {
-        const resourceRoot = getDocsResourceRoot(projectRoot, context.metadata);
+      if (tab === 'docs' && shouldUseFilesystemResourceRoot(projectRoot, context.metadata, 'docs')) {
+        const resourceRoot = getDocsResourceRoot(projectRoot);
         const tree = scanResourceSidebarTree(resourceRoot);
         sendJson(res, { tab, version: SIDEBAR_TREE_VERSION, tree });
         return true;
@@ -1030,13 +1018,13 @@ export function handleWorkspaceApi(
     }
     if (req.method === 'PUT') {
       readJsonBody(req).then((body) => {
-        if (tab === 'docs' && hasDeclaredResourceRoot(context.metadata, 'docs')) {
+        if (tab === 'docs' && shouldUseFilesystemResourceRoot(projectRoot, context.metadata, 'docs')) {
           const normalized = normalizeResourceSidebarTreePayload(body?.tree);
           if (normalized.valid === false) {
             sendJson(res, { error: normalized.error }, { status: normalized.status });
             return;
           }
-          const resourceRoot = getDocsResourceRoot(projectRoot, context.metadata);
+          const resourceRoot = getDocsResourceRoot(projectRoot);
           const applied = applyResourceSidebarTree(resourceRoot, normalized);
           if (applied.ok === false) {
             sendJson(res, applied.body, { status: applied.status });
@@ -1066,8 +1054,8 @@ export function handleWorkspaceApi(
       return true;
     }
     if (req.method === 'POST') {
-      if (tab === 'docs' && hasDeclaredResourceRoot(context.metadata, 'docs')) {
-        const resourceRoot = getDocsResourceRoot(projectRoot, context.metadata);
+      if (tab === 'docs' && shouldUseFilesystemResourceRoot(projectRoot, context.metadata, 'docs')) {
+        const resourceRoot = getDocsResourceRoot(projectRoot);
         const { folderPath } = createUniqueResourceFolder(resourceRoot);
         const tree = scanResourceSidebarTree(resourceRoot);
         sendJson(res, {
@@ -1110,9 +1098,9 @@ export function handleWorkspaceApi(
         sendJson(res, { error: 'Invalid resource type, expected docs|themes' }, { status: 400 });
         return;
       }
-      if (!hasDeclaredResourceRoot(context.metadata, resourceType)) {
+      if (!shouldUseFilesystemResourceRoot(projectRoot, context.metadata, resourceType)) {
         sendJson(res, {
-          error: 'Resource filesystem open requires a declared resource root',
+          error: 'Resource filesystem open requires an available resource root',
           code: 'RESOURCE_ROOT_REQUIRED',
           type: resourceType,
         }, { status: 424 });

@@ -5,6 +5,7 @@ type SendFunction = (...args: any[]) => void;
 const CANVAS_ASSETS_SEGMENT = '/canvas-assets/';
 const AI_GENERATION_SPEC_SEGMENT = '/.spec/';
 const AXHUB_RUNTIME_STATE_SEGMENT = '/.axhub/';
+const ANNOTATION_SOURCE_FILE_NAME = '/annotation-source.json';
 const PROJECT_RESOURCE_SEGMENTS = [
   '/src/prototypes/',
   '/src/themes/',
@@ -15,8 +16,15 @@ function normalizePath(filePath: string): string {
   return filePath.replace(/\\/gu, '/');
 }
 
+function cleanHotUpdatePath(filePath: string): string {
+  return normalizePath(filePath).split(/[?#]/u)[0] || '';
+}
+
 export function isCanvasHotUpdateFile(filePath: string): boolean {
-  const normalized = normalizePath(filePath);
+  const normalized = cleanHotUpdatePath(filePath);
+  if (normalized.endsWith(ANNOTATION_SOURCE_FILE_NAME)) {
+    return true;
+  }
   const isCanvasDataFile =
     normalized.endsWith('.excalidraw')
     || normalized.includes(CANVAS_ASSETS_SEGMENT)
@@ -31,6 +39,32 @@ export function isCanvasHotUpdateFile(filePath: string): boolean {
   return PROJECT_RESOURCE_SEGMENTS.some((segment) => normalized.includes(segment));
 }
 
+function isAnnotationSourceHotUpdateFile(filePath: string): boolean {
+  return cleanHotUpdatePath(filePath).endsWith(ANNOTATION_SOURCE_FILE_NAME);
+}
+
+function invalidateHotUpdateModules(ctx: {
+  modules?: unknown;
+  server?: {
+    moduleGraph?: {
+      invalidateModule?: (
+        module: unknown,
+        seen?: Set<unknown>,
+        timestamp?: number,
+        isHmr?: boolean,
+      ) => void;
+    };
+  };
+  timestamp?: number;
+}): void {
+  if (!Array.isArray(ctx.modules)) return;
+  const invalidateModule = ctx.server?.moduleGraph?.invalidateModule;
+  if (typeof invalidateModule !== 'function') return;
+  for (const module of ctx.modules) {
+    invalidateModule(module, undefined, ctx.timestamp, true);
+  }
+}
+
 function extractPayloadPath(payload: HMRPayload): string | null {
   if (!payload || typeof payload !== 'object') {
     return null;
@@ -42,6 +76,33 @@ function extractPayloadPath(payload: HMRPayload): string | null {
     return payload.path;
   }
   return null;
+}
+
+function isCanvasUpdateRecord(update: unknown): boolean {
+  if (!update || typeof update !== 'object') {
+    return false;
+  }
+  const record = update as { path?: unknown; acceptedPath?: unknown };
+  return [record.path, record.acceptedPath].some((value) => (
+    typeof value === 'string' && isCanvasHotUpdateFile(value)
+  ));
+}
+
+function filterCanvasUpdatePayload(payload: HMRPayload): HMRPayload | null {
+  if (!payload || typeof payload !== 'object' || payload.type !== 'update' || !Array.isArray((payload as any).updates)) {
+    return payload;
+  }
+  const updates = (payload as any).updates.filter((update: unknown) => !isCanvasUpdateRecord(update));
+  if (updates.length === 0) {
+    return null;
+  }
+  if (updates.length === (payload as any).updates.length) {
+    return payload;
+  }
+  return {
+    ...(payload as any),
+    updates,
+  } as HMRPayload;
 }
 
 export function shouldDropCanvasFullReloadPayload(payload: HMRPayload): boolean {
@@ -61,6 +122,13 @@ function patchSend(target: { send?: SendFunction } | null | undefined): void {
     const payload = args[0];
     if (shouldDropCanvasFullReloadPayload(payload)) {
       return;
+    }
+    const filteredPayload = filterCanvasUpdatePayload(payload);
+    if (!filteredPayload) {
+      return;
+    }
+    if (filteredPayload !== payload) {
+      return originalSend(filteredPayload, ...args.slice(1));
     }
     return originalSend(...args);
   }) as SendFunction;
@@ -83,6 +151,9 @@ export function canvasHotUpdateFilterPlugin(): Plugin {
 
     handleHotUpdate(ctx) {
       if (isCanvasHotUpdateFile(ctx.file)) {
+        if (isAnnotationSourceHotUpdateFile(ctx.file)) {
+          invalidateHotUpdateModules(ctx);
+        }
         return [];
       }
       return undefined;

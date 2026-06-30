@@ -19,6 +19,8 @@ describe('usePrototypeEditorBridgeActions source', () => {
     expect(source).not.toContain('initialSelectionModeActive');
     expect(source).toContain("toolbarMode: 'host'");
     expect(source).toContain('mobileMode: context.mobileMode');
+    expect(source).toContain('annotationApiBaseUrl: window.location.origin');
+    expect(source).toContain('annotationProjectId: context.projectId');
     expect(source).toContain('selectedPageId?: string | null;');
     expect(source).toContain('pageId: normalizePrototypeEditorPageId(selectedPageId) || readPrototypeEditorPageIdFromIframe(iframe)');
     expect(source).toContain('const commentPageScope = buildPrototypeEditorCommentPageScope(context);');

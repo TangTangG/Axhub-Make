@@ -469,7 +469,7 @@ export default function ExportModal({
             <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
                 <DialogContent className="flex h-[560px] w-[min(90vw,860px)] max-w-[860px] flex-col overflow-hidden p-0 text-sm [&>[data-dialog-close]]:hidden">
                     <DialogHeader className="border-b px-5 py-3.5">
-                        <DialogTitle className="sr-only">导出到 Axure</DialogTitle>
+                        <DialogTitle className="sr-only">导出带交互原型</DialogTitle>
                         <div className="flex items-center justify-between gap-3">
                             <Tabs
                                 value={activeTabKey}
@@ -493,7 +493,7 @@ export default function ExportModal({
                                         value="dynamicPrototype"
                                         className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none"
                                     >
-                                        动态原型
+                                        带交互原型
                                     </TabsTrigger>
                                     <TabsTrigger
                                         value="staticPrototype"
@@ -540,7 +540,7 @@ export default function ExportModal({
                             <div className="space-y-3">
                                 {!canUseSourceFeatures ? (
                                     <div className="rounded-md border border-blue-200 bg-blue-50/50 p-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100">
-                                        当前项目可打开通用 Axure 导出入口；源码或 artifact metadata 缺失，Runtime 封面、复制配置和 Make 导出等高级功能暂不可用。
+                                        当前项目可打开通用 Axure 导出入口；源码或 artifact metadata 缺失，Runtime 封面、复制配置和 Figma Make 导出等高级功能暂不可用。
                                     </div>
                                 ) : null}
                             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_248px]">
@@ -838,7 +838,7 @@ export default function ExportModal({
                                     <Accordion type="single" collapsible defaultValue="runtime-component" className="w-full">
                                         <AccordionItem value="runtime-component" className="border-b px-4">
                                             <AccordionTrigger className="py-3 text-[15px] font-semibold hover:no-underline">
-                                                复制 runtime 组件（推荐）
+                                                复制 RunTime 组件（推荐）
                                             </AccordionTrigger>
                                             <AccordionContent className="pb-4">
                                                 <div className="text-xs font-semibold tracking-wide text-muted-foreground">准备工作：</div>
@@ -858,7 +858,7 @@ export default function ExportModal({
                                                     </Button>
                                                 </div>
                                                 <div className="mt-2 text-xs font-semibold tracking-wide text-muted-foreground">使用：</div>
-                                                <p className="mt-1 text-sm text-muted-foreground">复制 runtime 组件，粘贴到需要演示的页面即可</p>
+                                                <p className="mt-1 text-sm text-muted-foreground">复制 RunTime 组件，粘贴到需要演示的页面即可</p>
                                             </AccordionContent>
                                         </AccordionItem>
 
@@ -929,7 +929,7 @@ export default function ExportModal({
                                     disabled={isExporting || isReviewing || Boolean(axureSourceDisabledReason)}
                                 >
                                     {isExporting || isReviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                                    复制 Runtime 组件
+                                    复制到 RunTime 组件
                                 </Button>
                             </>
                         ) : activeTabKey === 'staticPrototype' ? (

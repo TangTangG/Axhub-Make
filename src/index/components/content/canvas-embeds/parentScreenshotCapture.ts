@@ -16,6 +16,26 @@ type SnapdomToPng = (element: Element, options?: SnapdomOptions) => Promise<HTML
 type ParentScreenshotTestGlobal = typeof globalThis & {
     __AXHUB_PARENT_SCREENSHOT_TEST_SNAPDOM_TO_PNG__?: SnapdomToPng | null;
 };
+type CaptureLayoutStyleSnapshot = {
+    width: string;
+    height: string;
+    minHeight: string;
+    overflow: string;
+    margin: string;
+    marginTop: string;
+    marginRight: string;
+    marginBottom: string;
+    marginLeft: string;
+    padding: string;
+    paddingTop: string;
+    paddingRight: string;
+    paddingBottom: string;
+    paddingLeft: string;
+    display: string;
+    alignItems: string;
+    justifyContent: string;
+    placeItems: string;
+};
 
 const PARENT_SCREENSHOT_SETTLE_DELAY_MS = 80;
 const BLANK_SCREENSHOT_SAMPLE_SIZE = 24;
@@ -117,42 +137,103 @@ function dispatchIframeResize(iframe: HTMLIFrameElement, doc: Document) {
     } catch { /* ignore */ }
 }
 
+function snapshotCaptureLayoutStyle(element: HTMLElement): CaptureLayoutStyleSnapshot {
+    return {
+        width: element.style.width,
+        height: element.style.height,
+        minHeight: element.style.minHeight,
+        overflow: element.style.overflow,
+        margin: element.style.margin,
+        marginTop: element.style.marginTop,
+        marginRight: element.style.marginRight,
+        marginBottom: element.style.marginBottom,
+        marginLeft: element.style.marginLeft,
+        padding: element.style.padding,
+        paddingTop: element.style.paddingTop,
+        paddingRight: element.style.paddingRight,
+        paddingBottom: element.style.paddingBottom,
+        paddingLeft: element.style.paddingLeft,
+        display: element.style.display,
+        alignItems: element.style.alignItems,
+        justifyContent: element.style.justifyContent,
+        placeItems: element.style.placeItems,
+    };
+}
+
+function restoreCaptureLayoutStyle(element: HTMLElement, snapshot: CaptureLayoutStyleSnapshot): void {
+    element.style.width = snapshot.width;
+    element.style.height = snapshot.height;
+    element.style.minHeight = snapshot.minHeight;
+    element.style.overflow = snapshot.overflow;
+    element.style.margin = snapshot.margin;
+    element.style.marginTop = snapshot.marginTop;
+    element.style.marginRight = snapshot.marginRight;
+    element.style.marginBottom = snapshot.marginBottom;
+    element.style.marginLeft = snapshot.marginLeft;
+    element.style.padding = snapshot.padding;
+    element.style.paddingTop = snapshot.paddingTop;
+    element.style.paddingRight = snapshot.paddingRight;
+    element.style.paddingBottom = snapshot.paddingBottom;
+    element.style.paddingLeft = snapshot.paddingLeft;
+    element.style.display = snapshot.display;
+    element.style.alignItems = snapshot.alignItems;
+    element.style.justifyContent = snapshot.justifyContent;
+    element.style.placeItems = snapshot.placeItems;
+}
+
+function flattenCaptureAlignmentStyle(element: HTMLElement): void {
+    element.style.margin = '0';
+    element.style.marginTop = '0';
+    element.style.marginRight = '0';
+    element.style.marginBottom = '0';
+    element.style.marginLeft = '0';
+    element.style.alignItems = 'initial';
+    element.style.justifyContent = 'initial';
+    element.style.placeItems = 'initial';
+}
+
+function flattenCapturePageStyle(element: HTMLElement): void {
+    flattenCaptureAlignmentStyle(element);
+    element.style.padding = '0';
+    element.style.paddingTop = '0';
+    element.style.paddingRight = '0';
+    element.style.paddingBottom = '0';
+    element.style.paddingLeft = '0';
+}
+
 function setCaptureSize(iframe: HTMLIFrameElement, doc: Document, width: number, height: number): () => void {
     const rootElement = typeof doc.getElementById === 'function'
         ? doc.getElementById('root') as HTMLElement | null
         : null;
+    const documentSnapshot = snapshotCaptureLayoutStyle(doc.documentElement);
+    const bodySnapshot = doc.body ? snapshotCaptureLayoutStyle(doc.body) : null;
+    const rootSnapshot = rootElement ? snapshotCaptureLayoutStyle(rootElement) : null;
     const original = {
         iframeWidth: iframe.style.width,
         iframeHeight: iframe.style.height,
         iframeTransform: iframe.style.transform,
         iframeTransformOrigin: iframe.style.transformOrigin,
-        documentWidth: doc.documentElement.style.width,
-        documentHeight: doc.documentElement.style.height,
-        documentOverflow: doc.documentElement.style.overflow,
-        bodyWidth: doc.body?.style.width,
-        bodyHeight: doc.body?.style.height,
-        bodyMinHeight: doc.body?.style.minHeight,
-        bodyOverflow: doc.body?.style.overflow,
-        rootWidth: rootElement?.style.width,
-        rootHeight: rootElement?.style.height,
-        rootMinHeight: rootElement?.style.minHeight,
-        rootOverflow: rootElement?.style.overflow,
     };
 
     iframe.style.width = `${width}px`;
     iframe.style.height = `${height}px`;
     iframe.style.transform = 'none';
     iframe.style.transformOrigin = 'top left';
+    flattenCapturePageStyle(doc.documentElement);
     doc.documentElement.style.width = `${width}px`;
     doc.documentElement.style.height = `${height}px`;
+    doc.documentElement.style.minHeight = `${height}px`;
     doc.documentElement.style.overflow = 'hidden';
     if (doc.body) {
+        flattenCapturePageStyle(doc.body);
+        doc.body.style.display = 'block';
         doc.body.style.width = `${width}px`;
         doc.body.style.height = `${height}px`;
         doc.body.style.minHeight = `${height}px`;
         doc.body.style.overflow = 'hidden';
     }
     if (rootElement) {
+        flattenCaptureAlignmentStyle(rootElement);
         rootElement.style.width = `${width}px`;
         rootElement.style.height = `${height}px`;
         rootElement.style.minHeight = `${height}px`;
@@ -165,20 +246,12 @@ function setCaptureSize(iframe: HTMLIFrameElement, doc: Document, width: number,
         iframe.style.height = original.iframeHeight;
         iframe.style.transform = original.iframeTransform;
         iframe.style.transformOrigin = original.iframeTransformOrigin;
-        doc.documentElement.style.width = original.documentWidth;
-        doc.documentElement.style.height = original.documentHeight;
-        doc.documentElement.style.overflow = original.documentOverflow;
-        if (doc.body) {
-            doc.body.style.width = original.bodyWidth || '';
-            doc.body.style.height = original.bodyHeight || '';
-            doc.body.style.minHeight = original.bodyMinHeight || '';
-            doc.body.style.overflow = original.bodyOverflow || '';
+        restoreCaptureLayoutStyle(doc.documentElement, documentSnapshot);
+        if (doc.body && bodySnapshot) {
+            restoreCaptureLayoutStyle(doc.body, bodySnapshot);
         }
-        if (rootElement) {
-            rootElement.style.width = original.rootWidth || '';
-            rootElement.style.height = original.rootHeight || '';
-            rootElement.style.minHeight = original.rootMinHeight || '';
-            rootElement.style.overflow = original.rootOverflow || '';
+        if (rootElement && rootSnapshot) {
+            restoreCaptureLayoutStyle(rootElement, rootSnapshot);
         }
         dispatchIframeResize(iframe, doc);
     };

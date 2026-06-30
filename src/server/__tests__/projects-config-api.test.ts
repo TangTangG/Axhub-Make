@@ -229,6 +229,150 @@ describe('make-server project config APIs', () => {
     }
   });
 
+  it('syncs project info into AGENTS and CLAUDE when project settings are saved', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'agent-instructions-client', name: 'Agent Instructions Client' },
+      resources: {
+        prototypes: [],
+        themes: [
+          {
+            id: 'brand',
+            name: 'brand',
+            path: 'src/themes/brand',
+            sourcePath: 'src/themes/brand',
+          },
+        ],
+      },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+    });
+    fs.writeFileSync(path.join(projectRoot, 'AGENTS.md'), [
+      '# Agent 工作流程',
+      '',
+      '## 额外产物',
+      '',
+      '原有说明。',
+      '',
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'CLAUDE.md'), [
+      '# Agent 工作流程',
+      '',
+      '## 项目信息',
+      '',
+      '- 项目名称：旧项目',
+      '',
+      '## 额外产物',
+      '',
+      '原有说明。',
+      '',
+    ].join('\n'), 'utf8');
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'agent-instructions-client', 'Agent Instructions Client');
+
+    try {
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server: { host: 'localhost', allowLAN: true },
+          projectInfo: {
+            name: '运营活动配置台',
+            description: '面向运营人员的活动配置后台',
+          },
+          projectDefaults: {
+            defaultTheme: 'brand',
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const expectedProjectInfo = [
+        '## 项目信息',
+        '',
+        '- 项目名称：运营活动配置台',
+        '- 项目简介：面向运营人员的活动配置后台',
+        '- 默认设计：brand（`src/themes/brand/DESIGN.md`）',
+      ].join('\n');
+      for (const fileName of ['AGENTS.md', 'CLAUDE.md']) {
+        const source = fs.readFileSync(path.join(projectRoot, fileName), 'utf8');
+        expect(source).toContain(expectedProjectInfo);
+        expect(source).not.toContain('旧项目');
+        expect(source).toContain('## 额外产物');
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('syncs project info when the default design is changed from the design list', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'default-design-client', name: '运营活动配置台' },
+      resources: {
+        prototypes: [],
+        themes: [
+          {
+            id: 'brand',
+            name: 'brand',
+            path: 'src/themes/brand',
+            sourcePath: 'src/themes/brand',
+          },
+        ],
+      },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+      projectInfo: { description: '面向运营人员的活动配置后台' },
+      projectDefaults: { defaultTheme: 'legacy' },
+    });
+    fs.writeFileSync(path.join(projectRoot, 'AGENTS.md'), [
+      '# Agent 工作流程',
+      '',
+      '## 项目信息',
+      '',
+      '- 项目名称：运营活动配置台',
+      '- 项目简介：面向运营人员的活动配置后台',
+      '- 默认设计：legacy（`src/themes/legacy/DESIGN.md`）',
+      '',
+      '## 额外产物',
+      '',
+      '原有说明。',
+      '',
+    ].join('\n'), 'utf8');
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'default-design-client', '运营活动配置台');
+
+    try {
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectDefaults: {
+            defaultTheme: 'brand',
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const expectedProjectInfo = [
+        '## 项目信息',
+        '',
+        '- 项目名称：运营活动配置台',
+        '- 项目简介：面向运营人员的活动配置后台',
+        '- 默认设计：brand（`src/themes/brand/DESIGN.md`）',
+      ].join('\n');
+      for (const fileName of ['AGENTS.md', 'CLAUDE.md']) {
+        const source = fs.readFileSync(path.join(projectRoot, fileName), 'utf8');
+        expect(source).toContain(expectedProjectInfo);
+        expect(source).not.toContain('legacy');
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
   it('preserves the configured LAN share host and exposes detected LAN host options', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
@@ -371,6 +515,8 @@ describe('make-server project config APIs', () => {
       });
       expect(bootstrap.ideAvailability).toBeUndefined();
       expect(bootstrap.agentAvailability).toBeUndefined();
+      expect(fs.existsSync(path.join(projectRoot, 'AGENTS.md'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'CLAUDE.md'))).toBe(false);
 
       const config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
       expect(config.ideAvailability).toEqual({});

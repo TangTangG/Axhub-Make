@@ -1,9 +1,63 @@
 {
   "type": "excalidraw",
   "version": 2,
-  "source": "@axhub/make",
-  "elements": [],
+  "source": "axhub-make",
+  "elements": [
+    {
+      "id": "1782741265778-d9d5f5h",
+      "type": "embeddable",
+      "x": 1761.342587433568,
+      "y": 1566.9593483257636,
+      "width": 1440,
+      "height": 900,
+      "angle": 0,
+      "strokeColor": "#008F5D",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "index": "a0",
+      "roundness": {
+        "type": 3
+      },
+      "seed": 2022884830,
+      "version": 204,
+      "versionNonce": 1580288784,
+      "isDeleted": false,
+      "boundElements": [],
+      "updated": 1782743412250,
+      "link": "http://localhost:53817/?p=annotation-demo-copy",
+      "locked": false,
+      "customData": {
+        "title": "标注演示",
+        "previewUrl": "http://localhost:53817/prototypes/annotation-demo-copy",
+        "openUrl": "http://localhost:53817/?p=annotation-demo-copy",
+        "previewKind": "web",
+        "resourceType": "preview",
+        "sourceResourceType": "prototype",
+        "resourceId": "annotation-demo-copy",
+        "screenshotUrl": "http://localhost:53817/prototypes/annotation-demo/canvas-assets/embed-1782741265778-d9d5f5h.png?v=1782743412247",
+        "embedSizePreset": "desktop",
+        "embedViewMode": "preview",
+        "storedPreviewSize": {
+          "width": 1440,
+          "height": 900
+        },
+        "previewStrokeColor": "#008F5D",
+        "initialPreviewScreenshotAttemptedAt": "2026-06-29T13:54:25.798Z",
+        "screenshotWidth": 1440,
+        "screenshotHeight": 900,
+        "screenshotContentScale": 1,
+        "screenshotCapturedAt": "2026-06-29T14:30:12.250Z"
+      }
+    }
+  ],
   "appState": {
+    "gridSize": 20,
     "viewBackgroundColor": "#ffffff"
   },
   "files": {}

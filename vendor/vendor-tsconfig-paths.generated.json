@@ -8,8 +8,8 @@
       "axhub-export-core": [
         "./vendor/axhub-export-core/dist/index.d.ts"
       ],
-      "axhub-genie-editor": [
-        "./vendor/axhub-genie-editor/src/index.ts"
+      "@axhub/commentary": [
+        "./vendor/axhub-commentary/src/index.ts"
       ],
       "tiptap-editor": [
         "./vendor/tiptap-editor/dist/index.d.ts"

@@ -210,6 +210,74 @@ describe('sidebarTree', () => {
         ]);
     });
 
+    it('matches basename docs to filesystem tree paths and refreshes path-like titles', () => {
+        const items = [
+            createPrototype({
+                name: 'Agent.png',
+                displayName: 'Agent',
+                filePath: '素材/Agent.png',
+            }),
+            createPrototype({
+                name: '批注更多开启.png',
+                displayName: '批注更多开启',
+                filePath: '素材/批注更多开启.png',
+            }),
+        ];
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-materials',
+                kind: 'folder',
+                title: '素材',
+                path: '素材',
+                folderPath: '素材',
+                children: [
+                    {
+                        id: 'item-docs-materials-agent',
+                        kind: 'item',
+                        title: '素材/Agent',
+                        itemKey: 'docs/素材/Agent.png',
+                        path: '素材/Agent.png',
+                    },
+                    {
+                        id: 'item-docs-materials-comment-more',
+                        kind: 'item',
+                        title: '素材/批注更多开启',
+                        itemKey: 'docs/素材/批注更多开启.png',
+                        path: '素材/批注更多开启.png',
+                    },
+                ],
+            },
+        ];
+
+        const tree = sanitizeSidebarTree('docs', persistedTree, items);
+
+        expect(tree).toEqual([
+            {
+                id: 'folder-docs-materials',
+                kind: 'folder',
+                title: '素材',
+                path: '素材',
+                folderPath: '素材',
+                children: [
+                    {
+                        id: 'item-docs-materials-agent',
+                        kind: 'item',
+                        title: 'Agent',
+                        itemKey: 'docs/素材/Agent.png',
+                        path: '素材/Agent.png',
+                    },
+                    {
+                        id: 'item-docs-materials-comment-more',
+                        kind: 'item',
+                        title: '批注更多开启',
+                        itemKey: 'docs/素材/批注更多开启.png',
+                        path: '素材/批注更多开启.png',
+                    },
+                ],
+            },
+        ]);
+    });
+
     it('refreshes generated repeated theme titles from resource display names', () => {
         const items = [
             createPrototype({

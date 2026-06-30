@@ -196,6 +196,7 @@ function generateOfflineHtml(options: {
   bootstrapPath: string;
   cssText?: string;
   cssPath?: string;
+  sourceReferenceScript?: string;
 }): string {
   const cssBlock = options.cssText?.trim()
     ? `\n  <style>\n${options.cssText}\n  </style>`
@@ -248,6 +249,7 @@ function generateOfflineHtml(options: {
 
   <div id="root"></div>
 
+  ${options.sourceReferenceScript ? `<script>${options.sourceReferenceScript}</script>\n` : ''}
   <script src="${options.reactPath}"></script>
   <script src="${options.reactDomPath}"></script>
   <script src="${options.bootstrapPath}"></script>
@@ -291,6 +293,7 @@ function generateOfflineHtml(options: {
         window.ReactDOM = bootstrap.ReactDOM;
 
         await loadEntryScript('${options.entryScriptPath}');
+        ${options.sourceReferenceScript ? options.sourceReferenceScript : ''}
 
         var Component = window.UserComponent && (window.UserComponent.Component || window.UserComponent.default || window.UserComponent);
         if (!Component) {
@@ -441,6 +444,7 @@ const SOURCE_EXCLUDED_FILE_NAMES = new Set([
   'canvas.code-manifest.json',
   'canvas.excalidraw',
   'canvas.fig',
+  'manifest.json',
 ]);
 
 function shouldExcludeSourceFile(relativePath: string): boolean {
@@ -461,7 +465,7 @@ function collectSourceStaticFiles(projectRoot: string, sourceFile: string): Expo
     throw new Error('源码目录不在项目根目录内，无法导出源码');
   }
 
-  return listFilesRecursive(sourceDir)
+  const sourceFiles = listFilesRecursive(sourceDir)
     .filter((relativePath) => !shouldExcludeSourceFile(relativePath))
     .map((relativePath) => {
       const normalizedPath = relativePath.split(path.sep).join('/');
@@ -471,6 +475,25 @@ function collectSourceStaticFiles(projectRoot: string, sourceFile: string): Expo
         fs.readFileSync(path.join(sourceDir, relativePath)),
       );
     });
+  const entryPath = path.relative(sourceDir, path.resolve(sourceFile)).split(path.sep).join('/');
+  const manifest = {
+    version: 1,
+    format: 'axhub-published-source',
+    sourceRoot: 'source',
+    entry: entryPath,
+    files: sourceFiles
+      .map((file) => file.path.replace(/^source\//u, ''))
+      .sort((a, b) => a.localeCompare(b))
+      .map((relativePath) => ({
+        path: relativePath,
+        kind: relativePath === entryPath ? 'entry' : 'source',
+      })),
+  };
+
+  return [
+    toStaticFile('source/manifest.json', 'application/json; charset=utf-8', `${JSON.stringify(manifest, null, 2)}\n`),
+    ...sourceFiles,
+  ];
 }
 
 function resolveMediaExportDir(projectRoot: string, mediaRoot?: string): string {
@@ -522,6 +545,8 @@ export async function buildExportHtmlStaticFiles(options: ExportHtmlOptions): Pr
   const extractedCss = extractLargeCssDataUris(builtCssText);
   const cssText = extractedCss.cssText;
   const shouldExternalizeCss = Buffer.byteLength(cssText, 'utf8') > INLINE_HTML_CSS_MAX_BYTES;
+  const shouldInjectAnnotationSourceReference = options.includeSource === true
+    && buildResult.metadata?.usesAnnotationRuntime === true;
 
   const htmlContent = generateOfflineHtml({
     title: displayName || entryName,
@@ -532,6 +557,9 @@ export async function buildExportHtmlStaticFiles(options: ExportHtmlOptions): Pr
     bootstrapPath: `./assets/${OFFLINE_BOOTSTRAP_FILE}`,
     cssText: shouldExternalizeCss ? '' : cssText,
     cssPath: shouldExternalizeCss ? './index.css' : undefined,
+    sourceReferenceScript: shouldInjectAnnotationSourceReference
+      ? 'window.__AXHUB_ANNOTATION_SOURCE_REFERENCE__={root:"source",manifest:"source/manifest.json"};'
+      : undefined,
   });
 
   const files: ExportHtmlStaticFile[] = [

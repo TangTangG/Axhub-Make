@@ -13,10 +13,10 @@
       "typesEntryRelative": "vendor/axhub-export-core/dist/index.d.ts"
     },
     {
-      "packageName": "axhub-genie-editor",
-      "outputDirRelative": "vendor/axhub-genie-editor",
-      "runtimeEntryRelative": "vendor/axhub-genie-editor/dist/index.mjs",
-      "typesEntryRelative": "vendor/axhub-genie-editor/src/index.ts"
+      "packageName": "@axhub/commentary",
+      "outputDirRelative": "vendor/axhub-commentary",
+      "runtimeEntryRelative": "vendor/axhub-commentary/dist/index.mjs",
+      "typesEntryRelative": "vendor/axhub-commentary/src/index.ts"
     },
     {
       "packageName": "tiptap-editor",

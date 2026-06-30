@@ -10,7 +10,7 @@ describe('html-template annotation boundary', () => {
   it('exposes the shared HTML page annotation editor bridge for HTML resources', () => {
     const source = readHtmlTemplateSource();
 
-    expect(source).toContain("import { createGenieEditor");
+    expect(source).toContain("import { createCommentary");
     expect(source).not.toContain("interactionProfile: 'text-comment'");
     expect(source).toContain("skillInstallSource: '.agents/skills/prototype-comments/SKILL.md'");
     expect(source).toContain('window.HtmlTemplateBootstrap');

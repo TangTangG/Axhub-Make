@@ -212,6 +212,33 @@ describe('ACP chat runner', () => {
     });
   });
 
+  it('treats stream error chunks followed by a stop finish as non-fatal diagnostics', async () => {
+    const mod = await loadRunnerModule();
+    const fetchImpl = vi.fn(async () => createSseResponse([
+      createJsonEvent({ type: 'text-delta', delta: 'patch applied' }),
+      createJsonEvent({ type: 'error', errorText: 'session status poll failed' }),
+      createJsonEvent({ type: 'finish', finishReason: 'stop' }),
+      'data: [DONE]\n\n',
+    ]));
+
+    const result = await mod.runAcpChatCommand({
+      acpApiBaseUrl: 'http://acp.local/api',
+      workspacePath: '/workspace',
+      prompt: 'Run.',
+    }, { fetchImpl });
+
+    expect(result).toMatchObject({
+      output: 'patch applied',
+      finishReason: 'stop',
+      errors: [
+        {
+          type: 'error',
+          message: 'session status poll failed',
+        },
+      ],
+    });
+  });
+
   it('fails tool-output-error chunks so image runs cannot silently succeed', async () => {
     const mod = await loadRunnerModule();
     const fetchImpl = vi.fn(async () => createSseResponse([
@@ -245,6 +272,41 @@ describe('ACP chat runner', () => {
           },
         ],
       },
+    });
+  });
+
+  it('treats tool errors followed by a stop finish as diagnostics when explicitly allowed', async () => {
+    const mod = await loadRunnerModule();
+    const fetchImpl = vi.fn(async () => createSseResponse([
+      createJsonEvent({ type: 'text-delta', delta: 'patch applied' }),
+      createJsonEvent({
+        type: 'tool-output-error',
+        toolCallId: 'call-check-ready',
+        toolName: 'run_shell_command',
+        errorText: 'node scripts/check-app-ready.mjs failed',
+      }),
+      createJsonEvent({ type: 'finish', finishReason: 'stop' }),
+      'data: [DONE]\n\n',
+    ]));
+
+    const result = await mod.runAcpChatCommand({
+      acpApiBaseUrl: 'http://acp.local/api',
+      workspacePath: '/workspace',
+      prompt: 'Update annotation.',
+      allowToolErrorDiagnostics: true,
+    }, { fetchImpl });
+
+    expect(result).toMatchObject({
+      output: 'patch applied',
+      finishReason: 'stop',
+      errors: [
+        {
+          type: 'tool-output-error',
+          toolCallId: 'call-check-ready',
+          toolName: 'run_shell_command',
+          message: 'node scripts/check-app-ready.mjs failed',
+        },
+      ],
     });
   });
 

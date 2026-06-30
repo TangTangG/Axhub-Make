@@ -120,12 +120,17 @@ function buildApiMarkdownUrl(
         name?: string;
         resourceId?: string;
         projectId?: string;
+        projectDocumentPath?: string;
     },
     kind: 'doc' | 'template',
 ): string {
     const rawName = normalizeResourceName(item.name);
     const rawResourceId = normalizeResourceName(item.resourceId);
     const projectId = String(item.projectId || '').trim();
+    const projectDocumentPath = normalizeResourceName(item.projectDocumentPath);
+    if (kind === 'doc' && projectId && projectDocumentPath) {
+        return `/api/projects/${encodeURIComponent(projectId)}/document-content?path=${encodeURIComponent(projectDocumentPath)}`;
+    }
     if (kind === 'doc' && projectId && (rawResourceId || rawName)) {
         return `/api/projects/${encodeURIComponent(projectId)}/docs/${encodeURIComponent(rawResourceId || rawName)}/content`;
     }
@@ -164,6 +169,7 @@ export function resolveMarkdownPreviewIframeUrl(
         previewUrl?: string;
         filePath?: string;
         absoluteFilePath?: string;
+        projectDocumentPath?: string;
     } | null | undefined,
     kind: 'doc' | 'template',
 ): string {
@@ -186,6 +192,10 @@ export function resolveMarkdownPreviewIframeUrl(
     }
 
     const name = normalizeResourceName(item.name);
+    if (kind === 'doc' && item.projectId && normalizeResourceName(item.projectDocumentPath)) {
+        const markdownUrl = buildApiMarkdownUrl(item, kind);
+        return markdownUrl ? buildSpecTemplatePreviewUrl(markdownUrl) : '';
+    }
     if (hasHtmlExtension(name)) {
         return buildApiHtmlUrl(item, kind);
     }

@@ -997,6 +997,161 @@ describe('AI runs API', () => {
     }
   });
 
+  it('does not stream a terminal run error for direct ACP diagnostics when the run finishes normally', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-warning-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-direct-warning', name: 'AI Runs Direct Warning' },
+    });
+    const acp = await startAcpRunTestServer({
+      streamEvents: [
+        { type: 'text-delta', delta: '修改已应用' },
+        { type: 'error', errorText: 'session status poll failed' },
+        { type: 'finish', finishReason: 'stop' },
+      ],
+    });
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '修改批注',
+          threadId: 'annotation-mqz16rps-081z7c',
+        }),
+      });
+      const events = await collectRunEvents(response);
+
+      expect(response.status).toBe(200);
+      expect(events.map((event) => event.event)).toEqual([
+        'run.accepted',
+        'run.stage',
+        'run.text.delta',
+        'run.completed',
+      ]);
+      expect(events.some((event) => event.event === 'run.error')).toBe(false);
+      expect(events.at(-1)).toMatchObject({
+        event: 'run.completed',
+        data: {
+          status: 'done',
+          output: '修改已应用',
+          finishReason: 'stop',
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not stream a terminal run error for direct ACP tool diagnostics when the run finishes normally', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-tool-warning-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-direct-tool-warning', name: 'AI Runs Direct Tool Warning' },
+    });
+    const acp = await startAcpRunTestServer({
+      streamEvents: [
+        { type: 'text-delta', delta: '修改已应用' },
+        {
+          type: 'tool-output-error',
+          toolCallId: 'call-check-ready',
+          toolName: 'run_shell_command',
+          errorText: 'node scripts/check-app-ready.mjs failed',
+        },
+        { type: 'finish', finishReason: 'stop' },
+      ],
+    });
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '修改批注',
+          threadId: 'annotation-mqz16rps-081z7c',
+        }),
+      });
+      const events = await collectRunEvents(response);
+
+      expect(response.status).toBe(200);
+      expect(events.map((event) => event.event)).toEqual([
+        'run.accepted',
+        'run.stage',
+        'run.text.delta',
+        'run.completed',
+      ]);
+      expect(events.some((event) => event.event === 'run.error')).toBe(false);
+      expect(events.at(-1)).toMatchObject({
+        event: 'run.completed',
+        data: {
+          status: 'done',
+          output: '修改已应用',
+          finishReason: 'stop',
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('streams original ACP error diagnostics for failed direct runs', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-error-diagnostics-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-direct-error-diagnostics', name: 'AI Runs Direct Error Diagnostics' },
+    });
+    const acp = await startAcpRunTestServer({
+      streamEvents: [
+        { type: 'text-delta', delta: '修改已应用' },
+        { type: 'error', errorText: 'session status poll failed', code: 'SESSION_STATUS_FAILED' },
+      ],
+    });
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '修改批注',
+          threadId: 'annotation-mqz16rps-081z7c',
+        }),
+      });
+      const events = await collectRunEvents(response);
+
+      expect(response.status).toBe(200);
+      expect(events.at(-1)).toMatchObject({
+        event: 'run.error',
+        data: {
+          status: 'error',
+          error: 'session status poll failed',
+          code: 'ACP_CHAT_STREAM_ERROR',
+          output: '修改已应用',
+          chunk: {
+            type: 'error',
+            errorText: 'session status poll failed',
+            code: 'SESSION_STATUS_FAILED',
+          },
+          errors: [
+            {
+              type: 'error',
+              message: 'session status poll failed',
+              chunk: {
+                type: 'error',
+                errorText: 'session status poll failed',
+                code: 'SESSION_STATUS_FAILED',
+              },
+            },
+          ],
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('streams ACP image tool failures as run error events', async () => {
     const projectRoot = createTempRoot('axhub-ai-runs-image-error-');
     writeProjectMetadata(projectRoot, {

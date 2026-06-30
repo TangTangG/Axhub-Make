@@ -55,6 +55,10 @@ function isGeneratedRepeatedThemeTitle(title: string, item: ItemData): boolean {
     return Boolean(displayName && after.toLowerCase() === displayName.toLowerCase());
 }
 
+function getItemResourceName(tab: SidebarTreeTab, item: ItemData): string {
+    return normalizeTreeKey(tab === 'docs' ? (item.filePath || item.name) : item.name);
+}
+
 function resolveItemTitle(tab: SidebarTreeTab, item: ItemData, persistedTitle?: string): string {
     const title = persistedTitle?.trim();
     if (!title) {
@@ -62,7 +66,7 @@ function resolveItemTitle(tab: SidebarTreeTab, item: ItemData, persistedTitle?: 
     }
 
     const itemKey = `${tab}/${item.name}`;
-    const defaultTitleCandidates = new Set([
+    const defaultTitleCandidateValues = [
         item.name,
         stripFinalPathExtension(item.name),
         item.name.split('/').pop() || item.name,
@@ -73,7 +77,26 @@ function resolveItemTitle(tab: SidebarTreeTab, item: ItemData, persistedTitle?: 
         toGeneratedTitle(stripFinalPathExtension(item.name)),
         toGeneratedTitle(itemKey),
         toGeneratedTitle(stripFinalPathExtension(itemKey)),
-    ]);
+    ];
+
+    if (tab === 'docs' && item.filePath) {
+        const filePath = normalizeTreeKey(item.filePath);
+        const filePathKey = filePath ? `docs/${filePath}` : '';
+        defaultTitleCandidateValues.push(
+            filePath,
+            stripFinalPathExtension(filePath),
+            filePath.split('/').pop() || filePath,
+            filePathKey,
+            stripFinalPathExtension(filePathKey),
+            filePathKey.split('/').pop() || filePathKey,
+            toGeneratedTitle(filePath),
+            toGeneratedTitle(stripFinalPathExtension(filePath)),
+            toGeneratedTitle(filePathKey),
+            toGeneratedTitle(stripFinalPathExtension(filePathKey)),
+        );
+    }
+
+    const defaultTitleCandidates = new Set(defaultTitleCandidateValues);
 
     if (defaultTitleCandidates.has(title)) {
         return item.displayName || item.name;
@@ -87,8 +110,9 @@ function resolveItemTitle(tab: SidebarTreeTab, item: ItemData, persistedTitle?: 
 }
 
 function createItemNode(tab: SidebarTreeTab, item: ItemData, title?: string, itemKeyOverride?: string): SidebarTreeNode {
-    const itemKey = itemKeyOverride || `${tab}/${item.name}`;
-    const itemName = itemKey.startsWith(`${tab}/`) ? itemKey.slice(`${tab}/`.length) : item.name;
+    const resourceName = getItemResourceName(tab, item) || item.name;
+    const itemKey = itemKeyOverride || `${tab}/${resourceName}`;
+    const itemName = itemKey.startsWith(`${tab}/`) ? itemKey.slice(`${tab}/`.length) : resourceName;
     return {
         id: `item:${tab}:${itemName}`,
         kind: 'item',
@@ -112,7 +136,7 @@ export function createSidebarTreeItemLookup(tab: SidebarTreeTab, items: ItemData
     const lookup: SidebarTreeItemLookup = new Map();
 
     for (const item of items) {
-        const itemName = normalizeTreeKey(item.name);
+        const itemName = getItemResourceName(tab, item);
         if (!itemName) {
             continue;
         }
@@ -125,6 +149,11 @@ export function createSidebarTreeItemLookup(tab: SidebarTreeTab, items: ItemData
 
         if (tab === 'docs') {
             addLookupEntry(lookup, stripFinalPathExtension(canonicalKey), entry);
+            const legacyName = normalizeTreeKey(item.name);
+            if (legacyName && !isIgnoredDocsResourcePath(legacyName)) {
+                addLookupEntry(lookup, `docs/${legacyName}`, entry);
+                addLookupEntry(lookup, stripFinalPathExtension(`docs/${legacyName}`), entry);
+            }
         }
     }
 
@@ -320,7 +349,7 @@ function isConsumedItem(tab: SidebarTreeTab, itemKey: string, consumedKeys: Set<
 
 export function buildDefaultTree(tab: SidebarTreeTab, items: ItemData[]): SidebarTreeNode[] {
     return items
-        .filter((item) => tab !== 'docs' || !isIgnoredDocsResourcePath(item.name))
+        .filter((item) => tab !== 'docs' || !isIgnoredDocsResourcePath(getItemResourceName(tab, item)))
         .map((item) => createItemNode(tab, item));
 }
 
@@ -396,8 +425,8 @@ export function sanitizeSidebarTree(tab: SidebarTreeTab, tree: SidebarTreeNode[]
     }
 
     const missingNodes = items
-        .filter((item) => tab !== 'docs' || !isIgnoredDocsResourcePath(item.name))
-        .filter((item) => !isConsumedItem(tab, `${tab}/${normalizeTreeKey(item.name)}`, consumedKeys))
+        .filter((item) => tab !== 'docs' || !isIgnoredDocsResourcePath(getItemResourceName(tab, item)))
+        .filter((item) => !isConsumedItem(tab, `${tab}/${getItemResourceName(tab, item)}`, consumedKeys))
         .map((item) => createItemNode(tab, item));
 
     return [...missingNodes, ...nextTree];

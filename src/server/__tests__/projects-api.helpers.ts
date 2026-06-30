@@ -13,6 +13,7 @@ import {
 } from '../projectCore/index.ts';
 
 import { startMakeServer } from '../index.ts';
+import type { GitWorkspaceCommandExecutor } from '../managementApi.git.ts';
 
 const tempRoots: string[] = [];
 
@@ -53,7 +54,7 @@ export function writeProjectMetadata(
   overrides: Record<string, unknown> = {},
   options: { makeClientMarker?: boolean } = {},
 ) {
-  const docPath = path.join(projectRoot, 'docs', 'spec.md');
+  const docPath = path.join(projectRoot, 'src', 'resources', 'spec.md');
   const project = {
     id: path.basename(projectRoot),
     name: path.basename(projectRoot),
@@ -80,20 +81,10 @@ export function writeProjectMetadata(
           clientUrl: 'http://localhost:3000/home',
         },
       ],
-      docs: [
-        {
-          id: 'spec',
-          name: 'spec',
-          title: 'Spec',
-          path: docPath,
-        },
-      ],
       themes: [{ id: 'theme-a', name: 'theme-a' }],
-      data: [{ id: 'orders', name: 'orders' }],
-      templates: [{ id: 'prd', name: 'prd' }],
     },
-    navigation: { prototypes: ['home'], docs: ['spec'] },
-    orders: { themes: ['theme-a'], data: ['orders'], templates: ['prd'] },
+    navigation: { prototypes: ['home'] },
+    orders: { themes: ['theme-a'] },
     capabilities: {
       quickEdit: true,
       quickEditMode: 'clientRuntime',
@@ -112,11 +103,15 @@ export function getTestProjectRegistryPath(registryHome: string) {
 
 export async function startTestServer(
   projectRoot: string,
-  registryHome = createTempRoot('axhub-make-projects-api-home-'),
-  options: { runtimeOrigin?: string; serverConfig?: unknown } = {},
+  registryHomeOrOptions: string | { runtimeOrigin?: string; serverConfig?: unknown; gitWorkspaceCommandExecutor?: GitWorkspaceCommandExecutor } = createTempRoot('axhub-make-projects-api-home-'),
+  options: { runtimeOrigin?: string; serverConfig?: unknown; gitWorkspaceCommandExecutor?: GitWorkspaceCommandExecutor } = {},
 ) {
-  if (options.serverConfig) {
-    writeJson(getGlobalServerConfigPath(registryHome), options.serverConfig);
+  const registryHome = typeof registryHomeOrOptions === 'string'
+    ? registryHomeOrOptions
+    : createTempRoot('axhub-make-projects-api-home-');
+  const resolvedOptions = typeof registryHomeOrOptions === 'string' ? options : registryHomeOrOptions;
+  if (resolvedOptions.serverConfig) {
+    writeJson(getGlobalServerConfigPath(registryHome), resolvedOptions.serverConfig);
   }
   const registryPath = getProjectRegistryPath(registryHome);
   return startMakeServer({
@@ -125,7 +120,8 @@ export async function startTestServer(
     port: 0,
     adminRoot: path.join(projectRoot, 'missing-admin'),
     registryPath,
-    runtimeOrigin: options.runtimeOrigin,
+    runtimeOrigin: resolvedOptions.runtimeOrigin,
+    gitWorkspaceCommandExecutor: resolvedOptions.gitWorkspaceCommandExecutor,
   });
 }
 

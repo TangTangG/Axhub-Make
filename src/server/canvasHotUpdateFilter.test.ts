@@ -20,6 +20,8 @@ async function runConfigureServer(plugin: any, server: any) {
 describe('make-server canvas hot-update filter', () => {
   it('identifies canvas data files', () => {
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas.excalidraw')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/annotation-source.json')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/annotation-source.json?import&t=123')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas-assets/screenshot.png')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/generation-artifacts.json')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/generation-assets/images/image-1.png')).toBe(true);
@@ -41,6 +43,10 @@ describe('make-server canvas hot-update filter', () => {
     expect(await handleHotUpdate({
       file: '/project/src/prototypes/home/canvas.excalidraw',
       modules: [{ id: 'canvas' }],
+    })).toEqual([]);
+    expect(await handleHotUpdate({
+      file: '/project/src/prototypes/home/annotation-source.json',
+      modules: [{ id: 'annotation-source' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
       file: '/project/src/prototypes/home/canvas-assets/screenshot.png',
@@ -68,6 +74,26 @@ describe('make-server canvas hot-update filter', () => {
     })).toBeUndefined();
   });
 
+  it('invalidates annotation source modules while suppressing browser reloads', async () => {
+    const plugin = canvasHotUpdateFilterPlugin();
+    const handleHotUpdate = plugin.handleHotUpdate as any;
+    const annotationModule = { id: 'annotation-source' };
+    const otherModule = { id: 'canvas' };
+    const invalidateModule = vi.fn();
+
+    expect(await handleHotUpdate({
+      file: '/project/src/prototypes/home/annotation-source.json',
+      modules: [annotationModule, otherModule],
+      server: {
+        moduleGraph: { invalidateModule },
+      },
+      timestamp: 123,
+    })).toEqual([]);
+
+    expect(invalidateModule).toHaveBeenCalledWith(annotationModule, undefined, 123, true);
+    expect(invalidateModule).toHaveBeenCalledWith(otherModule, undefined, 123, true);
+  });
+
   it('drops full reload payloads triggered by canvas data files', async () => {
     const hotSend = vi.fn();
     const server = {
@@ -81,6 +107,12 @@ describe('make-server canvas hot-update filter', () => {
     server.hot.send({
       type: 'full-reload',
       triggeredBy: '/project/src/prototypes/home/canvas.excalidraw',
+    });
+    expect(hotSend).not.toHaveBeenCalled();
+
+    server.hot.send({
+      type: 'full-reload',
+      triggeredBy: '/project/src/prototypes/home/annotation-source.json',
     });
     expect(hotSend).not.toHaveBeenCalled();
 
@@ -115,6 +147,69 @@ describe('make-server canvas hot-update filter', () => {
     expect(hotSend).toHaveBeenCalledTimes(2);
   });
 
+  it('drops Vite update payloads triggered only by annotation source modules', async () => {
+    const hotSend = vi.fn();
+    const server = {
+      hot: { send: hotSend },
+      ws: { send: vi.fn() },
+    };
+    const plugin = canvasHotUpdateFilterPlugin();
+
+    await runConfigureServer(plugin, server);
+
+    server.hot.send({
+      type: 'update',
+      updates: [{
+        type: 'js-update',
+        timestamp: 1,
+        path: '/src/prototypes/home/annotation-source.json?import&t=123',
+        acceptedPath: '/src/prototypes/home/annotation-source.json?import&t=123',
+      }],
+    });
+
+    expect(hotSend).not.toHaveBeenCalled();
+  });
+
+  it('keeps ordinary Vite updates batched with annotation source modules', async () => {
+    const hotSend = vi.fn();
+    const server = {
+      hot: { send: hotSend },
+      ws: { send: vi.fn() },
+    };
+    const plugin = canvasHotUpdateFilterPlugin();
+
+    await runConfigureServer(plugin, server);
+
+    server.hot.send({
+      type: 'update',
+      updates: [
+        {
+          type: 'js-update',
+          timestamp: 1,
+          path: '/src/prototypes/home/annotation-source.json?import&t=123',
+          acceptedPath: '/src/prototypes/home/annotation-source.json?import&t=123',
+        },
+        {
+          type: 'js-update',
+          timestamp: 1,
+          path: '/src/index/index.tsx',
+          acceptedPath: '/src/index/index.tsx',
+        },
+      ],
+    });
+
+    expect(hotSend).toHaveBeenCalledTimes(1);
+    expect(hotSend.mock.calls[0]?.[0]).toEqual({
+      type: 'update',
+      updates: [{
+        type: 'js-update',
+        timestamp: 1,
+        path: '/src/index/index.tsx',
+        acceptedPath: '/src/index/index.tsx',
+      }],
+    });
+  });
+
   it('does not drop non-reload payloads even when they mention canvas files', () => {
     expect(shouldDropCanvasFullReloadPayload({
       type: 'update',
@@ -128,6 +223,7 @@ describe('make-server canvas hot-update filter', () => {
     expect(viteConfigSource).toContain("import { canvasHotUpdateFilterPlugin } from './src/server/canvasHotUpdateFilter'");
     expect(viteConfigSource).toContain('canvasHotUpdateFilterPlugin()');
     expect(viteConfigSource).toContain("'**/automation-reports/**'");
+    expect(viteConfigSource).not.toContain("'**/annotation-source.json'");
     expect(viteConfigSource).toContain("'**/client/**'");
     expect(viteConfigSource).toContain("'**/midscene/**'");
     expect(viteConfigSource).toContain("'**/.axhub/**'");

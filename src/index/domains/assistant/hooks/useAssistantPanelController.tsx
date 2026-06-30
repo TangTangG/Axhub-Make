@@ -67,6 +67,8 @@ type OpenAssistantSubmitOptions = {
     ignoredArtifactPaths?: string[];
     provider?: string | null;
     model?: string | null;
+    mode?: string | null;
+    thought?: string | null;
 };
 type OpenAssistantSubmitResult = {
     ok: boolean;
@@ -1905,6 +1907,8 @@ export function useAssistantPanelController({
                 waitUntil: options.collectArtifacts === true ? 'started' : options.waitUntil || 'started',
                 provider: options.provider,
                 model: options.model,
+                modeId: options.mode,
+                thoughtLevel: options.thought,
             });
             if (options.collectArtifacts === true && submitResult.threadId) {
                 const artifactResult = await waitForAcpArtifacts(() => queryArtifactsWithRetry({

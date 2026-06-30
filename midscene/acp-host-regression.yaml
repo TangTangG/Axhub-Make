@@ -159,47 +159,41 @@ tasks:
               'run id: ' + runId,
               'artifact ids: ' + expectedArtifacts.map((artifact) => artifact.id).join(', '),
             ].join('\n');
-            document.dispatchEvent(new CustomEvent('axhub:insertAiGeneration', {
-              detail: {
-                scene: 'document',
-                source: 'canvas-toolbar',
-              },
-            }));
-
             const deadline = Date.now() + 45000;
             let lastState = null;
             while (Date.now() < deadline) {
-              const textarea = document.querySelector('textarea[aria-label="AI 生成提示词"]');
-              const elements = window.__AXHUB_EXCALIDRAW_API__?.getSceneElements?.() || [];
-              const generator = elements.find((element) => (
-                !element?.isDeleted
-                && element.customData?.type === 'axhub-ai-generation'
-                && element.customData?.scene === 'document'
-              ));
+              let textarea = document.querySelector('textarea[aria-label="画布 AI 输入"]');
+              const launcher = document.querySelector('[data-axhub-canvas-start-ai-launcher]');
+              if (!textarea && launcher) {
+                launcher.click();
+                await sleep(300);
+              }
+              const documentSceneButton = Array.from(document.querySelectorAll('[data-axhub-canvas-start-scene-switcher] button'))
+                .find((button) => button.textContent?.trim() === '文档');
+              documentSceneButton?.click();
+              textarea = document.querySelector('textarea[aria-label="画布 AI 输入"]');
               lastState = {
                 hasComposer: Boolean(textarea),
-                hasGenerator: Boolean(generator),
+                hasLauncher: Boolean(launcher),
                 composerAriaLabel: textarea?.getAttribute?.('aria-label') || '',
-                elementCount: elements.length,
               };
-              if (textarea && generator) {
+              if (textarea) {
                 return {
                   expectedArtifacts,
                   promptText: window.__AXHUB_E2E_REALTIME_PROMPT_TEXT__,
                   composerAriaLabel: textarea.getAttribute('aria-label'),
-                  generatorId: generator.id,
                 };
               }
               await sleep(500);
             }
             throw new Error('Canvas AI composer did not appear for active canvas write test: ' + JSON.stringify(lastState));
           })()
-        name: insert_canvas_ai_node_for_active_canvas_write
+        name: open_canvas_start_ai_composer_for_active_canvas_write
       - javascript: |
           (async () => {
             const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
             const promptText = String(window.__AXHUB_E2E_REALTIME_PROMPT_TEXT__ || '');
-            const textarea = document.querySelector('textarea[aria-label="AI 生成提示词"]');
+            const textarea = document.querySelector('textarea[aria-label="画布 AI 输入"]');
             if (!textarea) {
               throw new Error('Canvas AI composer textarea is not available for prompt submission.');
             }
@@ -210,7 +204,7 @@ tasks:
             textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
             textarea.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true, cancelable: true }));
             await sleep(600);
-            const root = textarea.closest('[data-axhub-ai-generation-composer]') || textarea.closest('.ax-ai-image-composer-host') || document;
+            const root = textarea.closest('[data-axhub-canvas-start-composer]') || textarea.closest('.ax-placeholder-display-composer') || document;
             const buttons = Array.from(root.querySelectorAll('button')).filter((button) => {
               const rect = button.getBoundingClientRect();
               return rect.width > 0 && rect.height > 0 && !button.disabled;
@@ -273,7 +267,7 @@ tasks:
             }
             throw new Error('ACP iframe was not visible after canvas composer prompt submission: ' + JSON.stringify(lastState));
           })()
-        name: submit_canvas_ai_prompt_for_active_canvas_write
+        name: submit_canvas_start_ai_prompt_for_active_canvas_write
       - javascript: |
           (async () => {
             const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

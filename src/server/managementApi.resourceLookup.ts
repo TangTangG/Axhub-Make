@@ -47,15 +47,6 @@ function getResourceGroupFromCollection(metadata: ProjectMetadata, resource: any
   if (metadata.resources.themes.includes(resource)) {
     return 'themes';
   }
-  if (metadata.resources.docs.includes(resource)) {
-    return 'docs';
-  }
-  if (metadata.resources.data.includes(resource)) {
-    return 'data';
-  }
-  if (metadata.resources.templates.includes(resource)) {
-    return 'templates';
-  }
   return '';
 }
 
@@ -87,14 +78,11 @@ export function normalizeProjectResourcePath(metadata: ProjectMetadata, rawPath:
 export function findProjectResourceByPath(metadata: ProjectMetadata, rawPath: string) {
   const normalizedPath = normalizeSlashPath(rawPath);
   const normalizedCandidate = normalizeResourcePathCandidate(rawPath);
-  const [, resourceName = ''] = normalizedPath.match(/^(?:src\/)?(?:prototypes|docs|themes|data|templates)\/(.+)$/u) || [];
+  const [, resourceName = ''] = normalizedPath.match(/^(?:src\/)?(?:prototypes|themes)\/(.+)$/u) || [];
   const normalizedResourceName = stripIndexEntryPath(resourceName);
   const allResources = [
     ...metadata.resources.prototypes,
-    ...metadata.resources.docs,
     ...metadata.resources.themes,
-    ...metadata.resources.data,
-    ...metadata.resources.templates,
   ];
   return allResources.find((resource: any) => {
     const id = String(resource.id || '').trim();
@@ -126,11 +114,9 @@ function resolveDirectoryIndexFile(sourcePath: string): string | null {
 export function resolveSourceFileFromMetadata(context: ResourceLookupContext, rawPath: string): string | null {
   const resource = findProjectResourceByPath(context.metadata, rawPath);
   const sourceCandidate = String(resource?.absoluteFilePath || resource?.filePath || resource?.sourcePath || resource?.path || '').trim();
-  if (!sourceCandidate) {
-    return null;
-  }
+  const directCandidate = sourceCandidate || rawPath;
   try {
-    const sourcePath = resolveProjectPath(context.project.root, sourceCandidate);
+    const sourcePath = resolveProjectPath(context.project.root, directCandidate);
     if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isFile()) {
       return sourcePath;
     }

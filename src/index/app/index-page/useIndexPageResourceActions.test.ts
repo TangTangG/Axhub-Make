@@ -106,11 +106,11 @@ describe('useIndexPageResourceActions source', () => {
     expect(prototypeDeleteSource).toContain('body: JSON.stringify(buildResourceBody({ path: localBasePath }))');
     expect(templateRenameSource).toContain('fetch(buildResourceUrl(`/api/docs/templates/${encodeURIComponent(currentName)}`),');
     expect(templateRenameSource).toContain('body: JSON.stringify(buildResourceBody({ newBaseName: trimmedName }))');
-    expect(docResourceSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentName)}`),');
+    expect(docResourceSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}`),');
     expect(docResourceSource).toContain('body: JSON.stringify(buildResourceBody({ newBaseName: trimmedName }))');
-    expect(docResourceSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(item.name)}/copy`),');
+    expect(docResourceSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}/copy`),');
     expect(docResourceSource).toContain("body: JSON.stringify(buildResourceBody({}))");
-    expect(docResourceSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(item.name)}`), { method: \'DELETE\' })');
+    expect(docResourceSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}`), { method: \'DELETE\' })');
   });
 
   it('normalizes nested document and template rename input down to a file basename', () => {
@@ -129,6 +129,32 @@ describe('useIndexPageResourceActions source', () => {
     expect(docRenameSource).toContain('const currentBaseName = resolveDocRenameBaseName(currentName, currentExt);');
     expect(docRenameSource).toContain('trimmedName = resolveDocRenameBaseName(trimmedName);');
     expect(docRenameSource).toContain('body: JSON.stringify(buildResourceBody({ newBaseName: trimmedName }))');
+  });
+
+  it('renames nested document resources by their path while keeping the display name as a basename', () => {
+    const rootSource = readResourceRootSource();
+    const docRenameStart = rootSource.indexOf('const handleRenameDocItem = useCallback');
+    const duplicateDocStart = rootSource.indexOf('const handleDuplicateDocItem', docRenameStart);
+    const docRenameSource = rootSource.slice(docRenameStart, duplicateDocStart);
+
+    expect(docRenameSource).toContain('const currentResourcePath = String(item.filePath || item.name || \'\').trim();');
+    expect(docRenameSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}`),');
+    expect(docRenameSource).toContain('const renamedResourcePath = renamedPath || renamedDocName;');
+    expect(docRenameSource).toContain('const renamedDisplayName = getDocDisplayName(getDocFileName(renamedDocName)) || renamedDocName;');
+    expect(docRenameSource).toContain('const oldItemKey = `docs/${currentResourcePath}`;');
+    expect(docRenameSource).toContain('const newItemKey = `docs/${renamedResourcePath}`;');
+  });
+
+  it('duplicates nested document resources by path and reselects the copied path', () => {
+    const rootSource = readResourceRootSource();
+    const duplicateDocStart = rootSource.indexOf('const handleDuplicateDocItem = useCallback');
+    const deleteDocStart = rootSource.indexOf('const handleDeleteDocItem = useCallback', duplicateDocStart);
+    const duplicateDocSource = rootSource.slice(duplicateDocStart, deleteDocStart);
+
+    expect(duplicateDocSource).toContain('const currentResourcePath = String(item.filePath || item.name || \'\').trim();');
+    expect(duplicateDocSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}/copy`),');
+    expect(duplicateDocSource).toContain('const duplicatedPath = String(payload?.path || \'\').trim();');
+    expect(duplicateDocSource).toContain('const duplicated = nextDocs.find((doc) => doc.filePath === duplicatedPath || doc.name === payload?.name);');
   });
 
   it('selects new placeholder prototypes in demo mode instead of canvas mode', () => {
@@ -236,6 +262,17 @@ describe('useIndexPageResourceActions source', () => {
     expect(handlerSource).toContain('setSelectedDoc(uploadedDoc);');
   });
 
+  it('keeps project-path document selections when resource docs metadata refreshes', () => {
+    const source = readResourceRootSource();
+    const syncEffectStart = source.indexOf('useEffect(() => {\n        setSelectedDoc((previous) => {');
+    const syncEffectEnd = source.indexOf('    useEffect(() => {\n        setSelectedResourceFolder', syncEffectStart);
+    const syncEffectSource = source.slice(syncEffectStart, syncEffectEnd);
+
+    expect(syncEffectStart).toBeGreaterThanOrEqual(0);
+    expect(syncEffectSource).toContain('previous.projectDocumentPath');
+    expect(syncEffectSource).toContain('return previous;');
+  });
+
   it('cleans the docs sidebar tree after deleting a document resource', () => {
     const source = readResourceRootSource();
     const handlerStart = source.indexOf('const handleDeleteDocItem = useCallback');
@@ -243,10 +280,11 @@ describe('useIndexPageResourceActions source', () => {
     const handlerSource = source.slice(handlerStart, handlerEnd);
 
     expect(handlerSource).toContain('const nextDocs = await reloadDocsItems();');
+    expect(handlerSource).toContain('const currentResourcePath = String(item.filePath || item.name || \'\').trim();');
     expect(handlerSource).toContain("setSidebarTrees((previous: Record<SidebarTreeTab, SidebarTreeNode[]>) => ({");
     expect(handlerSource).toContain('removeDocsSidebarTreeItem(');
     expect(handlerSource).toContain("sanitizeSidebarTree('docs', previous.docs || [], nextDocs)");
-    expect(handlerSource).toContain('item.name');
+    expect(handlerSource).toContain('currentResourcePath');
     expect(handlerSource).toContain("await loadSidebarTree('docs', { force: true, items: nextDocs });");
   });
 

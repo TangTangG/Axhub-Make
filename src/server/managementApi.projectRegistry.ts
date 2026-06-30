@@ -12,7 +12,7 @@ import {
   type RegisteredProject,
 } from './projectCore/index.ts';
 
-import { getRequestUrl, readJsonBody, sendJson } from './http.ts';
+import { getRequestUrl, readJsonBody, sendFile, sendJson } from './http.ts';
 import { LocalCommandError } from './localCommand.ts';
 import { backfillMakeClientResourcePreviewLinks } from './makeClientRuntimeLinks.ts';
 import { getMakeClientDevStatus } from './makeClientProject.ts';
@@ -23,12 +23,19 @@ import { PROTOTYPE_PLACEHOLDER_GUIDE } from './prototypePlaceholderGuide.ts';
 
 type ProjectMetadataStore = ReturnType<typeof createProjectMetadataStore>;
 type EffectiveProjectCapabilities = ProjectMetadata['capabilities'] & { lanAccessAllowed: boolean };
+interface FilesystemDocResource {
+  id: string;
+  name: string;
+  title: string;
+  path: string;
+  description: string;
+  updatedAt: string;
+}
 
 /**
  * Reconcile metadata resources with actual filesystem state.
  * - Reconciles prototype entries against the declared/default local source root.
- * - Removes doc entries whose referenced files no longer exist on disk.
- * - Discovers new files in the docs/themes directories that aren't in metadata.
+ * - Discovers theme directories that aren't in metadata.
  * This makes the filesystem the single source of truth — no manual sync needed.
  */
 function reconcileMetadataWithFilesystem(
@@ -36,7 +43,6 @@ function reconcileMetadataWithFilesystem(
   projectRoot: string,
 ): ProjectMetadata {
   const metadata = metadataStore.getMetadata();
-  const resourceWriteTargets = metadata.resourceWriteTargets;
   let changed = false;
 
   // --- Prototypes reconciliation ---
@@ -122,73 +128,8 @@ function reconcileMetadataWithFilesystem(
   }
   const allPrototypes = [...reconciledPrototypes, ...discoveredPrototypes];
 
-  // --- Docs reconciliation ---
-  const docsTarget = resourceWriteTargets?.docs;
-  const docsDir = docsTarget?.type === 'project-relative-path' && docsTarget.path
-    ? path.resolve(projectRoot, docsTarget.path)
-    : path.join(projectRoot, 'src/resources');
-
-  // 1. Remove stale docs (file deleted from disk)
-  const staleDocIds: string[] = [];
-  const reconciledDocs = metadata.resources.docs.filter((doc) => {
-    if (isIgnoredResourceRelativePath(getDocRelativePath(projectRoot, docsDir, doc))) {
-      staleDocIds.push(doc.id);
-      return false;
-    }
-    if (doc.path && !fs.existsSync(doc.path)) {
-      staleDocIds.push(doc.id);
-      return false;
-    }
-    return true;
-  });
-  if (staleDocIds.length > 0) {
-    changed = true;
-  }
-
-  // 2. Discover new resource files not in metadata.
-  const existingDocPaths = new Set(reconciledDocs.map((doc) => doc.path));
-  const discoveredDocs: typeof metadata.resources.docs = [];
-  if (fs.existsSync(docsDir)) {
-    const walkDocs = (dir: string) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name.startsWith('.')) continue;
-        const fullPath = path.join(dir, entry.name);
-        const rel = path.relative(docsDir, fullPath).split(path.sep).join('/');
-        if (rel.startsWith('templates/') || rel === 'templates' || isIgnoredResourceRelativePath(rel)) continue;
-        if (entry.isDirectory()) {
-          walkDocs(fullPath);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        const ext = path.extname(entry.name).toLowerCase();
-        if (existingDocPaths.has(fullPath)) continue;
-        const id = ext === '.md' ? rel.replace(/\.[^.]+$/u, '') : rel;
-        let displayName = ext === '.md' ? rel.replace(/\.[^.]+$/u, '') : rel.replace(/\.[^.]+$/u, '');
-        if (ext === '.md') {
-          try {
-            const content = fs.readFileSync(fullPath, 'utf8');
-            const title = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
-            if (title) displayName = title;
-          } catch { /* ignore */ }
-        }
-        discoveredDocs.push({
-          id,
-          name: id,
-          title: displayName,
-          path: fullPath,
-          description: '',
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    };
-    walkDocs(docsDir);
-  }
-  if (discoveredDocs.length > 0) {
-    changed = true;
-  }
-
   // --- Themes reconciliation (only when themes dir exists) ---
-  const themesTarget = resourceWriteTargets?.themes;
+  const themesTarget = metadata.resourceWriteTargets?.themes;
   const themesDir = themesTarget?.type === 'project-relative-path' && themesTarget.path
     ? path.resolve(projectRoot, themesTarget.path)
     : path.join(projectRoot, 'src/themes');
@@ -237,27 +178,7 @@ function reconcileMetadataWithFilesystem(
     nextNavigationPrototypes.push(prototype.id);
   }
 
-  const staleDocIdSet = new Set(staleDocIds);
-  const allDocs = [...reconciledDocs, ...discoveredDocs];
   const allThemes = [...reconciledThemes, ...discoveredThemes];
-  const allowedDocIds = new Set(allDocs.flatMap((doc) => [doc.id, doc.name].filter(Boolean)));
-  const nextNavigationDocs: string[] = [];
-  const seenNavigationDocs = new Set<string>();
-  for (const docId of metadata.navigation.docs) {
-    if (!allowedDocIds.has(docId) || staleDocIdSet.has(docId) || seenNavigationDocs.has(docId)) {
-      changed = true;
-      continue;
-    }
-    seenNavigationDocs.add(docId);
-    nextNavigationDocs.push(docId);
-  }
-  for (const doc of discoveredDocs) {
-    if (seenNavigationDocs.has(doc.id)) {
-      continue;
-    }
-    seenNavigationDocs.add(doc.id);
-    nextNavigationDocs.push(doc.id);
-  }
 
   if (!changed) {
     return metadata;
@@ -268,13 +189,11 @@ function reconcileMetadataWithFilesystem(
     resources: {
       ...metadata.resources,
       prototypes: allPrototypes,
-      docs: allDocs,
       themes: allThemes,
     },
     navigation: {
       ...metadata.navigation,
       prototypes: nextNavigationPrototypes,
-      docs: nextNavigationDocs,
     },
     orders: {
       ...metadata.orders,
@@ -286,14 +205,7 @@ function reconcileMetadataWithFilesystem(
   });
 }
 
-function getDocsResourceRoot(projectRoot: string, metadata: ProjectMetadata): string {
-  const target = metadata.resourceWriteTargets?.docs;
-  if (target?.type === 'project-relative-path' && target.path) {
-    const resolvedTarget = path.resolve(projectRoot, target.path);
-    if (isPathInside(projectRoot, resolvedTarget)) {
-      return resolvedTarget;
-    }
-  }
+function getDocsResourceRoot(projectRoot: string): string {
   return path.join(projectRoot, 'src/resources');
 }
 
@@ -439,19 +351,19 @@ function readMarkdownTitle(filePath: string): string {
   }
 }
 
-function scanFilesystemDocResources(projectRoot: string, metadata: ProjectMetadata): ProjectMetadata['resources']['docs'] {
-  const docsDir = getDocsResourceRoot(projectRoot, metadata);
+function scanFilesystemDocResources(projectRoot: string): FilesystemDocResource[] {
+  const docsDir = getDocsResourceRoot(projectRoot);
   if (!fs.existsSync(docsDir)) {
     return [];
   }
 
-  const docs: ProjectMetadata['resources']['docs'] = [];
+  const docs: FilesystemDocResource[] = [];
   const walk = (dir: string) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.name.startsWith('.')) continue;
       const fullPath = path.join(dir, entry.name);
       const relativeName = normalizeRelativePath(docsDir, fullPath);
-      if (relativeName === 'templates' || relativeName.startsWith('templates/') || isIgnoredResourceRelativePath(relativeName)) continue;
+      if (isIgnoredResourceRelativePath(relativeName)) continue;
       if (entry.isDirectory()) {
         walk(fullPath);
         continue;
@@ -483,18 +395,10 @@ function scanFilesystemDocResources(projectRoot: string, metadata: ProjectMetada
   return docs.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function mergeFilesystemDocResources(metadata: ProjectMetadata, projectRoot: string): ProjectMetadata['resources']['docs'] {
-  const byPath = new Set(metadata.resources.docs.map((doc) => path.resolve(doc.path)));
-  const byKey = new Set(metadata.resources.docs.flatMap((doc) => [doc.id, doc.name].filter(Boolean)));
-  const extras = scanFilesystemDocResources(projectRoot, metadata)
-    .filter((doc) => !byPath.has(path.resolve(doc.path)) && !byKey.has(doc.id) && !byKey.has(doc.name));
-  return [...metadata.resources.docs, ...extras];
-}
-
-function createProjectResourcesPayload(metadata: ProjectMetadata, projectRoot: string): ProjectMetadata['resources'] {
+function createProjectResourcesPayload(metadata: ProjectMetadata, projectRoot: string) {
   return {
     ...metadata.resources,
-    docs: mergeFilesystemDocResources(metadata, projectRoot),
+    docs: scanFilesystemDocResources(projectRoot),
   };
 }
 
@@ -575,18 +479,6 @@ function isIgnoredResourceRelativePath(relativePath: string): boolean {
   return normalized.split('/').some((segment) => segment.startsWith('.'));
 }
 
-function getDocRelativePath(projectRoot: string, docsDir: string, doc: ProjectMetadata['resources']['docs'][number]): string {
-  const rawPath = String(doc.path || '').trim();
-  if (!rawPath) {
-    return String(doc.name || doc.id || '');
-  }
-  const resolvedPath = path.resolve(path.isAbsolute(rawPath) ? rawPath : path.join(projectRoot, rawPath));
-  if (isPathInside(docsDir, resolvedPath)) {
-    return path.relative(docsDir, resolvedPath).split(path.sep).join('/');
-  }
-  return String(doc.name || doc.id || '');
-}
-
 function normalizeDocContentRequestPath(value: string): string {
   const rawValue = String(value || '').trim().replace(/\\/g, '/');
   if (!rawValue || rawValue.includes('\0') || rawValue.startsWith('/') || path.win32.isAbsolute(rawValue) || path.posix.isAbsolute(rawValue)) {
@@ -601,22 +493,21 @@ function normalizeDocContentRequestPath(value: string): string {
 
 function resolveDocContentFileByRelativePath(
   projectRoot: string,
-  metadata: ProjectMetadata,
   resourceId: string,
-): ProjectMetadata['resources']['docs'][number] | null {
+): FilesystemDocResource | null {
   const requestedPath = normalizeDocContentRequestPath(resourceId);
-  if (!requestedPath || isIgnoredResourceRelativePath(requestedPath) || requestedPath === 'templates' || requestedPath.startsWith('templates/')) {
+  if (!requestedPath || isIgnoredResourceRelativePath(requestedPath)) {
     return null;
   }
 
-  const docsDir = getDocsResourceRoot(projectRoot, metadata);
+  const docsDir = getDocsResourceRoot(projectRoot);
   const candidatePaths = [requestedPath];
   if (!requestedPath.toLowerCase().endsWith('.md')) {
     candidatePaths.push(`${requestedPath}.md`);
   }
 
   for (const candidatePath of [...new Set(candidatePaths)]) {
-    if (isIgnoredResourceRelativePath(candidatePath) || candidatePath === 'templates' || candidatePath.startsWith('templates/')) {
+    if (isIgnoredResourceRelativePath(candidatePath)) {
       continue;
     }
     if (path.extname(candidatePath).toLowerCase() !== '.md') {
@@ -645,6 +536,130 @@ function resolveDocContentFileByRelativePath(
   }
 
   return null;
+}
+
+function normalizeProjectDocumentRequestPath(value: string): string {
+  const rawValue = String(value || '').trim().replace(/\\/g, '/');
+  if (!rawValue || rawValue.includes('\0') || rawValue.startsWith('/') || path.win32.isAbsolute(rawValue) || path.posix.isAbsolute(rawValue)) {
+    return '';
+  }
+  const segments = rawValue.split('/').filter(Boolean);
+  if (segments.length === 0 || segments.some((segment) => segment === '.' || segment === '..')) {
+    return '';
+  }
+  const normalized = segments.join('/');
+  if (isIgnoredResourceRelativePath(normalized)) {
+    return '';
+  }
+  if (path.extname(normalized).toLowerCase() !== '.md') {
+    return '';
+  }
+  return normalized;
+}
+
+function resolveProjectDocumentContentFile(projectRoot: string, requestedPath: string): {
+  path: string;
+  projectRelativePath: string;
+} | null {
+  const projectRelativePath = normalizeProjectDocumentRequestPath(requestedPath);
+  if (!projectRelativePath) {
+    return null;
+  }
+  const targetPath = path.resolve(projectRoot, projectRelativePath);
+  if (!isPathInside(projectRoot, targetPath)) {
+    return null;
+  }
+  return {
+    path: targetPath,
+    projectRelativePath,
+  };
+}
+
+function normalizeProjectDocumentAssetPath(value: string): string {
+  const rawValue = String(value || '').trim().replace(/\\/g, '/');
+  if (!rawValue || rawValue.includes('\0') || rawValue.startsWith('/') || path.win32.isAbsolute(rawValue) || path.posix.isAbsolute(rawValue)) {
+    return '';
+  }
+  const segments = rawValue.split('/').filter(Boolean);
+  if (segments.length === 0 || segments.some((segment) => segment === '.' || segment === '..')) {
+    return '';
+  }
+  return segments.join('/');
+}
+
+const projectDocumentImagePlaceholderPattern = /^__ANNOTATION_IMAGE_([A-Z0-9]+(?:_[A-Z0-9]+)*)__$/u;
+const projectDocumentImageAssetExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'];
+
+function getProjectDocumentPlaceholderAssetBaseName(assetPath: string): string {
+  const match = String(assetPath || '').trim().match(projectDocumentImagePlaceholderPattern);
+  if (!match) {
+    return '';
+  }
+  return match[1].toLowerCase().replace(/_/gu, '-');
+}
+
+function resolveProjectDocumentPlaceholderAssetFile(
+  projectRoot: string,
+  doc: { path: string; projectRelativePath: string },
+  requestedAssetPath: string,
+): string | null {
+  const assetBaseName = getProjectDocumentPlaceholderAssetBaseName(requestedAssetPath);
+  if (!assetBaseName) {
+    return null;
+  }
+
+  const prototypeMatch = doc.projectRelativePath.match(/^src\/prototypes\/([^/]+)\/docs(?:\/|$)/u);
+  if (!prototypeMatch) {
+    return null;
+  }
+
+  try {
+    if (!fs.statSync(doc.path).isFile() || !fs.readFileSync(doc.path, 'utf8').includes(requestedAssetPath)) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  const assetsDir = path.resolve(projectRoot, 'src', 'prototypes', prototypeMatch[1], 'assets');
+  if (!isPathInside(projectRoot, assetsDir)) {
+    return null;
+  }
+
+  for (const extension of projectDocumentImageAssetExtensions) {
+    const candidatePath = path.join(assetsDir, `${assetBaseName}${extension}`);
+    if (!isPathInside(assetsDir, candidatePath) || !isPathInside(projectRoot, candidatePath)) {
+      continue;
+    }
+    try {
+      if (fs.statSync(candidatePath).isFile()) {
+        return candidatePath;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return path.join(assetsDir, `${assetBaseName}.png`);
+}
+
+function resolveProjectDocumentAssetFile(projectRoot: string, requestedDocPath: string, requestedAssetPath: string): string | null {
+  const doc = resolveProjectDocumentContentFile(projectRoot, requestedDocPath);
+  const assetPath = normalizeProjectDocumentAssetPath(requestedAssetPath);
+  if (!doc || !assetPath) {
+    return null;
+  }
+
+  const placeholderAssetPath = resolveProjectDocumentPlaceholderAssetFile(projectRoot, doc, requestedAssetPath);
+  if (placeholderAssetPath) {
+    return placeholderAssetPath;
+  }
+
+  const docDir = path.dirname(doc.path);
+  const targetPath = path.resolve(docDir, assetPath);
+  return isPathInside(docDir, targetPath) && isPathInside(projectRoot, targetPath)
+    ? targetPath
+    : null;
 }
 
 function sendProjectMetadataError(
@@ -936,6 +951,100 @@ export function handleProjectRegistryApi(
     }
   }
 
+  if (rest === 'document-content') {
+    const metadataStore = handlers.getExistingMetadataStore(res, project);
+    if (!metadataStore) {
+      return true;
+    }
+    const metadata = readProjectMetadataOrSendError(res, metadataStore, { project, projectId });
+    if (!metadata) {
+      return true;
+    }
+    void metadata;
+    const requestedPath = getRequestUrl(req).searchParams.get('path') || '';
+    const doc = resolveProjectDocumentContentFile(project.root, requestedPath);
+    if (!doc) {
+      sendJson(res, {
+        error: 'Document path is forbidden',
+        code: 'DOCUMENT_PATH_FORBIDDEN',
+        projectId,
+        projectRoot: project.root,
+      }, { status: 403 });
+      return true;
+    }
+    if (req.method === 'GET') {
+      if (!fs.existsSync(doc.path) || !fs.statSync(doc.path).isFile()) {
+        sendJson(res, {
+          error: 'Document file not found',
+          code: 'DOCUMENT_FILE_MISSING',
+          projectId,
+          path: doc.path,
+          projectRelativePath: doc.projectRelativePath,
+        }, { status: 404 });
+        return true;
+      }
+      sendJson(res, {
+        content: fs.readFileSync(doc.path, 'utf8'),
+        path: doc.path,
+        projectRelativePath: doc.projectRelativePath,
+      });
+      return true;
+    }
+    if (req.method === 'PUT') {
+      readJsonBody(req).then((body) => {
+        fs.mkdirSync(path.dirname(doc.path), { recursive: true });
+        fs.writeFileSync(doc.path, String(body?.content ?? ''), 'utf8');
+        sendJson(res, {
+          success: true,
+          path: doc.path,
+          projectRelativePath: doc.projectRelativePath,
+        });
+      }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
+      return true;
+    }
+    return false;
+  }
+
+  if (rest === 'document-asset') {
+    const metadataStore = handlers.getExistingMetadataStore(res, project);
+    if (!metadataStore) {
+      return true;
+    }
+    const metadata = readProjectMetadataOrSendError(res, metadataStore, { project, projectId });
+    if (!metadata) {
+      return true;
+    }
+    void metadata;
+
+    if (req.method !== 'GET') {
+      return false;
+    }
+
+    const url = getRequestUrl(req);
+    const targetPath = resolveProjectDocumentAssetFile(
+      project.root,
+      url.searchParams.get('path') || '',
+      url.searchParams.get('asset') || '',
+    );
+    if (!targetPath) {
+      sendJson(res, {
+        error: 'Document asset path is forbidden',
+        code: 'DOCUMENT_ASSET_PATH_FORBIDDEN',
+        projectId,
+        projectRoot: project.root,
+      }, { status: 403 });
+      return true;
+    }
+    if (!sendFile(res, targetPath)) {
+      sendJson(res, {
+        error: 'Document asset not found',
+        code: 'DOCUMENT_ASSET_MISSING',
+        projectId,
+      }, { status: 404 });
+    }
+    return true;
+  }
+
   const docMatch = rest.match(/^docs\/([^/]+)\/content$/u);
   if (docMatch) {
     const metadataStore = handlers.getExistingMetadataStore(res, project);
@@ -947,8 +1056,7 @@ export function handleProjectRegistryApi(
     if (!metadata) {
       return true;
     }
-    const doc = metadata.resources.docs.find((item) => item.id === resourceId || item.name === resourceId)
-      || resolveDocContentFileByRelativePath(project.root, metadata, resourceId);
+    const doc = resolveDocContentFileByRelativePath(project.root, resourceId);
     if (!doc) {
       sendJson(res, { error: 'Doc not found' }, { status: 404 });
       return true;

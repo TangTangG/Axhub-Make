@@ -6,11 +6,13 @@ import React, { useMemo } from 'react';
 import {
     ArrowLeft,
     ArrowRight,
+    Bot,
     FileText,
     FolderTree,
     Link2,
     type LucideIcon,
     MessageSquareText,
+    PencilLine,
     SlidersHorizontal,
     Sparkles,
 } from 'lucide-react';
@@ -22,9 +24,19 @@ import {
     useProtoDevState,
 } from '@axhub/annotation';
 import { defineHashPageRoute, useHashPage } from '../../common/useHashPage';
-import agentSkillAnnotationAsset from './assets/agent-skill-annotation.png';
+import agentReadAsset from './assets/agent-read.png';
+import aiSkillOpenAsset from './assets/ai-skill-open.png';
+import commentMenuOpenAsset from './assets/comment-menu-open.png';
+import documentEditAsset from './assets/document-edit.png';
 import makeAnnotationAsset from './assets/make-annotation.png';
+import manualEditCommentAsset from './assets/manual-edit-comment.png';
 import annotationSourceDocument from './annotation-source.json';
+import prdFlowMarkdown from './docs/prd-02-flow.md?raw';
+import prdHandoffMarkdown from './docs/prd-05-handoff.md?raw';
+import prdOverviewMarkdown from './docs/prd-00-overview.md?raw';
+import prdRisksMarkdown from './docs/prd-04-risks.md?raw';
+import prdRolesMarkdown from './docs/prd-01-roles.md?raw';
+import prdStatesMarkdown from './docs/prd-03-states.md?raw';
 import './style.css';
 
 type ChapterId =
@@ -32,7 +44,9 @@ type ChapterId =
     | 'content-annotation'
     | 'state-annotation'
     | 'prototype-directory'
-    | 'generate-annotation';
+    | 'generate-annotation'
+    | 'edit-comments'
+    | 'agent-read';
 
 type Chapter = {
     id: ChapterId;
@@ -52,6 +66,13 @@ type ComparisonRow = {
     traditional: string;
 };
 
+type DirectoryNodeWithMarkdownPath = {
+    type?: string;
+    markdown?: string;
+    markdownPath?: string;
+    children?: DirectoryNodeWithMarkdownPath[];
+};
+
 type ProtoState = {
     result_state?: 'success' | 'failure';
     list_state?: 'empty' | 'filled';
@@ -67,7 +88,9 @@ const annotationRoute = defineHashPageRoute([
     { id: 'content-annotation', title: '内容标注' },
     { id: 'state-annotation', title: '状态标注' },
     { id: 'prototype-directory', title: '原型目录' },
-    { id: 'generate-annotation', title: '生成标注' },
+    { id: 'generate-annotation', title: '开启标注' },
+    { id: 'edit-comments', title: '编辑标注' },
+    { id: 'agent-read', title: 'Agent 读取' },
 ], { defaultPageId: 'prototype-as-prd' });
 
 const chapters: Chapter[] = [
@@ -105,11 +128,27 @@ const chapters: Chapter[] = [
     },
     {
         id: 'generate-annotation',
-        title: '生成标注',
-        eyebrow: '05 · GENERATE',
-        summary: '生成标注关注的是能力边界：可以生成内容说明、状态说明、目录资料和默认设置状态，再由人工继续校正。',
-        metrics: { wordCount: '约 580 字', readingTime: '约 2 分钟' },
+        title: '开启标注',
+        eyebrow: '05 · ENABLE',
+        summary: '你可以通过 AI 或者手动开启标注，推荐前者。',
+        metrics: { wordCount: '约 280 字', readingTime: '约 1 分钟' },
         icon: Sparkles,
+    },
+    {
+        id: 'edit-comments',
+        title: '编辑标注',
+        eyebrow: '06 · EDIT',
+        summary: '编辑标注分为 AI 编辑和手动编辑。AI 可直接在对话里提出，也可先批注再执行；手动则用于补节点和改内容。',
+        metrics: { wordCount: '约 360 字', readingTime: '约 1 分钟' },
+        icon: PencilLine,
+    },
+    {
+        id: 'agent-read',
+        title: 'Agent 读取',
+        eyebrow: '07 · READ',
+        summary: '开发 Agent 可以通过技能读取源码、标注内容、文档内容和截图，便于理解上下文并继续开发。',
+        metrics: { wordCount: '约 160 字', readingTime: '约 1 分钟' },
+        icon: Bot,
     },
 ];
 
@@ -131,6 +170,24 @@ const comparisonRows: ComparisonRow[] = [
     },
 ];
 
+const openAnnotationMethods = [
+    {
+        title: '批注工具',
+        detail: '通过批注工具的技能可以新建标注',
+        image: makeAnnotationAsset,
+    },
+    {
+        title: 'Agent 标注技能',
+        detail: '使用项目内置的技能，即可任意生成和编辑标注',
+        image: aiSkillOpenAsset,
+    },
+    {
+        title: '批注模式更多菜单',
+        detail: '批注模式下，从更多菜单开启标注。',
+        image: commentMenuOpenAsset,
+    },
+];
+
 const capabilityItems = [
     {
         title: '任意元素标注',
@@ -149,6 +206,43 @@ const capabilityItems = [
         detail: '可以记录进入页面时默认展示的状态，让演示保持稳定。',
     },
 ];
+
+const editCommentGroups = [
+    {
+        title: 'AI 编辑',
+        detail: '把修改意图交给 AI 处理。',
+        methods: [
+            {
+                title: '对话框直接提',
+                detail: '在对话框直接跟 AI 提修改要求。',
+                image: aiSkillOpenAsset,
+            },
+            {
+                title: '批注后通过 AI 执行',
+                detail: '先留下批注，再让 AI 按批注执行。',
+                image: makeAnnotationAsset,
+            },
+        ],
+    },
+    {
+        title: '手动编辑',
+        detail: '用于少量校正和补充。',
+        methods: [
+            {
+                title: '编辑节点',
+                detail: '通过批注新增节点和编辑节点内容。',
+                image: manualEditCommentAsset,
+            },
+            {
+                title: '编辑文档',
+                detail: '批注文章时直接编辑文档内容（需要 AI 关联文档）。',
+                image: documentEditAsset,
+            },
+        ],
+    },
+];
+
+const agentReadSources = ['源码', '标注内容', '文档内容', '截图'];
 
 const directoryTypeCards = [
     {
@@ -231,6 +325,50 @@ const metricStateMeta: Record<MetricState, {
     },
 };
 
+const directoryMarkdownByPath: Record<string, string> = {
+    'docs/prd-00-overview.md': prdOverviewMarkdown,
+    'docs/prd-01-roles.md': prdRolesMarkdown,
+    'docs/prd-02-flow.md': prdFlowMarkdown,
+    'docs/prd-03-states.md': prdStatesMarkdown,
+    'docs/prd-04-risks.md': prdRisksMarkdown,
+    'docs/prd-05-handoff.md': prdHandoffMarkdown,
+};
+
+const directoryMarkdownAssetTokens: Record<string, string> = {
+    '__ANNOTATION_IMAGE_AI_SKILL_OPEN__': aiSkillOpenAsset,
+    '__ANNOTATION_IMAGE_COMMENT_MENU_OPEN__': commentMenuOpenAsset,
+    '__ANNOTATION_IMAGE_AGENT_READ__': agentReadAsset,
+    '__ANNOTATION_IMAGE_MANUAL_EDIT_COMMENT__': manualEditCommentAsset,
+    '__ANNOTATION_IMAGE_DOCUMENT_EDIT__': documentEditAsset,
+};
+
+function resolveDirectoryMarkdownAssets(markdown: string): string {
+    let resolvedMarkdown = markdown;
+    Object.entries(directoryMarkdownAssetTokens).forEach(([token, url]) => {
+        resolvedMarkdown = resolvedMarkdown.split(token).join(url);
+    });
+    return resolvedMarkdown;
+}
+
+function inlineDirectoryMarkdown(source: typeof annotationSourceDocument): AnnotationSourceDocument {
+    const clonedSource = JSON.parse(JSON.stringify(source)) as AnnotationSourceDocument & {
+        directory?: { nodes?: DirectoryNodeWithMarkdownPath[] };
+    };
+
+    const visit = (nodes?: DirectoryNodeWithMarkdownPath[]) => {
+        if (!nodes) return;
+        nodes.forEach((node) => {
+            if (node.type === 'markdown' && node.markdownPath) {
+                node.markdown = resolveDirectoryMarkdownAssets(directoryMarkdownByPath[node.markdownPath] || '');
+            }
+            visit(node.children);
+        });
+    };
+
+    visit(clonedSource.directory?.nodes);
+    return clonedSource;
+}
+
 function normalizeResultState(value: unknown): ResultState {
     return value === 'success' || value === 'failure' ? value : 'success';
 }
@@ -249,12 +387,12 @@ function ManuscriptSection({
     children,
 }: {
     id?: string;
-    title: string;
+    title?: string;
     children: React.ReactNode;
 }) {
     return (
-        <section id={id} className="annotation-guide-manuscript">
-            <h3 className="annotation-guide-section-title">{title}</h3>
+        <section id={id} className={['annotation-guide-manuscript', !title ? 'is-without-title' : ''].filter(Boolean).join(' ')}>
+            {title ? <h3 className="annotation-guide-section-title">{title}</h3> : null}
             {children}
         </section>
     );
@@ -505,48 +643,100 @@ function DirectoryGuideView({ chapter }: { chapter: Chapter }) {
     );
 }
 
-function GeneratePractice() {
+function EnableAnnotationPractice() {
     return (
         <>
-            <ManuscriptSection id="generate-content" title="可以生成的内容">
-                <div className="annotation-guide-generate-section-body" data-annotation-id="generate-practice">
-                    <p>
-                        生成标注先覆盖原型里最需要解释的内容，再交给人继续校正。它可以生成任意元素的说明、状态说明、原型目录里的页面/文档/外链，以及进入页面时默认展示的设置状态。
-                    </p>
-                    <div className="annotation-guide-generate-capability-grid">
-                        {capabilityItems.map((item) => (
-                            <article key={item.title}>
-                                <h4>{item.title}</h4>
-                                <p>{item.detail}</p>
-                            </article>
+        <ManuscriptSection id="enable-methods" title="标注内容">
+            <div className="annotation-guide-generate-section-body" data-annotation-id="enable-annotation-methods">
+                <p>
+                    标注内容先覆盖原型里最需要解释的部分，再交给人继续校正。它可以生成任意元素的说明、状态说明、原型目录内容，以及进入页面时默认展示的设置状态。
+                </p>
+                <div className="annotation-guide-generate-capability-grid">
+                    {capabilityItems.map((item) => (
+                        <article key={item.title}>
+                            <h4>{item.title}</h4>
+                            <p>{item.detail}</p>
+                        </article>
+                    ))}
+                </div>
+            </div>
+        </ManuscriptSection>
+        <ManuscriptSection title="开启方式">
+            <div className="annotation-guide-generate-section-body">
+                <div className="annotation-guide-method-grid is-vertical">
+                    {openAnnotationMethods.map((item) => (
+                        <article key={item.title}>
+                            <h4>{item.title}</h4>
+                            <p>{item.detail}</p>
+                            <div className="annotation-guide-method-placeholder">
+                                {item.image ? (
+                                    <img src={item.image} alt={`${item.title}界面`} />
+                                ) : (
+                                    <span>截图占位</span>
+                                )}
+                            </div>
+                        </article>
+                    ))}
+                </div>
+            </div>
+        </ManuscriptSection>
+        </>
+    );
+}
+
+function EditCommentsView() {
+    return (
+        <>
+            {editCommentGroups.map((group, index) => (
+                <ManuscriptSection
+                    key={group.title}
+                    id={index === 0 ? 'edit-comments-methods' : undefined}
+                    title={group.title}
+                >
+                    <div
+                        className="annotation-guide-generate-section-body"
+                        data-annotation-id={index === 0 ? 'edit-comments-methods' : undefined}
+                    >
+                        <p>{group.detail}</p>
+                        <div className="annotation-guide-edit-method-list">
+                            {group.methods.map((method) => (
+                                <article key={method.title}>
+                                    <h4>{method.title}</h4>
+                                    <p>{method.detail}</p>
+                                    <div className="annotation-guide-method-placeholder">
+                                        {method.image ? (
+                                            <img src={method.image} alt={`${method.title}界面`} />
+                                        ) : (
+                                            <span>截图占位</span>
+                                        )}
+                                    </div>
+                                </article>
+                            ))}
+                        </div>
+                    </div>
+                </ManuscriptSection>
+            ))}
+        </>
+    );
+}
+
+function AgentReadView() {
+    return (
+        <ManuscriptSection id="agent-read-skill">
+            <div className="annotation-guide-agent-read" data-annotation-id="agent-read-skill">
+                <div>
+                    <p>开发 Agent 可以通过技能读取原型标注内容，并结合源码、文档和截图理解上下文，便于后续开发。</p>
+                    <div className="annotation-guide-read-source-list" aria-label="读取内容">
+                        {agentReadSources.map((source) => (
+                            <span key={source}>{source}</span>
                         ))}
                     </div>
                 </div>
-            </ManuscriptSection>
-            <ManuscriptSection id="generate-methods" title="两种标注方式">
-                <div className="annotation-guide-generate-section-body">
-                    <p>
-                        标注可以从人工批注开始，也可以让 Agent 先生成一版。两种方式生成的内容都保持可编辑，方便在评审前继续整理。
-                    </p>
-                    <div className="annotation-guide-method-grid">
-                        <article>
-                            <h4>内置批注编辑</h4>
-                            <p>适合在页面评审时补充说明、修正文案和记录即时反馈。</p>
-                            <div className="annotation-guide-method-placeholder">
-                                <img src={makeAnnotationAsset} alt="Make 内置批注编辑界面" />
-                            </div>
-                        </article>
-                        <article>
-                            <h4>Agent 标注技能</h4>
-                            <p>适合在 Agent 里直接使用默认已安装的标注技能，批量生成第一版标注。</p>
-                            <div className="annotation-guide-method-placeholder">
-                                <img src={agentSkillAnnotationAsset} alt="Agent 标注技能界面" />
-                            </div>
-                        </article>
-                    </div>
+                <div className="annotation-guide-method-placeholder">
+                    <img src={agentReadAsset} alt="Agent 读取界面" />
                 </div>
-            </ManuscriptSection>
-        </>
+            </div>
+        </ManuscriptSection>
     );
 }
 
@@ -554,7 +744,9 @@ function ChapterBody({ chapter }: { chapter: Chapter }) {
     if (chapter.id === 'content-annotation') return <ContentAnnotationDemoView />;
     if (chapter.id === 'state-annotation') return <StateAnnotationDemoView />;
     if (chapter.id === 'prototype-directory') return <DirectoryGuideView chapter={chapter} />;
-    if (chapter.id === 'generate-annotation') return <GeneratePractice />;
+    if (chapter.id === 'generate-annotation') return <EnableAnnotationPractice />;
+    if (chapter.id === 'edit-comments') return <EditCommentsView />;
+    if (chapter.id === 'agent-read') return <AgentReadView />;
     return <PrototypeAsPrdView />;
 }
 
@@ -564,6 +756,7 @@ export default function AnnotationGuide() {
     const activeChapter = chapters[activeIndex] || chapters[0];
     const previous = chapters[activeIndex - 1] || null;
     const next = chapters[activeIndex + 1] || null;
+    const annotationSource = useMemo(() => inlineDirectoryMarkdown(annotationSourceDocument), []);
 
     const viewerOptions = useMemo<AnnotationViewerOptions>(() => ({
         currentPageId: activeChapter.id,
@@ -643,7 +836,7 @@ export default function AnnotationGuide() {
             </section>
 
             <AnnotationViewer
-                source={annotationSourceDocument as unknown as AnnotationSourceDocument}
+                source={annotationSource}
                 options={viewerOptions}
             />
         </main>

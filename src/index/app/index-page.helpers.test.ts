@@ -174,7 +174,7 @@ describe('index page helpers', () => {
         });
 
         expect(image.name).toBe('assets/logo.png');
-        expect(image.displayName).toBe('assets/logo');
+        expect(image.displayName).toBe('logo');
         expect(image.specUrl).toBe('/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fassets%2Flogo.png');
         expect(image.previewUrl).toBe('/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fassets%2Flogo.png');
     });
@@ -182,13 +182,16 @@ describe('index page helpers', () => {
     it('uses project-scoped docs file URLs for pasted image resources from the docs list', () => {
         const [image] = normalizeDocsItems([
             {
-                name: '素材/image-2.png',
+                name: 'image-2.png',
                 displayName: '素材/image-2',
+                path: '素材/image-2.png',
                 absoluteFilePath: '/workspace/content/docs/素材/image-2.png',
                 fileSize: 22937,
             },
         ], 'make-project');
 
+        expect(image.name).toBe('image-2.png');
+        expect(image.displayName).toBe('image-2');
         expect(image.specUrl).toBe('/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project');
         expect(image.previewUrl).toBe('/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project');
         expect(image.absoluteFilePath).toBe('/workspace/content/docs/素材/image-2.png');

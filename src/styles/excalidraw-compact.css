@@ -943,10 +943,6 @@ body .excalidraw .HelpDialog__key,
     display: none !important;
 }
 
-[data-axhub-ai-generation-generator-selected='true'] .excalidraw .HintViewer {
-    display: none !important;
-}
-
 /* ── Compact toolbar: move to right side ───────────────────────── */
 
 /* The selected-shape-actions-container in compact mode is inside

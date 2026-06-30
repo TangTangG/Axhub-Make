@@ -6,7 +6,7 @@
 import React from 'react';
 import * as ReactDOMClient from 'react-dom/client';
 import * as ReactDOM from 'react-dom';
-import { createGenieEditor, type GenieEditorApi, type GenieEditorExternalEditingState, type GenieEditorExternalEditingTaskRef, type GenieEditorExternalEditingTargetRef, type GenieEditorHostToolbarAction, type GenieEditorHostToolbarState, type GenieEditorToolbarMode } from 'axhub-genie-editor';
+import { createCommentary, type CommentaryApi, type CommentaryExternalEditingState, type CommentaryExternalEditingTaskRef, type CommentaryExternalEditingTargetRef, type CommentaryHostToolbarAction, type CommentaryHostToolbarState, type CommentaryToolbarMode } from '@axhub/commentary';
 
 declare global {
   interface Window {
@@ -18,7 +18,7 @@ declare global {
   }
 }
 
-let commentEditor: GenieEditorApi | null = null;
+let commentEditor: CommentaryApi | null = null;
 let commentEditorDarkMode = false;
 let commentEditorAssistantPanelOpen = false;
 let htmlEditorContext: Record<string, unknown> | null = null;
@@ -80,10 +80,10 @@ function buildHtmlResourceContext() {
 }
 
 function ensureCommentEditor(options?: {
-  toolbarMode?: GenieEditorToolbarMode;
+  toolbarMode?: CommentaryToolbarMode;
   initialDarkMode?: boolean;
   assistantPanelOpen?: boolean;
-}): GenieEditorApi {
+}): CommentaryApi {
   const initialDarkMode = Boolean(options?.initialDarkMode ?? commentEditorDarkMode);
   if (typeof options?.assistantPanelOpen === 'boolean') {
     commentEditorAssistantPanelOpen = options.assistantPanelOpen;
@@ -104,7 +104,7 @@ function ensureCommentEditor(options?: {
   }
 
   commentEditor?.destroy();
-  commentEditor = createGenieEditor({
+  commentEditor = createCommentary({
     ui: {
       toolbarMode: options?.toolbarMode || 'host',
       initialDarkMode,
@@ -124,7 +124,7 @@ function setContext(context: Record<string, unknown> | null | undefined): void {
 }
 
 function enableDocumentEditor(options?: {
-  toolbarMode?: GenieEditorToolbarMode;
+  toolbarMode?: CommentaryToolbarMode;
   initialDarkMode?: boolean;
   assistantPanelOpen?: boolean;
 }): void {
@@ -135,15 +135,15 @@ function disableDocumentEditor(): void {
   commentEditor?.stop();
 }
 
-function getHostToolbarState(): GenieEditorHostToolbarState | null {
+function getHostToolbarState(): CommentaryHostToolbarState | null {
   return commentEditor?.getHostToolbarState?.() ?? null;
 }
 
-function subscribeHostToolbarState(listener: (state: GenieEditorHostToolbarState) => void): () => void {
+function subscribeHostToolbarState(listener: (state: CommentaryHostToolbarState) => void): () => void {
   return ensureCommentEditor().subscribeHostToolbarState(listener);
 }
 
-async function runHostToolbarAction(action: GenieEditorHostToolbarAction): Promise<boolean> {
+async function runHostToolbarAction(action: CommentaryHostToolbarAction): Promise<boolean> {
   if (action.type === 'toggle-dark-mode') {
     const nextDarkMode = typeof action.darkMode === 'boolean'
       ? action.darkMode
@@ -160,16 +160,16 @@ async function runHostToolbarAction(action: GenieEditorHostToolbarAction): Promi
 
 async function setNodeEditingState(
   elementKey: string,
-  nextState: GenieEditorExternalEditingState,
-  taskRef: Partial<GenieEditorExternalEditingTaskRef> | null,
-  targetRef?: GenieEditorExternalEditingTargetRef | null,
+  nextState: CommentaryExternalEditingState,
+  taskRef: Partial<CommentaryExternalEditingTaskRef> | null,
+  targetRef?: CommentaryExternalEditingTargetRef | null,
 ) {
   return ensureCommentEditor().setNodeEditingState(elementKey, nextState, taskRef, targetRef ?? null);
 }
 
 const editorBridge = {
   enable(_mode?: string, options?: {
-    toolbarMode?: GenieEditorToolbarMode;
+    toolbarMode?: CommentaryToolbarMode;
     initialDarkMode?: boolean;
     assistantPanelOpen?: boolean;
   }) {

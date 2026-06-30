@@ -267,6 +267,26 @@ describe('legacy file operations API', () => {
     expect(fs.readFileSync(path.join(projectRoot, 'src/prototypes/home-copy/index.tsx'), 'utf8')).toBe('export default null;\n');
   });
 
+  it('copies resources to an explicit target path from the Admin UI', async () => {
+    const projectRoot = createTempRoot();
+    writeFile(path.join(projectRoot, 'src/prototypes/home/index.tsx'), 'export default null;\n');
+
+    const copy = await callFileOperation({
+      pathname: '/api/copy',
+      projectRoot,
+      body: {
+        sourcePath: 'src/prototypes/home',
+        targetPath: 'src/prototypes/home-copy',
+      },
+    });
+
+    expect(copy).toMatchObject({
+      status: 200,
+      body: { success: true, path: 'src/prototypes/home-copy' },
+    });
+    expect(fs.readFileSync(path.join(projectRoot, 'src/prototypes/home-copy/index.tsx'), 'utf8')).toBe('export default null;\n');
+  });
+
   it('removes deleted prototype resources from metadata and navigation', async () => {
     const projectRoot = createTempRoot();
     const deletedDir = path.join(projectRoot, 'src/prototypes/home');

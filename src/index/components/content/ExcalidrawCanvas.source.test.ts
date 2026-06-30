@@ -138,10 +138,9 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain('onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;');
     expect(source).toContain('assistantProjectPath={assistantProjectPath}');
     expect(source).toContain('preferredPromptClient={preferredPromptClient}');
-    expect(source).toContain('onImageArtifact={handleCanvasImageArtifactEvent}');
     expect(source).toContain('onSubmitCanvasAssistantPrompt={handleSubmitCanvasAssistantPromptWithArtifacts}');
-    expect(source).toContain('onSceneMutated={scheduleExplicitCanvasSave}');
     expect(source).toContain('handleCanvasDrop');
+    expect(source).not.toContain('onImageArtifact={handleCanvasImageArtifactEvent}');
     expect(source).not.toContain("import CanvasAiImageTool from '../../domains/ai-image/CanvasAiImageTool';");
     expect(source).not.toContain("import CanvasPrototypeGenerationTool from '../../domains/prototype-generation/CanvasPrototypeGenerationTool';");
   });
@@ -176,17 +175,15 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain('onAddImageToAI={handleAddSelectedImageToAI}');
   });
 
-  it('handles canvas image artifacts by replacing bound placeholders or inserting at the default canvas placement', () => {
+  it('does not keep the old AI image placeholder artifact hook on the unified AI generation tool', () => {
     const source = readSource();
 
-    expect(source).toContain("import { resolveCanvasImageArtifactUpdate, type CanvasImageArtifactEvent } from '../../domains/ai-image/canvasImageArtifacts';");
-    expect(source).toContain('const handleCanvasImageArtifactEvent = useCallback((event: CanvasImageArtifactEvent) => {');
-    expect(source).toContain('resolveCanvasImageArtifactUpdate({');
-    expect(source).toContain('event,');
-    expect(source).toContain('excalidrawAPI.addFiles(update.files);');
-    expect(source).toContain('elements: update.elements,');
-    expect(source).toContain('selectedElementIds: update.selectedElementIds');
-    expect(source).toContain('if (update.usedFallbackPlacement && update.needsScroll && update.scrollTargetId)');
+    expect(source).not.toContain("import { resolveCanvasImageArtifactUpdate, type CanvasImageArtifactEvent } from '../../domains/ai-image/canvasImageArtifacts';");
+    expect(source).not.toContain('const handleCanvasImageArtifactEvent = useCallback((event: CanvasImageArtifactEvent) => {');
+    expect(source).not.toContain('resolveCanvasImageArtifactUpdate({');
+    expect(source).not.toContain('onImageArtifact={handleCanvasImageArtifactEvent}');
+    expect(source).toContain('const handleSubmitCanvasAssistantPromptWithArtifacts = useCallback(async (request: CanvasAiGenerationRequest) => {');
+    expect(source).toContain('applyGenerationArtifactsToCanvasElements({');
     expect(source).not.toContain('const handleInsertGenerationHistoryArtifact = useCallback((artifact: GenerationArtifactRecord) => {');
   });
 
@@ -247,6 +244,20 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain('const handleSubmitCanvasAssistantPromptWithArtifacts = useCallback');
     expect(source).toContain('const artifacts = typeof result === \'object\' && result !== null && Array.isArray(result.artifacts)');
     expect(source).toContain('scheduleExplicitCanvasSave({ elements: update.elements, appState: nextAppState });');
+  });
+
+  it('does not insert returned artifacts for the bottom canvas start assistant composer', () => {
+    const source = readSource();
+    const submitHandlerSource = source.slice(
+      source.indexOf('const handleSubmitCanvasAssistantPromptWithArtifacts = useCallback(async (request: CanvasAiGenerationRequest) => {'),
+      source.indexOf('const handleAddSelectedScreenshotToAI = useCallback', source.indexOf('const handleSubmitCanvasAssistantPromptWithArtifacts = useCallback')),
+    );
+
+    expect(submitHandlerSource).toContain("const shouldApplyReturnedArtifacts = request.source !== 'canvas-start';");
+    expect(submitHandlerSource).toContain('if (shouldApplyReturnedArtifacts && artifacts.length > 0 && excalidrawAPI) {');
+    expect(submitHandlerSource.indexOf('const shouldApplyReturnedArtifacts = request.source !== \'canvas-start\';')).toBeLessThan(
+      submitHandlerSource.indexOf('applyGenerationArtifactsToCanvasElements({'),
+    );
   });
 
   it('queues a latest scene snapshot when a server save is already in flight', () => {
@@ -489,8 +500,12 @@ describe('ExcalidrawCanvas source', () => {
     expect(createSource).not.toContain("const resourceType = payload.resourceType || (isDoc ? 'doc' : isTheme ? 'theme' : 'prototype');");
   });
 
-  it('passes prototype generation props into the unified AI generation tool', () => {
+  it('does not pass old prototype generator node props into the unified AI generation tool', () => {
     const source = readSource();
+    const toolSegment = source.slice(
+      source.indexOf('<CanvasAiGenerationTool'),
+      source.indexOf('/>', source.indexOf('<CanvasAiGenerationTool')),
+    );
 
     expect(source).toContain('assistantApiBaseUrl?: string;');
     expect(source).toContain('assistantProjectPath?: string;');
@@ -498,15 +513,16 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain('prototypes?: ItemData[];');
     expect(source).toContain('onRefreshPrototypes?: () => Promise<ItemData[]>;');
     expect(source).not.toContain('onStartAssistantRuntimeForCanvas?: () => Promise<{ apiBaseUrl?: string; projectPath?: string } | null | undefined>;');
-    expect(source).toContain('<CanvasAiGenerationTool');
-    expect(source).toContain('canvasFilePath={canvasFilePath || canvasName}');
-    expect(source).not.toContain('assistantApiBaseUrl={assistantApiBaseUrl}');
-    expect(source).toContain('assistantProjectPath={assistantProjectPath}');
-    expect(source).toContain('preferredPromptClient={preferredPromptClient}');
-    expect(source).toContain('prototypes={prototypes}');
-    expect(source).toContain('onRefreshPrototypes={onRefreshPrototypes}');
-    expect(source).not.toContain('onStartAssistantRuntime={onStartAssistantRuntimeForCanvas}');
-    expect(source).toContain('onSceneMutated={scheduleExplicitCanvasSave}');
+    expect(toolSegment).toContain('<CanvasAiGenerationTool');
+    expect(toolSegment).toContain('canvasFilePath={canvasFilePath || canvasName}');
+    expect(toolSegment).not.toContain('assistantApiBaseUrl={assistantApiBaseUrl}');
+    expect(toolSegment).toContain('assistantProjectPath={assistantProjectPath}');
+    expect(toolSegment).toContain('preferredPromptClient={preferredPromptClient}');
+    expect(toolSegment).not.toContain('prototypes={prototypes}');
+    expect(toolSegment).not.toContain('onRefreshPrototypes={onRefreshPrototypes}');
+    expect(toolSegment).not.toContain('onStartAssistantRuntime={onStartAssistantRuntimeForCanvas}');
+    expect(toolSegment).not.toContain('onSceneMutated={scheduleExplicitCanvasSave}');
+    expect(toolSegment).not.toContain('containerRef={canvasContainerRef as React.RefObject<HTMLDivElement>}');
   });
 
   it('destructures assistant project path before forwarding it into canvas tools', () => {

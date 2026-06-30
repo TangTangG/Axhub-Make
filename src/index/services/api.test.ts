@@ -39,7 +39,10 @@ describe('apiService source', () => {
     const source = readFileSync(resolve(__dirname, './api.ts'), 'utf8');
 
     expect(source).toContain('export interface MakeClientUpdateStatus');
+    expect(source).toContain('releaseNotes?: string;');
+    expect(source).toContain('export interface MakeClientUpdatePostUpdateWarning');
     expect(source).toContain('export interface MakeClientUpdateApplyResult');
+    expect(source).toContain('postUpdateWarning?: MakeClientUpdatePostUpdateWarning;');
     expect(source).toContain('async getMakeClientUpdateStatus(projectId: string): Promise<MakeClientUpdateStatus>');
     expect(source).toContain('async applyMakeClientUpdate(projectId: string): Promise<MakeClientUpdateApplyResult>');
     expect(source).toContain('const encodedProjectId = encodeURIComponent(projectId);');
@@ -65,10 +68,13 @@ describe('apiService source', () => {
   it('exposes cloud publishing config and publish endpoints', () => {
     const source = readFileSync(resolve(__dirname, './api.ts'), 'utf8');
 
-    expect(source).toContain("export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages';");
+    expect(source).toContain("export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages' | 'axhub';");
     expect(source).toContain('githubPages?: {');
     expect(source).toContain('sourceDirectory?: string;');
+    expect(source).toContain('pathPrefix?: string;');
     expect(source).toContain('githubPages: CloudPublishingConfigured');
+    expect(source).toContain('axhub: CloudPublishingConfigured<Record<string, never>>');
+    expect(source).toContain('visibleTargets?: CloudPublishTarget[];');
     expect(source).toContain('async getCloudPublishingConfig(): Promise<CloudPublishingConfigResponse>');
     expect(source).toContain("fetch('/api/cloud-publishing/config')");
     expect(source).toContain('async saveCloudPublishingConfig(payload: CloudPublishingConfigPayload)');
@@ -77,6 +83,16 @@ describe('apiService source', () => {
     expect(source).toContain("fetch(`/api/cloud-publishing/latest${latestQuery ? `?path=${encodeURIComponent(latestQuery)}` : ''}`)");
     expect(source).toContain('async publishCloudTarget(payload: CloudPublishRequest): Promise<CloudPublishResponse>');
     expect(source).toContain("fetch('/api/cloud-publishing/publish'");
+    expect(source).toContain('export interface AxhubStatusResponse');
+    expect(source).toContain('export interface AxhubHtmlProject');
+    expect(source).toContain('export interface AxhubPublishResponse');
+    expect(source).toContain('async getAxhubStatus(): Promise<AxhubStatusResponse>');
+    expect(source).toContain('async connectAxhub(): Promise<AxhubConnectResponse>');
+    expect(source).toContain('async connectAxhubEnterprise(payload: AxhubEnterpriseConnectRequest): Promise<AxhubEnterpriseConnectResponse>');
+    expect(source).toContain("fetch('/api/axhub/connect-enterprise'");
+    expect(source).toContain('async getAxhubHtmlProjects(keyword?: string): Promise<AxhubHtmlProjectsResponse>');
+    expect(source).toContain('async createAxhubHtmlProject(name: string): Promise<AxhubHtmlProjectResponse>');
+    expect(source).toContain('async publishAxhubHtmlProject(payload: { pid: number; path: string; projectId?: string | null }): Promise<AxhubPublishResponse>');
   });
 
   it('does not expose the obsolete browser prompt-execute wrapper', () => {

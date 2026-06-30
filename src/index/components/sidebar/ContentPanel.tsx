@@ -18,6 +18,7 @@ import {
     MoreHorizontal,
     Globe,
     Github,
+    GitBranch,
     Info,
     Moon,
     Pencil,
@@ -93,6 +94,8 @@ interface ContentPanelProps {
     projectTitle: string;
     activeProjectId: string | null;
     projectSetupRequired?: boolean;
+    makeClientUpdateAvailable?: boolean;
+    makeClientUpdateReminderVisible?: boolean;
     projects: ProjectListItem[];
     resourceWriteCapabilities: ResourceWriteCapabilities;
     lanAccessAllowed?: boolean;
@@ -105,6 +108,12 @@ interface ContentPanelProps {
         parentRoot: string;
         folderName: string;
         projectName?: string;
+    }) => Promise<unknown>;
+    onCloneMakeProject: (params: {
+        parentRoot: string;
+        folderName: string;
+        projectName?: string;
+        gitUrl: string;
     }) => Promise<unknown>;
     onCopyMakeProject: (params: {
         parentRoot: string;
@@ -152,7 +161,8 @@ interface ContentPanelProps {
     handleCopyItemPath: (item: ItemData) => void;
     handleVersionManagement: (item: ItemData) => void;
     handleDeleteItem: (item: ItemData) => void;
-    onSettingsClick: () => void;
+    onSettingsClick: (tab?: 'project' | 'update') => void;
+    onVersionCollaborationClick: () => void;
     onToggleTheme: () => void;
     selectedTheme: ThemeResourceItem | null;
     defaultThemeName?: string | null;
@@ -160,7 +170,7 @@ interface ContentPanelProps {
 }
 
 type DropPlacement = 'before' | 'inside' | 'after';
-type ProjectSetupMode = 'menu' | 'blank' | 'copy';
+type ProjectSetupMode = 'menu' | 'blank' | 'clone' | 'copy';
 type CanvasDropPreviewKind = 'web' | 'doc' | 'image' | 'none';
 const SIDEBAR_TREE_DRAG_MIME = 'application/x-axhub-sidebar-tree-node';
 const SIDEBAR_TITLE_MAX_LENGTH = 40;
@@ -175,7 +185,10 @@ const MAKE_CLIENT_SETUP_PENDING_LABEL = '创建并启动项目';
 const MAKE_CLIENT_SETUP_PENDING_DESCRIPTION = '首次新建会下载模板、安装依赖并启动客户端，可能需要几分钟；后续建议复制已有项目，会快很多';
 const MAKE_CLIENT_COPY_PENDING_LABEL = '复制并启动项目';
 const MAKE_CLIENT_COPY_PENDING_DESCRIPTION = '正在复制项目并启动客户端，可能需要几分钟';
+const MAKE_CLIENT_CLONE_PENDING_LABEL = '克隆并启动项目';
+const MAKE_CLIENT_CLONE_PENDING_DESCRIPTION = '正在全量克隆 Git 仓库、安装依赖并启动客户端，可能需要几分钟';
 const MAKE_CLIENT_SETUP_FAILED_LABEL = '创建项目失败';
+const MAKE_CLIENT_CLONE_FAILED_LABEL = '克隆项目失败';
 const MAKE_CLIENT_COPY_FAILED_LABEL = '复制项目失败';
 const MAKE_CLIENT_SETUP_FAILED_DESCRIPTION = '可以复制给 AI 处理';
 const MAKE_STATE_DIR_NOT_WRITABLE = 'MAKE_STATE_DIR_NOT_WRITABLE';
@@ -284,6 +297,41 @@ function buildMakeClientSetupAiPrompt(params: {
     return promptLines.join('\n');
 }
 
+function buildMakeClientCloneAiPrompt(params: {
+    parentRoot: string;
+    folderName: string;
+    projectName: string;
+    gitUrl: string;
+    errorMessage: string;
+    diagnostic: unknown;
+}): string {
+    const trimmedParentRoot = params.parentRoot.replace(/[\\/]+$/u, '');
+    const separator = trimmedParentRoot.includes('\\') ? '\\' : '/';
+    const projectRoot = `${trimmedParentRoot}${separator}${params.folderName}`;
+    return [
+        '请帮我克隆并接入 Axhub Make 客户端项目。',
+        '',
+        `Git 地址：${params.gitUrl || '(未填写)'}`,
+        `目标目录：${projectRoot}`,
+        `项目名称：${params.projectName || params.folderName}`,
+        '',
+        '请先确认 Git 是否可用，并根据这个地址判断需要 HTTPS 登录、SSH key、访问令牌或仓库权限。',
+        '如果需要授权，请引导我完成授权；如果 clone 成功，请确认项目目录里存在 .axhub/make/client.json，并运行 npm install --include=dev 与 npm run metadata:sync。',
+        '如果仓库不是 Axhub Make 客户端项目，请说明需要补齐 .axhub/make/client.json、package.json scripts.dev 和 metadata:sync 后再回到 Axhub Make 选择已有项目。',
+        '',
+        '错误摘要：',
+        params.errorMessage || MAKE_CLIENT_CLONE_FAILED_LABEL,
+        '',
+        '诊断信息：',
+        stringifyDiagnostic(params.diagnostic),
+    ].join('\n');
+}
+
+function readProjectSetupPromptFromError(error: unknown): string {
+    const diagnostic = readDiagnosticRecord((error as { diagnostic?: unknown } | null)?.diagnostic);
+    return typeof diagnostic.prompt === 'string' ? diagnostic.prompt.trim() : '';
+}
+
 function slugifyProjectFolderName(input: string): string {
     return String(input || '')
         .trim()
@@ -341,6 +389,7 @@ function getProjectSetupErrorPhase(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error || '');
     const diagnostic = (error as { diagnostic?: unknown } | null)?.diagnostic;
     if (isMakeStateNotWritableDiagnostic(diagnostic)) return 'make-state';
+    if (message.includes('克隆') || message.includes('Git clone')) return 'clone';
     if (message.includes('下载模板包') || message.includes('获取源码')) return 'template';
     if (message.includes('安装依赖')) return 'install';
     if (message.includes('metadata')) return 'metadata';
@@ -351,6 +400,9 @@ function getProjectSetupErrorPhase(error: unknown): string {
 function getProjectSetupPhaseLabel(phaseKey: string): string {
     if (phaseKey === 'make-state') {
         return '本机项目列表保存失败';
+    }
+    if (phaseKey === 'clone') {
+        return MAKE_CLIENT_CLONE_FAILED_LABEL;
     }
     return MAKE_CLIENT_SETUP_PHASES.find((phase) => phase.key === phaseKey)?.label || MAKE_CLIENT_SETUP_FAILED_LABEL;
 }
@@ -1030,6 +1082,7 @@ interface ProjectSetupDialogProps {
     hasActiveProject?: boolean;
     addingProject: boolean;
     creatingBlankProject: boolean;
+    cloningProject: boolean;
     copyingProject: boolean;
     onOpenChange: (open: boolean) => void;
     onSetupComplete: () => void;
@@ -1038,6 +1091,12 @@ interface ProjectSetupDialogProps {
         parentRoot: string;
         folderName: string;
         projectName?: string;
+    }) => Promise<unknown>;
+    onCloneProject: (params: {
+        parentRoot: string;
+        folderName: string;
+        projectName?: string;
+        gitUrl: string;
     }) => Promise<unknown>;
     onCopyProject: (params: {
         parentRoot: string;
@@ -1056,11 +1115,13 @@ function ProjectSetupDialog({
     hasActiveProject,
     addingProject,
     creatingBlankProject,
+    cloningProject,
     copyingProject,
     onOpenChange,
     onSetupComplete,
     onAddProject,
     onCreateBlankProject,
+    onCloneProject,
     onCopyProject,
     assistantOpen,
     onExecutePrompt,
@@ -1069,6 +1130,7 @@ function ProjectSetupDialog({
     const [parentRoot, setParentRoot] = useState(readStoredMakeClientParentRoot);
     const [projectName, setProjectName] = useState(DEFAULT_MAKE_CLIENT_PROJECT_NAME);
     const [folderName, setFolderName] = useState('make-project');
+    const [gitUrl, setGitUrl] = useState('');
     const [manualFolderName, setManualFolderName] = useState(false);
     const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
     const [folderBrowserPurpose, setFolderBrowserPurpose] = useState<'existing' | 'parent'>('existing');
@@ -1108,6 +1170,7 @@ function ProjectSetupDialog({
 
     function resetBlankProjectFields() {
         setProjectName(DEFAULT_MAKE_CLIENT_PROJECT_NAME);
+        setGitUrl('');
         setManualFolderName(false);
         setRunningPhase('');
         setFailedPhase('');
@@ -1140,7 +1203,7 @@ function ProjectSetupDialog({
         }
     }, [forceBlankProjectCreation]);
 
-    const busy = addingProject || creatingBlankProject || copyingProject;
+    const busy = addingProject || creatingBlankProject || cloningProject || copyingProject;
     const primaryTemplateDownloadUrl = makeClientTemplatePrimaryDownloadUrl();
     const mirrorTemplateDownloadUrl = makeClientTemplateMirrorDownloadUrl();
 
@@ -1248,6 +1311,56 @@ function ProjectSetupDialog({
         }
     };
 
+    const handleCloneMakeProject = async () => {
+        const normalizedParent = parentRoot.trim();
+        const normalizedFolder = folderName.trim();
+        const normalizedProjectName = projectName.trim();
+        const normalizedGitUrl = gitUrl.trim();
+        if (!normalizedParent) {
+            toast.error('请先选择项目所在位置');
+            return;
+        }
+        if (!normalizedFolder) {
+            toast.error('请填写文件夹名称');
+            return;
+        }
+        if (!normalizedGitUrl) {
+            toast.error('请填写 Git 链接');
+            return;
+        }
+        setFailedPhase('');
+        setFailedMessage('');
+        setFailedDiagnostic('');
+        setRunningPhase('cloning');
+        try {
+            writeStoredMakeClientParentRoot(normalizedParent);
+            await onCloneProject({
+                parentRoot: normalizedParent,
+                folderName: normalizedFolder,
+                projectName: normalizedProjectName,
+                gitUrl: normalizedGitUrl,
+            });
+            allowCloseRef.current = true;
+            onSetupComplete();
+            onOpenChange(false);
+        } catch (error: any) {
+            const errorMessage = error?.message || '克隆项目失败';
+            setFailedPhase(getProjectSetupErrorPhase(error) || 'clone');
+            setFailedMessage(errorMessage);
+            setFailedDiagnostic(readProjectSetupPromptFromError(error) || buildMakeClientCloneAiPrompt({
+                parentRoot: normalizedParent,
+                folderName: normalizedFolder,
+                projectName: normalizedProjectName,
+                gitUrl: normalizedGitUrl,
+                errorMessage,
+                diagnostic: error?.diagnostic || error,
+            }));
+            toast.error(errorMessage);
+        } finally {
+            setRunningPhase('');
+        }
+    };
+
     const handleCopyMakeProject = async () => {
         const normalizedParent = parentRoot.trim();
         const normalizedFolder = folderName.trim();
@@ -1311,12 +1424,22 @@ function ProjectSetupDialog({
         }
     };
 
-    const pendingCreate = Boolean(runningPhase || ((creatingBlankProject || copyingProject) && !failedPhase));
-    const pendingLabel = setupMode === 'copy' ? MAKE_CLIENT_COPY_PENDING_LABEL : MAKE_CLIENT_SETUP_PENDING_LABEL;
-    const pendingDescription = setupMode === 'copy' ? MAKE_CLIENT_COPY_PENDING_DESCRIPTION : MAKE_CLIENT_SETUP_PENDING_DESCRIPTION;
+    const pendingCreate = Boolean(runningPhase || ((creatingBlankProject || cloningProject || copyingProject) && !failedPhase));
+    const pendingLabel = setupMode === 'clone'
+        ? MAKE_CLIENT_CLONE_PENDING_LABEL
+        : setupMode === 'copy'
+            ? MAKE_CLIENT_COPY_PENDING_LABEL
+            : MAKE_CLIENT_SETUP_PENDING_LABEL;
+    const pendingDescription = setupMode === 'clone'
+        ? MAKE_CLIENT_CLONE_PENDING_DESCRIPTION
+        : setupMode === 'copy'
+            ? MAKE_CLIENT_COPY_PENDING_DESCRIPTION
+            : MAKE_CLIENT_SETUP_PENDING_DESCRIPTION;
     const failedTitle = failedPhase
         ? getProjectSetupPhaseLabel(failedPhase)
-        : setupMode === 'copy'
+        : setupMode === 'clone'
+            ? MAKE_CLIENT_CLONE_FAILED_LABEL
+            : setupMode === 'copy'
             ? MAKE_CLIENT_COPY_FAILED_LABEL
             : MAKE_CLIENT_SETUP_FAILED_LABEL;
     const renderFailureMessage = () => failedMessage ? (
@@ -1340,7 +1463,7 @@ function ProjectSetupDialog({
             </div>
         </div>
     ) : null;
-    const showProjectSetupFooter = setupMode === 'blank' || setupMode === 'copy' || !dismissDisabled;
+    const showProjectSetupFooter = setupMode === 'blank' || setupMode === 'clone' || setupMode === 'copy' || !dismissDisabled;
 
     return (
         <>
@@ -1399,6 +1522,21 @@ function ProjectSetupDialog({
                                 <span className="flex min-w-0 flex-1 flex-col gap-1">
                                     <span className="text-[13px] font-medium">AI 执行</span>
                                     <span className="text-[12px] leading-5 text-muted-foreground">复制一段精简提示词，让 AI 先确认目录，再下载客户端、安装依赖并写入配置。</span>
+                                </span>
+                            </button>
+                            <button
+                                type="button"
+                                className="flex min-h-[88px] w-full items-center gap-3 rounded-md border border-border/70 px-3 py-3 text-left transition-colors hover:bg-muted/70 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:outline-none disabled:opacity-50"
+                                onClick={() => {
+                                    resetBlankProjectFields();
+                                    setSetupMode('clone');
+                                }}
+                                disabled={busy}
+                            >
+                                <GitBranch className="h-4 w-4 shrink-0 text-primary" />
+                                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                                    <span className="text-[13px] font-medium">Git 链接克隆</span>
+                                    <span className="text-[12px] leading-5 text-muted-foreground">适合团队协作、异地办公或在多台设备间同步项目，从共享仓库拉取完整项目。</span>
                                 </span>
                             </button>
                             {hasActiveProject ? (
@@ -1520,6 +1658,19 @@ function ProjectSetupDialog({
                                     className="h-8 text-[12px]"
                                 />
                             </div>
+                            {setupMode === 'clone' ? (
+                                <div className="space-y-2">
+                                    <Label htmlFor="make-project-git-url" className="text-[12px]">Git 链接</Label>
+                                    <Input
+                                        id="make-project-git-url"
+                                        value={gitUrl}
+                                        onChange={(event) => setGitUrl(event.target.value)}
+                                        disabled={busy}
+                                        placeholder="https://github.com/owner/repo.git"
+                                        className="h-8 text-[12px]"
+                                    />
+                                </div>
+                            ) : null}
                             {pendingCreate ? (
                                 <div className="rounded-md border border-border/70 bg-muted/30 p-3">
                                     <div className="flex items-start gap-2 text-[12px]">
@@ -1541,22 +1692,26 @@ function ProjectSetupDialog({
                                     取消
                                 </Button>
                             ) : null}
-                            {setupMode === 'blank' || setupMode === 'copy' ? (
+                            {setupMode === 'blank' || setupMode === 'clone' || setupMode === 'copy' ? (
                                 <Button
                                     type="button"
                                     size="sm"
                                     className="h-8 gap-2"
                                     onClick={() => {
+                                        if (setupMode === 'clone') {
+                                            void handleCloneMakeProject();
+                                            return;
+                                        }
                                         if (setupMode === 'copy') {
                                             void handleCopyMakeProject();
                                             return;
                                         }
                                         void handleCreateBlankProject();
                                     }}
-                                    disabled={busy || !parentRoot.trim() || !folderName.trim()}
+                                    disabled={busy || !parentRoot.trim() || !folderName.trim() || (setupMode === 'clone' && !gitUrl.trim())}
                                 >
-                                    {creatingBlankProject || copyingProject ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : setupMode === 'copy' ? <Copy className="h-3.5 w-3.5" /> : <FolderPlus className="h-3.5 w-3.5" />}
-                                    {setupMode === 'copy' ? '复制并启动' : '创建并启动'}
+                                    {creatingBlankProject || cloningProject || copyingProject ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : setupMode === 'clone' ? <GitBranch className="h-3.5 w-3.5" /> : setupMode === 'copy' ? <Copy className="h-3.5 w-3.5" /> : <FolderPlus className="h-3.5 w-3.5" />}
+                                    {setupMode === 'clone' ? '克隆并启动' : setupMode === 'copy' ? '复制并启动' : '创建并启动'}
                                 </Button>
                             ) : null}
                         </DialogFooter>
@@ -1592,6 +1747,8 @@ export default function ContentPanel({
     projectTitle,
     activeProjectId,
     projectSetupRequired,
+    makeClientUpdateAvailable,
+    makeClientUpdateReminderVisible,
     projects,
     resourceWriteCapabilities,
     lanAccessAllowed = true,
@@ -1601,6 +1758,7 @@ export default function ContentPanel({
     onProjectStop,
     onAddProject,
     onCreateBlankMakeProject,
+    onCloneMakeProject,
     onCopyMakeProject,
     onRefreshProjects,
     tree,
@@ -1644,6 +1802,7 @@ export default function ContentPanel({
     handleVersionManagement,
     handleDeleteItem,
     onSettingsClick,
+    onVersionCollaborationClick,
     onToggleTheme,
     selectedTheme,
     defaultThemeName,
@@ -1668,6 +1827,7 @@ export default function ContentPanel({
     const [stoppingProjectId, setStoppingProjectId] = useState<string | null>(null);
     const [isAddingProject, setIsAddingProject] = useState(false);
     const [isCreatingBlankProject, setIsCreatingBlankProject] = useState(false);
+    const [isCloningProject, setIsCloningProject] = useState(false);
     const [isCopyingProject, setIsCopyingProject] = useState(false);
     const [isSearchExpanded, setIsSearchExpanded] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1884,16 +2044,23 @@ export default function ContentPanel({
 
     const handleSettingsMenuSelect = useCallback(() => {
         window.setTimeout(() => {
-            onSettingsClick();
+            onSettingsClick(makeClientUpdateReminderVisible ? 'update' : 'project');
         }, 0);
-    }, [onSettingsClick]);
+    }, [makeClientUpdateReminderVisible, onSettingsClick]);
+    const handleVersionCollaborationMenuSelect = useCallback(() => {
+        window.setTimeout(() => {
+            onVersionCollaborationClick();
+        }, 0);
+    }, [onVersionCollaborationClick]);
 
     useEffect(() => {
         knownFolderIdsRef.current = new Set(collectFolderIds(tree));
     }, [tree]);
 
+    const canSelectFolders = typeof onFolderClick === 'function';
+
     useEffect(() => {
-        if (dataTab !== 'docs' || !selectedFolder?.id) {
+        if (!canSelectFolders || !selectedFolder?.id) {
             return;
         }
         setExpandedFolderIds((previous) => {
@@ -1904,7 +2071,7 @@ export default function ContentPanel({
             next.add(selectedFolder.id);
             return next;
         });
-    }, [dataTab, selectedFolder?.id]);
+    }, [canSelectFolders, selectedFolder?.id]);
 
     useEffect(() => {
         if (!pendingRenameFolderId) {
@@ -2045,6 +2212,20 @@ export default function ContentPanel({
             return await onCreateBlankMakeProject(params);
         } finally {
             setIsCreatingBlankProject(false);
+        }
+    };
+
+    const handleCloneMakeProject = async (params: {
+        parentRoot: string;
+        folderName: string;
+        projectName?: string;
+        gitUrl: string;
+    }) => {
+        setIsCloningProject(true);
+        try {
+            return await onCloneMakeProject(params);
+        } finally {
+            setIsCloningProject(false);
         }
     };
 
@@ -2585,7 +2766,7 @@ export default function ContentPanel({
             const isSelected = Boolean(item && selectedItem?.name === item.name);
             const isFolderSelected =
                 isFolder
-                && dataTab === 'docs'
+                && canSelectFolders
                 && Boolean(selectedFolder)
                 && (selectedFolder?.id === node.id || selectedFolder?.path === (node.folderPath || node.path));
             const title = getNodeTitle(node);
@@ -2666,8 +2847,10 @@ export default function ContentPanel({
                                 return;
                             }
                             if (isFolder) {
-                                if (dataTab === 'docs') {
-                                    setDocumentPasteTargetFromFolder(node);
+                                if (canSelectFolders) {
+                                    if (dataTab === 'docs') {
+                                        setDocumentPasteTargetFromFolder(node);
+                                    }
                                     const isCollapsingFolder = isExpanded;
                                     toggleFolder(node.id);
                                     if (!isCollapsingFolder) {
@@ -2896,15 +3079,25 @@ export default function ContentPanel({
                     <TooltipProvider>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0">
+                                <Button variant="ghost" size="icon" className="relative h-7 w-7 shrink-0">
                                     <Menu className="h-4 w-4" />
+                                    {makeClientUpdateReminderVisible ? (
+                                        <span aria-label="有项目更新" className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-destructive" />
+                                    ) : null}
                                     <span className="sr-only">更多</span>
                                 </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="start" className="text-sm min-w-[132px]">
-                                <DropdownMenuItem className="h-7 gap-2 text-sm" onSelect={handleSettingsMenuSelect}>
+                                <DropdownMenuItem className="relative h-7 gap-2 text-sm" onSelect={handleSettingsMenuSelect}>
                                     <Settings className="h-3.5 w-3.5" />
                                     设置
+                                    {makeClientUpdateReminderVisible ? (
+                                        <span aria-label="有项目更新" className="ml-auto h-1.5 w-1.5 rounded-full bg-destructive" />
+                                    ) : null}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem className="h-7 gap-2 text-sm" onSelect={handleVersionCollaborationMenuSelect}>
+                                    <GitBranch className="h-3.5 w-3.5" />
+                                    版本和协作
                                 </DropdownMenuItem>
                                 <DropdownMenuItem className="h-7 gap-2 text-sm" onClick={onToggleTheme}>
                                     {isDarkMode ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
@@ -3378,6 +3571,7 @@ export default function ContentPanel({
             hasActiveProject={Boolean(activeProjectId)}
             addingProject={isAddingProject}
             creatingBlankProject={isCreatingBlankProject}
+            cloningProject={isCloningProject}
             copyingProject={isCopyingProject}
             onOpenChange={(open) => {
                 if (projectSetupRequired && !open) {
@@ -3396,6 +3590,7 @@ export default function ContentPanel({
             }}
             onAddProject={handleAddProject}
             onCreateBlankProject={handleCreateBlankMakeProject}
+            onCloneProject={handleCloneMakeProject}
             onCopyProject={handleCopyMakeProject}
             assistantOpen={webAgentPanelOpen === true && aiPanelMode === 'general-ai'}
             onExecutePrompt={onExecutePrompt}

@@ -67,6 +67,7 @@ export interface SubmitAnnotationPromptViaApiOptions {
     provider: string | null;
   }) => void | Promise<void>;
   onEvent?: (event: AiRunSseEvent) => void | Promise<void>;
+  signal?: AbortSignal;
 }
 
 function getLocalStorage(): AnnotationDirectRunStorage | null {
@@ -310,6 +311,7 @@ export async function submitAnnotationPromptViaApi(
     contextBundle: mapAssistantContextToAcpContextBundle(options.context),
     targetPath: target.currentFilePath,
     builtinToolSettings: options.builtinToolSettings,
+    signal: options.signal,
   }, async (event) => {
     if (event.event === 'run.accepted') {
       const acceptedThreadId = String(event.data.threadId || prepared.threadId || '').trim();

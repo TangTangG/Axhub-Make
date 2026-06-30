@@ -23,6 +23,7 @@ vi.mock('../onDemandBuild.ts', () => ({
   buildOnDemand: vi.fn(async () => ({
     jsCode: 'var UserComponent = function Home(){};',
     cssText: '.home{color:red;}',
+    metadata: { usesAnnotationRuntime: false },
   })),
 }));
 
@@ -242,6 +243,60 @@ function mockGitHubPagesRest(input: RequestInfo | URL, init?: RequestInit) {
   return jsonResponse({ message: `Unexpected GitHub request ${method} ${url}` }, 500);
 }
 
+function mockGitHubPagesRestWithResourcePrefix(input: RequestInfo | URL, init?: RequestInit) {
+  const url = String(input);
+  const method = String(init?.method || 'GET').toUpperCase();
+  const headers = new Headers(init?.headers);
+  expect(headers.get('authorization')).toBe('Bearer gh-test-token');
+
+  if (method === 'GET' && url.endsWith('/repos/lintendo/axhub-pages-demo')) {
+    return jsonResponse({
+      default_branch: 'main',
+      html_url: 'https://github.com/lintendo/axhub-pages-demo',
+    });
+  }
+  if (method === 'GET' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/ref/heads/gh-pages')) {
+    return jsonResponse({ message: 'Not Found' }, 404);
+  }
+  if (method === 'GET' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/ref/heads/main')) {
+    return jsonResponse({ object: { sha: 'main-sha' } });
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/refs')) {
+    return jsonResponse({ ref: 'refs/heads/gh-pages', object: { sha: 'main-sha' } }, 201);
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/blobs')) {
+    return jsonResponse({ sha: 'blob-sha' }, 201);
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/trees')) {
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.base_tree).toBe('main-sha');
+    expect(payload.tree.map((entry: any) => entry.path)).toEqual(expect.arrayContaining([
+      'home/index.html',
+      'home/index.js',
+    ]));
+    expect(payload.tree.map((entry: any) => entry.path)).not.toEqual(expect.arrayContaining([
+      'index.html',
+      'index.js',
+    ]));
+    return jsonResponse({ sha: 'tree-sha' }, 201);
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/commits')) {
+    return jsonResponse({ sha: 'commit-sha' }, 201);
+  }
+  if (method === 'PATCH' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/refs/heads/gh-pages')) {
+    return jsonResponse({ ref: 'refs/heads/gh-pages', object: { sha: 'commit-sha' } });
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/pages')) {
+    const payload = JSON.parse(String(init?.body));
+    expect(payload).toMatchObject({ source: { branch: 'gh-pages', path: '/' } });
+    return jsonResponse({ html_url: 'https://lintendo.github.io/axhub-pages-demo/' }, 201);
+  }
+  if (method === 'PUT' && url.endsWith('/repos/lintendo/axhub-pages-demo/pages')) {
+    return jsonResponse({ html_url: 'https://lintendo.github.io/axhub-pages-demo/' });
+  }
+  return jsonResponse({ message: `Unexpected GitHub request ${method} ${url}` }, 500);
+}
+
 function writeCloudPublishRecord(projectRoot: string, input: {
   target: 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages';
   status: 'success' | 'failed';
@@ -311,6 +366,7 @@ describe('cloud publishing API', () => {
     vi.mocked(buildOnDemand).mockResolvedValueOnce({
       jsCode: 'var UserComponent = function Home(){return "/api/media/file/banner/city.jpg";};',
       cssText: '.hero{background-image:url("/api/media/file/banner/city.jpg")}',
+      metadata: { usesAnnotationRuntime: false },
     });
 
     const files = await buildExportHtmlStaticFiles({
@@ -348,6 +404,7 @@ describe('cloud publishing API', () => {
     vi.mocked(buildOnDemand).mockResolvedValueOnce({
       jsCode: 'var UserComponent = function Home(){return "/api/media/file/banner/city.jpg";};',
       cssText: '.hero{background-image:url("/api/media/file/banner/city.jpg")}',
+      metadata: { usesAnnotationRuntime: false },
     });
     const server = await startTestServer(projectRoot);
 
@@ -395,6 +452,11 @@ describe('cloud publishing API', () => {
     writeFile(path.join(projectRoot, 'src/prototypes/home/canvas.fig'), 'FIG');
     writeFile(path.join(projectRoot, 'src/prototypes/home/canvas-assets/screenshot.png'), 'PNG');
     writeFile(path.join(projectRoot, 'src/prototypes/home/.spec/generation-artifacts.json'), '{}\n');
+    vi.mocked(buildOnDemand).mockResolvedValueOnce({
+      jsCode: 'var UserComponent = function Home(){};',
+      cssText: '.home{color:red;}',
+      metadata: { usesAnnotationRuntime: true },
+    });
 
     const files = await buildExportHtmlStaticFiles({
       projectRoot,
@@ -408,9 +470,25 @@ describe('cloud publishing API', () => {
     const paths = files.map((file) => file.path).sort();
 
     expect(paths).toEqual(expect.arrayContaining([
+      'source/manifest.json',
       'source/components/Card.tsx',
       'source/index.tsx',
     ]));
+    const manifest = JSON.parse(String(files.find((file) => file.path === 'source/manifest.json')?.body ?? 'null'));
+    expect(manifest).toMatchObject({
+      version: 1,
+      format: 'axhub-published-source',
+      sourceRoot: 'source',
+      entry: 'index.tsx',
+    });
+    expect(manifest.files).toEqual(expect.arrayContaining([
+      { path: 'index.tsx', kind: 'entry' },
+      { path: 'components/Card.tsx', kind: 'source' },
+    ]));
+    const html = String(files.find((file) => file.path === 'index.html')?.body ?? '');
+    const sourceReferenceAssignment = 'window.__AXHUB_ANNOTATION_SOURCE_REFERENCE__={root:"source",manifest:"source/manifest.json"};';
+    expect(html).toContain(sourceReferenceAssignment);
+    expect(html).toContain(`await loadEntryScript('./index.js');\n        ${sourceReferenceAssignment}`);
     expect(paths).not.toEqual(expect.arrayContaining([
       'source/Home.spec.tsx',
       'source/canvas.excalidraw',
@@ -420,6 +498,34 @@ describe('cloud publishing API', () => {
     ]));
   });
 
+  it('does not inject annotation source references for non-annotation pages', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    vi.mocked(buildOnDemand).mockResolvedValueOnce({
+      jsCode: 'var UserComponent = function Home(){};',
+      cssText: '.home{color:red;}',
+      metadata: { usesAnnotationRuntime: false },
+    });
+
+    const files = await buildExportHtmlStaticFiles({
+      projectRoot,
+      sourceFile: path.join(projectRoot, 'src/prototypes/home/index.tsx'),
+      entryName: 'home',
+      displayName: 'Home',
+      group: 'prototypes',
+      includeSource: true,
+    });
+
+    const paths = files.map((file) => file.path).sort();
+    const html = String(files.find((file) => file.path === 'index.html')?.body ?? '');
+
+    expect(paths).toEqual(expect.arrayContaining([
+      'source/manifest.json',
+      'source/index.tsx',
+    ]));
+    expect(html).not.toContain('__AXHUB_ANNOTATION_SOURCE_REFERENCE__');
+  });
+
   it('extracts large CSS data URIs into static asset files for cloud publishing limits', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
@@ -427,6 +533,7 @@ describe('cloud publishing API', () => {
     vi.mocked(buildOnDemand).mockResolvedValueOnce({
       jsCode: 'var UserComponent = function Home(){};',
       cssText: `@font-face{font-family:Demo;src:url("data:font/ttf;base64,${fontBody.toString('base64')}")} .home{font-family:Demo}`,
+      metadata: { usesAnnotationRuntime: false },
     });
 
     const files = await buildExportHtmlStaticFiles({
@@ -470,6 +577,7 @@ describe('cloud publishing API', () => {
           },
           publishSettings: {
             includeSource: false,
+            visibleTargets: ['axhub', 's3', 'vercel'],
           },
         }),
       });
@@ -502,6 +610,30 @@ describe('cloud publishing API', () => {
       });
       expect(config.targets.publishSettings).toMatchObject({
         includeSource: false,
+        visibleTargets: ['axhub', 's3', 'vercel'],
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('defaults visible cloud publishing platforms to Axhub only', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      vercel: { token: 'vercel-token', projectName: 'axhub-home' },
+      publishSettings: { includeSource: true },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const configResponse = await fetch(`${server.origin}/api/cloud-publishing/config`);
+      const config = await readJsonResponse(configResponse);
+
+      expect(configResponse.status).toBe(200);
+      expect(config.targets.publishSettings).toMatchObject({
+        includeSource: true,
+        visibleTargets: ['axhub'],
       });
     } finally {
       await server.close();
@@ -835,6 +967,69 @@ describe('cloud publishing API', () => {
     }
   });
 
+  it('auto-generates a GitHub Pages path prefix from the resource path when no path prefix is configured', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      githubPages: {
+        repository: 'lintendo/axhub-pages-demo',
+        branch: 'gh-pages',
+        sourceDirectory: '/',
+        pathPrefix: '',
+      },
+    });
+    const commandMock = mockCommandExecutor(async (command, args) => {
+      if (command === 'gh' && args.join(' ') === 'auth status') {
+        return { stdout: '', stderr: '' };
+      }
+      if (command === 'gh' && args.join(' ') === 'auth token') {
+        return { stdout: 'gh-test-token\n', stderr: '' };
+      }
+      throw new Error(`unexpected command ${command} ${args.join(' ')}`);
+    });
+    const fetchMock = mockExternalFetch((input, init) => mockGitHubPagesRestWithResourcePrefix(input, init));
+    const server = await startTestServer(projectRoot, { cloudPublishingCommandExecutor: commandMock });
+
+    try {
+      const configResponse = await fetch(`${server.origin}/api/cloud-publishing/config`);
+      const config = await readJsonResponse(configResponse);
+      expect(config.targets.githubPages).toMatchObject({
+        configured: true,
+        pathPrefix: '',
+        missingFields: [],
+      });
+
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'github-pages', path: 'prototypes/home' }),
+      });
+      const body = await readJsonResponse(response);
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        target: 'github-pages',
+        url: 'https://lintendo.github.io/axhub-pages-demo/home/',
+      });
+      expect(fetchMock.mock.calls.some(([requestUrl]) => String(requestUrl).includes('/git/trees'))).toBe(true);
+
+      const exportRecords = fs.readdirSync(getProjectExportsDir(projectRoot));
+      const latestRecord = JSON.parse(fs.readFileSync(path.join(getProjectExportsDir(projectRoot), exportRecords[0]), 'utf8'));
+      expect(latestRecord).toMatchObject({
+        operationType: 'cloud.publish.github-pages',
+        status: 'success',
+        metadata: {
+          repository: 'lintendo/axhub-pages-demo',
+          branch: 'gh-pages',
+          sourceDirectory: '/',
+          pathPrefix: 'home',
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('publishes to Cloudflare Pages create deployment API and reports missing project errors clearly', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
@@ -920,6 +1115,149 @@ describe('cloud publishing API', () => {
     }
   });
 
+  it('returns the Cloudflare Pages production subdomain from the project API when it differs from the configured project name', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      cloudflarePages: {
+        apiToken: 'cf-token',
+        accountId: 'account-1',
+        projectName: 'axhub',
+        productionBranch: 'main',
+      },
+    });
+    mockExternalFetch((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/upload-token')) {
+        return jsonResponse({ success: true, result: { jwt: 'cf-upload-jwt' } });
+      }
+      if (url.endsWith('/assets/check-missing')) {
+        const payload = JSON.parse(String(init?.body));
+        return jsonResponse({ success: true, result: payload.hashes });
+      }
+      if (url.endsWith('/assets/upload') || url.endsWith('/assets/upsert-hashes')) {
+        return jsonResponse({ success: true, result: {} });
+      }
+      if (url.endsWith('/pages/projects/axhub')) {
+        return jsonResponse({
+          success: true,
+          result: {
+            name: 'axhub',
+            subdomain: 'axhub-4sd.pages.dev',
+            domains: ['custom.example.com'],
+          },
+        });
+      }
+      return jsonResponse({
+        success: true,
+        result: {
+          id: 'deployment-1',
+          url: 'https://6450f361.axhub-4sd.pages.dev',
+        },
+      });
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'cloudflare-pages', path: 'prototypes/home' }),
+      });
+      const body = await readJsonResponse(response);
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        target: 'cloudflare-pages',
+        url: 'https://axhub-4sd.pages.dev',
+      });
+      const records = fs.readdirSync(getProjectExportsDir(projectRoot))
+        .map((fileName) => JSON.parse(fs.readFileSync(path.join(getProjectExportsDir(projectRoot), fileName), 'utf8')));
+      expect(records[0].metadata).toMatchObject({
+        url: 'https://axhub-4sd.pages.dev',
+        deploymentUrl: 'https://6450f361.axhub-4sd.pages.dev',
+        cloudflarePagesProjectName: 'axhub',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('auto-generates a Cloudflare Pages project name from the resource path when no project name is configured', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      cloudflarePages: {
+        apiToken: 'cf-token',
+        accountId: 'account-1',
+        projectName: '',
+        productionBranch: 'main',
+      },
+    });
+    const fetchMock = mockExternalFetch((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/upload-token')) {
+        return jsonResponse({ success: true, result: { jwt: 'cf-upload-jwt' } });
+      }
+      if (url.endsWith('/assets/check-missing')) {
+        const payload = JSON.parse(String(init?.body));
+        return jsonResponse({ success: true, result: payload.hashes });
+      }
+      if (url.endsWith('/assets/upload') || url.endsWith('/assets/upsert-hashes')) {
+        return jsonResponse({ success: true, result: {} });
+      }
+      if (url.endsWith('/pages/projects/home')) {
+        return jsonResponse({
+          success: true,
+          result: {
+            name: 'home',
+            subdomain: 'home.pages.dev',
+          },
+        });
+      }
+      return jsonResponse({
+        success: true,
+        result: {
+          id: 'deployment-1',
+          url: 'https://6450f361.home.pages.dev',
+        },
+      });
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const configResponse = await fetch(`${server.origin}/api/cloud-publishing/config`);
+      const config = await readJsonResponse(configResponse);
+      expect(config.targets.cloudflarePages).toMatchObject({
+        configured: true,
+        projectName: '',
+        missingFields: [],
+      });
+
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'cloudflare-pages', path: 'prototypes/home' }),
+      });
+      const body = await readJsonResponse(response);
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        target: 'cloudflare-pages',
+        url: 'https://home.pages.dev',
+      });
+      const [deploymentUrl] = fetchMock.mock.calls.find(([requestUrl]) => String(requestUrl).includes('/deployments')) || [];
+      expect(String(deploymentUrl)).toContain('/accounts/account-1/pages/projects/home/deployments');
+      const records = fs.readdirSync(getProjectExportsDir(projectRoot))
+        .map((fileName) => JSON.parse(fs.readFileSync(path.join(getProjectExportsDir(projectRoot), fileName), 'utf8')));
+      expect(records[0].metadata).toMatchObject({
+        cloudflarePagesProjectName: 'home',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('splits oversized Cloudflare Pages upload batches and rejects single files over the Pages asset limit', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
@@ -973,6 +1311,7 @@ describe('cloud publishing API', () => {
       vi.mocked(buildOnDemand).mockResolvedValueOnce({
         jsCode: 'var UserComponent = function Home(){};',
         cssText: 'x'.repeat(26 * 1024 * 1024),
+        metadata: { usesAnnotationRuntime: false },
       });
       const tooLargeResponse = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
         method: 'POST',
@@ -1208,7 +1547,7 @@ describe('cloud publishing API', () => {
     }
   });
 
-  it('uses an S3-compatible endpoint derived from an Alibaba OSS base URL', async () => {
+  it('auto-generates an S3 prefix from the resource path when no prefix is configured', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
     writeCloudConfig(projectRoot, {
@@ -1235,12 +1574,12 @@ describe('cloud publishing API', () => {
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
         target: 's3',
-        url: 'https://webpp.oss-cn-hangzhou.aliyuncs.com/index.html',
+        url: 'https://webpp.oss-cn-hangzhou.aliyuncs.com/home/index.html',
       });
       const s3Calls = fetchMock.mock.calls.filter(([requestUrl]) => String(requestUrl).includes('webpp.s3.oss-cn-hangzhou.aliyuncs.com'));
       expect(s3Calls.length).toBeGreaterThan(1);
       const [requestUrl, requestInit] = s3Calls[0];
-      expect(String(requestUrl)).toContain('https://webpp.s3.oss-cn-hangzhou.aliyuncs.com/');
+      expect(String(requestUrl)).toContain('https://webpp.s3.oss-cn-hangzhou.aliyuncs.com/home/');
       expect((requestInit?.headers as Record<string, string>).Authorization).toContain('Credential=OSS_TEST/');
     } finally {
       await server.close();

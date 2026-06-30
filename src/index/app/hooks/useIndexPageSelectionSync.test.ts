@@ -53,6 +53,7 @@ describe('useIndexPageSelectionSync source', () => {
     expect(source).toContain("pendingReturnTarget?.sidebarTab === 'document'");
     expect(source).toContain('const nextDocItem = pendingDocItem ?? fallbackDocItem');
     expect(source).toContain('setSelectedDoc(nextDocItem)');
+    expect(source).toContain("initialResourceDeepLink?.resourceType === 'project-doc'");
   });
 
   it('restores theme deep links from the short URL state', () => {
@@ -75,6 +76,8 @@ describe('useIndexPageSelectionSync source', () => {
     expect(source).toContain("resolvedDeepLink?.kind === 'template'");
     expect(source).toContain('setResourceSection(resolvedDeepLink.resourceSection);');
     expect(source).toContain('setSelectedTemplate(resolvedDeepLink.item);');
+    expect(source).toContain("if (resolvedDeepLink?.kind === 'doc') {");
+    expect(source).toContain('setSelectedDoc(resolvedDeepLink.item);');
   });
 
   it('handles a theme deep link only after attempting to resolve the requested theme', () => {
@@ -107,10 +110,12 @@ describe('useIndexPageSelectionSync source', () => {
     expect(source).toContain('resourceDeepLinkConsumedRef.current = true;');
     expect(source).toContain('onInitialResourceDeepLinkHandled?.();');
 
-    const docBlockStart = source.indexOf("if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'doc')");
+    const docBlockStart = source.indexOf("initialResourceDeepLink?.resourceType === 'doc'");
+    const projectDocCheck = source.indexOf("initialResourceDeepLink?.resourceType === 'project-doc'", docBlockStart);
     const docResolvedCheck = source.indexOf("resolvedDeepLink?.kind === 'doc'", docBlockStart);
     const docMissingHandled = source.indexOf('markInitialResourceDeepLinkHandled();', docResolvedCheck);
     expect(docBlockStart).toBeGreaterThanOrEqual(0);
+    expect(projectDocCheck).toBeGreaterThan(docBlockStart);
     expect(docMissingHandled).toBeGreaterThan(docResolvedCheck);
 
     const themeBlockStart = source.indexOf("if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'theme')");
@@ -118,6 +123,17 @@ describe('useIndexPageSelectionSync source', () => {
     const themeMissingHandled = source.indexOf('markInitialResourceDeepLinkHandled();', themeResolvedCheck);
     expect(themeBlockStart).toBeGreaterThanOrEqual(0);
     expect(themeMissingHandled).toBeGreaterThan(themeResolvedCheck);
+  });
+
+  it('opens document deep links in demo view so the document editing toolbar is shown', () => {
+    const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
+    const docResolvedStart = source.indexOf("if (resolvedDeepLink?.kind === 'doc') {");
+    const docResolvedEnd = source.indexOf('return;', docResolvedStart);
+    const docResolvedSource = source.slice(docResolvedStart, docResolvedEnd);
+
+    expect(docResolvedStart).toBeGreaterThanOrEqual(0);
+    expect(docResolvedSource).toContain("setViewMode('demo');");
+    expect(docResolvedSource).toContain('setSelectedDoc(resolvedDeepLink.item);');
   });
 
   it('keeps the selected prototype while resource tabs are browsed in prototype canvas mode', () => {

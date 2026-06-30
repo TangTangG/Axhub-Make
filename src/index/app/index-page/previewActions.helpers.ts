@@ -1,8 +1,8 @@
 import type {
     ElementLocator,
-    GenieEditorEditedSnapshot,
-    GenieEditorHostToolbarAction,
-    GenieEditorHostToolbarState,
+    CommentaryEditedSnapshot,
+    CommentaryHostToolbarAction,
+    CommentaryHostToolbarState,
 } from '@/common/web-editor-types';
 import type { AxureCopyOptions, ImageConfig } from '../../types';
 import type { ExportIndexBundle } from '../../services/api';
@@ -17,7 +17,7 @@ export const DEVICE_SIZES = {
 } as const;
 
 export type PreviewPane = 'primary' | 'secondary';
-export type PrototypePanePromptAction = 'copy-prompt' | 'send-to-genie';
+export type PrototypePanePromptAction = 'copy-prompt' | 'send-to-agent';
 export type PrototypePanePrompt = {
     pane: PreviewPane;
     promptText: string | null | undefined;
@@ -130,11 +130,11 @@ export const DEFAULT_EXPORT_IMAGE_CONFIG: ImageConfig = {
 };
 
 export type HostToolbarEditorsApi = {
-    getHostToolbarState?: () => GenieEditorHostToolbarState;
-    subscribeHostToolbarState?: (listener: (state: GenieEditorHostToolbarState) => void) => () => void;
-    runHostToolbarAction?: (action: GenieEditorHostToolbarAction) => Promise<boolean>;
+    getHostToolbarState?: () => CommentaryHostToolbarState;
+    subscribeHostToolbarState?: (listener: (state: CommentaryHostToolbarState) => void) => () => void;
+    runHostToolbarAction?: (action: CommentaryHostToolbarAction) => Promise<boolean>;
     getCopyPromptText?: () => string;
-    getEditedSnapshot?: () => GenieEditorEditedSnapshot;
+    getEditedSnapshot?: () => CommentaryEditedSnapshot;
     setNodeEditingState?: (
         elementKey: string,
         nextState: 'editing' | 'idle' | 'completed' | 'error',
@@ -154,6 +154,7 @@ export type HostToolbarEditorsApi = {
 export type DocumentEditorApi = HostToolbarEditorsApi & {
     enableDocumentEditor?: (options?: {
         toolbarMode?: 'inline' | 'host';
+        quickEditMode?: 'comment' | 'edit';
         initialDarkMode?: boolean;
         assistantPanelOpen?: boolean;
     }) => void | Promise<void>;
@@ -176,6 +177,8 @@ export type PrototypeEditorApi = HostToolbarEditorsApi & {
         initialDarkMode?: boolean;
         assistantPanelOpen?: boolean;
         commentPageScope?: string;
+        annotationApiBaseUrl?: string;
+        annotationProjectId?: string;
     }) => void | Promise<void>;
     disable?: () => void | Promise<void>;
     setContext?: (context: PrototypeEditorContext) => void;
@@ -187,6 +190,8 @@ export type PrototypeEditorApi = HostToolbarEditorsApi & {
         initialDarkMode?: boolean;
         assistantPanelOpen?: boolean;
         commentPageScope?: string;
+        annotationApiBaseUrl?: string;
+        annotationProjectId?: string;
     }) => void | Promise<void>;
     disablePanelOnly?: () => void | Promise<void>;
 };
@@ -199,7 +204,7 @@ export type PrototypeEditorBridgeStateMessage = {
     active?: boolean;
     mode?: string;
     error?: string;
-    hostToolbarState?: GenieEditorHostToolbarState | null;
+    hostToolbarState?: CommentaryHostToolbarState | null;
     promptText?: string;
     decisionDataCount?: number;
 };
@@ -233,11 +238,11 @@ export function readPreviewFrameEditorApi<T extends object>(
     }
 }
 
-export function isHostToolbarWakePendingState(state: GenieEditorHostToolbarState | null | undefined): boolean {
+export function isHostToolbarWakePendingState(state: CommentaryHostToolbarState | null | undefined): boolean {
     return Boolean(state && (state.robotLoading || state.robotState === 'waking'));
 }
 
-export function isHostToolbarAgentAwake(state: GenieEditorHostToolbarState | null | undefined): boolean {
+export function isHostToolbarAgentAwake(state: CommentaryHostToolbarState | null | undefined): boolean {
     return state?.robotState === 'awake' || state?.robotState === 'working';
 }
 
@@ -271,10 +276,10 @@ export function buildCombinedPrototypePrompt(prompts: PrototypePanePrompt[]): st
 }
 
 export function resolveHostToolbarStateForDisplay(
-    previousState: GenieEditorHostToolbarState | null,
-    nextState: GenieEditorHostToolbarState | null,
+    previousState: CommentaryHostToolbarState | null,
+    nextState: CommentaryHostToolbarState | null,
     hostDarkMode?: boolean,
-): GenieEditorHostToolbarState | null {
+): CommentaryHostToolbarState | null {
     if (!nextState) {
         return previousState;
     }
@@ -321,10 +326,10 @@ export function resolveHostToolbarStateForDisplay(
 }
 
 export function resolveHostToolbarStateAfterClearEdits(
-    previousState: GenieEditorHostToolbarState | null,
-    nextState: GenieEditorHostToolbarState | null,
+    previousState: CommentaryHostToolbarState | null,
+    nextState: CommentaryHostToolbarState | null,
     hostDarkMode?: boolean,
-): GenieEditorHostToolbarState | null {
+): CommentaryHostToolbarState | null {
     const resolvedState = resolveHostToolbarStateForDisplay(previousState, nextState, hostDarkMode);
     if (!resolvedState) {
         return resolvedState;
@@ -340,18 +345,71 @@ export function resolveHostToolbarStateAfterClearEdits(
     };
 }
 
+export function resolveActiveAnnotationDirectRunToolbarState(
+    state: CommentaryHostToolbarState | null,
+    active: boolean,
+): CommentaryHostToolbarState | null {
+    if (!state || !active) {
+        return state;
+    }
+    return {
+        ...state,
+        robotState: 'working',
+        robotLoading: false,
+        sendDisabled: true,
+        sendLoading: true,
+        interruptVisible: true,
+        interruptDisabled: false,
+        interruptLoading: false,
+    };
+}
+
 export function waitForHostToolbarActionState(
     editors: HostToolbarEditorsApi,
-    action: GenieEditorHostToolbarAction,
-    previousState?: GenieEditorHostToolbarState | null,
-): Promise<GenieEditorHostToolbarState | null> {
-    if (action.type !== 'wake-genie') {
+    action: CommentaryHostToolbarAction,
+    previousState?: CommentaryHostToolbarState | null,
+): Promise<CommentaryHostToolbarState | null> {
+    if (action.type === 'enable-annotation') {
+        const initialState = editors.getHostToolbarState?.() ?? null;
+        if (initialState?.annotationEnabled) {
+            return Promise.resolve(initialState);
+        }
+
+        return new Promise((resolveState) => {
+            let settled = false;
+            let unsubscribe: (() => void) | undefined;
+            const timerApi = typeof window !== 'undefined' ? window : globalThis;
+            const finish = (state: CommentaryHostToolbarState | null) => {
+                if (settled) return;
+                settled = true;
+                unsubscribe?.();
+                timerApi.clearTimeout(timeoutId);
+                resolveState(state);
+            };
+            const timeoutId = timerApi.setTimeout(() => {
+                finish(editors.getHostToolbarState?.() ?? initialState ?? previousState ?? null);
+            }, HOST_TOOLBAR_STATE_SETTLE_TIMEOUT_MS);
+
+            if (!editors.subscribeHostToolbarState) {
+                finish(initialState ?? previousState ?? null);
+                return;
+            }
+
+            unsubscribe = editors.subscribeHostToolbarState((nextState) => {
+                if (nextState?.annotationEnabled) {
+                    finish(nextState);
+                }
+            });
+        });
+    }
+
+    if (action.type !== 'wake-agent') {
         return Promise.resolve(editors.getHostToolbarState?.() ?? null);
     }
 
-    const isSettledWakeState = (state: GenieEditorHostToolbarState | null | undefined) =>
+    const isSettledWakeState = (state: CommentaryHostToolbarState | null | undefined) =>
         Boolean(state && !isHostToolbarWakePendingState(state));
-    const isSuccessfulWakeState = (state: GenieEditorHostToolbarState | null | undefined) =>
+    const isSuccessfulWakeState = (state: CommentaryHostToolbarState | null | undefined) =>
         state?.robotState === 'awake' || state?.robotState === 'working';
     const initialState = editors.getHostToolbarState?.() ?? null;
     if (isSuccessfulWakeState(initialState)) {
@@ -366,7 +424,7 @@ export function waitForHostToolbarActionState(
         let unsubscribe: (() => void) | undefined;
         let sawPendingWakeState = isHostToolbarWakePendingState(initialState);
         const timerApi = typeof window !== 'undefined' ? window : globalThis;
-        const finish = (state: GenieEditorHostToolbarState | null) => {
+        const finish = (state: CommentaryHostToolbarState | null) => {
             if (settled) return;
             settled = true;
             unsubscribe?.();
@@ -397,7 +455,7 @@ export function waitForHostToolbarActionState(
     });
 }
 
-export function createDefaultHostToolbarState(): GenieEditorHostToolbarState {
+export function createDefaultHostToolbarState(): CommentaryHostToolbarState {
     return {
         toolbarMode: 'host',
         visible: true,
@@ -430,6 +488,11 @@ export function createDefaultHostToolbarState(): GenieEditorHostToolbarState {
         copySkillInstallPromptDisabled: false,
         selectionModeActive: true,
         fullExitAvailable: false,
+        annotationEnabled: false,
+        annotationEnableAvailable: false,
+        annotationEnableLoading: false,
+        annotationEnableDisabled: true,
+        annotationEnableTitle: '开启需求标注',
     };
 }
 
@@ -805,6 +868,45 @@ export function getSelectedResourceTargetPath(selectedItem: any): string {
             ? selectedItem.name.trim()
             : '';
     return resourceId;
+}
+
+export function resolvePrototypeAnnotationTargetPath(selectedItem: any): string {
+    const normalizeCandidate = (value: unknown): string => (
+        typeof value === 'string'
+            ? value.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+            : ''
+    );
+    const decodeResourceId = (value: string): string => {
+        try {
+            return decodeURIComponent(value);
+        } catch {
+            return value;
+        }
+    };
+    const candidates = [
+        normalizeCandidate(selectedItem?.resourceId),
+        normalizeCandidate(getSelectedResourceTargetPath(selectedItem)),
+        normalizeCandidate(selectedItem?.name),
+        normalizeCandidate(selectedItem?.clientUrl),
+        normalizeCandidate(selectedItem?.previewUrl),
+    ];
+
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        const routeMatch = candidate.match(/(?:^|\/)prototypes\/([^/?#]+)(?:\/index\.[jt]sx?)?(?:[/?#].*)?$/u);
+        if (routeMatch?.[1]) {
+            return `prototypes/${decodeResourceId(routeMatch[1])}`;
+        }
+        const sourceMatch = candidate.match(/(?:^|\/)src\/prototypes\/([^/?#]+)(?:\/index\.[jt]sx?)?$/u);
+        if (sourceMatch?.[1]) {
+            return `prototypes/${decodeResourceId(sourceMatch[1])}`;
+        }
+        if (!candidate.includes('/') && candidate !== '.') {
+            return `prototypes/${candidate}`;
+        }
+    }
+
+    return '';
 }
 
 function normalizeSlashPath(value: unknown): string {

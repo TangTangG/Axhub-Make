@@ -305,9 +305,17 @@ describe('useIndexPagePreviewActions source', () => {
 
   it('requests screenshot preview whenever export modal opens without a captured screenshot', () => {
     const source = readPreviewActionsSource();
+    const requestScreenshotSegment = getSourceSegment(
+      source,
+      'const handleRequestScreenshot = useCallback((width?: number, height?: number) => {',
+      'const handleDimensionChange = useCallback',
+    );
 
     expect(source).toContain("if (isExportModalOpen && imageConfig.contentType === 'screenshot' && !imageConfig.rawScreenshotUrl) {");
     expect(source).toContain('handleRequestScreenshot();');
+    expect(requestScreenshotSegment).toContain('const screenshotSize = resolveCurrentPreviewScreenshotSize(previewConfig, screenshotDefaultSize);');
+    expect(requestScreenshotSegment).toContain('payload.targetWidth = screenshotSize.width;');
+    expect(requestScreenshotSegment).toContain('payload.targetHeight = screenshotSize.height;');
     expect(source).not.toContain('if (imageConfig.width === screenshotDefaultSize.width && imageConfig.height === screenshotDefaultSize.height)');
   });
 
@@ -692,11 +700,11 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('...createDefaultHostToolbarState(),');
     expect(source).toContain('visible: true,');
     expect(source).toContain('setHostToolbarState((previousState) => resolveHostToolbarStateForDisplay(previousState, nextState, isDarkMode));');
-    expect(source).toContain('previousState?: GenieEditorHostToolbarState | null');
+    expect(source).toContain('previousState?: CommentaryHostToolbarState | null');
     expect(source).toContain('connectAnnotationAcpRuntime');
     expect(source).toContain('runAnnotationAcpChatPrompt');
     expect(source).toContain('waitForHostToolbarActionState');
-    expect(source).toContain("nextAction.type === 'wake-genie'");
+    expect(source).toContain("nextAction.type === 'wake-agent'");
     expect(source).toContain('!isHostToolbarWakePendingState(state)');
     expect(source).not.toContain('const runtime = await startAssistantRuntimeForWebEditor?.();');
     expect(source).not.toContain("runtime.health?.status !== 'ready'");
@@ -711,12 +719,43 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("nextAction.type === 'full-exit'");
   });
 
+  it('owns prototype annotation enabling in the Make host toolbar instead of delegating it to the iframe editor', () => {
+    const source = readPreviewActionsSource();
+    const runHostToolbarActionSource = getSourceSegment(
+      source,
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+      'const runQuickEditSaveAction = useCallback',
+    );
+    const enableAnnotationSource = getSourceSegment(
+      source,
+      'const enablePrototypeAnnotationFromHost = useCallback(async () => {',
+      'const runQuickEditHostToolbarAction = useCallback',
+    );
+
+    expect(runHostToolbarActionSource).toContain("nextAction.type === 'enable-annotation'");
+    expect(runHostToolbarActionSource).toContain('return enablePrototypeAnnotationFromHost();');
+    expect(runHostToolbarActionSource).not.toContain("nextAction.type === 'enable-annotation' && !handled");
+    expect(runHostToolbarActionSource).not.toContain("messageApi.error('需求标注没有开启成功，请刷新页面后再试')");
+    expect(enableAnnotationSource).toContain("fetch('/api/prototype-annotation/enable'");
+    expect(enableAnnotationSource).toContain('const targetPath = resolvePrototypeAnnotationTargetPath(selectedItem);');
+    expect(enableAnnotationSource).toContain('targetPath,');
+    expect(enableAnnotationSource).toContain('annotationEnabled: true');
+    expect(enableAnnotationSource).toContain("annotationEnableTitle: '需求标注已开启'");
+    expect(enableAnnotationSource).toContain("messageApi.success('需求标注已开启，可直接在当前页面查看和编辑')");
+    expect(enableAnnotationSource).toContain("messageApi.error('需求标注没有开启成功，请刷新页面后再试')");
+    expect(enableAnnotationSource).not.toContain("messageApi.success('需求标注已准备，请刷新页面后查看')");
+    expect(enableAnnotationSource).not.toContain("messageApi.success('需求标注已接入，正在刷新预览')");
+    expect(enableAnnotationSource).not.toContain('setElementIframeKey((previous) => previous + 1);');
+    expect(enableAnnotationSource).not.toContain('contentWindow?.location.reload();');
+    expect(enableAnnotationSource).not.toContain('iframe.src = currentSrc;');
+  });
+
   it('uses the latest host toolbar state ref when connecting local AI from fallback quick edit mode', () => {
     const source = readPreviewRootSource();
     const fallbackActionSource = getSourceSegment(
       source,
-      'const runQuickEditHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
-      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runQuickEditHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
     );
 
     expect(fallbackActionSource).toContain('getHostToolbarState: () => hostToolbarStateRef.current ?? createDefaultHostToolbarState()');
@@ -729,8 +768,8 @@ describe('useIndexPagePreviewActions source', () => {
 
     expect(source).toContain('isHostToolbarAgentAwake');
     expect(source).not.toContain('isHostToolbarGenieAwake');
-    expect(source).not.toContain("requestedAction.type === 'send-to-genie' && !isHostToolbarAgentAwake(hostToolbarStateRef.current)");
-    expect(source).not.toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });");
+    expect(source).not.toContain("requestedAction.type === 'send-to-agent' && !isHostToolbarAgentAwake(hostToolbarStateRef.current)");
+    expect(source).not.toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-agent' });");
     expect(source).toContain('return runResolvedHostToolbarAction(requestedAction);');
   });
 
@@ -738,7 +777,7 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewRootSource();
     const enterDocumentEditorSource = getSourceSegment(
       source,
-      'const enterDocumentEditor = useCallback(async () => {',
+      'const enterDocumentEditor = useCallback(async (mode: SpecQuickEditMode = \'comment\') => {',
       'const handleEnableDocEdit = useCallback',
     );
     const handleOpenWebEditorSource = getSourceSegment(
@@ -748,33 +787,33 @@ describe('useIndexPagePreviewActions source', () => {
     );
     const runHostToolbarActionSource = getSourceSegment(
       source,
-      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
       'const runQuickEditSaveAction = useCallback',
     );
 
     expect(enterDocumentEditorSource).not.toContain('startAnnotationAcpRuntimeConnection();');
     expect(handleOpenWebEditorSource).not.toContain('startAnnotationAcpRuntimeConnection();');
-    expect(runHostToolbarActionSource).not.toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-genie' });");
+    expect(runHostToolbarActionSource).not.toContain("const wakeHandled = await runResolvedHostToolbarAction({ type: 'wake-agent' });");
     expect(runHostToolbarActionSource).toContain('return runResolvedHostToolbarAction(requestedAction);');
   });
 
-  it('maps annotation host toolbar AI actions to API direct ACP runs without opening the assistant panel', () => {
+  it('maps annotation host toolbar AI actions to abortable API direct ACP runs without opening the assistant panel', () => {
     const source = readPreviewRootSource();
     const runHostToolbarActionSource = getSourceSegment(
       source,
-      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
       'const runQuickEditSaveAction = useCallback',
     );
     const fallbackActionSource = getSourceSegment(
       source,
-      'const runQuickEditHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
-      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runQuickEditHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
     );
 
     expect(source).toContain('openAnnotationAssistantWithContext');
     expect(source).toContain('onOpenAnnotationAssistant?.(assistantContextV1)');
     expect(source).toContain('connectAnnotationAcpRuntime');
-    expect(runHostToolbarActionSource).toContain("if (nextAction.type === 'wake-genie') {");
+    expect(runHostToolbarActionSource).toContain("if (nextAction.type === 'wake-agent') {");
     expect(runHostToolbarActionSource).toContain('return connectAnnotationAcpRuntime({ showFeedback: true });');
     expect(runHostToolbarActionSource).not.toContain('return openAnnotationAssistantWithContext();');
     expect(source).toContain("robotState: 'awake' as const");
@@ -793,23 +832,86 @@ describe('useIndexPagePreviewActions source', () => {
     );
     expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, 'editing', latestTaskRef);");
     expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, 'completed', latestTaskRef);");
-    expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, 'error', latestTaskRef);");
+    expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, aborted ? 'idle' : 'error', terminalTaskRef);");
     expect(source).toContain('editors.setNodeEditingState(target.elementKey, nextState, taskRef, target.targetRef ?? null)');
     expect(source).toContain('target.targetRef ?? null');
+    expect(source).toContain('const activeAnnotationDirectRunRef = useRef');
+    expect(source).toContain('new AbortController()');
+    expect(source).toContain('activeAnnotationDirectRunRef.current = {');
+    expect(source).toContain('signal: controller.signal');
+    expect(source).toContain('interruptDisabled: false');
+    expect(source).toContain('abortAnnotationDirectRun');
+    expect(source).toContain("messageApi.info('已有 AI 执行正在进行，请先终止当前任务');");
+    expect(source).not.toContain('activeAnnotationDirectRunRef.current?.controller.abort();');
     expect(source).not.toContain('await onSubmitAnnotationAssistantPrompt(assistantContextV1, prompt)');
     expect(source).not.toContain('openAssistantWithContextAndSubmitPrompt');
     expect(source).not.toContain('runAiText({');
     expect(source).not.toContain("scene: 'annotation-quick-edit'");
-    expect(source).toContain("if (nextAction.type === 'send-to-genie') {");
+    expect(source).toContain("if (nextAction.type === 'send-to-agent') {");
     expect(fallbackActionSource).toContain("nextAction.type === 'copy-prompt'");
-    expect(fallbackActionSource).not.toContain("nextAction.type === 'send-to-genie'");
-    expect(fallbackActionSource).not.toContain("nextAction.type === 'interrupt-genie'");
+    expect(fallbackActionSource).not.toContain("nextAction.type === 'send-to-agent'");
+    expect(fallbackActionSource).not.toContain("nextAction.type === 'interrupt-agent'");
 
-    expect(source).toContain("if (nextAction.type === 'interrupt-genie') {");
-    expect(source).toContain("messageApi.warning('当前 ACP 执行暂不支持中断');");
+    expect(source).toContain("if (nextAction.type === 'interrupt-agent') {");
+    expect(source).toContain('return abortAnnotationDirectRun();');
+    expect(source).not.toContain("messageApi.warning('当前 ACP 执行暂不支持中断');");
+    expect(source).not.toContain('warnAnnotationAcpInterruptUnsupported');
     expect(source).not.toContain('acp.chat.submit');
     expect(source).not.toContain('acp.chat.interrupt');
     expect(source).not.toContain('/api/prompt/execute');
+  });
+
+  it('handles direct ACP interruption from both host toolbar fallbacks', () => {
+    const source = readPreviewRootSource();
+    const fallbackActionSource = getSourceSegment(
+      source,
+      'const runQuickEditHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+    );
+    const runHostToolbarActionSource = getSourceSegment(
+      source,
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+      'const runQuickEditSaveAction = useCallback',
+    );
+    const abortSource = getSourceSegment(
+      source,
+      'const abortAnnotationDirectRun = useCallback(() => {',
+      'const copyHostToolbarPromptText = useCallback',
+    );
+
+    expect(fallbackActionSource).toContain("if (action.type === 'interrupt-agent') {");
+    expect(fallbackActionSource).toContain('return abortAnnotationDirectRun();');
+    expect(runHostToolbarActionSource).toContain("if (nextAction.type === 'interrupt-agent') {");
+    expect(runHostToolbarActionSource).toContain('return abortAnnotationDirectRun();');
+    expect(abortSource).toContain('activeAnnotationDirectRunRef.current');
+    expect(abortSource).toContain('controller.abort();');
+    expect(abortSource).toContain('interruptLoading: true');
+    expect(abortSource).toContain("messageApi.info('已终止 AI 执行');");
+  });
+
+  it('preserves direct annotation run toolbar controls across editor state sync', () => {
+    const source = readPreviewRootSource();
+    const stateTrackingSource = getSourceSegment(
+      source,
+      'const resolveAnnotationDirectRunToolbarState = useCallback((state: CommentaryHostToolbarState | null) => (',
+      'const previewDeviceActions = usePreviewDeviceActions();',
+    );
+    const directRunSource = getSourceSegment(
+      source,
+      'const runAnnotationAcpChatPrompt = useCallback(async (input: string | null | undefined | AnnotationPromptRunRequest) => {',
+      'const abortAnnotationDirectRun = useCallback(() => {',
+    );
+
+    expect(source).toContain('resolveActiveAnnotationDirectRunToolbarState');
+    expect(stateTrackingSource).toContain('activeAnnotationDirectRunRef.current && !activeAnnotationDirectRunRef.current.controller.signal.aborted');
+    expect(stateTrackingSource).toContain('const resolvedState = resolveAnnotationDirectRunToolbarState(state);');
+    expect(stateTrackingSource).toContain('const resolvedState = resolveAnnotationDirectRunToolbarState(nextResolvedState);');
+    expect(directRunSource).toMatch(
+      /await applyAnnotationEditingTaskState\(request\.editingTargets, 'completed', latestTaskRef\);\s*if \(activeAnnotationDirectRunRef\.current\?\.controller === controller\) \{\s*activeAnnotationDirectRunRef\.current = null;\s*\}\s*setAnnotationAssistantToolbarState/,
+    );
+    expect(directRunSource).toMatch(
+      /await applyAnnotationEditingTaskState\(request\.editingTargets, aborted \? 'idle' : 'error', terminalTaskRef\);\s*if \(activeAnnotationDirectRunRef\.current\?\.controller === controller\) \{\s*activeAnnotationDirectRunRef\.current = null;\s*\}\s*setAnnotationAssistantToolbarState/,
+    );
   });
 
   it('does not show a persistent sending toast for direct annotation API runs', () => {
@@ -827,17 +929,34 @@ describe('useIndexPagePreviewActions source', () => {
     expect(directRunSource).not.toContain("messageApi.error(error?.message || 'AI 执行失败');");
   });
 
+  it('passes structured direct annotation API run errors into external editing task refs', () => {
+    const source = readPreviewRootSource();
+    const directRunSource = getSourceSegment(
+      source,
+      'const runAnnotationAcpChatPrompt = useCallback(async (input: string | null | undefined | AnnotationPromptRunRequest) => {',
+      'const copyHostToolbarPromptText = useCallback',
+    );
+
+    expect(source).toContain('function buildAnnotationEditingErrorTaskRef(');
+    expect(source).toContain('(error as { data?: Record<string, unknown> }).data');
+    expect(source).toContain('details: data');
+    expect(source).toContain('chunk }');
+    expect(directRunSource).toContain('const terminalTaskRef = aborted');
+    expect(directRunSource).toContain('buildAnnotationEditingErrorTaskRef(latestTaskRef, error)');
+    expect(directRunSource).toContain("applyAnnotationEditingTaskState(request.editingTargets, aborted ? 'idle' : 'error', terminalTaskRef)");
+  });
+
   it('keeps explicit selection mode actions reflected in host toolbar state', () => {
     const source = readPreviewRootSource();
     const runHostToolbarActionSource = getSourceSegment(
       source,
-      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
       'const runQuickEditSaveAction = useCallback',
     );
     const fallbackActionSource = getSourceSegment(
       source,
-      'const runQuickEditHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
-      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runQuickEditHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
     );
 
     expect(fallbackActionSource).toContain("if (nextAction.type === 'toggle-selection-mode') {");
@@ -859,7 +978,7 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewActionsSource();
     const runHostToolbarActionSource = getSourceSegment(
       readPreviewRootSource(),
-      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
       'const runQuickEditSaveAction = useCallback',
     );
 
@@ -875,13 +994,13 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewActionsSource();
     const runHostToolbarActionSource = getSourceSegment(
       readPreviewRootSource(),
-      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
       'const runQuickEditSaveAction = useCallback',
     );
 
     expect(source).toContain('buildCombinedPrototypePrompt');
     expect(source).toContain('const collectPrototypePrompt = useCallback(async (');
-    expect(source).toContain('action?: GenieEditorHostToolbarAction | null,');
+    expect(source).toContain('action?: CommentaryHostToolbarAction | null,');
     expect(source).toContain('const collectSplitPrototypePrompts = useCallback(async (');
     expect(source).toContain('collectSplitPrototypePrompts(nextAction)');
     expect(runHostToolbarActionSource).toContain("previewConfig.previewMode === 'split'");
@@ -932,7 +1051,7 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewActionsSource();
     const runHostToolbarActionSource = getSourceSegment(
       readPreviewRootSource(),
-      'const runHostToolbarAction = useCallback(async (action: GenieEditorHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
       'const runQuickEditSaveAction = useCallback',
     );
 
@@ -940,8 +1059,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('copyPromptDisabled: true');
     expect(runHostToolbarActionSource).toContain("nextAction.type === 'clear-edits'");
     expect(runHostToolbarActionSource).toContain('resolveHostToolbarStateAfterClearEdits(hostToolbarStateRef.current, resolvedState, isDarkMode)');
-    expect(runHostToolbarActionSource).toContain('hostToolbarStateRef.current = clearedState;');
-    expect(runHostToolbarActionSource).toContain('setHostToolbarState(clearedState);');
+    expect(runHostToolbarActionSource).toContain('setResolvedHostToolbarState(clearedState);');
   });
 
   it('tracks quick-edit runtime handshake from the active preview iframe before enabling runtime operations', () => {
@@ -994,7 +1112,7 @@ describe('useIndexPagePreviewActions source', () => {
     );
 
     expect(source).toContain('const decisionPanelAutoOpenSeqRef = useRef(0);');
-    expect(source).toContain('function hasHostToolbarDecisionData(state: GenieEditorHostToolbarState | null | undefined): boolean');
+    expect(source).toContain('function hasHostToolbarDecisionData(state: CommentaryHostToolbarState | null | undefined): boolean');
     expect(loadSegment).toContain('const decisionPanelAutoOpenSeq = decisionPanelAutoOpenSeqRef.current + 1;');
     expect(loadSegment).toContain('decisionPanelAutoOpenSeqRef.current = decisionPanelAutoOpenSeq;');
     expect(loadSegment).toContain('void maybeAutoOpenStandaloneDecisionPanel(primaryIframe, decisionPanelAutoOpenSeq);');
@@ -1005,6 +1123,33 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('queryPrototypeEditorState(iframe)');
     expect(source).toContain('await enterPrototypeEditorPanelOnly(iframe)');
     expect(source).toContain('setStandalonePanelOpen(opened);');
+  });
+
+  it('tracks whether the loaded prototype has design decision data for the toolbar entry', () => {
+    const source = readPreviewRootSource();
+    const loadSegment = getSourceSegment(
+      source,
+      'const maybeAutoOpenStandaloneDecisionPanel = useCallback(async (iframe: HTMLIFrameElement | null, sequence: number) => {',
+      'const handlePreviewIframeLoad = useCallback(() => {',
+    );
+    const resetEffectSource = getSourceSegment(
+      source,
+      'useEffect(() => {\n        const shouldRestoreQuickEdit = quickEditRuntimeActiveRef.current;',
+      'const quickEditAvailable = Boolean(selectedEditablePreviewResource)',
+    );
+    const returnSegment = source.slice(source.indexOf('return {'));
+
+    expect(source).toContain('const [prototypeDecisionDataAvailable, setPrototypeDecisionDataAvailable] = useState(false);');
+    expect(source).toContain('const loadedPrototypeDecisionDataAvailableRef = useRef(false);');
+    expect(source).toContain('function hasPrototypeDecisionData(');
+    expect(source).toContain('const setTrackedHostToolbarState = useCallback((nextState: SetStateAction<CommentaryHostToolbarState | null>) => {');
+    expect(source).toContain('setHostToolbarState: setTrackedHostToolbarState,');
+    expect(loadSegment).toContain('const hasDecisionData = hasPrototypeDecisionData(nextState, decisionDataCount);');
+    expect(loadSegment).toContain('loadedPrototypeDecisionDataAvailableRef.current = hasDecisionData;');
+    expect(loadSegment).toContain('setPrototypeDecisionDataAvailable(hasDecisionData);');
+    expect(loadSegment).toContain('if (!hasDecisionData) {');
+    expect(resetEffectSource).toContain('setPrototypeDecisionDataAvailable(false);');
+    expect(returnSegment).toContain('prototypeDecisionDataAvailable,');
   });
 
   it('runs quick edit save text and style through direct editor APIs before bridge fallback', () => {
@@ -1161,11 +1306,12 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('enterDocumentEditor');
     expect(source).toContain('enableDocumentEditor({');
     expect(source).toContain("toolbarMode: 'host'");
+    expect(source).toContain('quickEditMode: mode');
     expect(source).toContain('initialDarkMode: isDarkMode');
     expect(source).toContain('assistantPanelOpen: assistantContextAppendAvailable');
     expect(source).toContain('documentHostToolbarUnsubscribeRef.current = editorApi.subscribeHostToolbarState?.((nextState) => {');
-    expect(source).toContain('setHostToolbarState(resolveHostToolbarStateForDisplay(null, editorApi.getHostToolbarState?.() ?? createDefaultHostToolbarState(), isDarkMode));');
-    expect(source).toContain('void enterDocumentEditor();');
+    expect(source).toContain('setResolvedHostToolbarState(resolveHostToolbarStateForDisplay(null, editorApi.getHostToolbarState?.() ?? createDefaultHostToolbarState(), isDarkMode));');
+    expect(source).toContain('void enterDocumentEditor(mode);');
     expect(source).toContain('return readPreviewFrameEditorApi<DocumentEditorApi>(iframe, \'SpecTemplateBootstrap\');');
     expect(source).not.toContain("return api ?? readPreviewFrameEditorApi<DocumentEditorApi>(iframe, 'HtmlTemplateBootstrap');");
     expect(source).toContain("setEditorStatus({ mode: 'quickEdit' });");
@@ -1241,7 +1387,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toMatch(/postProjectCommunicationRecord\(selectedItem, 'exports', \{\s*operationType: 'make\.export',\s*status: 'success'/s);
     expect(source).toMatch(/metadata: \{\s*fileName,\s*\}/s);
     expect(source).toMatch(/postProjectCommunicationRecord\(selectedItem, 'exports', \{\s*operationType: 'make\.export',\s*status: 'failed'/s);
-    expect(source).toContain("errorMessage: String(error?.message || '导出 Make 失败')");
+    expect(source).toContain("errorMessage: String(error?.message || '导出 Figma Make 失败')");
   });
 
   it('builds Axure runtime cover and copy config from Axure-compatible export code', () => {
@@ -1254,7 +1400,7 @@ describe('useIndexPagePreviewActions source', () => {
     const copyConfigSegment = getSourceSegment(
       readPreviewRootSource(),
       'const handleCopyConfig = useCallback(async (exportType: string): Promise<string> => {',
-      '    const handleQuickCopyEditablePrototype = useCallback',
+      '    const handleQuickCopyRuntimeComponent = useCallback',
     );
 
     expect(coverSegment).toContain('const axureRuntimeCode = indexBundle.entry.axureCode || indexBundle.entry.code;');
@@ -1287,15 +1433,17 @@ describe('useIndexPagePreviewActions source', () => {
     expect(exportMakeSegment).toContain('setIsFigmaMakeExportDialogOpen(true);');
     expect(exportMakeSegment).not.toContain('/api/export-make?path=');
     expect(exportMakeSegment).not.toContain('navigator.clipboard.writeText(result.prompt)');
-    expect(exportMakeSegment).not.toContain("messageApi.loading('正在导出 Make...'");
+    expect(exportMakeSegment).not.toContain("messageApi.loading('正在导出 Figma Make...'");
   });
 
   it('publishes cloud targets through project config and opens target settings when config is missing', () => {
     const source = readPreviewRootSource();
 
     expect(source).toContain('const [cloudPublishSettingsOpen, setCloudPublishSettingsOpen] = useState(false);');
-    expect(source).toContain("const [cloudPublishSettingsInitialTarget, setCloudPublishSettingsInitialTarget] = useState<CloudPublishTarget>('s3');");
+    expect(source).toContain('const [axhubPublishDialogOpen, setAxhubPublishDialogOpen] = useState(false);');
+    expect(source).toContain("const [cloudPublishSettingsInitialTarget, setCloudPublishSettingsInitialTarget] = useState<CloudPublishSettingsInitialTarget>('s3');");
     expect(source).toContain('const [latestCloudPublishItems, setLatestCloudPublishItems] = useState');
+    expect(source).toContain("const [visibleCloudPublishTargets, setVisibleCloudPublishTargets] = useState<CloudPublishTarget[]>(['axhub']);");
     expect(source).toContain('const currentPublishResourcePath = useMemo');
     expect(source).toContain('resolveCurrentPublishResourcePath({');
     expect(source).toContain('contentMode,');
@@ -1303,13 +1451,28 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('selectedTheme,');
     expect(source).toContain('apiService.getCloudPublishingLatest(currentPublishResourcePath)');
     expect(source).toContain("...(latest.targets.githubPages ? { 'github-pages': latest.targets.githubPages } : {})");
-    expect(source).toContain("const handleOpenCloudPublishSettings = useCallback((target: CloudPublishTarget = 's3')");
+    expect(source).toContain("...(latest.targets.axhub ? { axhub: latest.targets.axhub } : {})");
+    expect(source).toContain("const handleOpenCloudPublishSettings = useCallback((target: CloudPublishSettingsInitialTarget = 's3')");
+    expect(source).toContain('const handleOpenAxhubPublishDialog = useCallback');
+    expect(source).toContain('const handleAxhubPublished = useCallback((result: AxhubPublishResponse)');
     expect(source).toContain('const handlePublishCloudTarget = useCallback');
     expect(source).toContain('const handleCopyLatestCloudPublishUrl = useCallback');
+    expect(source).toContain("messageApi.warning('暂无发布地址');");
+    expect(source).toContain("toast.success('发布地址已复制');");
+    expect(source).toContain("messageApi.error(error?.message || '复制发布地址失败');");
+    expect(source).not.toContain("messageApi.warning('暂无最近发布地址');");
     expect(source).toContain('const latestCloudPublishUrl = useMemo');
     expect(source).toContain('sort((a, b) => b.deployedAt.localeCompare(a.deployedAt))');
     expect(source).toContain('apiService.getCloudPublishingConfig()');
+    expect(source).toContain('setVisibleCloudPublishTargets(config.targets.publishSettings.visibleTargets || [\'axhub\']);');
+    expect(source).toContain('const handleCloudPublishSettingsSaved = useCallback');
+    expect(source).toContain('config.targets.publishSettings.visibleTargets || [\'axhub\']');
+    expect(source).toContain('refreshCloudPublishingConfig');
+    expect(source).toContain('visibleCloudPublishTargets,');
     expect(source).toContain("'github-pages': 'GitHub Pages'");
+    expect(source).toContain("axhub: 'Axhub'");
+    expect(source).toContain("if (target === 'axhub')");
+    expect(source).toContain('handleOpenAxhubPublishDialog();');
     expect(source).toContain('apiService.publishCloudTarget({');
     expect(source).toContain('path: currentPublishResourcePath');
     expect(source).not.toContain('path: targetPath');
@@ -1363,5 +1526,24 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('handleSwitchDocQuickEditMode');
     expect(source).toContain("'comment'");
     expect(source).not.toContain("'specComment'");
+  });
+
+  it('passes the requested Markdown document mode when enabling comment or edit mode', () => {
+    const source = readPreviewRootSource();
+    const handleEnableDocEditSource = getSourceSegment(
+      source,
+      'const handleEnableDocEdit = useCallback((mode: SpecQuickEditMode = \'comment\') => {',
+      'const handleSaveDocEdit = useCallback',
+    );
+    const enterDocumentEditorSource = getSourceSegment(
+      source,
+      'const enterDocumentEditor = useCallback(async (mode: SpecQuickEditMode = \'comment\') => {',
+      'const enterHtmlDocumentEditor = useCallback',
+    );
+
+    expect(handleEnableDocEditSource).toContain("postToPreview({ type: 'SPEC_EDIT_ENABLE', mode })");
+    expect(handleEnableDocEditSource).toContain('quickEditMode: mode');
+    expect(handleEnableDocEditSource).toContain('enterDocumentEditor(mode)');
+    expect(enterDocumentEditorSource).toContain('quickEditMode: mode');
   });
 });

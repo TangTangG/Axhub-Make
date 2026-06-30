@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -142,6 +143,93 @@ describe('release make artifact helpers', () => {
       fs.readFileSync(sourceFile, 'utf8'),
       "export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.2';\n",
     );
+  });
+
+  it('requires make client template release notes to mention the matching template version', () => {
+    const root = createTempRoot('axhub-release-template-notes-');
+    const clientRoot = path.join(root, 'client');
+    const releaseNotesPath = path.join(clientRoot, 'RELEASE_NOTES.md');
+    const releaseNotes = [
+      '# Axhub Make Client 0.2.0',
+      '',
+      '- 更新官方模板文件。',
+      '',
+    ].join('\n');
+    writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client","version":"0.2.0"}\n');
+    writeFile(releaseNotesPath, releaseNotes);
+
+    assert.equal(
+      releaseMake.readMakeClientTemplateReleaseNotes({
+        sourceClientDir: clientRoot,
+        templateVersion: '0.2.0',
+      }),
+      releaseNotes.trim(),
+    );
+
+    writeFile(releaseNotesPath, '# Axhub Make Client 0.1.9\n\n- 旧版本说明。\n');
+    assert.throws(
+      () => releaseMake.readMakeClientTemplateReleaseNotes({
+        sourceClientDir: clientRoot,
+        templateVersion: '0.2.0',
+      }),
+      /must mention template version 0\.2\.0/,
+    );
+
+    writeFile(releaseNotesPath, '# Axhub Make Client 0.1.9\n\n- 准备升级到 0.2.0。\n');
+    assert.throws(
+      () => releaseMake.readMakeClientTemplateReleaseNotes({
+        sourceClientDir: clientRoot,
+        templateVersion: '0.2.0',
+      }),
+      /must mention template version 0\.2\.0/,
+    );
+
+    fs.rmSync(releaseNotesPath);
+    assert.throws(
+      () => releaseMake.readMakeClientTemplateReleaseNotes({
+        sourceClientDir: clientRoot,
+        templateVersion: '0.2.0',
+      }),
+      /release notes file is required/,
+    );
+  });
+
+  it('syncs the default make client template release notes into the runtime constants', () => {
+    const root = createTempRoot('axhub-release-template-notes-sync-');
+    const sourceFile = path.join(root, 'makeClientTemplate.ts');
+    const releaseNotes = '# Axhub Make Client 0.2.0\n\n- 更新官方模板文件。';
+    writeFile(sourceFile, [
+      "export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.1';",
+      'export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = "";',
+      '',
+    ].join('\n'));
+
+    const result = releaseMake.syncDefaultMakeClientTemplateReleaseNotes({
+      sourceFile,
+      templateVersion: '0.2.0',
+      releaseNotes,
+    });
+
+    assert.equal(result.changed, true);
+    assert.equal(result.templateVersion, '0.2.0');
+    assert.match(
+      fs.readFileSync(sourceFile, 'utf8'),
+      /export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = "# Axhub Make Client 0\.2\.0\\n\\n- 更新官方模板文件。";/u,
+    );
+  });
+
+  it('keeps make client Vitest companion packages on exact matching versions', () => {
+    const clientPackageJson = JSON.parse(fs.readFileSync(path.resolve('client/package.json'), 'utf8'));
+    const devDependencies = clientPackageJson.devDependencies || {};
+    const vitestVersion = devDependencies.vitest;
+
+    assert.match(
+      vitestVersion,
+      /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u,
+      'client devDependencies.vitest must be an exact version to avoid npm peer dependency solver drift',
+    );
+    assert.equal(devDependencies['@vitest/ui'], vitestVersion);
+    assert.equal(devDependencies['@vitest/coverage-v8'], vitestVersion);
   });
 
   it('keeps ordinary make release commands free of the client template zip', () => {
@@ -343,6 +431,35 @@ describe('release make artifact helpers', () => {
     assert.doesNotMatch(releaseSource, /packages\/axhub-export-core\/scripts\/canvas-fig-sync\.mjs/u);
   });
 
+  it('keeps vendored source package TypeScript deprecation config compatible with the release toolchain', () => {
+    const releaseTypescriptPackageJson = JSON.parse(
+      fs.readFileSync(
+        createRequire(import.meta.url).resolve('typescript/package.json'),
+        'utf8',
+      ),
+    );
+    const releaseTypescriptMajor = Number.parseInt(
+      String(releaseTypescriptPackageJson.version).split('.')[0] || '',
+      10,
+    );
+    assert(Number.isInteger(releaseTypescriptMajor), 'release TypeScript major version must be detectable');
+
+    const exportCoreTsconfig = JSON.parse(
+      fs.readFileSync(path.resolve('../../packages/axhub-export-core/tsconfig.json'), 'utf8'),
+    );
+    const ignoreDeprecations = exportCoreTsconfig.compilerOptions?.ignoreDeprecations;
+    if (ignoreDeprecations === undefined) {
+      return;
+    }
+
+    const ignoreDeprecationsMajor = Number.parseInt(String(ignoreDeprecations).split('.')[0] || '', 10);
+    assert(Number.isInteger(ignoreDeprecationsMajor), 'ignoreDeprecations must start with a major version');
+    assert(
+      ignoreDeprecationsMajor <= releaseTypescriptMajor,
+      `ignoreDeprecations ${ignoreDeprecations} is not accepted by release TypeScript ${releaseTypescriptPackageJson.version}`,
+    );
+  });
+
   it('bundles the canvas fig sync release script with runtime dependencies', () => {
     const args = releaseMake.createCanvasFigSyncBundleArgs(
       '/tmp/canvas-fig-sync.mjs',
@@ -388,6 +505,19 @@ describe('release make artifact helpers', () => {
     }
     assert.match(onDemandBuildSource, /importPackageFromProject/u);
     assert.match(viteDevServerSource, /importRuntimePackage/u);
+  });
+
+  it('packages make client runtime patch sources used by dev ensure', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
+
+    for (const runtimePatchFile of [
+      'client/vite-plugins/clientPreviewPlugin.ts',
+      'client/vite-plugins/canvasHotUpdateFilter.ts',
+      'client/vite-plugins/utils/moduleSpecifierQuery.ts',
+      'client/vite-plugins/utils/previewTitle.ts',
+    ]) {
+      assert.ok(packageJson.files.includes(runtimePatchFile), runtimePatchFile);
+    }
   });
 
   it('does not resolve source-only files at runtime from the bundled npm server', () => {
@@ -577,6 +707,55 @@ describe('release make artifact helpers', () => {
       assert(args.includes('--external'), `missing --external for ${packageName}`);
       assert(args.includes(packageName), `missing external package ${packageName}`);
     }
+  });
+
+  it('re-signs macOS Bun executables after sanitizing local machine paths', () => {
+    const calls = [];
+    const executablePath = '/tmp/axhub-make';
+
+    const result = releaseMake.finalizeExecutableBundle(
+      { bunTarget: 'bun-darwin-arm64', executableName: 'axhub-make' },
+      executablePath,
+      {
+        sanitizeFile: (filePath) => {
+          calls.push(['sanitize', [filePath]]);
+          return { filePath, changed: true };
+        },
+        runCommand: (command, args) => {
+          calls.push([command, args]);
+        },
+      },
+    );
+
+    assert.deepEqual(calls, [
+      ['sanitize', [executablePath]],
+      ['codesign', ['--force', '--sign', '-', executablePath]],
+    ]);
+    assert.equal(result.codesigned, true);
+  });
+
+  it('does not codesign Windows Bun executables after sanitizing local machine paths', () => {
+    const calls = [];
+    const executablePath = '/tmp/axhub-make.exe';
+
+    const result = releaseMake.finalizeExecutableBundle(
+      { bunTarget: 'bun-windows-x64', executableName: 'axhub-make.exe' },
+      executablePath,
+      {
+        sanitizeFile: (filePath) => {
+          calls.push(['sanitize', [filePath]]);
+          return { filePath, changed: true };
+        },
+        runCommand: (command, args) => {
+          calls.push([command, args]);
+        },
+      },
+    );
+
+    assert.deepEqual(calls, [
+      ['sanitize', [executablePath]],
+    ]);
+    assert.equal(result.codesigned, false);
   });
 
   it('builds npm exec smoke args that exercise the npx default make bin', () => {

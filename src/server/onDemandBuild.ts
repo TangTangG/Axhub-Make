@@ -16,6 +16,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
+import { createAnnotationSourceMarkdownPlugin } from '../../client/vite-plugins/annotationSourceMarkdown.ts';
+
 const requireFromCurrentModule = createRequire(import.meta.url);
 
 export interface OnDemandBuildResult {
@@ -23,6 +25,10 @@ export interface OnDemandBuildResult {
   jsCode: string;
   /** Extracted CSS text (empty string if none) */
   cssText: string;
+  /** Build-time facts used by publishing integrations. */
+  metadata: {
+    usesAnnotationRuntime: boolean;
+  };
 }
 
 /**
@@ -78,6 +84,13 @@ function getDefaultExport<T = any>(module: any, packageName: string): T {
   return value as T;
 }
 
+function isAnnotationRuntimeModule(moduleId: string): boolean {
+  const normalized = moduleId.replace(/\\/g, '/');
+  return normalized.includes('/node_modules/@axhub/annotation/')
+    || normalized.includes('/packages/axhub-annotation/src/')
+    || normalized.includes('/packages/axhub-annotation/dist/');
+}
+
 /**
  * Build a single prototype entry on-demand and return the IIFE JS + CSS.
  *
@@ -102,6 +115,7 @@ export async function buildOnDemand(projectRoot: string, entryFilePath: string):
     root: projectRoot,
     plugins: [
       tailwindcss(),
+      createAnnotationSourceMarkdownPlugin(projectRoot, { mode: 'build' }),
       react({
         jsxRuntime: 'classic',
         babel: { configFile: false, babelrc: false },
@@ -160,7 +174,7 @@ export async function buildOnDemand(projectRoot: string, entryFilePath: string):
   const outputs = Array.isArray(bundleResult) ? bundleResult : [bundleResult];
   const outputBundle = outputs.find(
     (item: any) => item && item.output && Array.isArray(item.output),
-  ) as { output: Array<{ type: string; fileName: string; code?: string; source?: string | Uint8Array }> } | undefined;
+  ) as { output: Array<{ type: string; fileName: string; code?: string; source?: string | Uint8Array; modules?: Record<string, unknown> }> } | undefined;
 
   const jsChunk = outputBundle?.output.find(
     (item) => item.type === 'chunk' && typeof item.code === 'string',
@@ -185,10 +199,14 @@ export async function buildOnDemand(projectRoot: string, entryFilePath: string):
   return {
     jsCode: sanitizeProcessEnv(jsChunk.code),
     cssText,
+    metadata: {
+      usesAnnotationRuntime: Object.keys(jsChunk.modules || {}).some(isAnnotationRuntimeModule),
+    },
   };
 }
 
 export const __onDemandBuildTestUtils = {
   getPackageExport,
   getDefaultExport,
+  isAnnotationRuntimeModule,
 };

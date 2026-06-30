@@ -99,6 +99,9 @@ describe('make-server project data and theme APIs', () => {
       expect(JSON.parse(fs.readFileSync(path.join(secondRoot, 'src/database/customers.json'), 'utf8'))).toMatchObject({
         tableName: 'Customers',
       });
+      const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(secondRoot), 'utf8'));
+      expect(metadata.resources).not.toHaveProperty('data');
+      expect(metadata.orders).not.toHaveProperty('data');
     } finally {
       await server.close();
     }
@@ -126,12 +129,10 @@ describe('make-server project data and theme APIs', () => {
         body: JSON.stringify({ tableName: '' }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(missingCreateName).toMatchObject({
-        status: 424,
+        status: 400,
         body: {
-          code: 'RESOURCE_WRITE_ADAPTER_REQUIRED',
-          details: {
-            route: '/api/data/tables',
-          },
+          code: 'VALIDATION_ERROR',
+          error: 'Missing tableName',
         },
       });
 
@@ -201,6 +202,9 @@ describe('make-server project data and theme APIs', () => {
         .then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(deletedTable).toEqual({ status: 200, body: { success: true } });
       expect(fs.existsSync(path.join(projectRoot, 'src/database/customers.json'))).toBe(false);
+      const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
+      expect(metadata.resources).not.toHaveProperty('data');
+      expect(metadata.orders).not.toHaveProperty('data');
     } finally {
       await server.close();
     }
@@ -291,7 +295,6 @@ describe('make-server project data and theme APIs', () => {
       project: { id: 'theme-link-client', name: 'Theme Link Client' },
       resources: {
         prototypes: [],
-        docs: [],
         themes: [
           {
             id: 'antd-new',
@@ -302,10 +305,8 @@ describe('make-server project data and theme APIs', () => {
             updatedAt: '2026-05-04T00:00:00.000Z',
           },
         ],
-        data: [],
-        templates: [],
       },
-      orders: { themes: ['antd-new'], data: [], templates: [] },
+      orders: { themes: ['antd-new'] },
     });
     const themeDir = path.join(projectRoot, 'src/themes/antd-new');
     fs.mkdirSync(themeDir, { recursive: true });
@@ -353,7 +354,6 @@ describe('make-server project data and theme APIs', () => {
       project: { id: 'make-client-theme-api', name: 'Make Client Theme API' },
       resources: {
         prototypes: [],
-        docs: [],
         themes: [
           {
             id: 'genesis',
@@ -362,10 +362,8 @@ describe('make-server project data and theme APIs', () => {
             sourcePath: 'src/themes/genesis',
           },
         ],
-        data: [],
-        templates: [],
       },
-      orders: { themes: ['genesis'], data: [], templates: [] },
+      orders: { themes: ['genesis'] },
     });
     writeJson(path.join(projectRoot, '.axhub', 'make', 'client.json'), {
       schemaVersion: 1,
@@ -422,7 +420,6 @@ describe('make-server project data and theme APIs', () => {
       project: { id: 'theme-target-client', name: 'Theme Target Client' },
       resources: {
         prototypes: [],
-        docs: [],
         themes: [
           {
             id: 'brand',
@@ -431,11 +428,9 @@ describe('make-server project data and theme APIs', () => {
             path: 'content/themes/brand',
           },
         ],
-        data: [],
-        templates: [],
       },
-      navigation: { prototypes: [], docs: [] },
-      orders: { themes: ['brand'], data: [], templates: [] },
+      navigation: { prototypes: [] },
+      orders: { themes: ['brand'] },
       capabilities: {
         quickEdit: true,
         figmaExport: false,
@@ -568,7 +563,6 @@ describe('make-server project data and theme APIs', () => {
       project: { id: 'nested-client', name: 'Nested Client' },
       resources: {
         prototypes: [],
-        docs: [],
         themes: [
           {
             id: 'brand',
@@ -577,10 +571,8 @@ describe('make-server project data and theme APIs', () => {
             sourcePath: 'src/themes/brand',
           },
         ],
-        data: [],
-        templates: [],
       },
-      orders: { themes: ['brand'], data: [], templates: [] },
+      orders: { themes: ['brand'] },
       capabilities: {
         resourceWrites: {
           themeCreate: true,

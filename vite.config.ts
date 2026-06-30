@@ -13,7 +13,7 @@ import { DEFAULT_MAKE_SERVER_PORT } from './src/server/defaults';
 import { releaseListeningProcessesOnPort } from './src/server/portOccupancy';
 
 const adminOutDir = path.resolve(__dirname, 'dist/admin');
-const FRESH_VENDOR_ALIAS_PACKAGES = new Set(['axhub-genie-editor']);
+const FRESH_VENDOR_ALIAS_PACKAGES = new Set(['@axhub/commentary']);
 const REACT_SINGLETON_PACKAGES = ['react', 'react-dom'] as const;
 const ASSISTANT_UI_SINGLETON_PACKAGES = [
   '@assistant-ui/react',
@@ -401,7 +401,7 @@ export default defineConfig({
     ],
     exclude: [
       '@axhub/excalidraw',
-      'axhub-genie-editor',
+      '@axhub/commentary',
       'axhub-export-core',
       'tiptap-editor',
     ],

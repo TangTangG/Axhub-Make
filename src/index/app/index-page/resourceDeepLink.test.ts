@@ -73,6 +73,19 @@ describe('resource deep links', () => {
         });
 
         expect(buildIndexDeepLinkUrl({
+            resourceType: 'project-doc',
+            resourceId: 'src/prototypes/annotation-demo/docs/prd-03-states.md',
+            projectId: 'client-a',
+        }, 'http://localhost:51720/old/path?ignored=1')).toBe('http://localhost:51720/?projectId=client-a&docPath=src%2Fprototypes%2Fannotation-demo%2Fdocs%2Fprd-03-states.md');
+
+        expect(parseIndexDeepLink('/?projectId=client-a&docPath=src%2Fprototypes%2Fannotation-demo%2Fdocs%2Fprd-03-states.md')).toEqual({
+            resourceType: 'project-doc',
+            resourceId: 'src/prototypes/annotation-demo/docs/prd-03-states.md',
+            projectId: 'client-a',
+            collapseSidebar: true,
+        });
+
+        expect(buildIndexDeepLinkUrl({
             resourceType: 'template',
             resourceId: 'write-prd.md',
             projectId: 'client-a',
@@ -208,9 +221,37 @@ describe('resource deep links', () => {
         })).toBeNull();
     });
 
+    it('resolves project document path links to temporary document items outside the resource directory', () => {
+        expect(resolveIndexDeepLinkSelection({
+            resourceType: 'project-doc',
+            resourceId: 'src/prototypes/annotation-demo/docs/prd-03-states.md',
+            projectId: 'client-a',
+            collapseSidebar: false,
+        }, {
+            prototypes: [],
+            docs: [],
+        })).toEqual({
+            kind: 'doc',
+            item: {
+                name: 'src/prototypes/annotation-demo/docs/prd-03-states.md',
+                displayName: 'prd-03-states.md',
+                jsUrl: '',
+                specUrl: '/api/projects/client-a/document-content?path=src%2Fprototypes%2Fannotation-demo%2Fdocs%2Fprd-03-states.md',
+                previewUrl: '/spec-template.html?url=%2Fapi%2Fprojects%2Fclient-a%2Fdocument-content%3Fpath%3Dsrc%252Fprototypes%252Fannotation-demo%252Fdocs%252Fprd-03-states.md',
+                filePath: 'src/prototypes/annotation-demo/docs/prd-03-states.md',
+                projectId: 'client-a',
+                resourceId: 'src/prototypes/annotation-demo/docs/prd-03-states.md',
+                projectDocumentPath: 'src/prototypes/annotation-demo/docs/prd-03-states.md',
+            },
+            sidebarTab: 'document',
+            collapseSidebar: false,
+        });
+    });
+
     it('resolves short links for prototypes, documents, templates, and themes', () => {
         const prototype = createItem('express-home');
         const doc = createItem('product-spec.md');
+        const templateDoc = createItem('templates/prd-template');
         const template = createItem('write-prd.md');
         const theme = { name: 'june', displayName: 'June' };
 
@@ -263,6 +304,23 @@ describe('resource deep links', () => {
             item: template,
             sidebarTab: 'assets',
             resourceSection: 'templates',
+            collapseSidebar: false,
+        });
+
+        expect(resolveIndexDeepLinkSelection({
+            resourceType: 'template',
+            resourceId: 'prd-template.md',
+            projectId: 'client-a',
+            collapseSidebar: false,
+        }, {
+            prototypes: [prototype],
+            docs: [doc, templateDoc],
+            templates: [],
+            themes: [theme],
+        })).toEqual({
+            kind: 'doc',
+            item: templateDoc,
+            sidebarTab: 'document',
             collapseSidebar: false,
         });
 

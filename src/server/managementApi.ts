@@ -33,6 +33,7 @@ import {
 } from './http.ts';
 import { handleAiArtifactHistoryApi } from './managementApi.aiArtifactHistory.ts';
 import { handleAiRunsApi } from './managementApi.aiRuns.ts';
+import { handleAxhubApi } from './managementApi.axhub.ts';
 import { handleAssistantPromptIde } from './managementApi.assistantIde.ts';
 import { handleBridgeAndImageProxy } from './managementApi.bridge.ts';
 import { handleCanvasApi } from './managementApi.canvas.ts';
@@ -44,10 +45,11 @@ import { handleProjectDocsApi } from './managementApi.docs.ts';
 import { handleEntriesCompatibilityApi } from './managementApi.entries.ts';
 import { handleSourceBackedExports, handleUnavailableManagement } from './managementApi.exports.ts';
 import { handleFileOperationsApi } from './managementApi.fileOperations.ts';
-import { handleGitApi } from './managementApi.git.ts';
+import { handleGitApi, type GitWorkspaceCommandExecutor } from './managementApi.git.ts';
 import { handleLegacyDocsApi } from './managementApi.legacyDocs.ts';
 import { handleLegacyWebSocketApi } from './managementApi.legacyWebSocket.ts';
 import { handleProjectRegistryApi } from './managementApi.projectRegistry.ts';
+import { handlePrototypeAnnotationApi } from './managementApi.prototypeAnnotation.ts';
 import { handlePrototypeCommentsApi } from './managementApi.prototypeComments.ts';
 import {
   handleCreatePlaceholderPrototype,
@@ -91,7 +93,9 @@ export interface ManagementApiOptions {
   refreshMakeStateHealth?: () => MakeStateHealthResult;
   devMode?: boolean;
   diagnosticLog?: DiagnosticLog;
+  axhubOnlineBaseUrl?: string;
   cloudPublishingCommandExecutor?: CommandExecutor;
+  gitWorkspaceCommandExecutor?: GitWorkspaceCommandExecutor;
 }
 
 interface ProjectRequestContext {
@@ -121,6 +125,9 @@ function createEffectiveProjectCapabilities(context: ProjectRequestContext): Eff
     Boolean(getDeclaredResourceWriteDir(context, type))
   );
   const hasPrototypeCreateTarget = Boolean(getPrototypeCreateDir(context));
+  const hasDocsWriteTarget = Boolean(getDocsWriteDir(context));
+  const hasTemplatesWriteTarget = Boolean(getTemplatesDirForContext(context));
+  const hasDataWriteTarget = Boolean(getDataDir(context.project.root));
 
   return {
     ...capabilities,
@@ -132,14 +139,14 @@ function createEffectiveProjectCapabilities(context: ProjectRequestContext): Eff
     resourceWrites: {
       prototypeCreate: hasPrototypeCreateTarget,
       prototypeUpload: hasTarget('prototypes'),
-      docCreate: hasTarget('docs'),
-      docImport: hasTarget('docs'),
+      docCreate: hasDocsWriteTarget,
+      docImport: hasDocsWriteTarget,
       themeCreate: hasTarget('themes'),
       themeImport: hasTarget('themes'),
-      dataCreate: hasTarget('data'),
+      dataCreate: hasDataWriteTarget,
       dataImport: false,
-      templateCreate: hasTarget('templates'),
-      templateDuplicate: hasTarget('templates'),
+      templateCreate: hasTemplatesWriteTarget,
+      templateDuplicate: hasTemplatesWriteTarget,
     },
   };
 }
@@ -688,6 +695,10 @@ function getTemplatesDir(projectRoot: string): string {
   return path.join(projectRoot, 'src/resources/templates');
 }
 
+function getDataDir(projectRoot: string): string {
+  return path.join(projectRoot, 'src/database');
+}
+
 function getStandardMakeClientPrototypeDir(context: ProjectRequestContext): string | null {
   if (!readMakeClientMarker(context.project.root)) {
     return null;
@@ -715,12 +726,17 @@ function getPrototypeCreateDir(context: ProjectRequestContext): string | null {
   return getDeclaredResourceWriteDir(context, 'prototypes') || getStandardMakeClientPrototypeDir(context);
 }
 
+function getDocsWriteDir(context: ProjectRequestContext): string | null {
+  const docsDir = getDocsDir(context.project.root);
+  return isPathInside(context.project.root, docsDir) ? docsDir : null;
+}
+
 function getDocsDirForContext(context: ProjectRequestContext): string {
-  return getDeclaredResourceWriteDir(context, 'docs') || getDocsDir(context.project.root);
+  return getDocsWriteDir(context) || getDocsDir(context.project.root);
 }
 
 function getTemplatesDirForContext(context: ProjectRequestContext): string {
-  return getDeclaredResourceWriteDir(context, 'templates') || getTemplatesDir(context.project.root);
+  return getTemplatesDir(context.project.root);
 }
 
 function safeDecodeURIComponent(value: string): string {
@@ -1255,6 +1271,17 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     return true;
   }
 
+  if (handleAxhubApi(req, res, options, pathname, {
+    resolveProjectContext,
+    resolveSourceFileFromMetadata,
+    findProjectResourceByPath,
+    getDeclaredResourceWriteDir: getDeclaredResourceWriteDir as any,
+    readProjectConfig,
+    sendDisabledCapability,
+  })) {
+    return true;
+  }
+
   if (handleLegacyWebSocketApi(req, res, options, pathname, {
     readRawRequestBody,
   })) {
@@ -1279,6 +1306,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
   if (handleGitApi(req, res, options, pathname, url, {
     resolveProjectContext,
     findProjectResourceByPath,
+    commandExecutor: options.gitWorkspaceCommandExecutor,
   })) {
     return true;
   }
@@ -1339,11 +1367,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     getDeclaredResourceWriteDir,
     hasResourceWriteCapability,
     sendResourceWriteAdapterRequired,
-    saveMetadataWithResourceOrder,
-    prependUnique,
     createProjectRelativePath,
-    updateGenericResourceMetadata,
-    removeGenericResourceMetadata,
   })) return true;
 
   const requestContext = getRequestProjectContext(req, res, options);
@@ -1400,11 +1424,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     getDeclaredResourceWriteDir,
     hasResourceWriteCapability,
     sendResourceWriteAdapterRequired,
-    saveMetadataWithResourceOrder,
-    prependUnique,
     createProjectRelativePath,
-    updateGenericResourceMetadata,
-    removeGenericResourceMetadata,
   })) return true;
   if (handleProjectDataAndThemeApi(req, res, requestContext, options, pathname, {
     createProjectContextFromBody,
@@ -1471,6 +1491,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     sendDisabledCapability,
   })) return true;
   if (handleCanvasApi(req, res, activeProjectRoot, pathname, { metadata: requestContext.metadata })) return true;
+  if (handlePrototypeAnnotationApi(req, res, requestContext, url)) return true;
   if (handlePrototypeCommentsApi(req, res, requestContext, url)) return true;
   if (handleMediaApi(req, res, activeProjectRoot, { mediaRoot: getDeclaredResourceWriteDir(requestContext, 'media') || undefined })) return true;
   if (handleWorkspaceApi(req, res, options, requestContext, pathname, url, {

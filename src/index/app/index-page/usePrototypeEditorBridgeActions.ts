@@ -7,9 +7,9 @@ import {
     type SetStateAction,
 } from 'react';
 import type {
-    GenieEditorExternalEditingTargetRef,
-    GenieEditorHostToolbarAction,
-    GenieEditorHostToolbarState,
+    CommentaryExternalEditingTargetRef,
+    CommentaryHostToolbarAction,
+    CommentaryHostToolbarState,
 } from '@/common/web-editor-types';
 import {
     createDefaultHostToolbarState,
@@ -40,7 +40,7 @@ type UsePrototypeEditorBridgeActionsParams = {
         warning: (content: string) => void;
     };
     prototypeHostToolbarUnsubscribeRef: MutableRefObject<(() => void) | null>;
-    setHostToolbarState: Dispatch<SetStateAction<GenieEditorHostToolbarState | null>>;
+    setHostToolbarState: Dispatch<SetStateAction<CommentaryHostToolbarState | null>>;
 };
 
 type PrototypeEditorEnableOptions = {
@@ -49,6 +49,8 @@ type PrototypeEditorEnableOptions = {
     mobileMode?: boolean;
     assistantPanelOpen?: boolean;
     commentPageScope?: string;
+    annotationApiBaseUrl?: string;
+    annotationProjectId?: string;
 };
 type PrototypeEditorEnterOptions = {
     showMissingWarning?: boolean;
@@ -58,8 +60,13 @@ type PrototypeEditorNodeEditingTaskRef = {
     provider: string | null;
     sessionId: string | null;
     requestId: string | null;
+    error?: string | null;
+    code?: string | null;
+    output?: string | null;
+    chunk?: unknown;
+    details?: unknown;
 } | null;
-type PrototypeEditorNodeEditingTargetRef = GenieEditorExternalEditingTargetRef | null;
+type PrototypeEditorNodeEditingTargetRef = CommentaryExternalEditingTargetRef | null;
 
 type PrototypeEditorBridgeActions = {
     getPrototypeEditorApi: (iframe?: HTMLIFrameElement | null) => PrototypeEditorApi | null;
@@ -76,7 +83,7 @@ type PrototypeEditorBridgeActions = {
     postPrototypeEditorDisable: (iframe: HTMLIFrameElement) => Promise<PrototypeEditorBridgeStateMessage | null>;
     postPrototypeEditorHostToolbarAction: (
         iframe: HTMLIFrameElement,
-        action: GenieEditorHostToolbarAction,
+        action: CommentaryHostToolbarAction,
     ) => Promise<PrototypeEditorBridgeStateMessage | null>;
     postPrototypeEditorSaveAction: (
         iframe: HTMLIFrameElement,
@@ -234,6 +241,8 @@ export function usePrototypeEditorBridgeActions({
             initialDarkMode: isDarkMode,
             mobileMode: context.mobileMode,
             assistantPanelOpen,
+            annotationApiBaseUrl: window.location.origin,
+            annotationProjectId: context.projectId,
             ...(commentPageScope ? { commentPageScope } : {}),
         };
     }, [assistantPanelOpen, buildPrototypeEditorCommentPageScope, isDarkMode]);
@@ -292,7 +301,7 @@ export function usePrototypeEditorBridgeActions({
 
     const postPrototypeEditorHostToolbarAction = useCallback((
         iframe: HTMLIFrameElement,
-        action: GenieEditorHostToolbarAction,
+        action: CommentaryHostToolbarAction,
     ) => postPrototypeEditorBridgeMessage(iframe, {
         type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION',
         action,

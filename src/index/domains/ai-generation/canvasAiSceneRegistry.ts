@@ -172,6 +172,13 @@ export function getCanvasAiPrototypeStartSystemPrompt(scene: CanvasAiScene | Leg
   return '请生成原型页面。';
 }
 
+export function stripCanvasUpdateInstruction(prompt: string): string {
+  return prompt
+    .replace(/生成后请将结果更新到当前画布。?/gu, '')
+    .replace(/请将结果更新到当前画布。?/gu, '')
+    .trim();
+}
+
 function pickPlaceholder(placeholders: readonly string[]): string {
   const index = Math.min(placeholders.length - 1, Math.floor(Math.random() * placeholders.length));
   return placeholders[index] || '';

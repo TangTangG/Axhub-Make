@@ -50,6 +50,8 @@ interface SubmitPromptOptions {
     waitUntil?: 'started' | 'finished';
     provider?: string | null;
     model?: string | null;
+    modeId?: string | null;
+    thoughtLevel?: string | null;
 }
 
 interface QueryArtifactsOptions {
@@ -459,6 +461,8 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
                 waitUntil: submitOptions?.waitUntil || 'started',
                 ...(submitOptions?.provider ? { provider: submitOptions.provider } : {}),
                 ...(submitOptions?.model ? { model: submitOptions.model } : {}),
+                ...(submitOptions?.modeId ? { modeId: submitOptions.modeId } : {}),
+                ...(submitOptions?.thoughtLevel ? { thoughtLevel: submitOptions.thoughtLevel } : {}),
                 ...(submitOptions?.newThread === true ? { newThread: true } : {}),
             },
         };

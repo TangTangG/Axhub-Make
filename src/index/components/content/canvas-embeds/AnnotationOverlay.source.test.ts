@@ -66,6 +66,20 @@ describe('AnnotationOverlay AI context menu source', () => {
     expect(copyIndex).toBeLessThan(transparentIndex);
   });
 
+  it('positions the image quick-actions flyout against the viewport instead of the scrollable menu', () => {
+    const source = readSource();
+    const quickActionsStart = source.indexOf("wrapperLi.setAttribute('data-axhub-annotation-item', 'image-quick-actions');");
+    const quickActionsEnd = source.indexOf('// ── Local image tools (no AI bridge required) ──');
+    const quickActionsSource = source.slice(quickActionsStart, quickActionsEnd);
+
+    expect(quickActionsStart).toBeGreaterThan(-1);
+    expect(quickActionsEnd).toBeGreaterThan(quickActionsStart);
+    expect(source).toContain('applyContextSubmenuFlyoutLayout');
+    expect(quickActionsSource).toContain('applyContextSubmenuFlyoutLayout({');
+    expect(quickActionsSource).toContain('triggerEl: triggerBtn,');
+    expect(quickActionsSource).toContain('flyoutEl: flyout,');
+  });
+
   it('closes the context menu only after copy image succeeds', () => {
     const source = readSource();
     const copyItemStart = source.indexOf("copyLi.setAttribute('data-axhub-annotation-item', 'copy-original-image');");

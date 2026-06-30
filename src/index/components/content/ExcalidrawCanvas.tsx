@@ -79,9 +79,7 @@ import { removeKeyedBackgroundFromDataUrl } from './canvas-embeds/transparentIma
 import { createCanvasBackgroundTransparentImageUpdate } from './canvasBackgroundTransparentInsertion';
 import { copyImageDataUrlToClipboard } from '../../utils/clipboard';
 import { getAiImageTaskStore } from '../../domains/ai-image/aiImageStore';
-import { resolveCanvasImageArtifactUpdate, type CanvasImageArtifactEvent } from '../../domains/ai-image/canvasImageArtifacts';
 import CanvasAiGenerationTool, { type CanvasAiGenerationRequest, type CanvasAiGenerationResult } from '../../domains/ai-generation/CanvasAiGenerationTool';
-import { applyCanvasAiArtifactToElements } from '../../domains/ai-generation/canvasAiGeneration';
 import { applyGenerationArtifactsToCanvasElements } from '../../domains/ai-generation/canvasArtifactInsertion';
 import { buildAssistantImageAttachmentPayload, type AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
 import { getPrototypeGenerationTaskStore } from '../../domains/prototype-generation/prototypeTaskStore';
@@ -1417,10 +1415,8 @@ export default function ExcalidrawCanvas({
     onCloseWebAgentPanel,
     onOpenAISettings,
     preferredPromptClient,
-    prototypes,
     themes,
     defaultThemeName,
-    onRefreshPrototypes,
     onSubmitCanvasAssistantPrompt,
 }: ExcalidrawCanvasProps) {
     const desktopUiMode = toExcalidrawDesktopUiMode(propertyPanelMode);
@@ -2339,43 +2335,13 @@ export default function ExcalidrawCanvas({
         };
     }, [handleCanvasBridgeCommandRequest]);
 
-    const handleCanvasImageArtifactEvent = useCallback((event: CanvasImageArtifactEvent) => {
-        if (!excalidrawAPI) return;
-        const appState = excalidrawAPI.getAppState();
-        const update = resolveCanvasImageArtifactUpdate({
-            elements: excalidrawAPI.getSceneElements(),
-            appState,
-            event,
-        });
-        if (!update.files.length && !Object.keys(update.selectedElementIds).length) return;
-        excalidrawAPI.addFiles(update.files);
-        excalidrawAPI.updateScene({
-            elements: update.elements,
-            appState: {
-                selectedElementIds: update.selectedElementIds,
-                selectedGroupIds: {},
-            },
-        });
-        if (update.usedFallbackPlacement && update.needsScroll && update.scrollTargetId) {
-            const currentZoom = appState.zoom?.value || 1;
-            requestAnimationFrame(() => {
-                excalidrawAPI.scrollToContent(update.scrollTargetId, {
-                    fitToContent: true,
-                    animate: true,
-                    minZoom: currentZoom,
-                    maxZoom: currentZoom,
-                });
-            });
-        }
-        scheduleExplicitCanvasSave();
-    }, [excalidrawAPI, scheduleExplicitCanvasSave]);
-
     const handleSubmitCanvasAssistantPromptWithArtifacts = useCallback(async (request: CanvasAiGenerationRequest) => {
         const result = await onSubmitCanvasAssistantPrompt?.(request);
         const artifacts = typeof result === 'object' && result !== null && Array.isArray(result.artifacts)
             ? result.artifacts
             : [];
-        if (artifacts.length > 0 && excalidrawAPI) {
+        const shouldApplyReturnedArtifacts = request.source !== 'canvas-start';
+        if (shouldApplyReturnedArtifacts && artifacts.length > 0 && excalidrawAPI) {
             const appState = excalidrawAPI.getAppState();
             const update = applyGenerationArtifactsToCanvasElements({
                 elements: excalidrawAPI.getSceneElements(),
@@ -3158,18 +3124,13 @@ export default function ExcalidrawCanvas({
                     />
                     <CanvasAiGenerationTool
                         excalidrawAPI={excalidrawAPI}
-                        containerRef={canvasContainerRef as React.RefObject<HTMLDivElement>}
                         canvasFilePath={canvasFilePath || canvasName}
                         assistantProjectPath={assistantProjectPath}
                         preferredPromptClient={preferredPromptClient}
-                        prototypes={prototypes}
                         themes={themes}
                         defaultThemeName={defaultThemeName}
-                        onImageArtifact={handleCanvasImageArtifactEvent}
-                        onRefreshPrototypes={onRefreshPrototypes}
                         onOpenAISettings={onOpenAISettings}
                         onSubmitCanvasAssistantPrompt={handleSubmitCanvasAssistantPromptWithArtifacts}
-                        onSceneMutated={scheduleExplicitCanvasSave}
                     />
                     <CanvasDrawioTool
                         excalidrawAPI={excalidrawAPI}

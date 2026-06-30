@@ -9,6 +9,12 @@ export interface JsonResponseOptions {
   headers?: Record<string, string>;
 }
 
+export const LOCAL_API_CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
 export type NetworkInterfaceMap = ReturnType<typeof networkInterfaces>;
 
 export function getLocalNetworkHostsFromInterfaces(interfaces: NetworkInterfaceMap): string[] {
@@ -47,6 +53,24 @@ export function sendJson(res: ServerResponse, data: unknown, options: JsonRespon
     res.setHeader(key, value);
   }
   res.end(JSON.stringify(data));
+}
+
+export function sendCorsJson(res: ServerResponse, data: unknown, options: JsonResponseOptions = {}): void {
+  sendJson(res, data, {
+    ...options,
+    headers: {
+      ...LOCAL_API_CORS_HEADERS,
+      ...options.headers,
+    },
+  });
+}
+
+export function sendCorsPreflight(res: ServerResponse): void {
+  res.statusCode = 204;
+  for (const [key, value] of Object.entries(LOCAL_API_CORS_HEADERS)) {
+    res.setHeader(key, value);
+  }
+  res.end();
 }
 
 export function sendText(res: ServerResponse, text: string, contentType = 'text/plain; charset=utf-8', status = 200): void {

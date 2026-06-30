@@ -286,6 +286,33 @@ describe('client preview routes', () => {
     expect(html).not.toContain('/@vite/client?projectId=');
   });
 
+  it('installs the React refresh preamble before loading host toolbar React modules', async () => {
+    const projectRoot = createFixtureProject();
+    stubAdminHealth(['http://localhost:5174']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: 'http://localhost:5174',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+    stubAdminHealth(['http://localhost:5174', origin]);
+
+    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&genieToolbar=host`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('data-axhub-react-refresh-preamble');
+    expect(html).toContain('import { injectIntoGlobalHook } from "/@react-refresh";');
+    expect(html).toContain('window.$RefreshReg$ = () => {};');
+    expect(html.indexOf('data-axhub-react-refresh-preamble')).toBeLessThan(html.indexOf('data-axhub-dev-template-bootstrap'));
+    expect(html).not.toContain('preamble?html-proxy');
+  });
+
   it('keeps projectId on prototype entry imports inside preview loader modules', async () => {
     const projectRoot = createFixtureProject();
     stubAdminHealth(['http://localhost:5174']);
@@ -778,6 +805,77 @@ describe('client preview routes', () => {
     expect(proxyCode).toContain('path: "/prototypes/未命名"');
   });
 
+  it('does not mount annotation runtime from the preview loader when annotation source exists', async () => {
+    const projectRoot = createFixtureProject();
+    writeFile(path.join(projectRoot, 'src/prototypes/home/annotation-source.json'), `${JSON.stringify({
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [],
+        updatedAt: 1,
+      },
+      markdownMap: {},
+      assetMap: {},
+    }, null, 2)}\n`);
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+
+    const loaderCode = await loadPluginModule(plugin, '/prototypes/home/__axhub-preview-loader.js');
+
+    expect(loaderCode).toContain('import PreviewComponent from');
+    expect(loaderCode).not.toContain("import { createAnnotationViewer } from '@axhub/annotation';");
+    expect(loaderCode).not.toContain('annotationSourceDocument from');
+    expect(loaderCode).not.toContain('createAnnotationViewer({');
+    expect(loaderCode).not.toContain('__AXHUB_MAKE_ANNOTATION_RUNTIME__');
+    expect(loaderCode).not.toContain('__AXHUB_ANNOTATION_RUNTIME__');
+    expect(loaderCode).not.toContain('annotationVersion');
+  });
+
+  it('serves source preview HTML assets without Vite dev script injection', async () => {
+    const projectRoot = createFixtureProject();
+    const previewHtml = '<!doctype html><html><head><title>xAI</title></head><body><h1>Source Preview</h1></body></html>\n';
+    writeFile(path.join(projectRoot, 'src/themes/xai/index.tsx'), 'export default function Theme() { return null; }\n');
+    writeFile(path.join(projectRoot, 'src/themes/xai/assets/preview.html'), previewHtml);
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+
+    const response = await fetch(`${origin}/themes/xai/assets/preview.html`, {
+      headers: { accept: 'text/html' },
+    });
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    expect(html).toBe(previewHtml);
+    expect(html).not.toContain('/@vite/client');
+    expect(html).not.toContain('/@react-refresh');
+  });
+
+  it('serves nested index HTML assets without treating them as preview entry routes', async () => {
+    const projectRoot = createFixtureProject();
+    const assetHtml = '<!doctype html><html><body><h1>Nested HTML Asset</h1></body></html>\n';
+    writeFile(path.join(projectRoot, 'src/themes/xai/index.tsx'), 'export default function Theme() { return null; }\n');
+    writeFile(path.join(projectRoot, 'src/themes/xai/assets/index.html'), assetHtml);
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+
+    const response = await fetch(`${origin}/themes/xai/assets/index.html`, {
+      headers: { accept: 'text/html' },
+    });
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    expect(html).toBe(assetHtml);
+    expect(html).not.toContain('/@vite/client');
+    expect(html).not.toContain('/@react-refresh');
+  });
+
   it('lets Vite transform CSS imported by prototype modules', async () => {
     const projectRoot = createFixtureProject();
     process.chdir(projectRoot);
@@ -980,6 +1078,38 @@ describe('client preview routes', () => {
     expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/css; charset=utf-8');
     expect(Buffer.concat(chunks).toString('utf8')).toBe('.home { color: red; }\n');
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('lets Vite transform direct stylesheet requests that contain Tailwind imports', async () => {
+    const projectRoot = createFixtureProject();
+    writeFile(path.join(projectRoot, 'src/prototypes/home/style.css'), '@import "tailwindcss";\n.home { color: red; }\n');
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home/style.css',
+      headers: {
+        accept: 'text/css,*/*;q=0.1',
+      },
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.end).not.toHaveBeenCalled();
   });
 
   it('serves persisted prototype screenshots from the canvas-assets folder', async () => {

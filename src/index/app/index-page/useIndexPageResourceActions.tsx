@@ -7,6 +7,7 @@ import { hasExplicitLocalPath } from '../../utils/localPath';
 import { removeDocsSidebarTreeItem, sanitizeSidebarTree } from '../../utils/sidebarTree';
 import {
     getDocDisplayName,
+    getDocFileName,
     isProtectedDocItemName,
     isProtectedTemplateName,
     normalizeDocItem,
@@ -59,13 +60,14 @@ function buildCreatedPlaceholderPrototypeItem(result: any): ItemData | null {
     };
 }
 
-function toSelectedResourceFolder(folder: SidebarTreeNode): SelectedResourceFolder {
+function toSelectedResourceFolder(folder: SidebarTreeNode, treeTab: SidebarTreeTab = 'docs'): SelectedResourceFolder {
     const folderPath = String(folder.folderPath || folder.path || '').trim();
     return {
         id: folder.id,
         title: folder.title,
         path: folderPath,
         folderPath,
+        treeTab,
         children: Array.isArray(folder.children) ? folder.children : [],
     };
 }
@@ -186,6 +188,7 @@ export function useIndexPageResourceActions(params: any) {
     const [defaultThemeName, setDefaultThemeName] = useState<string | null>(null);
     const [selectedDoc, setSelectedDoc] = useState<ItemData | null>(null);
     const [selectedResourceFolder, setSelectedResourceFolder] = useState<SelectedResourceFolder | null>(null);
+    const selectedDocsResourceFolder = selectedResourceFolder?.treeTab === 'docs' ? selectedResourceFolder : null;
     const [selectedTemplate, setSelectedTemplate] = useState<ItemData | null>(null);
     const [selectedCanvas, setSelectedCanvas] = useState<CanvasItem | null>(null);
     const [selectedTheme, setSelectedTheme] = useState<any>(null);
@@ -206,22 +209,26 @@ export function useIndexPageResourceActions(params: any) {
 
     useEffect(() => {
         setSelectedDoc((previous) => {
-            if (selectedResourceFolder) {
+            if (selectedDocsResourceFolder) {
                 return previous && docsItems.some((item: ItemData) => item.name === previous.name) ? previous : null;
             }
             if (!previous) {
                 return docsItems[0] || null;
             }
+            if (previous.projectDocumentPath) {
+                return previous;
+            }
             return docsItems.find((item: ItemData) => item.name === previous.name) || docsItems[0] || null;
         });
-    }, [docsItems, selectedResourceFolder]);
+    }, [docsItems, selectedDocsResourceFolder]);
 
     useEffect(() => {
         setSelectedResourceFolder((previous) => {
-            const latestFolder = findResourceFolder(sidebarTrees.docs || [], previous);
-            return latestFolder ? toSelectedResourceFolder(latestFolder) : null;
+            const treeTab = previous?.treeTab || 'docs';
+            const latestFolder = findResourceFolder(sidebarTrees[treeTab] || [], previous);
+            return latestFolder ? toSelectedResourceFolder(latestFolder, treeTab) : null;
         });
-    }, [sidebarTrees.docs]);
+    }, [sidebarTrees]);
 
     useEffect(() => {
         setSelectedTemplate((previous) => {
@@ -316,15 +323,28 @@ export function useIndexPageResourceActions(params: any) {
         }
     }, [loadSidebarTree, reloadDocsItems, setSidebarTab, setViewMode]);
 
-    const handleSelectResourceFolder = useCallback((folder: SidebarTreeNode) => {
+    const handleSelectResourceFolder = useCallback((
+        folder: SidebarTreeNode,
+        treeTab: SidebarTreeTab = 'docs',
+        options: { preserveViewMode?: boolean } = {},
+    ) => {
         if (folder.kind !== 'folder') {
             return;
         }
-        setSidebarTab('document');
-        setViewMode('demo');
-        setSelectedDoc(null);
-        setSelectedResourceFolder(toSelectedResourceFolder(folder));
-    }, [setSidebarTab, setViewMode]);
+        if (treeTab === 'docs') {
+            setSidebarTab('document');
+            setSelectedDoc(null);
+        } else if (treeTab === 'canvas') {
+            setSidebarTab('canvas');
+        } else if (treeTab === 'themes') {
+            setSidebarTab('assets');
+            setResourceSection('themes');
+        }
+        if (treeTab === 'docs' && !options.preserveViewMode) {
+            setViewMode('demo');
+        }
+        setSelectedResourceFolder(toSelectedResourceFolder(folder, treeTab));
+    }, [setResourceSection, setSidebarTab, setViewMode]);
 
     const handleOpenResourceFolderInSystem = useCallback(async (folderPath: string) => {
         const normalizedPath = String(folderPath || '').trim();
@@ -1092,6 +1112,7 @@ export function useIndexPageResourceActions(params: any) {
 
     const handleRenameDocItem = useCallback(async (item: ItemData, nextName: string) => {
         const currentName = item.name;
+        const currentResourcePath = String(item.filePath || item.name || '').trim();
         const dotIndex = currentName.lastIndexOf('.');
         const currentExt = dotIndex > 0 ? currentName.slice(dotIndex) : '';
         const currentBaseName = resolveDocRenameBaseName(currentName, currentExt);
@@ -1121,7 +1142,7 @@ export function useIndexPageResourceActions(params: any) {
                 });
                 return;
             }
-            const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentName)}`), {
+            const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}`), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(buildResourceBody({ newBaseName: trimmedName })),
@@ -1143,13 +1164,14 @@ export function useIndexPageResourceActions(params: any) {
                 throw new Error(payload.error || '重命名失败');
             }
             const renamedDocName = typeof payload?.name === 'string' ? payload.name : `${trimmedName}${currentExt}`;
-            const renamedDisplayName = getDocDisplayName(renamedDocName) || renamedDocName;
             const renamedPath = String(payload?.path || '').trim() || undefined;
+            const renamedResourcePath = renamedPath || renamedDocName;
+            const renamedDisplayName = getDocDisplayName(getDocFileName(renamedDocName)) || renamedDocName;
             const renamedAbsoluteFilePath = String(payload?.absoluteFilePath || '').trim() || undefined;
             const optimisticDocs = (() => {
                 let replaced = false;
                 const mapped = docsItems.map((doc: ItemData) => {
-                    if (doc.name !== currentName) return doc;
+                    if (doc.name !== currentName && doc.filePath !== currentResourcePath) return doc;
                     replaced = true;
                     return {
                         ...doc,
@@ -1168,8 +1190,8 @@ export function useIndexPageResourceActions(params: any) {
                 }
                 return mapped;
             })();
-            const oldItemKey = `docs/${currentName}`;
-            const newItemKey = `docs/${renamedDocName}`;
+            const oldItemKey = `docs/${currentResourcePath}`;
+            const newItemKey = `docs/${renamedResourcePath}`;
             const { nextTree: remappedTree, replaced } = replaceSidebarItemKey(
                 sidebarTrees.docs,
                 oldItemKey,
@@ -1207,9 +1229,10 @@ export function useIndexPageResourceActions(params: any) {
     ]);
 
     const handleDuplicateDocItem = useCallback(async (item: ItemData) => {
+        const currentResourcePath = String(item.filePath || item.name || '').trim();
         const hide = messageApi.loading('正在创建副本...', 0);
         try {
-            const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(item.name)}/copy`), {
+            const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}/copy`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(buildResourceBody({})),
@@ -1219,7 +1242,8 @@ export function useIndexPageResourceActions(params: any) {
                 throw new Error(payload.error || '创建副本失败');
             }
             const nextDocs = await reloadDocsItems();
-            const duplicated = nextDocs.find((doc) => doc.name === payload?.name);
+            const duplicatedPath = String(payload?.path || '').trim();
+            const duplicated = nextDocs.find((doc) => doc.filePath === duplicatedPath || doc.name === payload?.name);
             if (duplicated) {
                 setSelectedDoc(duplicated);
             }
@@ -1232,6 +1256,7 @@ export function useIndexPageResourceActions(params: any) {
     }, [buildResourceBody, buildResourceUrl, messageApi, reloadDocsItems]);
 
     const handleDeleteDocItem = useCallback(async (item: ItemData) => {
+        const currentResourcePath = String(item.filePath || item.name || '').trim();
         const hideChecking = messageApi.loading('正在检查引用...', 0);
         try {
             const checkResult = await checkDocReferences(item.name, 'delete');
@@ -1262,7 +1287,7 @@ export function useIndexPageResourceActions(params: any) {
             onOk: async () => {
                 const hide = messageApi.loading('正在删除...', 0);
                 try {
-                    const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(item.name)}`), { method: 'DELETE' });
+                    const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}`), { method: 'DELETE' });
                     const payload = await response.json().catch(() => ({} as any));
                     if (!response.ok) {
                         if (payload.code === 'PROTECTED_DOC') {
@@ -1283,14 +1308,14 @@ export function useIndexPageResourceActions(params: any) {
                         ...previous,
                         docs: removeDocsSidebarTreeItem(
                             sanitizeSidebarTree('docs', previous.docs || [], nextDocs),
-                            item.name,
+                            currentResourcePath,
                         ),
                     }));
                     if (typeof loadSidebarTree === 'function') {
                         await loadSidebarTree('docs', { force: true, items: nextDocs });
                         setSidebarTrees((previous: Record<SidebarTreeTab, SidebarTreeNode[]>) => ({
                             ...previous,
-                            docs: removeDocsSidebarTreeItem(previous.docs || [], item.name),
+                            docs: removeDocsSidebarTreeItem(previous.docs || [], currentResourcePath),
                         }));
                     }
                     setSelectedDoc((previous) => {

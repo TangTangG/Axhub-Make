@@ -30,6 +30,7 @@ export interface ItemData {
     clientUrl?: string;
     projectId?: string;
     resourceId?: string;
+    projectDocumentPath?: string;
     previewDisabled?: boolean;
     placeholder?: boolean;
     placeholderGuide?: PrototypePlaceholderGuide;

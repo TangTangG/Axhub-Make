@@ -12,12 +12,12 @@ import { Mermaid, XProvider } from '@ant-design/x';
 import zhCN_X from '@ant-design/x/locale/zh_CN';
 import { ConfigProvider, Anchor, Modal, Tabs } from 'antd';
 import {
-    createGenieEditor,
-    type GenieEditorApi,
-    type GenieEditorHostToolbarAction,
-    type GenieEditorHostToolbarState,
-    type GenieEditorToolbarMode,
-} from 'axhub-genie-editor';
+    createCommentary,
+    type CommentaryApi,
+    type CommentaryHostToolbarAction,
+    type CommentaryHostToolbarState,
+    type CommentaryToolbarMode,
+} from '@axhub/commentary';
 import { SimpleEditor, type UploadFunction } from 'tiptap-editor';
 import { defaultThemeConfig } from '../theme';
 import type { GenieContextV1 } from '@/common/genie/types';
@@ -67,14 +67,15 @@ export interface MarkdownViewerHandle {
     enableQuickEdit: () => void;
     disableQuickEdit: (options?: { discardChanges?: boolean }) => void;
     enableDocumentEditor: (options?: {
-        toolbarMode?: GenieEditorToolbarMode;
+        toolbarMode?: CommentaryToolbarMode;
+        quickEditMode?: 'comment' | 'edit';
         initialDarkMode?: boolean;
         assistantPanelOpen?: boolean;
     }) => void;
     disableDocumentEditor: () => void;
-    getHostToolbarState: () => GenieEditorHostToolbarState | null;
-    subscribeHostToolbarState: (listener: (state: GenieEditorHostToolbarState) => void) => () => void;
-    runHostToolbarAction: (action: GenieEditorHostToolbarAction) => Promise<boolean>;
+    getHostToolbarState: () => CommentaryHostToolbarState | null;
+    subscribeHostToolbarState: (listener: (state: CommentaryHostToolbarState) => void) => () => void;
+    runHostToolbarAction: (action: CommentaryHostToolbarAction) => Promise<boolean>;
     setQuickEditMode: (mode: 'comment' | 'edit', options?: { saveBehavior?: 'none' | 'save' | 'discard' }) => Promise<boolean>;
     getQuickEditStatus: () => {
         enabled: boolean;
@@ -96,6 +97,8 @@ const SPEC_EDIT_QUERY_KEY = 'specEdit';
 const SPEC_DRAFT_STORAGE_PREFIX = 'axhub-spec-draft:';
 const SPEC_DRAFT_DEBOUNCE_MS = 650;
 const PROJECT_DOCUMENT_CONTENT_PATH_RE = /^\/api\/projects\/[^/]+\/docs\/.+\/content$/iu;
+const PROJECT_DOCUMENT_PATH_CONTENT_RE = /^\/api\/projects\/[^/]+\/document-content$/iu;
+const MARKDOWN_DOCS_BROADCAST_CHANNEL = 'axhub-markdown-docs';
 
 function resolveAxhubDisplayNameFromLocation(): string {
     if (typeof window === 'undefined') return '';
@@ -171,6 +174,17 @@ function parseAxhubImageWidth(src: string | undefined): { cleanSrc: string; widt
     return { cleanSrc, width };
 }
 
+function buildProjectDocumentAssetUrl(parsedUrl: URL, assetPath: string): string {
+    const projectDocumentMatch = parsedUrl.pathname.match(/^\/api\/projects\/([^/]+)\/document-content$/iu);
+    if (!projectDocumentMatch) return '';
+
+    const projectId = decodeURIComponent(projectDocumentMatch[1] || '');
+    const filePath = String(parsedUrl.searchParams.get('path') || '').trim();
+    if (!projectId || !filePath) return '';
+
+    return `/api/projects/${encodeURIComponent(projectId)}/document-asset?path=${encodeURIComponent(filePath)}&asset=${encodeURIComponent(assetPath)}`;
+}
+
 function resolveMarkdownImageSrc(src: string, documentUrl?: string): string {
     const safeSrc = String(src || '').trim();
     if (!safeSrc) return safeSrc;
@@ -191,6 +205,10 @@ function resolveMarkdownImageSrc(src: string, documentUrl?: string): string {
             if (filePath) {
                 return `/api/markdown-file-asset?path=${encodeURIComponent(filePath)}&asset=${encodeURIComponent(safeSrc)}`;
             }
+        }
+        const projectDocumentAssetUrl = buildProjectDocumentAssetUrl(parsedUrl, safeSrc);
+        if (projectDocumentAssetUrl) {
+            return projectDocumentAssetUrl;
         }
     } catch {
         // noop
@@ -240,6 +258,10 @@ function resolveMarkdownImageSrc(src: string, documentUrl?: string): string {
     } catch {
         return safeSrc;
     }
+}
+
+function normalizeRequestedQuickEditMode(value: unknown): 'comment' | 'edit' {
+    return value === 'edit' ? 'edit' : 'comment';
 }
 
 const MarkdownImage = (props: MarkdownImageProps) => {
@@ -477,6 +499,9 @@ function parseQuickEditModeFromUrl(): SpecQuickEditMode {
     if (typeof window === 'undefined') return 'none';
     try {
         const params = new URLSearchParams(window.location.search);
+        if (params.get('mode') === 'edit') {
+            return 'edit';
+        }
         if (params.get('editor') === 'specComment') {
             return 'comment';
         }
@@ -485,6 +510,32 @@ function parseQuickEditModeFromUrl(): SpecQuickEditMode {
         return value === '1' || value.toLowerCase() === 'true' ? 'comment' : 'none';
     } catch {
         return 'none';
+    }
+}
+
+function resolveSavedMarkdownFilePath(docUrl: string | undefined): string {
+    if (!docUrl || typeof window === 'undefined') return '';
+    try {
+        const parsedUrl = new URL(docUrl, window.location.origin);
+        return parsedUrl.pathname === '/api/markdown-file'
+            ? String(parsedUrl.searchParams.get('path') || '').trim()
+            : '';
+    } catch {
+        return '';
+    }
+}
+
+function broadcastMarkdownFileSaved(payload: {
+    type: 'markdown-file-saved';
+    path: string;
+    updatedAt: number;
+}) {
+    if (!payload.path || typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel(MARKDOWN_DOCS_BROADCAST_CHANNEL);
+    try {
+        channel.postMessage(payload);
+    } finally {
+        channel.close();
     }
 }
 
@@ -553,7 +604,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     const draftPersistTimerRef = useRef<number | null>(null);
     const draftPromptedDocKeysRef = useRef<Set<string>>(new Set());
     const draftConfirmingDocKeyRef = useRef<string | null>(null);
-    const commentEditorRef = useRef<GenieEditorApi | null>(null);
+    const commentEditorRef = useRef<CommentaryApi | null>(null);
     const commentEditorDarkModeRef = useRef(false);
     const commentEditorAssistantPanelOpenRef = useRef(false);
     const editorUserChangedDocKeysRef = useRef<Set<string>>(new Set());
@@ -637,7 +688,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
         }
 
         commentEditorRef.current?.destroy();
-        const editor = createGenieEditor({
+        const editor = createCommentary({
             interactionProfile: 'text-comment',
             ui: {
                 toolbarMode: 'host',
@@ -923,7 +974,12 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
             search = '';
         }
 
-        if (pathname === '/api/markdown-file' || pathname.startsWith('/api/docs/') || PROJECT_DOCUMENT_CONTENT_PATH_RE.test(pathname)) {
+        if (
+            pathname === '/api/markdown-file'
+            || pathname.startsWith('/api/docs/')
+            || PROJECT_DOCUMENT_CONTENT_PATH_RE.test(pathname)
+            || PROJECT_DOCUMENT_PATH_CONTENT_RE.test(pathname)
+        ) {
             return {
                 url: `${pathname}${search}`,
                 init: {
@@ -1005,6 +1061,14 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
             const result = await response.json().catch(() => ({}));
             if (!response.ok) {
                 throw new Error(result?.error || '保存失败');
+            }
+            const savedMarkdownPath = resolveSavedMarkdownFilePath(currentDoc.url);
+            if (savedMarkdownPath) {
+                broadcastMarkdownFileSaved({
+                    type: 'markdown-file-saved',
+                    path: savedMarkdownPath,
+                    updatedAt: Date.now(),
+                });
             }
 
             setSavedContents((previous) => ({
@@ -1211,7 +1275,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
 
             if (data.type === 'SPEC_EDIT_ENABLE') {
                 draftPromptedDocKeysRef.current.clear();
-                setQuickEditModeState('comment');
+                setQuickEditModeState(normalizeRequestedQuickEditMode(data.mode));
                 return;
             }
 
@@ -1304,7 +1368,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
         },
         enableDocumentEditor(options) {
             draftPromptedDocKeysRef.current.clear();
-            setQuickEditModeState('comment');
+            setQuickEditModeState(normalizeRequestedQuickEditMode(options?.quickEditMode));
             const editor = ensureCommentEditor({
                 initialDarkMode: options?.initialDarkMode,
                 assistantPanelOpen: options?.assistantPanelOpen,

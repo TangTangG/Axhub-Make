@@ -74,25 +74,27 @@ describe('PresentationToolbar cloud publishing source', () => {
     expect(normalPreviewActionsSource).not.toContain('<RotateCw /> 刷新');
   });
 
-  it('renames the prototype export menu trigger to publish and adds cloud service targets', () => {
+  it('keeps only the default publish action, copy URL, and platform settings visible by default', () => {
     const source = readToolbarSource();
 
     expect(source).toContain('<span>发布</span>');
     expect(source).toContain('云服务');
-    expect(source).toContain('发布到 S3 对象存储');
-    expect(source).toContain('发布到 Vercel');
-    expect(source).toContain('发布到 Cloudflare Pages');
-    expect(source).toContain('发布到 GitHub Pages');
-    expect(source).toContain('最近发布地址');
-    const cloudServiceSegment = source.slice(source.indexOf('云服务'), source.indexOf('<Copy className="h-3.5 w-3.5" /> 最近发布地址'));
-    expect(cloudServiceSegment.indexOf('发布到 S3 对象存储')).toBeLessThan(cloudServiceSegment.indexOf('发布到 Vercel'));
-    expect(cloudServiceSegment.indexOf('发布到 S3 对象存储')).toBeLessThan(cloudServiceSegment.indexOf('发布到 Cloudflare Pages'));
-    expect(cloudServiceSegment.indexOf('发布到 S3 对象存储')).toBeLessThan(cloudServiceSegment.indexOf('发布到 GitHub Pages'));
-    expect((source.match(/最近发布地址/g) || []).length).toBe(1);
+    expect(source).toContain("visibleCloudPublishTargets = ['axhub']");
+    expect(source).toContain("visibleCloudPublishTargetSet.has('axhub')");
+    expect(source).toContain('<Cloud className="h-3.5 w-3.5" /> 发布到 Axhub');
+    expect(source).toContain('<Send className="h-3.5 w-3.5" /> 发布到对象存储');
+    expect(source).toContain("visibleCloudPublishTargetSet.has('s3')");
+    expect(source).toContain("visibleCloudPublishTargetSet.has('vercel')");
+    expect(source).toContain("visibleCloudPublishTargetSet.has('cloudflare-pages')");
+    expect(source).toContain("visibleCloudPublishTargetSet.has('github-pages')");
+    expect(source).toContain('复制发布地址');
+    expect((source.match(/复制发布地址/g) || []).length).toBe(1);
     expect(source).not.toContain('Vercel 最近发布地址');
     expect(source).not.toContain('Cloudflare Pages 最近发布地址');
     expect(source).not.toContain('S3 最近发布地址');
-    expect(source).toContain('<Settings2 className="h-3.5 w-3.5" /> 设置');
+    expect(source).not.toContain('发布到 S3 对象存储');
+    expect(source).toContain('<Settings2 className="h-3.5 w-3.5" /> 更多平台与设置');
+    expect(source).toContain("onClick={() => handleOpenCloudPublishSettings('publish-settings')}");
   });
 
   it('offers separate HTML export actions with and without source files', () => {
@@ -107,11 +109,16 @@ describe('PresentationToolbar cloud publishing source', () => {
 
     expect(source).toContain('currentPublishResourcePath?: string;');
     expect(source).toContain('currentPublishResourcePath = \'\',');
+    expect(source).toContain("visibleCloudPublishTargets?: CloudPublishTarget[];");
     expect(source).toContain('const hasCurrentPublishResource = Boolean(currentPublishResourcePath);');
     expect(source).toContain("handlePublishCloudTarget('vercel')");
     expect(source).toContain("handlePublishCloudTarget('cloudflare-pages')");
     expect(source).toContain("handlePublishCloudTarget('s3')");
     expect(source).toContain("handlePublishCloudTarget('github-pages')");
+    expect(source).toContain('handleOpenAxhubPublishDialog: () => void | Promise<void>;');
+    expect(source).toContain('handleOpenAxhubPublishDialog,');
+    expect(source).toContain('onClick={() => handleOpenAxhubPublishDialog()}');
+    expect(source).toContain('<Cloud className="h-3.5 w-3.5" /> 发布到 Axhub');
     expect(source).toContain('handleCopyLatestCloudPublishUrl()');
     expect(source).not.toContain('handleCopyLatestCloudPublishUrl(\'vercel\')');
     expect(source).not.toContain('handleCopyLatestCloudPublishUrl(\'cloudflare-pages\')');
@@ -205,6 +212,21 @@ describe('PresentationToolbar Genie host controls source', () => {
     expect(source).not.toContain("'关闭属性调整'");
   });
 
+  it('hides design decision actions when the current prototype has no decision data', () => {
+    const source = readToolbarSource();
+    const hostControlsSource = source.slice(
+      source.indexOf('const hostToolbarControls = hostToolbarState?.visible ? ('),
+      source.indexOf('const activeQuickEditToolbarButtons = ('),
+    );
+
+    expect(source).toContain('prototypeDecisionDataAvailable?: boolean;');
+    expect(source).toContain('prototypeDecisionDataAvailable = false,');
+    expect(source).toContain('const canShowPrototypeDecisionActions = !isPreviewContent || prototypeDecisionDataAvailable;');
+    expect(source).toContain('&& canShowPrototypeDecisionActions');
+    expect(source).toContain('const showHostPropertyPanelAction = contentMode !== \'theme\'\n        && canShowPrototypeDecisionActions;');
+    expect(hostControlsSource).toContain('showHostPropertyPanelAction ? renderHostToolbarActionButton');
+  });
+
   it('adds the review action after annotation and design decisions', () => {
     const source = readToolbarSource();
     const normalPreviewActionsSource = source.slice(
@@ -241,7 +263,7 @@ describe('PresentationToolbar Genie host controls source', () => {
     expect(hostControlsSource).toContain("'host-send'");
     expect(hostControlsSource).toContain("'AI 执行'");
     expect(hostControlsSource).not.toContain("'host-interrupt'");
-    expect(hostMoreMenuSource).toContain("{ type: 'interrupt-genie' }");
+    expect(hostMoreMenuSource).toContain("{ type: 'interrupt-agent' }");
     expect(hostMoreMenuSource).toContain('中断执行');
     expect(source).toMatch(/showHostAgentMenu[\s\S]*执行 Agent/);
   });
@@ -279,9 +301,30 @@ describe('PresentationToolbar Genie host controls source', () => {
     expect(source).toContain('hostLocalAgentConnected');
     expect(source).toContain("hostLocalAgentConnected ? '已链接本地 Agent' : '链接本地 Agent'");
     expect(source).toContain("hostLocalAgentConnected && 'text-brand hover:bg-brand/5 hover:text-brand'");
-    expect(source).toContain("hostLocalAgentConnected ? 'disconnect-genie' : 'wake-genie'");
+    expect(source).toContain("hostLocalAgentConnected ? 'disconnect-agent' : 'wake-agent'");
     expect(source).not.toContain("'host-local-agent'");
     expect(source).not.toMatch(/renderHostToolbarActionButton\([\s\S]*hostLocalAgentConnected \? '已链接/);
+  });
+
+  it('adds the local annotation enable action immediately after the local agent switch', () => {
+    const source = readToolbarSource();
+    const hostMoreMenuSource = source.slice(
+      source.indexOf('const hostMoreMenu = hostToolbarState?.visible ? ('),
+      source.indexOf('const hostToolbarControls = hostToolbarState?.visible ? ('),
+    );
+
+    expect(hostMoreMenuSource).toContain("type: 'enable-annotation'");
+    expect(hostMoreMenuSource).toContain('开启需求标注');
+    expect(hostMoreMenuSource).toContain('hostToolbarState.annotationEnabled');
+    expect(hostMoreMenuSource).toContain('hostToolbarState.annotationEnableLoading');
+    expect(hostMoreMenuSource).toContain('hostToolbarState.annotationEnableDisabled');
+    expect(hostMoreMenuSource).toContain("hostToolbarState.annotationEnabled && 'text-brand hover:bg-brand/5 hover:text-brand'");
+    expect(hostMoreMenuSource.indexOf("hostLocalAgentConnected ? '已链接本地 Agent' : '链接本地 Agent'")).toBeLessThan(
+      hostMoreMenuSource.indexOf('开启需求标注'),
+    );
+    expect(hostMoreMenuSource.indexOf('开启需求标注')).toBeLessThan(
+      hostMoreMenuSource.indexOf("{ type: 'open-keyboard-shortcuts' }"),
+    );
   });
 
   it('places the more button between refresh and exit while quick editing', () => {
@@ -420,6 +463,20 @@ describe('PresentationToolbar Genie host controls source', () => {
     expect(documentResourceActionsSource).toContain('<PencilRuler /> 批注');
     expect(documentResourceActionsSource).toContain('<TooltipContent>{`批注${currentMarkdownLabel}`}</TooltipContent>');
     expect(documentResourceActionsSource).not.toContain('<SquarePen /> 编辑');
+  });
+
+  it('opens document annotation and editing buttons directly in their requested mode', () => {
+    const source = readToolbarSource();
+    const documentResourceActionsSource = source.slice(
+      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
+    );
+
+    expect(source).toContain('handleEnableDocEdit: (mode?: SpecQuickEditMode) => void;');
+    expect(source).toContain('handleEnableDocEdit,');
+    expect(documentResourceActionsSource).toContain("onClick={() => handleEnableDocEdit('comment')}");
+    expect(documentResourceActionsSource).toContain("onClick={() => handleEnableDocEdit('edit')}");
+    expect(documentResourceActionsSource).not.toContain('onClick={handleEnableDocEdit}');
   });
 
   it('reuses the page annotation host toolbar when HTML document annotation is active', () => {

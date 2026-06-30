@@ -11,6 +11,7 @@ import {
   getCanvasAiSceneQuickPrompts,
   pickCanvasAiPrototypeStartPlaceholder,
   pickCanvasAiScenePlaceholder,
+  stripCanvasUpdateInstruction,
 } from './canvasAiSceneRegistry';
 
 describe('canvas AI scene registry', () => {
@@ -175,6 +176,14 @@ describe('canvas AI scene registry', () => {
     expect(getCanvasAiPrototypeStartSystemPrompt('document')).not.toContain('Markdown .md 文档');
     expect(getCanvasAiPrototypeStartSystemPrompt('document')).not.toContain('Draw.io .drawio.svg 图表');
     expect(getCanvasAiPrototypeStartSystemPrompt('document')).not.toContain('当前原型草稿画布');
+  });
+
+  it('can strip canvas update instructions when copying prompts for local AI', () => {
+    expect(stripCanvasUpdateInstruction(getCanvasAiPrototypeStartSystemPrompt('design'))).toBe(
+      '使用内置工具生成图片；若无相关工具，请停止并告知用户。',
+    );
+    expect(stripCanvasUpdateInstruction(getCanvasAiPrototypeStartSystemPrompt('document'))).toBe('');
+    expect(stripCanvasUpdateInstruction(getCanvasAiPrototypeStartSystemPrompt('page'))).toBe('请生成原型页面。');
   });
 
   it('picks placeholders from prototype start overrides when they exist', () => {

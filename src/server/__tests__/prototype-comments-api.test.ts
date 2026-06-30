@@ -58,6 +58,49 @@ describe('prototype comments API', () => {
     }
   });
 
+  it('allows preview pages to read prototype comments across origins', async () => {
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
+    writePrototypeProject(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`, {
+        headers: {
+          Origin: 'http://localhost:51720',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('allows preview pages to preflight prototype comment writes', async () => {
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
+    writePrototypeProject(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/prototype-comments?targetPath=prototypes/home`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'http://localhost:51720',
+          'Access-Control-Request-Method': 'PUT',
+          'Access-Control-Request-Headers': 'content-type',
+        },
+      });
+
+      expect(response.status).toBe(204);
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(response.headers.get('access-control-allow-methods')).toContain('PUT');
+      expect(response.headers.get('access-control-allow-headers')?.toLowerCase()).toContain('content-type');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('writes and reads prototype comments under the fixed .spec file', async () => {
     const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
@@ -181,6 +224,15 @@ describe('prototype comments API', () => {
                 createdAt: 10,
                 data: PNG_DATA_URL,
               },
+              {
+                id: 'hero-detail',
+                elementKey: 'hero',
+                name: 'Hero Detail.PNG',
+                mimeType: 'image/png',
+                size: 256,
+                createdAt: 11,
+                data: PNG_DATA_URL,
+              },
             ],
           },
         }),
@@ -193,6 +245,10 @@ describe('prototype comments API', () => {
         expect.objectContaining({
           id: 'hero-image',
           assetPath: 'prototype-comment-assets/hero-image.png',
+        }),
+        expect.objectContaining({
+          id: 'hero-detail',
+          assetPath: 'prototype-comment-assets/hero-detail.png',
         }),
       ]);
       expect(JSON.stringify(body.document)).not.toContain('base64');
@@ -214,6 +270,11 @@ describe('prototype comments API', () => {
       expect(hydratedBody.document.images[0]).toMatchObject({
         id: 'hero-image',
         assetPath: 'prototype-comment-assets/hero-image.png',
+        data: expect.stringMatching(/^data:image\/png;base64,/u),
+      });
+      expect(hydratedBody.document.images[1]).toMatchObject({
+        id: 'hero-detail',
+        assetPath: 'prototype-comment-assets/hero-detail.png',
         data: expect.stringMatching(/^data:image\/png;base64,/u),
       });
     } finally {

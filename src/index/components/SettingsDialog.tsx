@@ -27,7 +27,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { apiService, type AssistantRuntimeResponse, type MakeClientUpdateApplyResult, type MakeClientUpdateStatus } from '../services/api';
+import { apiService, type AssistantRuntimeResponse, type MakeClientUpdateApplyResult, type MakeClientUpdateBackupRecord, type MakeClientUpdateStatus } from '../services/api';
 import { normalizePromptClientPreference } from '../../common/promptExecution';
 import { ACP_PROVIDER_OPTIONS, type AcpProviderKey } from '../../common/acpModelConfig';
 import { runAiText, type AiRunClientError } from '../domains/ai-generation/aiRunClient';
@@ -61,6 +61,10 @@ interface SettingsDialogProps {
     open: boolean;
     onClose: () => void;
     onSaved?: () => void;
+    makeClientUpdateReminderVisible?: boolean;
+    onMakeClientUpdateReminderSeen?: () => void;
+    onMakeClientUpdateAvailabilityChange?: (status: MakeClientUpdateStatus | null) => void;
+    onOpenVersionCollaboration?: () => void;
     initialTab?: SettingsDialogInitialTab;
     initialAcpRuntime?: AssistantRuntimeResponse | null;
     initialAcpFailureSource?: string;
@@ -153,14 +157,6 @@ const AGENT_PROVIDER_TEST_KEYWORD = 'AXHUB_AGENT_TEST_OK';
 const AGENT_PROVIDER_TEST_PROMPT = `请只返回 ${AGENT_PROVIDER_TEST_KEYWORD}，不要返回其他文字。`;
 const AGENT_PROVIDER_TEST_TIMEOUT_MS = 60_000;
 const AI_IMAGE_CONFIG_TEST_PROMPT = '生成一张用于验证图片生成配置的极简测试图片，内容为白底黑色文字 OK。';
-const MAKE_CLIENT_UPDATE_STEPS = [
-    '检测版本',
-    '下载模板',
-    '创建备份',
-    '覆盖文件',
-    '写入版本',
-    '安装依赖/同步元数据',
-];
 
 const DEFAULT_FORM_STATE: SettingsFormState = {
     host: 'localhost',
@@ -274,15 +270,6 @@ function formatAiImageConfigLastTestTime(testedAt?: number): string {
     }).format(new Date(testedAt));
 }
 
-function formatMakeClientUpdateGitStatus(status: MakeClientUpdateStatus | null): string {
-    if (!status) return '未检测';
-    if (!status.git.available) return 'Git 不可用';
-    if (!status.git.isRepository) return '未初始化 Git';
-    if (!status.git.hasCommits) return '暂无本地 commit';
-    if (!status.git.clean) return '工作区有改动';
-    return 'Git 已就绪';
-}
-
 function formatMakeClientUpdateActionLabel(
     status: MakeClientUpdateStatus | null,
     applying: boolean,
@@ -293,9 +280,42 @@ function formatMakeClientUpdateActionLabel(
     return '开始更新';
 }
 
-function getMakeClientUpdatePrimaryBlocker(status: MakeClientUpdateStatus | null): string {
+function getVisibleMakeClientUpdateBlocker(status: MakeClientUpdateStatus | null): string {
     if (!status) return '请先检测更新状态';
     return status.blockedReasons[0]?.message || '';
+}
+
+function formatMakeClientUpdateBackupTime(value?: string): string {
+    if (!value) return '未知';
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) return '未知';
+    return new Intl.DateTimeFormat('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    }).format(new Date(timestamp));
+}
+
+function buildMakeClientUpdateRestorePrompt(record: MakeClientUpdateBackupRecord): string {
+    return [
+        '请帮我根据 Axhub Make 客户端更新备份处理还原或排查。',
+        '',
+        '我不懂命令行、Node.js、npm 或 pnpm。请你把每一步都说清楚，一次只让我执行一个命令，并解释这个命令是在检查什么或修复什么。',
+        '',
+        '**备份信息**：',
+        `备份目录：${record.backupRoot}`,
+        `备份压缩包：${record.backupZipPath}`,
+        `备份日志：${record.manifestPath}`,
+        `版本变化：${record.currentVersion} -> ${record.targetVersion}`,
+        `覆盖文件数量：${record.writtenFilesCount}`,
+        '',
+        '**处理要求**：',
+        '- 请先读取 manifest.json，确认 original/ 中有哪些文件可恢复。',
+        '- 不要默认直接覆盖我当前项目里的新文件；先说明会恢复哪些文件、风险是什么。',
+        '- 如果需要还原，请优先从 original/ 逐个恢复被覆盖文件。',
+        '- 不要删除我的用户原型、资源、运行记录或备份目录。',
+    ].join('\n');
 }
 
 function formatLocalAcpCheckedAt(checkedAt?: string): string {
@@ -376,7 +396,7 @@ function isAiRunAcpRuntimeUnavailable(error: unknown): error is AiRunClientError
     return record.code === 'ACP_RUNTIME_UNAVAILABLE' || record.action === 'open-ai-settings';
 }
 
-export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'project', initialAcpRuntime = null, initialAcpFailureSource = '', initialAcpFailureMessage = '' }: SettingsDialogProps) {
+export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdateReminderVisible, onMakeClientUpdateReminderSeen, onMakeClientUpdateAvailabilityChange, onOpenVersionCollaboration, initialTab = 'project', initialAcpRuntime = null, initialAcpFailureSource = '', initialAcpFailureMessage = '' }: SettingsDialogProps) {
     const [loading, setLoading] = useState(false);
     const [formState, setFormState] = useState<SettingsFormState>(DEFAULT_FORM_STATE);
     const [activeTab, setActiveTab] = useState<SettingsDialogInitialTab>(initialTab);
@@ -407,6 +427,10 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
     const localAcpNeedsCorsRestart = isLocalAcpCorsFailure(localAcpRuntime, localAcpFailureContext?.message);
     const localAcpActionLabel = localAcpConnected ? '重启' : localAcpNeedsCorsRestart ? '重启修复' : '链接';
     const localAcpActionBusy = localAcpConnecting || localAcpRestarting;
+    const makeClientUpdateAvailable = makeClientUpdateStatus?.updateAvailable === true;
+    const visibleMakeClientUpdateBlocker = makeClientUpdateAvailable ? getVisibleMakeClientUpdateBlocker(makeClientUpdateStatus) : '';
+    const makeClientUpdateCanApply = Boolean(makeClientUpdateAvailable && makeClientUpdateStatus?.canApply);
+    const latestMakeClientUpdateBackup = makeClientUpdateResult?.backupRecord || makeClientUpdateStatus?.lastBackup || null;
 
     useEffect(() => {
         if (!open) {
@@ -430,6 +454,9 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
         }
 
         setActiveTab(initialTab);
+        if (initialTab === 'update') {
+            onMakeClientUpdateReminderSeen?.();
+        }
         if (initialTab === 'ai' && initialAcpRuntime && initialAcpRuntime.health.status !== 'ready') {
             setLocalAcpRuntime(initialAcpRuntime);
             setLocalAcpFailureContext({
@@ -442,7 +469,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
         }
         void loadConfig();
         void loadThemeOptions();
-    }, [open, initialAcpRuntime, initialAcpFailureMessage, initialAcpFailureSource, initialTab]);
+    }, [open, initialAcpRuntime, initialAcpFailureMessage, initialAcpFailureSource, initialTab, onMakeClientUpdateReminderSeen]);
 
     const updateField = <K extends keyof SettingsFormState>(key: K, value: SettingsFormState[K]) => {
         setFormState((previous) => ({ ...previous, [key]: value }));
@@ -619,6 +646,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
     const loadMakeClientUpdateStatus = async (projectId = activeProjectId) => {
         if (!projectId) {
             setMakeClientUpdateError(new Error('当前没有已注册的 Make Client 项目'));
+            onMakeClientUpdateAvailabilityChange?.(null);
             return;
         }
         setMakeClientUpdateStatusLoading(true);
@@ -626,8 +654,10 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
         try {
             const status = await apiService.getMakeClientUpdateStatus(projectId);
             setMakeClientUpdateStatus(status);
+            onMakeClientUpdateAvailabilityChange?.(status);
         } catch (error: any) {
             setMakeClientUpdateError(error);
+            onMakeClientUpdateAvailabilityChange?.(null);
             toast.error(formatMakeClientUpdateError(error, '检测项目更新失败'));
         } finally {
             setMakeClientUpdateStatusLoading(false);
@@ -640,6 +670,7 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
             void handleLocalAcpRuntimeCheck({ silent: true });
         }
         if (value === 'update') {
+            onMakeClientUpdateReminderSeen?.();
             if (activeProjectId) {
                 void loadMakeClientUpdateStatus(activeProjectId);
             } else {
@@ -664,7 +695,11 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
         try {
             const result = await apiService.applyMakeClientUpdate(activeProjectId);
             setMakeClientUpdateResult(result);
-            toast.success('项目更新完成，请重启或刷新客户端');
+            if (result.postUpdateWarning) {
+                toast.success('项目模板已更新完成；依赖安装或清单同步需要稍后重试');
+            } else {
+                toast.success('项目更新完成，请重启或刷新客户端');
+            }
             void loadMakeClientUpdateStatus(activeProjectId);
         } catch (error: any) {
             setMakeClientUpdateError(error);
@@ -672,6 +707,10 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
         } finally {
             setMakeClientUpdateApplying(false);
         }
+    };
+
+    const handleOpenVersionCollaboration = () => {
+        onOpenVersionCollaboration?.();
     };
 
     const handleCopyMakeClientUpdateFailurePrompt = async () => {
@@ -685,6 +724,19 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
             toast.success('已复制给 AI 处理的提示词');
         } catch {
             toast.error('复制失败，请手动选择错误信息');
+        }
+    };
+
+    const handleCopyMakeClientUpdateRestorePrompt = async () => {
+        if (!latestMakeClientUpdateBackup) {
+            toast.error('未找到可复制的更新备份记录');
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(buildMakeClientUpdateRestorePrompt(latestMakeClientUpdateBackup));
+            toast.success('已复制给 AI 处理/还原的提示词');
+        } catch {
+            toast.error('复制失败，请手动选择备份记录');
         }
     };
 
@@ -959,12 +1011,15 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                     <SheetHeader className="border-b px-5 py-3.5">
                         <SheetTitle className="sr-only">项目设置 / 项目更新 / AI 设置</SheetTitle>
                         <div className="flex items-center justify-between gap-3">
-                            <TabsList className="grid h-8 w-full max-w-[330px] grid-cols-3 rounded-lg border border-border/70 bg-muted/50 p-0.5">
+                            <TabsList className="grid h-8 w-full max-w-[360px] grid-cols-3 rounded-lg border border-border/70 bg-muted/50 p-0.5">
                                 <TabsTrigger value="project" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
                                     项目设置
                                 </TabsTrigger>
-                                <TabsTrigger value="update" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
+                                <TabsTrigger value="update" className="relative h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
                                     项目更新
+                                    {makeClientUpdateReminderVisible ? (
+                                        <span aria-label="有项目更新" className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-destructive" />
+                                    ) : null}
                                 </TabsTrigger>
                                 <TabsTrigger value="ai" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
                                     AI 设置
@@ -1116,47 +1171,103 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                     <span className="text-muted-foreground">项目路径</span>
                                     <span className="truncate font-medium text-foreground" title={makeClientUpdateStatus?.projectRoot || ''}>{makeClientUpdateStatus?.projectRoot || '未检测'}</span>
                                 </div>
-                                <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
-                                    <span className="text-muted-foreground">Git 状态</span>
-                                    <span className={makeClientUpdateStatus?.canApply ? 'font-medium text-emerald-600' : 'font-medium text-amber-600'}>
-                                        {formatMakeClientUpdateGitStatus(makeClientUpdateStatus)}
-                                    </span>
-                                </div>
                             </div>
 
-                            {makeClientUpdateStatus?.blockedReasons.length ? (
-                                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-300">
-                                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                                    <span>{getMakeClientUpdatePrimaryBlocker(makeClientUpdateStatus)}</span>
+                            {makeClientUpdateStatus?.releaseNotes ? (
+                                <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3 text-xs">
+                                    <div className="font-medium text-foreground">版本说明</div>
+                                    <div className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words leading-5 text-muted-foreground">
+                                        {makeClientUpdateStatus.releaseNotes}
+                                    </div>
                                 </div>
                             ) : null}
 
-                            <div className="space-y-2">
-                                <div className="text-xs font-medium text-foreground">更新过程</div>
-                                <div className="grid gap-1.5">
-                                    {MAKE_CLIENT_UPDATE_STEPS.map((step) => {
-                                        const active = makeClientUpdateApplying;
-                                        const completed = Boolean(makeClientUpdateResult);
-                                        return (
-                                            <div key={step} className="flex h-7 items-center gap-2 rounded-md bg-muted/20 px-2 text-xs text-muted-foreground">
-                                                {completed ? (
-                                                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                                                ) : active ? (
-                                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                                                ) : (
-                                                    <span className="h-3.5 w-3.5 rounded-full border border-border" />
-                                                )}
-                                                <span>{step}</span>
-                                            </div>
-                                        );
-                                    })}
+                            {visibleMakeClientUpdateBlocker ? (
+                                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-300">
+                                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                    <span>{visibleMakeClientUpdateBlocker}</span>
                                 </div>
-                            </div>
+                            ) : null}
+
+                            {makeClientUpdateAvailable && !makeClientUpdateApplying ? (
+                                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-300">
+                                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                    <span>
+                                        更新前会自动备份本次覆盖的文件。你也可以先通过 Git 提交一版作为额外备份。
+                                        <button
+                                            type="button"
+                                            className="ml-1 font-medium underline underline-offset-2"
+                                            onClick={handleOpenVersionCollaboration}
+                                        >
+                                            打开版本管理
+                                        </button>
+                                    </span>
+                                </div>
+                            ) : null}
+
+                            {makeClientUpdateApplying ? (
+                                <div className="flex items-start gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                                    <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />
+                                    <div className="min-w-0 space-y-1">
+                                        <div className="font-medium text-foreground">正在更新项目</div>
+                                        <div>正在执行完整模板更新流程，请保持此窗口打开。</div>
+                                        <div>更新失败时会保留错误诊断和备份位置，方便继续处理。</div>
+                                    </div>
+                                </div>
+                            ) : null}
 
                             {makeClientUpdateResult ? (
-                                <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-300">
-                                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                                    <span>项目更新完成。建议重启或刷新客户端后继续使用。</span>
+                                <div className="space-y-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-300">
+                                    <div className="flex items-start gap-2">
+                                        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                        <span>{makeClientUpdateResult.postUpdateWarning ? '项目模板文件已更新完成。依赖安装或项目清单同步需要稍后重试。' : '项目更新完成。建议重启或刷新客户端后继续使用。'}</span>
+                                    </div>
+                                    <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-2 pl-5">
+                                        <span className="text-emerald-600/80 dark:text-emerald-300/80">备份位置</span>
+                                        <span className="truncate font-mono text-[11px]" title={makeClientUpdateResult.backupRoot}>{makeClientUpdateResult.backupRoot}</span>
+                                        <span className="text-emerald-600/80 dark:text-emerald-300/80">备份压缩包</span>
+                                        <span className="truncate font-mono text-[11px]" title={makeClientUpdateResult.backupZipPath}>{makeClientUpdateResult.backupZipPath}</span>
+                                    </div>
+                                </div>
+                            ) : null}
+
+                            {makeClientUpdateResult?.postUpdateWarning ? (
+                                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-300">
+                                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                    <div className="min-w-0 space-y-1">
+                                        <div className="font-medium">后续步骤需要处理</div>
+                                        <div>模板已经更新到新版本，但依赖安装或项目清单同步没有完成。请刷新或重启客户端；如果仍异常，再重新检测并处理依赖。</div>
+                                    </div>
+                                </div>
+                            ) : null}
+
+                            {latestMakeClientUpdateBackup ? (
+                                <div className="space-y-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="font-medium text-foreground">上次更新记录</div>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 gap-1.5"
+                                            onClick={handleCopyMakeClientUpdateRestorePrompt}
+                                        >
+                                            <Copy className="h-3.5 w-3.5" />
+                                            复制给 AI 处理/还原
+                                        </Button>
+                                    </div>
+                                    <div className="grid grid-cols-[78px_minmax(0,1fr)] gap-2">
+                                        <span className="text-muted-foreground">更新时间</span>
+                                        <span className="truncate font-medium text-foreground">{formatMakeClientUpdateBackupTime(latestMakeClientUpdateBackup.completedAt)}</span>
+                                        <span className="text-muted-foreground">版本变化</span>
+                                        <span className="truncate font-medium text-foreground">{latestMakeClientUpdateBackup.currentVersion} -&gt; {latestMakeClientUpdateBackup.targetVersion}</span>
+                                        <span className="text-muted-foreground">覆盖文件</span>
+                                        <span className="truncate font-medium text-foreground">{latestMakeClientUpdateBackup.writtenFilesCount} 个文件</span>
+                                        <span className="text-muted-foreground">备份目录</span>
+                                        <span className="truncate font-mono text-[11px]" title={latestMakeClientUpdateBackup.backupRoot}>{latestMakeClientUpdateBackup.backupRoot}</span>
+                                        <span className="text-muted-foreground">备份压缩包</span>
+                                        <span className="truncate font-mono text-[11px]" title={latestMakeClientUpdateBackup.backupZipPath}>{latestMakeClientUpdateBackup.backupZipPath}</span>
+                                    </div>
                                 </div>
                             ) : null}
 
@@ -1190,9 +1301,9 @@ export default function SettingsDialog({ open, onClose, onSaved, initialTab = 'p
                                     disabled={
                                         makeClientUpdateApplying
                                         || makeClientUpdateStatusLoading
-                                        || !makeClientUpdateStatus?.canApply
+                                        || !makeClientUpdateCanApply
                                     }
-                                    title={getMakeClientUpdatePrimaryBlocker(makeClientUpdateStatus)}
+                                    title={visibleMakeClientUpdateBlocker}
                                 >
                                     {makeClientUpdateApplying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                                     {formatMakeClientUpdateActionLabel(makeClientUpdateStatus, makeClientUpdateApplying)}

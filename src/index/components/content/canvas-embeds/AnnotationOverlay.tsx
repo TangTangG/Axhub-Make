@@ -3,7 +3,7 @@ import { CaptureUpdateAction } from '@axhub/excalidraw';
 import { StickyNote, Trash2, X } from 'lucide-react';
 
 import { createMergedTextSceneUpdate } from './canvasTextMerge';
-import { resolveContextMenuViewportFit } from './contextMenuViewport';
+import { applyContextSubmenuFlyoutLayout, resolveContextMenuViewportFit } from './contextMenuViewport';
 import { getLinkEmbedSize } from './linkEmbedSizing';
 import { fitEmbedSizeToViewport, type EmbedViewportRect } from './embedViewportSizing';
 import { reorganizeContextMenu } from './contextMenuReorganizer';
@@ -754,17 +754,14 @@ export default function AnnotationOverlay({
                     const openSubmenu = () => {
                         flyout.classList.add('axhub-ctx-submenu-expanded');
                         requestAnimationFrame(() => {
-                            const rect = flyout.getBoundingClientRect();
-                            if (rect.right > window.innerWidth) {
-                                flyout.classList.add('axhub-ctx-submenu-flip');
-                            } else {
-                                flyout.classList.remove('axhub-ctx-submenu-flip');
-                            }
+                            applyContextSubmenuFlyoutLayout({
+                                triggerEl: triggerBtn,
+                                flyoutEl: flyout,
+                            });
                         });
                     };
                     const closeSubmenu = () => {
                         flyout.classList.remove('axhub-ctx-submenu-expanded');
-                        flyout.classList.remove('axhub-ctx-submenu-flip');
                     };
                     const toggleSubmenu = () => {
                         if (flyout.classList.contains('axhub-ctx-submenu-expanded')) {

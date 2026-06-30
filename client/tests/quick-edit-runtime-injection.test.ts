@@ -5,6 +5,7 @@ import {
   createQuickEditRuntimeScriptTag,
   injectDevTemplateBootstrapScript,
   injectQuickEditRuntimeScript,
+  injectReactRefreshPreambleScript,
 } from '../vite-plugins/clientPreviewPlugin';
 
 describe('quick edit runtime injection', () => {
@@ -69,5 +70,25 @@ describe('quick edit runtime injection', () => {
   it('does not inject the dev-template bootstrap when no make-server origin is available', () => {
     expect(createDevTemplateBootstrapScriptTag(null)).toBe('');
     expect(createDevTemplateBootstrapScriptTag('')).toBe('');
+  });
+
+  it('injects the React refresh preamble once before module scripts', () => {
+    const html = [
+      '<!doctype html>',
+      '<html>',
+      '<head></head>',
+      '<body>',
+      '  <script type="module" data-axhub-dev-template-bootstrap src="http://localhost:5174/assets/dev-template-bootstrap.js"></script>',
+      '</body>',
+      '</html>',
+    ].join('\n');
+    const nextHtml = injectReactRefreshPreambleScript(html);
+
+    expect(nextHtml).toContain('data-axhub-react-refresh-preamble');
+    expect(nextHtml).toContain('import { injectIntoGlobalHook } from "/@react-refresh";');
+    expect(nextHtml).toContain('window.$RefreshReg$ = () => {};');
+    expect(nextHtml.indexOf('data-axhub-react-refresh-preamble')).toBeLessThan(nextHtml.indexOf('</head>'));
+    expect(nextHtml.indexOf('data-axhub-react-refresh-preamble')).toBeLessThan(nextHtml.indexOf('data-axhub-dev-template-bootstrap'));
+    expect(injectReactRefreshPreambleScript(nextHtml)).toBe(nextHtml);
   });
 });

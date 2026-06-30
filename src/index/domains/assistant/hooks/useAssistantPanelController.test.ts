@@ -218,11 +218,15 @@ describe('useAssistantPanelController source', () => {
     expect(bridgeSource).toContain("waitUntil?: 'started' | 'finished';");
     expect(bridgeSource).toContain('provider?: string | null;');
     expect(bridgeSource).toContain('model?: string | null;');
+    expect(bridgeSource).toContain('modeId?: string | null;');
+    expect(bridgeSource).toContain('thoughtLevel?: string | null;');
     expect(bridgeSource).toContain("payload: {");
     expect(bridgeSource).toContain("text: prompt,");
     expect(bridgeSource).toContain("waitUntil: submitOptions?.waitUntil || 'started',");
     expect(bridgeSource).toContain("...(submitOptions?.provider ? { provider: submitOptions.provider } : {}),");
     expect(bridgeSource).toContain("...(submitOptions?.model ? { model: submitOptions.model } : {}),");
+    expect(bridgeSource).toContain("...(submitOptions?.modeId ? { modeId: submitOptions.modeId } : {}),");
+    expect(bridgeSource).toContain("...(submitOptions?.thoughtLevel ? { thoughtLevel: submitOptions.thoughtLevel } : {}),");
     expect(bridgeSource).toContain("...(submitOptions?.newThread === true ? { newThread: true } : {}),");
     expect(bridgeSource).toContain('const ACP_CHAT_SUBMIT_TIMEOUT_MS = 30_000;');
     expect(bridgeSource).toContain("'acp.chat.result'");
@@ -231,6 +235,8 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain('openAssistantWithContextAndSubmitPrompt');
     expect(controllerSource).toContain('provider?: string | null;');
     expect(controllerSource).toContain('model?: string | null;');
+    expect(controllerSource).toContain('mode?: string | null;');
+    expect(controllerSource).toContain('thought?: string | null;');
     expect(controllerSource).toContain("messageApi.loading('正在启动 AI 助手...', 0)");
     expect(controllerSource).toContain("syncAssistantContextToTargets(context, 'replace', {");
     expect(bridgeSource).not.toContain("'update_context'");
@@ -250,8 +256,12 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain('type OpenAssistantSubmitOptions = {');
     expect(controllerSource).toContain('provider?: string | null;');
     expect(controllerSource).toContain('model?: string | null;');
+    expect(controllerSource).toContain('mode?: string | null;');
+    expect(controllerSource).toContain('thought?: string | null;');
     expect(submitSource).toContain('provider: options.provider,');
     expect(submitSource).toContain('model: options.model,');
+    expect(submitSource).toContain('modeId: options.mode,');
+    expect(submitSource).toContain('thoughtLevel: options.thought,');
     expect(submitSource).toContain("waitUntil: options.collectArtifacts === true ? 'started' : options.waitUntil || 'started',");
   });
 

@@ -93,6 +93,7 @@ function createBuilderParams(overrides: Partial<Parameters<typeof useIndexPageSi
       stopProjectDevServer: vi.fn(),
       addProjectFromLocalPath: vi.fn(),
       createBlankMakeProject: vi.fn(async () => ({})),
+      cloneMakeProject: vi.fn(async () => ({})),
       copyMakeProject: vi.fn(async () => ({})),
       loadProjects: vi.fn(),
       setCreateDialogVisible: vi.fn(),
@@ -265,12 +266,13 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     expect(props.state.projectSetupRequired).toBe(true);
   });
 
-  it('resets successful project setup and copy to the prototype start page instead of preserving canvas mode', async () => {
+  it('resets successful project setup, clone, and copy to the prototype start page instead of preserving canvas mode', async () => {
     const setActiveTab = vi.fn();
     const setSidebarTab = vi.fn();
     const setViewMode = vi.fn();
     const setSelectedPrototypePageId = vi.fn();
     const createBlankMakeProject = vi.fn(async () => ({ project: { id: 'new-project' } }));
+    const cloneMakeProject = vi.fn(async () => ({ project: { id: 'cloned-project' } }));
     const copyMakeProject = vi.fn(async () => ({ project: { id: 'copied-project' } }));
     const addProjectFromLocalPath = vi.fn(async () => true);
     const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
@@ -285,6 +287,7 @@ describe('useIndexPageSidebarPropsBuilder', () => {
         setViewMode,
         setSelectedPrototypePageId,
         createBlankMakeProject,
+        cloneMakeProject,
         copyMakeProject,
         addProjectFromLocalPath,
       },
@@ -300,6 +303,12 @@ describe('useIndexPageSidebarPropsBuilder', () => {
       folderName: 'copied-project',
       projectName: 'Copied Project',
     });
+    await props.actions.onCloneMakeProject({
+      parentRoot: '/tmp',
+      folderName: 'cloned-project',
+      projectName: 'Cloned Project',
+      gitUrl: 'https://github.com/example/full-client.git',
+    });
     await props.actions.onAddProject('/tmp/existing-project');
 
     expect(createBlankMakeProject).toHaveBeenCalledWith({
@@ -312,23 +321,33 @@ describe('useIndexPageSidebarPropsBuilder', () => {
       folderName: 'copied-project',
       projectName: 'Copied Project',
     });
+    expect(cloneMakeProject).toHaveBeenCalledWith({
+      parentRoot: '/tmp',
+      folderName: 'cloned-project',
+      projectName: 'Cloned Project',
+      gitUrl: 'https://github.com/example/full-client.git',
+    });
     expect(addProjectFromLocalPath).toHaveBeenCalledWith('/tmp/existing-project');
-    expect(setActiveTab).toHaveBeenCalledTimes(3);
+    expect(setActiveTab).toHaveBeenCalledTimes(4);
     expect(setActiveTab).toHaveBeenNthCalledWith(1, 'prototypes');
     expect(setActiveTab).toHaveBeenNthCalledWith(2, 'prototypes');
     expect(setActiveTab).toHaveBeenNthCalledWith(3, 'prototypes');
-    expect(setSidebarTab).toHaveBeenCalledTimes(3);
+    expect(setActiveTab).toHaveBeenNthCalledWith(4, 'prototypes');
+    expect(setSidebarTab).toHaveBeenCalledTimes(4);
     expect(setSidebarTab).toHaveBeenNthCalledWith(1, 'prototype');
     expect(setSidebarTab).toHaveBeenNthCalledWith(2, 'prototype');
     expect(setSidebarTab).toHaveBeenNthCalledWith(3, 'prototype');
-    expect(setViewMode).toHaveBeenCalledTimes(3);
+    expect(setSidebarTab).toHaveBeenNthCalledWith(4, 'prototype');
+    expect(setViewMode).toHaveBeenCalledTimes(4);
     expect(setViewMode).toHaveBeenNthCalledWith(1, 'demo');
     expect(setViewMode).toHaveBeenNthCalledWith(2, 'demo');
     expect(setViewMode).toHaveBeenNthCalledWith(3, 'demo');
-    expect(setSelectedPrototypePageId).toHaveBeenCalledTimes(3);
+    expect(setViewMode).toHaveBeenNthCalledWith(4, 'demo');
+    expect(setSelectedPrototypePageId).toHaveBeenCalledTimes(4);
     expect(setSelectedPrototypePageId).toHaveBeenNthCalledWith(1, null);
     expect(setSelectedPrototypePageId).toHaveBeenNthCalledWith(2, null);
     expect(setSelectedPrototypePageId).toHaveBeenNthCalledWith(3, null);
+    expect(setSelectedPrototypePageId).toHaveBeenNthCalledWith(4, null);
   });
 
   it('does not pass the legacy document-to-prototype drawer action into the sidebar', () => {
@@ -397,7 +416,17 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     }));
 
     props.actions.onSettingsClick();
+    props.actions.onSettingsClick('update');
 
-    expect(openSettingsDialog).toHaveBeenCalledWith('project');
+    expect(openSettingsDialog).toHaveBeenNthCalledWith(1, 'project');
+    expect(openSettingsDialog).toHaveBeenNthCalledWith(2, 'update');
+  });
+
+  it('passes make client update availability into sidebar state', () => {
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      state: { makeClientUpdateAvailable: true } as any,
+    }));
+
+    expect(props.state.makeClientUpdateAvailable).toBe(true);
   });
 });

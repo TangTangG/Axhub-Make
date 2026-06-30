@@ -781,6 +781,8 @@ export function handleAiRunsApi(
         id: runId,
         threadId,
         provider,
+        scene,
+        allowToolErrorDiagnostics: scene === 'direct',
         workspacePath: context.project.root,
         conversationStorePath: safeText(request.conversationStorePath) || undefined,
         model,
@@ -837,12 +839,6 @@ export function handleAiRunsApi(
             });
             genericArtifactIndex += 1;
             if (artifact) await emitArtifact(artifact);
-          } else if (chunk.type === 'error' || chunk.type === 'tool-output-error') {
-            writeSseEvent(res, 'run.error', {
-              runId,
-              error: getChunkText(chunk, 'errorText') || getChunkText(chunk, 'message') || 'ACP chat stream failed',
-              chunk,
-            });
           }
         }
       }
@@ -949,6 +945,8 @@ export function handleAiRunsApi(
           runId,
           threadId: error.result?.threadId || threadId,
           output: error.result?.output,
+          errors: error.result?.errors,
+          chunk: error.result?.errors.find((entry) => entry.chunk)?.chunk,
           rawResponsePayload: error.result ? createPersistableRawResponsePayload(error.result.toolOutputs) : undefined,
         });
         return;

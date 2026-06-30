@@ -18,14 +18,14 @@ describe('PresentationArea resource folder source', () => {
   it('hides the presentation toolbar on the prototype start draft page', () => {
     const source = readPresentationAreaSource();
 
-    expect(source).toContain('const isPrototypeStartDraft = props.prototypeStartDraftActive === true && !props.selectedItem;');
+    expect(source).toContain('const isPrototypeStartDraft = isPreviewContentMode && props.prototypeStartDraftActive === true && !props.selectedItem;');
     expect(source).toContain('&& !isPrototypeStartDraft');
   });
 
   it('hides the presentation toolbar on existing placeholder prototype start pages', () => {
     const source = readPresentationAreaSource();
 
-    expect(source).toContain("const isPrototypeStartPlaceholder = props.selectedItem?.placeholder === true && props.viewMode === 'demo';");
+    expect(source).toContain("const isPrototypeStartPlaceholder = isPreviewContentMode && props.selectedItem?.placeholder === true && props.viewMode === 'demo';");
     expect(source).toContain('&& !isPrototypeStartPlaceholder');
   });
 
@@ -66,6 +66,14 @@ describe('PresentationArea resource folder source', () => {
     expect(startActionSource).not.toContain('<PresentationToolbar');
   });
 
+  it('scopes prototype start actions to prototype preview content so document pages keep their toolbar', () => {
+    const source = readPresentationAreaSource();
+
+    expect(source).toContain("const isPreviewContentMode = props.contentMode === 'preview';");
+    expect(source).toContain('const isPrototypeStartDraft = isPreviewContentMode');
+    expect(source).toContain('const isPrototypeStartPlaceholder = isPreviewContentMode');
+  });
+
   it('passes review tab state and host page zoom into the review layout without panel close wiring', () => {
     const source = readPresentationAreaSource();
     const reviewPanelSource = source.slice(
@@ -91,6 +99,16 @@ describe('PresentationArea resource folder source', () => {
     const source = readPresentationAreaSource();
 
     expect(source).toContain('onRunPrototypePanePromptAction={props.handleRunPrototypePanePromptAction}');
+  });
+
+  it('forwards prototype decision availability into the presentation toolbar', () => {
+    const source = readPresentationAreaSource();
+    const toolbarSource = source.slice(
+      source.indexOf('<PresentationToolbar'),
+      source.indexOf('/>', source.indexOf('<PresentationToolbar')),
+    );
+
+    expect(toolbarSource).toContain('prototypeDecisionDataAvailable={props.prototypeDecisionDataAvailable}');
   });
 
   it('forwards canvas AI prompt submissions into the content area', () => {

@@ -33,7 +33,7 @@ describe('make-server project declared resource write APIs', () => {
     expect(handleUploadAndReferenceApis).toBeTypeOf('function');
   });
 
-  it('keeps manual docs unavailable while creating templates, data tables, and themes through declared resource write targets', async () => {
+  it('keeps manual docs unavailable while creating templates and data tables in fixed resource directories', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
       project: { id: 'write-client', name: 'Write Client' },
@@ -59,7 +59,7 @@ describe('make-server project declared resource write APIs', () => {
         themes: { path: 'content/themes' },
       },
     });
-    const templateDir = path.join(projectRoot, 'content', 'templates');
+    const templateDir = path.join(projectRoot, 'src', 'resources', 'templates');
     fs.mkdirSync(templateDir, { recursive: true });
     fs.writeFileSync(path.join(templateDir, 'base.md'), '# Base\n', 'utf8');
     const server = await startTestServer(projectRoot);
@@ -86,7 +86,7 @@ describe('make-server project declared resource write APIs', () => {
           projectId: 'write-client',
         },
       });
-      expect(fs.readFileSync(path.join(projectRoot, 'content/templates/base-copy.md'), 'utf8')).toBe('# Base\n');
+      expect(fs.readFileSync(path.join(templateDir, 'base-copy.md'), 'utf8')).toBe('# Base\n');
 
       const tableCreate = await fetch(`${server.origin}/api/data/tables`, {
         method: 'POST',
@@ -102,7 +102,7 @@ describe('make-server project declared resource write APIs', () => {
           projectId: 'write-client',
         },
       });
-      expect(JSON.parse(fs.readFileSync(path.join(projectRoot, 'content/data/customers.json'), 'utf8'))).toEqual({
+      expect(JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/database/customers.json'), 'utf8'))).toEqual({
         tableName: 'Customers',
         records: [],
       });
@@ -127,30 +127,16 @@ describe('make-server project declared resource write APIs', () => {
       });
 
       const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
-      expect(metadata.resources.docs).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: 'spec' }),
-      ]));
-      expect(metadata.resources.docs).not.toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: 'manual-doc' }),
-      ]));
-      expect(metadata.resources.templates).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: 'base-copy', name: 'base-copy.md' }),
-        expect.objectContaining({ id: 'prd' }),
-      ]));
-      expect(metadata.resources.data).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: 'customers', name: 'customers', path: 'content/data/customers.json' }),
-        expect.objectContaining({ id: 'orders' }),
-      ]));
+      expect(metadata.resources).not.toHaveProperty('docs');
+      expect(metadata.resources).not.toHaveProperty('templates');
+      expect(metadata.resources).not.toHaveProperty('data');
       expect(metadata.resources.themes).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'brand-theme', name: 'brand-theme', path: 'content/themes/brand-theme' }),
         expect.objectContaining({ id: 'theme-a' }),
       ]));
-      expect(metadata.navigation.docs).toContain('spec');
-      expect(metadata.navigation.docs).not.toContain('manual-doc');
-      expect(metadata.orders.templates[0]).toBe('base-copy.md');
-      expect(metadata.orders.templates).toContain('prd');
-      expect(metadata.orders.data[0]).toBe('customers');
-      expect(metadata.orders.data).toContain('orders');
+      expect(metadata.navigation).not.toHaveProperty('docs');
+      expect(metadata.orders).not.toHaveProperty('templates');
+      expect(metadata.orders).not.toHaveProperty('data');
       expect(metadata.orders.themes[0]).toBe('brand-theme');
       expect(metadata.orders.themes).toContain('theme-a');
     } finally {
@@ -191,10 +177,12 @@ describe('make-server project declared resource write APIs', () => {
       capabilities: writeCapabilities,
       resourceWriteTargets: writeTargets,
     });
-    fs.mkdirSync(path.join(firstRoot, 'content', 'templates'), { recursive: true });
-    fs.writeFileSync(path.join(firstRoot, 'content', 'templates', 'base.md'), '# First Template\n', 'utf8');
-    fs.mkdirSync(path.join(secondRoot, 'content', 'templates'), { recursive: true });
-    fs.writeFileSync(path.join(secondRoot, 'content', 'templates', 'base.md'), '# Second Template\n', 'utf8');
+    const firstTemplatesDir = path.join(firstRoot, 'src', 'resources', 'templates');
+    const secondTemplatesDir = path.join(secondRoot, 'src', 'resources', 'templates');
+    fs.mkdirSync(firstTemplatesDir, { recursive: true });
+    fs.writeFileSync(path.join(firstTemplatesDir, 'base.md'), '# First Template\n', 'utf8');
+    fs.mkdirSync(secondTemplatesDir, { recursive: true });
+    fs.writeFileSync(path.join(secondTemplatesDir, 'base.md'), '# Second Template\n', 'utf8');
 
     const server = await startTestServer(firstRoot);
 
@@ -239,22 +227,22 @@ describe('make-server project declared resource write APIs', () => {
       });
 
       expect(fs.existsSync(path.join(secondRoot, 'content', 'docs', 'second-doc.md'))).toBe(false);
-      expect(fs.existsSync(path.join(secondRoot, 'content', 'templates', 'second-copy.md'))).toBe(true);
-      expect(fs.existsSync(path.join(secondRoot, 'content', 'data', 'second-customers.json'))).toBe(true);
+      expect(fs.existsSync(path.join(secondTemplatesDir, 'second-copy.md'))).toBe(true);
+      expect(fs.existsSync(path.join(secondRoot, 'src/database/second-customers.json'))).toBe(true);
       expect(fs.existsSync(path.join(secondRoot, 'content', 'themes', 'second-theme'))).toBe(true);
       expect(fs.existsSync(path.join(firstRoot, 'content', 'docs', 'second-doc.md'))).toBe(false);
-      expect(fs.existsSync(path.join(firstRoot, 'content', 'templates', 'second-copy.md'))).toBe(false);
-      expect(fs.existsSync(path.join(firstRoot, 'content', 'data', 'second-customers.json'))).toBe(false);
+      expect(fs.existsSync(path.join(firstTemplatesDir, 'second-copy.md'))).toBe(false);
+      expect(fs.existsSync(path.join(firstRoot, 'src/database/second-customers.json'))).toBe(false);
       expect(fs.existsSync(path.join(firstRoot, 'content', 'themes', 'second-theme'))).toBe(false);
       const firstMetadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(firstRoot), 'utf8'));
       const secondMetadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(secondRoot), 'utf8'));
-      expect(firstMetadata.navigation.docs).not.toContain('second-doc');
-      expect(firstMetadata.orders.templates).not.toContain('second-copy.md');
-      expect(firstMetadata.orders.data).not.toContain('second-customers');
+      expect(firstMetadata.navigation).not.toHaveProperty('docs');
+      expect(firstMetadata.orders).not.toHaveProperty('templates');
+      expect(firstMetadata.orders).not.toHaveProperty('data');
       expect(firstMetadata.orders.themes).not.toContain('second-theme');
-      expect(secondMetadata.navigation.docs).not.toContain('second-doc');
-      expect(secondMetadata.orders.templates).toContain('second-copy.md');
-      expect(secondMetadata.orders.data).toContain('second-customers');
+      expect(secondMetadata.navigation).not.toHaveProperty('docs');
+      expect(secondMetadata.orders).not.toHaveProperty('templates');
+      expect(secondMetadata.orders).not.toHaveProperty('data');
       expect(secondMetadata.orders.themes).toContain('second-theme');
     } finally {
       await server.close();
@@ -307,7 +295,7 @@ describe('make-server project declared resource write APIs', () => {
           projectId: 'write-alias-client',
         },
       });
-      expect(fs.readFileSync(path.join(projectRoot, 'content/templates/api-template.md'), 'utf8')).toBe('# Template\n');
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/templates/api-template.md'), 'utf8')).toBe('# Template\n');
 
       const formData = new FormData();
       formData.append('path', 'icons');
@@ -406,14 +394,14 @@ describe('make-server project declared resource write APIs', () => {
           ],
         },
       });
-      expect(fs.readFileSync(path.join(projectRoot, 'content/docs/中文资源.md'), 'utf8')).toBe('# 中文标题\n正文\n');
-      expect(fs.existsSync(path.join(projectRoot, 'content/docs/ä¸­æ–‡èµ„æº.md'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/中文资源.md'), 'utf8')).toBe('# 中文标题\n正文\n');
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/ä¸­æ–‡èµ„æº.md'))).toBe(false);
     } finally {
       await server.close();
     }
   });
 
-  it('uploads document files into a validated target folder and reports nested resource names', async () => {
+  it('uploads document files into a validated target folder without putting the folder in the generated name', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
       project: { id: 'nested-upload-client', name: 'Nested Upload Client' },
@@ -431,7 +419,7 @@ describe('make-server project declared resource write APIs', () => {
         docs: { path: 'content/docs' },
       },
     });
-    const docsDir = path.join(projectRoot, 'content/docs');
+    const docsDir = path.join(projectRoot, 'src/resources');
     fs.mkdirSync(path.join(docsDir, 'assets/screens'), { recursive: true });
     fs.writeFileSync(path.join(docsDir, 'assets/screens/pasted-image.png'), 'existing', 'utf8');
     const server = await startTestServer(projectRoot);
@@ -456,12 +444,16 @@ describe('make-server project declared resource write APIs', () => {
           success: true,
           files: [
             expect.objectContaining({
-              name: 'assets/screens/pasted-image-2.png',
+              name: 'pasted-image-2.png',
               id: 'pasted-image-2',
+              displayName: 'pasted-image-2',
+              path: 'assets/screens/pasted-image-2.png',
             }),
             expect.objectContaining({
-              name: 'assets/screens/hero.webp',
+              name: 'hero.webp',
               id: 'hero',
+              displayName: 'hero',
+              path: 'assets/screens/hero.webp',
             }),
           ],
         },
@@ -470,19 +462,41 @@ describe('make-server project declared resource write APIs', () => {
       expect(fs.readFileSync(path.join(docsDir, 'assets/screens/hero.webp'), 'utf8')).toBe('second');
       expect(fs.existsSync(path.join(docsDir, 'pasted-image-2.png'))).toBe(false);
 
-      const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
-      expect(metadata.resources.docs).toEqual(expect.arrayContaining([
+      const docsList = await fetch(`${server.origin}/api/docs?projectId=nested-upload-client`)
+        .then((response) => response.json());
+      expect(docsList).toEqual(expect.arrayContaining([
         expect.objectContaining({
-          id: 'pasted-image-2',
-          name: 'pasted-image-2',
-          path: path.join(docsDir, 'assets/screens/pasted-image-2.png'),
+          name: 'pasted-image-2.png',
+          displayName: 'pasted-image-2',
+          path: 'assets/screens/pasted-image-2.png',
         }),
         expect.objectContaining({
-          id: 'hero',
-          name: 'hero',
-          path: path.join(docsDir, 'assets/screens/hero.webp'),
+          name: 'hero.webp',
+          displayName: 'hero',
+          path: 'assets/screens/hero.webp',
         }),
       ]));
+
+      const rename = await fetch(`${server.origin}/api/docs/${encodeURIComponent('assets/screens/hero.webp')}?projectId=nested-upload-client`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newBaseName: 'renamed-hero' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(rename).toMatchObject({
+        status: 200,
+        body: {
+          success: true,
+          name: 'renamed-hero.webp',
+          path: 'assets/screens/renamed-hero.webp',
+        },
+      });
+      expect(fs.existsSync(path.join(docsDir, 'assets/screens/hero.webp'))).toBe(false);
+      expect(fs.readFileSync(path.join(docsDir, 'assets/screens/renamed-hero.webp'), 'utf8')).toBe('second');
+
+      const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
+      expect(metadata.resources).not.toHaveProperty('docs');
+      expect(metadata.navigation).not.toHaveProperty('docs');
     } finally {
       await server.close();
     }
@@ -506,7 +520,7 @@ describe('make-server project declared resource write APIs', () => {
         docs: { path: 'content/docs' },
       },
     });
-    const docsDir = path.join(projectRoot, 'content/docs');
+    const docsDir = path.join(projectRoot, 'src/resources');
     const server = await startTestServer(projectRoot);
 
     try {
@@ -532,11 +546,11 @@ describe('make-server project declared resource write APIs', () => {
     }
   });
 
-  it('keeps metadata, navigation, and orders in sync for declared resource writes', async () => {
+  it('keeps fixed filesystem resources out of metadata while preserving theme metadata writes', async () => {
     const projectRoot = createTempRoot();
-    const docsDir = path.join(projectRoot, 'content/docs');
-    const templatesDir = path.join(projectRoot, 'content/templates');
-    const dataDir = path.join(projectRoot, 'content/data');
+    const docsDir = path.join(projectRoot, 'src/resources');
+    const templatesDir = path.join(projectRoot, 'src/resources/templates');
+    const dataDir = path.join(projectRoot, 'src/database');
     const themesDir = path.join(projectRoot, 'content/themes');
     fs.mkdirSync(docsDir, { recursive: true });
     fs.mkdirSync(templatesDir, { recursive: true });
@@ -551,20 +565,10 @@ describe('make-server project declared resource write APIs', () => {
       project: { id: 'sync-client', name: 'Sync Client' },
       resources: {
         prototypes: [],
-        docs: [
-          {
-            id: 'base',
-            name: 'base',
-            title: 'Base Doc',
-            path: path.join(docsDir, 'base.md'),
-          },
-        ],
         themes: [{ id: 'brand', name: 'brand', title: 'Brand', path: 'content/themes/brand' }],
-        data: [{ id: 'orders', name: 'orders', title: 'Orders', path: 'content/data/orders.json' }],
-        templates: [{ id: 'base', name: 'base.md', title: 'Base Template', path: 'content/templates/base.md' }],
       },
-      navigation: { prototypes: [], docs: ['base'] },
-      orders: { themes: ['brand'], data: ['orders'], templates: ['base.md'] },
+      navigation: { prototypes: [] },
+      orders: { themes: ['brand'] },
       capabilities: {
         quickEdit: true,
         quickEditMode: 'clientRuntime',
@@ -646,12 +650,12 @@ describe('make-server project declared resource write APIs', () => {
       expect(docDelete.status).toBe(200);
 
       const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
-      expect(metadata.resources.docs.map((doc: any) => doc.id)).toEqual(['base-copy']);
-      expect(metadata.navigation.docs).toEqual(['base-copy']);
-      expect(metadata.resources.templates).toEqual([]);
-      expect(metadata.orders.templates).toEqual([]);
-      expect(metadata.resources.data).toEqual([]);
-      expect(metadata.orders.data).toEqual([]);
+      expect(metadata.resources).not.toHaveProperty('docs');
+      expect(metadata.navigation).not.toHaveProperty('docs');
+      expect(metadata.resources).not.toHaveProperty('templates');
+      expect(metadata.orders).not.toHaveProperty('templates');
+      expect(metadata.resources).not.toHaveProperty('data');
+      expect(metadata.orders).not.toHaveProperty('data');
       expect(metadata.resources.themes).toEqual([]);
       expect(metadata.orders.themes).toEqual([]);
       expect(fs.existsSync(path.join(docsDir, 'base.md'))).toBe(false);

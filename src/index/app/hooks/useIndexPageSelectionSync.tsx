@@ -446,6 +446,7 @@ export function useIndexPageSelectionSync({
         if (
             (
                 initialResourceDeepLink?.resourceType === 'doc'
+                || initialResourceDeepLink?.resourceType === 'project-doc'
                 || initialResourceDeepLink?.resourceType === 'template'
                 || initialResourceDeepLink?.resourceType === 'theme'
             )
@@ -453,7 +454,13 @@ export function useIndexPageSelectionSync({
         ) {
             return;
         }
-        if (!resourceDeepLinkConsumedRef.current && initialResourceDeepLink?.resourceType === 'doc') {
+        if (
+            !resourceDeepLinkConsumedRef.current
+            && (
+                initialResourceDeepLink?.resourceType === 'doc'
+                || initialResourceDeepLink?.resourceType === 'project-doc'
+            )
+        ) {
             const resolvedDeepLink = resolveIndexDeepLinkSelection(initialResourceDeepLink, {
                 prototypes: data.prototypes,
                 docs: docsItems,
@@ -462,6 +469,7 @@ export function useIndexPageSelectionSync({
             if (resolvedDeepLink?.kind === 'doc') {
                 markInitialResourceDeepLinkHandled();
                 setSidebarTab(resolvedDeepLink.sidebarTab);
+                setViewMode('demo');
                 setSelectedResourceFolder?.(null);
                 setSelectedDoc(resolvedDeepLink.item);
                 if (resolvedDeepLink.collapseSidebar) {
@@ -484,6 +492,17 @@ export function useIndexPageSelectionSync({
                 setResourceSection(resolvedDeepLink.resourceSection);
                 setSelectedResourceFolder?.(null);
                 setSelectedTemplate(resolvedDeepLink.item);
+                setViewMode('demo');
+                if (resolvedDeepLink.collapseSidebar) {
+                    setCollapsed?.(true);
+                }
+                return;
+            }
+            if (resolvedDeepLink?.kind === 'doc') {
+                markInitialResourceDeepLinkHandled();
+                setSidebarTab(resolvedDeepLink.sidebarTab);
+                setSelectedResourceFolder?.(null);
+                setSelectedDoc(resolvedDeepLink.item);
                 setViewMode('demo');
                 if (resolvedDeepLink.collapseSidebar) {
                     setCollapsed?.(true);
