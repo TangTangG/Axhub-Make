@@ -17,6 +17,8 @@ class FakeHTMLElement {
   clientHeight = 0;
   offsetWidth = 0;
   offsetHeight = 0;
+  scrollLeft = 0;
+  scrollTop = 0;
 
   constructor() {
     this.style = {
@@ -93,7 +95,13 @@ describe('runtime-export-core captureDocumentScreenshot', () => {
     globalThis.HTMLImageElement = FakeHTMLImageElement as any;
     globalThis.window = {
       devicePixelRatio: 3,
+      scrollX: 0,
+      scrollY: 0,
       location: { href: 'http://localhost:51720/prototypes/home', origin: 'http://localhost:51720' },
+      scrollTo: vi.fn((left: number, top: number) => {
+        (globalThis.window as any).scrollX = left;
+        (globalThis.window as any).scrollY = top;
+      }),
       setTimeout: (callback: () => void) => {
         callback();
         return 1;
@@ -142,6 +150,10 @@ describe('runtime-export-core captureDocumentScreenshot', () => {
       embedFonts: true,
       fallbackURL: expect.stringContaining('data:image/svg+xml'),
       cache: 'soft',
+      fast: true,
+      placeholders: false,
+      outerTransforms: false,
+      outerShadows: false,
     }));
     expect(result).toEqual({
       dataUrl: 'data:image/png;base64,c25hcGRvbQ==',
@@ -174,6 +186,43 @@ describe('runtime-export-core captureDocumentScreenshot', () => {
     expect(calledOptions).toEqual(expect.objectContaining({
       dpr: 1,
     }));
+  });
+
+  it('uses requested screenshot dimensions as the viewport and exports the full scroll size', async () => {
+    const element = new FakeHTMLElement();
+    element.clientWidth = 1440;
+    element.clientHeight = 1583;
+    element.offsetWidth = 1440;
+    element.offsetHeight = 1583;
+    element.scrollWidth = 1440;
+    element.scrollHeight = 1995;
+    snapdomToPng.mockImplementation(async () => {
+      expect(element.style.width).toBe('1440px');
+      expect(element.style.height).toBe('1995px');
+      expect(element.style.minHeight).toBe('1995px');
+      return {
+      src: 'data:image/png;base64,c25hcGRvbQ==',
+      getAttribute: vi.fn(),
+      };
+    });
+
+    const result = await captureDocumentScreenshot(element as any, {
+      targetWidth: 1440,
+      targetHeight: 1583,
+      targetPixelRatio: 1,
+    });
+
+    const [calledElement, calledOptions] = snapdomToPng.mock.calls[0];
+    expect(calledElement).toBe(element);
+    expect(calledOptions).toEqual(expect.objectContaining({
+      width: 1440,
+      height: 1995,
+    }));
+    expect(result).toEqual({
+      dataUrl: 'data:image/png;base64,c25hcGRvbQ==',
+      width: 1440,
+      height: 1995,
+    });
   });
 
   it('temporarily anchors the screenshot root and page chrome to the top-left viewport', async () => {
@@ -245,6 +294,54 @@ describe('runtime-export-core captureDocumentScreenshot', () => {
     expect(body.style.alignItems).toBe('center');
     expect(body.style.justifyContent).toBe('center');
     expect(body.style.placeItems).toBe('center');
+  });
+
+  it('captures from the scroll origin and restores previous scroll offsets', async () => {
+    const element = new FakeHTMLElement();
+    const documentElement = new FakeHTMLElement();
+    const body = new FakeHTMLElement();
+    element.scrollWidth = 390;
+    element.scrollHeight = 846;
+    element.scrollLeft = 9;
+    element.scrollTop = 45;
+    documentElement.scrollLeft = 11;
+    documentElement.scrollTop = 67;
+    body.scrollLeft = 13;
+    body.scrollTop = 89;
+    document.body = body as any;
+    document.documentElement = documentElement as any;
+    (globalThis.window as any).scrollX = 15;
+    (globalThis.window as any).scrollY = 111;
+    snapdomToPng.mockImplementation(async () => {
+      expect((globalThis.window as any).scrollTo).toHaveBeenCalledWith(0, 0);
+      expect((globalThis.window as any).scrollX).toBe(0);
+      expect((globalThis.window as any).scrollY).toBe(0);
+      expect(documentElement.scrollLeft).toBe(0);
+      expect(documentElement.scrollTop).toBe(0);
+      expect(body.scrollLeft).toBe(0);
+      expect(body.scrollTop).toBe(0);
+      expect(element.scrollLeft).toBe(0);
+      expect(element.scrollTop).toBe(0);
+      return {
+        src: 'data:image/png;base64,c25hcGRvbQ==',
+        getAttribute: vi.fn(),
+      };
+    });
+
+    await captureDocumentScreenshot(element as any, {
+      targetWidth: 390,
+      targetHeight: 846,
+    });
+
+    expect((globalThis.window as any).scrollTo).toHaveBeenLastCalledWith(15, 111);
+    expect((globalThis.window as any).scrollX).toBe(15);
+    expect((globalThis.window as any).scrollY).toBe(111);
+    expect(documentElement.scrollLeft).toBe(11);
+    expect(documentElement.scrollTop).toBe(67);
+    expect(body.scrollLeft).toBe(13);
+    expect(body.scrollTop).toBe(89);
+    expect(element.scrollLeft).toBe(9);
+    expect(element.scrollTop).toBe(45);
   });
 
   it('temporarily disables root flex centering that can create blank top screenshot space', async () => {

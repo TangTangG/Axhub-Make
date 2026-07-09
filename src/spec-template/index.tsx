@@ -6,10 +6,10 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  type GenieEditorHostToolbarAction,
-  type GenieEditorHostToolbarState,
-  type GenieEditorToolbarMode,
-} from 'axhub-genie-editor';
+  type CommentaryHostToolbarAction,
+  type CommentaryHostToolbarState,
+  type CommentaryToolbarMode,
+} from '@axhub/commentary';
 import { MarkdownViewer, type MarkdownViewerHandle } from './MarkdownViewer';
 
 interface MarkdownDocument {
@@ -38,7 +38,8 @@ function handleRenderedDocumentChange(document: MarkdownDocument | null): void {
 }
 
 function enableDocumentEditor(options?: {
-  toolbarMode?: GenieEditorToolbarMode;
+  toolbarMode?: CommentaryToolbarMode;
+  quickEditMode?: 'comment' | 'edit';
   initialDarkMode?: boolean;
   assistantPanelOpen?: boolean;
 }): void {
@@ -49,17 +50,17 @@ function disableDocumentEditor(): void {
   markdownViewerRef.current?.disableDocumentEditor();
 }
 
-function getDocumentHostToolbarState(): GenieEditorHostToolbarState | null {
+function getDocumentHostToolbarState(): CommentaryHostToolbarState | null {
   return markdownViewerRef.current?.getHostToolbarState() ?? null;
 }
 
 function subscribeDocumentHostToolbarState(
-  listener: (state: GenieEditorHostToolbarState) => void,
+  listener: (state: CommentaryHostToolbarState) => void,
 ): () => void {
   return markdownViewerRef.current?.subscribeHostToolbarState(listener) ?? (() => undefined);
 }
 
-function runDocumentHostToolbarAction(action: GenieEditorHostToolbarAction): Promise<boolean> {
+function runDocumentHostToolbarAction(action: CommentaryHostToolbarAction): Promise<boolean> {
   return markdownViewerRef.current?.runHostToolbarAction(action) ?? Promise.resolve(false);
 }
 
@@ -208,13 +209,15 @@ if (typeof window !== 'undefined') {
   };
   window.SpecTemplateBootstrap.editors = {
     enable(_mode?: string, options?: {
-      toolbarMode?: GenieEditorToolbarMode;
+      toolbarMode?: CommentaryToolbarMode;
+      quickEditMode?: 'comment' | 'edit';
       assistantPanelOpen?: boolean;
     }) {
       markdownViewerRef.current?.enableQuickEdit();
       if (options?.toolbarMode) {
         enableDocumentEditor({
           toolbarMode: options.toolbarMode,
+          quickEditMode: options.quickEditMode ?? (_mode === 'edit' ? 'edit' : 'comment'),
           assistantPanelOpen: options.assistantPanelOpen,
         });
       }

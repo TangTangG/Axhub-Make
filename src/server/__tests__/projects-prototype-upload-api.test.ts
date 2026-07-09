@@ -200,6 +200,97 @@ function createUnsafeZipWithTraversalEntry(): string {
   return zipPath;
 }
 
+const CRC32_TABLE = new Uint32Array(256).map((_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  return value >>> 0;
+});
+
+function crc32(data: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createStoredZipWithEncodedEntries(entries: { name: Buffer; data: Buffer }[], zipPath: string): void {
+  const chunks: Buffer[] = [];
+  const centralChunks: Buffer[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const crc = crc32(entry.data);
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(entry.data.length, 18);
+    localHeader.writeUInt32LE(entry.data.length, 22);
+    localHeader.writeUInt16LE(entry.name.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(entry.data.length, 20);
+    centralHeader.writeUInt32LE(entry.data.length, 24);
+    centralHeader.writeUInt16LE(entry.name.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+
+    chunks.push(localHeader, entry.name, entry.data);
+    centralChunks.push(centralHeader, entry.name);
+    offset += localHeader.length + entry.name.length + entry.data.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralChunks);
+  const endRecord = Buffer.alloc(22);
+  endRecord.writeUInt32LE(0x06054b50, 0);
+  endRecord.writeUInt16LE(0, 4);
+  endRecord.writeUInt16LE(0, 6);
+  endRecord.writeUInt16LE(entries.length, 8);
+  endRecord.writeUInt16LE(entries.length, 10);
+  endRecord.writeUInt32LE(centralDirectory.length, 12);
+  endRecord.writeUInt32LE(offset, 16);
+  endRecord.writeUInt16LE(0, 20);
+
+  fs.writeFileSync(zipPath, Buffer.concat([...chunks, centralDirectory, endRecord]));
+}
+
+function createLegacyChineseFileNameZip(): string {
+  const rootName = Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0xd7, 0xca, 0xd4, 0xb4]);
+  const ruleName = Buffer.from([0xb9, 0xe6, 0xd4, 0xf2]);
+  const zipPath = path.join(createTempRoot('axhub-make-legacy-chinese-zip-'), 'legacy-chinese.zip');
+  createStoredZipWithEncodedEntries([
+    {
+      name: Buffer.concat([rootName, Buffer.from('/index.tsx')]),
+      data: Buffer.from('export default function LegacyChineseZip() { return null; }\n'),
+    },
+    {
+      name: Buffer.concat([rootName, Buffer.from('/'), ruleName, Buffer.from('.md')]),
+      data: Buffer.from('# rules\n'),
+    },
+  ], zipPath);
+  return zipPath;
+}
+
 function readMetadata(projectRoot: string): any {
   return JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
 }
@@ -439,7 +530,7 @@ describe('make-server project prototype upload APIs', () => {
     }
   });
 
-  it('creates placeholder prototypes with clean source files and an empty canvas', async () => {
+  it('creates placeholder prototypes with clean source files and no canvas file', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
       project: { id: 'prototype-create-client', name: 'Prototype Create Client' },
@@ -474,19 +565,18 @@ describe('make-server project prototype upload APIs', () => {
           projectId: 'prototype-create-client',
           name: 'untitled',
           path: 'prototypes/untitled',
-          canvasFilePath: 'content/prototypes/untitled/canvas.excalidraw',
-          absoluteCanvasFilePath: path.join(projectRoot, 'content/prototypes/untitled/canvas.excalidraw'),
           clientUrl: `${server.origin}/prototypes/untitled`,
         },
       });
+      expect(create.body).not.toHaveProperty('canvasFilePath');
+      expect(create.body).not.toHaveProperty('absoluteCanvasFilePath');
       expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/untitled/index.tsx'))).toBe(true);
       expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/untitled/style.css'))).toBe(true);
-      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/untitled/canvas.excalidraw'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/untitled/canvas.excalidraw'))).toBe(false);
       expect(fs.existsSync(path.join(projectRoot, 'content/prototypes/untitled/spec.md'))).toBe(false);
 
       const indexSource = fs.readFileSync(path.join(projectRoot, 'content/prototypes/untitled/index.tsx'), 'utf8');
       const styleSource = fs.readFileSync(path.join(projectRoot, 'content/prototypes/untitled/style.css'), 'utf8');
-      const canvas = JSON.parse(fs.readFileSync(path.join(projectRoot, 'content/prototypes/untitled/canvas.excalidraw'), 'utf8'));
       expect(indexSource).toContain('export default function Placeholder()');
       expect(indexSource).toContain('className="placeholder-empty-page"');
       expect(indexSource).toContain('<main className="placeholder-empty-page" aria-label={displayName}>');
@@ -506,17 +596,6 @@ describe('make-server project prototype upload APIs', () => {
       expect(styleSource).not.toContain('.placeholder-empty-page__badge');
       expect(styleSource).not.toContain('box-shadow');
       expect(styleSource).not.toContain('对话技巧');
-      expect(canvas).toMatchObject({
-        type: 'excalidraw',
-        version: 2,
-        source: '@axhub/make',
-        elements: [],
-        appState: {
-          viewBackgroundColor: '#ffffff',
-        },
-        files: {},
-      });
-      expect(JSON.stringify(canvas)).not.toContain('对话技巧');
 
       const metadata = readMetadata(projectRoot);
       const prototype = metadata.resources.prototypes.find((item: any) => item.id === 'untitled');
@@ -528,6 +607,8 @@ describe('make-server project prototype upload APIs', () => {
         },
       });
       expect(prototype).not.toHaveProperty('spec');
+      expect(prototype).not.toHaveProperty('canvasFilePath');
+      expect(prototype).not.toHaveProperty('absoluteCanvasFilePath');
     } finally {
       await server.close();
     }
@@ -557,14 +638,14 @@ describe('make-server project prototype upload APIs', () => {
           name: 'untitled',
           path: 'prototypes/untitled',
           filePath: 'src/prototypes/untitled/index.tsx',
-          canvasFilePath: 'src/prototypes/untitled/canvas.excalidraw',
-          absoluteCanvasFilePath: path.join(projectRoot, 'src/prototypes/untitled/canvas.excalidraw'),
           clientUrl: `${server.origin}/prototypes/untitled`,
         },
       });
+      expect(create.body).not.toHaveProperty('canvasFilePath');
+      expect(create.body).not.toHaveProperty('absoluteCanvasFilePath');
       expect(fs.existsSync(path.join(projectRoot, 'src/prototypes/untitled/index.tsx'))).toBe(true);
       expect(fs.existsSync(path.join(projectRoot, 'src/prototypes/untitled/style.css'))).toBe(true);
-      expect(fs.existsSync(path.join(projectRoot, 'src/prototypes/untitled/canvas.excalidraw'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src/prototypes/untitled/canvas.excalidraw'))).toBe(false);
     } finally {
       await server.close();
     }
@@ -748,6 +829,60 @@ describe('make-server project prototype upload APIs', () => {
       });
       expect(fs.readFileSync(path.join(projectRoot, 'content/prototypes/zip-demo/index.tsx'), 'utf8'))
         .toContain('ZipDemo');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('uploads zip files whose Chinese entry names use legacy GB18030 bytes', async () => {
+    const projectRoot = createTempRoot();
+    const zipPath = createLegacyChineseFileNameZip();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'prototype-zip-legacy-chinese-client', name: 'Prototype Zip Legacy Chinese Client' },
+      capabilities: {
+        quickEdit: true,
+        quickEditMode: 'clientRuntime',
+        figmaExport: true,
+        axureExport: true,
+        multiDevicePreview: true,
+        resourceWrites: {
+          prototypeUpload: true,
+        },
+      },
+      resourceWriteTargets: {
+        prototypes: { path: 'content/prototypes' },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerAndActivateProject(
+        server.origin,
+        projectRoot,
+        'prototype-zip-legacy-chinese-client',
+        'Prototype Zip Legacy Chinese Client',
+      );
+
+      const form = new FormData();
+      form.append('uploadType', 'make');
+      form.append('targetType', 'prototypes');
+      form.append('uploadMode', 'zip');
+      form.append('file', new File([fs.readFileSync(zipPath)], 'legacy-chinese.zip', { type: 'application/zip' }));
+      const upload = await fetch(`${server.origin}/api/upload`, {
+        method: 'POST',
+        body: form,
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(upload.status).toBe(200);
+      expect(upload.body).toMatchObject({
+        success: true,
+        projectId: 'prototype-zip-legacy-chinese-client',
+      });
+      expect(upload.body.folderName).toMatch(/^upload-\d+$/u);
+      const uploadDir = path.join(projectRoot, 'content/prototypes', upload.body.folderName);
+      expect(fs.readFileSync(path.join(uploadDir, 'index.tsx'), 'utf8')).toContain('LegacyChineseZip');
+      expect(fs.readFileSync(path.join(uploadDir, '规则.md'), 'utf8')).toBe('# rules\n');
+      expect(fs.existsSync(path.join(uploadDir, '¹æÔò.md'))).toBe(false);
     } finally {
       await server.close();
     }

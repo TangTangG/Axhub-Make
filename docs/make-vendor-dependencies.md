@@ -8,7 +8,7 @@
 
 - `@axhub/excalidraw`
 - `axhub-export-core`
-- `axhub-genie-editor`
+- `@axhub/commentary`
 - `tiptap-editor`
 
 不在本轮 vendor 范围内的依赖：

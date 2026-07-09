@@ -22,7 +22,7 @@ import {
     mergeAssistantContextForActiveFile,
     resolveAssistantCurrentFile,
     shouldSyncAssistantCurrentFile,
-} from '../../../utils/genieContext';
+} from '../../../utils/assistantContext';
 import type { CanvasElementContextInfo } from '../../../components/content/canvas-embeds/AnnotationOverlay';
 import { useAssistantBridge } from './useAssistantBridge';
 import { useAssistantRuntime } from './useAssistantRuntime';
@@ -31,8 +31,8 @@ import {
     type AssistantImageGenerationConfig,
     type AssistantPreviewMcpConfig,
     buildAcpContextPostMessage,
-    getAcpPreviewMcpConfigSignature,
     getAcpImageGenerationConfigSignature,
+    getAcpPreviewMcpConfigSignature,
 } from '../assistantAcpContext';
 import { buildAssistantContextItemsFromCanvasElements, type AssistantImageAttachmentPayload } from '../assistantContextPayload';
 import {
@@ -44,11 +44,11 @@ import {
     setAssistantStoreThreadId,
 } from '../assistantResourceThread';
 import {
-    getGenieCurrentFilePath,
-    mergeGenieContextV1,
-    normalizeGenieCurrentFileV1,
-} from '@/common/genie/bridge';
-import type { GenieProvider } from '@/common/genie/types';
+    getAssistantCurrentFilePath,
+    mergeAssistantContextV1,
+    normalizeAssistantCurrentFileV1,
+} from '@/common/assistant-context/bridge';
+import type { AcpProvider } from '@/common/assistant-context/types';
 
 type AssistantTriggerSource = 'button' | 'event';
 type AssistantRuntimeState = Awaited<ReturnType<typeof apiService.getAssistantRuntime>>;
@@ -67,6 +67,9 @@ type OpenAssistantSubmitOptions = {
     ignoredArtifactPaths?: string[];
     provider?: string | null;
     model?: string | null;
+    mode?: string | null;
+    thought?: string | null;
+    autoSend?: boolean;
 };
 type OpenAssistantSubmitResult = {
     ok: boolean;
@@ -99,9 +102,9 @@ const LEGACY_ASSISTANT_OPEN_PARAMS = [
     'integrationWs',
     'integrationClientId',
     'integrationChannel',
-    'genieApiBaseUrl',
-    'genieIntegrationChannel',
-    'genieTargetClientId',
+    'agentApiBaseUrl',
+    'agentIntegrationChannel',
+    'agentTargetClientId',
     'editorClientId',
     'editorIntegrationWs',
     'editorApiBaseUrl',
@@ -237,37 +240,21 @@ async function waitForAcpArtifacts(
     };
 }
 
-function isUntitledPrototypeName(value: string): boolean {
-    return /^untitled(?:-[a-z0-9-]+)?$/u.test(value.trim());
+function resolveAssistantFallbackResourcePathFromUrl(targetPath?: string): string {
+    void targetPath;
+    return '';
 }
 
-function resolveAssistantFallbackResourcePathFromUrl(targetPath?: string): string {
-    const normalizedTargetPath = String(targetPath || '').trim().replace(/\\/g, '/');
-    if (!normalizedTargetPath.match(/^src\/prototypes\/[^/]+\/canvas\.excalidraw$/u)) {
-        return '';
-    }
-    if (typeof window === 'undefined') {
-        return '';
-    }
-
-    try {
-        const url = new URL(window.location.href);
-        const fromP = String(url.searchParams.get('fromP') || '').trim();
-        if (!fromP || !isUntitledPrototypeName(fromP)) {
-            return '';
-        }
-        return `src/prototypes/${fromP}/canvas.excalidraw`;
-    } catch {
-        return '';
-    }
+function isAssistantCanvasMcpPath(value: unknown): boolean {
+    const currentFilePath = typeof value === 'string' ? value.trim().replace(/\\/g, '/') : '';
+    return /^src\/resources\/.+\.excalidraw$/u.test(currentFilePath);
 }
 
 function isAssistantCanvasMcpContext(context: AssistantContextV1): boolean {
-    const currentFilePath = getAssistantContextCurrentFilePath(context).replace(/\\/g, '/');
-    return /^src\/prototypes\/[^/]+\/canvas\.excalidraw$/u.test(currentFilePath);
+    return isAssistantCanvasMcpPath(getAssistantContextCurrentFilePath(context));
 }
 
-function getAssistantPreviewMcpRuntimeConfig(context: AssistantContextV1): AssistantPreviewMcpConfig | null {
+function getAssistantPreviewMcpRuntimeConfig(context: AssistantContextV1, targetPath?: string): AssistantPreviewMcpConfig | null {
     if (typeof window === 'undefined') {
         return null;
     }
@@ -277,14 +264,18 @@ function getAssistantPreviewMcpRuntimeConfig(context: AssistantContextV1): Assis
         return null;
     }
     const previewBridgeClientId = String(globals.__AXHUB_PREVIEW_BRIDGE_CLIENT_ID__ || '').trim();
+    const includeCanvas = isAssistantCanvasMcpContext(context) || isAssistantCanvasMcpPath(targetPath);
     const canvasToken = String(globals.__AXHUB_CANVAS_MCP_TOKEN__ || '').trim();
     return {
         makeOrigin: window.location.origin,
         previewToken,
         previewBridgeClientId,
-        includeCanvas: isAssistantCanvasMcpContext(context) && Boolean(canvasToken),
-        canvasToken,
+        ...(includeCanvas && canvasToken ? { includeCanvas: true, canvasToken } : {}),
     };
+}
+
+function resolveStoredAssistantPanelMode(mode: AssistantAiPanelMode): AssistantAiPanelMode {
+    return mode === 'image-ai' ? 'image-ai' : 'general-ai';
 }
 
 interface AssistantMessageApi {
@@ -322,6 +313,7 @@ interface UseAssistantPanelControllerParams {
     selectedItem: ItemData | null;
     contentMode: AssistantContentMode;
     currentMarkdownResource: AssistantMarkdownResourceSelection;
+    initialAssistantPanelMode?: AssistantAiPanelMode;
     assistantImageGenerationConfig?: AssistantImageGenerationConfig | null;
     currentCanvas?: CanvasItem | null;
     currentTheme?: ThemeResourceItem | null;
@@ -339,6 +331,7 @@ export function useAssistantPanelController({
     selectedItem,
     contentMode,
     currentMarkdownResource,
+    initialAssistantPanelMode = null,
     assistantImageGenerationConfig = null,
     currentCanvas = null,
     currentTheme = null,
@@ -393,7 +386,7 @@ export function useAssistantPanelController({
         setAssistantPanelWidthValue(clampAssistantPanelWidth(nextWidth));
     }, []);
     const [assistantIframeOverrideUrl, setAssistantIframeOverrideUrl] = useState<string | null>(null);
-    const [assistantPanelMode, setAssistantPanelMode] = useState<AssistantAiPanelMode>('general-ai');
+    const [assistantPanelMode, setAssistantPanelMode] = useState<AssistantAiPanelMode>(() => resolveStoredAssistantPanelMode(initialAssistantPanelMode));
     const [assistantExternalContext, setAssistantExternalContext] = useState<AssistantContextV1 | null>(null);
     const assistantCurrentFilePathRef = useRef('');
     const assistantContextCommentsSignatureRef = useRef('');
@@ -753,7 +746,7 @@ export function useAssistantPanelController({
             currentTheme,
             currentDataTable,
         });
-        const currentFilePath = getGenieCurrentFilePath(currentFile);
+        const currentFilePath = getAssistantCurrentFilePath(currentFile);
         const currentFileDirectory = currentFilePath.replace(/\/[^/]+$/u, '');
         const currentMarkdownItem = currentMarkdownResource.item;
         const selectedResource = contentMode === 'doc' || contentMode === 'template'
@@ -831,7 +824,7 @@ export function useAssistantPanelController({
         postAssistantThemeToIframeWithRetry,
     ]);
 
-    const syncAssistantPreviewMcpConfigToIframe = useCallback((options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean } = {}) => {
+    const syncAssistantPreviewMcpConfigToIframe = useCallback((options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean; context?: AssistantContextV1 | null } = {}) => {
         const requireLoaded = options.requireLoaded !== false;
         const requireVisible = options.requireVisible !== false;
         if (
@@ -843,7 +836,8 @@ export function useAssistantPanelController({
             return;
         }
 
-        const previewMcpConfig = getAssistantPreviewMcpRuntimeConfig(assistantContextV1);
+        const previewMcpContext = options.context || assistantContextV1;
+        const previewMcpConfig = getAssistantPreviewMcpRuntimeConfig(previewMcpContext, latestAssistantResourcePathRef.current);
         const previewMcpConfigSignature = getAcpPreviewMcpConfigSignature(previewMcpConfig);
         if (!options.force && assistantPreviewMcpConfigSyncSignatureRef.current === previewMcpConfigSignature) {
             return;
@@ -860,7 +854,7 @@ export function useAssistantPanelController({
         postAssistantPreviewMcpConfigToIframeWithRetry,
     ]);
 
-    const syncAssistantPreviewMcpConfigToIframeWithAck = useCallback(async (options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean } = {}) => {
+    const syncAssistantPreviewMcpConfigToIframeWithAck = useCallback(async (options: { requireLoaded?: boolean; requireVisible?: boolean; force?: boolean; context?: AssistantContextV1 | null } = {}) => {
         const requireLoaded = options.requireLoaded !== false;
         const requireVisible = options.requireVisible !== false;
         if (
@@ -872,7 +866,8 @@ export function useAssistantPanelController({
             return false;
         }
 
-        const previewMcpConfig = getAssistantPreviewMcpRuntimeConfig(assistantContextV1);
+        const previewMcpContext = options.context || assistantContextV1;
+        const previewMcpConfig = getAssistantPreviewMcpRuntimeConfig(previewMcpContext, latestAssistantResourcePathRef.current);
         const previewMcpConfigSignature = getAcpPreviewMcpConfigSignature(previewMcpConfig);
         if (!options.force && assistantPreviewMcpConfigSyncSignatureRef.current === previewMcpConfigSignature) {
             return true;
@@ -918,7 +913,7 @@ export function useAssistantPanelController({
             contentMode: 'preview',
             currentMarkdownResource: { kind: 'doc', item: null },
         });
-        const currentFilePath = getGenieCurrentFilePath(currentFile);
+        const currentFilePath = getAssistantCurrentFilePath(currentFile);
         const currentFileDirectory = currentFilePath.replace(/\/[^/]+$/u, '');
 
         const baseContext: AssistantContextV1 = {
@@ -951,7 +946,7 @@ export function useAssistantPanelController({
             return baseContext;
         }
 
-        return mergeGenieContextV1(baseContext, externalContext) ?? baseContext;
+        return mergeAssistantContextV1(baseContext, externalContext) ?? baseContext;
     }, [activeTab, assistantRuntime?.projectPath]);
 
     useEffect(() => {
@@ -970,8 +965,8 @@ export function useAssistantPanelController({
                 return prev;
             }
 
-            const normalizedCurrentFile = normalizeGenieCurrentFileV1(assistantBaseContextV1.currentFile);
-            if (getGenieCurrentFilePath(prev.currentFile) !== normalizedCurrentFile.path) {
+            const normalizedCurrentFile = normalizeAssistantCurrentFileV1(assistantBaseContextV1.currentFile);
+            if (getAssistantCurrentFilePath(prev.currentFile) !== normalizedCurrentFile.path) {
                 return null;
             }
             if (
@@ -1669,7 +1664,7 @@ export function useAssistantPanelController({
         forceSyncAssistantRuntimeConfigToIframe,
     ]);
 
-    const handleOpenGenieWebAgent = useCallback((targetPath?: string, _provider?: GenieProvider) => {
+    const handleOpenAcpWebAgent = useCallback((targetPath?: string, _provider?: AcpProvider) => {
         void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe', null, {
             panelMode: 'general-ai',
         });
@@ -1797,7 +1792,7 @@ export function useAssistantPanelController({
             viewMode: 'demo',
             activeTab: 'prototypes',
         });
-        const targetPath = getGenieCurrentFilePath(itemContext.currentFile);
+        const targetPath = getAssistantCurrentFilePath(itemContext.currentFile);
         setAssistantExternalContext(itemContext);
         latestAssistantSyncContextRef.current = itemContext;
 
@@ -1849,7 +1844,7 @@ export function useAssistantPanelController({
         }
         let hideLoading = panelAlreadyOpen
             ? () => undefined
-            : messageApi.loading('正在启动 AI 助手...', 0);
+            : messageApi.loading('正在连接 AI...', 0);
         const closeLoading = () => {
             hideLoading();
             hideLoading = () => undefined;
@@ -1894,6 +1889,13 @@ export function useAssistantPanelController({
                 return false;
             }
 
+            await syncAssistantPreviewMcpConfigToIframeWithAck({
+                requireLoaded: false,
+                requireVisible: false,
+                force: true,
+                context,
+            });
+
             if (context) {
                 postAssistantContextToIframeWithRetry(context, 'replace');
             }
@@ -1905,7 +1907,17 @@ export function useAssistantPanelController({
                 waitUntil: options.collectArtifacts === true ? 'started' : options.waitUntil || 'started',
                 provider: options.provider,
                 model: options.model,
+                modeId: options.mode,
+                thoughtLevel: options.thought,
+                autoSend: options.autoSend,
             });
+            if (submitResult.isRunning === true && submitResult.canSend === false) {
+                messageApi.info('已填入输入框，等待当前回复结束后发送');
+                return {
+                    ok: false,
+                    threadId: submitResult.threadId,
+                } satisfies OpenAssistantSubmitResult;
+            }
             if (options.collectArtifacts === true && submitResult.threadId) {
                 const artifactResult = await waitForAcpArtifacts(() => queryArtifactsWithRetry({
                     threadId: submitResult.threadId,
@@ -1961,6 +1973,7 @@ export function useAssistantPanelController({
         postAssistantContextToIframeWithRetry,
         queryArtifactsWithRetry,
         submitPromptWithRetry,
+        syncAssistantPreviewMcpConfigToIframeWithAck,
         syncAssistantContextToTargets,
         waitForAssistantIframeReady,
     ]);
@@ -2081,7 +2094,7 @@ export function useAssistantPanelController({
         addImageAttachment,
         appendComposerText,
         handleToggleAssistant,
-        handleOpenGenieWebAgent,
+        handleOpenAcpWebAgent,
         openImageAiPanel,
         handleOpenImageAiPanelInNewWindow,
         hideAssistantPanelTemporarily,

@@ -313,7 +313,7 @@ function smokeProjectMetadata(projectRoot, assistantOrigin) {
       },
       docs: {
         type: 'project-relative-path',
-        path: 'src/docs',
+        path: 'src/resources',
       },
       themes: {
         type: 'project-relative-path',
@@ -321,11 +321,11 @@ function smokeProjectMetadata(projectRoot, assistantOrigin) {
       },
       data: {
         type: 'project-relative-path',
-        path: 'src/data',
+        path: 'src/resources/data',
       },
       templates: {
         type: 'project-relative-path',
-        path: 'src/templates',
+        path: 'src/resources/templates',
       },
       media: {
         type: 'project-relative-path',

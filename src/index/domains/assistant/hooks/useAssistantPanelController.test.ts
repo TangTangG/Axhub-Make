@@ -30,7 +30,7 @@ describe('useAssistantPanelController source', () => {
     expect(baseContextSource).toContain('currentTheme,');
   });
 
-  it('syncs ACP context through iframe postMessage without starting the Genie integration bridge', () => {
+  it('syncs ACP context through iframe postMessage without starting the Agent integration bridge', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(source).toContain('useAssistantBridge(assistantIframeSrc, assistantBridgeOptions)');
@@ -41,7 +41,7 @@ describe('useAssistantPanelController source', () => {
     expect(source).not.toContain("updateContext(latestContext, 'replace')");
   });
 
-  it('does not keep Genie WebSocket integration state for ACP UI', () => {
+  it('does not keep Agent WebSocket integration state for ACP UI', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(source).not.toContain('assistantBridgeRef');
@@ -66,7 +66,7 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain('? buildImagePlaygroundUrlForRuntime(resolvedRuntime)');
     expect(source).toContain('const runtimeForUrl = runtimeOverride || assistantRuntime;');
     expect(source).toContain('const sourceUrl = targetUrl || buildAssistantIframeUrlForRuntime(runtimeForUrl, conversationStorePath);');
-    expect(source).toContain('const handleOpenGenieWebAgent = useCallback((targetPath?: string, _provider?: GenieProvider) => {');
+    expect(source).toContain('const handleOpenAcpWebAgent = useCallback((targetPath?: string, _provider?: AcpProvider) => {');
     expect(source).toContain("void ensureAssistantReadyThenOpen('button', undefined, targetPath, 'iframe', null, {");
     expect(source).toContain("panelMode: 'general-ai',");
     expect(source).toContain("const openImageAiPanel = useCallback(() => {");
@@ -218,11 +218,17 @@ describe('useAssistantPanelController source', () => {
     expect(bridgeSource).toContain("waitUntil?: 'started' | 'finished';");
     expect(bridgeSource).toContain('provider?: string | null;');
     expect(bridgeSource).toContain('model?: string | null;');
+    expect(bridgeSource).toContain('modeId?: string | null;');
+    expect(bridgeSource).toContain('thoughtLevel?: string | null;');
+    expect(bridgeSource).toContain('autoSend?: boolean;');
     expect(bridgeSource).toContain("payload: {");
     expect(bridgeSource).toContain("text: prompt,");
     expect(bridgeSource).toContain("waitUntil: submitOptions?.waitUntil || 'started',");
     expect(bridgeSource).toContain("...(submitOptions?.provider ? { provider: submitOptions.provider } : {}),");
     expect(bridgeSource).toContain("...(submitOptions?.model ? { model: submitOptions.model } : {}),");
+    expect(bridgeSource).toContain("...(submitOptions?.modeId ? { modeId: submitOptions.modeId } : {}),");
+    expect(bridgeSource).toContain("...(submitOptions?.thoughtLevel ? { thoughtLevel: submitOptions.thoughtLevel } : {}),");
+    expect(bridgeSource).toContain("...(submitOptions?.autoSend === false ? { autoSend: false } : {}),");
     expect(bridgeSource).toContain("...(submitOptions?.newThread === true ? { newThread: true } : {}),");
     expect(bridgeSource).toContain('const ACP_CHAT_SUBMIT_TIMEOUT_MS = 30_000;');
     expect(bridgeSource).toContain("'acp.chat.result'");
@@ -231,7 +237,10 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain('openAssistantWithContextAndSubmitPrompt');
     expect(controllerSource).toContain('provider?: string | null;');
     expect(controllerSource).toContain('model?: string | null;');
-    expect(controllerSource).toContain("messageApi.loading('正在启动 AI 助手...', 0)");
+    expect(controllerSource).toContain('mode?: string | null;');
+    expect(controllerSource).toContain('thought?: string | null;');
+    expect(controllerSource).toContain('autoSend?: boolean;');
+    expect(controllerSource).toContain("messageApi.loading('正在连接 AI...', 0)");
     expect(controllerSource).toContain("syncAssistantContextToTargets(context, 'replace', {");
     expect(bridgeSource).not.toContain("'update_context'");
     expect(bridgeSource).not.toContain("'update_prompt'");
@@ -250,8 +259,14 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain('type OpenAssistantSubmitOptions = {');
     expect(controllerSource).toContain('provider?: string | null;');
     expect(controllerSource).toContain('model?: string | null;');
+    expect(controllerSource).toContain('mode?: string | null;');
+    expect(controllerSource).toContain('thought?: string | null;');
+    expect(controllerSource).toContain('autoSend?: boolean;');
     expect(submitSource).toContain('provider: options.provider,');
     expect(submitSource).toContain('model: options.model,');
+    expect(submitSource).toContain('modeId: options.mode,');
+    expect(submitSource).toContain('thoughtLevel: options.thought,');
+    expect(submitSource).toContain('autoSend: options.autoSend,');
     expect(submitSource).toContain("waitUntil: options.collectArtifacts === true ? 'started' : options.waitUntil || 'started',");
   });
 
@@ -296,7 +311,7 @@ describe('useAssistantPanelController source', () => {
     expect(submitSource).toContain('&& (assistantVisible || assistantPanelMounted)');
     expect(submitSource).toContain('if (panelAlreadyOpen && !assistantVisible) {');
     expect(submitSource).toContain('setAssistantVisible(true);');
-    expect(submitSource).toContain("let hideLoading = panelAlreadyOpen\n            ? () => undefined\n            : messageApi.loading('正在启动 AI 助手...', 0);");
+    expect(submitSource).toContain("let hideLoading = panelAlreadyOpen\n            ? () => undefined\n            : messageApi.loading('正在连接 AI...', 0);");
     expect(submitSource).toContain('const closeLoading = () => {');
     expect(submitSource).toContain('const opened = panelAlreadyOpen');
     expect(submitSource).toContain('const ready = panelAlreadyOpen');
@@ -343,7 +358,7 @@ describe('useAssistantPanelController source', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
     const toggleSource = source.slice(
       source.indexOf('const handleToggleAssistant = useCallback(() => {'),
-      source.indexOf('const handleOpenGenieWebAgent = useCallback', source.indexOf('const handleToggleAssistant = useCallback(() => {')),
+      source.indexOf('const handleOpenAcpWebAgent = useCallback', source.indexOf('const handleToggleAssistant = useCallback(() => {')),
     );
 
     expect(toggleSource).toContain('if (assistantVisible) {');
@@ -358,7 +373,10 @@ describe('useAssistantPanelController source', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(source).toContain("export type AssistantAiPanelMode = 'general-ai' | 'image-ai' | 'external' | null;");
-    expect(source).toContain("const [assistantPanelMode, setAssistantPanelMode] = useState<AssistantAiPanelMode>('general-ai');");
+    expect(source).toContain('initialAssistantPanelMode?: AssistantAiPanelMode;');
+    expect(source).toContain('initialAssistantPanelMode = null,');
+    expect(source).toContain('function resolveStoredAssistantPanelMode(mode: AssistantAiPanelMode): AssistantAiPanelMode');
+    expect(source).toContain('const [assistantPanelMode, setAssistantPanelMode] = useState<AssistantAiPanelMode>(() => resolveStoredAssistantPanelMode(initialAssistantPanelMode));');
     expect(source).toContain("const assistantSupportsAcpContext = assistantPanelMode === 'general-ai';");
     expect(source).toContain("const assistantAcceptsImageRuntimeConfig = assistantPanelMode === 'general-ai' || assistantPanelMode === 'image-ai';");
     expect(source).toContain("panelMode?: AssistantAiPanelMode;");
@@ -544,10 +562,14 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).not.toContain("url.searchParams.set('imageGeneration'");
   });
 
-  it('syncs axhub-preview MCP whenever ACP UI is open and adds axhub-canvas only for canvas context', () => {
+  it('syncs axhub-preview MCP whenever ACP UI is open and folds axhub-canvas into the same runtime config for canvas context', () => {
     const adapterSource = readFileSync(resolve(__dirname, '../assistantAcpContext.ts'), 'utf8');
     const bridgeSource = readFileSync(resolve(__dirname, './useAssistantBridge.ts'), 'utf8');
     const controllerSource = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+    const retrySyncSource = controllerSource.slice(
+      controllerSource.indexOf('const syncAssistantPreviewMcpConfigToIframe = useCallback'),
+      controllerSource.indexOf('const syncAssistantPreviewMcpConfigToIframeWithAck = useCallback'),
+    );
 
     expect(adapterSource).toContain('buildAcpPreviewMcpPostMessage');
     expect(adapterSource).toContain("'axhub-preview'");
@@ -559,10 +581,21 @@ describe('useAssistantPanelController source', () => {
     expect(adapterSource).toContain('ACP_MCP_RUNTIME_CLEAR_FIELDS');
     expect(bridgeSource).toContain('syncPreviewMcpConfigWithRetry');
     expect(bridgeSource).toContain('buildAcpPreviewMcpPostMessage(config)');
+    expect(bridgeSource).toContain('syncCanvasMcpConfigWithAck');
+    expect(bridgeSource).toContain('buildAcpCanvasMcpPostMessage(config');
     expect(controllerSource).toContain('const assistantPreviewMcpConfigSyncSignatureRef = useRef(\'\');');
     expect(controllerSource).toContain('syncPreviewMcpConfigWithRetry: postAssistantPreviewMcpConfigToIframeWithRetry,');
     expect(controllerSource).toContain('function isAssistantCanvasMcpContext(context: AssistantContextV1): boolean');
-    expect(controllerSource).toContain('getAssistantPreviewMcpRuntimeConfig(assistantContextV1)');
+    expect(controllerSource).toContain('function isAssistantCanvasMcpPath(value: unknown): boolean');
+    expect(controllerSource).toContain('function getAssistantPreviewMcpRuntimeConfig(context: AssistantContextV1, targetPath?: string)');
+    expect(retrySyncSource).toContain('const previewMcpContext = options.context || assistantContextV1;');
+    expect(retrySyncSource).toContain('getAssistantPreviewMcpRuntimeConfig(previewMcpContext, latestAssistantResourcePathRef.current)');
+    expect(retrySyncSource).not.toContain('postAssistantCanvasMcpConfigToIframeWithRetry');
+    expect(controllerSource).toContain('const previewMcpContext = options.context || assistantContextV1;');
+    expect(controllerSource).toContain('getAssistantPreviewMcpRuntimeConfig(previewMcpContext, latestAssistantResourcePathRef.current)');
+    expect(controllerSource).not.toContain('await postAssistantCanvasMcpConfigToIframeWithAck');
+    expect(controllerSource).toContain('await syncAssistantPreviewMcpConfigToIframeWithAck({');
+    expect(controllerSource).toContain('context,');
     expect(controllerSource).toContain('__AXHUB_PREVIEW_BRIDGE_CLIENT_ID__');
     expect(controllerSource.indexOf('const assistantContextV1 = useMemo<AssistantContextV1>'))
       .toBeLessThan(controllerSource.indexOf('const syncAssistantPreviewMcpConfigToIframe = useCallback'));
@@ -574,6 +607,18 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain('assistantIframeBridgeRecoveringRef.current = true;');
     expect(controllerSource).toContain('assistantIframeBridgeRecoveringRef.current = false;');
     expect(controllerSource).not.toContain('url.searchParams.set(\'mcpServers\'');
+  });
+
+  it('includes the resource canvas MCP in the primary runtime MCP config for canvas contexts', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+    const previewConfigSource = source.slice(
+      source.indexOf('function getAssistantPreviewMcpRuntimeConfig'),
+      source.indexOf('function resolveStoredAssistantPanelMode'),
+    );
+
+    expect(previewConfigSource).toContain('const includeCanvas = isAssistantCanvasMcpContext(context) || isAssistantCanvasMcpPath(targetPath);');
+    expect(previewConfigSource).toContain("const canvasToken = String(globals.__AXHUB_CANVAS_MCP_TOKEN__ || '').trim();");
+    expect(previewConfigSource).toContain('...(includeCanvas && canvasToken ? { includeCanvas: true, canvasToken } : {}),');
   });
 
   it('recovers ACP UI iframe refreshes with host ready and acked runtime/context sync before falling back to retries', () => {
@@ -649,7 +694,19 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain("if (options.collectArtifacts === true && submitResult.threadId) {");
   });
 
-  it('does not expose Web Editor Genie request handling for ACP UI', () => {
+  it('treats visible running ACP submit results as draft-only and skips artifact collection', () => {
+    const bridgeSource = readFileSync(resolve(__dirname, './useAssistantBridge.ts'), 'utf8');
+    const controllerSource = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+
+    expect(bridgeSource).toContain('isRunning?: boolean;');
+    expect(bridgeSource).toContain('isRunning: Boolean(data.payload?.isRunning),');
+    expect(controllerSource).toContain('if (submitResult.isRunning === true && submitResult.canSend === false) {');
+    expect(controllerSource).toContain("messageApi.info('已填入输入框，等待当前回复结束后发送');");
+    expect(controllerSource).toContain('return {');
+    expect(controllerSource).toContain('ok: false,');
+  });
+
+  it('does not expose Web Editor Agent request handling for ACP UI', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(source).not.toContain('handleWebEditorGenieRequest');
@@ -680,12 +737,12 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain('assistantContextCommentsSignatureRef');
   });
 
-  it('can open a non-Genie web agent URL directly in the sidebar iframe', () => {
+  it('can open a non-ACP web agent URL directly in the sidebar iframe', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(source).toContain('const openRawUrlInAssistantPanel = useCallback((url: string) => {');
     expect(source).toContain('setAssistantIframeOverrideUrl(nextUrl);');
-    expect(source).toContain('handleOpenGenieWebAgent');
+    expect(source).toContain('handleOpenAcpWebAgent');
     expect(source).toContain('openRawUrlInAssistantPanel');
     expect(source).not.toContain('stopAssistantIntegrationBridge');
   });
@@ -748,8 +805,9 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain("const ACP_NAVIGATION_CHANGED_EVENT = 'acp.navigation.changed';");
     expect(source).toContain('getAssistantResourceThreadId');
     expect(source).toContain('getAssistantResourceThreadIdWithFallback');
-    expect(source).toContain("url.searchParams.get('fromP')");
-    expect(source).toContain("`src/prototypes/${fromP}/canvas.excalidraw`");
+    expect(source).not.toContain("url.searchParams.get('fromP')");
+    expect(source).not.toContain("`src/prototypes/${fromP}/canvas.excalidraw`");
+    expect(source).toContain("return /^src\\/resources\\/.+\\.excalidraw$/u.test(currentFilePath);");
     expect(source).toContain('const resolvedResourceThreadStoragePath = threadId');
     expect(source).toContain('latestAssistantResourcePathRef.current = resolvedAssistantUrl.resourceThreadStoragePath;');
     expect(source).toContain('setAssistantResourceThreadId');

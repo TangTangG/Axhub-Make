@@ -1,1 +1,1 @@
-export type * from 'axhub-genie-editor';
+export type * from '@axhub/commentary';

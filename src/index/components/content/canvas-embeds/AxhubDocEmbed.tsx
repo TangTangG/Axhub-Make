@@ -354,6 +354,21 @@ function extractMarkdownUrl(url: string): string {
     return url;
 }
 
+export function normalizeFetchedMarkdownContent(rawContent: string): string {
+    const text = String(rawContent || '');
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+        return text;
+    }
+
+    try {
+        const payload = JSON.parse(trimmed);
+        return typeof payload?.content === 'string' ? payload.content : text;
+    } catch {
+        return text;
+    }
+}
+
 /* ── Component ───────────────────────────────────────────────────── */
 
 function AxhubDocEmbedInner({ url, title, elementId }: AxhubDocEmbedProps) {
@@ -384,8 +399,9 @@ function AxhubDocEmbedInner({ url, title, elementId }: AxhubDocEmbedProps) {
                 throw new Error(`加载文档失败 (${response.status})`);
             }
             const text = await response.text();
-            setMarkdownContent(text);
-            logEmbedDebug('doc', 'fetch:success', { elementId, url: markdownUrl, length: text.length });
+            const content = normalizeFetchedMarkdownContent(text);
+            setMarkdownContent(content);
+            logEmbedDebug('doc', 'fetch:success', { elementId, url: markdownUrl, length: content.length });
         } catch (err: any) {
             logEmbedDebug('doc', 'fetch:error', { elementId, url: markdownUrl, message: err?.message });
             setError(err?.message || '加载文档失败');

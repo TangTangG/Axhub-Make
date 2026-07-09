@@ -221,6 +221,8 @@ type ScreenshotRootStyleSnapshot = {
   marginBottom: string;
   width: string;
   height: string;
+  minHeight: string;
+  overflow: string;
   display: string;
   alignItems: string;
   justifyContent: string;
@@ -241,11 +243,62 @@ type ScreenshotPageStyleSnapshot = {
   paddingRight: string;
   paddingBottom: string;
   paddingLeft: string;
+  overflow: string;
   display: string;
   alignItems: string;
   justifyContent: string;
   placeItems: string;
 };
+
+type ScreenshotElementScrollSnapshot = {
+  element: HTMLElement;
+  scrollLeft: number;
+  scrollTop: number;
+};
+
+function setElementScrollPosition(element: HTMLElement, left: number, top: number): void {
+  try {
+    element.scrollLeft = left;
+  } catch { /* ignore readonly scroll containers */ }
+  try {
+    element.scrollTop = top;
+  } catch { /* ignore readonly scroll containers */ }
+}
+
+function getScreenshotScrollElements(rootElement: HTMLElement): HTMLElement[] {
+  const candidates = [
+    document.documentElement instanceof HTMLElement ? document.documentElement : null,
+    document.body instanceof HTMLElement ? document.body : null,
+    rootElement,
+  ];
+  return candidates.filter((element, index): element is HTMLElement => (
+    element instanceof HTMLElement && candidates.indexOf(element) === index
+  ));
+}
+
+function installScreenshotScrollOrigin(rootElement: HTMLElement): () => void {
+  const windowScrollLeft = Number(window.scrollX ?? window.pageXOffset ?? 0) || 0;
+  const windowScrollTop = Number(window.scrollY ?? window.pageYOffset ?? 0) || 0;
+  const elementSnapshots: ScreenshotElementScrollSnapshot[] = getScreenshotScrollElements(rootElement).map(element => ({
+    element,
+    scrollLeft: Number(element.scrollLeft || 0),
+    scrollTop: Number(element.scrollTop || 0),
+  }));
+
+  try {
+    window.scrollTo?.(0, 0);
+  } catch { /* ignore unsupported test/browser scroll APIs */ }
+  elementSnapshots.forEach(({ element }) => setElementScrollPosition(element, 0, 0));
+
+  return () => {
+    try {
+      window.scrollTo?.(windowScrollLeft, windowScrollTop);
+    } catch { /* ignore unsupported test/browser scroll APIs */ }
+    elementSnapshots.forEach(({ element, scrollLeft, scrollTop }) => {
+      setElementScrollPosition(element, scrollLeft, scrollTop);
+    });
+  };
+}
 
 function snapshotPageStyle(element: HTMLElement): ScreenshotPageStyleSnapshot {
   return {
@@ -262,6 +315,7 @@ function snapshotPageStyle(element: HTMLElement): ScreenshotPageStyleSnapshot {
     paddingRight: element.style.paddingRight,
     paddingBottom: element.style.paddingBottom,
     paddingLeft: element.style.paddingLeft,
+    overflow: element.style.overflow,
     display: element.style.display,
     alignItems: element.style.alignItems,
     justifyContent: element.style.justifyContent,
@@ -283,10 +337,55 @@ function restorePageStyle(element: HTMLElement, snapshot: ScreenshotPageStyleSna
   element.style.paddingRight = snapshot.paddingRight;
   element.style.paddingBottom = snapshot.paddingBottom;
   element.style.paddingLeft = snapshot.paddingLeft;
+  element.style.overflow = snapshot.overflow;
   element.style.display = snapshot.display;
   element.style.alignItems = snapshot.alignItems;
   element.style.justifyContent = snapshot.justifyContent;
   element.style.placeItems = snapshot.placeItems;
+}
+
+function applyScreenshotBoxSize(
+  rootElement: HTMLElement,
+  documentElement: HTMLElement | null,
+  body: HTMLElement | null,
+  options: {
+    width?: number;
+    height?: number;
+  },
+): void {
+  const width = options.width ? `${options.width}px` : undefined;
+  const height = options.height ? `${options.height}px` : undefined;
+
+  if (width) {
+    rootElement.style.width = width;
+  }
+  if (height) {
+    rootElement.style.height = height;
+    rootElement.style.minHeight = height;
+    rootElement.style.overflow = 'hidden';
+  }
+
+  if (documentElement) {
+    if (width) {
+      documentElement.style.width = width;
+    }
+    if (height) {
+      documentElement.style.height = height;
+      documentElement.style.minHeight = height;
+      documentElement.style.overflow = 'hidden';
+    }
+  }
+
+  if (body) {
+    if (width) {
+      body.style.width = width;
+    }
+    if (height) {
+      body.style.height = height;
+      body.style.minHeight = height;
+      body.style.overflow = 'hidden';
+    }
+  }
 }
 
 function installScreenshotLayoutOverride(
@@ -305,6 +404,8 @@ function installScreenshotLayoutOverride(
     marginBottom: rootElement.style.marginBottom,
     width: rootElement.style.width,
     height: rootElement.style.height,
+    minHeight: rootElement.style.minHeight,
+    overflow: rootElement.style.overflow,
     display: rootElement.style.display,
     alignItems: rootElement.style.alignItems,
     justifyContent: rootElement.style.justifyContent,
@@ -312,8 +413,6 @@ function installScreenshotLayoutOverride(
   };
   const documentSnapshot = documentElement ? snapshotPageStyle(documentElement) : null;
   const bodySnapshot = body ? snapshotPageStyle(body) : null;
-  const width = options.targetWidth ? `${options.targetWidth}px` : undefined;
-  const height = options.targetHeight ? `${options.targetHeight}px` : undefined;
 
   rootElement.style.marginLeft = '0';
   rootElement.style.marginRight = '0';
@@ -322,12 +421,6 @@ function installScreenshotLayoutOverride(
   rootElement.style.alignItems = 'initial';
   rootElement.style.justifyContent = 'initial';
   rootElement.style.placeItems = 'initial';
-  if (width) {
-    rootElement.style.width = width;
-  }
-  if (height) {
-    rootElement.style.height = height;
-  }
 
   if (documentElement) {
     documentElement.style.margin = '0';
@@ -340,13 +433,6 @@ function installScreenshotLayoutOverride(
     documentElement.style.paddingRight = '0';
     documentElement.style.paddingBottom = '0';
     documentElement.style.paddingLeft = '0';
-    if (width) {
-      documentElement.style.width = width;
-    }
-    if (height) {
-      documentElement.style.height = height;
-      documentElement.style.minHeight = height;
-    }
   }
 
   if (body) {
@@ -364,14 +450,12 @@ function installScreenshotLayoutOverride(
     body.style.alignItems = 'initial';
     body.style.justifyContent = 'initial';
     body.style.placeItems = 'initial';
-    if (width) {
-      body.style.width = width;
-    }
-    if (height) {
-      body.style.height = height;
-      body.style.minHeight = height;
-    }
   }
+
+  applyScreenshotBoxSize(rootElement, documentElement, body, {
+    width: options.targetWidth,
+    height: options.targetHeight,
+  });
 
   return () => {
     rootElement.style.marginLeft = rootSnapshot.marginLeft;
@@ -380,6 +464,8 @@ function installScreenshotLayoutOverride(
     rootElement.style.marginBottom = rootSnapshot.marginBottom;
     rootElement.style.width = rootSnapshot.width;
     rootElement.style.height = rootSnapshot.height;
+    rootElement.style.minHeight = rootSnapshot.minHeight;
+    rootElement.style.overflow = rootSnapshot.overflow;
     rootElement.style.display = rootSnapshot.display;
     rootElement.style.alignItems = rootSnapshot.alignItems;
     rootElement.style.justifyContent = rootSnapshot.justifyContent;
@@ -450,10 +536,14 @@ async function captureElementWithSnapdom(
     width: options.width,
     height: options.height,
     dpr: options.pixelRatio,
+    fast: true,
     backgroundColor: '#fff',
     embedFonts: true,
     fallbackURL: SCREENSHOT_IMAGE_PLACEHOLDER_DATA_URL,
     cache: 'soft',
+    placeholders: false,
+    outerTransforms: false,
+    outerShadows: false,
   });
   return getSnapdomPngDataUrl(image);
 }
@@ -486,6 +576,7 @@ export async function captureDocumentScreenshot(
     targetWidth,
     targetHeight,
   });
+  const restoreScrollOrigin = installScreenshotScrollOrigin(element);
   if (targetWidth || targetHeight) {
     await settleScreenshotLayout();
   }
@@ -494,7 +585,14 @@ export async function captureDocumentScreenshot(
   const restoreImageUrls = rewriteElementImageUrlsForScreenshot(element);
   try {
     await settleScreenshotLayout();
-    const { width, height } = collectScreenshotSize(element);
+    const measuredSize = collectScreenshotSize(element);
+    const width = measuredSize.width;
+    const height = measuredSize.height;
+    applyScreenshotBoxSize(element, document.documentElement instanceof HTMLElement ? document.documentElement : null, document.body instanceof HTMLElement ? document.body : null, {
+      width,
+      height,
+    });
+    await settleScreenshotLayout();
     const pixelRatio = targetPixelRatio ?? Math.max(1, Math.min(2, window.devicePixelRatio || 2));
     const dataUrl = await captureElementWithSnapdom(element, {
       width,
@@ -507,5 +605,6 @@ export async function captureDocumentScreenshot(
     restoreImageUrls();
     restoreScrollbarHidingStyle();
     restoreScreenshotLayout();
+    restoreScrollOrigin();
   }
 }

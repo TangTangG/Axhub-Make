@@ -1,10 +1,7 @@
 import React from 'react';
-import { PencilRuler } from 'lucide-react';
 import PresentationToolbar from './PresentationToolbar';
 import ContentAreaView from './ContentAreaView';
 import UiReviewPanel from './UiReviewPanel';
-import { Button } from '@/components/ui/button';
-import { toast } from 'sonner';
 import type {
     PresentationAreaLegacyProps,
     PresentationAreaProps,
@@ -26,46 +23,26 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
 
     const isCanvasMode = props.contentMode === 'canvas' || props.viewMode === 'canvas';
     const isResourceFolderPreview = props.contentMode === 'doc' && Boolean(props.selectedResourceFolder);
-    const isPrototypeStartDraft = props.prototypeStartDraftActive === true && !props.selectedItem;
-    const isPrototypeStartPlaceholder = props.selectedItem?.placeholder === true && props.viewMode === 'demo';
+    const isPreviewContentMode = props.contentMode === 'preview';
+    const isPrototypeStartDraft = isPreviewContentMode && props.prototypeStartDraftActive === true && !props.selectedItem;
+    const isResourceStartDraft = props.contentMode === 'doc' && props.resourceStartDraftActive === true && !props.selectedDoc;
+    const isThemeStartDraft = props.contentMode === 'theme' && props.themeStartDraftActive === true && !props.selectedTheme;
+    const isPrototypeStartPlaceholder = isPreviewContentMode && props.selectedItem?.placeholder === true && props.viewMode === 'demo';
     const shouldShowPresentationToolbar = !isCanvasMode
         && !isResourceFolderPreview
         && !isPrototypeStartDraft
+        && !isResourceStartDraft
+        && !isThemeStartDraft
         && !isPrototypeStartPlaceholder;
     const shouldShowAssistantPanel = props.reviewPanelOpen
         && props.viewMode !== 'canvas'
         && !isPrototypeStartDraft
+        && !isResourceStartDraft
+        && !isThemeStartDraft
         && !isPrototypeStartPlaceholder;
-    const shouldShowPrototypeStartActions = isPrototypeStartDraft || isPrototypeStartPlaceholder;
-    const handleOpenPrototypeStartCanvas = async () => {
-        const draftCreatedItem = isPrototypeStartDraft
-            ? await props.onCreatePrototypeForDraftStart?.()
-            : null;
-        const startItem = draftCreatedItem || props.selectedItem;
-        if (!startItem) {
-            toast.error('创建原型失败');
-            return;
-        }
-        props.setViewMode?.('canvas');
-    };
 
     return (
         <div className="relative flex flex-col flex-1 h-full min-h-0 min-w-0 bg-background">
-            {shouldShowPrototypeStartActions ? (
-                <div className="pointer-events-none absolute right-8 top-5 z-10 flex items-center justify-end">
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="pointer-events-auto h-8 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
-                        aria-label="打开画布"
-                        onClick={() => { void handleOpenPrototypeStartCanvas(); }}
-                    >
-                        <PencilRuler className="h-4 w-4" />
-                        <span>画布</span>
-                    </Button>
-                </div>
-            ) : null}
             {shouldShowPresentationToolbar ? (
                 <PresentationToolbar
                     collapsed={props.collapsed}
@@ -103,12 +80,13 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     handleExportHtml={props.handleExportHtml}
                     handlePublishCloudTarget={props.handlePublishCloudTarget}
                     handleOpenCloudPublishSettings={props.handleOpenCloudPublishSettings}
+                    handleOpenAxhubPublishDialog={props.handleOpenAxhubPublishDialog}
                     currentPublishResourcePath={props.currentPublishResourcePath}
+                    visibleCloudPublishTargets={props.visibleCloudPublishTargets}
                     latestCloudPublishUrl={props.latestCloudPublishUrl}
                     handleCopyLatestCloudPublishUrl={props.handleCopyLatestCloudPublishUrl}
                     setIsExportModalOpen={props.setIsExportModalOpen}
                     handleQuickCopyEditablePrototype={props.handleQuickCopyEditablePrototype}
-                    handleQuickCopyRuntimeComponent={props.handleQuickCopyRuntimeComponent}
                     handleOpenAxureUsageGuide={props.handleOpenAxureUsageGuide}
                     handleOpenIdeFile={props.handleOpenIdeFile}
                     handleOpenDocInIDE={props.handleOpenDocInIDE}
@@ -123,6 +101,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     quickEditRuntimeStatus={props.quickEditRuntimeStatus}
                     exportAvailability={props.exportAvailability}
                     hostToolbarState={props.hostToolbarState}
+                    prototypeDecisionDataAvailable={props.prototypeDecisionDataAvailable}
                     handleRunHostToolbarAction={props.handleRunHostToolbarAction}
                     handleRunQuickEditSaveAction={props.handleRunQuickEditSaveAction}
                     contentMode={props.contentMode}
@@ -135,6 +114,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     onStandalonePanelToggle={props.onStandalonePanelToggle}
                     reviewPanelOpen={props.reviewPanelOpen}
                     onReviewPanelToggle={props.handleReviewPanelToggle}
+                    onOpenAISettings={props.onOpenAISettings}
                 />
             ) : null}
             <div className="flex flex-1 min-h-0">
@@ -145,9 +125,10 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         secondaryPreviewIframeRef={props.secondaryPreviewIframeRef}
                         selectedItem={props.selectedItem}
                         prototypeStartDraftActive={props.prototypeStartDraftActive}
+                        resourceStartDraftActive={props.resourceStartDraftActive}
+                        themeStartDraftActive={props.themeStartDraftActive}
                         activeTab={props.activeTab}
                         previewConfig={props.previewConfig}
-                        reviewPageZoomEnabled={props.reviewPageZoomEnabled}
                         handleChangeMultiPageColumns={props.handleChangeMultiPageColumns}
                         handleSelectPreviewSinglePreset={props.handleSelectPreviewSinglePreset}
                         handleSelectCustomPreview={props.handleSelectCustomPreview}
@@ -173,6 +154,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         onEnterSelectedPrototypePreview={props.handleEnterSelectedPrototypePreview}
                         contentMode={props.contentMode}
                         docsItems={props.docsItems}
+                        sidebarTrees={props.sidebarTrees}
                         selectedDoc={props.selectedDoc}
                         selectedResourceFolder={props.selectedResourceFolder}
                         selectedTemplate={props.selectedTemplate}
@@ -191,6 +173,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         collapsed={props.collapsed}
                         setCollapsed={props.setCollapsed}
                         selectedCanvas={props.selectedCanvas}
+                        canvasItems={props.canvasItems}
                         excalidrawPropertyPanelMode={props.excalidrawPropertyPanelMode}
                         setExcalidrawPropertyPanelMode={props.setExcalidrawPropertyPanelMode}
                         excalidrawPropertyPanelPosition={props.excalidrawPropertyPanelPosition}
@@ -203,7 +186,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         onAddCanvasImageToAI={props.onAddCanvasImageToAI}
                         onAnnotationsChange={props.onCanvasAnnotationsChange}
                         onOpenCanvasInIDE={props.onOpenCanvasInIDE}
-                        onOpenCanvasGenie={props.onOpenCanvasGenie}
+                        onOpenCanvasAgent={props.onOpenCanvasAgent}
                         onSelectResourceFolder={props.onSelectResourceFolder}
                         onSelectResourceFolderItem={props.onSelectResourceFolderItem}
                         onOpenResourceFolderInSystem={props.onOpenResourceFolderInSystem}
@@ -214,7 +197,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         webAgentPanelOpen={props.webAgentPanelOpen}
                         aiPanelMode={props.aiPanelMode}
                         onOpenProjectInIDE={props.handleOpenProjectInIDE}
-                        onOpenGenieWebAgent={props.onOpenGenieWebAgent}
+                        onOpenAcpWebAgent={props.onOpenAcpWebAgent}
                         onOpenImageAiPanel={props.onOpenImageAiPanel}
                         onOpenWebAgentInPanel={props.onOpenWebAgentInPanel}
                         onExecutePrompt={props.onExecutePrompt}
@@ -230,28 +213,38 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         onOpenPrototypeCreateDialog={props.onOpenPrototypeCreateDialog}
                         onOpenAISettings={props.onOpenAISettings}
                         onCreatePrototypeForDraftStart={props.onCreatePrototypeForDraftStart}
+                        onUploadResourceFiles={props.onUploadResourceFiles}
+                        onCreateResourceCanvasFile={props.onCreateResourceCanvasFile}
+                        onCreateDrawioResourceFile={props.onCreateDrawioResourceFile}
+                        onOpenDesignImport={props.onOpenDesignImport}
                         onRefreshPrototypes={props.onRefreshPrototypes}
+                        agentRunConcurrency={props.agentRunConcurrency}
                         onSubmitCanvasAssistantPrompt={props.onSubmitCanvasAssistantPrompt}
                     />
                 </div>
                 {shouldShowAssistantPanel ? (
                     <UiReviewPanel
-                        activeKind={props.activeReviewKind || 'design'}
-                        markdown={props.reviewMarkdown || ''}
+                        reports={props.reviewReports || []}
+                        selectedReport={props.selectedReviewReport || null}
+                        activeReportId={props.activeReviewReportId}
                         reviewPrompt={props.reviewPrompt || ''}
                         reviewDocumentPath={props.reviewDocumentPath}
-                        updatedAt={props.reviewUpdatedAt}
+                        reviewPrompts={props.reviewPrompts}
+                        reviewDocumentPaths={props.reviewDocumentPaths}
                         loading={props.reviewLoading}
+                        detailLoading={props.reviewDetailLoading}
+                        uploadLoading={props.reviewUploadLoading}
                         error={props.reviewError}
-                        pageZoomEnabled={Boolean(props.reviewPageZoomEnabled)}
-                        preferredPromptClient={props.preferredPromptClient}
-                        preferredIDE={props.preferredIDE}
-                        ideAvailability={props.ideAvailability}
-                        assistantOpen={props.assistantVisible === true && props.aiPanelMode === 'general-ai'}
+                        lanSubmitConfig={props.reviewLanSubmitConfig}
                         onExecutePrompt={props.onExecutePrompt}
-                        onKindChange={(kind) => props.handleReviewKindChange?.(kind)}
-                        onCopyPrompt={() => { void props.handleCopyReviewPrompt?.(); }}
-                        onTogglePageZoom={() => props.handleToggleReviewPageZoom?.()}
+                        onSelectReport={(report) => props.handleSelectReviewReport?.(report)}
+                        onBackToList={() => props.handleBackToReviewList?.()}
+                        onCopyReportPath={(report) => props.handleCopyReviewReportPath?.(report)}
+                        onDeleteReport={(report) => props.handleDeleteReviewReport?.(report)}
+                        onStartReview={(kind) => props.handleStartReview?.(kind)}
+                        onRunReviewDirect={(kind) => props.handleRunReviewDirect?.(kind)}
+                        onUploadReport={(files, meta) => props.handleUploadReviewReport?.(files, meta)}
+                        onLanSubmitEnabledChange={(enabled) => props.handleReviewLanSubmitEnabledChange?.(enabled)}
                     />
                 ) : null}
             </div>

@@ -3,9 +3,6 @@ import path from 'node:path';
 
 import {
   getProjectMetadataPath,
-  isMakeStateWritePermissionError,
-  readServerInfo,
-  writeServerInfo,
   type RegisteredProject,
 } from './projectCore/index.ts';
 
@@ -13,6 +10,7 @@ import { readJsonBody, sendJson } from './http.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import {
   applyMakeClientUpdate,
+  cloneMakeClientProject,
   copyMakeClientProject,
   createBlankMakeClientProject,
   ensureMakeClientDevServer,
@@ -41,22 +39,6 @@ interface MakeClientApiHandlers {
     },
   ) => RegisteredProject;
   toProjectEntry: (project: RegisteredProject) => RegisteredProject;
-}
-
-function tryWriteAdminServerInfo(projectRoot: string, options: ManagementApiOptions): void {
-  if (!options.serverInfo) {
-    return;
-  }
-  try {
-    writeServerInfo(projectRoot, 'admin', {
-      ...options.serverInfo,
-      projectRoot,
-    }, { homeDir: options.serverInfoHomeDir });
-  } catch (error: any) {
-    if (!isMakeStateWritePermissionError(error)) {
-      throw error;
-    }
-  }
 }
 
 export function handleMakeClientProjectApi(
@@ -172,6 +154,56 @@ export function handleMakeClientProjectApi(
     return true;
   }
 
+  if (pathname === '/api/projects/make/clone' && req.method === 'POST') {
+    readJsonBody(req).then(async (body) => {
+      const parentRoot = String(body?.parentRoot || '').trim();
+      const folderName = String(body?.folderName || '').trim();
+      const gitUrl = String(body?.gitUrl || '').trim();
+      if (!parentRoot || !folderName || !gitUrl) {
+        sendJson(res, {
+          error: 'Missing parentRoot, folderName, or gitUrl',
+          code: 'INVALID_MAKE_PROJECT_FOLDER_NAME',
+        }, { status: 400 });
+        return;
+      }
+      const result = await cloneMakeClientProject({
+        parentRoot,
+        folderName,
+        gitUrl,
+        projectName: typeof body?.projectName === 'string' ? body.projectName : undefined,
+      }, {
+        adminServerInfo: options.serverInfo,
+        serverInfoHomeDir: options.serverInfoHomeDir,
+        diagnosticLog: options.diagnosticLog,
+      });
+      const project = handlers.addOrUpdateMakeClientRegistryProject({
+        id: result.marker.project.id,
+        name: result.marker.project.name,
+        root: result.projectRoot,
+        metadataPath: getProjectMetadataPath(result.projectRoot),
+      });
+      registry.setActiveProject(project.id);
+      sendJson(res, {
+        success: true,
+        phase: 'ready',
+        project: handlers.toProjectEntry(project),
+        marker: result.marker,
+        runtime: result.dev.runtime,
+        progress: result.progress,
+      }, { status: 201 });
+    }).catch((error: any) => {
+      const details = error?.details && typeof error.details === 'object' ? error.details as Record<string, unknown> : {};
+      sendJson(res, {
+        ...makeClientErrorPayload(error),
+        ...(typeof details.prompt === 'string' ? { prompt: details.prompt } : {}),
+        ...(typeof details.promptScene === 'string' ? { promptScene: details.promptScene } : {}),
+        ...(typeof details.gitUrl === 'string' ? { gitUrl: details.gitUrl } : {}),
+        ...(typeof details.projectRoot === 'string' ? { projectRoot: details.projectRoot } : {}),
+      }, { status: Number(error?.status || 500) });
+    });
+    return true;
+  }
+
   if (!projectRoute) {
     return false;
   }
@@ -252,19 +284,6 @@ export function handleMakeClientProjectApi(
 
   if (rest === 'dev/ensure' && req.method === 'POST') {
     readJsonBody(req).then(async (body) => {
-      const existingRuntime = readServerInfo(project.root, 'runtime');
-      if (existingRuntime && path.resolve(existingRuntime.projectRoot) === path.resolve(project.root)) {
-        const status = await getMakeClientDevStatus(projectId, project.root);
-        if (!status.makeClient || status.running) {
-          tryWriteAdminServerInfo(project.root, options);
-          return {
-            success: true as const,
-            reused: true,
-            phase: 'ready' as const,
-            runtime: status.runtime || existingRuntime,
-          };
-        }
-      }
       return ensureMakeClientDevServer(project.root, {
         adminServerInfo: options.serverInfo,
         serverInfoHomeDir: options.serverInfoHomeDir,
@@ -279,6 +298,7 @@ export function handleMakeClientProjectApi(
         reused: result.reused,
         phase: result.phase,
         runtime: result.runtime,
+        ...(result.runtimePatched ? { runtimePatched: true } : {}),
       });
     }).catch((error: any) => {
       sendJson(res, makeClientErrorPayload(error, {

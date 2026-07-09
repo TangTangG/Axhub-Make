@@ -4,7 +4,10 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveAiRunTimeoutMs } from '../managementApi.aiRuns.ts';
+import {
+  resolveAcpConversationRunState,
+  resolveAiRunTimeoutMs,
+} from '../managementApi.aiRuns.ts';
 import {
   cleanupProjectApiTestRoots,
   createTempRoot,
@@ -44,6 +47,10 @@ async function readRequestBody(req: IncomingMessage): Promise<string> {
 async function startAcpRunTestServer(options: {
   streamEvents?: Record<string, unknown>[];
   recordsResponse?: unknown;
+  chatError?: {
+    status: number;
+    body: Record<string, unknown>;
+  };
 } = {}): Promise<AcpRunTestServer> {
   const requests: AcpRunTestServer['requests'] = [];
   const recordsRequests: AcpRunTestServer['recordsRequests'] = [];
@@ -72,6 +79,11 @@ async function startAcpRunTestServer(options: {
       const rawBody = await readRequestBody(req);
       const body = rawBody ? JSON.parse(rawBody) : {};
       requests.push({ method: req.method, url: req.url, body });
+      if (options.chatError) {
+        res.writeHead(options.chatError.status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(options.chatError.body));
+        return;
+      }
       res.writeHead(200, {
         'content-type': 'text/event-stream',
         'x-acp-provider': String(body.provider || 'codex'),
@@ -233,9 +245,207 @@ describe('AI runs API', () => {
     }
   });
 
-  it('keeps direct ACP runs above the short settings-test timeout floor', () => {
-    expect(resolveAiRunTimeoutMs('direct', { automation: { acp: { timeout: 30 } } })).toBe(180_000);
-    expect(resolveAiRunTimeoutMs('prototype', { automation: { acp: { timeout: 30 } } })).toBe(30_000);
+  it('keeps ACP runs above the long no-response confirmation floor', () => {
+    expect(resolveAiRunTimeoutMs('direct', { automation: { acp: { timeout: 30 } } })).toBe(1_200_000);
+    expect(resolveAiRunTimeoutMs('prototype', { automation: { acp: { timeout: 30 } } })).toBe(1_200_000);
+    expect(resolveAiRunTimeoutMs('image', { automation: { acp: { timeout: 222 } } })).toBe(1_200_000);
+  });
+
+  it('resolves completed direct ACP no-response state from the conversation store', () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-no-response-store-');
+    const conversationStorePath = path.join(projectRoot, 'src/prototypes/home/.spec/acp/conversations.json');
+    fs.mkdirSync(path.dirname(conversationStorePath), { recursive: true });
+    fs.writeFileSync(conversationStorePath, JSON.stringify({
+      version: 1,
+      conversations: [
+        {
+          threadId: 'annotation-no-response',
+          provider: 'codex',
+          providerSessionId: 'session-no-response',
+          status: 'active',
+          lastActiveAt: '2026-07-02T17:32:32.832Z',
+        },
+      ],
+      sessions: [
+        {
+          threadId: 'annotation-no-response',
+          acpSessionId: 'session-no-response',
+          provider: 'codex',
+          closedAt: null,
+        },
+      ],
+      messages: {
+        'annotation-no-response': {
+          headId: 'assistant-message',
+          messages: [
+            {
+              id: 'user-message',
+              role: 'user',
+              content: {
+                parts: [{ type: 'text', text: '修改批注' }],
+                metadata: {
+                  custom: {
+                    acpRun: {
+                      status: 'running',
+                      threadId: 'annotation-no-response',
+                      acpSessionId: 'session-no-response',
+                    },
+                  },
+                },
+              },
+            },
+            {
+              id: 'assistant-message',
+              role: 'assistant',
+              content: {
+                parts: [
+                  { type: 'text', text: '我开始修改 home 节点', state: 'done' },
+                  { type: 'text', text: '完成。已调整样式并清理批注。', state: 'streaming' },
+                ],
+                metadata: {
+                  custom: {
+                    acpRun: {
+                      status: 'completed',
+                      threadId: 'annotation-no-response',
+                      acpSessionId: 'session-no-response',
+                      updatedAt: 1783013552755,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    }, null, 2), 'utf8');
+
+    const state = resolveAcpConversationRunState({
+      conversationStorePath,
+      runId: 'annotation-no-response',
+      threadId: 'annotation-no-response',
+      conversationId: 'annotation-no-response',
+      provider: 'codex',
+    });
+
+    expect(state).toMatchObject({
+      status: 'completed',
+      result: {
+        id: 'annotation-no-response',
+        threadId: 'annotation-no-response',
+        provider: 'codex',
+        output: '完成。已调整样式并清理批注。',
+        finishReason: 'completed',
+        runtimeHeaders: {
+          provider: 'codex',
+          threadId: 'annotation-no-response',
+          sessionId: 'session-no-response',
+        },
+      },
+    });
+  });
+
+  it('emits run.error and persists task diagnostics when ACP active-run cancellation fails', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-cancel-failed-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-cancel-failed', name: 'AI Runs Cancel Failed' },
+      resourceWriteTargets: {
+        prototypes: { type: 'project-relative-path', path: 'src/prototypes' },
+      },
+    });
+    const errorBody = {
+      error: 'Failed to cancel the active ACP run before sending the new prompt.',
+      code: 'ACP_CHAT_CANCEL_FAILED',
+      threadId: 'thread-home',
+      provider: 'codex',
+      cause: 'provider cleanup failed',
+    };
+    const acp = await startAcpRunTestServer({
+      chatError: {
+        status: 502,
+        body: errorBody,
+      },
+    });
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '继续修改这个批注。',
+          runId: 'run-cancel-failed',
+          threadId: 'thread-home',
+          conversationId: 'conversation-home',
+          taskId: 'task-cancel-failed',
+          targetPath: 'prototypes/home',
+        }),
+      });
+      const events = await collectRunEvents(response);
+
+      expect(events.map((event) => event.event)).toEqual([
+        'run.accepted',
+        'run.stage',
+        'run.error',
+      ]);
+      expect(events.at(-1)).toMatchObject({
+        event: 'run.error',
+        data: {
+          status: 'error',
+          runId: 'run-cancel-failed',
+          threadId: 'thread-home',
+          conversationId: 'conversation-home',
+          code: 'ACP_CHAT_CANCEL_FAILED',
+          error: 'Failed to cancel the active ACP run before sending the new prompt.',
+          details: errorBody,
+        },
+      });
+
+      const taskPath = path.join(projectRoot, 'src/prototypes/home/.spec/generation-tasks.json');
+      const taskHistory = JSON.parse(fs.readFileSync(taskPath, 'utf8'));
+      expect(taskHistory.tasks).toEqual([
+        expect.objectContaining({
+          id: 'task-cancel-failed',
+          status: 'error',
+          error: 'Failed to cancel the active ACP run before sending the new prompt.',
+          metadata: expect.objectContaining({
+            errorCode: 'ACP_CHAT_CANCEL_FAILED',
+            errorDetails: errorBody,
+          }),
+        }),
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('normalizes AI settings provider tests from prompt clients before calling ACP chat', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-agent-provider-test-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-agent-provider-test', name: 'AI Runs Agent Provider Test' },
+    });
+    const acp = await startAcpRunTestServer();
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'agent-provider-test',
+          client: 'acp:cursor',
+          prompt: '请只返回 AXHUB_AGENT_TEST_OK，不要返回其他文字。',
+        }),
+      });
+      await collectRunEvents(response);
+
+      expect(acp.requests[0].body).toMatchObject({
+        provider: 'cursor',
+        workspacePath: projectRoot,
+      });
+    } finally {
+      await server.close();
+    }
   });
 
   it('streams image generation artifacts through one unified AI run endpoint', async () => {
@@ -276,7 +486,7 @@ describe('AI runs API', () => {
           scene: 'image',
           prompt: '生成两张图',
           params: {
-            size: '1024x1024',
+            size: '1440x896',
             quality: 'high',
             output_format: 'png',
             n: 2,
@@ -337,7 +547,7 @@ describe('AI runs API', () => {
           ],
         }),
       ]);
-      expect(acp.requests[0].body.messages[0].parts[0].text).toContain('- size: 1024x1024');
+      expect(acp.requests[0].body.messages[0].parts[0].text).toContain('- size: 1440x896');
       expect(acp.requests[0].body.messages[0].parts[0].text).toContain('- quality: high');
       expect(acp.requests[0].body.messages[0].parts[0].text).toContain('- count: 2');
       expect(acp.requests[0].body.builtinToolSettings).toEqual({
@@ -487,6 +697,48 @@ describe('AI runs API', () => {
     }
   });
 
+  it('forwards per-run MCP servers to direct ACP runs', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-mcp-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-direct-mcp', name: 'AI Runs Direct MCP' },
+    });
+    const acp = await startAcpRunTestServer();
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '在当前画布新增节点。',
+          mcpServers: [{
+            name: 'axhub-canvas',
+            type: 'http',
+            url: `${server.origin}/api/mcp/axhub-canvas`,
+            headers: [{
+              name: 'x-axhub-canvas-mcp-token',
+              value: 'canvas-secret',
+            }],
+          }],
+        }),
+      });
+      await collectRunEvents(response);
+
+      expect(acp.requests[0].body.mcpServers).toEqual([{
+        name: 'axhub-canvas',
+        type: 'http',
+        url: `${server.origin}/api/mcp/axhub-canvas`,
+        headers: [{
+          name: 'x-axhub-canvas-mcp-token',
+          value: 'canvas-secret',
+        }],
+      }]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('forwards prototype conversation store paths to direct ACP runs', async () => {
     const projectRoot = createTempRoot('axhub-ai-runs-direct-store-path-');
     writeProjectMetadata(projectRoot, {
@@ -516,7 +768,7 @@ describe('AI runs API', () => {
     }
   });
 
-  it('uses the shared ACP timeout for image runs instead of image-generation timeout settings', async () => {
+  it('uses the shared ACP no-response floor for image runs instead of image-generation timeout settings', async () => {
     const projectRoot = createTempRoot('axhub-ai-runs-image-timeout-');
     writeProjectMetadata(projectRoot, {
       project: { id: 'ai-runs-image-timeout', name: 'AI Runs Image Timeout' },
@@ -547,7 +799,8 @@ describe('AI runs API', () => {
       });
       await collectRunEvents(response);
 
-      expect(timeoutSpy.mock.calls.map(([timeoutMs]) => timeoutMs)).toContain(222_000);
+      expect(timeoutSpy.mock.calls.map(([timeoutMs]) => timeoutMs)).toContain(1_200_000);
+      expect(timeoutSpy.mock.calls.map(([timeoutMs]) => timeoutMs)).not.toContain(222_000);
       expect(timeoutSpy.mock.calls.map(([timeoutMs]) => timeoutMs)).not.toContain(45_000);
     } finally {
       timeoutSpy.mockRestore();
@@ -990,6 +1243,161 @@ describe('AI runs API', () => {
           apiKey: 'sk-image',
           model: 'gpt-image-2',
           savePathPattern: 'src/prototypes/home/.spec/generation-assets/images/image-<index>.<ext>',
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not stream a terminal run error for direct ACP diagnostics when the run finishes normally', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-warning-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-direct-warning', name: 'AI Runs Direct Warning' },
+    });
+    const acp = await startAcpRunTestServer({
+      streamEvents: [
+        { type: 'text-delta', delta: '修改已应用' },
+        { type: 'error', errorText: 'session status poll failed' },
+        { type: 'finish', finishReason: 'stop' },
+      ],
+    });
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '修改批注',
+          threadId: 'annotation-mqz16rps-081z7c',
+        }),
+      });
+      const events = await collectRunEvents(response);
+
+      expect(response.status).toBe(200);
+      expect(events.map((event) => event.event)).toEqual([
+        'run.accepted',
+        'run.stage',
+        'run.text.delta',
+        'run.completed',
+      ]);
+      expect(events.some((event) => event.event === 'run.error')).toBe(false);
+      expect(events.at(-1)).toMatchObject({
+        event: 'run.completed',
+        data: {
+          status: 'done',
+          output: '修改已应用',
+          finishReason: 'stop',
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not stream a terminal run error for direct ACP tool diagnostics when the run finishes normally', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-tool-warning-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-direct-tool-warning', name: 'AI Runs Direct Tool Warning' },
+    });
+    const acp = await startAcpRunTestServer({
+      streamEvents: [
+        { type: 'text-delta', delta: '修改已应用' },
+        {
+          type: 'tool-output-error',
+          toolCallId: 'call-check-ready',
+          toolName: 'run_shell_command',
+          errorText: 'node scripts/check-app-ready.mjs failed',
+        },
+        { type: 'finish', finishReason: 'stop' },
+      ],
+    });
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '修改批注',
+          threadId: 'annotation-mqz16rps-081z7c',
+        }),
+      });
+      const events = await collectRunEvents(response);
+
+      expect(response.status).toBe(200);
+      expect(events.map((event) => event.event)).toEqual([
+        'run.accepted',
+        'run.stage',
+        'run.text.delta',
+        'run.completed',
+      ]);
+      expect(events.some((event) => event.event === 'run.error')).toBe(false);
+      expect(events.at(-1)).toMatchObject({
+        event: 'run.completed',
+        data: {
+          status: 'done',
+          output: '修改已应用',
+          finishReason: 'stop',
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('streams original ACP error diagnostics for failed direct runs', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-direct-error-diagnostics-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-direct-error-diagnostics', name: 'AI Runs Direct Error Diagnostics' },
+    });
+    const acp = await startAcpRunTestServer({
+      streamEvents: [
+        { type: 'text-delta', delta: '修改已应用' },
+        { type: 'error', errorText: 'session status poll failed', code: 'SESSION_STATUS_FAILED' },
+      ],
+    });
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '修改批注',
+          threadId: 'annotation-mqz16rps-081z7c',
+        }),
+      });
+      const events = await collectRunEvents(response);
+
+      expect(response.status).toBe(200);
+      expect(events.at(-1)).toMatchObject({
+        event: 'run.error',
+        data: {
+          status: 'error',
+          error: 'session status poll failed',
+          code: 'ACP_CHAT_STREAM_ERROR',
+          output: '修改已应用',
+          chunk: {
+            type: 'error',
+            errorText: 'session status poll failed',
+            code: 'SESSION_STATUS_FAILED',
+          },
+          errors: [
+            {
+              type: 'error',
+              message: 'session status poll failed',
+              chunk: {
+                type: 'error',
+                errorText: 'session status poll failed',
+                code: 'SESSION_STATUS_FAILED',
+              },
+            },
+          ],
         },
       });
     } finally {

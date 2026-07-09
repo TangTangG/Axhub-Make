@@ -18,6 +18,7 @@ export interface MakeServerCliOptions {
   devMode?: boolean;
   open?: boolean;
   logFile?: string;
+  axhubOnlineBaseUrl?: string;
 }
 
 export const CLI_USAGE = `Usage: axhub-make [options]
@@ -27,6 +28,8 @@ Options:
   --host <host>              Server host. Defaults to all interfaces.
   --runtime-origin <origin>  Runtime server origin.
   --admin-root <path>        Admin UI static asset directory.
+  --axhub-online-base-url <url>
+                             Axhub online service base URL for auth and publishing.
   --dev                      Enable Vite dev middleware for frontend HMR.
   --no-open                  Start the server without opening the admin page.
   --log-file [path]          Tee console and diagnostic logs to a local file.
@@ -93,6 +96,21 @@ function readOptionValue(args: string[], index: number, optionName: string): str
   return value;
 }
 
+function normalizeOnlineBaseUrlOption(value: string, optionName: string): string {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('Unsupported protocol');
+    }
+    url.pathname = url.pathname.replace(/\/+$/u, '');
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/+$/u, '');
+  } catch {
+    throw new Error(`Invalid ${optionName}: ${value}`);
+  }
+}
+
 export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCliOptions {
   let legacyProjectRoot = '';
   let port = DEFAULT_MAKE_SERVER_PORT;
@@ -103,6 +121,7 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCli
   let devMode = false;
   let open = true;
   let logFile: string | undefined;
+  let axhubOnlineBaseUrl: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -135,6 +154,12 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCli
     }
     if (arg === '--admin-root') {
       adminRoot = path.resolve(cwd, readOptionValue(args, index, '--admin-root'));
+      index += 1;
+      continue;
+    }
+    if (arg === '--axhub-online-base-url') {
+      const value = readOptionValue(args, index, '--axhub-online-base-url');
+      axhubOnlineBaseUrl = normalizeOnlineBaseUrlOption(value, '--axhub-online-base-url');
       index += 1;
       continue;
     }
@@ -183,6 +208,7 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): MakeServerCli
     ...(devMode ? { devMode } : {}),
     ...(open === false ? { open } : {}),
     ...(logFile ? { logFile } : {}),
+    ...(axhubOnlineBaseUrl ? { axhubOnlineBaseUrl } : {}),
   };
 }
 

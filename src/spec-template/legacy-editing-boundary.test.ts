@@ -34,9 +34,40 @@ describe('spec-template quick editing regression boundary', () => {
     const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
 
     expect(viewerSource).toContain("PROJECT_DOCUMENT_CONTENT_PATH_RE.test(pathname)");
+    expect(viewerSource).toContain("PROJECT_DOCUMENT_PATH_CONTENT_RE.test(pathname)");
     expect(viewerSource).toMatch(
-      /if \(pathname === '\/api\/markdown-file' \|\| pathname\.startsWith\('\/api\/docs\/'\) \|\| PROJECT_DOCUMENT_CONTENT_PATH_RE\.test\(pathname\)\) \{[\s\S]*?method: 'PUT'/,
+      /if \([\s\S]*pathname === '\/api\/markdown-file'[\s\S]*pathname\.startsWith\('\/api\/docs\/'\)[\s\S]*PROJECT_DOCUMENT_CONTENT_PATH_RE\.test\(pathname\)[\s\S]*PROJECT_DOCUMENT_PATH_CONTENT_RE\.test\(pathname\)[\s\S]*\) \{[\s\S]*?method: 'PUT'/,
     );
+  });
+
+  it('resolves relative images in project document content previews through a project asset endpoint', () => {
+    const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
+
+    expect(viewerSource).toContain('buildProjectDocumentAssetUrl');
+    expect(viewerSource).toContain("parsedUrl.pathname.match(/^\\/api\\/projects\\/([^/]+)\\/document-content$/iu)");
+    expect(viewerSource).toContain('/api/projects/${encodeURIComponent(projectId)}/document-asset');
+    expect(viewerSource).toContain("path=${encodeURIComponent(filePath)}");
+    expect(viewerSource).toContain("asset=${encodeURIComponent(assetPath)}");
+  });
+
+  it('supports opening Markdown documents directly in edit mode from the URL', () => {
+    const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
+
+    expect(viewerSource).toContain("params.get('mode')");
+    expect(viewerSource).toMatch(/params\.get\('mode'\)[\s\S]*['"]edit['"][\s\S]*return 'edit'/);
+    expect(viewerSource).toContain("params.get('editor') === 'specComment'");
+    expect(viewerSource).toContain("return 'comment'");
+  });
+
+  it('broadcasts successful markdown-file saves to directory readers', () => {
+    const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
+
+    expect(viewerSource).toContain('axhub-markdown-docs');
+    expect(viewerSource).toContain('BroadcastChannel');
+    expect(viewerSource).toContain("type: 'markdown-file-saved'");
+    expect(viewerSource).toContain('resolveSavedMarkdownFilePath(currentDoc.url)');
+    expect(viewerSource).toContain('path: savedMarkdownPath');
+    expect(viewerSource).toContain('updatedAt: Date.now()');
   });
 
   it('keeps the Markdown comment prompt helper used by quick-edit comment mode', () => {
@@ -87,15 +118,15 @@ describe('spec-template quick editing regression boundary', () => {
     expect(bootstrapSource).toContain('markdownViewerRef.current?.getHostToolbarState');
     expect(bootstrapSource).toContain('markdownViewerRef.current?.subscribeHostToolbarState');
     expect(bootstrapSource).toContain('markdownViewerRef.current?.runHostToolbarAction');
-    expect(bootstrapSource).not.toContain("import { createGenieEditor } from 'axhub-genie-editor';");
-    expect(viewerSource).toContain("createGenieEditor({");
+    expect(bootstrapSource).not.toContain("import { createCommentary } from '@axhub/commentary';");
+    expect(viewerSource).toContain("createCommentary({");
     expect(viewerSource).toContain("interactionProfile: 'text-comment'");
     expect(viewerSource).toContain("toolbarMode: 'host'");
     expect(viewerSource).toContain('initialSelectionModeActive: false');
     expect(viewerSource).toContain('hideExecutionControls: true');
     expect(viewerSource).toContain("editor.runHostToolbarAction?.({ type: 'toggle-selection-mode', active: false })");
     expect(viewerSource).toContain('initialDarkMode');
-    expect(viewerSource).not.toContain('genieBridge');
+    expect(viewerSource).not.toContain('agentBridge');
     expect(viewerSource).not.toContain('integrationWs');
     expect(viewerSource).not.toContain('resolveDefaultEditorApiBaseUrl');
     expect(viewerSource).not.toContain('showCopyPromptAction: false');

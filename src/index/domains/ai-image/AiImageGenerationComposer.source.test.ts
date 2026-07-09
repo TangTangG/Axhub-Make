@@ -18,18 +18,6 @@ function readSharedComposerStyles() {
   return readFileSync(resolve(__dirname, '../shared/canvas-generation-acp-scope.css'), 'utf8');
 }
 
-function readSkillsSource() {
-  return readFileSync(resolve(__dirname, './aiImageSkills.ts'), 'utf8');
-}
-
-function readSceneRegistrySource() {
-  return readFileSync(resolve(__dirname, '../ai-generation/canvasAiSceneRegistry.ts'), 'utf8');
-}
-
-function readTriggerPopoverSource() {
-  return readFileSync(resolve(__dirname, '../../../components/assistant-ui/composer-trigger-popover.tsx'), 'utf8');
-}
-
 describe('AiImageGenerationComposer source', () => {
   it('renders a non-modal bottom composer instead of a dialog', () => {
     const source = readSource();
@@ -82,7 +70,7 @@ describe('AiImageGenerationComposer source', () => {
     expect(sharedSource).toContain('new CanvasGenerationMakeTransport');
     expect(sharedSource).toContain('<AcpUiProvider');
     expect(sharedSource).toContain('<AssistantRuntimeProvider runtime={runtime}>');
-    expect(sharedSource).toContain('renderTriggerPopovers?.()');
+    expect(sharedSource).not.toContain('renderTriggerPopovers?.()');
     expect(sharedSource).toContain('onPaste={');
     expect(sharedSource).not.toContain('@assistant-ui/react-ui');
     expect(sharedSource).not.toContain('ThreadConfigProvider');
@@ -125,12 +113,17 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('QUALITY_OPTIONS.map');
     expect(source).toContain('SIZE_PRESETS.map');
     expect(source).toContain('COUNT_OPTIONS.map');
-    expect(source).toContain('移动端 1K');
-    expect(source).toContain('移动端 2K');
-    expect(source).toContain('移动端 4K');
-    expect(source).toContain('PC 端 1K');
-    expect(source).toContain('PC 端 2K');
-    expect(source).toContain('PC 端 4K');
+    expect(source).toContain('手机整屏 768x1664');
+    expect(source).toContain('手机高清 1168x2528');
+    expect(source).toContain('PC 工作台 1440x896');
+    expect(source).toContain('PC 高清 1920x1200');
+    expect(source).toContain('方图 1024x1024');
+    expect(source).not.toContain('移动端竖图 1024x1536');
+    expect(source).not.toContain('移动端 2K 1152x2048');
+    expect(source).not.toContain('PC 横图 1536x1024');
+    expect(source).not.toContain('PC 2K 2048x1152');
+    expect(source).not.toContain('移动端 4K');
+    expect(source).not.toContain('PC 端 4K');
     expect(source).toContain('sizeToDimensions(params.size)');
     expect(source).toContain('>W</span>');
     expect(source).toContain('value={currentDimensions.width}');
@@ -187,7 +180,7 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).not.toContain('promptWithSettings');
   });
 
-  it('supports custom image size dimensions from editable width and height fields', () => {
+  it('keeps custom image dimensions but documents GPT Image 2 size constraints', () => {
     const source = readSource();
 
     expect(source).toContain("{ label: '自定义', value: 'custom', width: null, height: null }");
@@ -197,58 +190,41 @@ describe('AiImageGenerationComposer source', () => {
     expect(source).toContain('function normalizeDimensionInput');
     expect(source).toContain('const updateCustomDimension = (dimension: \'width\' | \'height\', value: string) => {');
     expect(source).toContain("updateParam('size', dimensionsToSize(nextWidth, nextHeight));");
-    expect(source).toContain('const customDimensionSize = useMemo(() => dimensionsToSize(customDimensions.width, customDimensions.height), [customDimensions]);');
-    expect(source).toContain("if (params.size === CUSTOM_SIZE_VALUE || customDimensionSize === params.size) return '自定义';");
     expect(source).toContain('inputMode="numeric"');
     expect(source).toContain('aria-label="自定义图片宽度"');
     expect(source).toContain('aria-label="自定义图片高度"');
+    expect(source).toContain('宽高需为 16 的倍数');
+    expect(source).toContain('最长边小于 3840px');
+    expect(source).toContain('比例不超过 3:1');
   });
 
-  it('adds AI image prompts through assistant-ui trigger popovers', () => {
+  it('does not expose preset prompt shortcuts in the AI image composer', () => {
     const source = readSource();
-    const skillsSource = readSkillsSource();
-    const registrySource = readSceneRegistrySource();
     const sharedSource = readSharedComposerSource();
-    const triggerPopoverSource = readTriggerPopoverSource();
 
-    expect(source).toContain('AI_IMAGE_SKILLS');
-    expect(source).toContain('appendAiImageSkillPrompt');
-    expect(source).toContain('ComposerTriggerPopover');
-    expect(source).toContain('unstable_useSlashCommandAdapter');
-    expect(skillsSource).toContain('AI_IMAGE_SKILLS: readonly AiImageSkill[] = [');
-    expect(registrySource).toContain('extract-icons');
-    expect(registrySource).toContain('generate-wireframe');
-    expect(registrySource).toContain('提取该 UI 设计稿中的图标，按矩阵格式使用工具生成一张新图片。');
-    expect(skillsSource).toContain('提取该 UI 设计稿中的图标，按矩阵格式使用工具生成一张新图片。');
-    expect(skillsSource).toContain('不要整张图片变灰，使用工具生成一张新图片');
-    expect(source).toContain('Sparkles');
-    expect(source).toContain('提示词');
-    expect(source).toContain('打开 AI 生图提示词');
-    expect(source).toContain('没有匹配的提示词');
-    expect(source).not.toContain('打开 AI 生图技能');
-    expect(source).toContain('renderLeadingActions');
-    expect(source).toContain('renderTriggerPopovers');
+    expect(source).not.toContain('AI_IMAGE_SKILLS');
+    expect(source).not.toContain('appendAiImageSkillPrompt');
+    expect(source).not.toContain('ComposerTriggerPopover');
+    expect(source).not.toContain('unstable_useSlashCommandAdapter');
+    expect(source).not.toContain('打开 AI 生图提示词');
+    expect(source).not.toContain('没有匹配的提示词');
+    expect(source).not.toContain('data-axhub-ai-image-composer-prompts-trigger');
+    expect(source).not.toContain('data-axhub-ai-image-composer-prompts-menu');
+    expect(source).not.toContain('renderLeadingActions={() => <AiImageSkillsButton');
+    expect(source).not.toContain('renderTriggerPopovers={() => <AiImageSkillTriggers');
     expect(sharedSource).toContain('renderLeadingActions');
-    expect(sharedSource).toContain('renderTriggerPopovers');
+    expect(sharedSource).not.toContain('renderTriggerPopovers');
     expect(sharedSource).toContain('footerLeadingActionsClassName');
-    expect(triggerPopoverSource).toContain('w-64 overflow-hidden rounded-md border bg-popover p-0 text-popover-foreground shadow-md');
-    expect(triggerPopoverSource).toContain('gap-0.5 px-3 py-2');
-    expect(triggerPopoverSource).toContain('flex items-center gap-2 text-sm font-medium');
-    expect(triggerPopoverSource).toContain('ml-5 text-xs leading-tight text-muted-foreground');
-    expect(triggerPopoverSource).not.toContain('rounded-[24px]');
-    expect(triggerPopoverSource).not.toContain('shadow-xl');
-    expect(triggerPopoverSource).not.toContain('ms-5.5');
-    expect(triggerPopoverSource).not.toContain('tracking-wide');
   });
 
-  it('opens the prompt button popover without inserting a slash into the composer', () => {
+  it('has no prompt shortcut button or slash shortcut wiring', () => {
     const source = readSource();
     const sharedSource = readSharedComposerSource();
 
-    expect(source).toContain('data-axhub-ai-image-composer-prompts-trigger');
-    expect(source).toContain('data-axhub-ai-image-composer-prompts-menu');
-    expect(source).toContain('handleSkillSelected(skill.prompt)');
-    expect(source).toContain('composer.setText(appendAiImageSkillPrompt(composer.getState().text, skillPrompt));');
+    expect(source).not.toContain('data-axhub-ai-image-composer-prompts-trigger');
+    expect(source).not.toContain('data-axhub-ai-image-composer-prompts-menu');
+    expect(source).not.toContain('handleSkillSelected(skill.prompt)');
+    expect(source).not.toContain('appendAiImageSkillPrompt');
     expect(source).not.toContain('onClick={() => openTrigger');
     expect(source).not.toContain('openTrigger: (char: string) => void');
     expect(sharedSource).not.toContain('unstable_useTriggerPopoverRootContext');
@@ -274,7 +250,7 @@ describe('AiImageGenerationComposer source', () => {
     expect(sharedSource).not.toContain('data-axhub-canvas-generation-reference-bar');
     expect(sharedSource).not.toContain('data-axhub-canvas-generation-reference-entry');
     expect(sharedSource).not.toContain('参考图');
-    expect(source).toMatch(/renderLeadingActions=\{\(\{ submitting: isSubmitting \}\) => \(\s*<>\s*<AiImageSkillsButton[\s\S]*<AiImageComposerAction[\s\S]*<\/>\s*\)\}/);
+    expect(source).toMatch(/renderLeadingActions=\{\(\) => \(\s*<AiImageComposerAction[\s\S]*\/>\s*\)\}/);
     expect(source).not.toContain('renderActions={() => (');
     expect(source).not.toContain('referenceBarClassName="ax-ai-image-composer-reference-bar"');
     expect(source).not.toContain('referenceEntryClassName="ax-ai-image-composer-reference-entry"');

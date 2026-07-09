@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 
-import { buildExportReviewPrompt, createExportReviewFailureResult } from './exportReviewPrompt';
+import { AXURE_EXPORT_REVIEW_RULE_PATHS, buildExportReviewPrompt, createExportReviewFailureResult } from './exportReviewPrompt';
 
-const PROMPT_PATH_PATTERN = /(?:^|[\s`"'：（(【\[])(?:\/?(?:src|skills|rules|temp|docs|database|themes|prototypes|components|assets|media|\.axhub)\/|~\/|[A-Za-z]:[\\/]|(?:[A-Za-z0-9_.-]+[\\/]){2,})/u;
+const NON_CLIENT_RELATIVE_PATH_PATTERN = /(?:^|[\s`"'：（(【\[])(?:\/(?:src|skills|rules|temp|docs|database|themes|prototypes|components|assets|media|\.axhub)\/|~\/|[A-Za-z]:[\\/]|(?:apps|Users|private|var|tmp)[\\/])/u;
 
-function expectPromptHasNoPaths(prompt: string): void {
-    expect(prompt).not.toMatch(PROMPT_PATH_PATTERN);
+function expectPromptHasNoNonClientRelativePaths(prompt: string): void {
+    expect(prompt).not.toMatch(NON_CLIENT_RELATIVE_PATH_PATTERN);
+}
+
+function expectClientRulePathExists(rulePath: string): void {
+    expect(rulePath.startsWith('/')).toBe(false);
+    expect(existsSync(new URL(`../../../client/${rulePath}`, import.meta.url))).toBe(true);
 }
 
 describe('buildExportReviewPrompt', () => {
-    it('builds a concise prompt with resource name, rule names, and blocking issues only', () => {
+    it('builds a concise prompt with client-relative rule paths and blocking issues only', () => {
         const prompt = buildExportReviewPrompt({
             file: 'src/prototypes/demo/index.tsx',
             passed: false,
@@ -40,6 +46,12 @@ describe('buildExportReviewPrompt', () => {
         expect(prompt).toContain('demo');
         expect(prompt).toContain('Axure 导出工作流');
         expect(prompt).toContain('Axure API 规范');
+        expect(prompt).toContain('rules/axure-export-workflow.md');
+        expect(prompt).toContain('rules/axure-api-guide.md');
+        for (const rulePath of AXURE_EXPORT_REVIEW_RULE_PATHS) {
+            expect(prompt).toContain(rulePath);
+            expectClientRulePathExists(rulePath);
+        }
         expect(prompt).not.toContain('src/prototypes/demo/index.tsx');
         expect(prompt).not.toContain('/rules/axure-export-workflow.md');
         expect(prompt).not.toContain('/rules/axure-api-guide.md');
@@ -48,7 +60,7 @@ describe('buildExportReviewPrompt', () => {
         expect(prompt).not.toContain('可选建议');
         expect(prompt).not.toContain('[axure-api-optional] 未接入 Axure API');
         expect(prompt).not.toContain('复杂');
-        expectPromptHasNoPaths(prompt);
+        expectPromptHasNoNonClientRelativePaths(prompt);
     });
 
     it('builds a fallback review result for code review API failures', () => {

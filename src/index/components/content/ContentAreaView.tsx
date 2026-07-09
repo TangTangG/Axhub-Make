@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ChevronDown, CircleHelp, Copy, ExternalLink, FileIcon, Globe, ImageIcon, Monitor, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone, UploadCloud } from 'lucide-react';
+import { ChevronDown, CircleHelp, Copy, ExternalLink, FileIcon, Globe, ImageIcon, LayoutDashboard, Monitor, Network, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { Segmented } from 'antd';
-import { ItemData, CanvasItem, TabType, ViewMode, type PromptClientPreference } from '../../types';
+import { ItemData, CanvasItem, SidebarTreeNode, SidebarTreeTab, TabType, ViewMode, type PromptClientPreference } from '../../types';
 import type { DataTableResourceItem, ThemeResourceItem } from '../../domains/resources/resource.types';
 import DeviceShell from '../DeviceShell';
 import { cn } from '@/lib/utils';
+import { resolveAcpPromptClientProvider } from '@/common/acpModelConfig';
+import { normalizePromptClientPreference } from '@/common/promptExecution';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -23,14 +25,13 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import HomeDataTable from './HomeDataTable';
-import CanvasWelcomeGuide from './CanvasWelcomeGuide';
 import CanvasFloatingToolbar from './CanvasFloatingToolbar';
 import OpenInDropdown from '../sidebar/OpenInDropdown';
 import TemplateLibraryCard, { type TemplateLibraryCardItem } from '../dialogs/TemplateLibraryCard';
 import PromptActionButton from '../PromptActionButton';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import type { PrototypeCreateDialogOpenOptions, SelectedResourceFolder } from '../../types/index-page.types';
 import type {
     MultiPageColumns,
@@ -43,13 +44,19 @@ import { DEVICE_PRESET_SIZES, resolvePreviewLayout } from '../../domains/device/
 import type { ProjectRuntimeStatus } from '../../services/projectResources';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
 import type { CanvasElementContextInfo } from './canvas-embeds/AnnotationOverlay';
-import { resolveCanvasFilePath, resolvePrototypeCanvasFilePath } from './canvasFilePath';
+import { resolveCanvasFilePath } from './canvasFilePath';
 import { injectPreviewIframeScrollbarStyle } from './previewIframeScrollbar';
 import ResourceFolderPreview from './ResourceFolderPreview';
 import MultiPagePreviewCanvas from './MultiPagePreviewCanvas';
 import { CanvasGenerationDisplayComposer } from '../../domains/shared/CanvasGenerationComposer';
-import type { CanvasAiScene } from '../../domains/shared/CanvasGenerationComposer';
+import type { CanvasAiScene, CanvasPromptOptimizationRequest } from '../../domains/shared/CanvasGenerationComposer';
 import { createCanvasGenerationComposerDraftStorageKey } from '../../domains/shared/canvasGenerationComposerDraft';
+import {
+    createPrototypePlaceholderSettingsStorageKey,
+    getPrototypePlaceholderSettingsStorage,
+    readPrototypePlaceholderSettings,
+    writePrototypePlaceholderSettings,
+} from './prototypePlaceholderSettingsStorage';
 import type { CanvasAiGenerationRequest, CanvasAiGenerationResult } from '../../domains/ai-generation/CanvasAiGenerationTool';
 import type { AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
 import type { CanvasLocalContextRef } from '../../domains/ai-image/canvasReferenceImages';
@@ -62,32 +69,36 @@ import {
 import { PrototypeThemeSearchSelect } from '../../domains/prototype-generation/PrototypeThemeSearchSelect';
 import {
     appendCanvasAiPrototypeStartSystemPrompt,
-    CANVAS_AI_SCENE_OPTIONS,
-    getCanvasAiPrototypeStartPlaceholders,
-    getCanvasAiPrototypeStartQuickPrompts,
-    getCanvasAiPrototypeStartSystemPrompt,
+    getCanvasAiStartPlaceholders,
+    getCanvasAiStartSystemPrompt,
     getCanvasAiSceneDefinition,
-    pickCanvasAiPrototypeStartPlaceholder,
+    pickCanvasAiStartPlaceholder,
+    stripCanvasUpdateInstruction,
 } from '../../domains/ai-generation/canvasAiSceneRegistry';
 import {
+    appendCanvasGenerationFinalGuide,
     appendDocumentStartPromptSettings,
     appendImageStartPromptSettings,
     appendPrototypeStartPromptSettings,
     type CanvasDocumentFormat,
+    type CanvasGenerationFinalGuide,
     type CanvasDocumentPromptSettings,
 } from '../../domains/ai-generation/canvasGenerationPromptSettings';
+import { optimizeCanvasPrompt } from '../../domains/ai-generation/canvasPromptOptimization';
 import { apiService } from '../../services/index.api';
 import { documentTemplatesApi, type DocumentTemplateOption } from '../../services/documentTemplates';
 import { generateTemplateImportPrompt, type TemplateLibraryPromptItem } from '../../utils/templateImportPrompts';
 import { getUserFriendlyUploadErrorMessage } from '../../utils/uploadErrors';
 import { resolveMarkdownPreviewIframeUrl } from '../../utils/markdownPreview';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
+import { copyToClipboard } from '../../utils/clipboard';
 
 const ExcalidrawCanvas = React.lazy(() => lazyWithRetry(() => import('./ExcalidrawCanvas')));
 
 const PREVIEW_DEVICE_SHELL_INSET = { width: 32, height: 32 } as const;
 const SPLIT_PREVIEW_HEADER_HEIGHT = 40;
 const SPLIT_PREVIEW_HORIZONTAL_INSET = 44;
+const COPY_START_PROMPT_TOOLTIP = '复制提示词给本地AI使用';
 const UNSPECIFIED_START_SETTING_VALUE = '__unspecified__';
 const PROTOTYPE_START_COUNT_OPTIONS = [1, 2, 3, 4] as const;
 const START_SETTINGS_SELECT_CONTENT_STYLE = { zIndex: 1400 } satisfies CSSProperties;
@@ -221,6 +232,27 @@ const IMAGE_START_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 const PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_KEY = 'axhub:placeholder-template-library:v1';
 const PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const PLACEHOLDER_TEMPLATE_CASE_LIMIT = 9;
+type StartGuideKind = 'prototype' | 'resource' | 'design';
+const START_GUIDE_SCENES = {
+    prototype: ['page'],
+    resource: ['design', 'document'],
+    design: ['design'],
+} as const satisfies Record<StartGuideKind, readonly CanvasAiScene[]>;
+const START_GUIDE_DEFAULT_SCENE = {
+    prototype: 'page',
+    resource: 'design',
+    design: 'design',
+} as const satisfies Record<StartGuideKind, CanvasAiScene>;
+const START_GUIDE_SOURCE = {
+    prototype: 'placeholder-start',
+    resource: 'resource-start',
+    design: 'theme-start',
+} as const satisfies Record<StartGuideKind, CanvasAiGenerationRequest['source']>;
+const START_GUIDE_SETTINGS_STORAGE_KEY_SUFFIX = {
+    prototype: 'placeholder-start-settings',
+    resource: 'resource-start-settings',
+    design: 'theme-start-settings',
+} as const satisfies Record<StartGuideKind, string>;
 type ImageStartParams = Omit<AiImageTaskParams, 'n' | 'output_format'> & {
     n?: AiImageTaskParams['n'];
     output_format?: AiImageTaskParams['output_format'];
@@ -287,7 +319,7 @@ function normalizeTemplateCases(value: unknown): TemplateLibraryCardItem[] {
         .filter((item): item is TemplateLibraryCardItem => Boolean(item));
 }
 
-function readPlaceholderTemplateLibraryCache(now = Date.now()): PlaceholderTemplateLibraryCache | null {
+function readPlaceholderTemplateLibraryCache(): PlaceholderTemplateLibraryCache | null {
     if (typeof window === 'undefined') return null;
     try {
         const raw = window.localStorage.getItem(PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_KEY);
@@ -296,9 +328,6 @@ function readPlaceholderTemplateLibraryCache(now = Date.now()): PlaceholderTempl
         const cachedAt = typeof parsed.cachedAt === 'number' ? parsed.cachedAt : 0;
         const templates = normalizeTemplateCases(parsed.templates);
         if (!cachedAt || templates.length === 0) return null;
-        if (now - cachedAt > PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_TTL_MS) {
-            return { cachedAt, templates };
-        }
         return { cachedAt, templates };
     } catch {
         return null;
@@ -341,6 +370,38 @@ function FieldLabelWithHint({ label, hint }: { label: string; hint: string }) {
                 </Tooltip>
             </TooltipProvider>
         </span>
+    );
+}
+
+function StartSettingsCopyPromptButton({ onCopyPrompt }: { onCopyPrompt: () => void }) {
+    const [tooltipOpen, setTooltipOpen] = useState(false);
+
+    return (
+        <TooltipProvider delayDuration={150}>
+            <Tooltip open={tooltipOpen}>
+                <TooltipTrigger asChild>
+                    <button
+                        type="button"
+                        className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label={COPY_START_PROMPT_TOOLTIP}
+                        onPointerEnter={(event) => {
+                            if (event.pointerType === 'mouse') setTooltipOpen(true);
+                        }}
+                        onPointerLeave={() => setTooltipOpen(false)}
+                        onBlur={() => setTooltipOpen(false)}
+                        onClick={() => {
+                            setTooltipOpen(false);
+                            onCopyPrompt();
+                        }}
+                    >
+                        <Copy className="size-3.5" aria-hidden="true" />
+                    </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                    {COPY_START_PROMPT_TOOLTIP}
+                </TooltipContent>
+            </Tooltip>
+        </TooltipProvider>
     );
 }
 
@@ -433,7 +494,6 @@ interface ContentAreaProps {
     selectedItem: ItemData | null;
     activeTab: TabType;
     previewConfig: PreviewConfig;
-    reviewPageZoomEnabled?: boolean;
     handleChangeMultiPageColumns: (columns: MultiPageColumns) => void;
     handleSelectPreviewSinglePreset: (preset: PreviewSinglePreset) => void;
     handleSelectCustomPreview: () => void;
@@ -444,7 +504,7 @@ interface ContentAreaProps {
     handleChangeSplitPreviewWidth: (pane: 'primary' | 'secondary', width: number) => void;
     handleChangeSplitPreviewHeight: (pane: 'primary' | 'secondary', height: number) => void;
     quickEditActive?: boolean;
-    onRunPrototypePanePromptAction?: (pane: 'primary' | 'secondary', action: 'copy-prompt' | 'send-to-genie') => void | Promise<boolean>;
+    onRunPrototypePanePromptAction?: (pane: 'primary' | 'secondary', action: 'copy-prompt' | 'send-to-agent') => void | Promise<boolean>;
     currentDevice: { id: string; [key: string]: any };
     displaySize: { width: number; height: number };
     scale: number;
@@ -458,6 +518,7 @@ interface ContentAreaProps {
     onEnterSelectedPrototypePreview?: () => void;
     contentMode?: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
     docsItems?: ItemData[];
+    sidebarTrees?: Partial<Record<SidebarTreeTab, SidebarTreeNode[]>>;
     selectedDoc?: ItemData | null;
     selectedResourceFolder?: SelectedResourceFolder | null;
     selectedTemplate?: ItemData | null;
@@ -476,6 +537,7 @@ interface ContentAreaProps {
     collapsed?: boolean;
     setCollapsed?: (collapsed: boolean) => void;
     selectedCanvas?: CanvasItem | null;
+    canvasItems?: CanvasItem[];
     excalidrawPropertyPanelMode?: ExcalidrawPropertyPanelMode;
     setExcalidrawPropertyPanelMode?: (mode: ExcalidrawPropertyPanelMode) => void;
     excalidrawPropertyPanelPosition?: ExcalidrawPropertyPanelPosition;
@@ -486,7 +548,7 @@ interface ContentAreaProps {
     onAddToContext?: (elements: CanvasElementContextInfo[]) => void;
     onAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
     onOpenCanvasInIDE?: (canvasFilePath: string) => void | Promise<void>;
-    onOpenCanvasGenie?: () => void | Promise<void>;
+    onOpenCanvasAgent?: () => void | Promise<void>;
     onSelectResourceFolder?: (folder: any) => void;
     onSelectResourceFolderItem?: (item: ItemData) => void;
     onOpenResourceFolderInSystem?: (folderPath: string) => void | Promise<void>;
@@ -497,7 +559,7 @@ interface ContentAreaProps {
     webAgentPanelOpen?: boolean;
     aiPanelMode?: 'general-ai' | 'image-ai' | null;
     onOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string) => boolean | Promise<boolean>;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
     onOpenImageAiPanel?: () => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
@@ -513,8 +575,15 @@ interface ContentAreaProps {
     defaultThemeName?: string | null;
     onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;
     prototypeStartDraftActive?: boolean;
+    resourceStartDraftActive?: boolean;
+    themeStartDraftActive?: boolean;
     onCreatePrototypeForDraftStart?: () => Promise<ItemData | null>;
+    onUploadResourceFiles?: () => void;
+    onCreateResourceCanvasFile?: () => void | Promise<void>;
+    onCreateDrawioResourceFile?: () => void | Promise<void>;
+    onOpenDesignImport?: () => void;
     onRefreshPrototypes?: (preferredName?: string) => Promise<ItemData[]>;
+    agentRunConcurrency?: number;
     onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     onAddCanvasScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;
     onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;
@@ -728,6 +797,7 @@ function PrototypeStartSettingsPopover({
     onCountChange,
     onThemeChange,
     onNeedsRequirementsAnalysisChange,
+    onCopyPrompt,
 }: {
     count?: number;
     selectedThemeName: string;
@@ -737,6 +807,7 @@ function PrototypeStartSettingsPopover({
     onCountChange: (count?: number) => void;
     onThemeChange: (themeName: string) => void;
     onNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
+    onCopyPrompt?: () => void;
 }) {
     const hasCount = typeof count === 'number';
     const hasSelectedTheme = selectedThemeName !== NO_PROTOTYPE_THEME_VALUE;
@@ -761,9 +832,12 @@ function PrototypeStartSettingsPopover({
             </PopoverTrigger>
             <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
                 <div className="space-y-3">
-                    <div className="space-y-1">
-                        <div className="text-sm font-medium text-foreground">原型设置</div>
-                        <div className="text-xs text-muted-foreground">{summary}</div>
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                            <div className="text-sm font-medium text-foreground">原型设置</div>
+                            <div className="truncate text-xs text-muted-foreground">{summary}</div>
+                        </div>
+                        {onCopyPrompt ? <StartSettingsCopyPromptButton onCopyPrompt={onCopyPrompt} /> : null}
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -823,6 +897,7 @@ function ImageStartSettingsPopover({
     themes,
     onParamsChange,
     onThemeChange,
+    onCopyPrompt,
 }: {
     params: ImageStartParams;
     selectedThemeName: string;
@@ -830,6 +905,7 @@ function ImageStartSettingsPopover({
     themes?: ThemeResourceItem[];
     onParamsChange: (params: ImageStartParams) => void;
     onThemeChange: (themeName: string) => void;
+    onCopyPrompt?: () => void;
 }) {
     const sizeLabel = IMAGE_START_SIZE_OPTIONS.find((option) => option.value === params.size)?.label || params.size;
     const qualityLabel = IMAGE_START_QUALITY_OPTIONS.find((option) => option.value === params.quality)?.label || params.quality;
@@ -871,9 +947,12 @@ function ImageStartSettingsPopover({
             </PopoverTrigger>
             <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
                 <div className="space-y-3">
-                    <div className="space-y-1">
-                        <div className="text-sm font-medium text-foreground">图片设置</div>
-                        <div className="text-xs text-muted-foreground">{summary}</div>
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                            <div className="text-sm font-medium text-foreground">图片设置</div>
+                            <div className="truncate text-xs text-muted-foreground">{summary}</div>
+                        </div>
+                        {onCopyPrompt ? <StartSettingsCopyPromptButton onCopyPrompt={onCopyPrompt} /> : null}
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -1008,6 +1087,7 @@ function DocumentStartSettingsPopover({
     onHtmlVisualSpecChange,
     onTemplateChange,
     onNeedsRequirementsAnalysisChange,
+    onCopyPrompt,
 }: {
     format: CanvasDocumentFormat | '';
     htmlVisualSpec: HtmlVisualSpecSkillId | '';
@@ -1020,6 +1100,7 @@ function DocumentStartSettingsPopover({
     onHtmlVisualSpecChange: (visualSpec: HtmlVisualSpecSkillId | '') => void;
     onTemplateChange: (templateName: string) => void;
     onNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
+    onCopyPrompt?: () => void;
 }) {
     const formatLabel = DOCUMENT_START_FORMAT_OPTIONS.find((option) => option.value === format)?.label || '';
     const visualSpecOption = DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.find((option) => option.value === htmlVisualSpec) || null;
@@ -1043,9 +1124,12 @@ function DocumentStartSettingsPopover({
             </PopoverTrigger>
             <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
                 <div className="space-y-3">
-                    <div className="space-y-1">
-                        <div className="text-sm font-medium text-foreground">文档设置</div>
-                        <div className="text-xs text-muted-foreground">{summary}</div>
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                            <div className="text-sm font-medium text-foreground">文档设置</div>
+                            <div className="truncate text-xs text-muted-foreground">{summary}</div>
+                        </div>
+                        {onCopyPrompt ? <StartSettingsCopyPromptButton onCopyPrompt={onCopyPrompt} /> : null}
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -1147,7 +1231,8 @@ function DocumentStartSettingsPopover({
     );
 }
 
-function PrototypePlaceholderGuide({
+function StartGuide({
+    kind,
     item,
     draftActive = false,
     activeProjectId,
@@ -1167,7 +1252,15 @@ function PrototypePlaceholderGuide({
     onOpenPrototypeCreateDialog,
     onRefreshPrototypes,
     onSubmitPrototypeStartRequest,
+    onUploadResourceFiles,
+    onCreateResourceCanvasFile,
+    onCreateDrawioResourceFile,
+    onOpenDesignImport,
+    sidebarTrees,
+    docsItems,
+    prototypes,
 }: {
+    kind: StartGuideKind;
     item: ItemData;
     draftActive?: boolean;
     activeProjectId?: string | null;
@@ -1182,18 +1275,33 @@ function PrototypePlaceholderGuide({
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
     onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
     onOpenAISettings?: () => void;
+    sidebarTrees?: Partial<Record<SidebarTreeTab, SidebarTreeNode[]>>;
+    docsItems?: ItemData[];
+    prototypes?: ItemData[];
     themes?: ThemeResourceItem[];
     defaultThemeName?: string | null;
     onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;
     onRefreshPrototypes?: (preferredName?: string) => Promise<ItemData[]>;
     onSubmitPrototypeStartRequest?: (request: CanvasAiGenerationRequest) => void | Promise<void>;
+    onUploadResourceFiles?: () => void;
+    onCreateResourceCanvasFile?: () => void | Promise<void>;
+    onCreateDrawioResourceFile?: () => void | Promise<void>;
+    onOpenDesignImport?: () => void;
 }) {
-    const [activeScene, setActiveScene] = useState<CanvasAiScene>('page');
+    const availableScenes = START_GUIDE_SCENES[kind];
+    const [activeScene, setActiveScene] = useState<CanvasAiScene>(() => START_GUIDE_DEFAULT_SCENE[kind]);
+    const startSource = START_GUIDE_SOURCE[kind];
+    const shouldShowSceneSwitcher = availableScenes.length > 1;
+    const shouldShowPrototypeActions = kind === 'prototype';
+    const shouldShowResourceActions = kind === 'resource';
+    const shouldShowDesignImportAction = kind === 'design';
+    const shouldShowTopActions = shouldShowPrototypeActions || shouldShowResourceActions || shouldShowDesignImportAction;
+    const shouldShowPrototypeCases = kind === 'prototype';
+    const shouldUseImageStartSettings = activeScene === 'design' && kind !== 'design';
     const activeSceneDefinition = getCanvasAiSceneDefinition(activeScene);
-    const activeStartPlaceholders = getCanvasAiPrototypeStartPlaceholders(activeScene);
-    const activeQuickPrompts = activeScene === 'document' ? [] : getCanvasAiPrototypeStartQuickPrompts(activeScene);
-    const activeStartSystemPrompt = getCanvasAiPrototypeStartSystemPrompt(activeScene);
-    const [placeholder, setPlaceholder] = useState(() => pickCanvasAiPrototypeStartPlaceholder(activeScene));
+    const activeStartPlaceholders = getCanvasAiStartPlaceholders(kind, activeScene);
+    const activeStartSystemPrompt = getCanvasAiStartSystemPrompt(kind, activeScene);
+    const [placeholder, setPlaceholder] = useState(() => pickCanvasAiStartPlaceholder(kind, activeScene));
     const [prototypeGenerationCount, setPrototypeGenerationCount] = useState<number | undefined>(undefined);
     const [prototypeNeedsRequirementsAnalysis, setPrototypeNeedsRequirementsAnalysis] = useState(false);
     const [imageStartParams, setImageStartParams] = useState<ImageStartParams>(DEFAULT_IMAGE_START_PARAMS);
@@ -1209,8 +1317,11 @@ function PrototypePlaceholderGuide({
     const [templateCasesError, setTemplateCasesError] = useState('');
     const [templateImportingId, setTemplateImportingId] = useState('');
     const [selectedThemeName, setSelectedThemeName] = useState(() => resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
+    const placeholderDropZoneRef = useRef<HTMLDivElement | null>(null);
     const previousDefaultThemeNameRef = useRef(defaultThemeName);
     const userSelectedThemeRef = useRef(false);
+    const restoredPlaceholderSettingsKeyRef = useRef<string | null>(null);
+    const skipPlaceholderSettingsWriteKeyRef = useRef<string | null>(null);
     const prototypeIndexPath = resolvePrototypeIndexFilePath(item);
     const prototypeLocalContextRef = useMemo<CanvasLocalContextRef>(() => ({
         resourceType: 'prototype',
@@ -1223,11 +1334,19 @@ function PrototypePlaceholderGuide({
             assistantProjectPath || activeProjectId || '',
             item.name,
             prototypeIndexPath,
-            'placeholder-start',
+            startSource,
             activeScene,
         ])
-    ), [activeProjectId, activeScene, assistantProjectPath, item.name, prototypeIndexPath]);
-    const shouldShowInlineAppList = Boolean(onOpenProjectInIDE);
+    ), [activeProjectId, activeScene, assistantProjectPath, item.name, prototypeIndexPath, startSource]);
+    const placeholderStartSettingsStorageKey = useMemo(() => (
+        createPrototypePlaceholderSettingsStorageKey([
+            assistantProjectPath || activeProjectId || '',
+            item.name,
+            prototypeIndexPath,
+            START_GUIDE_SETTINGS_STORAGE_KEY_SUFFIX[kind],
+        ])
+    ), [activeProjectId, assistantProjectPath, item.name, kind, prototypeIndexPath]);
+    const shouldShowInlineAppList = kind === 'prototype' && Boolean(onOpenProjectInIDE);
     const selectedTheme = useMemo(() => (
         themes?.find((theme) => theme.name === selectedThemeName) || null
     ), [selectedThemeName, themes]);
@@ -1238,10 +1357,160 @@ function PrototypePlaceholderGuide({
         disable_prompt_optimization: imageStartParams.disable_prompt_optimization === true || selectedThemeName !== NO_PROTOTYPE_THEME_VALUE,
         background: imageStartParams.output_format === 'png' ? imageStartParams.background : 'auto',
     }), [imageStartParams, selectedTheme?.name, selectedThemeName]);
+    const buildDocumentStartSettings = (): CanvasDocumentPromptSettings | undefined => {
+        if (activeScene !== 'document') return undefined;
+        const selectedHtmlVisualSpecOption = documentFormat === 'html' && documentHtmlVisualSpec
+            ? DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.find((option) => option.value === documentHtmlVisualSpec)
+            : null;
+        const nextDocumentStartSettings: CanvasDocumentPromptSettings = {
+            ...(documentFormat ? { format: documentFormat } : {}),
+            ...(selectedHtmlVisualSpecOption ? {
+                htmlVisualSpec: {
+                    label: selectedHtmlVisualSpecOption.label,
+                    description: selectedHtmlVisualSpecOption.description,
+                    themeInstruction: selectedHtmlVisualSpecOption.themeInstruction,
+                    skillName: selectedHtmlVisualSpecOption.skillName,
+                    githubUrl: selectedHtmlVisualSpecOption.githubUrl,
+                },
+            } : {}),
+            ...(selectedDocumentTemplateName ? { templateName: selectedDocumentTemplateName } : {}),
+            ...(documentNeedsRequirementsAnalysis ? { needsRequirementsAnalysis: true } : {}),
+        };
+        return Object.keys(nextDocumentStartSettings).length
+            ? nextDocumentStartSettings
+            : undefined;
+    };
+    const buildPrototypeStartSettings = () => ({
+        count: prototypeGenerationCount,
+        themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : selectedTheme?.name || '',
+        needsRequirementsAnalysis: prototypeNeedsRequirementsAnalysis,
+    });
+    const buildPlaceholderStartPrompt = (prompt: string, finalGuide: CanvasGenerationFinalGuide) => {
+        const startSystemPrompt = finalGuide === 'update-canvas'
+            ? activeStartSystemPrompt
+            : stripCanvasUpdateInstruction(activeStartSystemPrompt);
+        const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(prompt, startSystemPrompt);
+        const prototypeStartSettings = buildPrototypeStartSettings();
+        const documentStartSettings = buildDocumentStartSettings();
+        const promptWithSceneSettings = activeScene === 'page'
+            ? appendPrototypeStartPromptSettings({
+                prompt: promptWithStartSystemPrompt,
+                settings: prototypeStartSettings,
+            })
+            : shouldUseImageStartSettings
+                ? appendImageStartPromptSettings({
+                    prompt: promptWithStartSystemPrompt,
+                    settings: effectiveImageStartParams,
+                })
+                : activeScene === 'document'
+                    ? appendDocumentStartPromptSettings({
+                        prompt: promptWithStartSystemPrompt,
+                        settings: documentStartSettings || {},
+                    })
+                    : promptWithStartSystemPrompt;
+        return {
+            prompt: appendCanvasGenerationFinalGuide({
+                prompt: promptWithSceneSettings,
+                finalGuide,
+            }),
+            documentStartSettings,
+        };
+    };
+    const optimizePlaceholderStartPrompt = async (request: CanvasPromptOptimizationRequest) => {
+        if (!resolveAcpPromptClientProvider(normalizePromptClientPreference(preferredPromptClient))) {
+            toast.warning('请先在 AI 设置中选择本地 AI Agent');
+            throw { action: 'open-ai-settings' };
+        }
+        return optimizeCanvasPrompt({
+            prompt: request.prompt,
+            scene: activeScene,
+            sceneSettings: shouldUseImageStartSettings ? effectiveImageStartParams : activeScene === 'document' ? buildDocumentStartSettings() : activeScene === 'page' ? buildPrototypeStartSettings() : undefined,
+            canvasFilePath: kind === 'prototype' ? prototypeIndexPath : undefined,
+            workspacePath: assistantProjectPath,
+            contextBundle: request.contextBundle,
+            attachments: request.attachments,
+            provider: request.provider,
+            model: request.model,
+            mode: request.mode,
+            thought: request.thought,
+        });
+    };
+    const handleCopyLocalAiStartPrompt = async (promptText: string) => {
+        const trimmedPrompt = promptText.trim();
+        try {
+            const { prompt } = buildPlaceholderStartPrompt(trimmedPrompt, 'local-ai-acknowledgement');
+            await copyToClipboard(prompt);
+            toast.success('提示词已复制到剪贴板');
+        } catch (error: any) {
+            toast.error(error?.message || '复制提示词失败');
+        }
+    };
 
     useEffect(() => {
-        setPlaceholder(pickCanvasAiPrototypeStartPlaceholder(activeScene));
-    }, [activeScene]);
+        if ((availableScenes as readonly CanvasAiScene[]).includes(activeScene)) return;
+        setActiveScene(START_GUIDE_DEFAULT_SCENE[kind]);
+    }, [activeScene, availableScenes, kind]);
+
+    useEffect(() => {
+        setPlaceholder(pickCanvasAiStartPlaceholder(kind, activeScene));
+    }, [activeScene, kind]);
+
+    useEffect(() => {
+        const storage = getPrototypePlaceholderSettingsStorage();
+        const saved = readPrototypePlaceholderSettings(storage, placeholderStartSettingsStorageKey);
+        restoredPlaceholderSettingsKeyRef.current = placeholderStartSettingsStorageKey;
+        skipPlaceholderSettingsWriteKeyRef.current = placeholderStartSettingsStorageKey;
+        setPrototypeGenerationCount(saved.prototypeGenerationCount ?? undefined);
+        setPrototypeNeedsRequirementsAnalysis(saved.prototypeNeedsRequirementsAnalysis ?? false);
+        setImageStartParams({
+            ...DEFAULT_IMAGE_START_PARAMS,
+            ...saved.imageStartParams,
+        });
+        setDocumentFormat(saved.documentFormat ?? '');
+        setDocumentHtmlVisualSpec((saved.documentHtmlVisualSpec || '') as HtmlVisualSpecSkillId | '');
+        setDocumentNeedsRequirementsAnalysis(saved.documentNeedsRequirementsAnalysis ?? false);
+        setSelectedDocumentTemplateName(saved.selectedDocumentTemplateName || '');
+        if (saved.selectedThemeName) {
+            userSelectedThemeRef.current = true;
+            setSelectedThemeName(saved.selectedThemeName);
+        } else {
+            userSelectedThemeRef.current = false;
+            previousDefaultThemeNameRef.current = defaultThemeName;
+            setSelectedThemeName(resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
+        }
+    }, [defaultThemeName, placeholderStartSettingsStorageKey, themes]);
+
+    useEffect(() => {
+        if (restoredPlaceholderSettingsKeyRef.current !== placeholderStartSettingsStorageKey) return;
+        if (skipPlaceholderSettingsWriteKeyRef.current === placeholderStartSettingsStorageKey) {
+            skipPlaceholderSettingsWriteKeyRef.current = null;
+            return;
+        }
+        writePrototypePlaceholderSettings(
+            getPrototypePlaceholderSettingsStorage(),
+            placeholderStartSettingsStorageKey,
+            {
+                prototypeGenerationCount,
+                prototypeNeedsRequirementsAnalysis,
+                selectedThemeName,
+                imageStartParams,
+                documentFormat,
+                documentHtmlVisualSpec,
+                documentNeedsRequirementsAnalysis,
+                selectedDocumentTemplateName,
+            },
+        );
+    }, [
+        documentFormat,
+        documentHtmlVisualSpec,
+        documentNeedsRequirementsAnalysis,
+        imageStartParams,
+        placeholderStartSettingsStorageKey,
+        prototypeGenerationCount,
+        prototypeNeedsRequirementsAnalysis,
+        selectedDocumentTemplateName,
+        selectedThemeName,
+    ]);
 
     useEffect(() => {
         let cancelled = false;
@@ -1287,6 +1556,15 @@ function PrototypePlaceholderGuide({
 
     useEffect(() => {
         let cancelled = false;
+        if (!shouldShowPrototypeCases) {
+            setTemplateCases([]);
+            setTemplateCasesLoading(false);
+            setTemplateCasesError('');
+            return () => {
+                cancelled = true;
+            };
+        }
+
         const cached = readPlaceholderTemplateLibraryCache();
         if (cached) {
             setTemplateCases(cached.templates.slice(0, PLACEHOLDER_TEMPLATE_CASE_LIMIT));
@@ -1326,7 +1604,7 @@ function PrototypePlaceholderGuide({
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [shouldShowPrototypeCases]);
 
     const toPromptTemplateItem = (template: TemplateLibraryCardItem): TemplateLibraryPromptItem => ({
         id: template.id,
@@ -1421,90 +1699,162 @@ function PrototypePlaceholderGuide({
     };
 
     return (
-        <div className="h-full w-full overflow-auto bg-[#f7f9fb] px-6 py-10 text-center">
+        <div ref={placeholderDropZoneRef} className="relative h-full w-full overflow-auto bg-[#f7f9fb] px-6 py-10 text-center">
+            {shouldShowTopActions ? (
+                <div className="absolute right-6 top-5 z-10 flex flex-wrap items-center justify-end gap-2 text-[12px]">
+                    <TooltipProvider>
+                        {shouldShowPrototypeActions ? (
+                            <>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
+                                            onClick={() => onOpenPrototypeCreateDialog?.({ initialTab: 'upload', targetPrototypeName: draftActive ? undefined : item.name })}
+                                        >
+                                            <UploadCloud className="h-3.5 w-3.5" />
+                                            导入原型
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">Axhub Make / Axure / V0 / aistudio / Stitch / Figma Make</TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <span className="inline-flex h-7 cursor-default items-center gap-1.5 rounded-md px-2 text-xs text-slate-600">
+                                            <Globe className="h-3.5 w-3.5" />
+                                            导入任意网页
+                                        </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">使用 Chrome 扩展可以采集任意网页</TooltipContent>
+                                </Tooltip>
+                            </>
+                        ) : null}
+                        {shouldShowResourceActions ? (
+                            <>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
+                                            onClick={onUploadResourceFiles}
+                                        >
+                                            <UploadCloud className="h-3.5 w-3.5" />
+                                            上传资源
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">上传资源文件</TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
+                                            onClick={() => { void onCreateResourceCanvasFile?.(); }}
+                                        >
+                                            <LayoutDashboard className="h-3.5 w-3.5" />
+                                            画布
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">新建 Excalidraw 画布文件</TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
+                                            onClick={() => { void onCreateDrawioResourceFile?.(); }}
+                                        >
+                                            <Network className="h-3.5 w-3.5" />
+                                            Drawio 图表
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">新建 Drawio 图表文件</TooltipContent>
+                                </Tooltip>
+                            </>
+                        ) : null}
+                        {shouldShowDesignImportAction ? (
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
+                                        onClick={onOpenDesignImport}
+                                    >
+                                        <UploadCloud className="h-3.5 w-3.5" />
+                                        导入设计规范
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">导入设计规范</TooltipContent>
+                            </Tooltip>
+                        ) : null}
+                    </TooltipProvider>
+                </div>
+            ) : null}
             <div className="flex min-h-[76vh] w-full items-center justify-center">
                 <div className="flex min-h-full w-full max-w-[960px] flex-col items-center justify-center">
                     <div className="w-full">
                         <h1 className="text-[28px] font-semibold leading-tight text-slate-950 sm:text-[34px]">
                             我们先从哪里开始呢?
                         </h1>
-                        <div className="mt-5 flex justify-center">
-                            <Segmented
-                                value={activeScene}
-                                options={CANVAS_AI_SCENE_OPTIONS.map((option) => ({ label: option.label, value: option.value }))}
-                                onChange={(value) => setActiveScene(value as CanvasAiScene)}
-                            />
-                        </div>
+                        {shouldShowSceneSwitcher ? (
+                            <div className="mt-5 flex justify-center">
+                                <Segmented
+                                    value={activeScene}
+                                    options={availableScenes.map((scene) => ({ label: getCanvasAiSceneDefinition(scene).label, value: scene }))}
+                                    onChange={(value) => setActiveScene(value as CanvasAiScene)}
+                                />
+                            </div>
+                        ) : null}
                     </div>
 
                     <div className="mt-8 w-full">
                         <CanvasGenerationDisplayComposer
                             placeholder={placeholder || activeStartPlaceholders[0] || activeSceneDefinition.placeholders[0] || '描述你想创建的内容'}
                             ariaLabel="原型起始页 AI 输入"
-                            quickPrompts={activeQuickPrompts}
                             preferredPromptClient={preferredPromptClient}
                             showSelectors
                             workspacePath={assistantProjectPath}
                             draftStorageKey={placeholderStartComposerDraftStorageKey}
                             onOpenAISettings={onOpenAISettings}
+                            projectResourceTrees={{
+                                prototypes: sidebarTrees?.prototypes || [],
+                                docs: sidebarTrees?.docs || [],
+                                themes: sidebarTrees?.themes || [],
+                            }}
+                            projectResourceItems={{
+                                prototypes: prototypes || [],
+                                docs: docsItems || [],
+                                themes: themes || [],
+                            }}
+                            externalFileDropTargetRef={placeholderDropZoneRef}
+                            onOptimizePrompt={optimizePlaceholderStartPrompt}
                             onSubmit={async (prompt, selection) => {
-                                const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(prompt, activeStartSystemPrompt);
-                                const prototypeStartSettings = {
-                                    count: prototypeGenerationCount,
-                                    themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : selectedTheme?.name || '',
-                                    needsRequirementsAnalysis: prototypeNeedsRequirementsAnalysis,
-                                };
-                                let documentStartSettings: CanvasDocumentPromptSettings | undefined;
-                                if (activeScene === 'document') {
-                                    const selectedHtmlVisualSpecOption = documentFormat === 'html' && documentHtmlVisualSpec
-                                        ? DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.find((option) => option.value === documentHtmlVisualSpec)
-                                        : null;
-                                    const nextDocumentStartSettings: CanvasDocumentPromptSettings = {
-                                        ...(documentFormat ? { format: documentFormat } : {}),
-                                        ...(selectedHtmlVisualSpecOption ? {
-                                            htmlVisualSpec: {
-                                                label: selectedHtmlVisualSpecOption.label,
-                                                description: selectedHtmlVisualSpecOption.description,
-                                                themeInstruction: selectedHtmlVisualSpecOption.themeInstruction,
-                                                skillName: selectedHtmlVisualSpecOption.skillName,
-                                                githubUrl: selectedHtmlVisualSpecOption.githubUrl,
-                                            },
-                                        } : {}),
-                                        ...(selectedDocumentTemplateName ? { templateName: selectedDocumentTemplateName } : {}),
-                                        ...(documentNeedsRequirementsAnalysis ? { needsRequirementsAnalysis: true } : {}),
-                                    };
-                                    documentStartSettings = Object.keys(nextDocumentStartSettings).length
-                                        ? nextDocumentStartSettings
-                                        : undefined;
-                                }
-                                const submittedPrompt = activeScene === 'page'
-                                    ? appendPrototypeStartPromptSettings({
-                                        prompt: promptWithStartSystemPrompt,
-                                        settings: prototypeStartSettings,
-                                    })
-                                    : activeScene === 'design'
-                                        ? appendImageStartPromptSettings({
-                                            prompt: promptWithStartSystemPrompt,
-                                            settings: effectiveImageStartParams,
-                                        })
-                                        : appendDocumentStartPromptSettings({
-                                            prompt: promptWithStartSystemPrompt,
-                                            settings: documentStartSettings || {},
-                                        });
+                                const { prompt: submittedPrompt, documentStartSettings } = buildPlaceholderStartPrompt(prompt, 'none');
                                 return onSubmitPrototypeStartRequest?.({
                                     scene: activeScene,
                                     prompt: submittedPrompt,
-                                    source: 'placeholder-start',
-                                    sceneSettings: activeScene === 'design' ? effectiveImageStartParams : activeScene === 'document' ? documentStartSettings : undefined,
+                                    source: startSource,
+                                    sceneSettings: shouldUseImageStartSettings ? effectiveImageStartParams : activeScene === 'document' ? documentStartSettings : undefined,
                                     provider: selection?.provider,
                                     model: selection?.model,
                                     mode: selection?.mode,
                                     thought: selection?.thought,
                                     contextBundle: selection?.contextBundle,
-                                    localContextRefs: activeScene === 'page' ? [] : [prototypeLocalContextRef],
+                                    attachments: selection?.attachments,
+                                    localContextRefs: kind !== 'prototype' || activeScene === 'page' ? [] : [prototypeLocalContextRef],
                                 });
                             }}
-                            postSelectorActions={
+                            postSelectorActions={({ getPromptText }) =>
                                 activeScene === 'page' ? (
                                     <PrototypeStartSettingsPopover
                                         count={prototypeGenerationCount}
@@ -1518,8 +1868,9 @@ function PrototypePlaceholderGuide({
                                             setSelectedThemeName(themeName);
                                         }}
                                         onNeedsRequirementsAnalysisChange={setPrototypeNeedsRequirementsAnalysis}
+                                        onCopyPrompt={() => { void handleCopyLocalAiStartPrompt(getPromptText()); }}
                                     />
-                                ) : activeScene === 'design' ? (
+                                ) : shouldUseImageStartSettings ? (
                                     <ImageStartSettingsPopover
                                         params={imageStartParams}
                                         selectedThemeName={selectedThemeName}
@@ -1530,6 +1881,7 @@ function PrototypePlaceholderGuide({
                                             userSelectedThemeRef.current = true;
                                             setSelectedThemeName(themeName);
                                         }}
+                                        onCopyPrompt={() => { void handleCopyLocalAiStartPrompt(getPromptText()); }}
                                     />
                                 ) : activeScene === 'document' ? (
                                     <DocumentStartSettingsPopover
@@ -1544,6 +1896,7 @@ function PrototypePlaceholderGuide({
                                         onHtmlVisualSpecChange={setDocumentHtmlVisualSpec}
                                         onTemplateChange={setSelectedDocumentTemplateName}
                                         onNeedsRequirementsAnalysisChange={setDocumentNeedsRequirementsAnalysis}
+                                        onCopyPrompt={() => { void handleCopyLocalAiStartPrompt(getPromptText()); }}
                                     />
                                 ) : null
                             }
@@ -1566,16 +1919,15 @@ function PrototypePlaceholderGuide({
                     ) : null}
                 </div>
             </div>
-
-            <div className="mx-auto w-full max-w-[1080px] pt-8 text-left">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                        <h2 className="text-sm font-semibold text-slate-900">原型案例</h2>
-                        {templateCasesLoading ? (
-                            <span className="text-[12px] text-slate-500">加载中...</span>
-                        ) : null}
-                    </div>
-                    <div className="flex flex-wrap items-center justify-end gap-2 text-[12px]">
+            {shouldShowPrototypeCases ? (
+                <div className="mx-auto w-full max-w-[1080px] pt-8 text-left">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-sm font-semibold text-slate-900">原型案例</h2>
+                            {templateCasesLoading ? (
+                                <span className="text-[12px] text-slate-500">加载中...</span>
+                            ) : null}
+                        </div>
                         <TooltipProvider>
                             <Tooltip>
                                 <TooltipTrigger asChild>
@@ -1592,44 +1944,19 @@ function PrototypePlaceholderGuide({
                                 </TooltipTrigger>
                                 <TooltipContent side="top">打开在线模板库</TooltipContent>
                             </Tooltip>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-7 cursor-pointer gap-1.5 px-2 text-xs text-slate-600 hover:bg-white hover:text-slate-950"
-                                        onClick={() => onOpenPrototypeCreateDialog?.({ initialTab: 'upload', targetPrototypeName: draftActive ? undefined : item.name })}
-                                    >
-                                        <UploadCloud className="h-3.5 w-3.5" />
-                                        导入原型
-                                    </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">Axhub Make / Axure / V0 / aistudio / Stitch / Figma Make</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <span className="inline-flex h-7 cursor-default items-center gap-1.5 rounded-md px-2 text-xs text-slate-600">
-                                        <Globe className="h-3.5 w-3.5" />
-                                        导入任意网页
-                                    </span>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">使用 Chrome 扩展可以采集任意网页</TooltipContent>
-                            </Tooltip>
                         </TooltipProvider>
                     </div>
+                    {templateCases.length > 0 ? (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                            {templateCases.map(renderTemplateCaseCard)}
+                        </div>
+                    ) : templateCasesError ? (
+                        <div className="rounded-md border border-dashed bg-white/70 p-4 text-center text-[12px] text-slate-500">
+                            暂时无法加载原型案例
+                        </div>
+                    ) : null}
                 </div>
-                {templateCases.length > 0 ? (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {templateCases.map(renderTemplateCaseCard)}
-                    </div>
-                ) : templateCasesError ? (
-                    <div className="rounded-md border border-dashed bg-white/70 p-4 text-center text-[12px] text-slate-500">
-                        暂时无法加载原型案例
-                    </div>
-                ) : null}
-
-            </div>
+            ) : null}
         </div>
     );
 }
@@ -1642,7 +1969,6 @@ export default function ContentArea({
     selectedItem,
     activeTab: _activeTab,
     previewConfig,
-    reviewPageZoomEnabled = false,
     handleChangeMultiPageColumns,
     handleSelectPreviewSinglePreset,
     handleSelectCustomPreview,
@@ -1666,6 +1992,7 @@ export default function ContentArea({
     setViewMode,
     contentMode = 'preview',
     docsItems = [],
+    sidebarTrees,
     selectedDoc = null,
     selectedResourceFolder = null,
     selectedTemplate = null,
@@ -1684,6 +2011,7 @@ export default function ContentArea({
     collapsed = false,
     setCollapsed,
     selectedCanvas = null,
+    canvasItems = [],
     excalidrawPropertyPanelMode,
     setExcalidrawPropertyPanelMode,
     excalidrawPropertyPanelPosition,
@@ -1703,7 +2031,7 @@ export default function ContentArea({
     webAgentPanelOpen,
     aiPanelMode,
     onOpenProjectInIDE,
-    onOpenGenieWebAgent,
+    onOpenAcpWebAgent,
     onOpenImageAiPanel,
     onExecutePrompt,
     onCloseAiPanel,
@@ -1717,8 +2045,15 @@ export default function ContentArea({
     defaultThemeName,
     onOpenPrototypeCreateDialog,
     prototypeStartDraftActive,
+    resourceStartDraftActive,
+    themeStartDraftActive,
     onCreatePrototypeForDraftStart,
+    onUploadResourceFiles,
+    onCreateResourceCanvasFile,
+    onCreateDrawioResourceFile,
+    onOpenDesignImport,
     onRefreshPrototypes,
+    agentRunConcurrency,
     onSubmitCanvasAssistantPrompt,
     onAddCanvasScreenshotToAI,
     onAddCanvasImageToAI,
@@ -1740,6 +2075,7 @@ export default function ContentArea({
     }>({});
     const [runtimeUnavailablePreviewPath, setRuntimeUnavailablePreviewPath] = useState<string | null>(null);
 
+    const selectedResourceCanvas = selectedDoc?.openMode === 'canvas' ? selectedDoc : null;
     const selectedMarkdownItem = contentMode === 'template' ? selectedTemplate : selectedDoc;
     const markdownEmptyLabel = contentMode === 'template' ? '模板' : '资源';
     const draftPrototypeStartItem = useMemo<ItemData>(() => ({
@@ -1749,16 +2085,32 @@ export default function ContentArea({
         specUrl: '',
         previewDisabled: true,
     }), []);
-    const selectedPrototypeCanvasName = selectedItem
-        ? `prototypes/${selectedItem.name}/canvas.excalidraw`
-        : '';
-    const selectedPrototypeCanvasFilePath = selectedItem
-        ? resolvePrototypeCanvasFilePath(selectedItem, selectedPrototypeCanvasName)
-        : '';
+    const draftResourceStartItem = useMemo<ItemData>(() => ({
+        name: 'resource-start-draft',
+        displayName: '新资源草稿',
+        jsUrl: '',
+        specUrl: '',
+        previewDisabled: true,
+    }), []);
+    const draftThemeStartItem = useMemo<ItemData>(() => ({
+        name: 'theme-start-draft',
+        displayName: '新设计草稿',
+        jsUrl: '',
+        specUrl: '',
+        previewDisabled: true,
+    }), []);
     const selectedStandaloneCanvasFilePath = selectedCanvas
         ? resolveCanvasFilePath(selectedCanvas, selectedCanvas.name)
         : '';
+    const selectedResourceCanvasFilePath = selectedResourceCanvas
+        ? resolveCanvasFilePath(selectedResourceCanvas, selectedResourceCanvas.name)
+        : '';
     const handleSubmitPrototypeStartRequest = async (request: CanvasAiGenerationRequest) => {
+        if (request.source === 'resource-start' || request.source === 'theme-start') {
+            await onSubmitCanvasAssistantPrompt?.(request);
+            return;
+        }
+
         const draftCreatedItem = prototypeStartDraftActive && !selectedItem
             ? await onCreatePrototypeForDraftStart?.()
             : null;
@@ -1767,7 +2119,6 @@ export default function ContentArea({
             toast.error('创建原型失败');
             return;
         }
-        const startCanvasFilePath = resolvePrototypeCanvasFilePath(startItem, `prototypes/${startItem.name}/canvas.excalidraw`);
         const startPrototypeIndexPath = resolvePrototypeIndexFilePath(startItem);
         const startPrototypeLocalContextRef: CanvasLocalContextRef = {
             resourceType: 'prototype',
@@ -1778,7 +2129,7 @@ export default function ContentArea({
         const submittedRequest: CanvasAiGenerationRequest = {
             ...request,
             createdPrototype: startItem,
-            canvasFilePath: request.scene === 'page' ? request.canvasFilePath : startCanvasFilePath,
+            canvasFilePath: request.canvasFilePath,
             localContextRefs: request.scene === 'page' ? request.localContextRefs || [] : [startPrototypeLocalContextRef],
         };
 
@@ -1888,43 +2239,6 @@ export default function ContentArea({
         previewContainerSize.height,
         previewContainerSize.width,
     ]);
-    const desktopReviewZoomLayout = useMemo(() => {
-        const enabled = reviewPageZoomEnabled && viewMode === 'demo'
-            && previewConfig.previewMode === 'single'
-            && previewConfig.singlePreset === 'desktop';
-        const logicalWidth = Math.max(
-            DEVICE_PRESET_SIZES.desktop.width,
-            measuredSingleContentSize?.width || 0,
-        );
-        const logicalHeight = Math.max(
-            DEVICE_PRESET_SIZES.desktop.height,
-            measuredSingleContentSize?.height || previewContainerSize.height,
-        );
-        const scale = enabled
-            ? Math.min(1, previewContainerSize.width / Math.max(1, logicalWidth))
-            : 1;
-        const viewportWidth = Math.max(1, Math.round(logicalWidth * scale));
-        const viewportHeight = Math.max(1, Math.min(previewContainerSize.height, Math.round(logicalHeight * scale)));
-
-        return {
-            enabled,
-            logicalWidth,
-            iframeHeight: logicalHeight,
-            scale,
-            viewportWidth,
-            viewportHeight,
-        };
-    }, [
-        measuredSingleContentSize?.height,
-        measuredSingleContentSize?.width,
-        previewConfig.previewMode,
-        previewConfig.singlePreset,
-        previewContainerSize.height,
-        previewContainerSize.width,
-        reviewPageZoomEnabled,
-        viewMode,
-    ]);
-
     useEffect(() => {
         setSplitPrimaryWidthDraft(String(previewConfig.splitWidths.primary));
         setSplitPrimaryHeightDraft(String(previewConfig.splitHeights.primary));
@@ -2114,7 +2428,7 @@ export default function ContentArea({
                     className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground"
                     title="执行本视窗批注"
                     aria-label="执行本视窗批注"
-                    onClick={() => { void onRunPrototypePanePromptAction(pane, 'send-to-genie'); }}
+                    onClick={() => { void onRunPrototypePanePromptAction(pane, 'send-to-agent'); }}
                 >
                     <Play className="h-3.5 w-3.5" />
                 </Button>
@@ -2183,6 +2497,7 @@ export default function ContentArea({
             ref={iframeRef}
             key={key}
             src={src}
+            allow="clipboard-write"
             onLoad={onLoad}
             className="border-none block origin-top-left"
             title={title}
@@ -2208,6 +2523,37 @@ export default function ContentArea({
     }
 
     if (contentMode === 'doc' || contentMode === 'template') {
+        if (contentMode === 'doc' && resourceStartDraftActive && !selectedDoc && !selectedResourceFolder) {
+            return (
+                <StartGuide
+                    kind="resource"
+                    item={draftResourceStartItem}
+                    draftActive={resourceStartDraftActive && !selectedDoc}
+                    activeProjectId={activeProjectId}
+                    preferredIDE={preferredIDE}
+                    preferredPromptClient={preferredPromptClient}
+                    ideAvailability={ideAvailability}
+                    agentAvailability={agentAvailability}
+                    assistantVisible={assistantVisible}
+                    aiPanelMode={aiPanelMode}
+                    assistantProjectPath={assistantProjectPath}
+                    onOpenProjectInIDE={onOpenProjectInIDE}
+                    onPreferredIDEChange={onPreferredIDEChange}
+                    onExecutePrompt={onExecutePrompt}
+                    themes={themes}
+                    sidebarTrees={sidebarTrees}
+                    docsItems={docsItems}
+                    prototypes={prototypes}
+                    defaultThemeName={defaultThemeName}
+                    onSubmitPrototypeStartRequest={handleSubmitPrototypeStartRequest}
+                    onUploadResourceFiles={onUploadResourceFiles}
+                    onCreateResourceCanvasFile={onCreateResourceCanvasFile}
+                    onCreateDrawioResourceFile={onCreateDrawioResourceFile}
+                    onOpenAISettings={onOpenAISettings}
+                />
+            );
+        }
+
         if (contentMode === 'doc' && selectedResourceFolder) {
             return (
                 <ResourceFolderPreview
@@ -2348,6 +2694,35 @@ export default function ContentArea({
     }
 
     if (contentMode === 'theme') {
+        if (themeStartDraftActive && !selectedTheme) {
+            return (
+                <StartGuide
+                    kind="design"
+                    item={draftThemeStartItem}
+                    draftActive={themeStartDraftActive && !selectedTheme}
+                    activeProjectId={activeProjectId}
+                    preferredIDE={preferredIDE}
+                    preferredPromptClient={preferredPromptClient}
+                    ideAvailability={ideAvailability}
+                    agentAvailability={agentAvailability}
+                    assistantVisible={assistantVisible}
+                    aiPanelMode={aiPanelMode}
+                    assistantProjectPath={assistantProjectPath}
+                    onOpenProjectInIDE={onOpenProjectInIDE}
+                    onPreferredIDEChange={onPreferredIDEChange}
+                    onExecutePrompt={onExecutePrompt}
+                    themes={themes}
+                    sidebarTrees={sidebarTrees}
+                    docsItems={docsItems}
+                    prototypes={prototypes}
+                    defaultThemeName={defaultThemeName}
+                    onSubmitPrototypeStartRequest={handleSubmitPrototypeStartRequest}
+                    onOpenDesignImport={onOpenDesignImport}
+                    onOpenAISettings={onOpenAISettings}
+                />
+            );
+        }
+
         if (!selectedTheme) {
             return (
                 <div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">
@@ -2382,6 +2757,7 @@ export default function ContentArea({
                         ref={previewIframeRef}
                         key={elementIframeKey}
                         src={themePreviewUrl}
+                        allow="clipboard-write"
                         onLoad={onPreviewIframeLoad}
                         className="w-full h-full border-none"
                         title={selectedTheme.displayName}
@@ -2411,7 +2787,12 @@ export default function ContentArea({
     }
 
     if (contentMode === 'canvas') {
-        if (!selectedCanvas) {
+        const currentCanvasItem = selectedResourceCanvas || selectedCanvas;
+        const currentCanvasFilePath = selectedResourceCanvas
+            ? selectedResourceCanvasFilePath
+            : selectedStandaloneCanvasFilePath;
+
+        if (!currentCanvasItem) {
             return (
                 <div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">
                     请从左侧选择或新建一个画布
@@ -2421,12 +2802,11 @@ export default function ContentArea({
 
         return (
             <div className="h-full min-h-0 relative bg-background">
-                <CanvasWelcomeGuide />
-                <CanvasErrorBoundary resetKey={selectedCanvas.name}>
+                <CanvasErrorBoundary resetKey={currentCanvasItem.name}>
                     <React.Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">加载中...</div>}>
                         <ExcalidrawCanvas
-                            canvasName={selectedCanvas.name}
-                            canvasFilePath={selectedStandaloneCanvasFilePath}
+                            canvasName={currentCanvasItem.name}
+                            canvasFilePath={currentCanvasFilePath}
                             activeProjectId={activeProjectId}
                             isDarkMode={_isDarkMode}
                             collapsed={collapsed}
@@ -2445,7 +2825,7 @@ export default function ContentArea({
                             ideAvailability={ideAvailability}
                             agentAvailability={agentAvailability}
                             onOpenProjectInIDE={onOpenProjectInIDE}
-                            onOpenGenieWebAgent={onOpenGenieWebAgent}
+                            onOpenAcpWebAgent={onOpenAcpWebAgent}
                             webAgentPanelOpen={webAgentPanelOpen}
                             aiPanelMode={aiPanelMode}
                             onOpenImageAiPanel={onOpenImageAiPanel}
@@ -2457,8 +2837,19 @@ export default function ContentArea({
                             preferredPromptClient={preferredPromptClient}
                             prototypes={prototypes}
                             themes={themes}
+                            projectResourceTrees={{
+                                prototypes: sidebarTrees?.prototypes || [],
+                                docs: sidebarTrees?.docs || [],
+                                themes: sidebarTrees?.themes || [],
+                            }}
+                            projectResourceItems={{
+                                prototypes: prototypes || [],
+                                docs: docsItems || [],
+                                themes: themes || [],
+                            }}
                             defaultThemeName={defaultThemeName}
                             onRefreshPrototypes={onRefreshPrototypes}
+                            agentRunConcurrency={agentRunConcurrency}
                             onSubmitCanvasAssistantPrompt={onSubmitCanvasAssistantPrompt}
                             overlayChildren={<CanvasFloatingToolbar />}
                         />
@@ -2478,7 +2869,8 @@ export default function ContentArea({
         >
             {selectedItem ? (
                 selectedItem.placeholder === true && viewMode === 'demo' ? (
-                    <PrototypePlaceholderGuide
+                    <StartGuide
+                        kind="prototype"
                         item={selectedItem}
                         activeProjectId={activeProjectId}
                         preferredIDE={preferredIDE}
@@ -2492,6 +2884,9 @@ export default function ContentArea({
                         onPreferredIDEChange={onPreferredIDEChange}
                         onExecutePrompt={onExecutePrompt}
                         themes={themes}
+                        sidebarTrees={sidebarTrees}
+                        docsItems={docsItems}
+                        prototypes={prototypes}
                         defaultThemeName={defaultThemeName}
                         onOpenPrototypeCreateDialog={onOpenPrototypeCreateDialog}
                         onRefreshPrototypes={onRefreshPrototypes}
@@ -2499,49 +2894,8 @@ export default function ContentArea({
                         onOpenAISettings={onOpenAISettings}
                     />
                 ) : viewMode === 'canvas' ? (
-                    <div className="h-full w-full min-h-0 relative overflow-hidden bg-background">
-                        <CanvasErrorBoundary resetKey={selectedPrototypeCanvasName}>
-                            <React.Suspense fallback={<div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">加载中...</div>}>
-                                <ExcalidrawCanvas
-                                    canvasName={selectedPrototypeCanvasName}
-                                    canvasFilePath={selectedPrototypeCanvasFilePath}
-                                    activeProjectId={activeProjectId}
-                                    isDarkMode={_isDarkMode}
-                                    collapsed={collapsed}
-                                    setCollapsed={setCollapsed}
-                                    propertyPanelMode={excalidrawPropertyPanelMode}
-                                    onPropertyPanelModeChange={setExcalidrawPropertyPanelMode}
-                                    propertyPanelPosition={excalidrawPropertyPanelPosition}
-                                    onPropertyPanelPositionChange={setExcalidrawPropertyPanelPosition}
-                                    bridgeConnected={bridgeConnected}
-                                    onAddToContext={onAddToContext}
-                                    onAddScreenshotToAI={onAddCanvasScreenshotToAI}
-                                    onAddImageToAI={onAddCanvasImageToAI}
-                                    onAnnotationsChange={onAnnotationsChange}
-                                    onOpenCanvasInIDE={onOpenCanvasInIDE}
-                                    preferredIDE={preferredIDE}
-                                    ideAvailability={ideAvailability}
-                                    agentAvailability={agentAvailability}
-                                    onOpenProjectInIDE={onOpenProjectInIDE}
-                                    onOpenGenieWebAgent={onOpenGenieWebAgent}
-                                    webAgentPanelOpen={webAgentPanelOpen}
-                                    aiPanelMode={aiPanelMode}
-                                    onOpenImageAiPanel={onOpenImageAiPanel}
-                                    onCloseAiPanel={onCloseAiPanel}
-                                    onCloseWebAgentPanel={onCloseWebAgentPanel}
-                                    onPreferredIDEChange={onPreferredIDEChange}
-                                    onOpenAISettings={onOpenAISettings}
-                                    assistantProjectPath={assistantProjectPath}
-                                    preferredPromptClient={preferredPromptClient}
-                                    prototypes={prototypes}
-                                    themes={themes}
-                                    defaultThemeName={defaultThemeName}
-                                    onRefreshPrototypes={onRefreshPrototypes}
-                                    onSubmitCanvasAssistantPrompt={onSubmitCanvasAssistantPrompt}
-                                    overlayChildren={<CanvasFloatingToolbar />}
-                                />
-                            </React.Suspense>
-                        </CanvasErrorBoundary>
+                    <div className="flex h-full w-full items-center justify-center text-center text-[12px] text-muted-foreground">
+                        画布现在作为资源文件管理，请在资源中打开 .excalidraw 文件
                     </div>
                 ) : (
                     selectedItem.previewDisabled ? (
@@ -2642,37 +2996,15 @@ export default function ContentArea({
                             </div>
                         </div>
                     ) : previewLayout.single.kind === 'desktop' ? (
-                        desktopReviewZoomLayout.enabled ? (
-                            <div className="flex h-full w-full items-start justify-center pt-4">
-                                <div
-                                    className="overflow-hidden border bg-background shadow-sm"
-                                    style={{
-                                        width: desktopReviewZoomLayout.viewportWidth,
-                                        height: previewContainerSize.height,
-                                    }}
-                                >
-                                    {renderScaledIframe(
-                                        previewIframeRef,
-                                        elementIframeKey,
-                                        primaryIframeUrl,
-                                        desktopReviewZoomLayout.logicalWidth,
-                                        desktopReviewZoomLayout.iframeHeight,
-                                        desktopReviewZoomLayout.scale,
-                                        selectedItem.displayName,
-                                        handleSingleIframeLoad,
-                                    )}
-                                </div>
-                            </div>
-                        ) : (
-                            <iframe
-                                ref={previewIframeRef}
-                                key={elementIframeKey}
-                                src={primaryIframeUrl}
-                                onLoad={onPreviewIframeLoad}
-                                className="w-full h-full border-none block"
-                                title={selectedItem.displayName}
-                            />
-                        )
+                        <iframe
+                            ref={previewIframeRef}
+                            key={elementIframeKey}
+                            src={primaryIframeUrl}
+                            allow="clipboard-write"
+                            onLoad={onPreviewIframeLoad}
+                            className="w-full h-full border-none block"
+                            title={selectedItem.displayName}
+                        />
                     ) : previewLayout.single.kind === 'custom' ? (
                         <div className="flex h-full w-full items-start justify-center pt-4">
                             <div
@@ -2716,7 +3048,8 @@ export default function ContentArea({
                     )
                 )
             ) : prototypeStartDraftActive ? (
-                <PrototypePlaceholderGuide
+                <StartGuide
+                    kind="prototype"
                     item={draftPrototypeStartItem}
                     draftActive={prototypeStartDraftActive && !selectedItem}
                     activeProjectId={activeProjectId}
@@ -2731,6 +3064,9 @@ export default function ContentArea({
                     onPreferredIDEChange={onPreferredIDEChange}
                     onExecutePrompt={onExecutePrompt}
                     themes={themes}
+                    sidebarTrees={sidebarTrees}
+                    docsItems={docsItems}
+                    prototypes={prototypes}
                     defaultThemeName={defaultThemeName}
                     onOpenPrototypeCreateDialog={onOpenPrototypeCreateDialog}
                     onRefreshPrototypes={onRefreshPrototypes}

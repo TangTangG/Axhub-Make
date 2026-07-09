@@ -33,6 +33,7 @@ import {
 } from './http.ts';
 import { handleAiArtifactHistoryApi } from './managementApi.aiArtifactHistory.ts';
 import { handleAiRunsApi } from './managementApi.aiRuns.ts';
+import { handleAxhubApi } from './managementApi.axhub.ts';
 import { handleAssistantPromptIde } from './managementApi.assistantIde.ts';
 import { handleBridgeAndImageProxy } from './managementApi.bridge.ts';
 import { handleCanvasApi } from './managementApi.canvas.ts';
@@ -44,10 +45,12 @@ import { handleProjectDocsApi } from './managementApi.docs.ts';
 import { handleEntriesCompatibilityApi } from './managementApi.entries.ts';
 import { handleSourceBackedExports, handleUnavailableManagement } from './managementApi.exports.ts';
 import { handleFileOperationsApi } from './managementApi.fileOperations.ts';
-import { handleGitApi } from './managementApi.git.ts';
+import { handleGitApi, type GitWorkspaceCommandExecutor } from './managementApi.git.ts';
 import { handleLegacyDocsApi } from './managementApi.legacyDocs.ts';
 import { handleLegacyWebSocketApi } from './managementApi.legacyWebSocket.ts';
 import { handleProjectRegistryApi } from './managementApi.projectRegistry.ts';
+import { handleReviewReportsApi } from './managementApi.reviewReports.ts';
+import { handlePrototypeAnnotationApi } from './managementApi.prototypeAnnotation.ts';
 import { handlePrototypeCommentsApi } from './managementApi.prototypeComments.ts';
 import {
   handleCreatePlaceholderPrototype,
@@ -91,7 +94,9 @@ export interface ManagementApiOptions {
   refreshMakeStateHealth?: () => MakeStateHealthResult;
   devMode?: boolean;
   diagnosticLog?: DiagnosticLog;
+  axhubOnlineBaseUrl?: string;
   cloudPublishingCommandExecutor?: CommandExecutor;
+  gitWorkspaceCommandExecutor?: GitWorkspaceCommandExecutor;
 }
 
 interface ProjectRequestContext {
@@ -121,10 +126,13 @@ function createEffectiveProjectCapabilities(context: ProjectRequestContext): Eff
     Boolean(getDeclaredResourceWriteDir(context, type))
   );
   const hasPrototypeCreateTarget = Boolean(getPrototypeCreateDir(context));
+  const hasDocsWriteTarget = Boolean(getDocsWriteDir(context));
+  const hasTemplatesWriteTarget = Boolean(getTemplatesDirForContext(context));
+  const hasDataWriteTarget = Boolean(getDataDir(context.project.root));
 
   return {
     ...capabilities,
-    lanAccessAllowed: readProjectLANAccessAllowed(context.project.root),
+    lanAccessAllowed: true,
     localExports: {
       html: hasTarget('prototypes'),
       make: hasFigmaMakeArtifactCapability(context.project.root, context.metadata),
@@ -132,20 +140,16 @@ function createEffectiveProjectCapabilities(context: ProjectRequestContext): Eff
     resourceWrites: {
       prototypeCreate: hasPrototypeCreateTarget,
       prototypeUpload: hasTarget('prototypes'),
-      docCreate: hasTarget('docs'),
-      docImport: hasTarget('docs'),
+      docCreate: hasDocsWriteTarget,
+      docImport: hasDocsWriteTarget,
       themeCreate: hasTarget('themes'),
       themeImport: hasTarget('themes'),
-      dataCreate: hasTarget('data'),
+      dataCreate: hasDataWriteTarget,
       dataImport: false,
-      templateCreate: hasTarget('templates'),
-      templateDuplicate: hasTarget('templates'),
+      templateCreate: hasTemplatesWriteTarget,
+      templateDuplicate: hasTemplatesWriteTarget,
     },
   };
-}
-
-function readProjectLANAccessAllowed(projectRoot: string): boolean {
-  return readProjectConfig(projectRoot)?.server?.allowLAN !== false;
 }
 
 function encodeUrlPathSegments(value: string): string {
@@ -642,12 +646,12 @@ function getExistingMetadataStore(res: ServerResponse, project: RegisteredProjec
 function readProjectConfig(projectRoot: string): any {
   const configPath = getConfigPath(projectRoot);
   if (!fs.existsSync(configPath)) {
-    return { server: { host: 'localhost', allowLAN: true } };
+    return { server: { host: 'localhost' } };
   }
   try {
     return JSON.parse(fs.readFileSync(configPath, 'utf8'));
   } catch {
-    return { server: { host: 'localhost', allowLAN: true } };
+    return { server: { host: 'localhost' } };
   }
 }
 
@@ -688,6 +692,10 @@ function getTemplatesDir(projectRoot: string): string {
   return path.join(projectRoot, 'src/resources/templates');
 }
 
+function getDataDir(projectRoot: string): string {
+  return path.join(projectRoot, 'src/resources/data');
+}
+
 function getStandardMakeClientPrototypeDir(context: ProjectRequestContext): string | null {
   if (!readMakeClientMarker(context.project.root)) {
     return null;
@@ -715,12 +723,17 @@ function getPrototypeCreateDir(context: ProjectRequestContext): string | null {
   return getDeclaredResourceWriteDir(context, 'prototypes') || getStandardMakeClientPrototypeDir(context);
 }
 
+function getDocsWriteDir(context: ProjectRequestContext): string | null {
+  const docsDir = getDocsDir(context.project.root);
+  return isPathInside(context.project.root, docsDir) ? docsDir : null;
+}
+
 function getDocsDirForContext(context: ProjectRequestContext): string {
-  return getDeclaredResourceWriteDir(context, 'docs') || getDocsDir(context.project.root);
+  return getDocsWriteDir(context) || getDocsDir(context.project.root);
 }
 
 function getTemplatesDirForContext(context: ProjectRequestContext): string {
-  return getDeclaredResourceWriteDir(context, 'templates') || getTemplatesDir(context.project.root);
+  return getTemplatesDir(context.project.root);
 }
 
 function safeDecodeURIComponent(value: string): string {
@@ -977,18 +990,13 @@ function createAdminContextPayload(options: ManagementApiOptions) {
 function createEmptyProjectResources(): ProjectMetadata['resources'] {
   return {
     prototypes: [],
-    docs: [],
     themes: [],
-    data: [],
-    templates: [],
   };
 }
 
 function createEmptyResourceOrders(): ProjectMetadata['orders'] {
   return {
     themes: [],
-    data: [],
-    templates: [],
   };
 }
 
@@ -998,7 +1006,7 @@ function createUnavailableProjectCapabilities(project: RegisteredProject): Effec
     quickEditMode: 'clientRuntime',
     figmaExport: false,
     axureExport: false,
-    lanAccessAllowed: readProjectLANAccessAllowed(project.root),
+    lanAccessAllowed: true,
     localExports: {
       html: false,
       make: false,
@@ -1032,7 +1040,6 @@ function createUnavailableProjectResourcesPayload(
     resources: createEmptyProjectResources(),
     navigation: {
       prototypes: [],
-      docs: [],
     },
     orders: createEmptyResourceOrders(),
     capabilities: createUnavailableProjectCapabilities(project),
@@ -1154,7 +1161,7 @@ function handleUnavailableProjectStartupApi(
       resolveProjectContext: () => ({ project }),
       resolveSourceFileFromMetadata,
       findProjectResourceByPath,
-      readProjectConfig,
+      getServerConfigStoreForRequest,
       commandExecutor: options.cloudPublishingCommandExecutor,
       sendDisabledCapability,
     });
@@ -1216,6 +1223,9 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
       origin: options.origin,
       runtimeOrigin: options.runtimeOrigin || null,
       devMode: options.devMode === true,
+      capabilities: {
+        reviewReports: true,
+      },
       server: options.serverInfo || readServerInfo(projectRoot, 'admin', { homeDir: options.serverInfoHomeDir }),
       makeState: options.makeStateHealth,
     });
@@ -1255,6 +1265,17 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     return true;
   }
 
+  if (handleAxhubApi(req, res, options, pathname, {
+    resolveProjectContext,
+    resolveSourceFileFromMetadata,
+    findProjectResourceByPath,
+    getDeclaredResourceWriteDir: getDeclaredResourceWriteDir as any,
+    readProjectConfig,
+    sendDisabledCapability,
+  })) {
+    return true;
+  }
+
   if (handleLegacyWebSocketApi(req, res, options, pathname, {
     readRawRequestBody,
   })) {
@@ -1279,6 +1300,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
   if (handleGitApi(req, res, options, pathname, url, {
     resolveProjectContext,
     findProjectResourceByPath,
+    commandExecutor: options.gitWorkspaceCommandExecutor,
   })) {
     return true;
   }
@@ -1303,6 +1325,16 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     getDeclaredResourceWriteDir,
     sendResourceWriteAdapterRequired,
     encodeUrlPathSegments,
+  })) {
+    return true;
+  }
+
+  if (handleReviewReportsApi(req, res, options, pathname, url, {
+    resolveProjectContext,
+    createProjectContextFromBody,
+    createProjectContextFromMultipartParts,
+    readMultipartParts,
+    readProjectConfig,
   })) {
     return true;
   }
@@ -1339,11 +1371,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     getDeclaredResourceWriteDir,
     hasResourceWriteCapability,
     sendResourceWriteAdapterRequired,
-    saveMetadataWithResourceOrder,
-    prependUnique,
     createProjectRelativePath,
-    updateGenericResourceMetadata,
-    removeGenericResourceMetadata,
   })) return true;
 
   const requestContext = getRequestProjectContext(req, res, options);
@@ -1385,12 +1413,20 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
 
   if (handleAiArtifactHistoryApi(req, res, requestContext, pathname)) return true;
 
+  if (handleReviewReportsApi(req, res, options, pathname, url, {
+    resolveProjectContext,
+    createProjectContextFromBody,
+    createProjectContextFromMultipartParts,
+    readMultipartParts,
+    readProjectConfig,
+  })) return true;
+
   if (handleCloudPublishingApi(req, res, options, pathname, {
     resolveProjectContext,
     resolveSourceFileFromMetadata,
     findProjectResourceByPath,
     getDeclaredResourceWriteDir: getDeclaredResourceWriteDir as any,
-    readProjectConfig,
+    getServerConfigStoreForRequest,
     commandExecutor: options.cloudPublishingCommandExecutor,
     sendDisabledCapability,
   })) return true;
@@ -1400,11 +1436,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     getDeclaredResourceWriteDir,
     hasResourceWriteCapability,
     sendResourceWriteAdapterRequired,
-    saveMetadataWithResourceOrder,
-    prependUnique,
     createProjectRelativePath,
-    updateGenericResourceMetadata,
-    removeGenericResourceMetadata,
   })) return true;
   if (handleProjectDataAndThemeApi(req, res, requestContext, options, pathname, {
     createProjectContextFromBody,
@@ -1471,6 +1503,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     sendDisabledCapability,
   })) return true;
   if (handleCanvasApi(req, res, activeProjectRoot, pathname, { metadata: requestContext.metadata })) return true;
+  if (handlePrototypeAnnotationApi(req, res, requestContext, url)) return true;
   if (handlePrototypeCommentsApi(req, res, requestContext, url)) return true;
   if (handleMediaApi(req, res, activeProjectRoot, { mediaRoot: getDeclaredResourceWriteDir(requestContext, 'media') || undefined })) return true;
   if (handleWorkspaceApi(req, res, options, requestContext, pathname, url, {

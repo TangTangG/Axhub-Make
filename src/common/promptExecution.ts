@@ -1,8 +1,7 @@
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import { normalizeAcpProviderKey, toAcpPromptClient } from './acpModelConfig';
 import type {
   AcpPromptClient,
-  GeniePromptClient,
   LocalPromptClient,
   PromptClient,
   PromptClientPreference,
@@ -11,44 +10,25 @@ import type {
 const LEGACY_PROMPT_CLIENT_MAP: Record<string, AcpPromptClient> = {
   claude: 'acp:claude',
   claudecode: 'acp:claude',
-  'genie:claude': 'acp:claude',
   codex: 'acp:codex',
   openai: 'acp:codex',
-  'genie:codex': 'acp:codex',
-  gemini: 'acp:gemini',
-  'genie:gemini': 'acp:gemini',
+  gemini: 'acp:codex',
+  'acp:gemini': 'acp:codex',
   opencode: 'acp:opencode',
-  'genie:opencode': 'acp:opencode',
   cursor: 'acp:cursor',
-  'genie:cursor': 'acp:cursor',
   qoder: 'acp:qoder',
-  'genie:qoder': 'acp:qoder',
   codebuddy: 'acp:codebuddy',
-  'genie:codebuddy': 'acp:codebuddy',
   reasonix: 'acp:reasonix',
-  'genie:reasonix': 'acp:reasonix',
 };
 
 const ACP_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
   'acp:claude',
   'acp:codex',
-  'acp:gemini',
   'acp:opencode',
   'acp:cursor',
   'acp:qoder',
   'acp:codebuddy',
   'acp:reasonix',
-]);
-
-const GENIE_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
-  'genie:claude',
-  'genie:codex',
-  'genie:gemini',
-  'genie:opencode',
-  'genie:cursor',
-  'genie:qoder',
-  'genie:codebuddy',
-  'genie:reasonix',
 ]);
 
 const LOCAL_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
@@ -74,22 +54,14 @@ export function isAcpPromptClient(value: unknown): value is AcpPromptClient {
   return typeof value === 'string' && ACP_PROMPT_CLIENT_SET.has(value);
 }
 
-export function isGeniePromptClient(value: unknown): value is GeniePromptClient {
-  return typeof value === 'string' && GENIE_PROMPT_CLIENT_SET.has(value);
-}
-
 export function isLocalPromptClient(value: unknown): value is LocalPromptClient {
   return typeof value === 'string' && LOCAL_PROMPT_CLIENT_SET.has(value);
 }
 
-export function toAcpProvider(client: PromptClientPreference): GenieProvider | null {
-  if (!isAcpPromptClient(client) && !isGeniePromptClient(client)) return null;
+export function toAcpProvider(client: PromptClientPreference): AcpProvider | null {
+  if (!isAcpPromptClient(client)) return null;
 
-  return normalizeAcpProviderKey(client.split(':')[1]) as GenieProvider | null;
-}
-
-export function toGenieProvider(client: PromptClientPreference): GenieProvider | null {
-  return toAcpProvider(client);
+  return normalizeAcpProviderKey(client.split(':')[1]) as AcpProvider | null;
 }
 
 export function toAcpPromptClientPreference(provider: unknown): AcpPromptClient | null {

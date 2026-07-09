@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -57,6 +58,21 @@ function readTrackedFiles() {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function findAncestorFile(relativePath) {
+  let currentDir = path.resolve('.');
+  while (true) {
+    const candidate = path.join(currentDir, relativePath);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return null;
+    }
+    currentDir = parentDir;
+  }
 }
 
 function shouldScanTrackedFile(relativePath) {
@@ -144,6 +160,123 @@ describe('release make artifact helpers', () => {
     );
   });
 
+  it('requires make client template release notes to mention the matching template version', () => {
+    const root = createTempRoot('axhub-release-template-notes-');
+    const clientRoot = path.join(root, 'client');
+    const releaseNotesPath = path.join(clientRoot, 'RELEASE_NOTES.md');
+    const releaseNotes = [
+      '# Axhub Make Client 0.2.0',
+      '',
+      '- 更新官方模板文件。',
+      '',
+    ].join('\n');
+    writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client","version":"0.2.0"}\n');
+    writeFile(releaseNotesPath, releaseNotes);
+
+    assert.equal(
+      releaseMake.readMakeClientTemplateReleaseNotes({
+        sourceClientDir: clientRoot,
+        templateVersion: '0.2.0',
+      }),
+      releaseNotes.trim(),
+    );
+
+    writeFile(releaseNotesPath, '# Axhub Make Client 0.1.9\n\n- 旧版本说明。\n');
+    assert.throws(
+      () => releaseMake.readMakeClientTemplateReleaseNotes({
+        sourceClientDir: clientRoot,
+        templateVersion: '0.2.0',
+      }),
+      /must mention template version 0\.2\.0/,
+    );
+
+    writeFile(releaseNotesPath, '# Axhub Make Client 0.1.9\n\n- 准备升级到 0.2.0。\n');
+    assert.throws(
+      () => releaseMake.readMakeClientTemplateReleaseNotes({
+        sourceClientDir: clientRoot,
+        templateVersion: '0.2.0',
+      }),
+      /must mention template version 0\.2\.0/,
+    );
+
+    fs.rmSync(releaseNotesPath);
+    assert.throws(
+      () => releaseMake.readMakeClientTemplateReleaseNotes({
+        sourceClientDir: clientRoot,
+        templateVersion: '0.2.0',
+      }),
+      /release notes file is required/,
+    );
+  });
+
+  it('syncs the default make client template release notes into the runtime constants', () => {
+    const root = createTempRoot('axhub-release-template-notes-sync-');
+    const sourceFile = path.join(root, 'makeClientTemplate.ts');
+    const releaseNotes = '# Axhub Make Client 0.2.0\n\n- 更新官方模板文件。';
+    writeFile(sourceFile, [
+      "export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.1';",
+      'export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = "";',
+      '',
+    ].join('\n'));
+
+    const result = releaseMake.syncDefaultMakeClientTemplateReleaseNotes({
+      sourceFile,
+      templateVersion: '0.2.0',
+      releaseNotes,
+    });
+
+    assert.equal(result.changed, true);
+    assert.equal(result.templateVersion, '0.2.0');
+    assert.match(
+      fs.readFileSync(sourceFile, 'utf8'),
+      /export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = "# Axhub Make Client 0\.2\.0\\n\\n- 更新官方模板文件。";/u,
+    );
+  });
+
+  it('creates the online make client template latest manifest from release notes and zip metadata', () => {
+    const releaseNotes = '# Axhub Make Client 0.2.0\n\n- 更新官方模板文件。';
+    const manifest = releaseMake.createMakeClientTemplateLatestManifest({
+      templateVersion: '0.2.0',
+      releaseNotes,
+      zipMetadata: releaseMake.createTemplateZipMetadata({ templateVersion: '0.2.0' }),
+      publishedAt: '2026-07-09T00:00:00.000Z',
+    });
+
+    assert.deepEqual(manifest, {
+      schemaVersion: 1,
+      version: '0.2.0',
+      releaseNotes,
+      publishedAt: '2026-07-09T00:00:00.000Z',
+      sources: [
+        {
+          id: 'github',
+          url: 'https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v0.2.0/axhub-make-client-template.zip',
+          markerRepository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+          templateVersion: '0.2.0',
+        },
+        {
+          id: 'gitee',
+          url: 'https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v0.2.0/axhub-make-client-template.zip',
+          markerRepository: 'https://gitee.com/axhub/Axhub-Make/tree/main/client',
+          templateVersion: '0.2.0',
+        },
+      ],
+    });
+  });
+
+  it('keeps make release Vitest companion packages on exact matching versions', () => {
+    const sourcePackageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
+    const devDependencies = sourcePackageJson.devDependencies || {};
+    const vitestVersion = devDependencies.vitest;
+
+    assert.match(
+      vitestVersion,
+      /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u,
+      'devDependencies.vitest must be an exact version to avoid npm peer dependency solver drift',
+    );
+    assert.equal(devDependencies['@vitest/coverage-v8'], vitestVersion);
+  });
+
   it('keeps ordinary make release commands free of the client template zip', () => {
     const commands = releaseMake.publishCommands({
       tagName: 'make-v1.2.3',
@@ -162,12 +295,15 @@ describe('release make artifact helpers', () => {
     assert(!commands.releaseArgs.includes('/tmp/axhub-make-client-template.zip'));
   });
 
-  it('builds template-only release commands with only the client template zip', () => {
+  it('builds template-only release commands with the client template zip and latest manifest', () => {
     const commands = releaseMake.publishTemplateCommands({
       tagName: 'make-client-template-v0.2.0-beta.1',
       templateVersion: '0.2.0-beta.1',
       templateZip: {
         path: '/tmp/axhub-make-client-template.zip',
+      },
+      latestManifest: {
+        path: '/tmp/axhub-make-client-template.latest.json',
       },
     }, {
       githubRepo: 'lintendo/Axhub-Make',
@@ -178,6 +314,7 @@ describe('release make artifact helpers', () => {
       'create',
       'make-client-template-v0.2.0-beta.1',
       '/tmp/axhub-make-client-template.zip',
+      '/tmp/axhub-make-client-template.latest.json',
       '--repo',
       'lintendo/Axhub-Make',
       '--title',
@@ -191,22 +328,33 @@ describe('release make artifact helpers', () => {
     const outputRoot = createTempRoot('axhub-release-template-output-');
     const clientRoot = path.join(sourceRoot, 'client');
     writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/index.tsx'), 'export {};\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/acp/conversations.json'), `{"cwd":"/${'Users'}/builder/project"}\n`);
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/prototype-comments.json'), '{}\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/prototype-review.md'), '# Keep review\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.ttf'), 'source font\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'), 'subset font\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/canvas.excalidraw'), '{"type":"excalidraw"}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/canvas-assets/screenshot.png'), 'screenshot\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/acp/conversations.json'), `{"cwd":"/${'Users'}/builder/project"}\n`);
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/prototype-comments.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/prototype-review.md'), '# Keep review\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/TsangerJinKai02-W04.ttf'), 'source font\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/TsangerJinKai02-W04.subset.woff2'), 'subset font\n');
     writeFile(path.join(clientRoot, 'tests/template.test.mjs'), 'export {};\n');
     writeFile(path.join(clientRoot, '.git/config'), '[core]\n');
     writeFile(path.join(clientRoot, '.DS_Store'), 'finder\n');
     writeFile(path.join(clientRoot, 'src/resources/.DS_Store'), 'finder\n');
+    writeFile(path.join(clientRoot, 'src/resources/untitled.assets/scratch.png'), 'scratch\n');
+    writeFile(path.join(clientRoot, 'src/themes/trae/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/themes/whop/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/themes/claude/index.tsx'), 'export {};\n');
     writeFile(path.join(clientRoot, '.drawio-tmp/order-flow/order-flow.spec.yaml'), 'id: order-flow\n');
     writeFile(path.join(clientRoot, 'node_modules/left-pad/index.js'), 'module.exports = null;\n');
     writeFile(path.join(clientRoot, 'dist/build.js'), 'console.log("built");\n');
     writeFile(path.join(clientRoot, '.agents/skills/local/SKILL.md'), 'npm run typecheck\n');
     writeFile(path.join(clientRoot, '.claude/skills/local/SKILL.md'), 'npm run typecheck\n');
     writeFile(path.join(clientRoot, '.trae/local.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.codex/session.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.workbuddy/state.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.logs/make-server.pid'), '12345\n');
+    writeFile(path.join(clientRoot, 'logs/make-server.log'), 'server log\n');
+    writeFile(path.join(clientRoot, 'tmp-midscene/cli-runtime/package.json'), '{"name":"tmp-midscene-runtime"}\n');
     writeFile(path.join(clientRoot, 'temp/scratch.txt'), 'scratch\n');
     writeFile(path.join(clientRoot, '.axhub/make/client.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/README.md'), '# Make client\n');
@@ -219,6 +367,7 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, '.axhub/make/exports/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/edit-history/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/sessions/conversations.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/reviews/config.json'), '{"reviewer":"local"}\n');
 
     const result = await releaseMake.createMakeClientTemplateZip({
       sourceClientDir: clientRoot,
@@ -229,22 +378,33 @@ describe('release make artifact helpers', () => {
     assert.match(result.sha256, /^[a-f0-9]{64}$/u);
     const entries = releaseMake.listZipEntries(result.path);
     assert(entries.includes('package.json'));
-    assert(entries.includes('src/prototypes/template-home/index.tsx'));
-    assert(!entries.some((entry) => entry.startsWith('src/prototypes/template-home/.spec/acp/')));
-    assert(!entries.includes('src/prototypes/template-home/.spec/prototype-comments.json'));
-    assert(entries.includes('src/prototypes/template-home/.spec/prototype-review.md'));
-    assert(!entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.ttf'));
-    assert(entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'));
+    assert(entries.includes('src/prototypes/beginner-guide/index.tsx'));
+    assert(!entries.includes('src/prototypes/beginner-guide/canvas.excalidraw'));
+    assert(!entries.some((entry) => entry.startsWith('src/prototypes/beginner-guide/canvas-assets/')));
+    assert(!entries.some((entry) => entry.startsWith('src/prototypes/beginner-guide/.spec/acp/')));
+    assert(!entries.includes('src/prototypes/beginner-guide/.spec/prototype-comments.json'));
+    assert(entries.includes('src/prototypes/beginner-guide/.spec/prototype-review.md'));
+    assert(!entries.includes('src/prototypes/beginner-guide/TsangerJinKai02-W04.ttf'));
+    assert(entries.includes('src/prototypes/beginner-guide/TsangerJinKai02-W04.subset.woff2'));
     assert(!entries.some((entry) => entry.startsWith('tests/')));
     assert(!entries.some((entry) => entry.startsWith('.git/')));
     assert(!entries.includes('.DS_Store'));
     assert(!entries.includes('src/resources/.DS_Store'));
+    assert(!entries.some((entry) => entry.startsWith('src/resources/untitled.assets/')));
+    assert(!entries.some((entry) => entry.startsWith('src/themes/trae/')));
+    assert(!entries.some((entry) => entry.startsWith('src/themes/whop/')));
+    assert(entries.includes('src/themes/claude/index.tsx'));
     assert(!entries.some((entry) => entry.startsWith('.drawio-tmp/')));
     assert(!entries.some((entry) => entry.startsWith('node_modules/')));
     assert(!entries.some((entry) => entry.startsWith('dist/')));
     assert(entries.includes('.agents/skills/local/SKILL.md'));
     assert(entries.includes('.claude/skills/local/SKILL.md'));
     assert(!entries.some((entry) => entry.startsWith('.trae/')));
+    assert(!entries.some((entry) => entry.startsWith('.codex/')));
+    assert(!entries.some((entry) => entry.startsWith('.workbuddy/')));
+    assert(!entries.some((entry) => entry.startsWith('.logs/')));
+    assert(!entries.some((entry) => entry.startsWith('logs/')));
+    assert(!entries.some((entry) => entry.startsWith('tmp-midscene/')));
     assert(!entries.some((entry) => entry.startsWith('temp/')));
     assert(entries.includes('.axhub/make/client.json'));
     assert(entries.includes('.axhub/make/axhub.config.json'));
@@ -257,6 +417,7 @@ describe('release make artifact helpers', () => {
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/exports/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/edit-history/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/sessions/')));
+    assert(!entries.includes('src/prototypes/beginner-guide/.spec/reviews/config.json'));
   });
 
   it('rejects make client template zips with local machine paths', async () => {
@@ -265,7 +426,7 @@ describe('release make artifact helpers', () => {
     const clientRoot = path.join(sourceRoot, 'client');
     writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
     writeFile(
-      path.join(clientRoot, 'src/prototypes/template-home/index.js'),
+      path.join(clientRoot, 'src/prototypes/beginner-guide/index.js'),
       `export const leakedPath = "/${'Users'}/builder/project";\n`,
     );
 
@@ -343,6 +504,42 @@ describe('release make artifact helpers', () => {
     assert.doesNotMatch(releaseSource, /packages\/axhub-export-core\/scripts\/canvas-fig-sync\.mjs/u);
   });
 
+  it('keeps vendored source package TypeScript deprecation config compatible with the release toolchain', () => {
+    const releaseTypescriptPackageJson = JSON.parse(
+      fs.readFileSync(
+        createRequire(import.meta.url).resolve('typescript/package.json'),
+        'utf8',
+      ),
+    );
+    const releaseTypescriptMajor = Number.parseInt(
+      String(releaseTypescriptPackageJson.version).split('.')[0] || '',
+      10,
+    );
+    assert(Number.isInteger(releaseTypescriptMajor), 'release TypeScript major version must be detectable');
+
+    const exportCoreTsconfigPath = path.resolve('vendor/axhub-export-core/tsconfig.json');
+    const sourceExportCoreTsconfigPath = findAncestorFile('packages/axhub-export-core/tsconfig.json');
+    const tsconfigPath = fs.existsSync(exportCoreTsconfigPath)
+      ? exportCoreTsconfigPath
+      : sourceExportCoreTsconfigPath;
+    if (!tsconfigPath) {
+      return;
+    }
+
+    const exportCoreTsconfig = JSON.parse(fs.readFileSync(tsconfigPath, 'utf8'));
+    const ignoreDeprecations = exportCoreTsconfig.compilerOptions?.ignoreDeprecations;
+    if (ignoreDeprecations === undefined) {
+      return;
+    }
+
+    const ignoreDeprecationsMajor = Number.parseInt(String(ignoreDeprecations).split('.')[0] || '', 10);
+    assert(Number.isInteger(ignoreDeprecationsMajor), 'ignoreDeprecations must start with a major version');
+    assert(
+      ignoreDeprecationsMajor <= releaseTypescriptMajor,
+      `ignoreDeprecations ${ignoreDeprecations} is not accepted by release TypeScript ${releaseTypescriptPackageJson.version}`,
+    );
+  });
+
   it('bundles the canvas fig sync release script with runtime dependencies', () => {
     const args = releaseMake.createCanvasFigSyncBundleArgs(
       '/tmp/canvas-fig-sync.mjs',
@@ -388,6 +585,28 @@ describe('release make artifact helpers', () => {
     }
     assert.match(onDemandBuildSource, /importPackageFromProject/u);
     assert.match(viteDevServerSource, /importRuntimePackage/u);
+  });
+
+  it('packages make client runtime patch sources used by dev ensure', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
+
+    for (const runtimePatchFile of [
+      'client/vite-plugins/clientPreviewPlugin.ts',
+      'client/vite-plugins/canvasHotUpdateFilter.ts',
+      'client/vite-plugins/utils/moduleSpecifierQuery.ts',
+      'client/vite-plugins/utils/previewTitle.ts',
+    ]) {
+      assert.ok(packageJson.files.includes(runtimePatchFile), runtimePatchFile);
+    }
+  });
+
+  it('packages the shared make client template defaults used by the server runtime', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
+
+    assert.ok(
+      packageJson.files.includes('src/common/makeClientTemplate.ts'),
+      'src/common/makeClientTemplate.ts',
+    );
   });
 
   it('does not resolve source-only files at runtime from the bundled npm server', () => {
@@ -577,6 +796,55 @@ describe('release make artifact helpers', () => {
       assert(args.includes('--external'), `missing --external for ${packageName}`);
       assert(args.includes(packageName), `missing external package ${packageName}`);
     }
+  });
+
+  it('re-signs macOS Bun executables after sanitizing local machine paths', () => {
+    const calls = [];
+    const executablePath = '/tmp/axhub-make';
+
+    const result = releaseMake.finalizeExecutableBundle(
+      { bunTarget: 'bun-darwin-arm64', executableName: 'axhub-make' },
+      executablePath,
+      {
+        sanitizeFile: (filePath) => {
+          calls.push(['sanitize', [filePath]]);
+          return { filePath, changed: true };
+        },
+        runCommand: (command, args) => {
+          calls.push([command, args]);
+        },
+      },
+    );
+
+    assert.deepEqual(calls, [
+      ['sanitize', [executablePath]],
+      ['codesign', ['--force', '--sign', '-', executablePath]],
+    ]);
+    assert.equal(result.codesigned, true);
+  });
+
+  it('does not codesign Windows Bun executables after sanitizing local machine paths', () => {
+    const calls = [];
+    const executablePath = '/tmp/axhub-make.exe';
+
+    const result = releaseMake.finalizeExecutableBundle(
+      { bunTarget: 'bun-windows-x64', executableName: 'axhub-make.exe' },
+      executablePath,
+      {
+        sanitizeFile: (filePath) => {
+          calls.push(['sanitize', [filePath]]);
+          return { filePath, changed: true };
+        },
+        runCommand: (command, args) => {
+          calls.push([command, args]);
+        },
+      },
+    );
+
+    assert.deepEqual(calls, [
+      ['sanitize', [executablePath]],
+    ]);
+    assert.equal(result.codesigned, false);
   });
 
   it('builds npm exec smoke args that exercise the npx default make bin', () => {

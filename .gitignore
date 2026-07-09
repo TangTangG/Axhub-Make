@@ -32,6 +32,7 @@ vite.config.*.timestamp-*
 **/.axhub/make/.dev-server-info.json
 **/.axhub/make/axhub.config.json
 !client/.axhub/make/axhub.config.json
+**/.axhub/make/review-reports.json
 **/.axhub/make/entries.json
 **/.axhub/make/sidebar-tree.json
 !client/.axhub/make/sidebar-tree.json
@@ -41,18 +42,27 @@ vite.config.*.timestamp-*
 **/.axhub/make/backups/
 **/.axhub/make/edit-history/
 **/src/prototypes/**/.spec/acp/
+**/src/prototypes/**/.spec/reviews/config.json
 
 # Local tools and caches
 .local/
 **/.local/
+.logs/
+**/.logs/
 .trae/
 **/.trae/
 .codex/
 **/.codex/
+.codegraph/
+**/.codegraph/
+.opencode/
+**/.opencode/
 .workbuddy/
 **/.workbuddy/
 .cache/
 **/.cache/
+.drawio-tmp/
+**/.drawio-tmp/
 automation-reports/
 **/automation-reports/
 temp/
@@ -74,6 +84,7 @@ tmp-midscene/
 
 # Logs and archives
 *.log
+*.pid
 *.tmp
 *.temp
 *.tgz

@@ -135,7 +135,7 @@ describe('axhub canvas MCP endpoint', () => {
 
   it('routes tool calls to the canvas bridge and returns MCP text content', async () => {
     const sendCommand = vi.fn(async () => ({
-      canvasName: 'prototypes/home/canvas',
+      canvasName: 'resources/flows/home.excalidraw',
       selectedElementIds: [],
     }));
 
@@ -146,7 +146,7 @@ describe('axhub canvas MCP endpoint', () => {
       params: {
         name: 'canvas_get_state',
         arguments: {
-          canvasName: 'prototypes/home/canvas',
+          canvasName: 'resources/flows/home.excalidraw',
           includeElements: true,
           requestId: 'tool-request',
           timeoutMs: 1234,
@@ -160,7 +160,7 @@ describe('axhub canvas MCP endpoint', () => {
     expect(sendCommand).toHaveBeenCalledWith('canvas_get_state', {
       includeElements: true,
     }, {
-      canvasName: 'prototypes/home/canvas',
+      canvasName: 'resources/flows/home.excalidraw',
       requestId: 'tool-request',
       timeoutMs: 1234,
     });
@@ -170,7 +170,7 @@ describe('axhub canvas MCP endpoint', () => {
         text: JSON.stringify({
           ok: true,
           payload: {
-            canvasName: 'prototypes/home/canvas',
+            canvasName: 'resources/flows/home.excalidraw',
             selectedElementIds: [],
           },
         }),
@@ -190,7 +190,7 @@ describe('axhub canvas MCP endpoint', () => {
       params: {
         name: 'canvas_insert_mermaid',
         arguments: {
-          canvasName: 'prototypes/home/canvas',
+          canvasName: 'resources/flows/home.excalidraw',
           mermaidCode: 'flowchart TD\n  A --> B',
           position: { x: 120, y: 240 },
           themeVariables: { fontSize: '20px' },
@@ -208,7 +208,7 @@ describe('axhub canvas MCP endpoint', () => {
       themeVariables: { fontSize: '20px' },
       flowchart: { curve: 'linear' },
     }, {
-      canvasName: 'prototypes/home/canvas',
+      canvasName: 'resources/flows/home.excalidraw',
     });
     expect(json.result).toEqual({
       content: [{

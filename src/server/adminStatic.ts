@@ -81,6 +81,7 @@ export function buildInjectScript(options: AdminStaticOptions): string {
       lanHost: '${escapeScriptString(lanHost)}'
     };
     window.__PROJECT_ROOT__ = '${escapeScriptString(options.projectRoot)}';
+    window.__AXHUB_MAKE_API_ORIGIN__ = window.location.origin;
     window.__RUNTIME_ORIGIN__ = '${escapeScriptString(options.runtimeOrigin || '')}';
     window.__AXHUB_CANVAS_MCP_URL__ = '${AXHUB_CANVAS_MCP_PATH}';
     window.__AXHUB_CANVAS_MCP_TOKEN__ = '${escapeScriptString(options.axhubCanvasMcpToken || '')}';
@@ -540,7 +541,7 @@ export function handleAdminStatic(req: IncomingMessage, res: ServerResponse, opt
     return sendAdminHtml(req, res, htmlPath, options);
   }
 
-  const canvasMatch = pathname.match(/^\/canvas\/(.+?)\/?$/u);
+  const canvasMatch = pathname.match(/^\/canvas\/(resources\/.+?\.excalidraw)\/?$/u);
   if (canvasMatch?.[1]) {
     return sendCanvasTemplateHtml(res, adminRoot, canvasMatch[1]);
   }

@@ -1,31 +1,41 @@
 import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 
 import { AXURE_API_FIXED_RULE_PATHS, buildAxureApiUpdatePrompt } from './axureApiPrompts';
 
-const PROMPT_PATH_PATTERN = /(?:^|[\s`"'：（(【\[])(?:\/?(?:src|skills|rules|temp|docs|database|themes|prototypes|components|assets|media|\.axhub|scripts)\/|~\/|[A-Za-z]:[\\/]|(?:[A-Za-z0-9_.-]+[\\/]){2,})/u;
+const NON_CLIENT_RELATIVE_PATH_PATTERN = /(?:^|[\s`"'：（(【\[])(?:\/(?:src|skills|rules|temp|docs|database|themes|prototypes|components|assets|media|\.axhub|scripts)\/|~\/|[A-Za-z]:[\\/]|(?:apps|Users|private|var|tmp)[\\/])/u;
 
-function expectPromptHasNoPaths(prompt: string): void {
-    expect(prompt).not.toMatch(PROMPT_PATH_PATTERN);
-    expect(prompt).not.toContain('路径');
+function expectPromptHasNoNonClientRelativePaths(prompt: string): void {
+    expect(prompt).not.toMatch(NON_CLIENT_RELATIVE_PATH_PATTERN);
+}
+
+function expectClientRulePathExists(rulePath: string): void {
+    expect(rulePath.startsWith('/')).toBe(false);
+    expect(existsSync(new URL(`../../../client/${rulePath}`, import.meta.url))).toBe(true);
 }
 
 describe('buildAxureApiUpdatePrompt', () => {
-    it('injects fixed skill names and target resource without exposing paths', () => {
+    it('injects fixed skill names, client-relative rule paths, and target resource', () => {
         const prompt = buildAxureApiUpdatePrompt({
             activeTab: 'components',
             itemName: 'ref-button',
         });
 
         for (const rulePath of AXURE_API_FIXED_RULE_PATHS) {
-            expect(prompt).not.toContain(`\`${rulePath}\``);
+            expect(prompt).toContain(`\`${rulePath}\``);
+            expectClientRulePathExists(rulePath);
         }
 
         expect(prompt).toContain('Axure 导出工作流');
         expect(prompt).toContain('Axure API 规范');
+        expect(prompt).toContain('rules/axure-export-workflow.md');
+        expect(prompt).toContain('rules/axure-api-guide.md');
         expect(prompt).toContain('`ref-button`');
         expect(prompt).not.toContain('`src/components/ref-button/index.tsx`');
         expect(prompt).not.toContain('`src/components/ref-button/spec.md`');
-        expectPromptHasNoPaths(prompt);
+        expect(prompt).not.toContain('`/rules/axure-export-workflow.md`');
+        expect(prompt).not.toContain('`/rules/axure-api-guide.md`');
+        expectPromptHasNoNonClientRelativePaths(prompt);
     });
 
     it('uses fixed prompt instructions without preview context', () => {

@@ -9,6 +9,9 @@ import { normalizePath } from 'vite';
 type ViteConfig = {
   cacheDir?: string;
   plugins?: Array<{ name: string; handleHotUpdate?: unknown }>;
+  resolve?: {
+    alias?: Array<{ find: string | RegExp; replacement: string }>;
+  };
   server?: {
     headers?: Record<string, string>;
     watch?: {
@@ -139,12 +142,19 @@ describe('make-server Vite dev middleware', () => {
         '**/dist/**',
         '**/src/server/**',
         '**/*.excalidraw',
-        '**/canvas-assets/**',
+        '**/*.assets/**',
       ]));
       expect(firstConfig.plugins?.some((plugin) => (
         plugin.name === 'axhub-canvas-hot-update-filter'
         && typeof plugin.handleHotUpdate === 'function'
       ))).toBe(true);
+      const hotUpdateFilter = firstConfig.plugins?.find((plugin) => (
+        plugin.name === 'axhub-canvas-hot-update-filter'
+      ));
+      await expect(Promise.resolve((hotUpdateFilter?.handleHotUpdate as any)?.({
+        file: path.join(makeServerRoot, 'client/src/prototypes/home/annotation-source.json'),
+        modules: [{ id: 'annotation-source' }],
+      }))).resolves.toEqual([]);
       expect(firstConfig.cacheDir?.startsWith(expectedCachePrefix)).toBe(true);
       expect(secondConfig.cacheDir?.startsWith(expectedCachePrefix)).toBe(true);
       expect(secondConfig.cacheDir).not.toBe(firstConfig.cacheDir);
@@ -153,6 +163,35 @@ describe('make-server Vite dev middleware', () => {
     } finally {
       await firstMiddleware.close();
       await secondMiddleware.close();
+    }
+  });
+
+  it('aliases the embedded commentary runtime to the vendored dist entry', async () => {
+    const makeServerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-vite-dev-commentary-'));
+    fs.mkdirSync(path.join(makeServerRoot, 'vendor/axhub-commentary/dist'), { recursive: true });
+    fs.writeFileSync(
+      path.join(makeServerRoot, 'vendor/axhub-commentary/dist/index.mjs'),
+      'export const commentaryRuntime = true;\n',
+      'utf8',
+    );
+    const createServer = vi.fn(async (_config: ViteConfig) => ({
+      middlewares: vi.fn(),
+      transformIndexHtml: vi.fn(async (_url: string, html: string) => html),
+      close: vi.fn(),
+    }));
+    vi.doMock('vite', () => ({ createServer, normalizePath }));
+
+    try {
+      const { createViteDevMiddleware } = await import('../viteDevServer.ts');
+      const middleware = await createViteDevMiddleware(http.createServer(), makeServerRoot);
+      const config = createServer.mock.calls[0]?.[0] as ViteConfig;
+      const commentaryAlias = config.resolve?.alias?.find((alias) => String(alias.find) === '/^@axhub\\/commentary$/');
+
+      expect(commentaryAlias?.replacement).toBe(path.join(makeServerRoot, 'vendor/axhub-commentary/dist/index.mjs'));
+
+      await middleware.close();
+    } finally {
+      fs.rmSync(makeServerRoot, { recursive: true, force: true });
     }
   });
 

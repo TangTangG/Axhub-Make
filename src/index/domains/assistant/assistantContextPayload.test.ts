@@ -81,17 +81,17 @@ describe('assistant context payload builder', () => {
 
     expect(buildAssistantContextItemsFromResource({
       resourceType: 'canvas',
-      resourceId: 'home',
-      name: 'home',
+      resourceId: 'flows/home.excalidraw',
+      name: 'flows/home.excalidraw',
       displayName: 'Home Canvas',
-      filePath: 'src/canvas/home.excalidraw',
+      filePath: 'src/resources/flows/home.excalidraw',
     })[0]).toMatchObject({
       kind: 'file',
-      path: 'src/canvas/home.excalidraw',
+      path: 'src/resources/flows/home.excalidraw',
       name: 'Home Canvas',
       metadata: {
         resourceType: 'canvas',
-        resourceId: 'home',
+        resourceId: 'flows/home.excalidraw',
       },
     });
 
@@ -134,7 +134,7 @@ describe('assistant context payload builder', () => {
         width: 240,
         height: 80,
       },
-    ], 'src/prototypes/checkout-flow/canvas.excalidraw');
+    ], 'src/resources/flows/checkout-flow.excalidraw');
 
     expect(items).toEqual([
       {
@@ -155,7 +155,7 @@ describe('assistant context payload builder', () => {
         body: 'Needs stronger contrast',
         target: {
           type: 'canvas-element',
-          filePath: 'src/prototypes/checkout-flow/canvas.excalidraw',
+          filePath: 'src/resources/flows/checkout-flow.excalidraw',
           elementId: 'shape-1',
           elementType: 'rectangle',
           label: 'CTA Area',
@@ -163,7 +163,7 @@ describe('assistant context payload builder', () => {
         title: 'CTA Area',
         source: 'axhub-runtime',
         metadata: {
-          filePath: 'src/prototypes/checkout-flow/canvas.excalidraw',
+          filePath: 'src/resources/flows/checkout-flow.excalidraw',
           elementId: 'shape-1',
           elementType: 'rectangle',
         },

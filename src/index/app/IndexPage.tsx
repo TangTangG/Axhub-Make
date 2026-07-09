@@ -14,10 +14,12 @@ import type { SettingsDialogAIContext, SettingsDialogInitialTab } from '../compo
 import type {
     ResourceSection,
     SidebarTab,
+    UploadedResourceFile,
 } from '../types/index-page.types';
 import { useIndexPageResourceActions } from './index-page/useIndexPageResourceActions';
 import { useIndexPagePreviewActions } from './index-page/useIndexPagePreviewActions';
 import { useIndexPagePreferences } from './hooks/useIndexPagePreferences';
+import { normalizePromptClientPreference } from '@/common/promptExecution';
 import { resolveAcpPromptClientProvider } from '@/common/acpModelConfig';
 import { useIndexPagePresentationPropsBuilder } from './hooks/useIndexPagePresentationPropsBuilder';
 import { useIndexPageSelectionSync } from './hooks/useIndexPageSelectionSync';
@@ -36,17 +38,21 @@ import {
 } from './index-page.helpers';
 import { getSelectedResourceTargetPath } from './index-page/previewActions.helpers';
 import { apiService } from '../services/index.api';
-import type { GenieProvider } from '@/common/genie/types';
+import type { MakeClientUpdateStatus } from '../services/api';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import { DEFAULT_LOCAL_EXPORT_CAPABILITIES, DEFAULT_RESOURCE_WRITE_CAPABILITIES, normalizeProjectResourcesPayload } from '../services/projectResources';
 import type { PendingReturnTarget } from './hooks/useIndexPageSelectionSync';
 import { getExplicitLocalPath, stripIndexFilePath } from '../utils/localPath';
 import { copyToClipboard } from '../utils/clipboard';
-import { getAssistantContextCurrentFilePath, resolveAssistantCurrentFile } from '../utils/genieContext';
+import { getAssistantContextCurrentFilePath, resolveAssistantCurrentFile } from '../utils/assistantContext';
 import { buildMakeClientStartupFailurePrompt } from '../utils/projectSetupErrors';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../utils/excalidrawUiMode';
 import type { CanvasAiGenerationRequest } from '../domains/ai-generation/CanvasAiGenerationTool';
-import { mapAcpOutputArtifactsToGenerationArtifacts } from '../domains/ai-generation/acpOutputArtifacts';
-import { submitAnnotationPromptViaApi } from '../domains/assistant/annotationDirectRun';
+import { mapCanvasDirectRunArtifacts } from '../domains/ai-generation/canvasDirectRun';
+import {
+    submitAnnotationPromptViaApi,
+} from '../domains/assistant/annotationDirectRun';
+import { buildAcpCanvasMcpServers } from '../domains/assistant/assistantAcpContext';
 import type { AssistantImageAttachmentPayload } from '../domains/assistant/assistantContextPayload';
 import './styles/index-page.css';
 
@@ -67,6 +73,12 @@ type PrototypeRouteInfo = {
 
 const PROTOTYPE_ROUTE_PAGE_ID_RE = /^[a-z0-9-]+$/u;
 const MAKE_STATE_DIR_NOT_WRITABLE = 'MAKE_STATE_DIR_NOT_WRITABLE';
+const MAKE_CLIENT_UPDATE_REMINDER_DISMISSED_PREFIX = 'axhub.make.clientUpdateReminder.dismissed';
+
+type MakeClientUpdateReminderTarget = {
+    projectId: string;
+    targetVersion: string;
+};
 
 function normalizePrototypeRoutePageId(value: unknown): string {
     const id = typeof value === 'string' ? value.trim() : '';
@@ -100,6 +112,24 @@ function readRecord(value: unknown): Record<string, any> {
     return value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, any>
         : {};
+}
+
+function isCanvasMcpResourcePath(value: unknown): boolean {
+    const normalized = typeof value === 'string' ? value.trim().replace(/\\/g, '/') : '';
+    return /^src\/resources\/.+\.excalidraw$/u.test(normalized);
+}
+
+function buildCanvasMcpServersForDirectRun(canvasFilePath: string): unknown[] | undefined {
+    if (!isCanvasMcpResourcePath(canvasFilePath) || typeof window === 'undefined') {
+        return undefined;
+    }
+    const globals = window as unknown as Record<string, unknown>;
+    const canvasToken = String(globals.__AXHUB_CANVAS_MCP_TOKEN__ || '').trim();
+    const mcpServers = buildAcpCanvasMcpServers({
+        makeOrigin: window.location.origin,
+        token: canvasToken,
+    });
+    return mcpServers || undefined;
 }
 
 function buildCreatedPrototypeStartItem(result: any): ItemData | null {
@@ -150,6 +180,32 @@ function buildMakeStatePermissionPrompt(health: unknown): string {
     ].join('\n');
 }
 
+function buildMakeClientUpdateReminderDismissedKey(projectId: string, targetVersion: string): string {
+    return `${MAKE_CLIENT_UPDATE_REMINDER_DISMISSED_PREFIX}.${encodeURIComponent(projectId)}.${encodeURIComponent(targetVersion)}`;
+}
+
+function readMakeClientUpdateReminderDismissed(projectId: string, targetVersion: string): boolean {
+    if (!projectId || !targetVersion || typeof window === 'undefined') {
+        return false;
+    }
+    try {
+        return window.localStorage.getItem(buildMakeClientUpdateReminderDismissedKey(projectId, targetVersion)) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function writeMakeClientUpdateReminderDismissed(projectId: string, targetVersion: string): void {
+    if (!projectId || !targetVersion || typeof window === 'undefined') {
+        return;
+    }
+    try {
+        window.localStorage.setItem(buildMakeClientUpdateReminderDismissedKey(projectId, targetVersion), '1');
+    } catch {
+        // Ignore storage failures; the update entry remains available without the one-time dismissal memory.
+    }
+}
+
 export default function IndexPage({
     isDarkMode,
     setIsDarkMode,
@@ -166,10 +222,15 @@ export default function IndexPage({
     const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
     const [settingsDialogInitialTab, setSettingsDialogInitialTab] = useState<SettingsDialogInitialTab>('project');
     const [settingsDialogAIContext, setSettingsDialogAIContext] = useState<SettingsDialogAIContext | null>(null);
+    const [makeClientUpdateAvailable, setMakeClientUpdateAvailable] = useState(false);
+    const [makeClientUpdateReminderVisible, setMakeClientUpdateReminderVisible] = useState(false);
+    const [versionCollaborationDrawerOpen, setVersionCollaborationDrawerOpen] = useState(false);
     const [viewMode, setViewMode] = useState<ViewMode>('demo');
     const [activeTab, setActiveTab] = useState<TabType>('prototypes');
     const [selectedItem, setSelectedItem] = useState<ItemData | null>(null);
     const [prototypeStartDraftActive, setPrototypeStartDraftActive] = useState(false);
+    const [resourceStartDraftActive, setResourceStartDraftActive] = useState(false);
+    const [themeStartDraftActive, setThemeStartDraftActive] = useState(false);
     const [selectedPrototypePageId, setSelectedPrototypePageId] = useState<string | null>(null);
     const [sidebarTab, setSidebarTab] = useState<SidebarTab>('prototype');
     const [resourceSection, setResourceSection] = useState<ResourceSection>('themes');
@@ -183,6 +244,9 @@ export default function IndexPage({
     const assistantAutoOpenSuppressedProjectScopeRef = useRef('');
     const closedPrototypePlaceholderAutoCloseKeyRef = useRef('');
     const openedPrototypeWaitingGenerationKeyRef = useRef('');
+    const startGuideResourceUploadInputRef = useRef<HTMLInputElement | null>(null);
+    const makeClientUpdateReminderTargetRef = useRef<MakeClientUpdateReminderTarget | null>(null);
+    const makeClientUpdateReminderPendingSeenProjectIdRef = useRef('');
     const initialResourceDeepLink = useMemo(() => parseResourceDeepLink(), []);
     const [initialResourceDeepLinkHandled, setInitialResourceDeepLinkHandled] = useState(() => !initialResourceDeepLink);
     const handleInitialResourceDeepLinkHandled = useCallback(() => {
@@ -195,11 +259,104 @@ export default function IndexPage({
         }
     }, [prototypeStartDraftActive, selectedItem, sidebarTab, viewMode]);
 
+    const markMakeClientUpdateReminderSeen = useCallback(() => {
+        const activeProjectId = String(workspace.activeProjectId || '').trim();
+        const reminderTarget = makeClientUpdateReminderTargetRef.current;
+        if (reminderTarget && reminderTarget.projectId === activeProjectId) {
+            writeMakeClientUpdateReminderDismissed(reminderTarget.projectId, reminderTarget.targetVersion);
+            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+        } else if (activeProjectId) {
+            makeClientUpdateReminderPendingSeenProjectIdRef.current = activeProjectId;
+        }
+        setMakeClientUpdateReminderVisible(false);
+    }, [workspace.activeProjectId]);
+
     const openSettingsDialog = useCallback((tab: SettingsDialogInitialTab = 'project', aiContext?: SettingsDialogAIContext | null) => {
+        if (tab === 'update') {
+            markMakeClientUpdateReminderSeen();
+        }
         setSettingsDialogInitialTab(tab);
         setSettingsDialogAIContext(tab === 'ai' ? aiContext || null : null);
         setSettingsDialogOpen(true);
+    }, [markMakeClientUpdateReminderSeen]);
+
+    const openVersionCollaborationFromSettings = useCallback(() => {
+        setSettingsDialogOpen(false);
+        setVersionCollaborationDrawerOpen(true);
     }, []);
+
+    const handleMakeClientUpdateAvailabilityChange = useCallback((status: MakeClientUpdateStatus | null) => {
+        const updateAvailable = status?.updateAvailable === true;
+        setMakeClientUpdateAvailable(updateAvailable);
+        const projectId = String(status?.projectId || workspace.activeProjectId || '').trim();
+        const targetVersion = String(status?.targetVersion || '').trim();
+        if (!updateAvailable || !projectId || !targetVersion) {
+            makeClientUpdateReminderTargetRef.current = null;
+            if (makeClientUpdateReminderPendingSeenProjectIdRef.current === projectId) {
+                makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+            }
+            setMakeClientUpdateReminderVisible(false);
+            return;
+        }
+        makeClientUpdateReminderTargetRef.current = { projectId, targetVersion };
+        if (makeClientUpdateReminderPendingSeenProjectIdRef.current === projectId) {
+            writeMakeClientUpdateReminderDismissed(projectId, targetVersion);
+            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+            setMakeClientUpdateReminderVisible(false);
+            return;
+        }
+        setMakeClientUpdateReminderVisible(updateAvailable && !readMakeClientUpdateReminderDismissed(projectId, targetVersion));
+    }, [workspace.activeProjectId]);
+
+    useEffect(() => {
+        const activeProjectId = workspace.activeProjectId;
+        if (!activeProjectId || workspace.projectSetupRequired) {
+            setMakeClientUpdateAvailable(false);
+            setMakeClientUpdateReminderVisible(false);
+            makeClientUpdateReminderTargetRef.current = null;
+            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+            return;
+        }
+
+        let cancelled = false;
+        void apiService.getMakeClientUpdateStatus(activeProjectId)
+            .then((status) => {
+                if (!cancelled) {
+                    const updateAvailable = status.updateAvailable === true;
+                    setMakeClientUpdateAvailable(updateAvailable);
+                    if (updateAvailable && status.targetVersion) {
+                        makeClientUpdateReminderTargetRef.current = { projectId: activeProjectId, targetVersion: status.targetVersion };
+                        if (makeClientUpdateReminderPendingSeenProjectIdRef.current === activeProjectId) {
+                            writeMakeClientUpdateReminderDismissed(activeProjectId, status.targetVersion);
+                            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+                            setMakeClientUpdateReminderVisible(false);
+                            return;
+                        }
+                        setMakeClientUpdateReminderVisible(updateAvailable && !readMakeClientUpdateReminderDismissed(activeProjectId, status.targetVersion));
+                    } else {
+                        makeClientUpdateReminderTargetRef.current = null;
+                        if (makeClientUpdateReminderPendingSeenProjectIdRef.current === activeProjectId) {
+                            makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+                        }
+                        setMakeClientUpdateReminderVisible(false);
+                    }
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setMakeClientUpdateAvailable(false);
+                    setMakeClientUpdateReminderVisible(false);
+                    makeClientUpdateReminderTargetRef.current = null;
+                    if (makeClientUpdateReminderPendingSeenProjectIdRef.current === activeProjectId) {
+                        makeClientUpdateReminderPendingSeenProjectIdRef.current = '';
+                    }
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [workspace.activeProjectId, workspace.projectSetupRequired]);
 
     const handleExcalidrawPropertyPanelModeChange = useCallback((mode: ExcalidrawPropertyPanelMode) => {
         setExcalidrawPropertyPanelMode(mode);
@@ -309,13 +466,85 @@ export default function IndexPage({
         reloadCanvasItems: workspace.reloadCanvasItems,
         getSidebarTabItems: workspace.getSidebarTabItems,
         loadSidebarTree: workspace.loadSidebarTree,
+        resourceStartDraftActive,
+        themeStartDraftActive,
     });
+
+    useEffect(() => {
+        if (!resourceStartDraftActive) return;
+        if (resources.selectedDoc || resources.selectedResourceFolder || sidebarTab !== 'document' || viewMode !== 'demo') {
+            setResourceStartDraftActive(false);
+        }
+    }, [resourceStartDraftActive, resources.selectedDoc, resources.selectedResourceFolder, sidebarTab, viewMode]);
+
+    useEffect(() => {
+        if (!themeStartDraftActive) return;
+        if (resources.selectedTheme || sidebarTab !== 'assets' || resourceSection !== 'themes' || viewMode !== 'demo') {
+            setThemeStartDraftActive(false);
+        }
+    }, [resourceSection, resources.selectedTheme, sidebarTab, themeStartDraftActive, viewMode]);
+
+    const handleCreateResourceStartDraft = useCallback(() => {
+        setSidebarTab('document');
+        setViewMode('demo');
+        resources.setSelectedResourceFolder(null);
+        resources.setSelectedDoc(null);
+        setPrototypeStartDraftActive(false);
+        setThemeStartDraftActive(false);
+        setResourceStartDraftActive(true);
+    }, [resources, setSidebarTab, setViewMode]);
+
+    const handleCreateThemeStartDraft = useCallback(() => {
+        setSidebarTab('assets');
+        setResourceSection('themes');
+        setViewMode('demo');
+        resources.setSelectedTheme(null);
+        setPrototypeStartDraftActive(false);
+        setResourceStartDraftActive(false);
+        setThemeStartDraftActive(true);
+    }, [resources, setResourceSection, setSidebarTab, setViewMode]);
+
+    const handleOpenStartGuideResourceUpload = useCallback(() => {
+        startGuideResourceUploadInputRef.current?.click();
+    }, []);
+
+    const handleUploadStartGuideResourceFiles = useCallback(async (files: FileList | File[]) => {
+        if (!files || files.length === 0) return;
+        const hide = messageApi.loading('正在上传资源...', 0);
+        try {
+            const formData = new FormData();
+            if (workspace.activeProjectId) {
+                formData.append('projectId', workspace.activeProjectId);
+            }
+            for (const file of Array.from(files)) {
+                formData.append('file', file, file.name);
+            }
+            const response = await fetch('/api/docs/upload', {
+                method: 'POST',
+                body: formData,
+            });
+            const payload = await response.json().catch(() => ({} as any));
+            if (!response.ok) {
+                throw new Error(payload?.error || '上传失败');
+            }
+            const uploadedFiles = Array.isArray(payload?.files)
+                ? payload.files as UploadedResourceFile[]
+                : [];
+            await resources.handleUploadedResourceFiles(uploadedFiles);
+            messageApi.success(`已上传 ${uploadedFiles.length || files.length} 个资源文件`);
+        } catch (error: any) {
+            messageApi.error(error?.message || '资源上传失败');
+        } finally {
+            hide();
+        }
+    }, [messageApi, resources, workspace.activeProjectId]);
 
     const contentMode = useMemo<IndexContentMode>(() => resolveIndexContentMode({
         sidebarTab,
         resourceSection,
         viewMode,
-    }), [resourceSection, sidebarTab, viewMode]);
+        selectedDocOpenMode: resources.selectedDoc?.openMode,
+    }), [resourceSection, resources.selectedDoc?.openMode, sidebarTab, viewMode]);
 
     const currentMarkdownResource = useMemo(() => {
         if (contentMode === 'doc') {
@@ -330,6 +559,7 @@ export default function IndexPage({
     const currentMarkdownLabel = currentMarkdownResource.kind === 'template' ? '模板' : '文档';
     const prototypePlaceholderActive = contentMode === 'preview' && viewMode === 'demo' && selectedItem?.placeholder === true;
     const prototypeStartPageActive = prototypeStartDraftActive || prototypePlaceholderActive;
+    const startPageActive = prototypeStartPageActive || resourceStartDraftActive || themeStartDraftActive;
     const prototypePlaceholderAutoCloseKey = prototypePlaceholderActive && selectedItem
         ? selectedItem.resourceId || selectedItem.name
         : '';
@@ -347,6 +577,26 @@ export default function IndexPage({
         onExcalidrawPropertyPanelPositionLoaded: setExcalidrawPropertyPanelPosition,
     });
 
+    const assistantAutoOpenProjectScope = workspace.activeProjectId
+        || workspace.projectTitle;
+    const assistantAutoOpenDismissedStorageKey = useMemo(() => (
+        buildAssistantAutoOpenDismissedStorageKey(assistantAutoOpenProjectScope)
+    ), [assistantAutoOpenProjectScope]);
+    const assistantAutoOpenPanelModeStorageKey = useMemo(() => (
+        buildAssistantAutoOpenPanelModeStorageKey(assistantAutoOpenProjectScope)
+    ), [assistantAutoOpenProjectScope]);
+    const initialAssistantPanelMode = useMemo(() => (
+        getAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey)
+    ), [assistantAutoOpenPanelModeStorageKey]);
+    const currentAssistantCanvasResource = useMemo(() => (
+        resources.selectedDoc?.openMode === 'canvas'
+            ? resources.selectedDoc
+            : resources.selectedCanvas
+    ), [
+        resources.selectedCanvas,
+        resources.selectedDoc,
+    ]);
+
     const assistantController = useAssistantPanelController({
         messageApi,
         modal,
@@ -363,8 +613,9 @@ export default function IndexPage({
         selectedItem,
         contentMode,
         currentMarkdownResource,
+        initialAssistantPanelMode,
         assistantImageGenerationConfig: preferences.assistantImageGenerationConfig,
-        currentCanvas: resources.selectedCanvas,
+        currentCanvas: currentAssistantCanvasResource,
         currentTheme: resources.selectedTheme,
         currentDataTable: resources.selectedDataTable,
     });
@@ -373,9 +624,6 @@ export default function IndexPage({
     const assistantCurrentFilePath = getAssistantContextCurrentFilePath(assistantController.assistantContextV1);
     const assistantAutoOpenTargetPath = assistantCurrentFilePath
         || (selectedItem ? getSelectedResourceTargetPath(selectedItem) : undefined);
-    const assistantAutoOpenProjectScope = workspace.activeProjectId
-        || assistantController.assistantProjectPath
-        || workspace.projectTitle;
     const buildAssistantAutoOpenKeyForTarget = useCallback((_targetPath?: string) => (
         buildAssistantAutoOpenDismissedStorageKey(
             assistantAutoOpenProjectScope,
@@ -383,12 +631,6 @@ export default function IndexPage({
     ), [
         assistantAutoOpenProjectScope,
     ]);
-    const assistantAutoOpenDismissedStorageKey = useMemo(() => (
-        buildAssistantAutoOpenDismissedStorageKey(assistantAutoOpenProjectScope)
-    ), [assistantAutoOpenProjectScope]);
-    const assistantAutoOpenPanelModeStorageKey = useMemo(() => (
-        buildAssistantAutoOpenPanelModeStorageKey(assistantAutoOpenProjectScope)
-    ), [assistantAutoOpenProjectScope]);
 
     useEffect(() => {
         const nextScope = assistantAutoOpenProjectScope;
@@ -406,6 +648,13 @@ export default function IndexPage({
         assistantController.assistantVisible,
     ]);
 
+    const ensureDefaultAiConfigured = useCallback((promptClient: unknown) => {
+        if (resolveAcpPromptClientProvider(normalizePromptClientPreference(promptClient))) return true;
+        openSettingsDialog('ai');
+        messageApi.warning('请先在 AI 设置中选择本地 AI Agent');
+        return false;
+    }, [messageApi, openSettingsDialog]);
+
     const handleSubmitAnnotationAssistantPrompt = useCallback(async (
         context: AssistantContextV1,
         promptText: string,
@@ -417,6 +666,9 @@ export default function IndexPage({
             ignoredArtifactPaths?: string[];
             provider?: string | null;
             model?: string | null;
+            mode?: string | null;
+            thought?: string | null;
+            autoSend?: boolean;
         },
     ) => {
         const prompt = String(promptText || '').trim();
@@ -424,7 +676,10 @@ export default function IndexPage({
             messageApi.warning('请输入提示词');
             return false;
         }
-        const annotationProvider = resolveAcpPromptClientProvider(preferences.annotationPromptClient || preferences.preferredPromptClient) || 'codex';
+        if (!ensureDefaultAiConfigured(preferences.preferredPromptClient)) return false;
+        const annotationPromptClient = preferences.annotationPromptClient || preferences.preferredPromptClient;
+        const annotationProvider = resolveAcpPromptClientProvider(annotationPromptClient);
+        if (!annotationProvider) return false;
         const annotationModel = preferences.annotationModel || null;
         assistantAutoOpenSuppressedProjectScopeRef.current = '';
         setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);
@@ -432,10 +687,12 @@ export default function IndexPage({
             ...options,
             provider: options?.provider ?? annotationProvider,
             model: options?.model ?? annotationModel,
+            autoSend: options?.autoSend,
         });
     }, [
         assistantAutoOpenDismissedStorageKey,
         assistantController.openAssistantWithContextAndSubmitPrompt,
+        ensureDefaultAiConfigured,
         messageApi,
         preferences.annotationModel,
         preferences.annotationPromptClient,
@@ -447,14 +704,17 @@ export default function IndexPage({
         prompt: string;
         onPrepared?: (payload: any) => void | Promise<void>;
         onAccepted?: (payload: any) => void | Promise<void>;
+        signal?: AbortSignal;
     }) => {
         const prompt = String(request.prompt || '').trim();
         if (!prompt) {
             messageApi.warning('请输入提示词');
             return false;
         }
-        const annotationPromptClient = preferences.annotationPromptClient || preferences.preferredPromptClient || null;
-        const annotationProvider = resolveAcpPromptClientProvider(annotationPromptClient) || 'codex';
+        if (!ensureDefaultAiConfigured(preferences.preferredPromptClient)) return false;
+        const annotationPromptClient = preferences.annotationPromptClient || preferences.preferredPromptClient;
+        const annotationProvider = resolveAcpPromptClientProvider(annotationPromptClient);
+        if (!annotationProvider) return false;
         const annotationModel = preferences.annotationModel || null;
         return submitAnnotationPromptViaApi({
             context: request.context,
@@ -465,18 +725,66 @@ export default function IndexPage({
             preferredPromptClient: annotationPromptClient || `acp:${annotationProvider}`,
             provider: annotationProvider,
             model: annotationModel,
+            agentRunConcurrency: preferences.agentRunConcurrency,
             builtinToolSettings: preferences.assistantImageGenerationConfig
                 ? { imageGeneration: preferences.assistantImageGenerationConfig }
                 : undefined,
-            onFirstRun: (message) => messageApi.info(message),
+            onRunStarting: (message) => messageApi.info(message),
             onPrepared: request.onPrepared,
             onAccepted: request.onAccepted,
+            signal: request.signal,
         });
     }, [
         assistantController.assistantProjectPath,
+        ensureDefaultAiConfigured,
         messageApi,
         preferences.annotationModel,
         preferences.annotationPromptClient,
+        preferences.agentRunConcurrency,
+        preferences.assistantImageGenerationConfig,
+        preferences.preferredPromptClient,
+        workspace.activeProjectId,
+        workspace.projectTitle,
+    ]);
+
+    const handleRunReviewAssistantPromptViaApi = useCallback(async (request: {
+        context: AssistantContextV1;
+        prompt: string;
+        targetPath?: string | null;
+    }) => {
+        const prompt = String(request.prompt || '').trim();
+        if (!prompt) {
+            messageApi.warning('请输入提示词');
+            return false;
+        }
+        if (!ensureDefaultAiConfigured(preferences.preferredPromptClient)) return false;
+        const annotationPromptClient = preferences.annotationPromptClient || preferences.preferredPromptClient;
+        const annotationProvider = resolveAcpPromptClientProvider(annotationPromptClient);
+        if (!annotationProvider) return false;
+        const annotationModel = preferences.annotationModel || null;
+        return submitAnnotationPromptViaApi({
+            context: request.context,
+            prompt,
+            projectPath: assistantController.assistantProjectPath,
+            projectScope: workspace.activeProjectId || assistantController.assistantProjectPath || workspace.projectTitle,
+            projectId: workspace.activeProjectId,
+            preferredPromptClient: annotationPromptClient || `acp:${annotationProvider}`,
+            scene: 'prototype-review-direct',
+            provider: annotationProvider,
+            model: annotationModel,
+            targetPath: request.targetPath || undefined,
+            agentRunConcurrency: preferences.agentRunConcurrency,
+            builtinToolSettings: preferences.assistantImageGenerationConfig
+                ? { imageGeneration: preferences.assistantImageGenerationConfig }
+                : undefined,
+        });
+    }, [
+        assistantController.assistantProjectPath,
+        ensureDefaultAiConfigured,
+        messageApi,
+        preferences.annotationModel,
+        preferences.annotationPromptClient,
+        preferences.agentRunConcurrency,
         preferences.assistantImageGenerationConfig,
         preferences.preferredPromptClient,
         workspace.activeProjectId,
@@ -509,12 +817,12 @@ export default function IndexPage({
 
     const handleExecutePromptAction = useCallback(async (
         prompt: string,
-        meta: { scene: string; targetPath?: string | null },
+        meta: { scene: string; targetPath?: string | null; autoSend?: boolean },
     ) => {
         const submitted = await handleSubmitAnnotationAssistantPrompt(
             buildPromptActionAssistantContext(meta.targetPath),
             prompt,
-            { waitUntil: 'started' },
+            { waitUntil: 'started', autoSend: meta.autoSend },
         );
         return Boolean(submitted);
     }, [buildPromptActionAssistantContext, handleSubmitAnnotationAssistantPrompt]);
@@ -656,6 +964,7 @@ export default function IndexPage({
     ]);
 
     const preview = useIndexPagePreviewActions({
+        projectId: workspace.activeProjectId,
         activeTab,
         collapsed,
         setCollapsed,
@@ -678,12 +987,15 @@ export default function IndexPage({
         viewMode,
         isDarkMode,
         setIsDarkMode,
+        openSettingsDialog,
+        agentRunConcurrency: preferences.agentRunConcurrency,
         assistantContextV1: assistantController.assistantContextV1,
         assistantProjectPath: assistantController.assistantProjectPath,
         assistantContextAppendAvailable: assistantController.assistantContextAppendAvailable,
         onOpenAnnotationAssistant: assistantController.openAssistantWithContext,
         onSubmitAnnotationAssistantPrompt: handleSubmitAnnotationAssistantPrompt,
         onRunAnnotationAssistantPromptViaApi: handleRunAnnotationAssistantPromptViaApi,
+        onRunReviewAssistantPromptViaApi: handleRunReviewAssistantPromptViaApi,
         probeAssistantRuntimeSilently: assistantController.probeAssistantRuntimeSilently,
         connectAssistantRuntimeSilently: assistantController.connectAssistantRuntimeSilently,
         syncAssistantCanvasComments: assistantController.syncAssistantCanvasComments,
@@ -764,6 +1076,7 @@ export default function IndexPage({
 
     const currentDeepLinkTarget = useMemo<ResourceDeepLinkTarget | null>(() => {
         const activeProjectId = workspace.activeProjectId;
+        const currentContentIsDocumentResource = contentMode === 'doc' || (contentMode === 'canvas' && sidebarTab === 'document');
         if (contentMode === 'preview' && selectedItem) {
             return {
                 resourceType: 'prototype',
@@ -773,10 +1086,11 @@ export default function IndexPage({
                 projectId: activeProjectId || undefined,
             };
         }
-        if (contentMode === 'doc' && resources.selectedDoc) {
+        if (currentContentIsDocumentResource && resources.selectedDoc) {
             return {
-                resourceType: 'doc',
-                resourceId: resources.selectedDoc.resourceId || resources.selectedDoc.name,
+                resourceType: resources.selectedDoc.projectDocumentPath ? 'project-doc' : 'doc',
+                resourceId: resources.selectedDoc.projectDocumentPath || resources.selectedDoc.resourceId || resources.selectedDoc.name,
+                view: contentMode === 'canvas' ? 'canvas' : 'demo',
                 projectId: activeProjectId || undefined,
             };
         }
@@ -795,7 +1109,7 @@ export default function IndexPage({
             };
         }
         return null;
-    }, [contentMode, resources.selectedDoc, resources.selectedTemplate, resources.selectedTheme, selectedItem, selectedPrototypePageId, viewMode, workspace.activeProjectId]);
+    }, [contentMode, resources.selectedDoc, resources.selectedTemplate, resources.selectedTheme, selectedItem, selectedPrototypePageId, sidebarTab, viewMode, workspace.activeProjectId]);
 
     const currentDeepLinkUrl = useMemo(() => (
         currentDeepLinkTarget ? buildIndexDeepLinkUrl(currentDeepLinkTarget) : ''
@@ -950,18 +1264,22 @@ export default function IndexPage({
         restoreAssistantPanel,
     ]);
 
-    const handleOpenGenieWebAgent = useCallback((targetPath?: string, provider?: GenieProvider) => {
+    const handleOpenAcpWebAgent = useCallback((targetPath?: string, provider?: AcpProvider) => {
+        if (!ensureDefaultAiConfigured(preferences.preferredPromptClient)) return;
         assistantAutoOpenSuppressedProjectScopeRef.current = '';
         setAssistantAutoOpenDismissed(buildAssistantAutoOpenKeyForTarget(targetPath), false);
         setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'general-ai');
-        assistantController.handleOpenGenieWebAgent(targetPath, provider);
+        assistantController.handleOpenAcpWebAgent(targetPath, provider);
     }, [
         assistantController,
         assistantAutoOpenPanelModeStorageKey,
         buildAssistantAutoOpenKeyForTarget,
+        ensureDefaultAiConfigured,
+        preferences.preferredPromptClient,
     ]);
 
     const handleOpenImageAiPanel = useCallback(() => {
+        if (!ensureDefaultAiConfigured(preferences.preferredPromptClient)) return;
         assistantAutoOpenSuppressedProjectScopeRef.current = '';
         setAssistantAutoOpenDismissed(assistantAutoOpenDismissedStorageKey, false);
         setAssistantAutoOpenPanelMode(assistantAutoOpenPanelModeStorageKey, 'image-ai');
@@ -970,6 +1288,8 @@ export default function IndexPage({
         assistantAutoOpenDismissedStorageKey,
         assistantAutoOpenPanelModeStorageKey,
         assistantController,
+        ensureDefaultAiConfigured,
+        preferences.preferredPromptClient,
     ]);
 
     const handleCloseAiPanel = useCallback(() => {
@@ -1202,9 +1522,9 @@ export default function IndexPage({
         });
     }, [openFileInIDE, workspace.activeProjectId]);
 
-    const handleOpenCanvasGenie = useCallback(async () => {
-        await Promise.resolve(handleOpenGenieWebAgent());
-    }, [handleOpenGenieWebAgent]);
+    const handleOpenCanvasAgent = useCallback(async () => {
+        await Promise.resolve(handleOpenAcpWebAgent());
+    }, [handleOpenAcpWebAgent]);
 
     const handleRefreshCanvasPrototypeItems = useCallback(async (preferredName?: string) => {
         await workspace.loadData();
@@ -1267,7 +1587,9 @@ export default function IndexPage({
         const canvasFilePath = String(request.canvasFilePath || '').trim();
         const requestPrototypeItem = request.createdPrototype || selectedItem;
         const isPrototypePlaceholderStart = request.source === 'placeholder-start' && request.scene === 'page';
-        const isDesignPlaceholderStart = request.source === 'placeholder-start' && request.scene === 'design';
+        const isStartGuideCanvasGeneration = request.source === 'placeholder-start'
+            || request.source === 'resource-start'
+            || request.source === 'theme-start';
         const placeholderStartCurrentFile = isPrototypePlaceholderStart
             ? resolveAssistantCurrentFile({
                 selectedItem: requestPrototypeItem,
@@ -1296,8 +1618,8 @@ export default function IndexPage({
             currentDataTable: resources.selectedDataTable,
         });
         const currentFile = isPrototypePlaceholderStart
-            ? placeholderStartCurrentFile
-            : canvasCurrentFile;
+            ? placeholderStartCurrentFile || ''
+            : canvasCurrentFile || '';
         const currentFilePath = isPrototypePlaceholderStart ? getAssistantContextCurrentFilePath({ currentFile }) : canvasFilePath || getAssistantContextCurrentFilePath({ currentFile });
         const currentFileDirectory = currentFilePath.replace(/\/[^/]+$/u, '');
 
@@ -1308,7 +1630,7 @@ export default function IndexPage({
             selectedElements: [],
             extensions: {
                 ...(assistantController.assistantContextV1.extensions || {}),
-                viewMode: isPrototypePlaceholderStart ? 'demo' : isDesignPlaceholderStart ? 'canvas' : 'canvas',
+                viewMode: isPrototypePlaceholderStart ? 'demo' : isStartGuideCanvasGeneration ? 'demo' : 'canvas',
                 activeTab,
                 contentMode,
                 selectedItem: requestPrototypeItem
@@ -1328,7 +1650,8 @@ export default function IndexPage({
                     scene: request.scene,
                     source: request.source || 'canvas-node',
                     generatorId: request.generatorId,
-                    canvasFilePath: isPrototypePlaceholderStart ? undefined : request.canvasFilePath,
+                    canvasFilePath: isStartGuideCanvasGeneration ? undefined : request.canvasFilePath,
+                    attachments: request.attachments || [],
                     referenceImages: request.referenceImages || [],
                     localContextRefs: isPrototypePlaceholderStart ? [] : request.localContextRefs || [],
                     provider: request.provider,
@@ -1336,11 +1659,13 @@ export default function IndexPage({
                     mode: request.mode,
                     thought: request.thought,
                     contextBundle: request.contextBundle,
+                    statusTaskId: request.statusTaskId,
                     canvasContext: {
                         canvasFilePath: request.canvasFilePath,
                         canvasName: currentFilePath,
                         generatorElementId: request.generatorId,
                         source: request.source || 'canvas-node',
+                        statusTaskId: request.statusTaskId,
                     },
                 },
                 updatedAt: new Date().toISOString(),
@@ -1359,24 +1684,63 @@ export default function IndexPage({
     ]);
 
     const handleSubmitCanvasAssistantPrompt = useCallback(async (request: CanvasAiGenerationRequest) => {
-        const result = await handleSubmitAnnotationAssistantPrompt(
-            buildCanvasAssistantContext(request),
-            request.prompt,
-            {
-                forceNewThread: true,
-                waitUntil: 'started',
-                collectArtifacts: true,
-                ignoredArtifactPaths: request.canvasFilePath ? [request.canvasFilePath] : [],
-            },
-        );
+        const prompt = String(request.prompt || '').trim();
+        if (!prompt) {
+            messageApi.warning('请输入提示词');
+            return { ok: false };
+        }
+        if (!ensureDefaultAiConfigured(preferences.preferredPromptClient)) return { ok: false };
+        const annotationPromptClient = preferences.annotationPromptClient || preferences.preferredPromptClient;
+        const annotationProvider = resolveAcpPromptClientProvider(annotationPromptClient);
+        if (!annotationProvider) return { ok: false };
+        const selectedProvider = resolveAcpPromptClientProvider(request.provider) || annotationProvider;
+        const annotationModel = preferences.annotationModel || null;
+        const canvasAssistantContext = buildCanvasAssistantContext(request);
+        const result = await submitAnnotationPromptViaApi({
+            context: canvasAssistantContext,
+            prompt,
+            projectPath: assistantController.assistantProjectPath,
+            projectScope: workspace.activeProjectId || assistantController.assistantProjectPath || workspace.projectTitle,
+            projectId: workspace.activeProjectId,
+            preferredPromptClient: selectedProvider ? `acp:${selectedProvider}` : annotationPromptClient,
+            scene: `canvas-${request.scene}-direct`,
+            provider: selectedProvider,
+            model: request.model ?? annotationModel,
+            mode: request.mode,
+            thought: request.thought,
+            targetPath: request.canvasFilePath || undefined,
+            agentRunConcurrency: preferences.agentRunConcurrency,
+            mcpServers: buildCanvasMcpServersForDirectRun(getAssistantContextCurrentFilePath(canvasAssistantContext)),
+            builtinToolSettings: preferences.assistantImageGenerationConfig
+                ? { imageGeneration: preferences.assistantImageGenerationConfig }
+                : undefined,
+            onPrepared: request.onPrepared,
+            onAccepted: request.onAccepted,
+            signal: request.signal,
+        });
         if (!result) {
             return { ok: false };
         }
-        const artifacts = mapAcpOutputArtifactsToGenerationArtifacts(result.artifacts || [], {
+        const artifacts = mapCanvasDirectRunArtifacts((result.artifacts || []) as Record<string, unknown>[], {
+            canvasFilePath: request.canvasFilePath,
+            taskId: result.runId,
+            runId: result.runId,
             threadId: result.threadId,
         });
         return { ok: true, artifacts };
-    }, [buildCanvasAssistantContext, handleSubmitAnnotationAssistantPrompt]);
+    }, [
+        assistantController.assistantProjectPath,
+        buildCanvasAssistantContext,
+        ensureDefaultAiConfigured,
+        messageApi,
+        preferences.annotationModel,
+        preferences.annotationPromptClient,
+        preferences.agentRunConcurrency,
+        preferences.assistantImageGenerationConfig,
+        preferences.preferredPromptClient,
+        workspace.activeProjectId,
+        workspace.projectTitle,
+    ]);
 
     const switchProjectWithReturnTarget = async (projectId: string) => {
         setPendingReturnTarget(getCurrentReturnTarget());
@@ -1584,11 +1948,15 @@ export default function IndexPage({
             searchText: workspace.searchText,
             selectedItem,
             prototypeStartDraftActive,
+            resourceStartDraftActive,
+            themeStartDraftActive,
             selectedPrototypePageId,
             resourceSection,
             projectTitle: workspace.projectTitle,
             activeProjectId: workspace.activeProjectId,
             projectSetupRequired: workspace.projectSetupRequired,
+            makeClientUpdateAvailable,
+            makeClientUpdateReminderVisible,
             projects: workspace.projects,
             resourceWriteCapabilities,
             localExportCapabilities,
@@ -1596,8 +1964,8 @@ export default function IndexPage({
             isDarkMode,
             sidebarTrees: workspace.sidebarTrees,
             prototypeStartPageActive,
-            webAgentPanelOpen: prototypeStartPageActive ? false : assistantController.assistantVisible,
-            aiPanelMode: prototypeStartPageActive ? null : assistantController.aiPanelMode,
+            webAgentPanelOpen: startPageActive ? false : assistantController.assistantVisible,
+            aiPanelMode: startPageActive ? null : assistantController.aiPanelMode,
             selectedDoc: resources.selectedDoc,
             selectedResourceFolder: resources.selectedResourceFolder,
             selectedCanvas: resources.selectedCanvas,
@@ -1611,6 +1979,7 @@ export default function IndexPage({
             setPreferredIDE: preferences.setPreferredIDE,
             setIsDarkMode,
             openSettingsDialog,
+            setVersionCollaborationDrawerOpen,
             setActiveTab,
             setSidebarTab,
             setViewMode,
@@ -1621,6 +1990,7 @@ export default function IndexPage({
             stopProjectDevServer: workspace.stopProjectDevServer,
             addProjectFromLocalPath: workspace.addProjectFromLocalPath,
             createBlankMakeProject: workspace.createBlankMakeProject,
+            cloneMakeProject: workspace.cloneMakeProject,
             copyMakeProject: workspace.copyMakeProject,
             loadProjects: workspace.loadProjects,
             setCreateDialogVisible,
@@ -1629,9 +1999,11 @@ export default function IndexPage({
             handleMenuClick: selection.handleMenuClick,
             setSelectedPrototypePageId,
             handleCreatePrototypeStartDraft,
+            handleCreateResourceStartDraft,
+            handleCreateThemeStartDraft,
             handleOpenProjectInIDE: ideActions.handleOpenProjectInIDE,
-            handleOpenGenieWebAgent: prototypeStartPageActive ? undefined : handleOpenGenieWebAgent,
-            handleOpenImageAiPanel: prototypeStartPageActive ? undefined : handleOpenImageAiPanel,
+            handleOpenAcpWebAgent: startPageActive ? undefined : handleOpenAcpWebAgent,
+            handleOpenImageAiPanel: startPageActive ? undefined : handleOpenImageAiPanel,
             handleOpenWebAgentInPanel: assistantController.openRawUrlInAssistantPanel,
             onExecutePrompt: handleExecutePromptAction,
             onCloseAiPanel: handleCloseAiPanel,
@@ -1656,16 +2028,20 @@ export default function IndexPage({
             collapsed,
             selectedItem,
             prototypeStartDraftActive,
+            resourceStartDraftActive,
+            themeStartDraftActive,
             viewMode,
             activeTab,
-            assistantVisible: prototypeStartPageActive ? false : assistantController.assistantVisible,
+            assistantVisible: startPageActive ? false : assistantController.assistantVisible,
             isDarkMode,
             contentMode,
             docsItems: workspace.docsItems,
+            sidebarTrees: workspace.sidebarTrees,
             selectedDoc: resources.selectedDoc,
             selectedResourceFolder: resources.selectedResourceFolder,
             selectedTemplate: resources.selectedTemplate,
             selectedCanvas: resources.selectedCanvas,
+            canvasItems: workspace.canvasItems,
             selectedTheme: resources.selectedTheme,
             selectedDataTable: resources.selectedDataTable,
             defaultThemeName: resources.defaultThemeName,
@@ -1684,8 +2060,8 @@ export default function IndexPage({
             excalidrawPropertyPanelPosition,
             bridgeConnected: assistantController.assistantContextAppendAvailable,
             activeProjectId: workspace.activeProjectId,
-            webAgentPanelOpen: prototypeStartPageActive ? false : assistantController.assistantVisible,
-            aiPanelMode: prototypeStartPageActive ? null : assistantController.aiPanelMode,
+            webAgentPanelOpen: startPageActive ? false : assistantController.assistantVisible,
+            aiPanelMode: startPageActive ? null : assistantController.aiPanelMode,
             assistantApiBaseUrl: assistantController.assistantApiBaseUrl,
             assistantProjectPath: assistantController.assistantProjectPath,
             prototypes: workspace.data.prototypes,
@@ -1697,7 +2073,7 @@ export default function IndexPage({
             setCollapsed,
             setViewMode,
             handleEnterSelectedPrototypePreview,
-            handleToggleAssistant: prototypeStartPageActive ? () => undefined : handleToggleAssistantPanel,
+            handleToggleAssistant: startPageActive ? () => undefined : handleToggleAssistantPanel,
             handleStartCurrentProjectServer,
             handleCopyStartServerErrorPrompt,
             handleOpenIdeFile: ideActions.handleOpenIdeFile,
@@ -1719,10 +2095,10 @@ export default function IndexPage({
             onAddCanvasScreenshotToAI: handleAddCanvasScreenshotToAssistant,
             onAddCanvasImageToAI: handleAddCanvasImageToAssistant,
             onOpenCanvasInIDE: handleOpenCanvasInIDE,
-            onOpenCanvasGenie: handleOpenCanvasGenie,
+            onOpenCanvasAgent: handleOpenCanvasAgent,
             handleOpenProjectInIDE: ideActions.handleOpenProjectInIDE,
-            onOpenGenieWebAgent: prototypeStartPageActive ? undefined : handleOpenGenieWebAgent,
-            onOpenImageAiPanel: prototypeStartPageActive ? undefined : handleOpenImageAiPanel,
+            onOpenAcpWebAgent: startPageActive ? undefined : handleOpenAcpWebAgent,
+            onOpenImageAiPanel: startPageActive ? undefined : handleOpenImageAiPanel,
             onOpenWebAgentInPanel: assistantController.openRawUrlInAssistantPanel,
             onExecutePrompt: handleExecutePromptAction,
             onCloseAiPanel: handleCloseAiPanel,
@@ -1730,7 +2106,12 @@ export default function IndexPage({
             onPreferredIDEChange: preferences.setPreferredIDE,
             openSettingsDialog,
             onCreatePrototypeForDraftStart: handleCreatePrototypeForDraftStart,
+            onUploadResourceFiles: handleOpenStartGuideResourceUpload,
+            onCreateResourceCanvasFile: resources.handleCreateResourceCanvasFile,
+            onCreateDrawioResourceFile: resources.handleCreateDrawioResourceFile,
+            onOpenDesignImport: resources.handleImportThemeResource,
             onRefreshPrototypes: handleRefreshCanvasPrototypeItems,
+            agentRunConcurrency: preferences.agentRunConcurrency,
             onSubmitCanvasAssistantPrompt: handleSubmitCanvasAssistantPrompt,
         },
         ui: {
@@ -1748,8 +2129,8 @@ export default function IndexPage({
     };
 
     const assistantPanelProps = {
-        mounted: prototypeStartPageActive ? false : assistantController.assistantPanelMounted,
-        visible: prototypeStartPageActive ? false : assistantController.assistantVisible,
+        mounted: startPageActive ? false : assistantController.assistantPanelMounted,
+        visible: startPageActive ? false : assistantController.assistantVisible,
         width: assistantController.assistantPanelWidth,
         minWidth: assistantController.assistantPanelMinWidth,
         maxWidth: assistantController.assistantPanelMaxWidth,
@@ -1835,12 +2216,25 @@ export default function IndexPage({
             open: preview.cloudPublishSettingsOpen,
             initialTarget: preview.cloudPublishSettingsInitialTarget,
             onOpenChange: preview.setCloudPublishSettingsOpen,
-            onSaved: () => undefined,
+            onSaved: preview.handleCloudPublishSettingsSaved,
+        },
+        axhubPublishDialog: {
+            open: preview.axhubPublishDialogOpen,
+            targetPath: preview.currentPublishResourcePath,
+            projectId: workspace.activeProjectId,
+            onOpenChange: preview.setAxhubPublishDialogOpen,
+            onPublished: preview.handleAxhubPublished,
         },
         settingsDialogOpen,
         settingsDialogInitialTab,
         settingsDialogAIContext,
         setSettingsDialogOpen,
+        makeClientUpdateReminderVisible,
+        onMakeClientUpdateReminderSeen: markMakeClientUpdateReminderSeen,
+        onMakeClientUpdateAvailabilityChange: handleMakeClientUpdateAvailabilityChange,
+        onOpenVersionCollaborationFromSettings: openVersionCollaborationFromSettings,
+        versionCollaborationDrawerOpen,
+        setVersionCollaborationDrawerOpen,
         onSettingsSaved: preferences.handleSettingsSaved,
         excalidrawPropertyPanelMode,
         setExcalidrawPropertyPanelMode,
@@ -1849,7 +2243,6 @@ export default function IndexPage({
         versionDialogVisible: resources.versionDialogVisible,
         setVersionDialogVisible: resources.setVersionDialogVisible,
         currentVersionItem: resources.currentVersionItem,
-        versionActiveTab: selection.activeTab,
     };
 
     const mobileProps = {
@@ -1865,12 +2258,26 @@ export default function IndexPage({
     };
 
     return (
-        <IndexPageLayout
-            sidebarProps={sidebarProps}
-            presentationAreaProps={presentationAreaProps}
-            assistantPanelProps={assistantPanelProps}
-            dialogsProps={dialogsProps}
-            mobileProps={mobileProps}
-        />
+        <>
+            <input
+                ref={startGuideResourceUploadInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                    if (event.target.files && event.target.files.length > 0) {
+                        void handleUploadStartGuideResourceFiles(event.target.files);
+                    }
+                    event.currentTarget.value = '';
+                }}
+            />
+            <IndexPageLayout
+                sidebarProps={sidebarProps}
+                presentationAreaProps={presentationAreaProps}
+                assistantPanelProps={assistantPanelProps}
+                dialogsProps={dialogsProps}
+                mobileProps={mobileProps}
+            />
+        </>
     );
 }

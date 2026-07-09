@@ -7,18 +7,16 @@ interface ResolveIndexContentModeParams {
     sidebarTab: SidebarTab;
     resourceSection: ResourceSection;
     viewMode: ViewMode;
+    selectedDocOpenMode?: string;
 }
 
 export function resolveIndexContentMode({
     sidebarTab,
     resourceSection,
     viewMode,
+    selectedDocOpenMode,
 }: ResolveIndexContentModeParams): IndexContentMode {
-    if (viewMode === 'canvas' && sidebarTab !== 'canvas') {
-        return 'preview';
-    }
-
-    if (sidebarTab === 'document') return 'doc';
+    if (sidebarTab === 'document') return selectedDocOpenMode === 'canvas' ? 'canvas' : 'doc';
     if (sidebarTab === 'canvas') return 'canvas';
     if (sidebarTab === 'assets') {
         if (resourceSection === 'templates') return 'template';
@@ -26,11 +24,4 @@ export function resolveIndexContentMode({
         return 'theme';
     }
     return 'preview';
-}
-
-export function isBrowsingResourceSidebarInPrototypeCanvas({
-    sidebarTab,
-    viewMode,
-}: Pick<ResolveIndexContentModeParams, 'sidebarTab' | 'viewMode'>): boolean {
-    return viewMode === 'canvas' && sidebarTab !== 'canvas';
 }

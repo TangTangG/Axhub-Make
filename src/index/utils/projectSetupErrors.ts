@@ -6,10 +6,7 @@ const MAKE_CLIENT_ERROR_MESSAGES: Record<string, string> = {
     MAKE_CLIENT_TEMPLATE_UNAVAILABLE: '无法下载 Make 客户端模板包，请检查网络或稍后重试',
     MAKE_CLIENT_INSTALL_FAILED: '依赖安装失败',
     MAKE_CLIENT_METADATA_SYNC_FAILED: '项目清单生成失败',
-    MAKE_CLIENT_UPDATE_GIT_UNAVAILABLE: '未找到可用的 Git，请先安装或修复 Git',
-    MAKE_CLIENT_UPDATE_NOT_GIT_REPOSITORY: '更新前需要先初始化 Git 仓库',
-    MAKE_CLIENT_UPDATE_NO_COMMITS: '更新前需要至少有一个本地 Git commit',
-    MAKE_CLIENT_UPDATE_GIT_DIRTY: '更新前需要先提交或处理当前文件改动',
+    MAKE_CLIENT_GIT_CLONE_FAILED: 'Git 克隆失败',
     MAKE_CLIENT_UPDATE_NOT_AVAILABLE: '当前客户端模板已是最新版本',
     MAKE_CLIENT_DEV_TIMEOUT: 'Make 客户端启动超时',
     PNPM_NOT_FOUND: '未找到可用的 Node 包管理器，请确认 Node.js 和 npm 可用',
@@ -19,7 +16,7 @@ const MAKE_CLIENT_ERROR_MESSAGES: Record<string, string> = {
 };
 
 const MAKE_CLIENT_PHASE_LABELS: Record<string, string> = {
-    clone: '下载模板包',
+    clone: '克隆项目',
     template: '下载模板包',
     install: '安装依赖',
     metadata: '生成项目清单',
@@ -28,7 +25,6 @@ const MAKE_CLIENT_PHASE_LABELS: Record<string, string> = {
 };
 
 const MAKE_CLIENT_UPDATE_PHASE_LABELS: Record<string, string> = {
-    'git-check': 'Git 安全检查',
     'download-template': '下载模板',
     template: '下载模板',
     backup: '创建备份',
@@ -98,12 +94,28 @@ function arrayOfStrings(value: unknown): string[] {
     return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
 }
 
-function renderFileListLine(label: string, value: unknown): string {
+function renderFileCountLine(label: string, value: unknown): string {
     const files = arrayOfStrings(value);
-    if (files.length === 0) {
-        return `${label}：(未返回)`;
-    }
-    return `${label}：${files.join('\n- ')}`;
+    return `${label}：${files.length > 0 ? files.length : '(未返回)'}`;
+}
+
+function renderKeyFileLine(label: string, value: unknown): string {
+    const files = arrayOfStrings(value);
+    if (files.length === 0) return `${label}：(未返回)`;
+    const priorityPatterns = [
+        /^package\.json$/u,
+        /^pnpm-lock\.yaml$/u,
+        /^package-lock\.json$/u,
+        /^\.axhub\/make\/client\.json$/u,
+        /^\.axhub\/make\/axhub\.config\.json$/u,
+        /^AGENTS\.md$/u,
+        /^CLAUDE\.md$/u,
+        /^README\.md$/u,
+    ];
+    const selected = files.filter((file) => priorityPatterns.some((pattern) => pattern.test(file))).slice(0, 8);
+    const fallback = selected.length > 0 ? selected : files.slice(0, 5);
+    const suffix = files.length > fallback.length ? `\n- ...另有 ${files.length - fallback.length} 个文件，完整清单见备份日志 manifest.json` : '';
+    return `${label}：${fallback.join('\n- ')}${suffix}`;
 }
 
 export function formatMakeClientProjectError(payload: unknown, fallback = 'Make 项目操作失败'): string {
@@ -195,8 +207,9 @@ export function buildMakeClientUpdateFailurePrompt(
     const projectRoot = pickString(raw.projectRoot) || pickString(raw.root);
     const currentVersion = pickString(raw.currentVersion);
     const targetVersion = pickString(raw.targetVersion);
-    const preUpdateHead = pickString(raw.preUpdateHead);
     const backupRoot = pickString(raw.backupRoot);
+    const backupZipPath = pickString(raw.backupZipPath);
+    const manifestPath = pickString(raw.manifestPath);
     const templateUrl = pickString(raw.templateUrl);
     const displayMessage = pickString(options.displayMessage) || formatMakeClientUpdateError(raw, '项目更新失败');
     const rawError = pickString(raw.error);
@@ -206,14 +219,15 @@ export function buildMakeClientUpdateFailurePrompt(
     return [
         '请帮我修复 Axhub Make 客户端更新失败的问题。',
         '',
-        '我不懂命令行、Git、Node.js、npm 或 pnpm。请你把每一步都说清楚，一次只让我执行一个命令，并解释这个命令是在检查什么或修复什么。',
+        '我不懂命令行、Node.js、npm 或 pnpm。请你把每一步都说清楚，一次只让我执行一个命令，并解释这个命令是在检查什么或修复什么。',
         '',
         '**现场信息**：',
         renderOptionalLine('项目目录', projectRoot),
         renderOptionalLine('当前版本', currentVersion),
         renderOptionalLine('目标版本', targetVersion),
-        renderOptionalLine('更新前 Git commit', preUpdateHead),
         renderOptionalLine('备份目录', backupRoot),
+        renderOptionalLine('备份压缩包', backupZipPath),
+        renderOptionalLine('备份日志', manifestPath),
         renderOptionalLine('模板来源', templateUrl),
         renderOptionalLine('失败阶段', phaseLabel),
         renderOptionalLine('错误码', code),
@@ -222,8 +236,11 @@ export function buildMakeClientUpdateFailurePrompt(
         ...(currentUrl ? [renderOptionalLine('当前 Axhub Make 页面', currentUrl)] : []),
         '',
         '**文件情况**：',
-        renderFileListLine('已写入文件', raw.writtenFiles),
-        renderFileListLine('计划写入文件', raw.plannedFiles),
+        renderFileCountLine('已写入文件数', raw.writtenFiles),
+        renderFileCountLine('计划写入文件数', raw.plannedFiles),
+        renderKeyFileLine('关键已写入文件', raw.writtenFiles),
+        renderKeyFileLine('关键计划文件', raw.plannedFiles),
+        '完整文件清单请读取备份日志 manifest.json，不要把清单整段复制到提示词里。',
         '',
         '**错误详情**：',
         ...(detailLines.length > 0 ? detailLines.map((line) => `- ${line}`) : ['- 服务端没有返回更详细的命令输出，请先根据错误码和阶段排查。']),
@@ -231,14 +248,15 @@ export function buildMakeClientUpdateFailurePrompt(
         '**请按这个方向排查**：',
         '- 请先判断我的系统是 macOS、Windows 还是 Linux，再给对应系统的命令。',
         '- 请检查项目目录是否存在，以及当前用户是否有读取和写入权限。',
-        '- 请检查更新前 Git commit、备份目录和已写入文件清单是否完整。',
+        '- 请检查备份目录、备份压缩包、备份日志和文件数量是否完整。',
         '- 如果是安装依赖或同步项目清单失败，请根据 npm 输出判断是网络、权限、lock 文件、package.json 还是脚本问题。',
-        '- 可以基于更新前 Git commit、备份目录和已写入文件清单判断修复或回退；不要默认自动回退，先说明风险和操作步骤。',
+        '- 如需完整文件清单，请读取备份日志 manifest.json，不要把清单整段复制到提示词里。',
+        '- 可以基于备份目录、manifest.json、original/ 和关键文件判断修复或还原；不要默认自动还原，先说明风险和操作步骤。',
         '',
         '**安全要求**：',
         '- 不要直接删除我的用户原型、资源、运行记录或备份目录。',
         '- 不要删除 src/resources/、.axhub/make/sessions/、.axhub/make/exports/ 或 .axhub/make/edit-history/。',
-        '- 如果需要用 Git 回退、恢复备份、删除 node_modules、lock 文件或缓存，请先解释原因，并让我确认后再做。',
+        '- 如果需要恢复备份、删除 node_modules、lock 文件或缓存，请先解释原因，并让我确认后再做。',
         '- 不要直接使用 sudo；如果确实需要管理员权限，请先解释风险，并让我确认。',
         '',
         '修复后请告诉我是否需要重启或刷新 Make 客户端。',

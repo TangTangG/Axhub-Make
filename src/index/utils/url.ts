@@ -6,12 +6,12 @@ export interface BuildEditorUrlOptions {
     hostToolbar?: boolean;
 }
 
-const STALE_GENIE_BRIDGE_QUERY_PARAMS = [
-    'genieApiBaseUrl',
+const STALE_AGENT_BRIDGE_QUERY_PARAMS = [
+    'agentApiBaseUrl',
     'apiBaseUrl',
-    'genieIntegrationChannel',
+    'agentIntegrationChannel',
     'integrationChannel',
-    'genieTargetClientId',
+    'agentTargetClientId',
     'integrationClientId',
     'cwd',
     'workdir',
@@ -27,12 +27,12 @@ const STALE_GENIE_BRIDGE_QUERY_PARAMS = [
     'editorPageUrl',
     'editorMobileMode',
     'mobileMode',
-    'genieToolbar',
+    'agentToolbar',
     'inspecta',
 ] as const;
 
-function clearStaleGenieBridgeQueryParams(url: URL) {
-    for (const key of STALE_GENIE_BRIDGE_QUERY_PARAMS) {
+function clearStaleAgentBridgeQueryParams(url: URL) {
+    for (const key of STALE_AGENT_BRIDGE_QUERY_PARAMS) {
         url.searchParams.delete(key);
     }
 }
@@ -46,14 +46,14 @@ export function appendEditorLaunchOptionsToUrl(
     options?: BuildEditorUrlOptions,
 ): URL {
     const url = inputUrl;
-    clearStaleGenieBridgeQueryParams(url);
+    clearStaleAgentBridgeQueryParams(url);
 
     if (typeof options?.mobileMode === 'boolean') {
         url.searchParams.set('editorMobileMode', options.mobileMode ? 'true' : 'false');
     }
 
     if (options?.hostToolbar) {
-        url.searchParams.set('genieToolbar', 'host');
+        url.searchParams.set('agentToolbar', 'host');
     }
 
     return url;
@@ -126,7 +126,7 @@ function buildRawItemUrl(
 ): URL | null {
     if (!selectedItem) return null;
     const baseUrl = viewMode === 'canvas'
-        ? `/canvas/prototypes/${encodeURIComponent(selectedItem.name)}/canvas.excalidraw`
+        ? ''
         : viewMode === 'demo'
             ? (selectedItem.clientUrl || selectedItem.previewUrl)
             : selectedItem.specUrl;

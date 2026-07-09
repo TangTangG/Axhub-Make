@@ -136,7 +136,7 @@ export default function FigmaMakeExportDialog({
             <DialogContent className="sm:max-w-[560px]">
                 <DialogHeader className="gap-1.5">
                     <DialogTitle className="text-[18px] font-semibold tracking-tight">
-                        导出 Figma.Make
+                        导出 Figma Make
                     </DialogTitle>
                     <DialogDescription className="text-sm leading-6">
                         使用 AI 导出或更新 .fig 文件
@@ -145,7 +145,7 @@ export default function FigmaMakeExportDialog({
 
                 <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                        <div className="text-sm font-medium">MAKE 文件</div>
+                        <div className="text-sm font-medium">Figma Make 文件</div>
                         <Button
                             type="button"
                             variant="ghost"
@@ -183,7 +183,7 @@ export default function FigmaMakeExportDialog({
                                 disabled={!canDownload}
                             >
                                 {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                                下载 Make
+                                下载 Figma Make
                             </Button>
                         </div>
                     </div>

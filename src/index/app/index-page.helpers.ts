@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { GenieContextV1 } from '@/common/genie/types';
+import type { AssistantContextV1 } from '@/common/assistant-context/types';
 import type { CanvasItem, ItemData, SidebarTreeNode, SidebarTreeTab, TabType } from '../types';
 import {
     STORAGE_KEY_ASSISTANT_AUTO_OPEN_DISMISSED,
@@ -26,7 +26,7 @@ export interface OpenAssistantUrlEventDetail {
 export interface SpecPromptRequestResult {
     prompt: string;
     targetPath?: string;
-    context?: GenieContextV1;
+    context?: AssistantContextV1;
 }
 
 export type MarkdownQuickEditMode = 'comment' | 'edit';
@@ -386,20 +386,54 @@ function buildDocsFileUrl(name: string, projectId: string | null): string {
     return withProjectIdQuery(`/api/docs/${encodeURIComponent(normalizedName)}`, projectId);
 }
 
+function getResourceFileExtension(value: unknown): string {
+    const normalized = String(value || '').trim().replace(/\\/g, '/').toLowerCase();
+    if (normalized.endsWith('.drawio.svg')) {
+        return '.drawio.svg';
+    }
+    const fileName = normalized.split('/').filter(Boolean).pop() || '';
+    const dotIndex = fileName.lastIndexOf('.');
+    return dotIndex >= 0 ? fileName.slice(dotIndex) : '';
+}
+
+function inferResourceOpenMode(...values: unknown[]): ItemData['openMode'] | undefined {
+    for (const value of values) {
+        const ext = getResourceFileExtension(value);
+        if (ext === '.excalidraw') return 'canvas';
+        if (ext === '.drawio' || ext === '.drawio.svg') return 'drawio';
+    }
+    return undefined;
+}
+
+function resolveResourceBackedDocFilePath(openMode: ItemData['openMode'] | undefined, routeName: string, sourcePath: string): string {
+    if (!openMode) {
+        return sourcePath;
+    }
+    const normalizedSourcePath = String(sourcePath || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    if (normalizedSourcePath.startsWith('src/resources/')) {
+        return normalizedSourcePath;
+    }
+    const normalizedRouteName = String(routeName || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    return normalizedRouteName ? `src/resources/${normalizedRouteName}` : normalizedSourcePath;
+}
+
 export function normalizeDocItem(
     doc: { name?: string; displayName?: string; path?: string; absoluteFilePath?: string; fileSize?: number },
     projectId: string | null = null,
 ): ItemData {
     const normalizedName = normalizeMarkdownResourceName('doc', String(doc?.name || '').trim());
-    const displayName = getDocDisplayName(normalizedName);
     const sourcePath = String(doc?.path || '').trim();
     const absoluteFilePath = String(doc?.absoluteFilePath || '').trim();
+    const routeName = normalizeMarkdownResourceName('doc', sourcePath) || normalizedName;
+    const openMode = inferResourceOpenMode(normalizedName, routeName, sourcePath, absoluteFilePath);
+    const filePath = resolveResourceBackedDocFilePath(openMode, routeName, sourcePath);
+    const displayName = getDocDisplayName(getDocFileName(normalizedName));
     const isMarkdown = [
         normalizedName,
         sourcePath,
         absoluteFilePath,
     ].some(hasMarkdownExtension);
-    const directDocsFileUrl = !isMarkdown ? buildDocsFileUrl(normalizedName, projectId) : '';
+    const directDocsFileUrl = !isMarkdown ? buildDocsFileUrl(routeName, projectId) : '';
     const markdownUrl = directDocsFileUrl || buildMarkdownFileUrl(absoluteFilePath || sourcePath);
     return {
         name: normalizedName,
@@ -407,8 +441,10 @@ export function normalizeDocItem(
         jsUrl: '',
         specUrl: markdownUrl,
         previewUrl: isMarkdown ? buildSpecTemplatePreviewUrl(markdownUrl) : markdownUrl,
-        filePath: sourcePath || undefined,
+        filePath: filePath || undefined,
         absoluteFilePath: absoluteFilePath || undefined,
+        ...(openMode ? { openMode } : {}),
+        ...(openMode === 'canvas' && filePath ? { canvasFilePath: filePath } : {}),
         ...(typeof doc?.fileSize === 'number' ? { fileSize: doc.fileSize } : {}),
     };
 }

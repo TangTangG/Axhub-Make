@@ -44,6 +44,12 @@ describe('markdown preview url helpers', () => {
         }, 'doc')).toBe('/spec-template.html?url=%2Fapi%2Fprojects%2Fclient-project%2Fdocs%2Fprd%2Fcontent');
 
         expect(resolveMarkdownPreviewIframeUrl({
+            name: 'src/prototypes/annotation-demo/docs/prd-03-states.md',
+            projectId: 'client-project',
+            projectDocumentPath: 'src/prototypes/annotation-demo/docs/prd-03-states.md',
+        }, 'doc')).toBe('/spec-template.html?url=%2Fapi%2Fprojects%2Fclient-project%2Fdocument-content%3Fpath%3Dsrc%252Fprototypes%252Fannotation-demo%252Fdocs%252Fprd-03-states.md');
+
+        expect(resolveMarkdownPreviewIframeUrl({
             name: 'local-prd',
             absoluteFilePath: '/workspace/client/src/resources/local-prd.md',
         }, 'doc')).toBe('/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fclient%252Fsrc%252Fresources%252Flocal-prd.md');

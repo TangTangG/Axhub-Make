@@ -85,6 +85,52 @@ describe('compactToolbarEnhancer source', () => {
     expect(source).toContain('this.wireDropdownMenuItem(item, () => this.onDrawioToolClick());');
   });
 
+  it('injects an add-resource button next to the native extra tools menu', () => {
+    const source = readSource();
+
+    expect(source).toContain("const PROJECT_RESOURCE_TOOL_LABEL = '添加资源';");
+    expect(source).toContain("const PROJECT_RESOURCE_TOOL_TOOLTIP = '从本项目添加资源到画布';");
+    expect(source).toContain('onProjectResourceClick: () => void;');
+    expect(source).toContain('private onProjectResourceClick: () => void;');
+    expect(source).toContain('this.onProjectResourceClick = opts.onProjectResourceClick;');
+    expect(source).toContain('this.injectProjectResourceToolbarButton(toolbar);');
+    expect(source).toContain('private injectProjectResourceToolbarButton(toolbar: Element)');
+    expect(source).toContain('private createProjectResourceToolbarButton(): HTMLButtonElement');
+    expect(source).toContain("data-axhub-project-resource-toolbar-wrapper");
+    expect(source).toContain("data-axhub-project-resource-toolbar-btn");
+    expect(source).toContain("data-testid', 'toolbar-project-resource'");
+    expect(source).toContain('this.wireToolbarButton(button, () => this.onProjectResourceClick());');
+    expect(source).toContain('this.applyToolbarAriaLabel(button, PROJECT_RESOURCE_TOOL_TOOLTIP);');
+    expect(source).toContain('extraToolsRoot.before(wrapper);');
+    expect(source).not.toContain('extraToolsRoot.after(wrapper);');
+    expect(source).toContain('private removeProjectResourceToolbarButtons()');
+    expect(source).toContain('this.removeProjectResourceToolbarButtons();');
+    expect(source).not.toContain('private injectProjectResourceExtraToolsMenuItem()');
+    expect(source).not.toContain("data-axhub-project-resource-extra-tools-item");
+  });
+
+  it('uses a resource package icon for the project resource toolbar entry', () => {
+    const source = readSource();
+    const resourceIcon = source.match(/const PROJECT_RESOURCE_ICON_SVG = `([^`]+)`;/)?.[1] ?? '';
+
+    expect(resourceIcon).toContain('M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z');
+    expect(resourceIcon).toContain('M3.3 7 12 12l8.7-5');
+    expect(resourceIcon).toContain('M12 22V12');
+    expect(resourceIcon).not.toContain('M8 14l2.1-2.1');
+    expect(resourceIcon).not.toContain('M15.5 8.5h.01');
+    expect(resourceIcon).not.toContain('M12 5v14');
+    expect(resourceIcon).not.toContain('M5 12h14');
+    expect(resourceIcon).not.toContain('M3 7a2 2 0 0 1 2-2h3l2 2h9');
+  });
+
+  it('sizes the project resource toolbar icon larger than the generic injected icon', () => {
+    const source = readSource();
+
+    expect(source).toContain('[data-axhub-project-resource-toolbar-btn] .ToolIcon__icon svg');
+    expect(source).toContain('width: var(--axhub-project-resource-toolbar-icon-size, 20px);');
+    expect(source).toContain('height: var(--axhub-project-resource-toolbar-icon-size, 20px);');
+  });
+
   it('does not define a plus icon for a unified AI generation toolbar entry', () => {
     const source = readSource();
     const generationIcon = source.match(/const AI_GENERATION_ICON_SVG = `([^`]+)`;/)?.[1] ?? '';
@@ -163,5 +209,15 @@ describe('compactToolbarEnhancer source', () => {
       .toBeGreaterThan(actionsSection.indexOf('for (const action of extraActions)'));
     expect(annotationButtonSection).toContain('ANNOTATION_ICON_SVG');
     expect(annotationButtonSection).toContain('this.onAnnotationClick();');
+  });
+
+  it('uses an AI sparkle icon for the annotation toolbar entry', () => {
+    const source = readSource();
+    const annotationIcon = source.match(/const ANNOTATION_ICON_SVG = `([^`]+)`;/)?.[1] ?? '';
+
+    expect(annotationIcon).toContain('M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z');
+    expect(annotationIcon).toContain('M19 3v4');
+    expect(annotationIcon).not.toContain('M7.9 20A9 9 0 1 0 4 16.1L2 22Z');
+    expect(annotationIcon).not.toContain('M12 8v4');
   });
 });

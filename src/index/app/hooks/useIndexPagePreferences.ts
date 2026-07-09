@@ -17,6 +17,14 @@ import {
 
 const EMPTY_AGENT_AVAILABILITY: RuntimeAgentAvailability = { cli: {}, localApp: {}, web: {} };
 
+function sanitizeAgentRunConcurrency(value: unknown): number {
+    const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value);
+    if (!Number.isFinite(numeric)) {
+        return 5;
+    }
+    return Math.min(10, Math.max(1, Math.trunc(numeric)));
+}
+
 export interface UseIndexPagePreferencesParams {
     setDefaultThemeName: (name: string | null) => void;
     activeProjectId?: string | null;
@@ -34,6 +42,7 @@ export interface UseIndexPagePreferencesResult {
     assistantImageGenerationConfig: AssistantImageGenerationConfig | null;
     annotationPromptClient: PromptClientPreference;
     annotationModel: string | null;
+    agentRunConcurrency: number;
     initialPreferencesLoaded: boolean;
     setPreferredIDE: (ide: MainIDEPreference) => void;
     handleSettingsSaved: () => void;
@@ -54,6 +63,7 @@ export function useIndexPagePreferences({
     const [assistantImageGenerationConfig, setAssistantImageGenerationConfig] = useState<AssistantImageGenerationConfig | null>(null);
     const [annotationPromptClient, setAnnotationPromptClient] = useState<PromptClientPreference>(null);
     const [annotationModel, setAnnotationModel] = useState<string | null>(null);
+    const [agentRunConcurrency, setAgentRunConcurrency] = useState(5);
     const [initialPreferencesLoaded, setInitialPreferencesLoaded] = useState(false);
 
     useEffect(() => {
@@ -71,6 +81,7 @@ export function useIndexPagePreferences({
                 setAssistantImageGenerationConfig(config?.ai?.imageGeneration || null);
                 setAnnotationPromptClient(normalizePromptClientPreference(config?.automation?.annotationPromptClient));
                 setAnnotationModel(config?.automation?.annotationModel || null);
+                setAgentRunConcurrency(sanitizeAgentRunConcurrency(config?.automation?.agentRunConcurrency));
                 setInitialPreferencesLoaded(true);
                 setDefaultThemeName((config as any)?.projectDefaults?.defaultTheme || null);
                 onExcalidrawPropertyPanelModeLoaded?.(persistExcalidrawPropertyPanelModePreference(
@@ -87,6 +98,7 @@ export function useIndexPagePreferences({
                     setAssistantImageGenerationConfig(null);
                     setAnnotationPromptClient(null);
                     setAnnotationModel(null);
+                    setAgentRunConcurrency(5);
                     setInitialPreferencesLoaded(true);
                     setIDEAvailability({});
                     setAgentAvailability(EMPTY_AGENT_AVAILABILITY);
@@ -111,6 +123,7 @@ export function useIndexPagePreferences({
                 setAssistantImageGenerationConfig(config?.ai?.imageGeneration || null);
                 setAnnotationPromptClient(normalizePromptClientPreference(config?.automation?.annotationPromptClient));
                 setAnnotationModel(config?.automation?.annotationModel || null);
+                setAgentRunConcurrency(sanitizeAgentRunConcurrency(config?.automation?.agentRunConcurrency));
                 setIDEAvailability(config?.ideAvailability || {});
                 setAgentAvailability(config?.agentAvailability || EMPTY_AGENT_AVAILABILITY);
                 setDefaultThemeName((config as any)?.projectDefaults?.defaultTheme || null);
@@ -128,6 +141,7 @@ export function useIndexPagePreferences({
                 setAssistantImageGenerationConfig(null);
                 setAnnotationPromptClient(null);
                 setAnnotationModel(null);
+                setAgentRunConcurrency(5);
                 setIDEAvailability({});
                 setAgentAvailability(EMPTY_AGENT_AVAILABILITY);
                 setDefaultThemeName(null);
@@ -142,6 +156,7 @@ export function useIndexPagePreferences({
         assistantImageGenerationConfig,
         annotationPromptClient,
         annotationModel,
+        agentRunConcurrency,
         initialPreferencesLoaded,
         setPreferredIDE,
         handleSettingsSaved,

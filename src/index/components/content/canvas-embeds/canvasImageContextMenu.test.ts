@@ -22,15 +22,9 @@ describe('canvas image context menu state', () => {
     expect(state.showScreenshotToAI).toBe(false);
     expect(state.showNodeContextToAI).toBe(false);
     expect(state.showOriginalImageToAI).toBe(true);
-    expect(state.showImageQuickActions).toBe(true);
+    expect(state.showImageQuickActions).toBe(false);
     expect(state.showCopyOriginalImage).toBe(true);
     expect(state.showBackgroundToTransparent).toBe(true);
-    expect(state.quickPrompts.map((prompt) => prompt.label)).toEqual([
-      '提取图标',
-      '生成草图',
-      '生成原型',
-      '生成响应式',
-    ]);
   });
 
   it('keeps screenshot and node context actions for multi-selection', () => {
@@ -96,7 +90,6 @@ describe('canvas image context menu state', () => {
     expect(state.showImageQuickActions).toBe(false);
     expect(state.showCopyOriginalImage).toBe(false);
     expect(state.showBackgroundToTransparent).toBe(false);
-    expect(state.quickPrompts).toEqual([]);
   });
 
   it('shows background-to-transparent for a single image with data even when AI is unavailable', () => {

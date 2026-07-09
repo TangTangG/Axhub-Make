@@ -12,8 +12,16 @@ describe('contextMenuReorganizer source', () => {
 
     expect(source).toContain('const closeSubmenu = () => {');
     expect(source).toContain("flyout.classList.remove('axhub-ctx-submenu-expanded');");
-    expect(source).toContain("flyout.classList.remove('axhub-ctx-submenu-flip');");
     expect(source).toContain("wrapperLi.addEventListener('mouseenter', openSubmenu);");
     expect(source).toContain("wrapperLi.addEventListener('mouseleave', closeSubmenu);");
+  });
+
+  it('positions custom submenu flyouts against the viewport instead of inside the scrollable menu', () => {
+    const source = readSource();
+
+    expect(source).toContain('applyContextSubmenuFlyoutLayout');
+    expect(source).toContain('applyContextSubmenuFlyoutLayout({');
+    expect(source).toContain('triggerEl: triggerBtn,');
+    expect(source).toContain('flyoutEl: flyout,');
   });
 });

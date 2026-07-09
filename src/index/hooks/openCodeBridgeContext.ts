@@ -37,7 +37,7 @@ export function resolveOpenCodeCurrentFilePath(params: OpenCodeCurrentFileContex
         const canvasPath = normalizePath((selectedCanvas as any).filePath)
             || normalizePath((selectedCanvas as any).absoluteFilePath);
         if (canvasPath) return canvasPath;
-        return selectedCanvas.name ? `canvas/${selectedCanvas.name}.excalidraw` : '';
+        return selectedCanvas.name ? resolveResourceCanvasPath(selectedCanvas.name) : '';
     }
 
     if (sidebarTab === 'assets') {
@@ -51,10 +51,6 @@ export function resolveOpenCodeCurrentFilePath(params: OpenCodeCurrentFileContex
         if (!selectedItem) return '';
         const basePath = resolvePrototypeBasePath(selectedItem);
         if (!basePath) return '';
-
-        if (viewMode === 'canvas') {
-            return `${basePath}/canvas.excalidraw`;
-        }
 
         return ensureIndexFile(basePath);
     }
@@ -120,6 +116,21 @@ function ensureIndexFile(value: string): string {
     if (/\/index\.(t|j)sx?$/i.test(normalized)) return normalized;
     if (/\.(t|j)sx?$/i.test(normalized)) return normalized;
     return `${normalized.replace(/\/+$/g, '')}/index.tsx`;
+}
+
+function resolveResourceCanvasPath(value: string): string {
+    const normalized = normalizePath(value).replace(/^\/+/, '');
+    if (!normalized) return '';
+    if (normalized.startsWith('src/resources/') && normalized.endsWith('.excalidraw')) {
+        return normalized;
+    }
+    if (normalized.startsWith('resources/') && normalized.endsWith('.excalidraw')) {
+        return `src/${normalized}`;
+    }
+    if (normalized.startsWith('src/')) {
+        return '';
+    }
+    return normalized.endsWith('.excalidraw') ? `src/resources/${normalized}` : '';
 }
 
 function resolvePrototypeBasePath(item: ItemData): string {

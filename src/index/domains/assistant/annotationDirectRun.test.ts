@@ -21,36 +21,13 @@ vi.mock('../ai-generation/aiRunClient', () => ({
 }));
 
 import {
-  ANNOTATION_DIRECT_RUN_MAX_SENDS,
-  ANNOTATION_DIRECT_RUN_TTL_MS,
-  buildAnnotationDirectRunThreadStorageKey,
   prepareAnnotationDirectRunThread,
-  recordAnnotationDirectRunAccepted,
   resolveAnnotationDirectRunTarget,
   submitAnnotationPromptViaApi,
 } from './annotationDirectRun';
-import {
-  getAssistantResourceThreadId,
-  getAssistantStoreThreadId,
-  setAssistantResourceThreadId,
-  setAssistantStoreThreadId,
-} from './assistantResourceThread';
 import { runAiStream } from '../ai-generation/aiRunClient';
 
-function createStorage() {
-  const values = new Map<string, string>();
-  return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      values.set(key, value);
-    },
-    removeItem: (key: string) => {
-      values.delete(key);
-    },
-  };
-}
-
-describe('annotation direct API run thread reuse', () => {
+describe('annotation direct API run threads', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -77,9 +54,7 @@ describe('annotation direct API run thread reuse', () => {
     });
   });
 
-  it('creates a new fixed-window thread when no reusable thread exists', () => {
-    const storage = createStorage();
-    const now = 1_700_000_000_000;
+  it('creates a new thread for each direct send', () => {
     const target = {
       projectScope: 'project-a',
       currentFilePath: 'src/prototypes/home/index.tsx',
@@ -89,46 +64,17 @@ describe('annotation direct API run thread reuse', () => {
 
     const prepared = prepareAnnotationDirectRunThread({
       target,
-      storage,
-      now,
       createRunId: () => 'annotation-run-1',
     });
 
     expect(prepared).toMatchObject({
-      firstRun: true,
       runId: 'annotation-run-1',
       threadId: 'annotation-run-1',
       conversationId: 'annotation-run-1',
     });
-
-    recordAnnotationDirectRunAccepted({
-      target,
-      storage,
-      now,
-      threadId: 'annotation-run-1',
-    });
-
-    const raw = storage.getItem(buildAnnotationDirectRunThreadStorageKey(target));
-    expect(raw ? JSON.parse(raw) : null).toMatchObject({
-      threadId: 'annotation-run-1',
-      createdAt: now,
-      expiresAt: now + ANNOTATION_DIRECT_RUN_TTL_MS,
-      sentCount: 1,
-      invalidated: false,
-    });
-    expect(getAssistantStoreThreadId({
-      projectScope: 'project-a',
-      conversationStorePath: target.conversationStorePath,
-    }, storage)).toBe('annotation-run-1');
-    expect(getAssistantResourceThreadId({
-      projectScope: 'project-a',
-      resourcePath: target.prototypePath,
-    }, storage)).toBe('annotation-run-1');
   });
 
-  it('does not reuse legacy assistant bindings without a direct-run reuse record', () => {
-    const storage = createStorage();
-    const now = 1_700_000_000_000;
+  it('does not reuse previous direct-send threads', () => {
     const target = {
       projectScope: 'project-a',
       currentFilePath: 'src/prototypes/home/index.tsx',
@@ -136,31 +82,59 @@ describe('annotation direct API run thread reuse', () => {
       conversationStorePath: '/workspace/project/src/prototypes/home/.spec/acp/conversations.json',
     };
 
-    setAssistantStoreThreadId({
-      projectScope: target.projectScope,
-      conversationStorePath: target.conversationStorePath,
-    }, 'legacy-store-thread', storage);
-    setAssistantResourceThreadId({
-      projectScope: target.projectScope,
-      resourcePath: target.prototypePath,
-    }, 'legacy-prototype-thread', storage);
-
-    expect(prepareAnnotationDirectRunThread({
+    const first = prepareAnnotationDirectRunThread({
       target,
-      storage,
-      now,
-      createRunId: () => 'fresh-direct-thread',
-    })).toMatchObject({
-      firstRun: true,
-      runId: 'fresh-direct-thread',
-      threadId: 'fresh-direct-thread',
-      conversationId: 'fresh-direct-thread',
+      createRunId: () => 'direct-thread-a',
+    });
+    const second = prepareAnnotationDirectRunThread({
+      target,
+      createRunId: () => 'direct-thread-b',
+    });
+
+    expect(first).toMatchObject({
+      runId: 'direct-thread-a',
+      threadId: 'direct-thread-a',
+      conversationId: 'direct-thread-a',
+    });
+    expect(second).toMatchObject({
+      runId: 'direct-thread-b',
+      threadId: 'direct-thread-b',
+      conversationId: 'direct-thread-b',
     });
   });
 
+  it('submits three separate prompts into three independent conversations', async () => {
+    const context = {
+      currentFile: {
+        path: 'src/prototypes/home/index.tsx',
+        displayName: 'Home',
+      },
+      selectedElements: [],
+      extensions: {},
+    };
+    const runIds = ['annotation-run-a', 'annotation-run-b', 'annotation-run-c'];
+    let runIndex = 0;
+
+    for (const prompt of ['改卡片 A', '改卡片 B', '改卡片 C']) {
+      await submitAnnotationPromptViaApi({
+        context: context as any,
+        prompt,
+        projectPath: '/workspace/project',
+        projectScope: 'project-a',
+        provider: 'codex',
+        preferredPromptClient: 'acp:codex',
+        createRunId: () => runIds[runIndex++] || 'unexpected-run',
+      });
+    }
+
+    const threadIds = vi.mocked(runAiStream).mock.calls.map((call) => (call[0] as any).threadId);
+    const conversationIds = vi.mocked(runAiStream).mock.calls.map((call) => (call[0] as any).conversationId);
+    expect(threadIds.slice(-3)).toEqual(runIds);
+    expect(conversationIds.slice(-3)).toEqual(runIds);
+    expect(new Set(threadIds.slice(-3)).size).toBe(3);
+  });
+
   it('submits an ACP context bundle instead of raw assistant context', async () => {
-    const storage = createStorage();
-    const now = 1_700_000_000_000;
     const context = {
       currentFile: {
         path: 'src/prototypes/home/index.tsx',
@@ -183,8 +157,6 @@ describe('annotation direct API run thread reuse', () => {
       projectScope: 'project-a',
       provider: 'codex',
       preferredPromptClient: 'acp:codex',
-      storage,
-      now: () => now,
       createRunId: () => 'run-context',
     });
 
@@ -212,8 +184,6 @@ describe('annotation direct API run thread reuse', () => {
   });
 
   it('submits image generation settings for direct runs without preview or canvas MCP servers', async () => {
-    const storage = createStorage();
-
     await submitAnnotationPromptViaApi({
       context: {
         currentFile: {
@@ -235,8 +205,6 @@ describe('annotation direct API run thread reuse', () => {
           model: 'current-image-model',
         },
       },
-      storage,
-      now: () => 1_700_000_000_000,
       createRunId: () => 'run-image-config',
     });
 
@@ -251,122 +219,141 @@ describe('annotation direct API run thread reuse', () => {
     expect(params.mcpServers).toBeUndefined();
   });
 
-  it('reuses the prototype thread for 48 hours and fewer than 40 sends without extending expiry', () => {
-    const storage = createStorage();
-    const now = 1_700_000_000_000;
-    const target = {
+  it('passes canvas MCP servers through direct runs when provided by the caller', async () => {
+    await submitAnnotationPromptViaApi({
+      context: {
+        currentFile: {
+          path: 'src/resources/flows/home.excalidraw',
+          displayName: 'Home Canvas',
+        },
+        selectedElements: [],
+        extensions: {},
+      } as any,
+      prompt: '在当前画布新增一组流程节点。',
+      projectPath: '/workspace/project',
       projectScope: 'project-a',
-      currentFilePath: 'src/prototypes/home/index.tsx',
-      prototypePath: 'src/prototypes/home',
-      conversationStorePath: '/workspace/project/src/prototypes/home/.spec/acp/conversations.json',
-    };
-
-    recordAnnotationDirectRunAccepted({
-      target,
-      storage,
-      now,
-      threadId: 'thread-home',
+      provider: 'codex',
+      preferredPromptClient: 'acp:codex',
+      mcpServers: [{
+        name: 'axhub-canvas',
+        type: 'http',
+        url: 'http://localhost:5174/api/mcp/axhub-canvas',
+        headers: [{
+          name: 'x-axhub-canvas-mcp-token',
+          value: 'canvas-secret',
+        }],
+      }],
+      createRunId: () => 'run-canvas-mcp',
     });
 
-    const prepared = prepareAnnotationDirectRunThread({
-      target,
-      storage,
-      now: now + 60_000,
-      createRunId: () => 'annotation-run-2',
-    });
-
-    expect(prepared).toMatchObject({
-      firstRun: false,
-      runId: 'annotation-run-2',
-      threadId: 'thread-home',
-      conversationId: 'thread-home',
-    });
-
-    recordAnnotationDirectRunAccepted({
-      target,
-      storage,
-      now: now + 60_000,
-      threadId: 'thread-home',
-    });
-
-    const raw = storage.getItem(buildAnnotationDirectRunThreadStorageKey(target));
-    expect(raw ? JSON.parse(raw) : null).toMatchObject({
-      threadId: 'thread-home',
-      createdAt: now,
-      expiresAt: now + ANNOTATION_DIRECT_RUN_TTL_MS,
-      sentCount: 2,
-    });
+    const params = vi.mocked(runAiStream).mock.calls[0]?.[0] as any;
+    expect(params.mcpServers).toEqual([{
+      name: 'axhub-canvas',
+      type: 'http',
+      url: 'http://localhost:5174/api/mcp/axhub-canvas',
+      headers: [{
+        name: 'x-axhub-canvas-mcp-token',
+        value: 'canvas-secret',
+      }],
+    }]);
   });
 
-  it('starts a new thread after expiry, max sends, or explicit invalidation', () => {
-    const storage = createStorage();
-    const now = 1_700_000_000_000;
-    const target = {
+  it('passes annotation direct-run concurrency to the AI stream request', async () => {
+    await submitAnnotationPromptViaApi({
+      context: {
+        currentFile: {
+          path: 'src/prototypes/home/index.tsx',
+          displayName: 'Home',
+        },
+        selectedElements: [],
+        extensions: {},
+      } as any,
+      prompt: '批量调整。',
+      projectPath: '/workspace/project',
       projectScope: 'project-a',
-      currentFilePath: 'src/prototypes/home/index.tsx',
-      prototypePath: 'src/prototypes/home',
-      conversationStorePath: '/workspace/project/src/prototypes/home/.spec/acp/conversations.json',
-    };
-    const key = buildAnnotationDirectRunThreadStorageKey(target);
-
-    storage.setItem(key, JSON.stringify({
-      threadId: 'expired-thread',
-      prototypePath: target.prototypePath,
-      conversationStorePath: target.conversationStorePath,
-      createdAt: now - ANNOTATION_DIRECT_RUN_TTL_MS - 1,
-      expiresAt: now - 1,
-      sentCount: 1,
-      invalidated: false,
-    }));
-
-    expect(prepareAnnotationDirectRunThread({
-      target,
-      storage,
-      now,
-      createRunId: () => 'fresh-expired',
-    })).toMatchObject({
-      firstRun: true,
-      threadId: 'fresh-expired',
+      provider: 'codex',
+      preferredPromptClient: 'acp:codex',
+      agentRunConcurrency: 4,
+      createRunId: () => 'run-concurrency',
     });
 
-    storage.setItem(key, JSON.stringify({
-      threadId: 'maxed-thread',
-      prototypePath: target.prototypePath,
-      conversationStorePath: target.conversationStorePath,
-      createdAt: now,
-      expiresAt: now + ANNOTATION_DIRECT_RUN_TTL_MS,
-      sentCount: ANNOTATION_DIRECT_RUN_MAX_SENDS,
-      invalidated: false,
-    }));
-
-    expect(prepareAnnotationDirectRunThread({
-      target,
-      storage,
-      now,
-      createRunId: () => 'fresh-maxed',
-    })).toMatchObject({
-      firstRun: true,
-      threadId: 'fresh-maxed',
-    });
-
-    storage.setItem(key, JSON.stringify({
-      threadId: 'invalid-thread',
-      prototypePath: target.prototypePath,
-      conversationStorePath: target.conversationStorePath,
-      createdAt: now,
-      expiresAt: now + ANNOTATION_DIRECT_RUN_TTL_MS,
-      sentCount: 1,
-      invalidated: true,
-    }));
-
-    expect(prepareAnnotationDirectRunThread({
-      target,
-      storage,
-      now,
-      createRunId: () => 'fresh-invalid',
-    })).toMatchObject({
-      firstRun: true,
-      threadId: 'fresh-invalid',
-    });
+    const params = vi.mocked(runAiStream).mock.calls[0]?.[0] as any;
+    expect(params.agentRunConcurrency).toBe(4);
   });
+
+  it('allows review direct runs to override scene and target path while keeping prototype conversation storage', async () => {
+    await submitAnnotationPromptViaApi({
+      context: {
+        currentFile: {
+          path: 'src/prototypes/home/.spec/ui-review.md',
+          displayName: 'ui-review.md',
+        },
+        selectedElements: [],
+        extensions: {},
+      } as any,
+      prompt: '执行评审。',
+      projectPath: '/workspace/project',
+      projectScope: 'project-a',
+      provider: 'codex',
+      preferredPromptClient: 'acp:codex',
+      scene: 'prototype-review-direct',
+      targetPath: 'src/prototypes/home/.spec/ui-review.md',
+      createRunId: () => 'run-review',
+    });
+
+    const params = vi.mocked(runAiStream).mock.calls[0]?.[0] as any;
+    expect(params.scene).toBe('prototype-review-direct');
+    expect(params.targetPath).toBe('src/prototypes/home/.spec/ui-review.md');
+    expect(params.conversationStorePath).toBe('/workspace/project/src/prototypes/home/.spec/acp/conversations.json');
+  });
+
+  it('uses a friendly connecting message before starting direct runs', async () => {
+    const onRunStarting = vi.fn();
+
+    await submitAnnotationPromptViaApi({
+      context: {
+        currentFile: {
+          path: 'src/prototypes/home/index.tsx',
+          displayName: 'Home',
+        },
+        selectedElements: [],
+        extensions: {},
+      } as any,
+      prompt: '调整按钮文案。',
+      projectPath: '/workspace/project',
+      projectScope: 'project-a',
+      provider: 'codex',
+      preferredPromptClient: 'acp:codex',
+      createRunId: () => 'run-friendly-start',
+      onRunStarting,
+    });
+
+    expect(onRunStarting).toHaveBeenCalledWith('正在连接 AI，请稍等。');
+  });
+
+  it('passes the abort signal through to the AI stream request', async () => {
+    const controller = new AbortController();
+
+    await submitAnnotationPromptViaApi({
+      context: {
+        currentFile: {
+          path: 'src/prototypes/home/index.tsx',
+          displayName: 'Home',
+        },
+        selectedElements: [],
+        extensions: {},
+      } as any,
+      prompt: '把卡片标题调短。',
+      projectPath: '/workspace/project',
+      projectScope: 'project-a',
+      provider: 'codex',
+      preferredPromptClient: 'acp:codex',
+      signal: controller.signal,
+      createRunId: () => 'run-abortable',
+    });
+
+    const params = vi.mocked(runAiStream).mock.calls[0]?.[0] as any;
+    expect(params.signal).toBe(controller.signal);
+  });
+
 });

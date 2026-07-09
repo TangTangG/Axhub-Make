@@ -17,8 +17,8 @@ import {
 
 import {
   checkMakeStateHealth,
+  createServerConfigStore,
   createProjectRegistry,
-  getConfigPath,
   getGlobalMakeStateDir,
   type AxhubServerInfo,
   type MakeStateHealthResult,
@@ -41,7 +41,13 @@ import { closeManagedOpenCodeServers, readManagedOpenCodeServerUrl } from './age
 import { getLocalIP, getRequestUrl, sendJson } from './http.ts';
 import { getMakeClientDevStatus } from './makeClientProject.ts';
 import { handleManagementApi } from './managementApi.ts';
+import {
+  getLanAccessGateDecision,
+  handleLanAccessApi,
+  handleLanAccessGate,
+} from './lanAccessControl.ts';
 import type { CommandExecutor } from './managementApi.cloudPublishing.ts';
+import type { GitWorkspaceCommandExecutor } from './managementApi.git.ts';
 import { releaseListeningProcessesOnPort } from './portOccupancy.ts';
 import {
   isRuntimeDevModuleRequest,
@@ -65,7 +71,9 @@ export interface StartMakeServerOptions {
   devMode?: boolean;
   logFile?: string;
   diagnosticLog?: DiagnosticLog;
+  axhubOnlineBaseUrl?: string;
   cloudPublishingCommandExecutor?: CommandExecutor;
+  gitWorkspaceCommandExecutor?: GitWorkspaceCommandExecutor;
 }
 
 export interface RunningMakeServer {
@@ -114,22 +122,6 @@ export function resolveDefaultAdminRoot(options: ResolveDefaultAdminRootOptions 
   return candidates.find((candidate) => exists(candidate)) || candidates[2];
 }
 
-function readProjectLANAccessAllowed(projectRoot?: string | null): boolean {
-  if (!projectRoot) {
-    return true;
-  }
-  const configPath = getConfigPath(projectRoot);
-  if (!fs.existsSync(configPath)) {
-    return true;
-  }
-  try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    return config?.server?.allowLAN !== false;
-  } catch {
-    return true;
-  }
-}
-
 export interface ResolveMakeServerListenHostOptions {
   projectRoot?: string | null;
   explicitHost?: string;
@@ -140,7 +132,7 @@ export function resolveMakeServerListenHost(options: ResolveMakeServerListenHost
   if (explicitHost) {
     return explicitHost;
   }
-  return readProjectLANAccessAllowed(options.projectRoot ? path.resolve(options.projectRoot) : null) ? '0.0.0.0' : 'localhost';
+  return '0.0.0.0';
 }
 
 function resolvePublicOriginHost(host: string): string {
@@ -316,6 +308,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   const lanHost = getLocalIP();
   const serverInfoHomeDir = options.serverInfoHomeDir
     || (options.registryPath ? path.dirname(path.dirname(path.dirname(options.registryPath))) : undefined);
+  const serverConfigStore = createServerConfigStore(serverInfoHomeDir ? { homeDir: serverInfoHomeDir } : undefined);
   const startupProjectRoot = path.resolve(options.projectRoot);
   const projectRoot = getGlobalMakeStateDir(serverInfoHomeDir);
   const host = resolveMakeServerListenHost({ explicitHost: options.host });
@@ -424,6 +417,16 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         currentRuntimeOrigin: runtimeOrigin,
       });
       adminStaticOptions.runtimeOrigin = runtimeOrigin;
+      const accessConfigOptions = {
+        getConfig: () => serverConfigStore.getConfig({ activeProjectRoot: activeProjectRoot || startupProjectRoot }),
+        saveConfig: serverConfigStore.saveConfig,
+      };
+      if (await handleLanAccessApi(req, res, accessConfigOptions)) {
+        return;
+      }
+      if (handleLanAccessGate(req, res, accessConfigOptions)) {
+        return;
+      }
       if (redirectMissingPlaceholderPrototypeShortLink(req, res, adminStaticOptions)) {
         return;
       }
@@ -458,7 +461,9 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         },
         devMode,
         diagnosticLog: options.diagnosticLog,
+        axhubOnlineBaseUrl: options.axhubOnlineBaseUrl,
         cloudPublishingCommandExecutor: options.cloudPublishingCommandExecutor,
+        gitWorkspaceCommandExecutor: options.gitWorkspaceCommandExecutor,
       })) {
         return;
       }
@@ -608,6 +613,16 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   const bridgeHub = getOpenCodeBridgeHub();
   canvasBridgeHub.configureProjectRoot(projectRoot);
   server.on('upgrade', (req, socket, head) => {
+    const requestUrl = req.url || '/';
+    const requestProjectId = getProjectIdFromRequest(req, requestUrl);
+    const activeProjectRoot = resolveActiveProjectRoot(options.registryPath, requestProjectId);
+    const accessDecision = getLanAccessGateDecision(req, {
+      getConfig: () => serverConfigStore.getConfig({ activeProjectRoot: activeProjectRoot || startupProjectRoot }),
+    });
+    if (!accessDecision.allowed) {
+      socket.end(`HTTP/1.1 ${accessDecision.status} ${accessDecision.status === 403 ? 'Forbidden' : 'Unauthorized'}\r\n\r\n`);
+      return;
+    }
     if (isOpenCodeBridgeUpgrade(req)) {
       bridgeHub.handleUpgrade(req, socket, head);
     } else if (isCanvasBridgeUpgrade(req)) {
@@ -616,8 +631,6 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       previewBridgeHub.handleUpgrade(req, socket, head);
     } else if (!devMode) {
       (async () => {
-        const requestUrl = req.url || '/';
-        const requestProjectId = getProjectIdFromRequest(req, requestUrl);
         const runtimeWebSocketOrigin = await resolveRuntimeOriginForProxy({
           registryPath: options.registryPath,
           projectId: requestProjectId,

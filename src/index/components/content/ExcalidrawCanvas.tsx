@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import {
     Excalidraw,
@@ -45,7 +45,6 @@ import {
     type ExcalidrawPropertyPanelMode,
     type ExcalidrawPropertyPanelPosition,
 } from '../../utils/excalidrawUiMode';
-import { CANVAS_DROP_MIME } from './canvasDropTypes';
 import { resolveVisibleIDEPreference } from '../../../common/ide';
 import { buildResourceDeepLinkUrl } from '../../app/index-page/resourceDeepLink';
 import {
@@ -79,25 +78,62 @@ import { removeKeyedBackgroundFromDataUrl } from './canvas-embeds/transparentIma
 import { createCanvasBackgroundTransparentImageUpdate } from './canvasBackgroundTransparentInsertion';
 import { copyImageDataUrlToClipboard } from '../../utils/clipboard';
 import { getAiImageTaskStore } from '../../domains/ai-image/aiImageStore';
-import { resolveCanvasImageArtifactUpdate, type CanvasImageArtifactEvent } from '../../domains/ai-image/canvasImageArtifacts';
 import CanvasAiGenerationTool, { type CanvasAiGenerationRequest, type CanvasAiGenerationResult } from '../../domains/ai-generation/CanvasAiGenerationTool';
-import { applyCanvasAiArtifactToElements } from '../../domains/ai-generation/canvasAiGeneration';
 import { applyGenerationArtifactsToCanvasElements } from '../../domains/ai-generation/canvasArtifactInsertion';
+import { createCanvasDirectRunController, type CanvasDirectRunController } from '../../domains/ai-generation/canvasDirectRun';
+import { appendCanvasGenerationPromptSettings } from '../../domains/ai-generation/canvasGenerationPromptSettings';
+import {
+    appendCanvasAiPrototypeStartSystemPrompt,
+    getCanvasAiPrototypeStartSystemPrompt,
+} from '../../domains/ai-generation/canvasAiSceneRegistry';
+import {
+    CANVAS_DIRECT_RUN_OVERLAY_CARD_HEIGHT,
+    CANVAS_DIRECT_RUN_OVERLAY_CARD_WIDTH,
+    createCanvasDirectRunAnnotationTaskElement,
+    createCanvasDirectRunOverlayTaskId,
+    getCanvasDirectRunAnnotationTaskRef,
+    normalizeCanvasDirectRunAnnotationTaskElement,
+    normalizeCanvasDirectRunAnnotationTaskElements,
+    resolveCanvasDirectRunOverlayPosition,
+    updateCanvasDirectRunAnnotationTaskElement,
+    type CanvasDirectRunAnnotationTaskUpdate,
+    type CanvasDirectRunOverlayController,
+} from '../../domains/ai-generation/CanvasDirectRunOverlay';
 import { buildAssistantImageAttachmentPayload, type AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
 import { getPrototypeGenerationTaskStore } from '../../domains/prototype-generation/prototypeTaskStore';
 import CanvasDrawioTool from '../../domains/drawio/CanvasDrawioTool';
 import { DRAWIO_INSERT_EVENT_NAME } from '../../domains/drawio/canvasDrawio';
+import {
+    CanvasProjectResourcePickerDialog,
+    buildCanvasProjectResourceItemSelections,
+    type CanvasAiScene,
+    type CanvasProjectResourceItemSelection,
+    type CanvasProjectResourceItems,
+    type CanvasProjectResourceTrees,
+} from '../../domains/shared/CanvasGenerationComposer';
 import { apiService } from '../../services/index.api';
 import type { ItemData, PromptClientPreference } from '../../types';
 import type { ThemeResourceItem } from '../../domains/resources/resource.types';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 
 type ExcalidrawAPI = NonNullable<Parameters<NonNullable<React.ComponentProps<typeof Excalidraw>['onExcalidrawAPI']>>[0]>;
 type ExcalidrawOpenPopup = ReturnType<ExcalidrawAPI['getAppState']>['openPopup'];
 type CanvasDropPreviewKind = 'web' | 'doc' | 'image' | 'none';
 type CanvasPreviewResourceType = 'preview' | 'prototype' | 'doc' | 'theme';
+type CanvasResourcePayload = {
+    type: string;
+    resourceType?: 'preview' | 'prototype' | 'doc' | 'theme';
+    sourceResourceType?: 'prototype' | 'doc' | 'theme';
+    resourceId?: string;
+    name: string;
+    displayName: string;
+    previewKind?: CanvasDropPreviewKind;
+    embedViewMode?: 'link' | 'preview';
+    previewUrl: string;
+    openUrl?: string;
+};
 type CanvasCommandName = 'canvas_get_state'
     | 'canvas_insert_elements'
     | 'canvas_insert_mermaid'
@@ -168,7 +204,7 @@ interface ExcalidrawCanvasProps {
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
     onOpenProjectInIDE?: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
     webAgentPanelOpen?: boolean;
     aiPanelMode?: 'general-ai' | 'image-ai' | null;
     onOpenImageAiPanel?: () => void | Promise<void>;
@@ -179,8 +215,11 @@ interface ExcalidrawCanvasProps {
     preferredPromptClient?: PromptClientPreference;
     prototypes?: ItemData[];
     themes?: ThemeResourceItem[];
+    projectResourceTrees?: CanvasProjectResourceTrees;
+    projectResourceItems?: CanvasProjectResourceItems;
     defaultThemeName?: string | null;
     onRefreshPrototypes?: () => Promise<ItemData[]>;
+    agentRunConcurrency?: number;
     onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
 }
 
@@ -191,7 +230,6 @@ const REMOTE_RELOAD_CHANGE_IGNORE_MS = 1000;
 const CANVAS_AUTOSAVE_ENABLED = true;
 
 type SaveSyncStatus = 'saved' | 'local' | 'saving' | 'error';
-export { CANVAS_DROP_MIME } from './canvasDropTypes';
 const EXCALIDRAW_ELEMENT_LINK_PARAM = 'element';
 const AXHUB_CANVAS_ELEMENT_PARAM = 'axhubCanvasElement';
 const HIDDEN_LIBRARY_TRIGGER_STYLE: React.CSSProperties = { display: 'none' };
@@ -222,6 +260,18 @@ const MISSING_SEARCH_TRANSLATIONS = {
 const IS_MAC_PLATFORM =
     typeof navigator !== 'undefined' && /mac|iphone|ipad|ipod/i.test(navigator.platform);
 
+function getAnnotationDirectRunConcurrency(value: unknown): number {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized)) return 1;
+    return Math.max(1, Math.min(8, Math.floor(normalized)));
+}
+
+function getAnnotationDirectTaskError(error: unknown): string {
+    if (error instanceof Error && error.message) return error.message;
+    if (typeof error === 'string' && error.trim()) return error.trim();
+    return 'AI 执行失败';
+}
+
 function encodeCanvasApiPath(canvasName: string): string {
     return canvasName
         .split('/')
@@ -230,8 +280,32 @@ function encodeCanvasApiPath(canvasName: string): string {
         .join('/');
 }
 
-function buildCanvasApiUrl(canvasName: string, projectId?: string | null): string {
-    const url = new URL(`/api/canvas/${encodeCanvasApiPath(canvasName)}`, window.location.origin);
+function resolveResourceCanvasApiPath(canvasName: string, canvasFilePath?: string): string {
+    const resourcesMarker = 'src/resources/';
+    const candidates = [canvasFilePath, canvasName];
+    for (const candidate of candidates) {
+        const normalized = String(candidate || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+        if (!normalized) continue;
+        if (normalized.startsWith(resourcesMarker)) {
+            return normalized.slice(resourcesMarker.length);
+        }
+        if (normalized.startsWith('resources/')) {
+            return normalized.slice('resources/'.length);
+        }
+        const markerIndex = normalized.indexOf(`/${resourcesMarker}`);
+        if (markerIndex >= 0) {
+            return normalized.slice(markerIndex + resourcesMarker.length + 1);
+        }
+        if (normalized.endsWith('.excalidraw') && !normalized.startsWith('src/')) {
+            return normalized;
+        }
+    }
+    return '';
+}
+
+function buildCanvasApiUrl(canvasName: string, projectId?: string | null, canvasFilePath?: string): string {
+    const resourceCanvasPath = resolveResourceCanvasApiPath(canvasName, canvasFilePath);
+    const url = new URL(`/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}`, window.location.origin);
     const normalizedProjectId = projectId?.trim();
     if (normalizedProjectId) {
         url.searchParams.set('projectId', normalizedProjectId);
@@ -239,22 +313,30 @@ function buildCanvasApiUrl(canvasName: string, projectId?: string | null): strin
     return `${url.pathname}${url.search}`;
 }
 
-function getCanvasBridgeCanvasName(canvasName: string): string {
-    const normalized = String(canvasName || '').trim().replace(/^src\//, '');
-    const prototypeMatch = normalized.match(/^prototypes\/([^/]+)\/canvas(?:\.excalidraw)?$/i);
-    return prototypeMatch?.[1] ? `prototypes/${prototypeMatch[1]}/canvas` : normalized;
+function getCanvasBridgeCanvasName(canvasName: string, canvasFilePath?: string): string {
+    const resourceCanvasPath = resolveResourceCanvasApiPath(canvasName, canvasFilePath);
+    return resourceCanvasPath ? `resources/${resourceCanvasPath}` : String(canvasName || '').trim();
 }
 
 export function resolveCanvasGenerationTaskTargetPath(...values: Array<string | undefined>): string | undefined {
+    const resourcesMarker = 'src/resources/';
     for (const value of values) {
-        const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/^src\//u, '');
-        const prototypePathMatch = normalized.match(/^prototypes\/([^/]+)$/iu);
-        if (prototypePathMatch?.[1] && !prototypePathMatch[1].startsWith('.') && !prototypePathMatch[1].includes('..')) {
-            return `prototypes/${prototypePathMatch[1]}`;
+        const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/^\/+/u, '');
+        if (!normalized || !normalized.endsWith('.excalidraw')) {
+            continue;
         }
-        const match = normalized.match(/^prototypes\/([^/]+)\/canvas(?:\.excalidraw)?$/iu);
-        if (match?.[1] && !match[1].startsWith('.') && !match[1].includes('..')) {
-            return `prototypes/${match[1]}`;
+        if (normalized.startsWith(resourcesMarker)) {
+            return normalized;
+        }
+        if (normalized.startsWith('resources/')) {
+            return `src/resources/${normalized.slice('resources/'.length)}`;
+        }
+        const markerIndex = normalized.indexOf(`/${resourcesMarker}`);
+        if (markerIndex >= 0) {
+            return normalized.slice(markerIndex + resourcesMarker.length + 1);
+        }
+        if (!normalized.startsWith('src/')) {
+            return `src/resources/${normalized}`;
         }
     }
     return undefined;
@@ -434,18 +516,6 @@ function isCanvasWelcomeAppStateVisible(appState: ReturnType<ExcalidrawAPI['getA
 
 function selectCanvasWelcomeAppStateVisible(appState: ReturnType<ExcalidrawAPI['getAppState']>): boolean {
     return isCanvasWelcomeAppStateVisible(appState);
-}
-
-function isCanvasWelcomeOverlayVisible(appState: ReturnType<ExcalidrawAPI['getAppState']>): boolean {
-    return isCanvasWelcomeAppStateVisible(appState) && appState.openMenu !== 'canvas';
-}
-
-function selectCanvasWelcomeOverlayVisible(appState: ReturnType<ExcalidrawAPI['getAppState']>): boolean {
-    return isCanvasWelcomeOverlayVisible(appState);
-}
-
-function isCanvasWelcomeSceneEmpty(excalidrawAPI: ExcalidrawAPI): boolean {
-    return excalidrawAPI.getSceneElementsIncludingDeleted().length === 0;
 }
 
 function getCaptureSceneElements(excalidrawAPI: ExcalidrawAPI): any[] {
@@ -965,35 +1035,6 @@ interface AxhubCanvasWelcomeScreenProps {
     sceneEmpty: boolean;
 }
 
-function AxhubCanvasWelcomeOverlay({
-    sceneEmpty,
-    welcomeVisible,
-}: {
-    sceneEmpty: boolean;
-    welcomeVisible?: boolean;
-}) {
-    if (!sceneEmpty || !welcomeVisible) return null;
-
-    return (
-        <div className="axhub-canvas-welcome-hints" aria-hidden="true">
-            <div className="axhub-canvas-welcome-hint axhub-canvas-welcome-hint--sidebar">
-                <svg className="axhub-canvas-welcome-hint__arrow" viewBox="0 0 150 92" focusable="false">
-                    <path d="M139 14C101 12 66 22 40 42C25 54 14 68 8 84" />
-                    <path className="axhub-canvas-welcome-hint__arrow-head" d="M28 78L8 84L17 61" />
-                </svg>
-                <span>拖入原型和资源，可以作为创作的上下文</span>
-            </div>
-            <div className="axhub-canvas-welcome-hint axhub-canvas-welcome-hint--preview">
-                <svg className="axhub-canvas-welcome-hint__arrow" viewBox="0 0 150 80" focusable="false">
-                    <path d="M10 68C44 63 73 48 99 30C113 20 126 12 140 10" />
-                    <path className="axhub-canvas-welcome-hint__arrow-head" d="M128 28L140 10L116 12" />
-                </svg>
-                <span>与 AI 协作</span>
-            </div>
-        </div>
-    );
-}
-
 function AxhubCanvasWelcomeScreen({
     sceneEmpty,
 }: AxhubCanvasWelcomeScreenProps) {
@@ -1007,11 +1048,11 @@ function AxhubCanvasWelcomeScreen({
                 <WelcomeScreen.Center.Logo>
                     <span className="axhub-canvas-welcome-title">
                         <PencilRuler className="axhub-canvas-welcome-title__icon" aria-hidden="true" />
-                        <span>原型草稿画布</span>
+                        <span>产品画布</span>
                     </span>
                 </WelcomeScreen.Center.Logo>
                 <WelcomeScreen.Center.Heading>
-                    好的原型从一份草稿开始。
+                    好的产品从一份草稿开始。
                 </WelcomeScreen.Center.Heading>
             </WelcomeScreen.Center>
         </WelcomeScreen>
@@ -1042,7 +1083,7 @@ function normalizeCanvasDataForSaveBaseline(data: any): string {
     });
 }
 
-function logCanvasDebug(event: string, details: Record<string, unknown> = {}) {
+function logCanvasDebug(_event: string, _details: Record<string, unknown> = {}) {
     // console.info('[Axhub Canvas]', event, {
     //     at: new Date().toISOString(),
     //     ...details,
@@ -1051,6 +1092,180 @@ function logCanvasDebug(event: string, details: Record<string, unknown> = {}) {
 
 function resolveString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
+}
+
+function matchesCanvasResourceFilePattern(value: unknown, pattern: RegExp): boolean {
+    const raw = String(value || '').trim();
+    if (!raw) return false;
+
+    const candidates = [raw];
+    for (let index = 0; index < 2; index += 1) {
+        const previous = candidates[candidates.length - 1];
+        try {
+            const decoded = decodeURIComponent(previous);
+            if (decoded === previous) break;
+            candidates.push(decoded);
+        } catch {
+            break;
+        }
+    }
+
+    return candidates.some((candidate) => pattern.test(candidate));
+}
+
+function resolveCanvasResourceDocPreviewKind(item: ItemData): CanvasDropPreviewKind {
+    const fields = [
+        item.name,
+        item.displayName,
+        item.filePath,
+        item.absoluteFilePath,
+        item.specUrl,
+        item.previewUrl,
+    ];
+    if (fields.some((field) => matchesCanvasResourceFilePattern(field, /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)([?#/]|$)/i))) {
+        return 'image';
+    }
+    if (fields.some((field) => matchesCanvasResourceFilePattern(field, /\.mdx?([?#/]|$)/i))) {
+        return 'doc';
+    }
+    return 'none';
+}
+
+function buildCanvasResourcePayloadFromPickerSelection(selection: CanvasProjectResourceItemSelection): CanvasResourcePayload | null {
+    const { item, tab } = selection;
+    const resourceId = item.resourceId || item.name;
+    const displayName = item.displayName || item.name;
+    if (!resourceId || !item.name) return null;
+
+    if (tab === 'docs') {
+        const previewKind = resolveCanvasResourceDocPreviewKind(item);
+        return {
+            type: 'doc',
+            resourceType: 'doc',
+            sourceResourceType: 'doc',
+            resourceId,
+            name: item.name,
+            displayName,
+            previewKind,
+            embedViewMode: previewKind === 'image' ? 'link' : 'preview',
+            previewUrl: item.previewUrl || item.specUrl || '',
+            openUrl: buildResourceDeepLinkUrl({
+                resourceType: 'doc',
+                resourceId,
+                collapseSidebar: true,
+            }),
+        };
+    }
+
+    if (tab === 'themes') {
+        return {
+            type: 'theme',
+            resourceType: 'theme',
+            sourceResourceType: 'theme',
+            resourceId,
+            name: item.name,
+            displayName,
+            previewKind: 'web',
+            embedViewMode: 'preview',
+            previewUrl: item.previewUrl || item.clientUrl || '',
+            openUrl: buildResourceDeepLinkUrl({
+                resourceType: 'theme',
+                resourceId,
+                collapseSidebar: true,
+            }),
+        };
+    }
+
+    return {
+        type: 'prototype',
+        resourceType: 'prototype',
+        sourceResourceType: 'prototype',
+        resourceId,
+        name: item.name,
+        displayName,
+        previewKind: 'web',
+        embedViewMode: 'preview',
+        previewUrl: item.previewUrl || item.clientUrl || '',
+        openUrl: buildResourceDeepLinkUrl({
+            resourceType: 'prototype',
+            resourceId,
+            view: 'demo',
+            collapseSidebar: true,
+        }),
+    };
+}
+
+function getCanvasResourcePayloadSize(payload: CanvasResourcePayload): { width: number; height: number } {
+    if (payload.previewKind === 'image') {
+        return { width: 640, height: 480 };
+    }
+    const size = getDefaultEmbedSize(payload);
+    return { width: size.width, height: size.height };
+}
+
+function getCanvasResourceGridPosition(
+    appState: any,
+    payloads: CanvasResourcePayload[],
+    index: number,
+): { x: number; y: number } {
+    const zoom = Number(appState.zoom?.value || 1) || 1;
+    const centerX = Number(appState.scrollX || 0) * -1 + Number(appState.width || 0) / 2 / zoom;
+    const centerY = Number(appState.scrollY || 0) * -1 + Number(appState.height || 0) / 2 / zoom;
+    const gap = 40;
+    const columns = Math.min(2, payloads.length);
+    const rows = Math.ceil(payloads.length / 2);
+    const sizes = payloads.map(getCanvasResourcePayloadSize);
+    const cellWidth = Math.max(...sizes.map((size) => size.width), 1);
+    const cellHeight = Math.max(...sizes.map((size) => size.height), 1);
+    const gridWidth = columns * cellWidth + Math.max(0, columns - 1) * gap;
+    const gridHeight = rows * cellHeight + Math.max(0, rows - 1) * gap;
+    const column = index % 2;
+    const row = Math.floor(index / 2);
+    const size = sizes[index] || { width: cellWidth, height: cellHeight };
+    return {
+        x: centerX - gridWidth / 2 + column * (cellWidth + gap) + (cellWidth - size.width) / 2,
+        y: centerY - gridHeight / 2 + row * (cellHeight + gap) + (cellHeight - size.height) / 2,
+    };
+}
+
+async function insertCanvasResourceSelections({
+    excalidrawAPI,
+    selections,
+    canvasPrototypeId,
+    viewportRect,
+    scheduleExplicitCanvasSave,
+}: {
+    excalidrawAPI: ExcalidrawAPI;
+    selections: CanvasProjectResourceItemSelection[];
+    canvasPrototypeId?: string | null;
+    viewportRect?: EmbedViewportRect | null;
+    scheduleExplicitCanvasSave: () => void;
+}) {
+    const payloads = selections
+        .map(buildCanvasResourcePayloadFromPickerSelection)
+        .filter((payload): payload is CanvasResourcePayload => Boolean(payload));
+    if (payloads.length === 0) return;
+
+    const appState = excalidrawAPI.getAppState();
+    const zoom = appState.zoom?.value;
+    for (let index = 0; index < payloads.length; index += 1) {
+        const payload = payloads[index];
+        const { x, y } = getCanvasResourceGridPosition(appState, payloads, index);
+        if (payload.previewKind === 'image') {
+            await createImageElementFromDrop(excalidrawAPI, payload, x, y);
+        } else {
+            createEmbeddableFromDrop(
+                excalidrawAPI,
+                payload,
+                x,
+                y,
+                canvasPrototypeId,
+                viewportRect,
+                zoom,
+            );
+        }
+        scheduleExplicitCanvasSave();
+    }
 }
 
 function resolveEmbeddableResourceType(element: any): CanvasPreviewResourceType | null {
@@ -1408,19 +1623,19 @@ export default function ExcalidrawCanvas({
     onAddScreenshotToAI,
     onAddImageToAI,
     onAnnotationsChange,
-    onOpenCanvasInIDE,
     assistantProjectPath,
-    onOpenGenieWebAgent,
+    onOpenAcpWebAgent,
     aiPanelMode,
     onOpenImageAiPanel,
     onCloseAiPanel,
     onCloseWebAgentPanel,
     onOpenAISettings,
     preferredPromptClient,
-    prototypes,
     themes,
+    projectResourceTrees,
+    projectResourceItems,
     defaultThemeName,
-    onRefreshPrototypes,
+    agentRunConcurrency,
     onSubmitCanvasAssistantPrompt,
 }: ExcalidrawCanvasProps) {
     const desktopUiMode = toExcalidrawDesktopUiMode(propertyPanelMode);
@@ -1432,8 +1647,9 @@ export default function ExcalidrawCanvas({
     const [error, setError] = useState<string>('');
     const [canvasBackgroundDraft, setCanvasBackgroundDraft] = useState('#ffffff');
     const [isCanvasSceneEmpty, setIsCanvasSceneEmpty] = useState(true);
-    const [welcomeOverlayVisible, setWelcomeOverlayVisible] = useState(false);
     const [saveStatus, setSaveStatus] = useState<SaveSyncStatus>('saved');
+    const [projectResourceDialogOpen, setProjectResourceDialogOpen] = useState(false);
+    const [projectResourceSelectedKeys, setProjectResourceSelectedKeys] = useState<Set<string>>(() => new Set());
     const localSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const serverSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const idleSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1450,11 +1666,24 @@ export default function ExcalidrawCanvas({
     const applyingRemoteCanvasReloadRef = useRef(false);
     const remoteReloadIgnoreUntilRef = useRef(0);
     const remoteCanvasFileAliasesRef = useRef<Record<string, RemoteCanvasFileAlias>>({});
+    const annotationDirectRunControllerRef = useRef<CanvasDirectRunController | null>(null);
+    const annotationDirectRunControllerMaxRef = useRef(0);
+    const annotationActiveStatusTaskRunsRef = useRef(new Map<string, { abort: () => Promise<boolean> }>());
+    const canvasDirectRunOverlayStopHandlersRef = useRef(new Map<string, () => void>());
+    const canvasDirectRunOverlayTaskOffsetRef = useRef(0);
+    const canvasDirectRunKnownRunningTaskIdsRef = useRef(new Set<string>());
+    const canvasDirectRunControlledRemovalIdsRef = useRef(new Set<string>());
+    const canvasDirectRunRecoveryAppliedKeyRef = useRef('');
     const canvasContainerRef = useRef<HTMLDivElement>(null);
     const previousDesktopUiModeRef = useRef(desktopUiMode);
     const aiOpenTargetPath = canvasFilePath || canvasName;
     const imageAiActive = aiPanelMode === 'image-ai';
     const generalAiActive = aiPanelMode === 'general-ai';
+    const handleProjectResourceClick = useCallback(() => setProjectResourceDialogOpen(true), []);
+    useEffect(() => () => {
+        void annotationDirectRunControllerRef.current?.abortAll();
+        annotationActiveStatusTaskRunsRef.current.clear();
+    }, []);
     const handleCloseCanvasAiPanel = useCallback(() => {
         onCloseAiPanel?.();
         if (!onCloseAiPanel) {
@@ -1473,8 +1702,8 @@ export default function ExcalidrawCanvas({
             handleCloseCanvasAiPanel();
             return;
         }
-        onOpenGenieWebAgent?.(aiOpenTargetPath);
-    }, [aiOpenTargetPath, generalAiActive, handleCloseCanvasAiPanel, onOpenGenieWebAgent]);
+        onOpenAcpWebAgent?.(aiOpenTargetPath);
+    }, [aiOpenTargetPath, generalAiActive, handleCloseCanvasAiPanel, onOpenAcpWebAgent]);
 
     // View state saver — persists zoom/scroll to localStorage with its own debounce
     const viewStateSaverRef = useRef(createViewStateSaver(() => currentNameRef.current));
@@ -1504,7 +1733,7 @@ export default function ExcalidrawCanvas({
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
         socket.send(JSON.stringify({
             type: 'canvas.status',
-            canvas: getCanvasBridgeCanvasName(currentNameRef.current),
+            canvas: getCanvasBridgeCanvasName(currentNameRef.current, canvasFilePath),
             canvasFilePath: canvasFilePath || undefined,
             dirty,
         }));
@@ -1516,7 +1745,7 @@ export default function ExcalidrawCanvas({
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
         socket.send(JSON.stringify({
             type: 'canvas.register',
-            canvas: getCanvasBridgeCanvasName(currentNameRef.current),
+            canvas: getCanvasBridgeCanvasName(currentNameRef.current, canvasFilePath),
             canvasFilePath: canvasFilePath || undefined,
             dirty,
         }));
@@ -1525,19 +1754,11 @@ export default function ExcalidrawCanvas({
     useEffect(() => {
         if (!excalidrawAPI) return;
         setCanvasBackgroundDraft(excalidrawAPI.getAppState().viewBackgroundColor || '#ffffff');
-        setWelcomeOverlayVisible(
-            isCanvasWelcomeSceneEmpty(excalidrawAPI)
-            && isCanvasWelcomeOverlayVisible(excalidrawAPI.getAppState()),
-        );
         const unsubscribeViewBackground = excalidrawAPI.onStateChange('viewBackgroundColor', (nextColor) => {
             setCanvasBackgroundDraft(nextColor || '#ffffff');
         });
-        const unsubscribeWelcomeScreen = excalidrawAPI.onStateChange(selectCanvasWelcomeOverlayVisible, (nextValue) => {
-            setWelcomeOverlayVisible(Boolean(nextValue) && isCanvasWelcomeSceneEmpty(excalidrawAPI));
-        });
         return () => {
             unsubscribeViewBackground?.();
-            unsubscribeWelcomeScreen?.();
         };
     }, [excalidrawAPI]);
 
@@ -1675,6 +1896,7 @@ export default function ExcalidrawCanvas({
                 document.dispatchEvent(new CustomEvent('axhub:openAnnotationPopover'));
             },
             onDrawioToolClick: () => document.dispatchEvent(new CustomEvent(DRAWIO_INSERT_EVENT_NAME)),
+            onProjectResourceClick: handleProjectResourceClick,
             hasAnnotation: () => {
                 const appState = excalidrawAPI.getAppState();
                 const selectedIds = Object.keys(appState?.selectedElementIds || {});
@@ -1700,7 +1922,7 @@ export default function ExcalidrawCanvas({
             enhancer.disconnect();
             cancelAnimationFrame(highlightRaf);
         };
-    }, [excalidrawAPI]);
+    }, [excalidrawAPI, handleProjectResourceClick]);
 
     useEffect(() => {
         if (!excalidrawAPI) return undefined;
@@ -1724,9 +1946,11 @@ export default function ExcalidrawCanvas({
         lastSavedContentRef.current = '';
         pendingLocalContentRef.current = null;
         queuedServerSaveRef.current = null;
+        canvasDirectRunKnownRunningTaskIdsRef.current = new Set();
+        canvasDirectRunControlledRemovalIdsRef.current = new Set();
+        canvasDirectRunRecoveryAppliedKeyRef.current = '';
         setSaveStatus('saved');
         setIsCanvasSceneEmpty(true);
-        setWelcomeOverlayVisible(false);
         setLoading(true);
         setError('');
         setInitialData(null);
@@ -1741,7 +1965,7 @@ export default function ExcalidrawCanvas({
         const loadCanvas = async () => {
             try {
                 logCanvasDebug('load:start', { canvasName });
-                const response = await fetch(buildCanvasApiUrl(canvasName, activeProjectId));
+                const response = await fetch(buildCanvasApiUrl(canvasName, activeProjectId, canvasFilePath));
                 if (cancelled) return;
                 if (!response.ok) {
                     throw new Error(`加载画布失败 (${response.status})`);
@@ -1775,7 +1999,9 @@ export default function ExcalidrawCanvas({
                 const mergedData = mergeViewStateIntoInitialData(finalData, viewState);
                 const welcomeReadyData = prepareWelcomeInitialData(mergedData);
                 const normalizedElements = Array.isArray(welcomeReadyData?.elements)
-                    ? normalizeEmbeddableLinkModeStroke(welcomeReadyData.elements)
+                    ? normalizeCanvasDirectRunAnnotationTaskElements(
+                        normalizeEmbeddableLinkModeStroke(welcomeReadyData.elements),
+                    )
                     : welcomeReadyData?.elements;
                 const normalizedData = normalizedElements === welcomeReadyData?.elements
                     ? welcomeReadyData
@@ -1806,7 +2032,7 @@ export default function ExcalidrawCanvas({
         return () => {
             cancelled = true;
         };
-    }, [activeProjectId, canvasName]);
+    }, [activeProjectId, canvasFilePath, canvasName]);
 
     useEffect(() => {
         if (excalidrawAPI && onCanvasAPIReady) {
@@ -1837,7 +2063,7 @@ export default function ExcalidrawCanvas({
     const reloadCanvasFromServer = useCallback(async () => {
         if (!excalidrawAPI) return;
 
-        const response = await fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId));
+        const response = await fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId, canvasFilePath));
         if (!response.ok) return;
         const data = await response.json();
         const remoteContent = normalizeCanvasDataForSaveBaseline(data);
@@ -1881,7 +2107,7 @@ export default function ExcalidrawCanvas({
         setCanvasBackgroundDraft(data?.appState?.viewBackgroundColor || '#ffffff');
         sendCanvasBridgeStatus(false);
         void markLocalCacheSynced(currentNameRef.current).catch(() => {});
-    }, [activeProjectId, excalidrawAPI]);
+    }, [activeProjectId, canvasFilePath, excalidrawAPI]);
 
     // ── Canvas Bridge WebSocket: enables canvas hot reload ──
     useEffect(() => {
@@ -2013,7 +2239,7 @@ export default function ExcalidrawCanvas({
                 canvasName: currentNameRef.current,
                 elements: elements.length,
             });
-            const response = await fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId), {
+            const response = await fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId, canvasFilePath), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2049,7 +2275,7 @@ export default function ExcalidrawCanvas({
                 void saveToServer(queuedSnapshot.elements, queuedSnapshot.appState);
             }
         }
-    }, [activeProjectId, buildSavePayload]);
+    }, [activeProjectId, buildSavePayload, canvasFilePath]);
 
     const handleRefreshCanvasFromServer = useCallback(async () => {
         if (!excalidrawAPI) return;
@@ -2105,6 +2331,241 @@ export default function ExcalidrawCanvas({
         }, IDLE_SAVE_DELAY_MS);
     }, [excalidrawAPI, saveLocally, scheduleServerSave, saveToServer]);
 
+    const updateCanvasDirectRunAnnotationTask = useCallback((
+        statusTaskId: string,
+        update: CanvasDirectRunAnnotationTaskUpdate,
+    ) => {
+        if (!excalidrawAPI) return false;
+        let changed = false;
+        const elements = excalidrawAPI.getSceneElements();
+        const nextElements = elements.map((element: any) => {
+            const taskRef = getCanvasDirectRunAnnotationTaskRef(element);
+            if (!taskRef || taskRef.statusTaskId !== statusTaskId || element.isDeleted) return element;
+            changed = true;
+            return updateCanvasDirectRunAnnotationTaskElement(element, update);
+        });
+        if (!changed) return false;
+        const appState = excalidrawAPI.getAppState();
+        excalidrawAPI.updateScene({
+            elements: nextElements as any,
+            captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        } as any);
+        scheduleExplicitCanvasSave({ elements: nextElements, appState });
+        return true;
+    }, [excalidrawAPI, scheduleExplicitCanvasSave]);
+
+    const normalizeCanvasDirectRunAnnotationTaskScene = useCallback(() => {
+        if (!excalidrawAPI) return false;
+        const elements = excalidrawAPI.getSceneElements();
+        const nextElements = normalizeCanvasDirectRunAnnotationTaskElements(elements);
+        if (nextElements === elements) return false;
+        const appState = excalidrawAPI.getAppState();
+        excalidrawAPI.updateScene({
+            elements: nextElements as any,
+            captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        } as any);
+        scheduleExplicitCanvasSave({ elements: nextElements, appState });
+        return true;
+    }, [excalidrawAPI, scheduleExplicitCanvasSave]);
+
+    useEffect(() => {
+        if (!excalidrawAPI || !hasLoadedRef.current) return;
+        normalizeCanvasDirectRunAnnotationTaskScene();
+    }, [canvasFilePath, canvasName, excalidrawAPI, normalizeCanvasDirectRunAnnotationTaskScene]);
+
+    const removeCanvasDirectRunOverlayTask = useCallback((statusTaskId: string) => {
+        if (!excalidrawAPI) return false;
+        let changed = false;
+        const nextElements = excalidrawAPI.getSceneElements().map((element: any) => {
+            const taskRef = getCanvasDirectRunAnnotationTaskRef(element);
+            if (!taskRef || taskRef.statusTaskId !== statusTaskId || element.isDeleted) return element;
+            changed = true;
+            return {
+                ...element,
+                isDeleted: true,
+                version: (element.version || 0) + 1,
+                versionNonce: Math.floor(Math.random() * 2147483647),
+                updated: Date.now(),
+            };
+        });
+        if (!changed) return false;
+        canvasDirectRunControlledRemovalIdsRef.current.add(statusTaskId);
+        canvasDirectRunOverlayStopHandlersRef.current.delete(statusTaskId);
+        const appState = excalidrawAPI.getAppState();
+        excalidrawAPI.updateScene({
+            elements: nextElements as any,
+            captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        } as any);
+        scheduleExplicitCanvasSave({ elements: nextElements, appState });
+        return true;
+    }, [excalidrawAPI, scheduleExplicitCanvasSave]);
+
+    const markCanvasDirectRunOverlayTaskFailed = useCallback((statusTaskId: string, error: string) => {
+        canvasDirectRunOverlayStopHandlersRef.current.delete(statusTaskId);
+        return updateCanvasDirectRunAnnotationTask(statusTaskId, {
+            status: 'failed',
+            error: String(error || 'AI 执行失败'),
+        });
+    }, [updateCanvasDirectRunAnnotationTask]);
+
+    const canvasDirectRunOverlayController = useMemo(() => ({
+        createStatusTask({ prompt, scene, details }) {
+            if (!excalidrawAPI) return null;
+            const appState = excalidrawAPI.getAppState();
+            const zoom = Math.max(0.01, Number(appState.zoom?.value || 1) || 1);
+            const width = Number(appState.width || canvasContainerRef.current?.clientWidth || 900);
+            const height = Number(appState.height || canvasContainerRef.current?.clientHeight || 600);
+            const taskWidth = CANVAS_DIRECT_RUN_OVERLAY_CARD_WIDTH / zoom;
+            const taskHeight = CANVAS_DIRECT_RUN_OVERLAY_CARD_HEIGHT / zoom;
+            const offsetIndex = canvasDirectRunOverlayTaskOffsetRef.current % 6;
+            canvasDirectRunOverlayTaskOffsetRef.current += 1;
+            const sceneElements = excalidrawAPI.getSceneElements();
+            const preferredX = (Number(appState.scrollX || 0) * -1) + (width / 2 / zoom) - (taskWidth / 2) + (offsetIndex * 12 / zoom);
+            const preferredY = (Number(appState.scrollY || 0) * -1) + (height / 2 / zoom) - (taskHeight / 2) + (offsetIndex * 12 / zoom);
+            const position = resolveCanvasDirectRunOverlayPosition({
+                elements: sceneElements,
+                preferredX,
+                preferredY,
+                width: taskWidth,
+                height: taskHeight,
+                gap: 32 / zoom,
+            });
+            const taskElement = createCanvasDirectRunAnnotationTaskElement({
+                id: createCanvasDirectRunOverlayTaskId(),
+                prompt,
+                scene,
+                x: position.x,
+                y: position.y,
+                width: taskWidth,
+                height: taskHeight,
+                details,
+            });
+            const nextElements = [...sceneElements, taskElement];
+            excalidrawAPI.updateScene({
+                elements: nextElements as any,
+                captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+            } as any);
+            scheduleExplicitCanvasSave({ elements: nextElements, appState });
+            canvasDirectRunKnownRunningTaskIdsRef.current.add(taskElement.id);
+            const focusZoom = Math.max(0.01, Number(excalidrawAPI.getAppState()?.zoom?.value || zoom) || zoom);
+            excalidrawAPI.scrollToContent([taskElement] as any, {
+                fitToContent: true,
+                animate: true,
+                minZoom: focusZoom,
+                maxZoom: focusZoom,
+            } as any);
+            return { id: taskElement.id, x: taskElement.x, y: taskElement.y, width: taskElement.width, height: taskElement.height };
+        },
+        updateStatusTaskRef(statusTaskId, update) {
+            return updateCanvasDirectRunAnnotationTask(statusTaskId, update);
+        },
+        markStatusTaskFailed(statusTaskId, error) {
+            return markCanvasDirectRunOverlayTaskFailed(statusTaskId, error);
+        },
+        removeStatusTask(statusTaskId) {
+            return removeCanvasDirectRunOverlayTask(statusTaskId);
+        },
+        hasStatusTask(statusTaskId) {
+            if (!excalidrawAPI) return false;
+            return excalidrawAPI.getSceneElements().some((element: any) => {
+                const taskRef = getCanvasDirectRunAnnotationTaskRef(element);
+                return !element.isDeleted && taskRef?.statusTaskId === statusTaskId;
+            });
+        },
+        registerStatusTaskStopped(statusTaskId, handler) {
+            canvasDirectRunOverlayStopHandlersRef.current.set(statusTaskId, handler);
+            return () => {
+                if (canvasDirectRunOverlayStopHandlersRef.current.get(statusTaskId) === handler) {
+                    canvasDirectRunOverlayStopHandlersRef.current.delete(statusTaskId);
+                }
+            };
+        },
+    } satisfies CanvasDirectRunOverlayController), [
+        excalidrawAPI,
+        scheduleExplicitCanvasSave,
+        markCanvasDirectRunOverlayTaskFailed,
+        removeCanvasDirectRunOverlayTask,
+        updateCanvasDirectRunAnnotationTask,
+    ]);
+
+    const handleStopCanvasDirectRunOverlayTask = useCallback((taskId: string) => {
+        const handler = canvasDirectRunOverlayStopHandlersRef.current.get(taskId);
+        if (handler) {
+            handler();
+            return;
+        }
+        updateCanvasDirectRunAnnotationTask(taskId, { status: 'aborted' });
+    }, [updateCanvasDirectRunAnnotationTask]);
+
+    const markUnownedCanvasDirectRunAnnotationTasksAborted = useCallback(() => {
+        if (!excalidrawAPI) return;
+        let changed = false;
+        const nextRunningTaskIds = new Set<string>();
+        const updatedAt = new Date().toISOString();
+        const nextElements = excalidrawAPI.getSceneElements().map((element: any) => {
+            const normalizedElement = normalizeCanvasDirectRunAnnotationTaskElement(element);
+            const taskRef = getCanvasDirectRunAnnotationTaskRef(normalizedElement);
+            if (normalizedElement !== element) changed = true;
+            if (!taskRef || normalizedElement?.isDeleted || taskRef.status !== 'running') return normalizedElement;
+            if (canvasDirectRunOverlayStopHandlersRef.current.has(taskRef.statusTaskId)) {
+                nextRunningTaskIds.add(taskRef.statusTaskId);
+                return normalizedElement;
+            }
+            changed = true;
+            return updateCanvasDirectRunAnnotationTaskElement(normalizedElement, {
+                status: 'aborted',
+                updatedAt,
+            });
+        });
+        canvasDirectRunKnownRunningTaskIdsRef.current = nextRunningTaskIds;
+        if (!changed) return;
+        const appState = excalidrawAPI.getAppState();
+        excalidrawAPI.updateScene({
+            elements: nextElements as any,
+            captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        } as any);
+        scheduleExplicitCanvasSave({ elements: nextElements, appState });
+    }, [excalidrawAPI, scheduleExplicitCanvasSave]);
+
+    useEffect(() => {
+        if (!excalidrawAPI || !hasLoadedRef.current) return;
+        const recoveryKey = `${canvasName}\n${canvasFilePath || ''}`;
+        if (canvasDirectRunRecoveryAppliedKeyRef.current === recoveryKey) return;
+        canvasDirectRunRecoveryAppliedKeyRef.current = recoveryKey;
+        normalizeCanvasDirectRunAnnotationTaskScene();
+        markUnownedCanvasDirectRunAnnotationTasksAborted();
+    }, [
+        canvasFilePath,
+        canvasName,
+        excalidrawAPI,
+        markUnownedCanvasDirectRunAnnotationTasksAborted,
+        normalizeCanvasDirectRunAnnotationTaskScene,
+    ]);
+
+    const handleApplyProjectResources = useCallback((
+        keys: Set<string>,
+        _contextItems: unknown[],
+        itemSelections?: CanvasProjectResourceItemSelection[],
+    ) => {
+        setProjectResourceSelectedKeys(new Set(keys));
+        if (!excalidrawAPI) return;
+        const selections = itemSelections ?? buildCanvasProjectResourceItemSelections({
+            trees: projectResourceTrees || {},
+            items: projectResourceItems || {},
+            selectedKeys: keys,
+        });
+        void insertCanvasResourceSelections({
+            excalidrawAPI,
+            selections,
+            canvasPrototypeId: getPrototypeIdFromCanvasName(currentNameRef.current),
+            viewportRect: canvasContainerRef.current?.getBoundingClientRect(),
+            scheduleExplicitCanvasSave: () => scheduleExplicitCanvasSave(),
+        }).catch((error) => {
+            console.warn('[Axhub Canvas] 添加项目资源到画布失败:', error);
+            toast.error('添加资源到画布失败');
+        });
+    }, [excalidrawAPI, projectResourceItems, projectResourceTrees, scheduleExplicitCanvasSave]);
+
     const executeCanvasBridgeCommand = useCallback(async (command: CanvasCommandName, payload: any = {}) => {
         if (!excalidrawAPI) {
             throw new Error('Canvas API is not ready.');
@@ -2116,7 +2577,7 @@ export default function ExcalidrawCanvas({
         switch (command) {
             case 'canvas_get_state':
                 return {
-                    canvasName: getCanvasBridgeCanvasName(currentNameRef.current),
+                    canvasName: getCanvasBridgeCanvasName(currentNameRef.current, canvasFilePath),
                     canvasFilePath: canvasFilePath || null,
                     viewport: {
                         scrollX: appState.scrollX,
@@ -2168,9 +2629,9 @@ export default function ExcalidrawCanvas({
                 };
             }
             case 'canvas_insert_elements': {
-                const incomingElements = Array.isArray(payload?.elements) ? payload.elements : [];
+                const incomingElements = Array.isArray(payload?.elements) ? payload.elements as any[] : [];
                 const position = resolveCanvasCommandInsertPosition(excalidrawAPI, payload, elements);
-                const insertedElements = incomingElements.map((element, index) => createCanvasCommandElement(element, index, position));
+                const insertedElements = incomingElements.map((element: any, index: number) => createCanvasCommandElement(element, index, position));
                 if (payload?.files && typeof payload.files === 'object' && typeof excalidrawAPI.addFiles === 'function') {
                     excalidrawAPI.addFiles(Object.values(payload.files as Record<string, unknown>) as any);
                 }
@@ -2178,13 +2639,13 @@ export default function ExcalidrawCanvas({
                 excalidrawAPI.updateScene({
                     elements: nextElements as any,
                     appState: {
-                        selectedElementIds: Object.fromEntries(insertedElements.map((element) => [element.id, true])),
+                        selectedElementIds: Object.fromEntries(insertedElements.map((element: any) => [element.id, true])),
                     },
                     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
                 } as any);
                 scheduleExplicitCanvasSave({ elements: nextElements, appState: excalidrawAPI.getAppState() });
                 return {
-                    insertedElementIds: insertedElements.map((element) => element.id),
+                    insertedElementIds: insertedElements.map((element: any) => element.id),
                 };
             }
             case 'canvas_insert_mermaid': {
@@ -2249,7 +2710,7 @@ export default function ExcalidrawCanvas({
                             version: Number(element.version || 0) + 1,
                             versionNonce: Math.floor(Math.random() * 2147483647),
                             updated: Date.now(),
-                        }
+                    }
                         : element
                 ));
                 excalidrawAPI.updateScene({
@@ -2339,48 +2800,24 @@ export default function ExcalidrawCanvas({
         };
     }, [handleCanvasBridgeCommandRequest]);
 
-    const handleCanvasImageArtifactEvent = useCallback((event: CanvasImageArtifactEvent) => {
-        if (!excalidrawAPI) return;
-        const appState = excalidrawAPI.getAppState();
-        const update = resolveCanvasImageArtifactUpdate({
-            elements: excalidrawAPI.getSceneElements(),
-            appState,
-            event,
-        });
-        if (!update.files.length && !Object.keys(update.selectedElementIds).length) return;
-        excalidrawAPI.addFiles(update.files);
-        excalidrawAPI.updateScene({
-            elements: update.elements,
-            appState: {
-                selectedElementIds: update.selectedElementIds,
-                selectedGroupIds: {},
-            },
-        });
-        if (update.usedFallbackPlacement && update.needsScroll && update.scrollTargetId) {
-            const currentZoom = appState.zoom?.value || 1;
-            requestAnimationFrame(() => {
-                excalidrawAPI.scrollToContent(update.scrollTargetId, {
-                    fitToContent: true,
-                    animate: true,
-                    minZoom: currentZoom,
-                    maxZoom: currentZoom,
-                });
-            });
-        }
-        scheduleExplicitCanvasSave();
-    }, [excalidrawAPI, scheduleExplicitCanvasSave]);
-
     const handleSubmitCanvasAssistantPromptWithArtifacts = useCallback(async (request: CanvasAiGenerationRequest) => {
         const result = await onSubmitCanvasAssistantPrompt?.(request);
+        if (typeof result === 'undefined') {
+            return { ok: false };
+        }
         const artifacts = typeof result === 'object' && result !== null && Array.isArray(result.artifacts)
             ? result.artifacts
             : [];
         if (artifacts.length > 0 && excalidrawAPI) {
+            if (request.statusTaskId) {
+                canvasDirectRunControlledRemovalIdsRef.current.add(request.statusTaskId);
+            }
             const appState = excalidrawAPI.getAppState();
             const update = applyGenerationArtifactsToCanvasElements({
                 elements: excalidrawAPI.getSceneElements(),
                 appState,
                 artifacts,
+                replaceElementId: request.statusTaskId,
             });
             if (update.files?.length) {
                 excalidrawAPI.addFiles(update.files);
@@ -2404,6 +2841,181 @@ export default function ExcalidrawCanvas({
         excalidrawAPI,
         onSubmitCanvasAssistantPrompt,
         scheduleExplicitCanvasSave,
+    ]);
+
+    const maxAnnotationDirectRuns = useMemo(() => getAnnotationDirectRunConcurrency(agentRunConcurrency), [agentRunConcurrency]);
+
+    const getAnnotationDirectRunController = useCallback(() => {
+        const existingController = annotationDirectRunControllerRef.current;
+        if (
+            existingController
+            && existingController.getActiveRunCount() > 0
+        ) {
+            return existingController;
+        }
+        if (
+            !existingController
+            || annotationDirectRunControllerMaxRef.current !== maxAnnotationDirectRuns
+        ) {
+            annotationDirectRunControllerRef.current = createCanvasDirectRunController({
+                maxActiveRuns: maxAnnotationDirectRuns,
+                submit: ({ request, signal, onPrepared, onAccepted }) => Promise.resolve(
+                    handleSubmitCanvasAssistantPromptWithArtifacts({
+                        ...request,
+                        signal,
+                        onPrepared,
+                        onAccepted,
+                    }),
+                ),
+                onEvent: (event) => {
+                    const statusTaskId = String(event.request.statusTaskId || '').trim();
+                    if (!statusTaskId || event.type === 'settled' || event.type === 'completed') return;
+                    if (event.type === 'error') {
+                        canvasDirectRunOverlayController.markStatusTaskFailed(
+                            statusTaskId,
+                            getAnnotationDirectTaskError(event.error),
+                        );
+                        return;
+                    }
+                    canvasDirectRunOverlayController.updateStatusTaskRef(statusTaskId, {
+                        status: event.type === 'aborted' ? 'aborted' : 'running',
+                        provider: event.taskRef.provider,
+                        runId: event.taskRef.requestId,
+                        threadId: event.taskRef.sessionId,
+                        conversationId: event.taskRef.sessionId,
+                    });
+                },
+            });
+            annotationDirectRunControllerMaxRef.current = maxAnnotationDirectRuns;
+        }
+        return annotationDirectRunControllerRef.current;
+    }, [
+        canvasDirectRunOverlayController,
+        handleSubmitCanvasAssistantPromptWithArtifacts,
+        maxAnnotationDirectRuns,
+    ]);
+
+    const handleExecuteAnnotationPrompt = useCallback(async (element: CanvasElementContextInfo, promptText: string) => {
+        const trimmedPrompt = String(promptText || '').trim();
+        if (!trimmedPrompt) return false;
+        if (!onSubmitCanvasAssistantPrompt) {
+            toast.error('AI 助手未就绪');
+            return false;
+        }
+        const scene: CanvasAiScene = 'page';
+        const sceneSettings = {};
+        const canvasPromptPath = canvasFilePath || canvasName;
+        const statusTask = canvasDirectRunOverlayController.createStatusTask({
+            prompt: trimmedPrompt,
+            scene,
+            details: {
+                prompt: trimmedPrompt,
+                context: [
+                    ...(canvasPromptPath ? [`画布: ${canvasPromptPath}`] : []),
+                    `批注节点: ${element.elementId}`,
+                    ...(element.displayName || element.title ? [`元素: ${element.displayName || element.title}`] : []),
+                    ...(element.resourceType ? [`资源类型: ${element.resourceType}`] : []),
+                    ...(element.resourceId ? [`资源 ID: ${element.resourceId}`] : []),
+                    ...(element.filePath ? [`文件: ${element.filePath}`] : []),
+                    ...(element.link ? [`链接: ${element.link}`] : []),
+                ],
+                config: [
+                    '类型: 原型页面',
+                    '来源: 批注执行',
+                ],
+            },
+        });
+        if (!statusTask) {
+            toast.error('无法创建画布执行状态');
+            return false;
+        }
+
+        const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(
+            trimmedPrompt,
+            getCanvasAiPrototypeStartSystemPrompt(scene),
+        );
+        const request: CanvasAiGenerationRequest = {
+            scene,
+            prompt: appendCanvasGenerationPromptSettings({
+                scene,
+                prompt: promptWithStartSystemPrompt,
+                settings: sceneSettings,
+                canvasContext: {
+                    canvasFilePath: canvasPromptPath,
+                    canvasName: canvasPromptPath,
+                    generatorElementId: element.elementId,
+                    statusTaskBounds: {
+                        x: statusTask.x,
+                        y: statusTask.y,
+                        width: statusTask.width,
+                        height: statusTask.height,
+                    },
+                    statusTaskId: statusTask.id,
+                    source: 'annotation-prompt-card',
+                },
+            }),
+            source: 'canvas-start',
+            sceneSettings,
+            canvasFilePath: canvasPromptPath,
+            statusTaskId: statusTask.id,
+        };
+        const controller = getAnnotationDirectRunController();
+        const startResult = controller.start(request);
+        if (!startResult.started) {
+            canvasDirectRunOverlayController.removeStatusTask(statusTask.id);
+            if (startResult.reason === 'concurrency') {
+                toast.warning(`已有 ${startResult.activeRunCount} 个画布 AI 任务进行中，请稍后再试`);
+            } else {
+                toast.error('AI 助手未提交提示词');
+            }
+            return false;
+        }
+
+        annotationActiveStatusTaskRunsRef.current.set(statusTask.id, {
+            abort: startResult.abort,
+        });
+        let unregisterStatusTaskStopped = () => {};
+        unregisterStatusTaskStopped = canvasDirectRunOverlayController.registerStatusTaskStopped(statusTask.id, () => {
+            const activeRun = annotationActiveStatusTaskRunsRef.current.get(statusTask.id);
+            if (!activeRun) return;
+            annotationActiveStatusTaskRunsRef.current.delete(statusTask.id);
+            unregisterStatusTaskStopped();
+            void activeRun.abort();
+            if (canvasDirectRunOverlayController.hasStatusTask(statusTask.id)) {
+                canvasDirectRunOverlayController.updateStatusTaskRef(statusTask.id, { status: 'aborted' });
+            }
+        });
+        const cleanupStatusRun = () => {
+            annotationActiveStatusTaskRunsRef.current.delete(statusTask.id);
+            unregisterStatusTaskStopped();
+        };
+        void startResult.promise.then((result) => {
+            if (result.aborted) {
+                cleanupStatusRun();
+                if (canvasDirectRunOverlayController.hasStatusTask(statusTask.id)) {
+                    canvasDirectRunOverlayController.updateStatusTaskRef(statusTask.id, { status: 'aborted' });
+                }
+                return;
+            }
+            if (result.ok) {
+                cleanupStatusRun();
+                canvasDirectRunOverlayController.removeStatusTask(statusTask.id);
+                return;
+            }
+            const errorMessage = getAnnotationDirectTaskError(result.error);
+            cleanupStatusRun();
+            if (canvasDirectRunOverlayController.hasStatusTask(statusTask.id)) {
+                canvasDirectRunOverlayController.markStatusTaskFailed(statusTask.id, errorMessage);
+            }
+            toast.error(errorMessage);
+        });
+        return statusTask.id;
+    }, [
+        canvasDirectRunOverlayController,
+        canvasFilePath,
+        canvasName,
+        getAnnotationDirectRunController,
+        onSubmitCanvasAssistantPrompt,
     ]);
 
     const handleAddSelectedScreenshotToAI = useCallback(async (elements: CanvasElementContextInfo[]) => {
@@ -2511,28 +3123,28 @@ export default function ExcalidrawCanvas({
         }
     }, [excalidrawAPI, scheduleExplicitCanvasSave]);
 
-    // ── Flush: immediately save to server (used by idle + beforeunload) ──
-    const flushToServer = useCallback(() => {
-        if (!excalidrawAPI || !hasLoadedRef.current) return;
-        // Cancel pending timers
-        if (localSaveTimerRef.current) { clearTimeout(localSaveTimerRef.current); localSaveTimerRef.current = null; }
-        if (serverSaveTimerRef.current) { clearTimeout(serverSaveTimerRef.current); serverSaveTimerRef.current = null; }
-        if (idleSaveTimerRef.current) { clearTimeout(idleSaveTimerRef.current); idleSaveTimerRef.current = null; }
-
-        const elements = excalidrawAPI.getSceneElements();
-        const appState = excalidrawAPI.getAppState();
-        void saveToServer(elements, appState);
-        viewStateSaverRef.current.flush();
-    }, [excalidrawAPI, saveToServer]);
+    const handleCanvasDirectRunAnnotationTaskDeletion = useCallback((elements: readonly any[]) => {
+        const nextRunningTaskIds = new Set<string>();
+        for (const element of elements) {
+            const taskRef = getCanvasDirectRunAnnotationTaskRef(element);
+            if (!taskRef || element?.isDeleted || taskRef.status !== 'running') continue;
+            nextRunningTaskIds.add(taskRef.statusTaskId);
+        }
+        for (const statusTaskId of canvasDirectRunKnownRunningTaskIdsRef.current) {
+            if (nextRunningTaskIds.has(statusTaskId)) continue;
+            if (canvasDirectRunControlledRemovalIdsRef.current.delete(statusTaskId)) continue;
+            const handler = canvasDirectRunOverlayStopHandlersRef.current.get(statusTaskId);
+            handler?.();
+        }
+        canvasDirectRunKnownRunningTaskIdsRef.current = nextRunningTaskIds;
+    }, []);
 
     const handleChange = useCallback((elements: readonly any[], appState: any) => {
         if (!hasLoadedRef.current) return;
         const sceneEmpty = isSceneEmpty(elements);
         setIsCanvasSceneEmpty(sceneEmpty);
-        if (excalidrawAPI) {
-            setWelcomeOverlayVisible(sceneEmpty && isCanvasWelcomeSceneEmpty(excalidrawAPI) && isCanvasWelcomeOverlayVisible(appState));
-        }
         syncPropertyPanelMode(appState);
+        handleCanvasDirectRunAnnotationTaskDeletion(elements);
 
         logCanvasDebug('change', {
             canvasName: currentNameRef.current,
@@ -2593,7 +3205,7 @@ export default function ExcalidrawCanvas({
         idleSaveTimerRef.current = setTimeout(() => {
             void saveToServer(correctedElements, appState);
         }, IDLE_SAVE_DELAY_MS);
-    }, [buildSavePayload, saveLocally, saveToServer, scheduleServerSave, excalidrawAPI, syncPropertyPanelMode]);
+    }, [buildSavePayload, saveLocally, saveToServer, scheduleServerSave, excalidrawAPI, syncPropertyPanelMode, handleCanvasDirectRunAnnotationTaskDeletion]);
 
     // ── Cleanup timers on unmount ──
     useEffect(() => {
@@ -2630,7 +3242,7 @@ export default function ExcalidrawCanvas({
                 content,
                 canvasBridgeClientId: bridgeClientIdRef.current,
             });
-            const url = buildCanvasApiUrl(currentNameRef.current, activeProjectId);
+            const url = buildCanvasApiUrl(currentNameRef.current, activeProjectId, canvasFilePath);
             // sendBeacon is fire-and-forget, works reliably during unload
             if (navigator.sendBeacon) {
                 navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
@@ -2638,7 +3250,7 @@ export default function ExcalidrawCanvas({
         };
         window.addEventListener('beforeunload', handleBeforeUnload);
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-    }, [activeProjectId, excalidrawAPI]);
+    }, [activeProjectId, canvasFilePath, excalidrawAPI]);
 
     // ── Search menu translation ──
     useEffect(() => {
@@ -2806,43 +3418,6 @@ export default function ExcalidrawCanvas({
         }
     }, []);
 
-    // ---------- "Add to Canvas" from sidebar menu ----------
-    // Listen for the custom 'axhub:addToCanvas' window event dispatched
-    // from the sidebar's "..." menu. Creates an embeddable at the center
-    // of the current viewport.
-    useEffect(() => {
-        const handler = (e: Event) => {
-            const detail = (e as CustomEvent).detail;
-            if (!detail || !excalidrawAPI) return;
-
-            // Place the new element at the center of the current viewport
-            const appState = excalidrawAPI.getAppState();
-            const defaultSize = getDefaultEmbedSize(detail);
-            const centerX = appState.scrollX * -1 + appState.width / 2 / appState.zoom.value - defaultSize.width / 2;
-            const centerY = appState.scrollY * -1 + appState.height / 2 / appState.zoom.value - defaultSize.height / 2;
-
-            createEmbeddableFromDrop(
-                excalidrawAPI,
-                detail,
-                centerX,
-                centerY,
-                getPrototypeIdFromCanvasName(currentNameRef.current),
-                canvasContainerRef.current?.getBoundingClientRect(),
-                appState.zoom?.value,
-            );
-            scheduleExplicitCanvasSave();
-            logCanvasDebug('embeddable:add', {
-                canvasName: currentNameRef.current,
-                type: detail.type,
-                name: detail.name,
-                previewUrl: detail.previewUrl,
-            });
-        };
-
-        window.addEventListener('axhub:addToCanvas', handler);
-        return () => window.removeEventListener('axhub:addToCanvas', handler);
-    }, [excalidrawAPI, scheduleExplicitCanvasSave]);
-
     useEffect(() => {
         const handler = (e: Event) => {
             const detail = (e as CustomEvent).detail;
@@ -2902,6 +3477,8 @@ export default function ExcalidrawCanvas({
                 try {
                     persistedScreenshot = await persistPrototypeScreenshot({
                         previewUrl: targetPreviewUrl,
+                        canvasFilePath: canvasFilePath || currentNameRef.current,
+                        canvasName: currentNameRef.current,
                         prototypeId: getPrototypeIdFromCanvasName(currentNameRef.current),
                         elementId: detail.elementId,
                         dataUrl: detail.dataUrl,
@@ -2985,58 +3562,6 @@ export default function ExcalidrawCanvas({
         return () => window.removeEventListener('axhub:embedScreenshotReady', handler);
     }, [excalidrawAPI, saveLocally, scheduleServerSave, saveToServer]);
 
-    // ── Drag-and-drop from sidebar into canvas ──
-    const handleCanvasDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-        if (e.dataTransfer.types.includes(CANVAS_DROP_MIME)) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
-        }
-    }, []);
-
-    const handleCanvasDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-        const raw = e.dataTransfer.getData(CANVAS_DROP_MIME);
-        if (!raw || !excalidrawAPI || !canvasContainerRef.current) return;
-
-        e.preventDefault();
-        e.stopPropagation();
-
-        let payload: any;
-        try {
-            payload = JSON.parse(raw);
-        } catch {
-            return;
-        }
-        const rect = canvasContainerRef.current.getBoundingClientRect();
-        const { x, y } = clientToCanvasCoords(excalidrawAPI, rect, e.clientX, e.clientY);
-
-        if (payload.previewKind === 'image') {
-            void createImageElementFromDrop(excalidrawAPI, payload, x, y).then(() => {
-                scheduleExplicitCanvasSave();
-            }).catch((error) => {
-                console.warn('[Axhub Canvas] 图片资源拖入画布失败:', error);
-            });
-            return;
-        }
-
-        createEmbeddableFromDrop(
-            excalidrawAPI,
-            payload,
-            x,
-            y,
-            getPrototypeIdFromCanvasName(currentNameRef.current),
-            rect,
-            excalidrawAPI.getAppState().zoom?.value,
-        );
-        scheduleExplicitCanvasSave();
-        logCanvasDebug('embeddable:drop', {
-            canvasName: currentNameRef.current,
-            type: payload.type,
-            name: payload.name,
-            x,
-            y,
-        });
-    }, [excalidrawAPI, scheduleExplicitCanvasSave]);
-
     if (loading) {
         return (
             <div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">
@@ -3061,9 +3586,16 @@ export default function ExcalidrawCanvas({
                 resolveExcalidrawCanvasClassName(propertyPanelMode, propertyPanelPosition),
             ].filter(Boolean).join(' ')}
             style={{ minHeight: 0, position: 'relative' }}
-            onDragOverCapture={handleCanvasDragOver}
-            onDropCapture={handleCanvasDrop}
         >
+            <CanvasProjectResourcePickerDialog
+                open={projectResourceDialogOpen}
+                onOpenChange={setProjectResourceDialogOpen}
+                trees={projectResourceTrees}
+                items={projectResourceItems}
+                selectedKeys={projectResourceSelectedKeys}
+                selectionMode="canvas-items"
+                onApply={handleApplyProjectResources}
+            />
             <Excalidraw
                 key={`${canvasName}:${excalidrawUiModeRevision}`}
                 langCode="zh-CN"
@@ -3135,10 +3667,6 @@ export default function ExcalidrawCanvas({
                     </Tooltip>
                 </div>
             </TooltipProvider>
-            <AxhubCanvasWelcomeOverlay
-                sceneEmpty={isCanvasSceneEmpty}
-                welcomeVisible={welcomeOverlayVisible}
-            />
             {excalidrawAPI && (
                 <>
                     <EmbedFloatingToolbar
@@ -3155,21 +3683,20 @@ export default function ExcalidrawCanvas({
                         onCopyImageToClipboard={handleCopySelectedImageToClipboard}
                         onMakeImageBackgroundTransparent={handleMakeImageBackgroundTransparent}
                         onAnnotationsChange={onAnnotationsChange}
+                        onExecuteAnnotationPrompt={handleExecuteAnnotationPrompt}
+                        onStopAnnotationTask={handleStopCanvasDirectRunOverlayTask}
                     />
                     <CanvasAiGenerationTool
                         excalidrawAPI={excalidrawAPI}
-                        containerRef={canvasContainerRef as React.RefObject<HTMLDivElement>}
                         canvasFilePath={canvasFilePath || canvasName}
                         assistantProjectPath={assistantProjectPath}
                         preferredPromptClient={preferredPromptClient}
-                        prototypes={prototypes}
                         themes={themes}
                         defaultThemeName={defaultThemeName}
-                        onImageArtifact={handleCanvasImageArtifactEvent}
-                        onRefreshPrototypes={onRefreshPrototypes}
+                        agentRunConcurrency={agentRunConcurrency}
                         onOpenAISettings={onOpenAISettings}
                         onSubmitCanvasAssistantPrompt={handleSubmitCanvasAssistantPromptWithArtifacts}
-                        onSceneMutated={scheduleExplicitCanvasSave}
+                        canvasDirectRunOverlayController={canvasDirectRunOverlayController}
                     />
                     <CanvasDrawioTool
                         excalidrawAPI={excalidrawAPI}

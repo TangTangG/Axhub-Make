@@ -5,6 +5,7 @@
 import { IDEAvailabilityMap, MainIDEPreference } from '../../common/ide';
 import type { AgentVersionInfo, CLIAgent, LocalAppAgent, RuntimeAgentAvailability, WebAgent } from '../../common/agent';
 import type { AcpProviderKey } from '../../common/acpModelConfig';
+import { formatLocalAppOpenFailureMessage } from '../../common/localAppOpenMessage';
 import { PromptClientPreference } from '../types';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../utils/excalidrawUiMode';
 import type { AssistantImageGenerationConfig } from '../domains/assistant/assistantAcpContext';
@@ -23,6 +24,7 @@ interface ConfigResponse {
         defaultIDE?: MainIDEPreference;
         annotationPromptClient?: PromptClientPreference;
         annotationModel?: string | null;
+        agentRunConcurrency?: number;
     };
     assistant?: {
         webBaseUrl?: string | null;
@@ -45,9 +47,27 @@ export interface AgentVersionsResponse {
     latestAgents?: Partial<Record<AcpProviderKey | CLIAgent, AgentVersionInfo>>;
 }
 
+export interface GetAgentVersionsOptions {
+    agent?: AcpProviderKey;
+}
+
 export interface MakeClientUpdateBlockedReason {
     code: string;
     message: string;
+}
+
+export interface MakeClientUpdateBackupRecord {
+    backupRoot: string;
+    backupZipPath: string;
+    manifestPath: string;
+    currentVersion: string;
+    targetVersion: string;
+    createdAt: string;
+    completedAt: string;
+    plannedFilesCount: number;
+    writtenFilesCount: number;
+    restoreAvailable: boolean;
+    zipAvailable: boolean;
 }
 
 export interface MakeClientUpdateStatus {
@@ -55,17 +75,13 @@ export interface MakeClientUpdateStatus {
     projectRoot: string;
     currentVersion: string;
     targetVersion: string;
+    releaseNotes?: string;
+    metadataSource: 'online' | 'bundled';
+    metadataError?: string;
     updateAvailable: boolean;
     canApply: boolean;
-    git: {
-        available: boolean;
-        isRepository: boolean;
-        hasCommits: boolean;
-        clean: boolean;
-        head?: string;
-        dirtyFiles: string[];
-        error?: string;
-    };
+    backupPolicy: 'zip-before-overwrite';
+    lastBackup: MakeClientUpdateBackupRecord | null;
     template: {
         version: string;
         sources: Array<{
@@ -78,19 +94,135 @@ export interface MakeClientUpdateStatus {
     blockedReasons: MakeClientUpdateBlockedReason[];
 }
 
+export interface MakeClientUpdatePostUpdateWarning {
+    error: string;
+    code: string;
+    phase?: string;
+    details?: Record<string, unknown>;
+}
+
 export interface MakeClientUpdateApplyResult {
     success: true;
     projectId: string;
     projectRoot: string;
     currentVersion: string;
     targetVersion: string;
-    preUpdateHead: string;
     backupRoot: string;
+    backupZipPath: string;
+    manifestPath: string;
+    backupRecord: MakeClientUpdateBackupRecord;
     plannedFiles: string[];
     writtenFiles: string[];
     templateUrl: string;
-    installMethod: 'npm' | 'skipped';
+    installMethod: 'npm' | 'pnpm' | 'skipped';
     metadataSynced: boolean;
+    postUpdateWarning?: MakeClientUpdatePostUpdateWarning;
+}
+
+export type GitWorkspacePromptScene =
+    | 'create-remote'
+    | 'auth-failed'
+    | 'branch-management'
+    | 'merge-required'
+    | 'conflict-required'
+    | 'push-rejected';
+
+export interface GitWorkspaceRemoteConfig {
+    url?: string;
+    defaultBranch?: string;
+}
+
+export interface GitWorkspaceChangeItem {
+    id: string;
+    name: string;
+    fileCount: number;
+}
+
+export interface GitWorkspaceChangeGroup {
+    key: 'prototypes' | 'resources' | 'themes' | 'skills' | 'rules' | 'other';
+    label: string;
+    fileCount: number;
+    items: GitWorkspaceChangeItem[];
+}
+
+export interface GitWorkspaceStatusResponse {
+    available: boolean;
+    gitAvailable?: boolean;
+    isGitRepo?: boolean;
+    hasCommits?: boolean;
+    code?: string;
+    errorCode?: string;
+    message?: string;
+    projectId?: string;
+    projectRoot?: string;
+    currentBranch?: string;
+    currentCommit?: {
+        hash: string;
+        shortHash: string;
+        message: string;
+        author: string;
+        email: string;
+        timestamp: number;
+        date: string;
+    } | null;
+    isHistoricalVersion?: boolean;
+    hasChanges?: boolean;
+    changedFilesCount?: number;
+    changeSummary: {
+        totalFiles: number;
+        groups: GitWorkspaceChangeGroup[];
+    };
+    remote?: GitWorkspaceRemoteConfig;
+    branchOverview?: {
+        localBranches: string[];
+        remoteBranches: string[];
+    };
+    remoteComparison?: {
+        available: boolean;
+        branch?: string;
+        targetRef?: string;
+        reason?: string;
+        incoming: {
+            totalFiles: number;
+            groups: GitWorkspaceChangeGroup[];
+        };
+        outgoing: {
+            totalFiles: number;
+            groups: GitWorkspaceChangeGroup[];
+        };
+    };
+}
+
+export interface GitWorkspaceActionResponse {
+    success: boolean;
+    projectId?: string;
+    currentBranch?: string;
+    remote?: GitWorkspaceRemoteConfig;
+    prompt?: string;
+    promptScene?: GitWorkspacePromptScene;
+    message?: string;
+    code?: string;
+    error?: string;
+    branchOverview?: {
+        localBranches: string[];
+        remoteBranches: string[];
+    };
+}
+
+interface SetGitWorkspaceRemoteRequest {
+    url: string;
+    defaultBranch?: string;
+}
+
+interface CreateGitWorkspaceRemoteRepositoryRequest {
+    url?: string;
+    repositoryName?: string;
+    visibility?: 'private' | 'public';
+}
+
+interface GetGitWorkspacePromptRequest {
+    scene: GitWorkspacePromptScene;
+    reason?: string;
 }
 
 interface SaveServerPreferencesRequest {
@@ -99,6 +231,7 @@ interface SaveServerPreferencesRequest {
         defaultIDE?: MainIDEPreference;
         annotationPromptClient?: PromptClientPreference;
         annotationModel?: string | null;
+        agentRunConcurrency?: number;
     };
     assistant?: {
         webBaseUrl?: string | null;
@@ -108,6 +241,20 @@ interface SaveServerPreferencesRequest {
         excalidrawPropertyPanelMode?: ExcalidrawPropertyPanelMode;
         excalidrawPropertyPanelPosition?: ExcalidrawPropertyPanelPosition;
     };
+}
+
+export interface LanAccessStatusResponse {
+    passwordSet: boolean;
+    sessionTtlMs: number;
+    shareTokenTtlMs: number;
+}
+
+export interface LanAccessShareUrlResponse {
+    success: boolean;
+    token: string;
+    url: string;
+    expiresAt: string;
+    ttlMs: number;
 }
 
 export type AssistantHealthStatus =
@@ -231,6 +378,91 @@ export interface ReviewResult {
     issues: ReviewIssue[];
 }
 
+export interface ReviewReportSummary {
+    id: string;
+    title: string;
+    reviewer: string;
+    createdAt: string;
+    score?: number;
+    source?: string;
+    path: string;
+}
+
+export interface ReviewReportDetail extends ReviewReportSummary {
+    markdown: string;
+}
+
+export interface ReviewReportListResponse {
+    projectId: string;
+    prototypeId: string;
+    reports: ReviewReportSummary[];
+}
+
+export interface ReviewReportDetailResponse {
+    projectId: string;
+    prototypeId: string;
+    report: ReviewReportDetail;
+}
+
+export interface ReviewReportExistsResponse {
+    projectId: string;
+    prototypeId: string;
+    reportId: string;
+    exists: boolean;
+}
+
+export interface ReviewReportDeleteResponse {
+    projectId: string;
+    prototypeId: string;
+    reportId: string;
+    deleted: boolean;
+}
+
+export interface ReviewReportSubmitPayload {
+    projectId?: string;
+    prototypeId: string;
+    title?: string;
+    reviewer?: string;
+    score?: number;
+    content: string;
+    source?: string;
+}
+
+export interface ReviewReportUploadResult {
+    projectId: string;
+    prototypeId: string;
+    report: ReviewReportDetail;
+}
+
+export interface ReviewReportSubmitResult {
+    projectId: string;
+    prototypeId: string;
+    report: ReviewReportSummary;
+}
+
+export interface ReviewLanSubmitConfig {
+    projectId: string;
+    prototypeId: string;
+    lanSubmitEnabled: boolean;
+    projectLanAllowed: boolean;
+    submitUrl: string;
+}
+
+export interface ReviewReportScopeOptions {
+    projectId?: string;
+    prototypeId: string;
+}
+
+export interface ReviewReportDetailOptions extends ReviewReportScopeOptions {
+    reportId: string;
+}
+
+export interface ReviewReportUploadOptions extends ReviewReportScopeOptions {
+    files: File[];
+    title?: string;
+    reviewer?: string;
+}
+
 export type AxureApiListKey = 'eventList' | 'actionList' | 'varList' | 'configList' | 'dataList';
 
 export interface AxureApiListPreview {
@@ -291,7 +523,7 @@ export interface ExportIndexBundle {
     };
 }
 
-export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages';
+export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages' | 'axhub';
 
 export interface CloudPublishingConfigPayload {
     vercel?: {
@@ -318,9 +550,11 @@ export interface CloudPublishingConfigPayload {
         repository?: string;
         branch?: string;
         sourceDirectory?: string;
+        pathPrefix?: string;
     };
     publishSettings?: {
         includeSource?: boolean;
+        visibleTargets?: CloudPublishTarget[];
     };
 }
 
@@ -329,12 +563,32 @@ type CloudPublishingConfigured<T extends object> = T & {
     missingFields: string[];
 };
 
+type CloudPublishingVercelConfigResponse = Omit<NonNullable<CloudPublishingConfigPayload['vercel']>, 'token'> & {
+    tokenConfigured: boolean;
+    configured: boolean;
+    missingFields: string[];
+};
+
+type CloudPublishingCloudflarePagesConfigResponse = Omit<NonNullable<CloudPublishingConfigPayload['cloudflarePages']>, 'apiToken'> & {
+    apiTokenConfigured: boolean;
+    configured: boolean;
+    missingFields: string[];
+};
+
+type CloudPublishingS3ConfigResponse = Omit<NonNullable<CloudPublishingConfigPayload['s3']>, 'secretAccessKey'> & {
+    accessKeyIdConfigured: boolean;
+    secretAccessKeyConfigured: boolean;
+    configured: boolean;
+    missingFields: string[];
+};
+
 export interface CloudPublishingConfigResponse {
     targets: {
-        vercel: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['vercel']>>;
-        cloudflarePages: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['cloudflarePages']>>;
-        s3: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['s3']>>;
+        vercel: CloudPublishingVercelConfigResponse;
+        cloudflarePages: CloudPublishingCloudflarePagesConfigResponse;
+        s3: CloudPublishingS3ConfigResponse;
         githubPages: CloudPublishingConfigured<NonNullable<CloudPublishingConfigPayload['githubPages']>>;
+        axhub: CloudPublishingConfigured<Record<string, never>>;
         publishSettings: NonNullable<CloudPublishingConfigPayload['publishSettings']>;
     };
 }
@@ -342,6 +596,7 @@ export interface CloudPublishingConfigResponse {
 export interface CloudPublishRequest {
     target: CloudPublishTarget;
     path: string;
+    axhubProjectId?: number;
 }
 
 export interface CloudPublishResponse {
@@ -363,6 +618,89 @@ export interface CloudPublishingLatestResponse {
         cloudflarePages: CloudPublishLatestItem | null;
         s3: CloudPublishLatestItem | null;
         githubPages: CloudPublishLatestItem | null;
+        axhub: CloudPublishLatestItem | null;
+    };
+}
+
+export interface AxhubUserInfo {
+    uid?: number;
+    userName?: string;
+    name?: string;
+    role?: string;
+    avatar?: string;
+    vipType?: number;
+    expirationTime?: string | null;
+    isPlus: boolean;
+    diskSpace?: number;
+    svnUsedSpace?: number;
+    htmlUsedSpace?: number;
+    freeDiskSpace?: number;
+    scopes?: string[];
+    serverUrl?: string;
+    tokenPrefix?: string;
+}
+
+export interface AxhubHtmlProject {
+    pid: number;
+    name: string;
+    path: string;
+    software: number;
+    shareMode?: number;
+    createTime?: string;
+    updateTime?: string;
+    generateTime?: string;
+    generateStatus?: number;
+    htmlUsedSpace?: number;
+}
+
+export interface AxhubStatusResponse {
+    connected: boolean;
+    hasPendingSession: boolean;
+    provider?: 'online' | 'enterprise';
+    onlineBaseUrl: string;
+    serverUrl?: string;
+    tokenPrefix?: string;
+    name?: string;
+    role?: string;
+    scopes?: string[];
+    me?: AxhubUserInfo;
+}
+
+export interface AxhubConnectResponse {
+    authorizeUrl: string;
+    state: string;
+}
+
+export interface AxhubEnterpriseConnectRequest {
+    serverUrl: string;
+    token: string;
+}
+
+export interface AxhubEnterpriseConnectResponse extends AxhubStatusResponse {
+    provider: 'enterprise';
+    serverUrl: string;
+    tokenPrefix: string;
+    me: AxhubUserInfo;
+}
+
+export interface AxhubHtmlProjectsResponse {
+    projects: AxhubHtmlProject[];
+}
+
+export interface AxhubHtmlProjectResponse {
+    project: AxhubHtmlProject;
+}
+
+export interface AxhubPublishResponse {
+    url: string;
+    path: string;
+    project: {
+        pid: number;
+        name: string;
+        path: string;
+        url: string;
+        htmlUsedSpace: number;
+        generateTime: string;
     };
 }
 
@@ -397,6 +735,7 @@ function createCloudPublishingApiError(result: any, fallback: string): CloudPubl
         || result?.target === 'cloudflare-pages'
         || result?.target === 's3'
         || result?.target === 'github-pages'
+        || result?.target === 'axhub'
     ) {
         error.target = result.target;
     }
@@ -423,6 +762,39 @@ function buildProjectScopedUrl(path: string, options?: GetConfigOptions): string
     const query = new URLSearchParams();
     query.set('projectId', projectId);
     return `${path}?${query.toString()}`;
+}
+
+function normalizeMakeApiOrigin(value: unknown): string {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim().replace(/\/+$/u, '');
+    if (!trimmed) return '';
+    try {
+        const url = new URL(trimmed);
+        return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : '';
+    } catch {
+        return '';
+    }
+}
+
+function buildMakeApiUrl(path: string): string {
+    const globals = typeof window === 'undefined'
+        ? null
+        : window as unknown as { __AXHUB_MAKE_API_ORIGIN__?: unknown };
+    const makeApiOrigin = normalizeMakeApiOrigin(globals?.__AXHUB_MAKE_API_ORIGIN__);
+    if (!makeApiOrigin) {
+        return path;
+    }
+    return `${makeApiOrigin}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+async function readApiJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const error = new Error((result as any)?.error || fallbackMessage) as Error & Record<string, unknown>;
+        Object.assign(error, result);
+        throw error;
+    }
+    return result as T;
 }
 
 export const apiService = {
@@ -578,6 +950,101 @@ export const apiService = {
         return response.json();
     },
 
+    async listReviewReports(options: ReviewReportScopeOptions): Promise<ReviewReportListResponse> {
+        const query = new URLSearchParams();
+        if (options.projectId?.trim()) {
+            query.set('projectId', options.projectId.trim());
+        }
+        query.set('prototypeId', options.prototypeId);
+        const response = await fetch(buildMakeApiUrl(`/api/review-reports?${query.toString()}`), { cache: 'no-store' });
+        return readApiJsonResponse<ReviewReportListResponse>(response, '加载评审报告失败');
+    },
+
+    async getReviewReport(options: ReviewReportDetailOptions): Promise<ReviewReportDetailResponse> {
+        const query = new URLSearchParams();
+        if (options.projectId?.trim()) {
+            query.set('projectId', options.projectId.trim());
+        }
+        query.set('prototypeId', options.prototypeId);
+        const response = await fetch(buildMakeApiUrl(`/api/review-reports/${encodeURIComponent(options.reportId)}?${query.toString()}`), { cache: 'no-store' });
+        return readApiJsonResponse<ReviewReportDetailResponse>(response, '加载评审报告详情失败');
+    },
+
+    async checkReviewReportExists(options: ReviewReportDetailOptions): Promise<ReviewReportExistsResponse> {
+        const query = new URLSearchParams();
+        if (options.projectId?.trim()) {
+            query.set('projectId', options.projectId.trim());
+        }
+        query.set('prototypeId', options.prototypeId);
+        query.set('reportId', options.reportId);
+        const response = await fetch(buildMakeApiUrl(`/api/review-reports/exists?${query.toString()}`), { cache: 'no-store' });
+        return readApiJsonResponse<ReviewReportExistsResponse>(response, '验证评审报告失败');
+    },
+
+    async deleteReviewReport(options: ReviewReportDetailOptions): Promise<ReviewReportDeleteResponse> {
+        const response = await fetch(buildMakeApiUrl(`/api/review-reports/${encodeURIComponent(options.reportId)}`), {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                projectId: options.projectId,
+                prototypeId: options.prototypeId,
+            }),
+        });
+        return readApiJsonResponse<ReviewReportDeleteResponse>(response, '删除评审报告失败');
+    },
+
+    async uploadReviewReport(options: ReviewReportUploadOptions): Promise<ReviewReportUploadResult> {
+        const formData = new FormData();
+        if (options.projectId?.trim()) {
+            formData.set('projectId', options.projectId.trim());
+        }
+        formData.set('prototypeId', options.prototypeId);
+        if (options.title?.trim()) {
+            formData.set('title', options.title.trim());
+        }
+        if (options.reviewer?.trim()) {
+            formData.set('reviewer', options.reviewer.trim());
+        }
+        for (const file of options.files) {
+            formData.append('file', file);
+        }
+        const response = await fetch(buildMakeApiUrl('/api/review-reports/upload'), {
+            method: 'POST',
+            body: formData,
+        });
+        return readApiJsonResponse<ReviewReportUploadResult>(response, '上传评审报告失败');
+    },
+
+    async submitReviewReport(payload: ReviewReportSubmitPayload): Promise<ReviewReportSubmitResult> {
+        const response = await fetch(buildMakeApiUrl('/api/review-reports/submit'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<ReviewReportSubmitResult>(response, '提交评审报告失败');
+    },
+
+    async getReviewLanSubmitConfig(projectId?: string, prototypeId?: string): Promise<ReviewLanSubmitConfig> {
+        const query = new URLSearchParams();
+        if (projectId?.trim()) {
+            query.set('projectId', projectId.trim());
+        }
+        if (prototypeId?.trim()) {
+            query.set('prototypeId', prototypeId.trim());
+        }
+        const response = await fetch(buildMakeApiUrl(`/api/review-reports/lan-submit-config${query.toString() ? `?${query.toString()}` : ''}`), { cache: 'no-store' });
+        return readApiJsonResponse<ReviewLanSubmitConfig>(response, '加载局域网提交配置失败');
+    },
+
+    async updateReviewLanSubmitConfig(payload: { projectId?: string; prototypeId: string; lanSubmitEnabled: boolean }): Promise<ReviewLanSubmitConfig> {
+        const response = await fetch(buildMakeApiUrl('/api/review-reports/lan-submit-config'), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<ReviewLanSubmitConfig>(response, '更新局域网提交配置失败');
+    },
+
     async getAxureApiPreview(path: string): Promise<AxureApiPreviewResponse> {
         const response = await fetch('/api/axure-api-preview', {
             method: 'POST',
@@ -622,7 +1089,7 @@ export const apiService = {
         return result;
     },
 
-    async saveCloudPublishingConfig(payload: CloudPublishingConfigPayload) {
+    async saveCloudPublishingConfig(payload: CloudPublishingConfigPayload): Promise<CloudPublishingConfigResponse> {
         const response = await fetch('/api/cloud-publishing/config', {
             method: 'POST',
             headers: {
@@ -662,12 +1129,136 @@ export const apiService = {
         return result;
     },
 
+    async getAxhubStatus(): Promise<AxhubStatusResponse> {
+        const response = await fetch('/api/axhub/status');
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '读取 Axhub 授权状态失败');
+        }
+        return result;
+    },
+
+    async connectAxhub(): Promise<AxhubConnectResponse> {
+        const response = await fetch('/api/axhub/connect', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '创建 Axhub 授权链接失败');
+        }
+        return result;
+    },
+
+    async connectAxhubEnterprise(payload: AxhubEnterpriseConnectRequest): Promise<AxhubEnterpriseConnectResponse> {
+        const response = await fetch('/api/axhub/connect-enterprise', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '连接企业版失败');
+        }
+        return result;
+    },
+
+    async disconnectAxhub(): Promise<{ success: boolean }> {
+        const response = await fetch('/api/axhub/disconnect', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '断开 Axhub 授权失败');
+        }
+        return result;
+    },
+
+    async getAxhubHtmlProjects(keyword?: string): Promise<AxhubHtmlProjectsResponse> {
+        const query = keyword?.trim() ? `?keyword=${encodeURIComponent(keyword.trim())}` : '';
+        const response = await fetch(`/api/axhub/html-projects${query}`);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '加载 Axhub HTML 项目失败');
+        }
+        return result;
+    },
+
+    async createAxhubHtmlProject(name: string): Promise<AxhubHtmlProjectResponse> {
+        const response = await fetch('/api/axhub/html-projects', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '创建 Axhub HTML 项目失败');
+        }
+        return result;
+    },
+
+    async publishAxhubHtmlProject(payload: { pid: number; path: string; projectId?: string | null }): Promise<AxhubPublishResponse> {
+        const response = await fetch('/api/axhub/publish', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result?.error || '发布到 Axhub 失败');
+        }
+        return result;
+    },
+
     async getConfig(options?: GetConfigOptions): Promise<ConfigResponse> {
         const response = await fetch(buildProjectScopedUrl('/api/config', options));
         if (!response.ok) {
             throw new Error('加载配置失败');
         }
         return response.json();
+    },
+
+    async getLanAccessStatus(): Promise<LanAccessStatusResponse> {
+        const response = await fetch('/api/access/status', { cache: 'no-store' });
+        return readApiJsonResponse<LanAccessStatusResponse>(response, '加载局域网访问状态失败');
+    },
+
+    async setLanAccessPassword(password: string): Promise<LanAccessStatusResponse & { success: boolean }> {
+        const response = await fetch('/api/access/password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+        });
+        return readApiJsonResponse<LanAccessStatusResponse & { success: boolean }>(response, '设置局域网访问密码失败');
+    },
+
+    async clearLanAccessPassword(): Promise<LanAccessStatusResponse & { success: boolean }> {
+        const response = await fetch('/api/access/password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: null }),
+        });
+        return readApiJsonResponse<LanAccessStatusResponse & { success: boolean }>(response, '清除局域网访问密码失败');
+    },
+
+    async createLanAccessShareUrl(targetUrl: string): Promise<LanAccessShareUrlResponse> {
+        const response = await fetch('/api/access/share-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ targetUrl }),
+        });
+        return readApiJsonResponse<LanAccessShareUrlResponse>(response, '生成局域网短期链接失败');
     },
 
     async getBootstrapConfig(options?: GetConfigOptions): Promise<ConfigResponse> {
@@ -678,8 +1269,9 @@ export const apiService = {
         return response.json();
     },
 
-    async getAgentVersions(): Promise<AgentVersionsResponse> {
-        const response = await fetch('/api/agent/versions', { cache: 'no-store' });
+    async getAgentVersions(options?: GetAgentVersionsOptions): Promise<AgentVersionsResponse> {
+        const query = options?.agent ? `?agent=${encodeURIComponent(options.agent)}` : '';
+        const response = await fetch(`/api/agent/versions${query}`, { cache: 'no-store' });
         if (!response.ok) {
             throw new Error('检测本地 AI 版本失败');
         }
@@ -708,6 +1300,96 @@ export const apiService = {
             throw error;
         }
         return result;
+    },
+
+    async getGitWorkspaceStatus(options: { gitVersion?: string; path?: string } = {}): Promise<GitWorkspaceStatusResponse> {
+        const query = new URLSearchParams();
+        if (options.gitVersion) query.set('gitVersion', options.gitVersion);
+        if (options.path) query.set('path', options.path);
+        const url = query.toString() ? `/api/git/workspace/status?${query.toString()}` : '/api/git/workspace/status';
+        const response = await fetch(url, { cache: 'no-store' });
+        return readApiJsonResponse<GitWorkspaceStatusResponse>(response, '加载版本状态失败');
+    },
+
+    async initGitWorkspace(): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '初始化本地仓库失败');
+    },
+
+    async commitGitWorkspace(message: string, options: { path?: string } = {}): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/commit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, ...(options.path ? { path: options.path } : {}) }),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '提交版本失败');
+    },
+
+    async switchGitWorkspaceBranch(branch: string): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/branch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ branch }),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '切换分支失败');
+    },
+
+    async setGitWorkspaceRemote(payload: SetGitWorkspaceRemoteRequest): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/remote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '连接在线仓库失败');
+    },
+
+    async fetchGitWorkspace(): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/fetch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '刷新在线仓库状态失败');
+    },
+
+    async syncDownGitWorkspace(): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/sync-down', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '同步下来失败');
+    },
+
+    async pushGitWorkspace(): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '同步到在线失败');
+    },
+
+    async createGitWorkspaceRemoteRepository(payload: CreateGitWorkspaceRemoteRepositoryRequest): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/create-remote-repository', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '创建在线仓库失败');
+    },
+
+    async getGitWorkspacePrompt(payload: GetGitWorkspacePromptRequest): Promise<GitWorkspaceActionResponse> {
+        const response = await fetch('/api/git/workspace/prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<GitWorkspaceActionResponse>(response, '生成 AI 提示词失败');
     },
 
     async saveServerPreferences(payload: SaveServerPreferencesRequest) {
@@ -826,7 +1508,7 @@ export const apiService = {
 
         const result = await response.json();
         if (!response.ok) {
-            throw new Error(result?.error || '打开本地应用失败');
+            throw new Error(result?.error || formatLocalAppOpenFailureMessage());
         }
 
         return result;

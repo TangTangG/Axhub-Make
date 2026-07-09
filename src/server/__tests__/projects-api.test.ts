@@ -50,7 +50,6 @@ function writeMakeClientPackageForProject(projectRoot: string) {
 function writeGeneratedPlaceholderPrototype(
   prototypesDir: string,
   name: string,
-  options: { elements?: unknown[]; files?: Record<string, unknown> } = {},
 ) {
   const targetDir = path.join(prototypesDir, name);
   fs.mkdirSync(targetDir, { recursive: true });
@@ -70,18 +69,10 @@ export default function Placeholder() {
     );
 }
 `, 'utf8');
-  fs.writeFileSync(path.join(targetDir, 'canvas.excalidraw'), JSON.stringify({
-    type: 'excalidraw',
-    version: 2,
-    source: 'axhub-make',
-    elements: options.elements || [],
-    appState: { viewBackgroundColor: '#ffffff' },
-    files: options.files || {},
-  }, null, 2), 'utf8');
 }
 
 function writeProjectMetadata(projectRoot: string, overrides: Record<string, unknown> = {}) {
-  const docPath = path.join(projectRoot, 'docs', 'spec.md');
+  const docPath = path.join(projectRoot, 'src', 'resources', 'spec.md');
   fs.mkdirSync(path.dirname(docPath), { recursive: true });
   fs.writeFileSync(docPath, '# Spec\n', 'utf8');
   writeJson(getProjectMetadataPath(projectRoot), {
@@ -96,20 +87,10 @@ function writeProjectMetadata(projectRoot: string, overrides: Record<string, unk
           clientUrl: 'http://localhost:3000/home',
         },
       ],
-      docs: [
-        {
-          id: 'spec',
-          name: 'spec',
-          title: 'Spec',
-          path: docPath,
-        },
-      ],
       themes: [{ id: 'theme-a', name: 'theme-a' }],
-      data: [{ id: 'orders', name: 'orders' }],
-      templates: [{ id: 'prd', name: 'prd' }],
     },
-    navigation: { prototypes: ['home'], docs: ['spec'] },
-    orders: { themes: ['theme-a'], data: ['orders'], templates: ['prd'] },
+    navigation: { prototypes: ['home'] },
+    orders: { themes: ['theme-a'] },
     capabilities: {
       quickEdit: true,
       quickEditMode: 'clientRuntime',
@@ -285,7 +266,7 @@ describe('make-server project APIs', () => {
     }
   });
 
-  it('exposes current project LAN access capability from project config', async () => {
+  it('ignores legacy allowLAN when exposing current project LAN access capability', async () => {
     const defaultRoot = createTempRoot();
     writeMakeClientMarkerForProject(defaultRoot, 'lan-disabled', 'LAN Disabled');
     writeMakeClientPackageForProject(defaultRoot);
@@ -303,7 +284,7 @@ describe('make-server project APIs', () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
-      expect(body.capabilities.lanAccessAllowed).toBe(false);
+      expect(body.capabilities.lanAccessAllowed).toBe(true);
     } finally {
       await server.close();
     }
@@ -350,8 +331,8 @@ describe('make-server project APIs', () => {
       await registerExistingMakeProject(server.origin, projectRoot);
       const resources = await fetch(`${server.origin}/api/projects/client-a/resources`).then((response) => response.json());
       expect(resources.project).toEqual({ id: 'client-a', name: 'Client A' });
-      expect(resources.navigation).toEqual({ prototypes: ['home'], docs: ['spec'] });
-      expect(resources.orders).toEqual({ themes: ['theme-a'], data: ['orders'], templates: ['prd'] });
+      expect(resources.navigation).toEqual({ prototypes: ['home'] });
+      expect(resources.orders).toEqual({ themes: ['theme-a'] });
       expect(resources.capabilities).toMatchObject({ quickEdit: true, axureExport: false });
 
       for (const url of [
@@ -372,32 +353,16 @@ describe('make-server project APIs', () => {
     writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
     writeMakeClientPackageForProject(projectRoot);
     const prototypesDir = path.join(projectRoot, 'content', 'prototypes');
-    const docsDir = path.join(projectRoot, 'content', 'docs');
+    const docsDir = path.join(projectRoot, 'src', 'resources');
     const themesDir = path.join(projectRoot, 'content', 'themes');
-    const staleDocPath = path.join(docsDir, 'stale.md');
     writeGeneratedPlaceholderPrototype(prototypesDir, 'draft');
-    writeGeneratedPlaceholderPrototype(prototypesDir, 'placeholder-started', {
-      elements: [{ id: 'pending-image', type: 'image', status: 'pending' }],
-      files: {
-        'pending-file': {
-          mimeType: 'image/png',
-          path: 'canvas-assets/images/pending-file.png',
-        },
-      },
-    });
     fs.mkdirSync(path.join(prototypesDir, 'fresh'), { recursive: true });
     fs.writeFileSync(path.join(prototypesDir, 'fresh', 'index.tsx'), '/**\n * @name Fresh Prototype\n */\nexport default null;\n', 'utf8');
     writeGeneratedPlaceholderPrototype(prototypesDir, 'untitled-2');
     fs.mkdirSync(path.join(prototypesDir, 'edited'), { recursive: true });
     fs.writeFileSync(path.join(prototypesDir, 'edited', 'index.tsx'), '/**\n * @name Edited Prototype\n */\nexport default null;\n', 'utf8');
-    fs.writeFileSync(path.join(prototypesDir, 'edited', 'canvas.excalidraw'), JSON.stringify({
-      type: 'excalidraw',
-      version: 2,
-      source: 'axhub-make',
-      elements: [{ id: 'rect', type: 'rectangle' }],
-      appState: { viewBackgroundColor: '#ffffff' },
-      files: {},
-    }), 'utf8');
+    fs.mkdirSync(path.join(prototypesDir, 'placeholder-started'), { recursive: true });
+    fs.writeFileSync(path.join(prototypesDir, 'placeholder-started', 'index.tsx'), '/**\n * @name Placeholder Started\n */\nexport default function WaitingGeneration() { return <main className="prototype-waiting-generation-page"><span>正在等待生成</span></main>; }\n', 'utf8');
     fs.mkdirSync(path.join(prototypesDir, 'waiting'), { recursive: true });
     fs.writeFileSync(path.join(prototypesDir, 'waiting', 'index.tsx'), '/**\n * @name Waiting Prototype\n */\nexport default function WaitingGeneration() { return <main className="prototype-waiting-generation-page"><span>正在等待生成</span></main>; }\n', 'utf8');
     fs.mkdirSync(path.join(prototypesDir, 'ready'), { recursive: true });
@@ -405,8 +370,10 @@ describe('make-server project APIs', () => {
     fs.mkdirSync(path.join(prototypesDir, 'ignored-no-entry'), { recursive: true });
     fs.writeFileSync(path.join(prototypesDir, 'ignored-no-entry', 'style.css'), '.ignored {}\n', 'utf8');
     fs.mkdirSync(path.join(docsDir, 'nested'), { recursive: true });
+    fs.mkdirSync(path.join(docsDir, 'templates'), { recursive: true });
     fs.mkdirSync(path.join(themesDir, 'fresh-theme'), { recursive: true });
     fs.writeFileSync(path.join(docsDir, 'nested', 'guide.md'), '# Guide Title\n\nUseful notes.\n', 'utf8');
+    fs.writeFileSync(path.join(docsDir, 'templates', 'prd-template.md'), '# PRD Template\n\nDefault template body.\n', 'utf8');
     fs.writeFileSync(path.join(docsDir, 'readme.md'), '# Ignored Readme\n', 'utf8');
     fs.writeFileSync(path.join(docsDir, '.draft.md'), '# Hidden\n', 'utf8');
     writeProjectMetadata(projectRoot, {
@@ -466,21 +433,14 @@ describe('make-server project APIs', () => {
             generationStatus: 'waiting',
           },
         ],
-        docs: [
-          { id: 'stale', name: 'stale', title: 'Stale', path: staleDocPath },
-          { id: 'readme', name: 'readme.md', title: 'Readme', path: path.join(docsDir, 'readme.md') },
-        ],
         themes: [
           { id: 'missing-theme', name: 'missing-theme' },
         ],
-        data: [],
-        templates: [],
       },
-      navigation: { prototypes: ['draft', 'ghost'], docs: ['stale', 'readme', 'stale'] },
-      orders: { themes: ['missing-theme'], data: [], templates: [] },
+      navigation: { prototypes: ['draft', 'ghost'] },
+      orders: { themes: ['missing-theme'] },
       resourceWriteTargets: {
         prototypes: { type: 'project-relative-path', path: 'content/prototypes' },
-        docs: { type: 'project-relative-path', path: 'content/docs' },
         themes: { type: 'project-relative-path', path: 'content/themes' },
       },
     });
@@ -560,7 +520,19 @@ describe('make-server project APIs', () => {
         expect.objectContaining({
           id: 'nested/guide',
           title: 'Guide Title',
-          path: path.join(docsDir, 'nested', 'guide.md'),
+          path: 'nested/guide.md',
+          filePath: 'src/resources/nested/guide.md',
+          absoluteFilePath: path.join(docsDir, 'nested', 'guide.md'),
+          openMode: 'document',
+        }),
+        expect.objectContaining({
+          id: 'templates/prd-template',
+          name: 'templates/prd-template',
+          title: 'PRD Template',
+          path: 'templates/prd-template.md',
+          filePath: 'src/resources/templates/prd-template.md',
+          absoluteFilePath: path.join(docsDir, 'templates', 'prd-template.md'),
+          openMode: 'document',
         }),
       ]));
       expect(body.resources.docs).not.toEqual(expect.arrayContaining([
@@ -570,7 +542,7 @@ describe('make-server project APIs', () => {
       expect(body.resources.themes).toEqual([
         expect.objectContaining({ id: 'fresh-theme' }),
       ]);
-      expect(body.navigation.docs).toEqual(['nested/guide']);
+      expect(body.navigation).not.toHaveProperty('docs');
       expect(body.orders.themes).toEqual(['fresh-theme']);
 
       const stored = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
@@ -621,7 +593,8 @@ describe('make-server project APIs', () => {
       });
       expect(storedReadyPrototype).not.toHaveProperty('generationStatus');
       expect(stored.navigation.prototypes).toEqual(['draft', 'fresh']);
-      expect(stored.navigation.docs).toEqual(['nested/guide']);
+      expect(stored.navigation).not.toHaveProperty('docs');
+      expect(stored.resources).not.toHaveProperty('docs');
     } finally {
       await server.close();
     }
@@ -714,7 +687,7 @@ describe('make-server project APIs', () => {
         body: JSON.stringify({ content: '# Updated Spec\n' }),
       }).then((response) => response.json());
       expect(docWrite).toMatchObject({ success: true });
-      expect(fs.readFileSync(path.join(projectRoot, 'docs', 'spec.md'), 'utf8')).toBe('# Updated Spec\n');
+      expect(fs.readFileSync(path.join(projectRoot, 'src', 'resources', 'spec.md'), 'utf8')).toBe('# Updated Spec\n');
 
       const deleted = await fetch(`${server.origin}/api/projects/client-a`, { method: 'DELETE' }).then((response) => response.json());
       expect(deleted).toEqual({ success: true });
@@ -725,11 +698,47 @@ describe('make-server project APIs', () => {
     }
   });
 
+  it('reads template markdown content from src/resources without metadata docs or templates indexes', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'template-doc-client', 'Template Doc Client');
+    writeMakeClientPackageForProject(projectRoot);
+    fs.mkdirSync(path.join(projectRoot, 'src', 'resources', 'templates'), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectRoot, 'src', 'resources', 'templates', 'prd-template.md'),
+      '# PRD Template\n\nBody.\n',
+      'utf8',
+    );
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'template-doc-client', name: 'Template Doc Client' },
+      resources: {
+        prototypes: [],
+        themes: [],
+      },
+      navigation: { prototypes: [] },
+      orders: { themes: [] },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const response = await fetch(`${server.origin}/api/projects/template-doc-client/docs/${encodeURIComponent('templates/prd-template')}/content`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        content: '# PRD Template\n\nBody.\n',
+        path: path.join(projectRoot, 'src', 'resources', 'templates', 'prd-template.md'),
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('reads nested project doc content by filesystem-relative path when metadata uses a legacy basename id', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
     writeMakeClientPackageForProject(projectRoot);
-    const docsDir = path.join(projectRoot, 'content', 'docs');
+    const docsDir = path.join(projectRoot, 'src', 'resources');
     const nestedDocPath = path.join(docsDir, '商品2.7', 'prd-qink追踪方案.md');
     fs.mkdirSync(path.dirname(nestedDocPath), { recursive: true });
     fs.writeFileSync(nestedDocPath, '# Qink PRD\n\nNested notes.\n', 'utf8');
@@ -737,22 +746,9 @@ describe('make-server project APIs', () => {
       project: { id: 'client-a', name: 'Client A' },
       resources: {
         prototypes: [],
-        docs: [
-          {
-            id: 'prd-qink追踪方案',
-            name: 'prd-qink追踪方案',
-            title: 'Qink PRD',
-            path: nestedDocPath,
-          },
-        ],
         themes: [],
-        data: [],
-        templates: [],
       },
-      navigation: { prototypes: [], docs: ['prd-qink追踪方案'] },
-      resourceWriteTargets: {
-        docs: { type: 'project-relative-path', path: 'content/docs' },
-      },
+      navigation: { prototypes: [] },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
     const server = await startMakeServer({
@@ -782,6 +778,136 @@ describe('make-server project APIs', () => {
       expect(docWriteResponse.status).toBe(200);
       expect(docWrite).toMatchObject({ success: true });
       expect(fs.readFileSync(nestedDocPath, 'utf8')).toBe('# Updated Nested PRD\n');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reads and writes project-internal markdown documents by project-relative path', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
+    const internalDocPath = path.join(projectRoot, 'src', 'prototypes', 'annotation-demo', 'docs', 'prd-03-states.md');
+    fs.mkdirSync(path.dirname(internalDocPath), { recursive: true });
+    fs.writeFileSync(internalDocPath, '# States PRD\n\nInitial body.\n', 'utf8');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'client-a', name: 'Client A' },
+      resources: {
+        prototypes: [],
+        themes: [],
+      },
+      navigation: { prototypes: [] },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const relativeDocPath = 'src/prototypes/annotation-demo/docs/prd-03-states.md';
+      const readResponse = await fetch(`${server.origin}/api/projects/client-a/document-content?path=${encodeURIComponent(relativeDocPath)}`);
+      const readBody = await readResponse.json();
+
+      expect(readResponse.status).toBe(200);
+      expect(readBody).toMatchObject({
+        content: '# States PRD\n\nInitial body.\n',
+        path: internalDocPath,
+        projectRelativePath: relativeDocPath,
+      });
+
+      const writeResponse = await fetch(`${server.origin}/api/projects/client-a/document-content?path=${encodeURIComponent(relativeDocPath)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: '# Updated States PRD\n' }),
+      });
+      const writeBody = await writeResponse.json();
+
+      expect(writeResponse.status).toBe(200);
+      expect(writeBody).toMatchObject({
+        success: true,
+        path: internalDocPath,
+        projectRelativePath: relativeDocPath,
+      });
+      expect(fs.readFileSync(internalDocPath, 'utf8')).toBe('# Updated States PRD\n');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('serves relative assets for project-internal markdown documents', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
+    const internalDocPath = path.join(projectRoot, 'src', 'prototypes', 'annotation-demo', 'docs', 'prd-05-handoff.md');
+    const assetPath = path.join(projectRoot, 'src', 'prototypes', 'annotation-demo', 'docs', 'assets', 'handoff.png');
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.writeFileSync(internalDocPath, '# Handoff PRD\n\n![handoff](assets/handoff.png)\n', 'utf8');
+    fs.writeFileSync(assetPath, 'png-bytes\n');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'client-a', name: 'Client A' },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const response = await fetch(
+        `${server.origin}/api/projects/client-a/document-asset?path=${encodeURIComponent('src/prototypes/annotation-demo/docs/prd-05-handoff.md')}&asset=${encodeURIComponent('assets/handoff.png')}`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('image/png');
+      expect(await response.text()).toBe('png-bytes\n');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('serves annotation demo markdown image placeholders from prototype assets', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
+    const internalDocPath = path.join(projectRoot, 'src', 'prototypes', 'annotation-demo', 'docs', 'prd-05-handoff.md');
+    const assetPath = path.join(projectRoot, 'src', 'prototypes', 'annotation-demo', 'assets', 'document-edit.png');
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+    fs.mkdirSync(path.dirname(internalDocPath), { recursive: true });
+    fs.writeFileSync(internalDocPath, '# Handoff PRD\n\n![文档编辑](__ANNOTATION_IMAGE_DOCUMENT_EDIT__)\n', 'utf8');
+    fs.writeFileSync(assetPath, 'document-edit-png\n');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'client-a', name: 'Client A' },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const response = await fetch(
+        `${server.origin}/api/projects/client-a/document-asset?path=${encodeURIComponent('src/prototypes/annotation-demo/docs/prd-05-handoff.md')}&asset=${encodeURIComponent('__ANNOTATION_IMAGE_DOCUMENT_EDIT__')}`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('image/png');
+      expect(await response.text()).toBe('document-edit-png\n');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects project document content paths outside the project root', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
+    writeMakeClientPackageForProject(projectRoot);
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'client-a', name: 'Client A' },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const response = await fetch(`${server.origin}/api/projects/client-a/document-content?path=${encodeURIComponent('../outside.md')}`);
+      const body = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(body).toMatchObject({
+        code: 'DOCUMENT_PATH_FORBIDDEN',
+        projectId: 'client-a',
+      });
     } finally {
       await server.close();
     }
@@ -922,28 +1048,17 @@ describe('make-server project APIs', () => {
     }
   });
 
-  it('rejects doc content reads when metadata points outside the project root', async () => {
+  it('rejects doc content reads that attempt to escape the fixed resources directory', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'client-a', 'Client A');
     writeMakeClientPackageForProject(projectRoot);
-    const outsideRoot = createTempRoot('axhub-make-projects-api-outside-');
-    const outsideDocPath = path.join(outsideRoot, 'outside.md');
-    fs.writeFileSync(outsideDocPath, '# Outside\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src', 'resources'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'outside.md'), '# Outside\n', 'utf8');
     writeProjectMetadata(projectRoot, {
       project: { id: 'client-a', name: 'Client A' },
       resources: {
         prototypes: [],
-        docs: [
-          {
-            id: 'outside',
-            name: 'outside',
-            title: 'Outside',
-            path: outsideDocPath,
-          },
-        ],
         themes: [],
-        data: [],
-        templates: [],
       },
     });
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
@@ -971,12 +1086,12 @@ describe('make-server project APIs', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/projects/client-a/docs/outside/content`);
+      const response = await fetch(`${server.origin}/api/projects/client-a/docs/${encodeURIComponent('../outside')}/content`);
       const body = await response.json();
 
-      expect(response.status).toBe(403);
+      expect(response.status).toBe(404);
       expect(body).toMatchObject({
-        code: 'DOC_PATH_OUTSIDE_PROJECT',
+        error: 'Doc not found',
       });
     } finally {
       await server.close();

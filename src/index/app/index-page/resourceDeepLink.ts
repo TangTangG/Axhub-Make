@@ -1,7 +1,7 @@
 import type { ItemData, ViewMode } from '../../types';
 import type { ResourceSection, SidebarTab, ThemeResourceItem } from '../../types/index-page.types';
 
-export type ResourceDeepLinkType = 'prototype' | 'doc' | 'template' | 'theme';
+export type ResourceDeepLinkType = 'prototype' | 'doc' | 'project-doc' | 'template' | 'theme';
 
 export interface ResourceDeepLinkTarget {
     resourceType: ResourceDeepLinkType;
@@ -24,6 +24,7 @@ export type ResolvedResourceDeepLinkSelection =
         kind: 'doc';
         item: ItemData;
         sidebarTab: Extract<SidebarTab, 'document'>;
+        viewMode: ViewMode;
         collapseSidebar: boolean;
     }
     | {
@@ -59,6 +60,93 @@ function normalizeTemplateDeepLinkResourceId(value: string): string {
         .replace(/^templates\/+/u, '');
 }
 
+function normalizeDeepLinkResourceId(value: unknown): string {
+    return String(value || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/^\/+|\/+$/g, '');
+}
+
+function withoutMarkdownExtension(value: string): string {
+    return value.replace(/\.mdx?$/iu, '');
+}
+
+function getBaseName(value: string): string {
+    return normalizeDeepLinkResourceId(value).split('/').filter(Boolean).pop() || value;
+}
+
+function isMarkdownDocumentPath(value: string): boolean {
+    return /\.mdx?$/iu.test(normalizeDeepLinkResourceId(value));
+}
+
+function buildProjectDocumentContentEndpoint(projectId: string | undefined, documentPath: string): string {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedPath = normalizeDeepLinkResourceId(documentPath);
+    if (!normalizedProjectId || !normalizedPath) {
+        return '';
+    }
+    return `/api/projects/${encodeURIComponent(normalizedProjectId)}/document-content?path=${encodeURIComponent(normalizedPath)}`;
+}
+
+function buildProjectDocumentDeepLinkItem(target: ResourceDeepLinkTarget): ItemData | null {
+    const documentPath = normalizeDeepLinkResourceId(target.resourceId);
+    if (!target.projectId || !documentPath || !isMarkdownDocumentPath(documentPath)) {
+        return null;
+    }
+    const markdownUrl = buildProjectDocumentContentEndpoint(target.projectId, documentPath);
+    if (!markdownUrl) {
+        return null;
+    }
+    return {
+        name: documentPath,
+        displayName: getBaseName(documentPath),
+        jsUrl: '',
+        specUrl: markdownUrl,
+        previewUrl: `/spec-template.html?url=${encodeURIComponent(markdownUrl)}`,
+        filePath: documentPath,
+        projectId: target.projectId,
+        resourceId: documentPath,
+        projectDocumentPath: documentPath,
+    };
+}
+
+function buildDocDeepLinkCandidates(target: ResourceDeepLinkTarget): Set<string> {
+    const rawResourceId = normalizeDeepLinkResourceId(target.resourceId);
+    const candidates = new Set<string>();
+    const add = (value: string) => {
+        const normalized = normalizeDeepLinkResourceId(value);
+        if (normalized) {
+            candidates.add(normalized);
+            candidates.add(withoutMarkdownExtension(normalized));
+        }
+    };
+
+    if (target.resourceType === 'template') {
+        const templateId = normalizeTemplateDeepLinkResourceId(rawResourceId);
+        add(`templates/${templateId}`);
+    } else {
+        add(rawResourceId);
+    }
+    return candidates;
+}
+
+function findDocDeepLinkItem(target: ResourceDeepLinkTarget, docs: ItemData[]): ItemData | null {
+    const candidates = buildDocDeepLinkCandidates(target);
+    return docs.find((item) => {
+        const itemCandidates = [
+            item.resourceId,
+            item.name,
+        ].map(normalizeDeepLinkResourceId);
+        return itemCandidates.some((candidate) => (
+            candidates.has(candidate) || candidates.has(withoutMarkdownExtension(candidate))
+        ));
+    }) || null;
+}
+
+function parseOptionalCanvasViewMode(url: URL): Extract<ViewMode, 'canvas'> | undefined {
+    return url.searchParams.get('view')?.trim() === 'canvas' ? 'canvas' : undefined;
+}
+
 export function buildResourceDeepLinkUrl(target: ResourceDeepLinkTarget, baseUrl?: string): string {
     return buildIndexDeepLinkUrl(target, baseUrl);
 }
@@ -72,15 +160,14 @@ export function buildIndexDeepLinkUrl(target: ResourceDeepLinkTarget, baseUrl?: 
 
     if (target.resourceType === 'prototype') {
         url.searchParams.set('p', target.resourceId);
-        if (target.view === 'canvas') {
-            url.searchParams.set('v', 'canvas');
-        }
         const pageId = String(target.pageId || '').trim();
-        if (target.view !== 'canvas' && pageId) {
+        if (pageId) {
             url.searchParams.set('page', pageId);
         }
     } else if (target.resourceType === 'doc') {
         url.searchParams.set('doc', target.resourceId);
+    } else if (target.resourceType === 'project-doc') {
+        url.searchParams.set('docPath', target.resourceId);
     } else if (target.resourceType === 'template') {
         const templateId = normalizeTemplateDeepLinkResourceId(target.resourceId);
         if (templateId) {
@@ -128,12 +215,13 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
     }
 
     const projectId = url.searchParams.get('projectId')?.trim() || undefined;
+    const canvasView = parseOptionalCanvasViewMode(url);
     const prototypeId = url.searchParams.get('p')?.trim();
     if (prototypeId) {
         return {
             resourceType: 'prototype',
             resourceId: prototypeId,
-            view: url.searchParams.get('v')?.trim() === 'canvas' ? 'canvas' : 'demo',
+            view: 'demo',
             ...(url.searchParams.get('page')?.trim() ? { pageId: url.searchParams.get('page')?.trim() } : {}),
             ...(projectId ? { projectId } : {}),
             collapseSidebar: false,
@@ -154,8 +242,20 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
         return {
             resourceType: 'doc',
             resourceId: docId,
+            ...(canvasView ? { view: canvasView } : {}),
             ...(projectId ? { projectId } : {}),
             collapseSidebar: false,
+        };
+    }
+
+    const docPath = normalizeDeepLinkResourceId(url.searchParams.get('docPath')?.trim());
+    if (docPath) {
+        return {
+            resourceType: 'project-doc',
+            resourceId: docPath,
+            ...(canvasView ? { view: canvasView } : {}),
+            ...(projectId ? { projectId } : {}),
+            collapseSidebar: true,
         };
     }
 
@@ -175,6 +275,7 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
         (
             resourceType !== 'prototype'
             && resourceType !== 'doc'
+            && resourceType !== 'project-doc'
             && resourceType !== 'template'
             && resourceType !== 'theme'
         )
@@ -183,13 +284,20 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
         return null;
     }
 
-    const viewParam = url.searchParams.get('view')?.trim();
-    const view = viewParam === 'canvas' ? 'canvas' : 'demo';
     const pageId = url.searchParams.get('page')?.trim();
     return {
         resourceType,
         resourceId,
-        ...(resourceType === 'prototype' ? { view } : {}),
+        ...(resourceType === 'prototype' ? { view: canvasView || 'demo' } : {}),
+        ...(
+            (
+                resourceType === 'doc'
+                || resourceType === 'project-doc'
+            )
+            && canvasView
+                ? { view: canvasView }
+                : {}
+        ),
         ...(resourceType === 'prototype' && pageId ? { pageId } : {}),
         ...(projectId ? { projectId } : {}),
         collapseSidebar: url.searchParams.get('sidebar') === 'collapsed',
@@ -230,16 +338,26 @@ export function resolveIndexDeepLinkSelection(
         const item = (resources.templates || []).find((candidate) => (
             candidate.resourceId === templateId || candidate.name === templateId
         ));
-        if (!item) {
-            return null;
+        if (item) {
+            return {
+                kind: 'template',
+                item,
+                sidebarTab: 'assets',
+                resourceSection: 'templates',
+                collapseSidebar: Boolean(target.collapseSidebar),
+            };
         }
-        return {
-            kind: 'template',
-            item,
-            sidebarTab: 'assets',
-            resourceSection: 'templates',
-            collapseSidebar: Boolean(target.collapseSidebar),
-        };
+        const docItem = findDocDeepLinkItem(target, resources.docs);
+        if (docItem) {
+            return {
+                kind: 'doc',
+                item: docItem,
+                sidebarTab: 'document',
+                viewMode: target.view || 'demo',
+                collapseSidebar: Boolean(target.collapseSidebar),
+            };
+        }
+        return null;
     }
 
     if (target.resourceType === 'theme') {
@@ -258,9 +376,21 @@ export function resolveIndexDeepLinkSelection(
         };
     }
 
-    const item = resources.docs.find((candidate) => (
-        candidate.resourceId === target.resourceId || candidate.name === target.resourceId
-    ));
+    if (target.resourceType === 'project-doc') {
+        const item = buildProjectDocumentDeepLinkItem(target);
+        if (!item) {
+            return null;
+        }
+        return {
+            kind: 'doc',
+            item,
+            sidebarTab: 'document',
+            viewMode: target.view || 'demo',
+            collapseSidebar: Boolean(target.collapseSidebar),
+        };
+    }
+
+    const item = findDocDeepLinkItem(target, resources.docs);
     if (!item) {
         return null;
     }
@@ -268,6 +398,7 @@ export function resolveIndexDeepLinkSelection(
         kind: 'doc',
         item,
         sidebarTab: 'document',
+        viewMode: target.view || 'demo',
         collapseSidebar: Boolean(target.collapseSidebar),
     };
 }

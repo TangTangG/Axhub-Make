@@ -595,7 +595,7 @@ export default function CanvasAiImageTool({
     if (context.localContextRefs.length) {
       toast.info(`已添加 ${context.localContextRefs.length} 个本地上下文`);
     }
-    return images;
+    return context;
   }, [pendingInitialLocalContextRefsGeneratorId, selectedInfo]);
 
   const handleImageTaskFinished = useCallback((task: AiImageTaskRecord) => {

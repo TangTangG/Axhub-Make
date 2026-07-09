@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocked = vi.hoisted(() => ({
-  createGenieEditor: vi.fn(),
-  getGlobalGenieEditorTweakProtocol: vi.fn(),
+  createCommentary: vi.fn(),
+  getGlobalCommentaryTweakProtocol: vi.fn(),
 }));
 
-vi.mock('axhub-genie-editor', () => ({
-  createGenieEditor: mocked.createGenieEditor,
-  getGlobalGenieEditorTweakProtocol: mocked.getGlobalGenieEditorTweakProtocol,
+vi.mock('@axhub/commentary', () => ({
+  createCommentary: mocked.createCommentary,
+  getGlobalCommentaryTweakProtocol: mocked.getGlobalCommentaryTweakProtocol,
 }));
 
 vi.mock('../index/components/dialogs/AppDialogProvider', () => ({
@@ -23,17 +23,17 @@ import {
 } from './webEditorV2Integration';
 
 beforeEach(() => {
-  mocked.createGenieEditor.mockReset();
-  mocked.getGlobalGenieEditorTweakProtocol.mockReset();
+  mocked.createCommentary.mockReset();
+  mocked.getGlobalCommentaryTweakProtocol.mockReset();
   vi.unstubAllGlobals();
 });
 
 describe('createWebEditorV2Controller launch options', () => {
-  it('ignores enable-time Genie bridge and editor integration options before creating the editor', async () => {
+  it('ignores enable-time Agent bridge and editor integration options before creating the editor', async () => {
     const start = vi.fn();
     const stop = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop,
       getState: vi.fn(() => ({ active: false, version: 2 })),
@@ -63,7 +63,7 @@ describe('createWebEditorV2Controller launch options', () => {
       toolbarMode: 'host',
       initialDarkMode: true,
       mobileMode: true,
-      genieBridge: {
+      agentBridge: {
         apiBaseUrl: 'http://localhost:32124/api',
         integrationChannel: '/workspace/demo/project',
         projectPath: '/workspace/demo/project',
@@ -76,13 +76,13 @@ describe('createWebEditorV2Controller launch options', () => {
       },
     } as any);
 
-    expect(mocked.createGenieEditor).toHaveBeenCalledWith(
+    expect(mocked.createCommentary).toHaveBeenCalledWith(
       expect.objectContaining({
         mobileMode: true,
       }),
     );
-    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
-    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('agentBridge');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
   });
 
@@ -93,7 +93,7 @@ describe('createWebEditorV2Controller launch options', () => {
       throw new Error('runtime fallback should not be fetched');
     });
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop,
       getState: vi.fn(() => ({ active: false, version: 2 })),
@@ -122,7 +122,7 @@ describe('createWebEditorV2Controller launch options', () => {
     const controller = createWebEditorV2Controller();
     await controller.enable({
       toolbarMode: 'host',
-      genieBridge: {
+      agentBridge: {
         apiBaseUrl: 'http://localhost:32124/api',
         integrationChannel: 'axhub',
         targetClientId: '',
@@ -135,17 +135,17 @@ describe('createWebEditorV2Controller launch options', () => {
       },
     } as any);
 
-    expect(fetchRuntime).not.toHaveBeenCalled();
-    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
-    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
+    expect(fetchRuntime).not.toHaveBeenCalledWith('/api/assistant/runtime?autoStart=false', expect.anything());
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('agentBridge');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('readHostToolbarModeFromSearch', () => {
   it('enables host toolbar mode only for explicit host requests', () => {
-    expect(readHostToolbarModeFromSearch('?genieToolbar=host')).toBe('host');
-    expect(readHostToolbarModeFromSearch('?genieToolbar=inline')).toBeUndefined();
+    expect(readHostToolbarModeFromSearch('?agentToolbar=host')).toBe('host');
+    expect(readHostToolbarModeFromSearch('?agentToolbar=inline')).toBeUndefined();
     expect(readHostToolbarModeFromSearch('')).toBeUndefined();
   });
 });
@@ -265,7 +265,7 @@ describe('resolveHostResourceContextFromLocation', () => {
     expect(
       resolveHostResourceContextFromLocation(
         '/prototypes/touch-and-talk-annotation-demo',
-        'http://localhost:53817/prototypes/touch-and-talk-annotation-demo?genieToolbar=host#page=common-tips',
+        'http://localhost:53817/prototypes/touch-and-talk-annotation-demo?agentToolbar=host#page=common-tips',
       )?.meta,
     ).toEqual({
       group: 'prototypes',
@@ -327,14 +327,14 @@ describe('resolveHostResourceContextFromLocation', () => {
 });
 
 describe('createWebEditorV2Controller', () => {
-  it('uses neutral editor debug title wording instead of the old Genie runtime label', async () => {
+  it('uses neutral editor debug title wording instead of the old Agent runtime label', async () => {
     const start = vi.fn();
     const stop = vi.fn();
     const setIntervalMock = vi.fn(() => 1);
     const clearIntervalMock = vi.fn();
     const documentMock = { title: 'Prototype Preview', body: {} };
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop,
       getState: vi.fn(() => ({ active: false, version: 2 })),
@@ -356,7 +356,7 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieDebugTitle=1',
+        search: '?editorDebugTitle=1',
         pathname: '/prototypes/home',
         href: 'http://localhost:51720/prototypes/home',
       },
@@ -382,7 +382,7 @@ describe('createWebEditorV2Controller', () => {
     const acknowledgeSavedTextChanges = vi.fn();
     const acknowledgeSavedStyleChanges = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop,
       getState,
@@ -413,7 +413,7 @@ describe('createWebEditorV2Controller', () => {
     vi.stubGlobal('window', {
       location: {
         search:
-          '?genieApiBaseUrl=http://localhost:32124/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1&cwd=%2Fworkspace%2Fdemo%2Fproject&provider=codex&editorIntegrationWs=1&editorApiBaseUrl=http://localhost:32124/api&editorIntegrationChannel=make&editorClientId=make-editor-abcd&editorSessionId=session-001&editorMobileMode=true',
+          '?agentApiBaseUrl=http://localhost:32124/api&agentIntegrationChannel=make&agentTargetClientId=frontend-1&cwd=%2Fworkspace%2Fdemo%2Fproject&provider=codex&editorIntegrationWs=1&editorApiBaseUrl=http://localhost:32124/api&editorIntegrationChannel=make&editorClientId=make-editor-abcd&editorSessionId=session-001&editorMobileMode=true',
         pathname: '/prototypes/home',
         href: 'http://localhost:51720/prototypes/home?editor=webEditorV2',
       },
@@ -428,27 +428,36 @@ describe('createWebEditorV2Controller', () => {
     const controller = createWebEditorV2Controller();
     await controller.enable();
 
-    expect(mocked.createGenieEditor).toHaveBeenCalledTimes(1);
-    expect(mocked.createGenieEditor).toHaveBeenCalledWith(
+    expect(mocked.createCommentary).toHaveBeenCalledTimes(1);
+    expect(mocked.createCommentary).toHaveBeenCalledWith(
       expect.objectContaining({
         mobileMode: true,
         ui: {
           breadcrumbs: true,
           getAssistantPanelOpen: expect.any(Function),
+          getAnnotationEnableAvailable: expect.any(Function),
+          getAnnotationEnableLoading: expect.any(Function),
+          getAnnotationEnabled: expect.any(Function),
+          onEnableAnnotation: expect.any(Function),
           propertyPanel: true,
           showCopyPromptAction: true,
         },
         host: expect.objectContaining({
           buildCopyPrompt: expect.any(Function),
+          canEditAnnotationMarkdown: expect.any(Function),
+          getAnnotationDocumentEditUrl: expect.any(Function),
+          getAnnotationMarkdown: expect.any(Function),
+          onDeleteAnnotationNode: expect.any(Function),
           getResourceContext: expect.any(Function),
+          onAnnotationMarkdownChange: expect.any(Function),
           persistenceAdapter: expect.any(Object),
         }),
       }),
     );
-    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
-    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('agentBridge');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
 
-    const host = mocked.createGenieEditor.mock.calls[0]?.[0]?.host;
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
     expect(host?.getResourceContext?.()).toEqual({
       kind: 'prototype-entry',
       id: 'prototypes/home',
@@ -636,7 +645,7 @@ describe('createWebEditorV2Controller', () => {
     const acknowledgeSavedTextChanges = vi.fn();
     const acknowledgeSavedStyleChanges = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop,
       getState: vi.fn(() => ({ active: false, version: 2 })),
@@ -674,17 +683,2145 @@ describe('createWebEditorV2Controller', () => {
     const controller = createWebEditorV2Controller();
     await controller.enable();
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('genieBridge');
-    expect(mocked.createGenieEditor.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/assistant/runtime?autoStart=false', expect.anything());
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('agentBridge');
+    expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
   });
 
-  it('normalizes project-local skillInstallSource before forwarding it to createGenieEditor', async () => {
+  it('confirms before enabling local prototype annotations with user-facing copy and leaves cancellation as a no-op', async () => {
+    const start = vi.fn();
+    const reload = vi.fn();
+    const confirm = vi.fn(() => false);
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: false, source: null }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+        reload,
+      },
+      confirm,
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+    const ui = mocked.createCommentary.mock.calls[0]?.[0]?.ui;
+
+    await expect(ui.onEnableAnnotation()).resolves.toBe(false);
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('开启需求标注功能'));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('如果之后需要关闭，请让 AI 帮你处理'));
+    expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('annotation-source.json'));
+    expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('运行时'));
+    expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('注入'));
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      '/api/prototype-annotation/enable',
+      expect.anything(),
+    );
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('enables local prototype annotations without reloading while Vite hot-updates the viewer', async () => {
+    const start = vi.fn();
+    const refresh = vi.fn();
+    const reload = vi.fn();
+    const source = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [],
+        updatedAt: 1,
+      },
+      markdownMap: {},
+      assetMap: {},
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: false, source: null }),
+        };
+      }
+      if (input === '/api/prototype-annotation/enable' && init?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, changedIndex: true, source }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      refresh,
+      getState: vi.fn(() => ({ active: true, version: 2 })),
+      getStatus: vi.fn(() => ({ active: true, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+        reload,
+      },
+      setTimeout: vi.fn((handler: () => void) => {
+        handler();
+        return 1;
+      }),
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+    const ui = mocked.createCommentary.mock.calls[0]?.[0]?.ui;
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(ui.onEnableAnnotation()).resolves.toBe(true);
+
+    expect(ui.getAnnotationEnabled()).toBe(true);
+    expect(host.canEditAnnotationMarkdown({} as Element)).toBe(true);
+    expect(refresh).toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('delegates annotation enabling to the parent Make host in host toolbar mode', async () => {
+    const start = vi.fn();
+    const refresh = vi.fn();
+    const reload = vi.fn();
+    const listeners = new Map<string, Set<EventListener>>();
+    const parentPostMessage = vi.fn();
+    const parentWindow = { postMessage: parentPostMessage };
+    const addEventListener = vi.fn((type: string, listener: EventListener) => {
+      const current = listeners.get(type) ?? new Set<EventListener>();
+      current.add(listener);
+      listeners.set(type, current);
+    });
+    const removeEventListener = vi.fn((type: string, listener: EventListener) => {
+      listeners.get(type)?.delete(listener);
+    });
+    let statusReadCount = 0;
+    const source = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'annotation-demo',
+        pageId: 'prototype-as-prd',
+        nodes: [],
+        updatedAt: 1,
+      },
+      markdownMap: {},
+      assetMap: {},
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'http://localhost:53817/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo&projectId=make-2-2') {
+        statusReadCount += 1;
+        return {
+          ok: true,
+          json: async () => statusReadCount > 1
+            ? ({ enabled: true, source })
+            : ({ enabled: false, source: null }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      refresh,
+      getState: vi.fn(() => ({ active: true, version: 2 })),
+      getStatus: vi.fn(() => ({ active: true, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        pathname: '/',
+        href: 'http://localhost:51720/?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+        reload,
+      },
+      parent: parentWindow,
+      addEventListener,
+      removeEventListener,
+      setTimeout: vi.fn(() => 1),
+      clearTimeout: vi.fn(),
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+    parentPostMessage.mockImplementation((message: any) => {
+      const [messageListener] = Array.from(listeners.get('message') ?? []);
+      messageListener?.({
+        data: {
+          type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_RESULT',
+          requestId: message.requestId,
+          handled: true,
+        },
+        source: parentWindow,
+      } as MessageEvent);
+    });
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({
+      toolbarMode: 'host',
+      annotationApiBaseUrl: 'http://localhost:53817',
+      annotationProjectId: 'make-2-2',
+    } as any);
+    const ui = mocked.createCommentary.mock.calls[0]?.[0]?.ui;
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(ui.onEnableAnnotation()).resolves.toBe(true);
+
+    expect(fetchMock).not.toHaveBeenCalledWith('/__axhub/make-server/status', expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:53817/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo&projectId=make-2-2',
+      { method: 'GET' },
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      'http://localhost:53817/api/prototype-annotation/enable?projectId=make-2-2',
+      expect.anything(),
+    );
+    expect(parentPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_REQUEST',
+        action: { type: 'enable-annotation' },
+      }),
+      '*',
+    );
+    expect(ui.getAnnotationEnabled()).toBe(true);
+    expect(host.canEditAnnotationMarkdown({} as Element)).toBe(true);
+    expect(refresh).toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('skips the local annotation enable API when the runtime is already mounted', async () => {
+    const start = vi.fn();
+    const refresh = vi.fn();
+    const runtimeRefresh = vi.fn();
+    const replaceSource = vi.fn();
+    const reload = vi.fn();
+    const source = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [],
+        updatedAt: 1,
+      },
+      markdownMap: {},
+      assetMap: {},
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      refresh,
+      getState: vi.fn(() => ({ active: true, version: 2 })),
+      getStatus: vi.fn(() => ({ active: true, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+        reload,
+      },
+      __AXHUB_MAKE_ANNOTATION_RUNTIME__: { replaceSource, refresh: runtimeRefresh },
+      setTimeout: vi.fn((handler: () => void) => {
+        handler();
+        return 1;
+      }),
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+    const ui = mocked.createCommentary.mock.calls[0]?.[0]?.ui;
+
+    await expect(ui.onEnableAnnotation()).resolves.toBe(true);
+
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/prototype-annotation/enable', expect.anything());
+    expect(replaceSource).not.toHaveBeenCalled();
+    expect(runtimeRefresh).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('does not show a second local failure dialog when host-owned annotation enabling fails', async () => {
+    const start = vi.fn();
+    const reload = vi.fn();
+    const alert = vi.fn();
+    const listeners = new Map<string, Set<EventListener>>();
+    const parentPostMessage = vi.fn();
+    const parentWindow = { postMessage: parentPostMessage };
+    const addEventListener = vi.fn((type: string, listener: EventListener) => {
+      const current = listeners.get(type) ?? new Set<EventListener>();
+      current.add(listener);
+      listeners.set(type, current);
+    });
+    const removeEventListener = vi.fn((type: string, listener: EventListener) => {
+      listeners.get(type)?.delete(listener);
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (url === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: false, source: null }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+        reload,
+      },
+      parent: parentWindow,
+      addEventListener,
+      removeEventListener,
+      setTimeout: vi.fn(() => 1),
+      clearTimeout: vi.fn(),
+      confirm: vi.fn(() => true),
+      alert,
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+    parentPostMessage.mockImplementation((message: any) => {
+      const [messageListener] = Array.from(listeners.get('message') ?? []);
+      messageListener?.({
+        data: {
+          type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_RESULT',
+          requestId: message.requestId,
+          handled: false,
+          error: 'Not found',
+        },
+        source: parentWindow,
+      } as MessageEvent);
+    });
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const ui = mocked.createCommentary.mock.calls[0]?.[0]?.ui;
+
+    await expect(ui.onEnableAnnotation()).resolves.toBe(false);
+
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/prototype-annotation/enable', expect.anything());
+    expect(alert).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('treats an already mounted annotation runtime as enabled for host toolbar state', async () => {
+    const start = vi.fn();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: false, source: null }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        pathname: '/',
+        href: 'http://localhost:53817/?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: {},
+      __AXHUB_ANNOTATION_SOURCE__: {
+        directory: null,
+        nodes: [{ id: 'prototype-as-prd', hasMarkdown: true }],
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const ui = mocked.createCommentary.mock.calls[0]?.[0]?.ui;
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    expect(ui.getAnnotationEnabled()).toBe(true);
+    expect(ui.getAnnotationEnableAvailable()).toBe(true);
+    expect(host.canEditAnnotationMarkdown({} as Element)).toBe(true);
+  });
+
+  it('reads local annotation markdown from the mounted runtime source when the API source is unavailable', async () => {
+    const start = vi.fn();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: false, source: null }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        pathname: '/',
+        href: 'http://localhost:53817/?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: {},
+      __AXHUB_ANNOTATION_SOURCE__: {
+        directory: null,
+        nodes: [{ id: 'prototype-as-prd-purpose', hasMarkdown: true }],
+      },
+      __AXHUB_ANNOTATION_SOURCE_DOCUMENT__: {
+        documentVersion: 1,
+        format: 'axhub-annotation-source',
+        data: {
+          version: 2,
+          prototypeName: 'annotation-demo',
+          pageId: 'prototype-as-prd',
+          updatedAt: 1,
+          nodes: [
+            {
+              id: 'prototype-as-prd-purpose',
+              hasMarkdown: true,
+              locator: { selectors: ['#purpose'], fingerprint: 'section|id=purpose', path: [] },
+            },
+          ],
+        },
+        markdownMap: {
+          'prototype-as-prd-purpose': '# 原型是主需求载体\n\n标注用于说明原因、边界、例外和未决事项。',
+        },
+        assetMap: {},
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const panelElement = {
+      getAttribute: vi.fn((name: string) => (
+        name === 'data-axhub-annotation-panel-node-id' ? 'prototype-as-prd-purpose' : null
+      )),
+      closest: vi.fn(() => null),
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.getAnnotationMarkdown(panelElement)).resolves.toBe(
+      '# 原型是主需求载体\n\n标注用于说明原因、边界、例外和未决事项。',
+    );
+  });
+
+  it('reads existing local annotation markdown when selecting the annotation marker itself', async () => {
+    const start = vi.fn();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: false, source: null }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        pathname: '/',
+        href: 'http://localhost:53817/?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: {},
+      __AXHUB_ANNOTATION_SOURCE__: {
+        directory: null,
+        nodes: [{ id: 'prototype-as-prd-purpose', hasMarkdown: true }],
+      },
+      __AXHUB_ANNOTATION_SOURCE_DOCUMENT__: {
+        documentVersion: 1,
+        format: 'axhub-annotation-source',
+        data: {
+          version: 2,
+          prototypeName: 'annotation-demo',
+          pageId: 'prototype-as-prd',
+          updatedAt: 1,
+          nodes: [
+            {
+              id: 'prototype-as-prd-purpose',
+              hasMarkdown: true,
+              locator: { selectors: ['.annotation-guide-hero'], fingerprint: 'section', path: [] },
+            },
+          ],
+        },
+        markdownMap: {
+          'prototype-as-prd-purpose': '# 原型是主需求载体\n\n标注用于说明原因、边界、例外和未决事项。',
+        },
+        assetMap: {},
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const markerElement = {
+      id: '',
+      tagName: 'BUTTON',
+      getAttribute: vi.fn((name: string) => {
+        if (name === 'data-axhub-annotation-marker') return 'true';
+        if (name === 'data-axhub-annotation-node-id') return 'prototype-as-prd-purpose';
+        return null;
+      }),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.getAnnotationMarkdown(markerElement)).resolves.toBe(
+      '# 原型是主需求载体\n\n标注用于说明原因、边界、例外和未决事项。',
+    );
+  });
+
+  it('reads existing local annotation markdown by matching element selectors without requiring locator metadata to be identical', async () => {
+    const start = vi.fn();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo') {
+        return {
+          ok: true,
+          json: async () => ({
+            enabled: true,
+            source: {
+              documentVersion: 1,
+              format: 'axhub-annotation-source',
+              data: {
+                version: 2,
+                prototypeName: 'annotation-demo',
+                pageId: 'prototype-as-prd',
+                updatedAt: 1,
+                nodes: [
+                  {
+                    id: 'prototype-as-prd-purpose',
+                    hasMarkdown: true,
+                    locator: { selectors: ['.annotation-guide-hero'] },
+                  },
+                ],
+              },
+              markdownMap: {
+                'prototype-as-prd-purpose': '# 原型是主需求载体',
+              },
+              assetMap: {},
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        pathname: '/',
+        href: 'http://localhost:53817/?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: {},
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const element = {
+      id: '',
+      tagName: 'SECTION',
+      classList: {
+        contains: (className: string) => className === 'annotation-guide-hero',
+      },
+      getAttribute: vi.fn((name: string) => {
+        if (name === 'data-annotation-id') return null;
+        if (name === 'class') return 'annotation-guide-hero';
+        return null;
+      }),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.getAnnotationMarkdown(element)).resolves.toBe('# 原型是主需求载体');
+  });
+
+  it('falls back to mounted annotation snapshot text when the runtime source document is unavailable', async () => {
+    const start = vi.fn();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: false, source: null }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        pathname: '/',
+        href: 'http://localhost:53817/?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_SOURCE__: {
+        directory: null,
+        nodes: [
+          {
+            id: 'prototype-as-prd-purpose',
+            hasMarkdown: true,
+            annotationText: '# 原型是主需求载体\n\n当原型已经能表达页面结构、交互路径和状态变化时，PRD 的重点就从重复描述界面转向补充判断依据。',
+          },
+        ],
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const panelElement = {
+      getAttribute: vi.fn((name: string) => (
+        name === 'data-axhub-annotation-panel-node-id' ? 'prototype-as-prd-purpose' : null
+      )),
+      closest: vi.fn(() => null),
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.getAnnotationMarkdown(panelElement)).resolves.toBe(
+      '# 原型是主需求载体\n\n当原型已经能表达页面结构、交互路径和状态变化时，PRD 的重点就从重复描述界面转向补充判断依据。',
+    );
+  });
+
+  it('only allows local annotation markdown editing from annotation bubble panel targets', async () => {
+    const start = vi.fn();
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: null }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        pathname: '/',
+        href: 'http://localhost:53817/?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: {},
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const bubblePanel = {
+      getAttribute: vi.fn((name: string) => {
+        if (name === 'data-axhub-annotation-panel-target') return 'true';
+        if (name === 'data-axhub-annotation-panel-node-id') return 'prototype-as-prd-purpose';
+        return null;
+      }),
+      closest: vi.fn(() => null),
+    } as unknown as Element;
+    const directoryArticleParagraph = {
+      getAttribute: vi.fn((name: string) => (
+        name === 'data-axhub-annotation-comment-target' ? 'true' : null
+      )),
+      closest: vi.fn((selector: string) => {
+        if (selector === '[data-axhub-annotation-panel-target="true"]') return null;
+        if (selector === '[data-axhub-annotation-panel-node-id]') return null;
+        return null;
+      }),
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    expect(host.canEditAnnotationMarkdown(bubblePanel)).toBe(true);
+    expect(host.canEditAnnotationMarkdown(directoryArticleParagraph)).toBe(false);
+  });
+
+  it('exposes directory markdown document editing through the commentary host only while annotation comments are enabled', async () => {
+    const start = vi.fn();
+    const stop = vi.fn();
+    const source = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [],
+        updatedAt: 1,
+      },
+      markdownMap: {},
+      assetMap: {},
+      directory: {
+        nodes: [
+          {
+            type: 'folder',
+            id: 'folder-docs',
+            title: 'Docs',
+            children: [
+              {
+                type: 'markdown',
+                id: 'nested-prd',
+                title: 'Nested PRD',
+                markdownPath: 'docs/nested/prd.md',
+                markdown: '# Nested PRD',
+              },
+            ],
+          },
+          {
+            type: 'markdown',
+            id: 'prd',
+            title: 'PRD',
+            markdownPath: 'docs/prd.md',
+            markdown: '# Home PRD',
+          },
+          {
+            type: 'markdown',
+            id: 'unsafe',
+            title: 'Unsafe',
+            markdownPath: '../secret.md',
+            markdown: '# Unsafe',
+          },
+        ],
+      },
+    };
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop,
+      getState: vi.fn(() => ({ active: true, version: 2 })),
+      getStatus: vi.fn(() => ({ active: true, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: {},
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      if (input === '/__axhub/make-server/status') {
+        return { ok: false, json: async () => ({}) };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return { ok: true, json: async () => ({ enabled: true, source }) };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    }) as typeof fetch);
+
+    const controller = createWebEditorV2Controller();
+
+    await controller.enable();
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+    const directoryMarkdownBlock = {
+      getAttribute: vi.fn((name: string) => (
+        name === 'data-axhub-annotation-directory-markdown-id' ? 'prd' : null
+      )),
+      closest: vi.fn((selector: string) => (
+        selector === '[data-axhub-annotation-directory-markdown-block="true"]'
+          ? directoryMarkdownBlock
+          : null
+      )),
+    } as unknown as Element & { closest: ReturnType<typeof vi.fn> };
+    const directoryMarkdownRoot = {
+      getAttribute: vi.fn((name: string) => (
+        name === 'data-axhub-annotation-directory-markdown-id' ? 'prd' : null
+      )),
+      closest: vi.fn(() => null),
+    } as unknown as Element;
+    const plainAnnotationTarget = {
+      getAttribute: vi.fn(() => null),
+      closest: vi.fn(() => null),
+    } as unknown as Element;
+    const nestedDirectoryMarkdownChild = {
+      getAttribute: vi.fn(() => null),
+      closest: vi.fn((selector: string) => (
+        selector === '[data-axhub-annotation-directory-markdown-block="true"]'
+          ? {
+              getAttribute: vi.fn((name: string) => (
+                name === 'data-axhub-annotation-directory-markdown-id' ? 'nested-prd' : null
+              )),
+            }
+          : null
+      )),
+    } as unknown as Element;
+    const unsafeDirectoryMarkdownBlock = {
+      getAttribute: vi.fn((name: string) => (
+        name === 'data-axhub-annotation-directory-markdown-id' ? 'unsafe' : null
+      )),
+      closest: vi.fn((selector: string) => (
+        selector === '[data-axhub-annotation-directory-markdown-block="true"]'
+          ? unsafeDirectoryMarkdownBlock
+          : null
+      )),
+    } as unknown as Element & { closest: ReturnType<typeof vi.fn> };
+
+    expect(host.getAnnotationDocumentEditUrl(directoryMarkdownBlock)).toBe(
+      '/?docPath=src%2Fprototypes%2Fhome%2Fdocs%2Fprd.md',
+    );
+    expect(host.getAnnotationDocumentEditUrl(nestedDirectoryMarkdownChild)).toBe(
+      '/?docPath=src%2Fprototypes%2Fhome%2Fdocs%2Fnested%2Fprd.md',
+    );
+    expect(host.getAnnotationDocumentEditUrl(directoryMarkdownRoot)).toBe('');
+    expect(host.getAnnotationDocumentEditUrl(plainAnnotationTarget)).toBe('');
+    expect(host.getAnnotationDocumentEditUrl(unsafeDirectoryMarkdownBlock)).toBe('');
+    controller.disable();
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens directory markdown document editing on the configured Make origin with the active project id', async () => {
+    const start = vi.fn();
+    const source = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'annotation-demo',
+        pageId: 'prototype-as-prd',
+        nodes: [],
+        updatedAt: 1,
+      },
+      markdownMap: {},
+      assetMap: {},
+      directory: {
+        nodes: [
+          {
+            type: 'markdown',
+            id: 'prd',
+            title: 'PRD',
+            markdownPath: 'docs/prd.md',
+            markdown: '# PRD',
+          },
+        ],
+      },
+    };
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: true, version: 2 })),
+      getStatus: vi.fn(() => ({ active: true, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?projectId=make-4&p=annotation-demo&page=prototype-as-prd',
+        pathname: '/',
+        href: 'http://localhost:51724/?projectId=make-4&p=annotation-demo&page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: {},
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      if (
+        input
+        === 'http://localhost:53817/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo&projectId=make-4'
+      ) {
+        return { ok: true, json: async () => ({ enabled: true, source }) };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    }) as typeof fetch);
+
+    const controller = createWebEditorV2Controller();
+
+    await controller.enable({
+      annotationApiBaseUrl: 'http://localhost:53817',
+      annotationProjectId: 'make-4',
+    } as any);
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+    const directoryMarkdownBlock = {
+      getAttribute: vi.fn((name: string) => (
+        name === 'data-axhub-annotation-directory-markdown-id' ? 'prd' : null
+      )),
+      closest: vi.fn((selector: string) => (
+        selector === '[data-axhub-annotation-directory-markdown-block="true"]'
+          ? directoryMarkdownBlock
+          : null
+      )),
+    } as unknown as Element & { closest: ReturnType<typeof vi.fn> };
+
+    expect(host.getAnnotationDocumentEditUrl(directoryMarkdownBlock)).toBe(
+      'http://localhost:53817/?projectId=make-4&docPath=src%2Fprototypes%2Fannotation-demo%2Fdocs%2Fprd.md',
+    );
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes directory markdown source after injected editor saves the referenced file', async () => {
+    const start = vi.fn();
+    const refresh = vi.fn();
+    const replaceSource = vi.fn();
+    const source = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [],
+        updatedAt: 1,
+      },
+      markdownMap: {},
+      assetMap: {},
+      directory: {
+        nodes: [
+          {
+            type: 'markdown',
+            id: 'prd',
+            title: 'PRD',
+            markdownPath: 'docs/prd.md',
+            markdown: '# Old PRD',
+          },
+        ],
+      },
+    };
+    const nextSource = {
+      ...source,
+      directory: {
+        nodes: [
+          {
+            type: 'markdown',
+            id: 'prd',
+            title: 'PRD',
+            markdownPath: 'docs/prd.md',
+            markdown: '# New PRD',
+          },
+        ],
+      },
+    };
+    const messageHandlers: Array<(event: MessageEvent) => void> = [];
+    class MockBroadcastChannel {
+      name: string;
+      constructor(name: string) {
+        this.name = name;
+      }
+      addEventListener(type: string, handler: (event: MessageEvent) => void) {
+        if (type === 'message') {
+          messageHandlers.push(handler);
+        }
+      }
+      close = vi.fn();
+    }
+    let statusCallCount = 0;
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      refresh,
+      getState: vi.fn(() => ({ active: true, version: 2 })),
+      getStatus: vi.fn(() => ({ active: true, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: { replaceSource },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('BroadcastChannel', MockBroadcastChannel as unknown as typeof BroadcastChannel);
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      if (input === '/__axhub/make-server/status') {
+        return { ok: false, json: async () => ({}) };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        statusCallCount += 1;
+        return {
+          ok: true,
+          json: async () => ({
+            enabled: true,
+            source: statusCallCount === 1 ? source : nextSource,
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    }) as typeof fetch);
+
+    const controller = createWebEditorV2Controller();
+
+    await controller.enable();
+    await messageHandlers[0]?.({
+      data: {
+        type: 'markdown-file-saved',
+        path: 'src/prototypes/home/docs/prd.md',
+        updatedAt: 1,
+      },
+    } as MessageEvent);
+
+    await vi.waitFor(() => {
+      expect(replaceSource).toHaveBeenCalledWith(nextSource);
+    });
+    expect(refresh).toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes local annotation markdown without touching prompt edits and refreshes the annotation runtime', async () => {
+    const start = vi.fn();
+    const replaceSource = vi.fn();
+    const refresh = vi.fn();
+    const reload = vi.fn();
+    const nextSource = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [
+          {
+            id: 'annotation-1',
+            locator: {
+              selectors: ['#target'],
+              fingerprint: 'button|id=target',
+              path: [{ tag: 'button', index: 0 }],
+            },
+            hasMarkdown: true,
+          },
+        ],
+        updatedAt: 1,
+      },
+      markdownMap: { 'annotation-1': '新的标注' },
+      assetMap: {},
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: nextSource }),
+        };
+      }
+      if (input === '/api/prototype-annotation/node' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({ source: nextSource }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+        reload,
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: { replaceSource, refresh },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const element = {
+      id: 'target',
+      tagName: 'BUTTON',
+      getAttribute: vi.fn((name: string) => (name === 'data-axhub-annotation-panel-node-id' ? null : '')),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    expect(host.canEditAnnotationMarkdown(element)).toBe(true);
+    await expect(host.onAnnotationMarkdownChange(element, '新的标注')).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/prototype-annotation/node',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"markdown":"新的标注"'),
+      }),
+    );
+    expect(replaceSource).toHaveBeenCalledWith(nextSource);
+    expect(refresh).toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletes a local annotation node by writing empty markdown and refreshing the annotation runtime', async () => {
+    const start = vi.fn();
+    const replaceSource = vi.fn();
+    const refresh = vi.fn();
+    const nextSource = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [],
+        updatedAt: 1,
+      },
+      markdownMap: {},
+      assetMap: {},
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: nextSource }),
+        };
+      }
+      if (input === '/api/prototype-annotation/node' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({ source: nextSource }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+        reload: vi.fn(),
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: { replaceSource, refresh },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const element = {
+      id: 'target',
+      tagName: 'BUTTON',
+      getAttribute: vi.fn((name: string) => (
+        name === 'data-axhub-annotation-node-id'
+          ? 'annotation-1'
+          : ''
+      )),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.onDeleteAnnotationNode(element)).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/prototype-annotation/node',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"markdown":""'),
+      }),
+    );
+    expect(replaceSource).toHaveBeenCalledWith(nextSource);
+    expect(refresh).toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletes a mounted annotation node by resolving the selected element locator to a node id', async () => {
+    const start = vi.fn();
+    const replaceSource = vi.fn();
+    const refresh = vi.fn();
+    let requestBody: Record<string, unknown> | null = null;
+    const mountedSource = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'annotation-demo',
+        pageId: 'agent-read',
+        nodes: [
+          {
+            id: 'agent-read-skill',
+            pageId: 'agent-read',
+            locator: {
+              selectors: ['[data-annotation-id="agent-read-skill"]'],
+            },
+            hasMarkdown: true,
+          },
+        ],
+        updatedAt: 1,
+      },
+      markdownMap: {
+        'agent-read-skill': '# Agent 读取',
+      },
+      assetMap: {},
+    };
+    const nextSource = {
+      ...mountedSource,
+      data: {
+        ...mountedSource.data,
+        nodes: [],
+        updatedAt: 2,
+      },
+      markdownMap: {},
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: mountedSource }),
+        };
+      }
+      if (input === '/api/prototype-annotation/node' && init?.method === 'PUT') {
+        requestBody = JSON.parse(String(init.body));
+        return {
+          ok: true,
+          json: async () => ({ source: nextSource }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?agentToolbar=host',
+        pathname: '/prototypes/annotation-demo',
+        href: 'http://localhost:51721/prototypes/annotation-demo?agentToolbar=host#page=agent-read',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_ANNOTATION_SOURCE_DOCUMENT__: mountedSource,
+      __AXHUB_ANNOTATION_RUNTIME__: { replaceSource, refresh },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const element = {
+      id: '',
+      tagName: 'DIV',
+      getAttribute: vi.fn((name: string) => {
+        if (name === 'data-annotation-id') return 'agent-read-skill';
+        if (name === 'class') return 'annotation-guide-agent-read';
+        return null;
+      }),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.onDeleteAnnotationNode(element)).resolves.toBeUndefined();
+
+    expect(requestBody).toEqual({
+      targetPath: 'prototypes/annotation-demo',
+      nodeId: 'agent-read-skill',
+      markdown: '',
+    });
+    expect(replaceSource).toHaveBeenCalledWith(nextSource);
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('refreshes the make annotation runtime wrapper after creating a local annotation node', async () => {
+    const start = vi.fn();
+    const replaceSource = vi.fn(async () => undefined);
+    const refresh = vi.fn();
+    const nextSource = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [
+          {
+            id: 'annotation-1',
+            locator: {
+              selectors: ['#target'],
+              fingerprint: 'button|id=target',
+              path: [{ tag: 'button', index: 0 }],
+            },
+            hasMarkdown: true,
+          },
+        ],
+        updatedAt: 1,
+      },
+      markdownMap: { 'annotation-1': '新的标注' },
+      assetMap: {},
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: nextSource }),
+        };
+      }
+      if (input === '/api/prototype-annotation/node' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({ source: nextSource }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      __AXHUB_MAKE_ANNOTATION_RUNTIME__: { replaceSource, refresh },
+      setTimeout: vi.fn((callback: () => void) => {
+        callback();
+        return 1;
+      }),
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const element = {
+      id: 'target',
+      tagName: 'BUTTON',
+      getAttribute: vi.fn((name: string) => (name === 'data-axhub-annotation-panel-node-id' ? null : '')),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.onAnnotationMarkdownChange(element, '新的标注')).resolves.toBeUndefined();
+
+    expect(replaceSource).toHaveBeenCalledWith(nextSource);
+    await vi.waitFor(() => {
+      expect(refresh).toHaveBeenCalled();
+    });
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for async annotation runtime source replacement before completing local annotation writes', async () => {
+    const start = vi.fn();
+    let resolveReplaceSource: (() => void) | null = null;
+    const replaceSource = vi.fn(() => new Promise<void>((resolve) => {
+      resolveReplaceSource = resolve;
+    }));
+    const refresh = vi.fn();
+    const reload = vi.fn();
+    const nextSource = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [
+          {
+            id: 'annotation-1',
+            locator: {
+              selectors: ['#target'],
+              fingerprint: 'button|id=target',
+              path: [{ tag: 'button', index: 0 }],
+            },
+            hasMarkdown: true,
+          },
+        ],
+        updatedAt: 1,
+      },
+      markdownMap: { 'annotation-1': '新的标注' },
+      assetMap: {},
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: nextSource }),
+        };
+      }
+      if (input === '/api/prototype-annotation/node' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({ source: nextSource }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+        reload,
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: { replaceSource, refresh },
+      setTimeout: vi.fn((callback: () => void) => {
+        callback();
+        return 1;
+      }),
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const element = {
+      id: 'target',
+      tagName: 'BUTTON',
+      getAttribute: vi.fn((name: string) => (name === 'data-axhub-annotation-panel-node-id' ? null : '')),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    let writeSettled = false;
+    const writePromise = host.onAnnotationMarkdownChange(element, '新的标注').then(() => {
+      writeSettled = true;
+    });
+
+    await vi.waitFor(() => {
+      expect(replaceSource).toHaveBeenCalledWith(nextSource);
+    });
+    expect(writeSettled).toBe(false);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+
+    resolveReplaceSource?.();
+    await expect(writePromise).resolves.toBeUndefined();
+
+    expect(writeSettled).toBe(true);
+    expect(refresh).toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps local annotation writes successful when async runtime source replacement rejects', async () => {
+    const start = vi.fn();
+    let rejectReplaceSource: ((error: Error) => void) | null = null;
+    const replaceSource = vi.fn(() => new Promise<void>((_resolve, reject) => {
+      rejectReplaceSource = reject;
+    }));
+    const refresh = vi.fn();
+    const reload = vi.fn();
+    const nextSource = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [
+          {
+            id: 'annotation-1',
+            locator: {
+              selectors: ['#target'],
+              fingerprint: 'button|id=target',
+              path: [{ tag: 'button', index: 0 }],
+            },
+            hasMarkdown: true,
+          },
+        ],
+        updatedAt: 1,
+      },
+      markdownMap: { 'annotation-1': '新的标注' },
+      assetMap: {},
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: nextSource }),
+        };
+      }
+      if (input === '/api/prototype-annotation/node' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({ source: nextSource }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+        reload,
+      },
+      __AXHUB_ANNOTATION_RUNTIME__: { replaceSource, refresh },
+      setTimeout: vi.fn((callback: () => void) => {
+        callback();
+        return 1;
+      }),
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const element = {
+      id: 'target',
+      tagName: 'BUTTON',
+      getAttribute: vi.fn((name: string) => (name === 'data-axhub-annotation-panel-node-id' ? null : '')),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    const writePromise = host.onAnnotationMarkdownChange(element, '新的标注');
+
+    await vi.waitFor(() => {
+      expect(replaceSource).toHaveBeenCalledWith(nextSource);
+    });
+    rejectReplaceSource?.(new Error('runtime replace failed'));
+
+    await expect(writePromise).resolves.toBeUndefined();
+
+    expect(refresh).toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes a structural selector fallback when creating local annotation nodes from repeated classes', async () => {
+    const start = vi.fn();
+    let requestBody: Record<string, unknown> | null = null;
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fhome') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: null }),
+        };
+      }
+      if (input === '/api/prototype-annotation/node' && init?.method === 'PUT') {
+        requestBody = JSON.parse(String(init.body));
+        return {
+          ok: true,
+          json: async () => ({
+            source: {
+              documentVersion: 1,
+              format: 'axhub-annotation-source',
+              data: {
+                version: 2,
+                prototypeName: 'home',
+                pageId: 'home',
+                nodes: [],
+                updatedAt: 1,
+              },
+              markdownMap: {},
+              assetMap: {},
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:51720/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const body = { tagName: 'BODY', children: [] as unknown[] };
+    const root = {
+      id: '',
+      tagName: 'DIV',
+      getAttribute: vi.fn((name: string) => (name === 'class' ? '' : null)),
+      parentElement: body,
+      children: [] as unknown[],
+    };
+    const main = {
+      id: '',
+      tagName: 'MAIN',
+      getAttribute: vi.fn((name: string) => (name === 'class' ? '' : null)),
+      parentElement: root,
+      children: [] as unknown[],
+    };
+    const article = {
+      id: '',
+      tagName: 'ARTICLE',
+      getAttribute: vi.fn((name: string) => (name === 'class' ? '' : null)),
+      parentElement: main,
+      children: [] as unknown[],
+    };
+    const firstSection = {
+      id: '',
+      tagName: 'SECTION',
+      getAttribute: vi.fn((name: string) => (name === 'class' ? 'annotation-guide-manuscript' : null)),
+      parentElement: article,
+      children: [] as unknown[],
+    };
+    const target = {
+      id: '',
+      tagName: 'SECTION',
+      getAttribute: vi.fn((name: string) => (name === 'class' ? 'annotation-guide-manuscript' : null)),
+      closest: vi.fn(() => null),
+      parentElement: article,
+      children: [] as unknown[],
+    };
+    body.children = [root];
+    root.children = [main];
+    main.children = [article];
+    article.children = [firstSection, target];
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable();
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.onAnnotationMarkdownChange(target as unknown as Element, '新的标注')).resolves.toBeUndefined();
+
+    expect(requestBody?.locator).toMatchObject({
+      selectors: [
+        '.annotation-guide-manuscript',
+        'div > main > article > section:nth-of-type(2)',
+      ],
+    });
+  });
+
+  it('includes the current prototype page id when creating a local annotation node', async () => {
+    const start = vi.fn();
+    let requestBody: Record<string, unknown> | null = null;
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: null }),
+        };
+      }
+      if (input === '/api/prototype-annotation/node' && init?.method === 'PUT') {
+        requestBody = JSON.parse(String(init.body));
+        return {
+          ok: true,
+          json: async () => ({
+            source: {
+              documentVersion: 1,
+              format: 'axhub-annotation-source',
+              data: {
+                version: 2,
+                prototypeName: 'annotation-demo',
+                pageId: 'prototype-as-prd',
+                nodes: [],
+                updatedAt: 1,
+              },
+              markdownMap: {},
+              assetMap: {},
+            },
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?agentToolbar=host',
+        pathname: '/prototypes/annotation-demo',
+        href: 'http://localhost:53817/prototypes/annotation-demo?agentToolbar=host#page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const element = {
+      id: 'purpose',
+      tagName: 'SECTION',
+      getAttribute: vi.fn((name: string) => (name === 'data-axhub-annotation-panel-node-id' ? null : '')),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.onAnnotationMarkdownChange(element, '新增标注')).resolves.toBeUndefined();
+
+    expect(requestBody).toMatchObject({
+      targetPath: 'prototypes/annotation-demo',
+      pageId: 'prototype-as-prd',
+      markdown: '新增标注',
+    });
+    expect(requestBody).not.toHaveProperty('nodeId');
+    expect(requestBody?.locator).toMatchObject({
+      selectors: expect.arrayContaining(['#purpose']),
+    });
+  });
+
+  it('writes local annotation markdown to the existing annotation node when selecting a marker', async () => {
+    const start = vi.fn();
+    const nextSource = {
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'annotation-demo',
+        pageId: 'prototype-as-prd',
+        nodes: [
+          {
+            id: 'prototype-as-prd-purpose',
+            locator: {
+              selectors: ['.annotation-guide-hero'],
+            },
+            hasMarkdown: true,
+          },
+        ],
+        updatedAt: 1,
+      },
+      markdownMap: { 'prototype-as-prd-purpose': '更新后的标注' },
+      assetMap: {},
+    };
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (input === '/api/prototype-annotation?targetPath=prototypes%2Fannotation-demo') {
+        return {
+          ok: true,
+          json: async () => ({ enabled: true, source: nextSource }),
+        };
+      }
+      if (input === '/api/prototype-annotation/node' && init?.method === 'PUT') {
+        return {
+          ok: true,
+          json: async () => ({ source: nextSource }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    mocked.createCommentary.mockReturnValue({
+      start,
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+    });
+
+    vi.stubGlobal('window', {
+      location: {
+        search: '?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        pathname: '/',
+        href: 'http://localhost:53817/?projectId=make-2-2&p=annotation-demo&page=prototype-as-prd',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
+
+    const markerElement = {
+      id: '',
+      tagName: 'BUTTON',
+      getAttribute: vi.fn((name: string) => {
+        if (name === 'data-axhub-annotation-marker') return 'true';
+        if (name === 'data-axhub-annotation-node-id') return 'prototype-as-prd-purpose';
+        return null;
+      }),
+      closest: vi.fn(() => null),
+      parentElement: null,
+    } as unknown as Element;
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ toolbarMode: 'host' });
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
+
+    await expect(host.onAnnotationMarkdownChange(markerElement, '更新后的标注')).resolves.toBeUndefined();
+
+    const writeCall = fetchMock.mock.calls.find(([input, init]) => (
+      input === '/api/prototype-annotation/node'
+      && init?.method === 'PUT'
+    ));
+    expect(writeCall).toBeTruthy();
+    expect(JSON.parse(String(writeCall?.[1]?.body))).toEqual({
+      targetPath: 'prototypes/annotation-demo',
+      nodeId: 'prototype-as-prd-purpose',
+      markdown: '更新后的标注',
+    });
+  });
+
+  it('normalizes project-local skillInstallSource entries before forwarding them to createCommentary', async () => {
     const start = vi.fn();
     const stop = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop,
       getState: vi.fn(() => ({ active: false, version: 2 })),
@@ -696,7 +2833,7 @@ describe('createWebEditorV2Controller', () => {
     vi.stubGlobal('window', {
       location: {
         search:
-          '?genieApiBaseUrl=http://localhost:32124/api&genieIntegrationChannel=make&genieTargetClientId=frontend-1',
+          '?agentApiBaseUrl=http://localhost:32124/api&agentIntegrationChannel=make&agentTargetClientId=frontend-1',
         pathname: '/prototypes/home',
         href: 'http://localhost:51720/prototypes/home?editor=webEditorV2',
         protocol: 'http:',
@@ -712,19 +2849,29 @@ describe('createWebEditorV2Controller', () => {
 
     const controller = createWebEditorV2Controller({
       ui: {
-        skillInstallSource: '.agents/skills/prototype-comments/SKILL.md',
+        skillInstallSource: [
+          '.agents/skills/explore-options/SKILL.md',
+          '.claude\\skills\\prototype-comments\\SKILL.md',
+        ].join('\n'),
       },
     });
     await controller.enable();
 
-    expect(mocked.createGenieEditor).toHaveBeenCalledWith(
+    expect(mocked.createCommentary).toHaveBeenCalledWith(
       expect.objectContaining({
         ui: {
           breadcrumbs: true,
           getAssistantPanelOpen: expect.any(Function),
+          getAnnotationEnableAvailable: expect.any(Function),
+          getAnnotationEnableLoading: expect.any(Function),
+          getAnnotationEnabled: expect.any(Function),
+          onEnableAnnotation: expect.any(Function),
           propertyPanel: true,
           showCopyPromptAction: true,
-          skillInstallSource: '.agents/skills/prototype-comments/SKILL.md',
+          skillInstallSource: [
+            '.agents/skills/explore-options/SKILL.md',
+            '.claude/skills/prototype-comments/SKILL.md',
+          ].join('\n'),
         },
       }),
     );
@@ -734,7 +2881,7 @@ describe('createWebEditorV2Controller', () => {
   it('forwards explicit host toolbar mode from the embedded preview url', async () => {
     const start = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop: vi.fn(),
       getState: vi.fn(() => ({ active: false, version: 2 })),
@@ -748,9 +2895,9 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieToolbar=host',
+        search: '?agentToolbar=host',
         pathname: '/prototypes/home',
-        href: 'http://localhost:51720/prototypes/home?genieToolbar=host',
+        href: 'http://localhost:51720/prototypes/home?agentToolbar=host',
         protocol: 'http:',
         hostname: 'localhost',
       },
@@ -765,7 +2912,7 @@ describe('createWebEditorV2Controller', () => {
     const controller = createWebEditorV2Controller();
     await controller.enable();
 
-    expect(mocked.createGenieEditor).toHaveBeenCalledWith(
+    expect(mocked.createCommentary).toHaveBeenCalledWith(
       expect.objectContaining({
         ui: expect.objectContaining({
           toolbarMode: 'host',
@@ -776,13 +2923,13 @@ describe('createWebEditorV2Controller', () => {
       toolbarMode: 'host',
       visible: true,
     });
-    await expect(controller.runHostToolbarAction({ type: 'wake-genie' })).resolves.toBe(true);
+    await expect(controller.runHostToolbarAction({ type: 'wake-agent' })).resolves.toBe(true);
   });
 
   it('forwards host toolbar mode from direct dev-template enable options', async () => {
     const start = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop: vi.fn(),
       getState: vi.fn(() => ({ active: false, version: 2 })),
@@ -813,7 +2960,7 @@ describe('createWebEditorV2Controller', () => {
     const controller = createWebEditorV2Controller();
     await controller.enable({ toolbarMode: 'host' });
 
-    expect(mocked.createGenieEditor).toHaveBeenCalledWith(
+    expect(mocked.createCommentary).toHaveBeenCalledWith(
       expect.objectContaining({
         ui: expect.objectContaining({
           toolbarMode: 'host',
@@ -836,7 +2983,7 @@ describe('createWebEditorV2Controller', () => {
       listeners.get(type)?.delete(listener);
     });
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop: vi.fn(),
       getState: vi.fn(() => ({ active: false, version: 2 })),
@@ -868,8 +3015,8 @@ describe('createWebEditorV2Controller', () => {
     const controller = createWebEditorV2Controller();
     await controller.enable({ toolbarMode: 'host' });
 
-    const editorOptions = mocked.createGenieEditor.mock.calls[0]?.[0];
-    const actionPromise = editorOptions.ui.onHostToolbarAction({ type: 'wake-genie' });
+    const editorOptions = mocked.createCommentary.mock.calls[0]?.[0];
+    const actionPromise = editorOptions.ui.onHostToolbarAction({ type: 'wake-agent' });
     const request = parentWindow.postMessage.mock.calls[0]?.[0] as {
       requestId: string;
       type: string;
@@ -878,7 +3025,7 @@ describe('createWebEditorV2Controller', () => {
 
     expect(request).toEqual(expect.objectContaining({
       type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_REQUEST',
-      action: { type: 'wake-genie' },
+      action: { type: 'wake-agent' },
     }));
 
     const [messageListener] = Array.from(listeners.get('message') ?? []);
@@ -898,7 +3045,7 @@ describe('createWebEditorV2Controller', () => {
   it('forwards host dark mode from direct dev-template enable options', async () => {
     const start = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop: vi.fn(),
       getState: vi.fn(() => ({ active: false, version: 2 })),
@@ -929,7 +3076,7 @@ describe('createWebEditorV2Controller', () => {
     const controller = createWebEditorV2Controller();
     await controller.enable({ toolbarMode: 'host', initialDarkMode: true });
 
-    expect(mocked.createGenieEditor).toHaveBeenCalledWith(
+    expect(mocked.createCommentary).toHaveBeenCalledWith(
       expect.objectContaining({
         ui: expect.objectContaining({
           toolbarMode: 'host',
@@ -944,7 +3091,7 @@ describe('createWebEditorV2Controller', () => {
     const start = vi.fn();
     const refresh = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop: vi.fn(),
       refresh,
@@ -971,13 +3118,13 @@ describe('createWebEditorV2Controller', () => {
 
     const controller = createWebEditorV2Controller();
     await controller.enable({ toolbarMode: 'host' });
-    const ui = mocked.createGenieEditor.mock.calls[0]?.[0]?.ui;
+    const ui = mocked.createCommentary.mock.calls[0]?.[0]?.ui;
 
     expect(ui?.getAssistantPanelOpen?.()).toBe(false);
 
     await controller.enable({ assistantPanelOpen: true });
 
-    expect(mocked.createGenieEditor).toHaveBeenCalledTimes(1);
+    expect(mocked.createCommentary).toHaveBeenCalledTimes(1);
     expect(ui?.getAssistantPanelOpen?.()).toBe(true);
     expect(refresh).toHaveBeenCalledTimes(1);
   });
@@ -987,7 +3134,7 @@ describe('createWebEditorV2Controller', () => {
     const refresh = vi.fn();
     const dispatchEvent = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop: vi.fn(),
       refresh,
@@ -1002,9 +3149,9 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieToolbar=host#page=voice-annotation',
+        search: '?agentToolbar=host#page=voice-annotation',
         pathname: '/prototypes/touch-and-talk-annotation-demo',
-        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?genieToolbar=host#page=voice-annotation',
+        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?agentToolbar=host#page=voice-annotation',
         protocol: 'http:',
         hostname: 'localhost',
       },
@@ -1019,7 +3166,7 @@ describe('createWebEditorV2Controller', () => {
       commentPageScope: 'prototypes/touch-and-talk-annotation-demo::page::common-tips',
     });
 
-    const host = mocked.createGenieEditor.mock.calls[0]?.[0]?.host;
+    const host = mocked.createCommentary.mock.calls[0]?.[0]?.host;
     expect(host?.getResourceContext?.()?.meta?.commentPageScope)
       .toBe('prototypes/touch-and-talk-annotation-demo::page::common-tips');
 
@@ -1041,7 +3188,7 @@ describe('createWebEditorV2Controller', () => {
     const refresh = vi.fn();
     const dispatchEvent = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop: vi.fn(),
       refresh,
@@ -1056,9 +3203,9 @@ describe('createWebEditorV2Controller', () => {
 
     vi.stubGlobal('window', {
       location: {
-        search: '?genieToolbar=host#page=common-tips',
+        search: '?agentToolbar=host#page=common-tips',
         pathname: '/prototypes/touch-and-talk-annotation-demo',
-        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?genieToolbar=host#page=common-tips',
+        href: 'http://localhost:51720/prototypes/touch-and-talk-annotation-demo?agentToolbar=host#page=common-tips',
         protocol: 'http:',
         hostname: 'localhost',
       },
@@ -1090,7 +3237,7 @@ describe('createWebEditorV2Controller', () => {
       { element: {}, schema: { fields: [] }, values: null },
       { element: {}, schema: { fields: [] }, values: null },
     ]);
-    mocked.getGlobalGenieEditorTweakProtocol.mockReturnValue({ listEntries });
+    mocked.getGlobalCommentaryTweakProtocol.mockReturnValue({ listEntries });
     vi.stubGlobal('document', { body: {} });
 
     const controller = createWebEditorV2Controller();
@@ -1120,7 +3267,7 @@ describe('createWebEditorV2Controller', () => {
     const getTextChanges = vi.fn(() => [{ before: '旧标题', after: '新标题' }]);
     const getStyleChanges = vi.fn(() => ({ cssText: '.card { color: red; }' }));
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start,
       stop,
       subscribeStatus,
@@ -1202,7 +3349,7 @@ describe('createWebEditorV2Controller', () => {
     const acknowledgeSavedTextChanges = vi.fn();
     const acknowledgeSavedStyleChanges = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start: vi.fn(),
       stop: vi.fn(),
       getState: vi.fn(() => ({ active: true, version: 2 })),
@@ -1257,7 +3404,7 @@ describe('createWebEditorV2Controller', () => {
     const acknowledgeSavedTextChanges = vi.fn();
     const acknowledgeSavedStyleChanges = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start: vi.fn(),
       stop: vi.fn(),
       getState: vi.fn(() => ({ active: true, version: 2 })),
@@ -1317,7 +3464,7 @@ describe('createWebEditorV2Controller', () => {
   it('blocks saving when the same source text maps to multiple target texts', async () => {
     const acknowledgeSavedTextChanges = vi.fn();
 
-    mocked.createGenieEditor.mockReturnValue({
+    mocked.createCommentary.mockReturnValue({
       start: vi.fn(),
       stop: vi.fn(),
       getState: vi.fn(() => ({ active: true, version: 2 })),

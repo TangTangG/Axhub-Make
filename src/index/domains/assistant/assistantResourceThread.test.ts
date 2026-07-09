@@ -65,16 +65,16 @@ describe('assistant resource thread storage', () => {
     }, storage)).toBe('');
   });
 
-  it('uses the current resource thread before falling back to a redirected placeholder source path', () => {
+  it('uses the current resource thread before falling back to another resource path', () => {
     const storage = createStorage();
     const projectScope = 'make-project';
     const latestTarget = {
       projectScope,
-      resourcePath: 'src/prototypes/latest/canvas.excalidraw',
+      resourcePath: 'src/resources/flows/latest.excalidraw',
     };
     const oldTarget = {
       projectScope,
-      resourcePath: 'src/prototypes/untitled-5/canvas.excalidraw',
+      resourcePath: 'src/resources/flows/untitled-5.excalidraw',
     };
 
     setAssistantResourceThreadId(oldTarget, 'thread-old', storage);
@@ -95,8 +95,8 @@ describe('assistant resource thread storage', () => {
   it('resolves prototype scoped ACP conversation stores under .spec/acp', () => {
     expect(resolvePrototypeConversationStorePath({
       projectPath: '/Users/me/project',
-      resourcePath: 'src/prototypes/login/canvas.excalidraw',
-    })).toBe('/Users/me/project/src/prototypes/login/.spec/acp/conversations.json');
+      resourcePath: 'src/resources/flows/login.excalidraw',
+    })).toBe('');
 
     expect(resolvePrototypeConversationStorePath({
       projectPath: 'C:\\work\\project',

@@ -26,6 +26,8 @@ export interface AiRunClientRequest {
   targetElementId?: string;
   targetArtifactId?: string;
   targetPath?: string;
+  agentRunConcurrency?: number;
+  mcpServers?: unknown[];
   builtinToolSettings?: Record<string, unknown>;
   signal?: AbortSignal;
 }
@@ -53,13 +55,48 @@ export interface AiRunClientError extends Error {
   data?: Record<string, unknown>;
 }
 
+function resolveAiRunClientErrorMessage(data: Record<string, unknown>): string {
+  switch (data.code) {
+    case 'ACP_CHAT_CANCEL_FAILED':
+      return '当前 AI 任务仍在处理中，停止失败，本次新请求未发送。请稍后重试。';
+    case 'ACP_CHAT_CANCELLED_BUT_SEND_FAILED':
+      return '已停止上一轮 AI 任务，但新请求发送失败。请重试。';
+    case 'ACP_CHAT_SEND_FAILED':
+      return 'AI 请求发送失败。请检查本地 ACP 服务或稍后重试。';
+    default:
+      return String(data.error || 'AI 执行失败');
+  }
+}
+
 function createAiRunClientError(data: Record<string, unknown>): AiRunClientError {
-  const error = new Error(String(data.error || 'AI 执行失败')) as AiRunClientError;
+  const error = new Error(resolveAiRunClientErrorMessage(data)) as AiRunClientError;
   if (typeof data.code === 'string') error.code = data.code;
   if (typeof data.action === 'string') error.action = data.action;
   if (data.runtime && typeof data.runtime === 'object') error.runtime = data.runtime;
   error.data = data;
   return error;
+}
+
+function normalizeAiRunsApiOrigin(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim().replace(/\/+$/u, '');
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : '';
+  } catch {
+    return '';
+  }
+}
+
+export function resolveAiRunsApiUrl(): string {
+  const globals = typeof window === 'undefined'
+    ? null
+    : window as unknown as {
+      __AXHUB_MAKE_API_ORIGIN__?: unknown;
+    };
+  const makeApiOrigin = normalizeAiRunsApiOrigin(globals?.__AXHUB_MAKE_API_ORIGIN__);
+  return makeApiOrigin ? `${makeApiOrigin}/api/ai/runs` : '/api/ai/runs';
 }
 
 export function parseAiRunSseEvent(rawEvent: string): AiRunSseEvent[] {
@@ -95,7 +132,7 @@ export async function runAiStream(
   params: AiRunClientRequest,
   onEvent?: (event: AiRunSseEvent) => void | Promise<void>,
 ): Promise<AiRunStreamResult> {
-  const response = await fetch('/api/ai/runs', {
+  const response = await fetch(resolveAiRunsApiUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     signal: params.signal,
@@ -125,6 +162,8 @@ export async function runAiStream(
       targetElementId: params.targetElementId,
       targetArtifactId: params.targetArtifactId,
       targetPath: params.targetPath,
+      agentRunConcurrency: params.agentRunConcurrency,
+      mcpServers: params.mcpServers,
       builtinToolSettings: params.builtinToolSettings,
     }),
   });

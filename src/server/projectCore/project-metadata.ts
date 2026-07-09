@@ -54,15 +54,6 @@ export interface PrototypeResource {
   importReport?: Record<string, unknown>;
 }
 
-export interface DocResource {
-  id: string;
-  name: string;
-  title: string;
-  path: string;
-  description: string;
-  updatedAt: string;
-}
-
 export interface GenericProjectResource {
   id: string;
   name?: string;
@@ -76,10 +67,14 @@ export interface GenericProjectResource {
  * capabilities.resourceWrites are normalized effective server write switches.
  * Project files do not need to declare them; make-server derives write support
  * from resourceWriteTargets plus implemented routes.
- * resourceWriteTargets are write destinations, such as docs.path = "src/docs".
+ * resourceWriteTargets are write destinations, such as docs.path = "src/resources".
  *
- * navigation stores prototypes/docs display order.
- * orders stores themes/data/templates display order.
+ * resources stores dedicated Make artifacts only. Ordinary files, including
+ * Markdown docs, data files, templates, images, Drawio diagrams, and Excalidraw
+ * canvases, are discovered from src/resources instead of project metadata.
+ *
+ * navigation stores prototype display order.
+ * orders stores theme display order.
  *
  * server and projectInfo belong to .axhub/make/axhub.config.json. They are
  * project runtime/display config, not project metadata fields.
@@ -92,19 +87,13 @@ export interface ProjectMetadata {
   };
   resources: {
     prototypes: PrototypeResource[];
-    docs: DocResource[];
     themes: GenericProjectResource[];
-    data: GenericProjectResource[];
-    templates: GenericProjectResource[];
   };
   navigation: {
     prototypes: string[];
-    docs: string[];
   };
   orders: {
     themes: string[];
-    data: string[];
-    templates: string[];
   };
   capabilities: {
     quickEdit: boolean;
@@ -195,19 +184,13 @@ function createDefaultMetadata(projectRoot: string): ProjectMetadata {
     },
     resources: {
       prototypes: [],
-      docs: [],
       themes: [],
-      data: [],
-      templates: [],
     },
     navigation: {
       prototypes: [],
-      docs: [],
     },
     orders: {
       themes: [],
-      data: [],
-      templates: [],
     },
     capabilities: {
       quickEdit: true,
@@ -436,42 +419,6 @@ function normalizePrototypeResources(value: unknown, projectRoot: string): Proto
     .filter((item): item is PrototypeResource => Boolean(item));
 }
 
-function normalizeDocResources(value: unknown, projectRoot: string): DocResource[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
-    .map((item) => {
-      const id = stringValue(item.id) || stringValue(item.name);
-      const name = stringValue(item.name) || id;
-      const title = stringValue(item.title) || name;
-      const docPath = stringValue(item.path);
-      if (!id || !name || !title || !docPath) {
-        return null;
-      }
-      const normalizedDocPath = docPath.replace(/\\/g, path.sep);
-      if (/^[a-z][a-z0-9+.-]*:/iu.test(normalizedDocPath)) {
-        return null;
-      }
-      const resolvedDocPath = path.resolve(path.isAbsolute(normalizedDocPath)
-        ? normalizedDocPath
-        : path.join(projectRoot, normalizedDocPath));
-      if (!isInsideProjectRoot(projectRoot, resolvedDocPath)) {
-        throw new Error(`Doc resource ${id} is outside project root`);
-      }
-      return {
-        id,
-        name,
-        title,
-        path: resolvedDocPath,
-        description: stringValue(item.description),
-        updatedAt: stringValue(item.updatedAt) || nowIso(),
-      };
-    })
-    .filter((item): item is DocResource => Boolean(item));
-}
-
 function normalizeProjectRelativeWriteTargetPath(projectRoot: string, resourceType: string, value: unknown): string {
   const rawPath = stringValue(value);
   if (!rawPath) {
@@ -534,7 +481,6 @@ function normalizeMetadata(data: unknown, projectRoot: string): ProjectMetadata 
   const orders = parsed.orders && typeof parsed.orders === 'object' ? parsed.orders : {};
   const capabilities = parsed.capabilities && typeof parsed.capabilities === 'object' ? parsed.capabilities : {};
   const project = parsed.project && typeof parsed.project === 'object' ? parsed.project : {};
-  const docs = normalizeDocResources(resources.docs, projectRoot);
   return {
     schemaVersion: 1,
     project: {
@@ -543,19 +489,13 @@ function normalizeMetadata(data: unknown, projectRoot: string): ProjectMetadata 
     },
     resources: {
       prototypes: normalizePrototypeResources(resources.prototypes, projectRoot),
-      docs,
       themes: normalizeGenericResources(resources.themes),
-      data: normalizeGenericResources(resources.data),
-      templates: normalizeGenericResources(resources.templates),
     },
     navigation: {
       prototypes: stringList(navigation.prototypes),
-      docs: stringList(navigation.docs),
     },
     orders: {
       themes: stringList(orders.themes),
-      data: stringList(orders.data),
-      templates: stringList(orders.templates),
     },
     capabilities: {
       quickEdit: typeof capabilities.quickEdit === 'boolean' ? capabilities.quickEdit : defaults.capabilities.quickEdit,

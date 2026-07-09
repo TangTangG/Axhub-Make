@@ -6,7 +6,10 @@ import net from 'node:net';
 import tls from 'node:tls';
 import type { Duplex } from 'node:stream';
 
-import { appendProjectIdToModuleSpecifiersInCode } from '../../client/vite-plugins/utils/moduleSpecifierQuery.ts';
+import {
+  appendSearchParamsToModuleSpecifiersInCode,
+  type ModuleSpecifierSearchParam,
+} from './moduleSpecifierQuery.ts';
 import { isPathInside, resolveComparableProjectRoot, resolveProjectRoot } from './projectCore/index.ts';
 
 const RUNTIME_API_PREFIXES = [
@@ -31,7 +34,6 @@ const RUNTIME_FILE_PATTERNS = [
   /^\/prototypes\/.+/u,
   /^\/themes\/.+/u,
   /^\/docs\/.+(?:\/spec\.html)?$/u,
-  /^\/canvas\/.+\/?$/u,
   /^\/assets\//u,
 ];
 
@@ -81,6 +83,7 @@ const RUNTIME_GRAPH_REFERER_PATTERNS = [
   /^\/src\//u,
   /^\/themes\//u,
 ];
+const RUNTIME_CONTEXT_QUERY_KEYS = ['projectId', 'gitVersion', 'gitPath'] as const;
 
 export interface RuntimeDevModuleRequestOptions {
   runtimeProjectRoot?: string | null;
@@ -118,6 +121,15 @@ function getSearchParamFromRequestOrReferer(req: IncomingMessage, key: string): 
   }
   const referer = getRequestReferer(req.headers);
   return referer ? getSearchParamFromUrl(referer, key) : '';
+}
+
+function getRuntimeContextSearchParams(req: IncomingMessage): ModuleSpecifierSearchParam[] {
+  return RUNTIME_CONTEXT_QUERY_KEYS
+    .map((key) => ({
+      key,
+      value: getSearchParamFromRequestOrReferer(req, key),
+    }))
+    .filter((param) => param.value);
 }
 
 function shouldRewriteRuntimeModuleResponse(proxyRes: IncomingMessage): boolean {
@@ -284,6 +296,13 @@ export function isRuntimeHtmlProxyRequest(requestUrl: string): boolean {
 
 export function isRuntimeOnlyRoute(pathname: string): boolean {
   const pathOnly = pathname.split('?')[0] || '/';
+  const decodedPathOnly = decodePathname(pathOnly);
+  if (
+    /^\/canvas\/(?:resources|prototypes)\//u.test(decodedPathOnly)
+    || /^\/prototypes\/[^/]+\/canvas-assets\//u.test(decodedPathOnly)
+  ) {
+    return false;
+  }
   if (RUNTIME_EXACT_PATHS.has(pathOnly)) {
     return true;
   }
@@ -301,7 +320,9 @@ export function getRuntimeProxyTargetPath(requestUrl: string): string {
       parsed.pathname === '/@vite/client'
       || /\/vite\/dist\/client\/env\.mjs$/u.test(decodePathname(parsed.pathname))
     ) {
-      parsed.searchParams.delete('projectId');
+      for (const key of RUNTIME_CONTEXT_QUERY_KEYS) {
+        parsed.searchParams.delete(key);
+      }
       return `${parsed.pathname}${parsed.search}${parsed.hash}` || '/';
     }
   } catch {
@@ -455,7 +476,7 @@ function getForwardedProtoForRuntime(req: IncomingMessage): string {
 export function proxyToRuntime(req: IncomingMessage, res: ServerResponse, runtimeOrigin: string): void {
   const target = new URL(getRuntimeProxyTargetPath(req.url || '/'), runtimeOrigin);
   const transport = target.protocol === 'https:' ? https : http;
-  const projectId = getSearchParamFromRequestOrReferer(req, 'projectId');
+  const contextParams = getRuntimeContextSearchParams(req);
   const forwardedHost = getForwardedHostForRuntime(req);
   const forwardedProto = getForwardedProtoForRuntime(req);
   const proxyReq = transport.request(target, {
@@ -467,7 +488,7 @@ export function proxyToRuntime(req: IncomingMessage, res: ServerResponse, runtim
       'x-forwarded-proto': forwardedProto,
     },
   }, (proxyRes) => {
-    if (!projectId || !shouldRewriteRuntimeModuleResponse(proxyRes)) {
+    if (contextParams.length === 0 || !shouldRewriteRuntimeModuleResponse(proxyRes)) {
       res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
       proxyRes.pipe(res);
       return;
@@ -480,7 +501,7 @@ export function proxyToRuntime(req: IncomingMessage, res: ServerResponse, runtim
     proxyRes.on('end', () => {
       const headers = { ...proxyRes.headers };
       const body = Buffer.concat(chunks).toString('utf8');
-      const rewritten = Buffer.from(appendProjectIdToModuleSpecifiersInCode(body, projectId), 'utf8');
+      const rewritten = Buffer.from(appendSearchParamsToModuleSpecifiersInCode(body, contextParams), 'utf8');
       delete headers['content-length'];
       delete headers['content-encoding'];
       res.writeHead(proxyRes.statusCode || 502, {

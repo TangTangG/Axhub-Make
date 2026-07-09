@@ -82,7 +82,7 @@ function toKebabBaseName(input: string, fallbackPrefix: string): string {
 }
 
 function getDataDir(projectRoot: string): string {
-  return path.join(projectRoot, 'src/database');
+  return path.join(projectRoot, 'src/resources/data');
 }
 
 function getThemesDir(projectRoot: string): string {
@@ -90,7 +90,7 @@ function getThemesDir(projectRoot: string): string {
 }
 
 function getDataDirForContext(context: DataThemeProjectContext, handlers: DataThemeApiHandlers): string {
-  return handlers.getDeclaredResourceWriteDir(context, 'data') || getDataDir(context.project.root);
+  return getDataDir(context.project.root);
 }
 
 function getThemesDirForContext(context: DataThemeProjectContext, handlers: DataThemeApiHandlers): string {
@@ -584,7 +584,7 @@ function handleData(
         const bodyContext = handlers.createProjectContextFromBody(req, res, options, body);
         if (!bodyContext) return;
         updateResolvedProjectContext(bodyContext);
-        if (!handlers.hasResourceWriteCapability(projectContext, 'dataCreate') || !handlers.getDeclaredResourceWriteDir(projectContext, 'data')) {
+        if (!handlers.hasResourceWriteCapability(projectContext, 'dataCreate')) {
           handlers.sendResourceWriteAdapterRequired(res, projectContext, '/api/data/tables');
           return;
         }
@@ -604,26 +604,6 @@ function handleData(
           return;
         }
         writeTableFile(tablePath, tableName, []);
-        const current = projectContext.metadataStore.getMetadata();
-        handlers.saveMetadataWithResourceOrder(projectContext, {
-          ...current,
-          resources: {
-            ...current.resources,
-            data: [
-              {
-                id: fileName,
-                name: fileName,
-                title: tableName,
-                path: handlers.createProjectRelativePath(projectRoot, tablePath),
-              },
-              ...current.resources.data.filter((table) => table.id !== fileName && table.name !== fileName),
-            ],
-          },
-          orders: {
-            ...current.orders,
-            data: handlers.prependUnique(current.orders.data, fileName),
-          },
-        });
         sendJson(res, {
           success: true,
           projectId: projectContext.project.id,
@@ -666,12 +646,6 @@ function handleData(
         if (nextTablePath !== table.tablePath) {
           fs.rmSync(table.tablePath, { force: true });
         }
-        handlers.updateGenericResourceMetadata(projectContext, 'data', fileName, {
-          id: nextFileName,
-          name: nextFileName,
-          title: tableName,
-          path: handlers.createProjectRelativePath(projectRoot, nextTablePath),
-        }, fileName, nextFileName);
         sendJson(res, { success: true, fileName: nextFileName, previousFileName: fileName, tableName });
       }).catch((error) => sendDataError(res, 400, 'INVALID_JSON', error.message));
       return true;
@@ -682,7 +656,6 @@ function handleData(
         return true;
       }
       fs.rmSync(tablePath, { force: true });
-      handlers.removeGenericResourceMetadata(projectContext, 'data', fileName);
       sendJson(res, { success: true });
       return true;
     }

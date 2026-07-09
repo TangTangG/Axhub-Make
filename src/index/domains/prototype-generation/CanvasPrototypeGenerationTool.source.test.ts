@@ -67,10 +67,10 @@ describe('CanvasPrototypeGenerationTool source', () => {
 
     expect(source).toContain('getPrototypeGenerationTaskStore().submit');
     expect(source).not.toContain('onStartAssistantRuntime?.()');
-    expect(source).toContain('derivePrototypeCanvasName');
-    expect(source).toContain('deriveCurrentPrototypeContext');
-    expect(source).toContain('canvasName: derivePrototypeCanvasName(canvasFilePath)');
-    expect(source).toContain('currentPrototype: deriveCurrentPrototypeContext(canvasFilePath, prototypes)');
+    expect(source).not.toContain('derivePrototypeCanvasName');
+    expect(source).not.toContain('deriveCurrentPrototypeContext');
+    expect(source).toContain('canvasName: canvasFilePath');
+    expect(source).toContain('currentPrototype: null');
     expect(source).toContain('knownPrototypes: prototypes');
     expect(source).toContain('beforePrototypeNames');
     expect(source).toContain('refreshProjectPrototypes');

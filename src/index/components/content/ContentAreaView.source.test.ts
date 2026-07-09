@@ -19,14 +19,45 @@ function getSourceSegment(source: string, startNeedle: string, endNeedle: string
 }
 
 describe('ContentAreaView review zoom source', () => {
-  it('wraps both canvas render paths in a scoped error boundary', () => {
+  it('allows embedded prototype and theme preview iframes to write clipboard text', () => {
+    const source = readContentAreaViewSource();
+    const scaledIframeHelper = getSourceSegment(
+      source,
+      'const renderScaledIframe = (',
+      '    if (projectAccessDeniedReason) {',
+    );
+    const themePreviewBranch = getSourceSegment(
+      source,
+      'const themePreviewUrl = selectedTheme.clientUrl || selectedTheme.previewUrl || \'\';',
+      "    if (contentMode === 'data') {",
+    );
+    const desktopBranch = getSourceSegment(
+      source,
+      "previewLayout.single.kind === 'desktop' ? (",
+      ") : previewLayout.single.kind === 'custom' ? (",
+    );
+
+    expect(scaledIframeHelper).toContain('allow="clipboard-write"');
+    expect(themePreviewBranch).toContain('allow="clipboard-write"');
+    expect(desktopBranch).toContain('allow="clipboard-write"');
+  });
+
+  it('does not keep the removed review-specific page zoom layout', () => {
+    const source = readContentAreaViewSource();
+
+    expect(source).not.toContain('reviewPageZoomEnabled');
+    expect(source).not.toContain('desktopReviewZoomLayout');
+    expect(source).not.toContain('reviewPageZoom');
+  });
+
+  it('wraps the resource canvas render path in a scoped error boundary', () => {
     const source = readContentAreaViewSource();
     const standaloneCanvasBranch = getSourceSegment(
       source,
       "if (contentMode === 'canvas') {",
       '    return (\n        <div\n            ref={containerRef}',
     );
-    const prototypeCanvasBranch = getSourceSegment(
+    const legacyPrototypeCanvasBranch = getSourceSegment(
       source,
       ") : viewMode === 'canvas' ? (",
       ") : (",
@@ -46,10 +77,11 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain("const ExcalidrawCanvas = React.lazy(() => lazyWithRetry(() => import('./ExcalidrawCanvas')));");
     expect(source).not.toContain('草稿加载失败');
     expect(source).not.toContain('请刷新页面，或切换到其他草稿后再回来重试。');
-    expect(standaloneCanvasBranch).toContain('<CanvasErrorBoundary resetKey={selectedCanvas.name}>');
+    expect(standaloneCanvasBranch).toContain('<CanvasErrorBoundary resetKey={currentCanvasItem.name}>');
     expect(standaloneCanvasBranch).toContain('</CanvasErrorBoundary>');
-    expect(prototypeCanvasBranch).toContain('<CanvasErrorBoundary resetKey={selectedPrototypeCanvasName}>');
-    expect(prototypeCanvasBranch).toContain('</CanvasErrorBoundary>');
+    expect(legacyPrototypeCanvasBranch).toContain('画布现在作为资源文件管理，请在资源中打开 .excalidraw 文件');
+    expect(legacyPrototypeCanvasBranch).not.toContain('<ExcalidrawCanvas');
+    expect(legacyPrototypeCanvasBranch).not.toContain('selectedPrototypeCanvasName');
   });
 
   it('uses draft wording for the standalone canvas empty state', () => {
@@ -62,6 +94,36 @@ describe('ContentAreaView review zoom source', () => {
 
     expect(standaloneCanvasBranch).toContain('请从左侧选择或新建一个画布');
     expect(standaloneCanvasBranch).not.toContain('请从左侧选择或新建一个草稿');
+  });
+
+  it('renders Excalidraw resource files from the resource tree as the current canvas', () => {
+    const source = readContentAreaViewSource();
+    const standaloneCanvasBranch = getSourceSegment(
+      source,
+      "if (contentMode === 'canvas') {",
+      '    return (\n        <div\n            ref={containerRef}',
+    );
+
+    expect(source).toContain("const selectedResourceCanvas = selectedDoc?.openMode === 'canvas' ? selectedDoc : null;");
+    expect(source).toContain('const selectedResourceCanvasFilePath = selectedResourceCanvas');
+    expect(standaloneCanvasBranch).toContain('const currentCanvasItem = selectedResourceCanvas || selectedCanvas;');
+    expect(standaloneCanvasBranch).toContain('canvasName={currentCanvasItem.name}');
+    expect(standaloneCanvasBranch).toContain('canvasFilePath={currentCanvasFilePath}');
+    expect(standaloneCanvasBranch).toContain('<CanvasErrorBoundary resetKey={currentCanvasItem.name}>');
+  });
+
+  it('does not render the custom canvas welcome guide overlay', () => {
+    const source = readContentAreaViewSource();
+    const standaloneCanvasBranch = getSourceSegment(
+      source,
+      "if (contentMode === 'canvas') {",
+      '    return (\n        <div\n            ref={containerRef}',
+    );
+
+    expect(source).not.toContain("import CanvasWelcomeGuide from './CanvasWelcomeGuide';");
+    expect(standaloneCanvasBranch).not.toContain('<CanvasWelcomeGuide />');
+    expect(source).not.toContain('axhub-canvas-welcome-dismissed');
+    expect(source).not.toContain('画布使用技巧');
   });
 
   it('forwards theme lists and default design into the canvas', () => {
@@ -78,21 +140,15 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain('defaultThemeName={defaultThemeName}');
   });
 
-  it('forwards the active project id into both canvas render paths', () => {
+  it('forwards the active project id into the resource canvas render path', () => {
     const source = readContentAreaViewSource();
     const standaloneCanvasBranch = getSourceSegment(
       source,
       "if (contentMode === 'canvas') {",
       '    return (\n        <div\n            ref={containerRef}',
     );
-    const prototypeCanvasBranch = getSourceSegment(
-      source,
-      ") : viewMode === 'canvas' ? (",
-      ") : (",
-    );
 
     expect(standaloneCanvasBranch).toContain('activeProjectId={activeProjectId}');
-    expect(prototypeCanvasBranch).toContain('activeProjectId={activeProjectId}');
   });
 
   it('shows a copyable AI prompt action for make client startup failures in both empty states', () => {
@@ -128,37 +184,76 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain('const selectedThemeClientUnavailable = selectedThemeRuntimeUnavailable || (');
   });
 
-  it('renders the prototype placeholder from the shared scene registry with start-specific prompt quick inputs', () => {
+  it('renders reusable start guides with scoped scenes and aligned actions', () => {
     const source = readContentAreaViewSource();
     const registrySource = readCanvasAiSceneRegistrySource();
-    const placeholderGuideSegment = getSourceSegment(
+    const startGuideSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
       'export default function ContentArea({',
     );
 
     expect(source).toContain("import { Segmented } from 'antd';");
+    expect(source).toContain("import TemplateLibraryCard, { type TemplateLibraryCardItem } from '../dialogs/TemplateLibraryCard';");
+    expect(source).toContain("import PromptActionButton from '../PromptActionButton';");
+    expect(source).toContain("import { generateTemplateImportPrompt, type TemplateLibraryPromptItem } from '../../utils/templateImportPrompts';");
+    expect(source).toContain("import { getUserFriendlyUploadErrorMessage } from '../../utils/uploadErrors';");
     expect(source).not.toContain("import '../../domains/ai-image/AiImageGenerationComposer.css';");
-    expect(source).toContain('CANVAS_AI_SCENE_OPTIONS');
-    expect(source).toContain('getCanvasAiPrototypeStartPlaceholders');
-    expect(source).toContain('getCanvasAiPrototypeStartQuickPrompts');
-    expect(source).toContain('getCanvasAiPrototypeStartSystemPrompt');
+    expect(source).not.toContain('CANVAS_AI_SCENE_OPTIONS');
+    expect(source).toContain('getCanvasAiStartPlaceholders');
+    expect(source).not.toContain('getCanvasAiPrototypeStartQuickPrompts');
+    expect(source).toContain('getCanvasAiStartSystemPrompt');
     expect(source).toContain('getCanvasAiSceneDefinition');
-    expect(source).toContain('pickCanvasAiPrototypeStartPlaceholder');
+    expect(source).toContain('pickCanvasAiStartPlaceholder');
     expect(source).toContain("import { createCanvasGenerationComposerDraftStorageKey } from '../../domains/shared/canvasGenerationComposerDraft';");
     expect(source).toContain('CanvasGenerationDisplayComposer');
+    expect(source).toContain("type StartGuideKind = 'prototype' | 'resource' | 'design';");
+    expect(source).toContain('const START_GUIDE_SCENES');
+    expect(source).toContain("prototype: ['page']");
+    expect(source).toContain("resource: ['design', 'document']");
+    expect(source).toContain("design: ['design']");
+    expect(source).toContain("const shouldShowSceneSwitcher = availableScenes.length > 1;");
+    expect(source).toContain("const shouldShowPrototypeActions = kind === 'prototype';");
+    expect(source).toContain("const shouldShowResourceActions = kind === 'resource';");
+    expect(source).toContain("const shouldShowTopActions = shouldShowPrototypeActions || shouldShowResourceActions || shouldShowDesignImportAction;");
+    expect(source).toContain("const shouldShowDesignImportAction = kind === 'design';");
+    expect(source).toContain("const shouldShowPrototypeCases = kind === 'prototype';");
+    expect(source).toContain("const shouldUseImageStartSettings = activeScene === 'design' && kind !== 'design';");
+    expect(source).toContain('onCreateResourceCanvasFile?: () => void | Promise<void>;');
+    expect(source).toContain('onCreateDrawioResourceFile?: () => void | Promise<void>;');
+    expect(source).toContain('onOpenDesignImport?: () => void;');
     expect(source).toContain('PrototypeStartSettingsPopover');
     expect(source).toContain('DocumentStartSettingsPopover');
     expect(source).toContain('documentTemplatesApi');
     expect(source).toContain('appendDocumentStartPromptSettings');
-    expect(placeholderGuideSegment).toContain('我们先从哪里开始呢?');
-    expect(placeholderGuideSegment).toContain('px-6 py-10');
-    expect(placeholderGuideSegment).toContain('max-w-[960px]');
-    expect(placeholderGuideSegment).toContain('max-w-[1080px]');
-    expect(placeholderGuideSegment).toContain('mt-8 w-full');
-    expect(placeholderGuideSegment).toContain('<Segmented');
-    expect(placeholderGuideSegment).toContain('assistantProjectPath?: string;');
-    expect(placeholderGuideSegment).toContain('assistantProjectPath,');
+    expect(startGuideSegment).toContain('我们先从哪里开始呢?');
+    expect(startGuideSegment).toContain('px-6 py-10');
+    expect(startGuideSegment).toContain('max-w-[960px]');
+    expect(startGuideSegment).toContain('max-w-[1080px]');
+    expect(startGuideSegment).toContain('mt-8 w-full');
+    expect(startGuideSegment).toContain('{shouldShowSceneSwitcher ? (');
+    expect(startGuideSegment).toContain('<Segmented');
+    expect(startGuideSegment).toContain('options={availableScenes.map((scene) => ({ label: getCanvasAiSceneDefinition(scene).label, value: scene }))}');
+    expect(startGuideSegment).toContain('更多模板');
+    expect(startGuideSegment).toContain('导入原型');
+    expect(startGuideSegment).toContain('导入任意网页');
+    expect(startGuideSegment).toContain('Drawio 图表');
+    expect(startGuideSegment).toContain('导入设计规范');
+    expect(startGuideSegment).not.toContain('导入设计稿');
+    expect(startGuideSegment).toContain('打开在线模板库');
+    expect(startGuideSegment).toContain('原型案例');
+    expect(startGuideSegment).toContain('templateCases');
+    expect(startGuideSegment).toContain('TemplateLibraryCard');
+    expect(startGuideSegment).toContain('renderTemplateCaseCard');
+    expect(startGuideSegment).toContain('{shouldShowPrototypeCases ? (');
+    expect(startGuideSegment).toContain('className="mb-3 flex flex-wrap items-center justify-between gap-3"');
+    expect(startGuideSegment).toContain("fetch('/api/template-library')");
+    expect(startGuideSegment).toContain("if (!shouldShowPrototypeCases) {");
+    expect(startGuideSegment).toContain('setTemplateCases([]);');
+    expect(startGuideSegment).toContain('generateTemplateImportPrompt({');
+    expect(startGuideSegment).toContain('void onRefreshPrototypes?.(String(result?.folderName || result?.name || \'\').trim());');
+    expect(startGuideSegment).toContain('assistantProjectPath?: string;');
+    expect(startGuideSegment).toContain('assistantProjectPath,');
     for (const scene of ['页面', '设计图', '文档']) {
       expect(registrySource).toContain(scene);
     }
@@ -169,71 +264,211 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).not.toContain('PROTOTYPE_PLACEHOLDER_QUICK_PROMPTS');
     expect(source).not.toContain('resolvePrototypePlaceholderScene');
     expect(source).not.toContain('上传设计稿');
-    expect(placeholderGuideSegment).toContain('onSubmitPrototypeStartRequest');
-    expect(placeholderGuideSegment).toContain('scene: activeScene');
-    expect(placeholderGuideSegment).toContain('const activeSceneDefinition = getCanvasAiSceneDefinition(activeScene);');
-    expect(placeholderGuideSegment).toContain('const activeStartPlaceholders = getCanvasAiPrototypeStartPlaceholders(activeScene);');
-    expect(placeholderGuideSegment).toContain('const activeStartSystemPrompt = getCanvasAiPrototypeStartSystemPrompt(activeScene);');
-    expect(placeholderGuideSegment).toContain("const activeQuickPrompts = activeScene === 'document' ? [] : getCanvasAiPrototypeStartQuickPrompts(activeScene);");
-    expect(placeholderGuideSegment).not.toContain('const activeQuickPrompts = getCanvasAiPrototypeStartQuickPrompts(activeScene);');
-    expect(placeholderGuideSegment).toContain('const prototypeLocalContextRef = useMemo');
-    expect(placeholderGuideSegment).toContain('paths: [prototypeIndexPath]');
-    expect(placeholderGuideSegment).toContain("resourceType: 'prototype'");
-    expect(placeholderGuideSegment).toContain('resourceId: item.name');
-    expect(placeholderGuideSegment).toContain('const placeholderStartComposerDraftStorageKey = useMemo(() => (');
-    expect(placeholderGuideSegment).toContain('createCanvasGenerationComposerDraftStorageKey([');
-    expect(placeholderGuideSegment).toContain('assistantProjectPath || activeProjectId ||');
-    expect(placeholderGuideSegment).toContain('item.name');
-    expect(placeholderGuideSegment).toContain('prototypeIndexPath');
-    expect(placeholderGuideSegment).toContain("'placeholder-start'");
-    expect(placeholderGuideSegment).toContain('activeScene');
-    expect(placeholderGuideSegment).toContain('pickCanvasAiPrototypeStartPlaceholder(activeScene)');
-    expect(placeholderGuideSegment).toContain('showSelectors');
-    expect(placeholderGuideSegment).toContain('workspacePath={assistantProjectPath}');
-    expect(placeholderGuideSegment).toContain('draftStorageKey={placeholderStartComposerDraftStorageKey}');
-    expect(placeholderGuideSegment).toContain('onSubmit={async (prompt, selection) => {');
-    expect(placeholderGuideSegment).toContain('return onSubmitPrototypeStartRequest?.({');
-    expect(placeholderGuideSegment).toContain("source: 'placeholder-start'");
-    expect(placeholderGuideSegment).toContain('const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(prompt, activeStartSystemPrompt);');
-    expect(placeholderGuideSegment).toContain("activeScene === 'page'");
-    expect(placeholderGuideSegment).toContain('appendPrototypeStartPromptSettings({');
-    expect(placeholderGuideSegment).toContain('appendImageStartPromptSettings({');
-    expect(placeholderGuideSegment).toContain('appendDocumentStartPromptSettings({');
-    expect(placeholderGuideSegment).not.toContain('appendCanvasGenerationPromptSettings({');
-    expect(placeholderGuideSegment).toContain('prompt: promptWithStartSystemPrompt,');
-    expect(placeholderGuideSegment).toContain("localContextRefs: activeScene === 'page' ? [] : [prototypeLocalContextRef],");
-    expect(placeholderGuideSegment).not.toContain('sceneSettings: activeScene === \'page\'');
-    expect(placeholderGuideSegment).toContain('count: prototypeGenerationCount');
-    expect(placeholderGuideSegment).toContain('themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? \'\' : selectedTheme?.name || \'\'');
-    expect(placeholderGuideSegment).toContain(": activeScene === 'design'");
-    expect(placeholderGuideSegment).toContain('imageStartParams');
-    expect(placeholderGuideSegment).toContain('const effectiveImageStartParams = useMemo<ImageStartParams>(() => ({');
-    expect(placeholderGuideSegment).toContain("background: imageStartParams.output_format === 'png' ? imageStartParams.background : 'auto'");
-    expect(placeholderGuideSegment).toContain('settings: effectiveImageStartParams');
-    expect(placeholderGuideSegment).toContain("sceneSettings: activeScene === 'design' ? effectiveImageStartParams : activeScene === 'document' ? documentStartSettings : undefined");
-    expect(placeholderGuideSegment).toContain('provider: selection?.provider');
-    expect(placeholderGuideSegment).toContain('model: selection?.model');
-    expect(placeholderGuideSegment).toContain('mode: selection?.mode');
-    expect(placeholderGuideSegment).toContain('thought: selection?.thought');
-    expect(placeholderGuideSegment).toContain('contextBundle: selection?.contextBundle');
-    expect(placeholderGuideSegment).toContain('quickPrompts={activeQuickPrompts}');
-    expect(placeholderGuideSegment).toContain('postSelectorActions={');
-    expect(placeholderGuideSegment).not.toContain('leadingActions={');
-    expect(placeholderGuideSegment).toContain("activeScene === 'page' ? (");
-    expect(placeholderGuideSegment).toContain("activeScene === 'design' ? (");
-    expect(placeholderGuideSegment).toContain("activeScene === 'document' ? (");
-    expect(placeholderGuideSegment).toContain('ImageStartSettingsPopover');
-    expect(placeholderGuideSegment).toContain('DocumentStartSettingsPopover');
-    expect(placeholderGuideSegment).toContain('w-full pt-24');
-    expect(placeholderGuideSegment).not.toContain('onClick={() => onSubmitPrototypeStartRequest?.({');
-    expect(placeholderGuideSegment).not.toContain('mt-5 flex flex-wrap items-center justify-center gap-2');
-    expect(placeholderGuideSegment).not.toContain('rounded-md border border-slate-200 bg-white px-3.5');
-    expect(placeholderGuideSegment).not.toContain('rounded-full border border-slate-200 bg-white px-4');
-    expect(placeholderGuideSegment).not.toContain('shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50');
-    expect(placeholderGuideSegment).not.toContain('打开画布创作原型');
-    expect(placeholderGuideSegment).not.toContain('新手对话技巧');
-    expect(placeholderGuideSegment).toContain('variant="inline-app-list"');
-    expect(placeholderGuideSegment).toContain('targetPath={draftActive ? null : prototypeIndexPath}');
+    expect(startGuideSegment).toContain('onSubmitPrototypeStartRequest');
+    expect(startGuideSegment).toContain('scene: activeScene');
+    expect(startGuideSegment).toContain('const activeSceneDefinition = getCanvasAiSceneDefinition(activeScene);');
+    expect(startGuideSegment).toContain('const activeStartPlaceholders = getCanvasAiStartPlaceholders(kind, activeScene);');
+    expect(startGuideSegment).toContain('const activeStartSystemPrompt = getCanvasAiStartSystemPrompt(kind, activeScene);');
+    expect(startGuideSegment).not.toContain('activeQuickPrompts');
+    expect(startGuideSegment).not.toContain('getCanvasAiPrototypeStartQuickPrompts');
+    expect(startGuideSegment).toContain('const prototypeLocalContextRef = useMemo');
+    expect(startGuideSegment).toContain('paths: [prototypeIndexPath]');
+    expect(startGuideSegment).toContain("resourceType: 'prototype'");
+    expect(startGuideSegment).toContain('resourceId: item.name');
+    expect(startGuideSegment).toContain('const placeholderStartComposerDraftStorageKey = useMemo(() => (');
+    expect(startGuideSegment).toContain('createCanvasGenerationComposerDraftStorageKey([');
+    expect(startGuideSegment).toContain('assistantProjectPath || activeProjectId ||');
+    expect(startGuideSegment).toContain('item.name');
+    expect(startGuideSegment).toContain('prototypeIndexPath');
+    expect(startGuideSegment).toContain('startSource');
+    expect(startGuideSegment).toContain('activeScene');
+    expect(startGuideSegment).toContain('pickCanvasAiStartPlaceholder(kind, activeScene)');
+    expect(startGuideSegment).toContain('showSelectors');
+    expect(startGuideSegment).toContain('workspacePath={assistantProjectPath}');
+    expect(startGuideSegment).toContain('draftStorageKey={placeholderStartComposerDraftStorageKey}');
+    expect(startGuideSegment).toContain('onSubmit={async (prompt, selection) => {');
+    expect(startGuideSegment).toContain('return onSubmitPrototypeStartRequest?.({');
+    expect(startGuideSegment).toContain('source: startSource');
+    expect(startGuideSegment).toContain('const buildPlaceholderStartPrompt = (prompt: string, finalGuide: CanvasGenerationFinalGuide) => {');
+    expect(startGuideSegment).toContain('const startSystemPrompt = finalGuide === \'update-canvas\'');
+    expect(startGuideSegment).toContain('stripCanvasUpdateInstruction(activeStartSystemPrompt);');
+    expect(startGuideSegment).toContain('const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(prompt, startSystemPrompt);');
+    expect(startGuideSegment).toContain("activeScene === 'page'");
+    expect(startGuideSegment).toContain('appendPrototypeStartPromptSettings({');
+    expect(startGuideSegment).toContain('appendImageStartPromptSettings({');
+    expect(startGuideSegment).toContain('appendDocumentStartPromptSettings({');
+    expect(startGuideSegment).not.toContain('appendCanvasGenerationPromptSettings({');
+    expect(startGuideSegment).toContain('prompt: promptWithStartSystemPrompt,');
+    expect(startGuideSegment).toContain('appendCanvasGenerationFinalGuide({');
+    expect(startGuideSegment).toContain('const { prompt: submittedPrompt, documentStartSettings } = buildPlaceholderStartPrompt(prompt, \'none\');');
+    expect(startGuideSegment).not.toContain("buildPlaceholderStartPrompt(prompt, 'update-canvas')");
+    expect(startGuideSegment).toContain("localContextRefs: kind !== 'prototype' || activeScene === 'page' ? [] : [prototypeLocalContextRef],");
+    expect(startGuideSegment).not.toContain('sceneSettings: activeScene === \'page\'');
+    expect(startGuideSegment).toContain('count: prototypeGenerationCount');
+    expect(startGuideSegment).toContain('themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? \'\' : selectedTheme?.name || \'\'');
+    expect(startGuideSegment).toContain(': shouldUseImageStartSettings');
+    expect(startGuideSegment).toContain('imageStartParams');
+    expect(startGuideSegment).toContain('const effectiveImageStartParams = useMemo<ImageStartParams>(() => ({');
+    expect(startGuideSegment).toContain("background: imageStartParams.output_format === 'png' ? imageStartParams.background : 'auto'");
+    expect(startGuideSegment).toContain('settings: effectiveImageStartParams');
+    expect(startGuideSegment).toContain("sceneSettings: shouldUseImageStartSettings ? effectiveImageStartParams : activeScene === 'document' ? documentStartSettings : undefined");
+    expect(startGuideSegment).toContain('provider: selection?.provider');
+    expect(startGuideSegment).toContain('model: selection?.model');
+    expect(startGuideSegment).toContain('mode: selection?.mode');
+    expect(startGuideSegment).toContain('thought: selection?.thought');
+    expect(startGuideSegment).toContain('contextBundle: selection?.contextBundle');
+    expect(startGuideSegment).toContain('attachments: selection?.attachments');
+    expect(startGuideSegment).not.toContain('quickPrompts={activeQuickPrompts}');
+    expect(startGuideSegment).toContain('projectResourceTrees={{');
+    expect(startGuideSegment).toContain('prototypes: sidebarTrees?.prototypes || []');
+    expect(startGuideSegment).toContain('docs: sidebarTrees?.docs || []');
+    expect(startGuideSegment).toContain('themes: sidebarTrees?.themes || []');
+    expect(startGuideSegment).toContain('projectResourceItems={{');
+    expect(startGuideSegment).toContain('prototypes: prototypes || []');
+    expect(startGuideSegment).toContain('docs: docsItems || []');
+    expect(startGuideSegment).toContain('themes: themes || []');
+    expect(startGuideSegment).toContain('externalFileDropTargetRef={placeholderDropZoneRef}');
+    expect(startGuideSegment).toContain('postSelectorActions={');
+    expect(startGuideSegment).not.toContain('leadingActions={');
+    expect(startGuideSegment).toContain("activeScene === 'page' ? (");
+    expect(startGuideSegment).toContain('shouldUseImageStartSettings ? (');
+    expect(startGuideSegment).toContain("activeScene === 'document' ? (");
+    expect(startGuideSegment).toContain('ImageStartSettingsPopover');
+    expect(startGuideSegment).toContain('DocumentStartSettingsPopover');
+    expect(startGuideSegment).toContain('w-full pt-24');
+    expect(startGuideSegment).not.toContain('onClick={() => onSubmitPrototypeStartRequest?.({');
+    expect(startGuideSegment).not.toContain('mt-5 flex flex-wrap items-center justify-center gap-2');
+    expect(startGuideSegment).not.toContain('rounded-md border border-slate-200 bg-white px-3.5');
+    expect(startGuideSegment).not.toContain('rounded-full border border-slate-200 bg-white px-4');
+    expect(startGuideSegment).not.toContain('shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50');
+    expect(startGuideSegment).not.toContain('打开画布创作原型');
+    expect(startGuideSegment).not.toContain('新手对话技巧');
+    expect(startGuideSegment).toContain('variant="inline-app-list"');
+    expect(startGuideSegment).toContain('targetPath={draftActive ? null : prototypeIndexPath}');
+  });
+
+  it('passes homepage project resource trees and file drop targets into placeholder composers', () => {
+    const source = readContentAreaViewSource();
+    const contentPropsSegment = getSourceSegment(
+      source,
+      'interface ContentAreaProps {',
+      'function ProjectContentEmptyState(',
+    );
+    const startGuideSegment = getSourceSegment(
+      source,
+      'function StartGuide({',
+      'export default function ContentArea({',
+    );
+    const contentDestructureSegment = getSourceSegment(
+      source,
+      'export default function ContentArea({',
+      '}: ContentAreaProps)',
+    );
+    const selectedPlaceholderRenderSegment = getSourceSegment(
+      source,
+      '<StartGuide',
+      ') : viewMode === \'canvas\' ? (',
+    );
+    const draftPlaceholderRenderSegment = source.slice(
+      source.lastIndexOf('<StartGuide'),
+      source.indexOf(') : (\n                !hasPrototypeItems ? ('),
+    );
+
+    expect(contentPropsSegment).toContain('sidebarTrees?: Partial<Record<SidebarTreeTab, SidebarTreeNode[]>>;');
+    expect(contentDestructureSegment).toContain('sidebarTrees,');
+    expect(startGuideSegment).toContain('const placeholderDropZoneRef = useRef<HTMLDivElement | null>(null);');
+    expect(startGuideSegment).toContain('ref={placeholderDropZoneRef}');
+    expect(startGuideSegment).toContain('projectResourceTrees={{');
+    expect(startGuideSegment).toContain('projectResourceItems={{');
+    expect(startGuideSegment).toContain('themes: sidebarTrees?.themes || []');
+    expect(startGuideSegment).toContain('themes: themes || []');
+    expect(startGuideSegment).toContain('externalFileDropTargetRef={placeholderDropZoneRef}');
+    expect(selectedPlaceholderRenderSegment).toContain('sidebarTrees={sidebarTrees}');
+    expect(selectedPlaceholderRenderSegment).toContain('docsItems={docsItems}');
+    expect(selectedPlaceholderRenderSegment).toContain('prototypes={prototypes}');
+    expect(selectedPlaceholderRenderSegment).toContain('themes={themes}');
+    expect(draftPlaceholderRenderSegment).toContain('sidebarTrees={sidebarTrees}');
+    expect(draftPlaceholderRenderSegment).toContain('docsItems={docsItems}');
+    expect(draftPlaceholderRenderSegment).toContain('prototypes={prototypes}');
+    expect(draftPlaceholderRenderSegment).toContain('themes={themes}');
+  });
+
+  it('passes homepage placeholder scene settings and context into prompt optimization', () => {
+    const source = readContentAreaViewSource();
+    const startGuideSegment = getSourceSegment(
+      source,
+      'function StartGuide({',
+      'export default function ContentArea({',
+    );
+    const optimizeSegment = getSourceSegment(
+      startGuideSegment,
+      'const optimizePlaceholderStartPrompt = async (request: CanvasPromptOptimizationRequest) => {',
+      '    const handleCopyLocalAiStartPrompt = async (promptText: string) => {',
+    );
+
+    expect(source).toContain("import { optimizeCanvasPrompt } from '../../domains/ai-generation/canvasPromptOptimization';");
+    expect(source).toContain("import { normalizePromptClientPreference } from '@/common/promptExecution';");
+    expect(source).toContain("import { resolveAcpPromptClientProvider } from '@/common/acpModelConfig';");
+    expect(source).toContain('CanvasPromptOptimizationRequest');
+    expect(startGuideSegment).toContain('onOptimizePrompt={optimizePlaceholderStartPrompt}');
+    expect(optimizeSegment).toContain('if (!resolveAcpPromptClientProvider(normalizePromptClientPreference(preferredPromptClient))) {');
+    expect(optimizeSegment).toContain("toast.warning('请先在 AI 设置中选择本地 AI Agent');");
+    expect(optimizeSegment).toContain("throw { action: 'open-ai-settings' };");
+    expect(optimizeSegment).toContain('scene: activeScene');
+    expect(optimizeSegment).toContain("sceneSettings: shouldUseImageStartSettings ? effectiveImageStartParams : activeScene === 'document' ? buildDocumentStartSettings() : activeScene === 'page' ? buildPrototypeStartSettings() : undefined");
+    expect(optimizeSegment).toContain("canvasFilePath: kind === 'prototype' ? prototypeIndexPath : undefined");
+    expect(optimizeSegment).toContain('workspacePath: assistantProjectPath');
+    expect(optimizeSegment).toContain('contextBundle: request.contextBundle');
+    expect(optimizeSegment).toContain('attachments: request.attachments');
+    expect(optimizeSegment).toContain('provider: request.provider');
+    expect(optimizeSegment).toContain('model: request.model');
+    expect(optimizeSegment).toContain('mode: request.mode');
+    expect(optimizeSegment).toContain('thought: request.thought');
+  });
+
+  it('persists prototype placeholder settings beside the retained composer draft', () => {
+    const source = readContentAreaViewSource();
+    const startGuideSegment = getSourceSegment(
+      source,
+      'function StartGuide({',
+      'export default function ContentArea({',
+    );
+
+    expect(source).toContain("from './prototypePlaceholderSettingsStorage';");
+    expect(source).toContain('createPrototypePlaceholderSettingsStorageKey');
+    expect(source).toContain('getPrototypePlaceholderSettingsStorage');
+    expect(source).toContain('readPrototypePlaceholderSettings');
+    expect(source).toContain('writePrototypePlaceholderSettings');
+    expect(startGuideSegment).toContain('const placeholderStartSettingsStorageKey = useMemo(() => (');
+    expect(startGuideSegment).toContain('createPrototypePlaceholderSettingsStorageKey([');
+    expect(startGuideSegment).toContain('START_GUIDE_SETTINGS_STORAGE_KEY_SUFFIX[kind]');
+    expect(startGuideSegment).toContain('const saved = readPrototypePlaceholderSettings(storage, placeholderStartSettingsStorageKey);');
+    expect(startGuideSegment).toContain('setPrototypeGenerationCount(saved.prototypeGenerationCount ?? undefined);');
+    expect(startGuideSegment).toContain('setPrototypeNeedsRequirementsAnalysis(saved.prototypeNeedsRequirementsAnalysis ?? false);');
+    expect(startGuideSegment).toContain('...DEFAULT_IMAGE_START_PARAMS,');
+    expect(startGuideSegment).toContain('...saved.imageStartParams,');
+    expect(startGuideSegment).toContain("setDocumentFormat(saved.documentFormat ?? '');");
+    expect(startGuideSegment).toContain("setDocumentHtmlVisualSpec((saved.documentHtmlVisualSpec || '') as HtmlVisualSpecSkillId | '');");
+    expect(startGuideSegment).toContain('setDocumentNeedsRequirementsAnalysis(saved.documentNeedsRequirementsAnalysis ?? false);');
+    expect(startGuideSegment).toContain("setSelectedDocumentTemplateName(saved.selectedDocumentTemplateName || '');");
+    expect(startGuideSegment).toContain('userSelectedThemeRef.current = true;');
+    expect(startGuideSegment).toContain('setSelectedThemeName(saved.selectedThemeName);');
+    expect(startGuideSegment).toContain('userSelectedThemeRef.current = false;');
+    expect(startGuideSegment).toContain('setSelectedThemeName(resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));');
+    expect(startGuideSegment).toContain('skipPlaceholderSettingsWriteKeyRef.current = placeholderStartSettingsStorageKey;');
+    expect(startGuideSegment).toContain('writePrototypePlaceholderSettings(');
+    for (const field of [
+      'prototypeGenerationCount',
+      'prototypeNeedsRequirementsAnalysis',
+      'selectedThemeName',
+      'imageStartParams',
+      'documentFormat',
+      'documentHtmlVisualSpec',
+      'documentNeedsRequirementsAnalysis',
+      'selectedDocumentTemplateName',
+    ]) {
+      expect(startGuideSegment).toContain(field);
+    }
   });
 
   it('keeps placeholder generation settings unspecified until the user picks values', () => {
@@ -246,16 +481,16 @@ describe('ContentAreaView review zoom source', () => {
     const imageSettingsSegment = getSourceSegment(
       source,
       'function ImageStartSettingsPopover({',
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
     );
     const documentSettingsSegment = getSourceSegment(
       source,
       'function DocumentStartSettingsPopover({',
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
     );
-    const placeholderGuideSegment = getSourceSegment(
+    const startGuideSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
       'export default function ContentArea({',
     );
 
@@ -263,8 +498,8 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain('type ImageStartParams = Omit<AiImageTaskParams');
     expect(source).toContain('output_format: undefined');
     expect(source).toContain('n: undefined');
-    expect(placeholderGuideSegment).toContain('useState<number | undefined>(undefined)');
-    expect(placeholderGuideSegment).toContain('useState<ImageStartParams>(DEFAULT_IMAGE_START_PARAMS)');
+    expect(startGuideSegment).toContain('useState<number | undefined>(undefined)');
+    expect(startGuideSegment).toContain('useState<ImageStartParams>(DEFAULT_IMAGE_START_PARAMS)');
     expect(prototypeSettingsSegment).toContain("const summary = summaryItems.join(' · ') || '未指定';");
     expect(prototypeSettingsSegment).toContain('<SelectItem value={UNSPECIFIED_START_SETTING_VALUE}>');
     expect(prototypeSettingsSegment).toContain('未指定');
@@ -287,14 +522,15 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain('PC 端 2K');
     expect(source).toContain('PC 端 4K');
     expect(imageSettingsSegment).not.toContain('图片数量');
-    expect(placeholderGuideSegment).toContain("useState<CanvasDocumentFormat | ''>('')");
-    expect(placeholderGuideSegment).not.toContain("useState<CanvasDocumentFormat>('md')");
-    expect(placeholderGuideSegment).toContain("current && templates.some((template) => template.name === current) ? current : ''");
-    expect(placeholderGuideSegment).not.toContain("templates[0]?.name || ''");
-    expect(placeholderGuideSegment).toContain('const nextDocumentStartSettings: CanvasDocumentPromptSettings = {');
-    expect(placeholderGuideSegment).toContain('documentStartSettings = Object.keys(nextDocumentStartSettings).length');
-    expect(placeholderGuideSegment).not.toContain('documentTemplatesApi.read');
-    expect(placeholderGuideSegment).not.toContain('templateContent');
+    expect(startGuideSegment).toContain("useState<CanvasDocumentFormat | ''>('')");
+    expect(startGuideSegment).not.toContain("useState<CanvasDocumentFormat>('md')");
+    expect(startGuideSegment).toContain("current && templates.some((template) => template.name === current) ? current : ''");
+    expect(startGuideSegment).not.toContain("templates[0]?.name || ''");
+    expect(startGuideSegment).toContain('const buildDocumentStartSettings = (): CanvasDocumentPromptSettings | undefined => {');
+    expect(startGuideSegment).toContain('const nextDocumentStartSettings: CanvasDocumentPromptSettings = {');
+    expect(startGuideSegment).toContain('return Object.keys(nextDocumentStartSettings).length');
+    expect(startGuideSegment).not.toContain('documentTemplatesApi.read');
+    expect(startGuideSegment).not.toContain('templateContent');
     expect(source).toContain("const DOCUMENT_START_FORMAT_OPTIONS = [\n    { label: 'Markdown 文档', value: 'md' },\n    { label: 'HTML 文档', value: 'html' },\n    { label: 'Mermaid 图表', value: 'mermaid' },\n    { label: 'Drawio 图表', value: 'drawio' },\n]");
     expect(source).not.toContain("{ label: 'HTML', value: 'html' }");
     expect(source).not.toContain("{ label: 'MD', value: 'md' }");
@@ -319,11 +555,11 @@ describe('ContentAreaView review zoom source', () => {
     const documentSettingsSegment = getSourceSegment(
       source,
       'function DocumentStartSettingsPopover({',
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
     );
-    const placeholderGuideSegment = getSourceSegment(
+    const startGuideSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
       'export default function ContentArea({',
     );
 
@@ -364,7 +600,7 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain("label: 'Guizang · 瑞士国际主义'");
     expect(source).toContain("themeInstruction: '使用 guizang-ppt-skill 的 Style B 瑞士国际主义：网格、直角色块、发丝线和高饱和锚点色。'");
     expect(source).toContain("githubUrl: 'https://github.com/op7418/guizang-ppt-skill'");
-    expect(placeholderGuideSegment).toContain("useState<HtmlVisualSpecSkillId | ''>('')");
+    expect(startGuideSegment).toContain("useState<HtmlVisualSpecSkillId | ''>('')");
     expect(documentSettingsSegment).toContain("htmlVisualSpec: HtmlVisualSpecSkillId | '';");
     expect(documentSettingsSegment).toContain("onHtmlVisualSpecChange: (visualSpec: HtmlVisualSpecSkillId | '') => void;");
     expect(documentSettingsSegment).toContain('const visualSpecOption = DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.find((option) => option.value === htmlVisualSpec) || null;');
@@ -389,16 +625,16 @@ describe('ContentAreaView review zoom source', () => {
     const documentSettingsSegment = getSourceSegment(
       source,
       'function DocumentStartSettingsPopover({',
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
     );
-    const placeholderGuideSegment = getSourceSegment(
+    const startGuideSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
       'export default function ContentArea({',
     );
 
-    expect(placeholderGuideSegment).toContain('const [prototypeNeedsRequirementsAnalysis, setPrototypeNeedsRequirementsAnalysis] = useState(false);');
-    expect(placeholderGuideSegment).toContain('const [documentNeedsRequirementsAnalysis, setDocumentNeedsRequirementsAnalysis] = useState(false);');
+    expect(startGuideSegment).toContain('const [prototypeNeedsRequirementsAnalysis, setPrototypeNeedsRequirementsAnalysis] = useState(false);');
+    expect(startGuideSegment).toContain('const [documentNeedsRequirementsAnalysis, setDocumentNeedsRequirementsAnalysis] = useState(false);');
     expect(prototypeSettingsSegment).toContain('needsRequirementsAnalysis,');
     expect(prototypeSettingsSegment).toContain('onNeedsRequirementsAnalysisChange,');
     expect(documentSettingsSegment).toContain('needsRequirementsAnalysis,');
@@ -416,31 +652,64 @@ describe('ContentAreaView review zoom source', () => {
     expect(documentSettingsSegment).toContain('checked={needsRequirementsAnalysis}');
     expect(prototypeSettingsSegment).toContain('onCheckedChange={(checked) => onNeedsRequirementsAnalysisChange(checked === true)}');
     expect(documentSettingsSegment).toContain('onCheckedChange={(checked) => onNeedsRequirementsAnalysisChange(checked === true)}');
-    expect(placeholderGuideSegment).toContain('needsRequirementsAnalysis: prototypeNeedsRequirementsAnalysis');
-    expect(placeholderGuideSegment).toContain('...(documentNeedsRequirementsAnalysis ? { needsRequirementsAnalysis: true } : {})');
+    expect(startGuideSegment).toContain('needsRequirementsAnalysis: prototypeNeedsRequirementsAnalysis');
+    expect(startGuideSegment).toContain('...(documentNeedsRequirementsAnalysis ? { needsRequirementsAnalysis: true } : {})');
   });
 
-  it('loads placeholder template cases from a local two-hour cache and limits the homepage list to nine', () => {
+  it('adds local AI prompt copy actions to prototype image and document start settings', () => {
     const source = readContentAreaViewSource();
-    const placeholderGuideSegment = getSourceSegment(
+    const prototypeSettingsSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function PrototypeStartSettingsPopover({',
+      'function ImageStartSettingsPopover({',
+    );
+    const imageSettingsSegment = getSourceSegment(
+      source,
+      'function ImageStartSettingsPopover({',
+      'function DocumentStartSettingsPopover({',
+    );
+    const documentSettingsSegment = getSourceSegment(
+      source,
+      'function DocumentStartSettingsPopover({',
+      'function StartGuide({',
+    );
+    const startGuideSegment = getSourceSegment(
+      source,
+      'function StartGuide({',
       'export default function ContentArea({',
     );
 
-    expect(source).toContain("PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_KEY = 'axhub:placeholder-template-library:v1'");
-    expect(source).toContain('PLACEHOLDER_TEMPLATE_LIBRARY_CACHE_TTL_MS = 2 * 60 * 60 * 1000');
-    expect(source).toContain('readPlaceholderTemplateLibraryCache');
-    expect(source).toContain('writePlaceholderTemplateLibraryCache');
-    expect(source).toContain("fetch('/api/template-library')");
-    expect(placeholderGuideSegment).toContain('setTemplateCases(cached.templates.slice(0, PLACEHOLDER_TEMPLATE_CASE_LIMIT))');
-    expect(placeholderGuideSegment).toContain('setTemplateCases(templates.slice(0, PLACEHOLDER_TEMPLATE_CASE_LIMIT))');
-    expect(source).toContain('PLACEHOLDER_TEMPLATE_CASE_LIMIT = 9');
-    expect(placeholderGuideSegment).toContain('原型案例');
-    expect(placeholderGuideSegment).toContain('grid-cols-1');
-    expect(placeholderGuideSegment).toContain('lg:grid-cols-3');
-    expect(placeholderGuideSegment).toContain('min-h-[76vh]');
-    expect(placeholderGuideSegment).toContain('pt-8');
+    expect(source).toContain("import { copyToClipboard } from '../../utils/clipboard';");
+    expect(source).toContain("const COPY_START_PROMPT_TOOLTIP = '复制提示词给本地AI使用';");
+    expect(source).toContain('stripCanvasUpdateInstruction,');
+    expect(source).toContain('const startSystemPrompt = finalGuide === \'update-canvas\'');
+    expect(source).toContain('stripCanvasUpdateInstruction(activeStartSystemPrompt);');
+    expect(source).toContain('const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(prompt, startSystemPrompt);');
+    expect(startGuideSegment).toContain('buildPlaceholderStartPrompt');
+    expect(startGuideSegment).toContain("appendCanvasGenerationFinalGuide({");
+    expect(startGuideSegment).toContain("buildPlaceholderStartPrompt(prompt, 'none')");
+    expect(startGuideSegment).toContain("buildPlaceholderStartPrompt(trimmedPrompt, 'local-ai-acknowledgement')");
+    expect(startGuideSegment).toContain('handleCopyLocalAiStartPrompt');
+    expect(startGuideSegment).toContain('await copyToClipboard(prompt);');
+    expect(startGuideSegment).toContain("toast.success('提示词已复制到剪贴板');");
+    expect(startGuideSegment).not.toContain("toast.warning('请先输入需求后再复制提示词');");
+    expect(startGuideSegment).toContain('postSelectorActions={({ getPromptText }) =>');
+    expect(startGuideSegment).toContain('onCopyPrompt={() => { void handleCopyLocalAiStartPrompt(getPromptText()); }}');
+    expect(source).toContain('function StartSettingsCopyPromptButton({ onCopyPrompt }');
+    expect(source).toContain('const [tooltipOpen, setTooltipOpen] = useState(false);');
+    expect(source).toContain('<Tooltip open={tooltipOpen}>');
+    expect(source).toContain('aria-label={COPY_START_PROMPT_TOOLTIP}');
+    expect(source).toContain('onPointerEnter={(event) => {');
+    expect(source).toContain("if (event.pointerType === 'mouse') setTooltipOpen(true);");
+    expect(source).toContain('onPointerLeave={() => setTooltipOpen(false)}');
+    expect(source).toContain('setTooltipOpen(false);');
+    expect(source).toContain('<Copy className="size-3.5"');
+    expect(source).toContain('TooltipContent side="top"');
+    for (const segment of [prototypeSettingsSegment, imageSettingsSegment, documentSettingsSegment]) {
+      expect(segment).toContain('onCopyPrompt,');
+      expect(segment).toContain('onCopyPrompt?: () => void;');
+      expect(segment).toContain('<StartSettingsCopyPromptButton onCopyPrompt={onCopyPrompt} />');
+    }
   });
 
   it('adds placeholder header actions that open drawers or show hover-only guidance', () => {
@@ -450,39 +719,72 @@ describe('ContentAreaView review zoom source', () => {
       'interface ContentAreaProps {',
       'function ProjectContentEmptyState',
     );
-    const placeholderGuideSegment = getSourceSegment(
+    const startGuideSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
       'export default function ContentArea({',
     );
 
     expect(propsSegment).toContain('onOpenPrototypeCreateDialog?: (options: PrototypeCreateDialogOpenOptions) => void;');
-    expect(placeholderGuideSegment).toContain('onOpenPrototypeCreateDialog');
-    expect(placeholderGuideSegment).toContain('handlePreviewTemplateCase');
-    expect(placeholderGuideSegment).toContain('renderCopyPromptAction={(template) => (');
-    expect(placeholderGuideSegment).toContain('<PromptActionButton');
-    expect(placeholderGuideSegment).toContain('type="borderless"');
-    expect(placeholderGuideSegment).toContain('onExecutePrompt={onExecutePrompt}');
-    expect(placeholderGuideSegment).toContain('handleDirectTemplateImport');
-    expect(placeholderGuideSegment).toContain('targetPrototypeName: draftActive ? undefined : item.name');
-    expect(placeholderGuideSegment).toContain("void onRefreshPrototypes?.(String(result?.folderName || result?.name || '').trim());");
-    expect(placeholderGuideSegment).toContain("onOpenPrototypeCreateDialog?.({ initialTab: 'onlineImport', targetPrototypeName: draftActive ? undefined : item.name })");
-    expect(placeholderGuideSegment).toContain("onOpenPrototypeCreateDialog?.({ initialTab: 'upload', targetPrototypeName: draftActive ? undefined : item.name })");
-    expect(placeholderGuideSegment).toContain('onPreview={handlePreviewTemplateCase}');
-    expect(placeholderGuideSegment).not.toContain('onCopyPrompt={(template) => void handleCopyTemplatePrompt(template)}');
-    expect(placeholderGuideSegment).toContain('onDirectImport={(template) => void handleDirectTemplateImport(template)}');
-    expect(placeholderGuideSegment).toContain('renderTemplateCaseCard');
-    expect(placeholderGuideSegment).toContain('更多模板');
-    expect(placeholderGuideSegment).not.toContain('更多模型');
-    expect(placeholderGuideSegment).toContain('导入原型');
-    expect(placeholderGuideSegment).toContain('导入任意网页');
-    expect(placeholderGuideSegment).toContain('Axhub Make / Axure / V0 / aistudio / Stitch / Figma Make');
-    expect(placeholderGuideSegment).toContain('使用 Chrome 扩展可以采集任意网页');
-    expect(placeholderGuideSegment).toContain('cursor-default');
-    expect(placeholderGuideSegment).toContain('ExternalLink');
-    expect(placeholderGuideSegment).toContain('UploadCloud');
-    expect(placeholderGuideSegment).toContain('Globe');
-    expect(placeholderGuideSegment).not.toContain('hover:underline');
+    expect(startGuideSegment).toContain('onOpenPrototypeCreateDialog');
+    const topActionsSegment = getSourceSegment(
+      startGuideSegment,
+      '{shouldShowTopActions ? (',
+      '<div className="flex min-h-[76vh]',
+    );
+    const prototypeCasesSegment = getSourceSegment(
+      startGuideSegment,
+      '{shouldShowPrototypeCases ? (',
+      '</div>\n            ) : null}\n        </div>',
+    );
+    const composerTailSegment = getSourceSegment(
+      startGuideSegment,
+      '<CanvasGenerationDisplayComposer',
+      '{shouldShowInlineAppList ? (',
+    );
+    expect(startGuideSegment).toContain("onOpenPrototypeCreateDialog?.({ initialTab: 'onlineImport', targetPrototypeName: draftActive ? undefined : item.name })");
+    expect(startGuideSegment).toContain("onOpenPrototypeCreateDialog?.({ initialTab: 'upload', targetPrototypeName: draftActive ? undefined : item.name })");
+    expect(topActionsSegment).not.toContain('更多模板');
+    expect(prototypeCasesSegment).toContain('更多模板');
+    expect(startGuideSegment).not.toContain('更多模型');
+    expect(topActionsSegment).toContain('导入原型');
+    expect(startGuideSegment).toContain('导入任意网页');
+    expect(topActionsSegment).toContain('上传资源');
+    expect(topActionsSegment).toContain('画布');
+    expect(topActionsSegment).toContain('Drawio 图表');
+    expect(topActionsSegment).toContain('导入设计规范');
+    expect(topActionsSegment).not.toContain('导入设计稿');
+    expect(composerTailSegment).not.toContain('导入设计规范');
+    expect(startGuideSegment).toContain('Axhub Make / Axure / V0 / aistudio / Stitch / Figma Make');
+    expect(startGuideSegment).toContain('使用 Chrome 扩展可以采集任意网页');
+    expect(startGuideSegment).toContain('cursor-default');
+    expect(startGuideSegment).toContain('ExternalLink');
+    expect(startGuideSegment).toContain('UploadCloud');
+    expect(startGuideSegment).toContain('Globe');
+    expect(startGuideSegment).not.toContain('hover:underline');
+  });
+
+  it('threads the resource upload start action through content area props', () => {
+    const source = readContentAreaViewSource();
+    const propsSegment = getSourceSegment(
+      source,
+      'interface ContentAreaProps {',
+      'function ProjectContentEmptyState',
+    );
+    const contentDestructureSegment = getSourceSegment(
+      source,
+      'export default function ContentArea({',
+      '}: ContentAreaProps)',
+    );
+    const resourceStartBranch = getSourceSegment(
+      source,
+      "if (contentMode === 'doc' && resourceStartDraftActive && !selectedDoc && !selectedResourceFolder) {",
+      "        if (contentMode === 'doc' && selectedResourceFolder) {",
+    );
+
+    expect(propsSegment).toContain('onUploadResourceFiles?: () => void;');
+    expect(contentDestructureSegment).toContain('onUploadResourceFiles,');
+    expect(resourceStartBranch).toContain('onUploadResourceFiles={onUploadResourceFiles}');
   });
 
   it('adds a PNG-only transparent background switch to image start settings', () => {
@@ -490,7 +792,7 @@ describe('ContentAreaView review zoom source', () => {
     const imageSettingsSegment = getSourceSegment(
       source,
       'function ImageStartSettingsPopover({',
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
     );
 
     expect(source).toContain("import { Switch } from '@/components/ui/switch';");
@@ -511,11 +813,11 @@ describe('ContentAreaView review zoom source', () => {
     const imageSettingsSegment = getSourceSegment(
       source,
       'function ImageStartSettingsPopover({',
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
     );
-    const placeholderGuideSegment = getSourceSegment(
+    const startGuideSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
       'export default function ContentArea({',
     );
 
@@ -544,12 +846,12 @@ describe('ContentAreaView review zoom source', () => {
     expect(imageSettingsSegment).not.toContain('className="space-y-2 pt-1"');
     expect(imageSettingsSegment).not.toContain('rounded-md border border-border/60 bg-muted/20 p-2');
     expect(imageSettingsSegment).not.toContain('justify-between gap-3 rounded-sm px-1.5');
-    expect(placeholderGuideSegment).toContain('themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? \'\' : selectedTheme?.name || \'\'');
-    expect(placeholderGuideSegment).toContain('disable_prompt_optimization: imageStartParams.disable_prompt_optimization === true || selectedThemeName !== NO_PROTOTYPE_THEME_VALUE');
-    expect(placeholderGuideSegment).toContain('selectedThemeName={selectedThemeName}');
-    expect(placeholderGuideSegment).toContain('themeLabel={themeLabel}');
-    expect(placeholderGuideSegment).toContain('themes={themes}');
-    expect(placeholderGuideSegment).toContain('onThemeChange={(themeName) => {');
+    expect(startGuideSegment).toContain('themeName: selectedThemeName === NO_PROTOTYPE_THEME_VALUE ? \'\' : selectedTheme?.name || \'\'');
+    expect(startGuideSegment).toContain('disable_prompt_optimization: imageStartParams.disable_prompt_optimization === true || selectedThemeName !== NO_PROTOTYPE_THEME_VALUE');
+    expect(startGuideSegment).toContain('selectedThemeName={selectedThemeName}');
+    expect(startGuideSegment).toContain('themeLabel={themeLabel}');
+    expect(startGuideSegment).toContain('themes={themes}');
+    expect(startGuideSegment).toContain('onThemeChange={(themeName) => {');
   });
 
   it('uses ACP selector-sized icons for prototype start settings triggers only', () => {
@@ -595,16 +897,16 @@ describe('ContentAreaView review zoom source', () => {
     expect(unsupportedFallbackSegment).not.toContain('const fileSize = (selectedMarkdownItem as any).fileSize;');
   });
 
-  it('passes prompt action context into placeholder template prompt cards', () => {
+  it('passes ACP selector and project resource context into start guide composers', () => {
     const source = readContentAreaViewSource();
-    const placeholderGuideSegment = getSourceSegment(
+    const startGuideSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
       'export default function ContentArea({',
     );
     const placeholderRenderSegment = getSourceSegment(
       source,
-      '<PrototypePlaceholderGuide',
+      '<StartGuide',
       ') : viewMode === \'canvas\' ? (',
     );
     const contentAreaPropsSegment = getSourceSegment(
@@ -612,51 +914,51 @@ describe('ContentAreaView review zoom source', () => {
       'export default function ContentArea({',
       '}: ContentAreaProps)',
     );
+    const composerSegment = getSourceSegment(
+      startGuideSegment,
+      '<CanvasGenerationDisplayComposer',
+      '{shouldShowInlineAppList ? (',
+    );
 
     expect(contentAreaPropsSegment).toContain('assistantVisible,');
     expect(contentAreaPropsSegment).toContain('preferredPromptClient,');
     expect(contentAreaPropsSegment).toContain('aiPanelMode,');
     expect(contentAreaPropsSegment).toContain('onExecutePrompt,');
-    expect(placeholderGuideSegment).toContain('preferredPromptClient,');
-    expect(placeholderGuideSegment).toContain('assistantVisible,');
-    expect(placeholderGuideSegment).toContain('aiPanelMode,');
-    expect(placeholderGuideSegment).toContain('onExecutePrompt,');
-    expect(placeholderGuideSegment).toContain('onRefreshPrototypes,');
-    expect(placeholderGuideSegment).toContain('preferredPromptClient?: PromptClientPreference;');
-    expect(placeholderGuideSegment).toContain("aiPanelMode?: 'general-ai' | 'image-ai' | null;");
-    expect(placeholderGuideSegment).toContain('onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;');
-    expect(placeholderGuideSegment).toContain('onRefreshPrototypes?: (preferredName?: string) => Promise<ItemData[]>;');
-    expect(placeholderGuideSegment).toContain('preferredClient={preferredPromptClient ?? null}');
-    expect(placeholderGuideSegment).toContain('preferredPromptClient={preferredPromptClient}');
-    expect(placeholderGuideSegment).toContain("assistantOpen={assistantVisible === true && aiPanelMode === 'general-ai'}");
-    expect(placeholderGuideSegment).toContain('onExecutePrompt={onExecutePrompt}');
-    expect(placeholderGuideSegment).toContain("void onRefreshPrototypes?.(String(result?.folderName || result?.name || '').trim());");
+    expect(startGuideSegment).toContain('preferredPromptClient,');
+    expect(startGuideSegment).toContain('preferredPromptClient?: PromptClientPreference;');
+    expect(startGuideSegment).toContain('preferredPromptClient={preferredPromptClient}');
+    expect(startGuideSegment).toContain('showSelectors');
+    expect(startGuideSegment).toContain('workspacePath={assistantProjectPath}');
+    expect(startGuideSegment).toContain('projectResourceTrees={{');
+    expect(startGuideSegment).toContain('projectResourceItems={{');
+    expect(composerSegment).not.toContain('preferredClient={preferredPromptClient ?? null}');
+    expect(composerSegment).not.toContain("assistantOpen={assistantVisible === true && aiPanelMode === 'general-ai'}");
+    expect(composerSegment).not.toContain('onExecutePrompt={onExecutePrompt}');
     expect(placeholderRenderSegment).toContain('preferredPromptClient={preferredPromptClient}');
-    expect(placeholderRenderSegment).toContain('assistantVisible={assistantVisible}');
-    expect(placeholderRenderSegment).toContain('aiPanelMode={aiPanelMode}');
-    expect(placeholderRenderSegment).toContain('onExecutePrompt={onExecutePrompt}');
-    expect(placeholderRenderSegment).toContain('onRefreshPrototypes={onRefreshPrototypes}');
+    expect(placeholderRenderSegment).toContain('sidebarTrees={sidebarTrees}');
+    expect(placeholderRenderSegment).toContain('docsItems={docsItems}');
+    expect(placeholderRenderSegment).toContain('prototypes={prototypes}');
   });
 
   it('uses the project default design for prototype start settings until the user picks one', () => {
     const source = readContentAreaViewSource();
-    const placeholderGuideSegment = getSourceSegment(
+    const startGuideSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
       'export default function ContentArea({',
     );
 
     expect(source).toContain('defaultThemeName?: string | null;');
-    expect(placeholderGuideSegment).toContain('defaultThemeName,');
-    expect(placeholderGuideSegment).toContain('resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName)');
-    expect(placeholderGuideSegment).toContain('const previousDefaultThemeNameRef = useRef(defaultThemeName);');
-    expect(placeholderGuideSegment).toContain('const userSelectedThemeRef = useRef(false);');
-    expect(placeholderGuideSegment).toContain('previousDefaultThemeName,');
-    expect(placeholderGuideSegment).toContain('userSelectedTheme: userSelectedThemeRef.current');
-    expect(placeholderGuideSegment).toContain('defaultThemeName, themes');
-    expect(placeholderGuideSegment).toContain('onThemeChange={(themeName) => {');
-    expect(placeholderGuideSegment).toContain('userSelectedThemeRef.current = true;');
-    expect(placeholderGuideSegment).toContain('setSelectedThemeName(themeName);');
+    expect(startGuideSegment).toContain('defaultThemeName,');
+    expect(startGuideSegment).toContain('resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName)');
+    expect(startGuideSegment).toContain('const previousDefaultThemeNameRef = useRef(defaultThemeName);');
+    expect(startGuideSegment).toContain('const userSelectedThemeRef = useRef(false);');
+    expect(startGuideSegment).toContain('previousDefaultThemeName,');
+    expect(startGuideSegment).toContain('userSelectedTheme: userSelectedThemeRef.current');
+    expect(startGuideSegment).toContain('defaultThemeName, themes');
+    expect(startGuideSegment).toContain('onThemeChange={(themeName) => {');
+    expect(startGuideSegment).toContain('userSelectedThemeRef.current = true;');
+    expect(startGuideSegment).toContain('setSelectedThemeName(themeName);');
   });
 
   it('keeps page placeholder start submissions in preview while dispatching through sidebar chat', () => {
@@ -724,12 +1026,12 @@ describe('ContentAreaView review zoom source', () => {
     expect(submitHandlerSegment).toContain('const draftCreatedItem = prototypeStartDraftActive && !selectedItem');
     expect(submitHandlerSegment).toContain('await onCreatePrototypeForDraftStart?.()');
     expect(submitHandlerSegment).toContain('const startItem = draftCreatedItem || selectedItem;');
-    expect(submitHandlerSegment).toContain('const startCanvasFilePath = resolvePrototypeCanvasFilePath(startItem');
+    expect(submitHandlerSegment).not.toContain('startCanvasFilePath');
     expect(submitHandlerSegment).toContain('const startPrototypeLocalContextRef: CanvasLocalContextRef = {');
     expect(submitHandlerSegment).toContain('const submittedRequest: CanvasAiGenerationRequest = {');
     expect(submitHandlerSegment).toContain('...request,');
     expect(submitHandlerSegment).toContain('createdPrototype: startItem,');
-    expect(submitHandlerSegment).toContain('canvasFilePath: request.scene === \'page\' ? request.canvasFilePath : startCanvasFilePath,');
+    expect(submitHandlerSegment).toContain('canvasFilePath: request.canvasFilePath,');
     expect(submitHandlerSegment).toContain('localContextRefs: request.scene === \'page\' ? request.localContextRefs || [] : [startPrototypeLocalContextRef],');
     expect(submitHandlerSegment).toContain("if (request.scene === 'page' && startItem?.name)");
     expect(submitHandlerSegment).toContain('await apiService.startPlaceholderPrototypeGeneration(startItem.name);');
@@ -745,17 +1047,17 @@ describe('ContentAreaView review zoom source', () => {
 
   it('does not render the prototype start canvas action inside the placeholder content', () => {
     const source = readContentAreaViewSource();
-    const placeholderGuideSegment = getSourceSegment(
+    const startGuideSegment = getSourceSegment(
       source,
-      'function PrototypePlaceholderGuide({',
+      'function StartGuide({',
       'export default function ContentArea({',
     );
 
-    expect(placeholderGuideSegment).not.toContain('onOpenPrototypeStartCanvas?: () => void | Promise<void>;');
-    expect(placeholderGuideSegment).not.toContain('onOpenPrototypeStartCanvas,');
-    expect(placeholderGuideSegment).not.toContain('className="sticky top-0 z-10 flex justify-end px-2 pb-4"');
-    expect(placeholderGuideSegment).not.toContain('aria-label="打开画布"');
-    expect(placeholderGuideSegment).not.toContain('<PencilRuler className="h-4 w-4" />');
+    expect(startGuideSegment).not.toContain('onOpenPrototypeStartCanvas?: () => void | Promise<void>;');
+    expect(startGuideSegment).not.toContain('onOpenPrototypeStartCanvas,');
+    expect(startGuideSegment).not.toContain('className="sticky top-0 z-10 flex justify-end px-2 pb-4"');
+    expect(startGuideSegment).not.toContain('aria-label="打开画布"');
+    expect(startGuideSegment).not.toContain('<PencilRuler className="h-4 w-4" />');
     expect(source).not.toContain('const handleOpenPrototypeStartCanvas = async () => {');
     expect(source).not.toContain('onOpenPrototypeStartCanvas={handleOpenPrototypeStartCanvas}');
   });
@@ -795,14 +1097,8 @@ describe('ContentAreaView review zoom source', () => {
       "if (contentMode === 'canvas') {",
       '    return (\n        <div\n            ref={containerRef}',
     );
-    const prototypeCanvasBranch = getSourceSegment(
-      source,
-      ") : viewMode === 'canvas' ? (",
-      ") : (",
-    );
 
     expect(standaloneCanvasBranch).toContain('onSubmitCanvasAssistantPrompt={onSubmitCanvasAssistantPrompt}');
-    expect(prototypeCanvasBranch).toContain('onSubmitCanvasAssistantPrompt={onSubmitCanvasAssistantPrompt}');
     expect(source).not.toContain('onSubmitPrototypeAssistantPrompt={');
   });
 
@@ -843,22 +1139,23 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).not.toContain('<Play />');
     expect(source).not.toContain('<span>预览</span>');
 
-    for (const branch of [standaloneCanvasBranch, prototypeCanvasBranch]) {
-      expect(branch).toContain('preferredIDE={preferredIDE}');
-      expect(branch).toContain('ideAvailability={ideAvailability}');
-      expect(branch).toContain('agentAvailability={agentAvailability}');
-      expect(branch).toContain('onOpenGenieWebAgent={onOpenGenieWebAgent}');
-      expect(branch).toContain('webAgentPanelOpen={webAgentPanelOpen}');
-      expect(branch).toContain('onCloseWebAgentPanel={onCloseWebAgentPanel}');
-      expect(branch).toContain('onPreferredIDEChange={onPreferredIDEChange}');
-      expect(branch).not.toContain('onRefreshAvailability={onRefreshAvailability}');
-      expect(branch).toContain('onOpenAISettings={onOpenAISettings}');
-    }
-    expect(prototypeCanvasBranch).toContain('overlayChildren={<CanvasFloatingToolbar />}');
+    expect(standaloneCanvasBranch).toContain('preferredIDE={preferredIDE}');
+    expect(standaloneCanvasBranch).toContain('ideAvailability={ideAvailability}');
+    expect(standaloneCanvasBranch).toContain('agentAvailability={agentAvailability}');
+    expect(standaloneCanvasBranch).toContain('onOpenAcpWebAgent={onOpenAcpWebAgent}');
+    expect(standaloneCanvasBranch).toContain('webAgentPanelOpen={webAgentPanelOpen}');
+    expect(standaloneCanvasBranch).toContain('onCloseWebAgentPanel={onCloseWebAgentPanel}');
+    expect(standaloneCanvasBranch).toContain('onPreferredIDEChange={onPreferredIDEChange}');
+    expect(standaloneCanvasBranch).not.toContain('onRefreshAvailability={onRefreshAvailability}');
+    expect(standaloneCanvasBranch).toContain('onOpenAISettings={onOpenAISettings}');
+    expect(standaloneCanvasBranch).toContain('overlayChildren={<CanvasFloatingToolbar />}');
+    expect(prototypeCanvasBranch).toContain('画布现在作为资源文件管理，请在资源中打开 .excalidraw 文件');
+    expect(prototypeCanvasBranch).not.toContain('preferredIDE={preferredIDE}');
+    expect(prototypeCanvasBranch).not.toContain('overlayChildren={<CanvasFloatingToolbar />}');
     expect(prototypeCanvasBranch).not.toContain('showPrototypePreviewHint={canPlayPrototypePreview}');
   });
 
-  it('uses host-side desktop review zoom without changing split or device preview paths', () => {
+  it('uses the normal desktop iframe path after removing review-specific zoom', () => {
     const source = readContentAreaViewSource();
     const desktopBranch = getSourceSegment(
       source,
@@ -866,17 +1163,16 @@ describe('ContentAreaView review zoom source', () => {
       ") : previewLayout.single.kind === 'custom' ? (",
     );
 
-    expect(source).toContain('reviewPageZoomEnabled?: boolean;');
     expect(source).toContain('DEVICE_PRESET_SIZES');
-    expect(source).toContain('const desktopReviewZoomLayout = useMemo');
-    expect(source).toContain('reviewPageZoomEnabled && viewMode === \'demo\'');
-    expect(source).toContain('DEVICE_PRESET_SIZES.desktop.width');
-    expect(desktopBranch).toContain('desktopReviewZoomLayout.enabled');
-    expect(desktopBranch).toContain('renderScaledIframe(');
-    expect(desktopBranch).toContain('height: previewContainerSize.height');
-    expect(desktopBranch).not.toContain('height: desktopReviewZoomLayout.viewportHeight');
+    expect(source).not.toContain('reviewPageZoomEnabled?: boolean;');
+    expect(source).not.toContain('const desktopReviewZoomLayout = useMemo');
+    expect(source).not.toContain('reviewPageZoomEnabled && viewMode === \'demo\'');
+    expect(desktopBranch).toContain('<iframe');
+    expect(desktopBranch).toContain('ref={previewIframeRef}');
+    expect(desktopBranch).toContain('src={primaryIframeUrl}');
+    expect(desktopBranch).not.toContain('desktopReviewZoomLayout.enabled');
+    expect(desktopBranch).not.toContain('renderScaledIframe(');
     expect(desktopBranch).not.toContain('handleChangePreviewScaleMode');
-    expect(source).not.toContain('reviewPageZoomEnabled && previewConfig.previewMode === \'split\'');
   });
 
   it('shows pane-scoped prompt buttons in split preview title bars only while quick edit is active', () => {
@@ -893,7 +1189,7 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).toContain('Play');
     expect(source).toContain('CircleHelp');
     expect(source).toContain('quickEditActive?: boolean;');
-    expect(source).toContain("onRunPrototypePanePromptAction?: (pane: 'primary' | 'secondary', action: 'copy-prompt' | 'send-to-genie') => void | Promise<boolean>;");
+    expect(source).toContain("onRunPrototypePanePromptAction?: (pane: 'primary' | 'secondary', action: 'copy-prompt' | 'send-to-agent') => void | Promise<boolean>;");
     expect(source).toContain('const renderSplitPromptActions = (pane:');
     expect(source).toContain("title=\"复制本视窗提示词\"");
     expect(source).toContain("aria-label=\"复制本视窗提示词\"");

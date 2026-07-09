@@ -102,7 +102,7 @@ describe('make-server project config APIs', () => {
       server: { host: 'localhost', allowLAN: true },
       projectInfo: { name: 'Project Config' },
       automation: {
-        defaultPromptClient: 'genie:claude',
+        defaultPromptClient: 'acp:claude',
         defaultIDE: 'cursor',
       },
       assistant: {
@@ -125,6 +125,7 @@ describe('make-server project config APIs', () => {
         },
         annotationPromptClient: null,
         annotationModel: null,
+        agentRunConcurrency: 5,
       });
       expect(legacyConfig.assistant).toEqual({
         webBaseUrl: 'http://legacy.local',
@@ -151,7 +152,7 @@ describe('make-server project config APIs', () => {
       expect(saved).toMatchObject({ status: 200, body: { success: true } });
       const projectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(projectConfig).toEqual({
-        server: { host: '0.0.0.0', allowLAN: false },
+        server: { host: '0.0.0.0' },
       });
       expect(projectConfig.projectInfo).toBeUndefined();
       expect(projectConfig.automation).toBeUndefined();
@@ -179,6 +180,7 @@ describe('make-server project config APIs', () => {
           },
           annotationPromptClient: null,
           annotationModel: null,
+          agentRunConcurrency: 5,
         },
         assistant: {
           webBaseUrl: 'http://assistant.local',
@@ -202,7 +204,7 @@ describe('make-server project config APIs', () => {
       expect(nextConfig).toMatchObject({
         projectId: 'config-client',
         projectPath: projectRoot,
-        server: { host: '0.0.0.0', allowLAN: false },
+        server: { host: '0.0.0.0' },
         projectInfo: { name: 'Updated Project' },
         automation: {
           defaultPromptClient: 'manual',
@@ -229,6 +231,150 @@ describe('make-server project config APIs', () => {
     }
   });
 
+  it('syncs project info into AGENTS and CLAUDE when project settings are saved', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'agent-instructions-client', name: 'Agent Instructions Client' },
+      resources: {
+        prototypes: [],
+        themes: [
+          {
+            id: 'brand',
+            name: 'brand',
+            path: 'src/themes/brand',
+            sourcePath: 'src/themes/brand',
+          },
+        ],
+      },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+    });
+    fs.writeFileSync(path.join(projectRoot, 'AGENTS.md'), [
+      '# Agent 工作流程',
+      '',
+      '## 额外产物',
+      '',
+      '原有说明。',
+      '',
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'CLAUDE.md'), [
+      '# Agent 工作流程',
+      '',
+      '## 项目信息',
+      '',
+      '- 项目名称：旧项目',
+      '',
+      '## 额外产物',
+      '',
+      '原有说明。',
+      '',
+    ].join('\n'), 'utf8');
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'agent-instructions-client', 'Agent Instructions Client');
+
+    try {
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server: { host: 'localhost', allowLAN: true },
+          projectInfo: {
+            name: '运营活动配置台',
+            description: '面向运营人员的活动配置后台',
+          },
+          projectDefaults: {
+            defaultTheme: 'brand',
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const expectedProjectInfo = [
+        '## 项目信息',
+        '',
+        '- 项目名称：运营活动配置台',
+        '- 项目简介：面向运营人员的活动配置后台',
+        '- 默认设计：brand（`src/themes/brand/DESIGN.md`）',
+      ].join('\n');
+      for (const fileName of ['AGENTS.md', 'CLAUDE.md']) {
+        const source = fs.readFileSync(path.join(projectRoot, fileName), 'utf8');
+        expect(source).toContain(expectedProjectInfo);
+        expect(source).not.toContain('旧项目');
+        expect(source).toContain('## 额外产物');
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('syncs project info when the default design is changed from the design list', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'default-design-client', name: '运营活动配置台' },
+      resources: {
+        prototypes: [],
+        themes: [
+          {
+            id: 'brand',
+            name: 'brand',
+            path: 'src/themes/brand',
+            sourcePath: 'src/themes/brand',
+          },
+        ],
+      },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+      projectInfo: { description: '面向运营人员的活动配置后台' },
+      projectDefaults: { defaultTheme: 'legacy' },
+    });
+    fs.writeFileSync(path.join(projectRoot, 'AGENTS.md'), [
+      '# Agent 工作流程',
+      '',
+      '## 项目信息',
+      '',
+      '- 项目名称：运营活动配置台',
+      '- 项目简介：面向运营人员的活动配置后台',
+      '- 默认设计：legacy（`src/themes/legacy/DESIGN.md`）',
+      '',
+      '## 额外产物',
+      '',
+      '原有说明。',
+      '',
+    ].join('\n'), 'utf8');
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'default-design-client', '运营活动配置台');
+
+    try {
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectDefaults: {
+            defaultTheme: 'brand',
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const expectedProjectInfo = [
+        '## 项目信息',
+        '',
+        '- 项目名称：运营活动配置台',
+        '- 项目简介：面向运营人员的活动配置后台',
+        '- 默认设计：brand（`src/themes/brand/DESIGN.md`）',
+      ].join('\n');
+      for (const fileName of ['AGENTS.md', 'CLAUDE.md']) {
+        const source = fs.readFileSync(path.join(projectRoot, fileName), 'utf8');
+        expect(source).toContain(expectedProjectInfo);
+        expect(source).not.toContain('legacy');
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
   it('preserves the configured LAN share host and exposes detected LAN host options', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
@@ -244,8 +390,8 @@ describe('make-server project config APIs', () => {
       const before = await fetch(`${server.origin}/api/config`).then((response) => response.json());
       expect(before.server).toEqual(expect.objectContaining({
         host: 'localhost',
-        allowLAN: true,
       }));
+      expect(before.server).not.toHaveProperty('allowLAN');
       expect(before.availableLANHosts).toEqual(expect.any(Array));
 
       const saved = await fetch(`${server.origin}/api/config`, {
@@ -261,16 +407,15 @@ describe('make-server project config APIs', () => {
       const projectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(projectConfig.server).toEqual({
         host: 'localhost',
-        allowLAN: true,
         lanHost: '10.0.8.42',
       });
 
       const after = await fetch(`${server.origin}/api/config`).then((response) => response.json());
       expect(after.server).toEqual(expect.objectContaining({
         host: 'localhost',
-        allowLAN: true,
         lanHost: '10.0.8.42',
       }));
+      expect(after.server).not.toHaveProperty('allowLAN');
       expect(after.availableLANHosts).toEqual(expect.any(Array));
     } finally {
       await server.close();
@@ -359,7 +504,7 @@ describe('make-server project config APIs', () => {
         projectPath: projectRoot,
         projectInfo: { name: 'Bootstrap Client' },
         automation: {
-          defaultPromptClient: 'acp:codex',
+          defaultPromptClient: null,
         },
         uiPreferences: {
           excalidrawPropertyPanelMode: 'collapsed',
@@ -371,6 +516,8 @@ describe('make-server project config APIs', () => {
       });
       expect(bootstrap.ideAvailability).toBeUndefined();
       expect(bootstrap.agentAvailability).toBeUndefined();
+      expect(fs.existsSync(path.join(projectRoot, 'AGENTS.md'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'CLAUDE.md'))).toBe(false);
 
       const config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
       expect(config.ideAvailability).toEqual({});
@@ -430,7 +577,7 @@ describe('make-server project config APIs', () => {
       });
       const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
       expect(serverConfig.automation).toEqual({
-        defaultPromptClient: 'acp:codex',
+        defaultPromptClient: null,
         defaultIDE: 'windsurf',
         acp: {
           mode: 'prompt',
@@ -439,6 +586,59 @@ describe('make-server project config APIs', () => {
         },
         annotationPromptClient: null,
         annotationModel: null,
+        agentRunConcurrency: 5,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('upgrades legacy short ACP timeout values when saving server preferences', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'legacy-acp-timeout-client', name: 'Legacy ACP Timeout Client' },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+      projectInfo: { name: 'Legacy ACP Timeout Client' },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    writeJson(getGlobalServerConfigPath(registryHome), {
+      automation: {
+        defaultPromptClient: 'acp:codex',
+        defaultIDE: 'web:acp',
+        acp: {
+          mode: 'prompt',
+          permission: 'approve-all',
+          timeout: 30,
+        },
+        annotationPromptClient: 'acp:codex',
+        annotationModel: null,
+        agentRunConcurrency: 5,
+      },
+    });
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'legacy-acp-timeout-client', 'Legacy ACP Timeout Client');
+
+    try {
+      const currentConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(currentConfig.automation.acp.timeout).toBe(1_200);
+
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          automation: {
+            defaultIDE: 'cursor',
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
+      expect(serverConfig.automation.acp).toEqual({
+        mode: 'prompt',
+        permission: 'approve-all',
+        timeout: 1_200,
       });
     } finally {
       await server.close();
@@ -482,7 +682,22 @@ describe('make-server project config APIs', () => {
     try {
       await saveAndExpectDefaultPromptClient('acp:opencode');
       await saveAndExpectDefaultPromptClient('opencode');
-      await saveAndExpectDefaultPromptClient('genie:opencode');
+
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          automation: {
+            defaultPromptClient: 'genie:opencode',
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
+      expect(serverConfig.automation.defaultPromptClient).toBe('acp:opencode');
+      const config = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(config.automation.defaultPromptClient).toBe('acp:opencode');
     } finally {
       await server.close();
     }
@@ -969,7 +1184,7 @@ describe('make-server project config APIs', () => {
       });
       const blankProjectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(blankProjectConfig).toEqual({
-        server: { host: 'localhost', allowLAN: true },
+        server: { host: 'localhost' },
         projectInfo: { description: 'Updated description' },
       });
       const blankMetadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
@@ -1001,7 +1216,7 @@ describe('make-server project config APIs', () => {
       });
       const namedProjectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(namedProjectConfig).toEqual({
-        server: { host: 'localhost', allowLAN: true },
+        server: { host: 'localhost' },
         projectInfo: { description: 'Named description' },
       });
       const namedConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());

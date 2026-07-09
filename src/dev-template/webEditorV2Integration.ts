@@ -1,27 +1,29 @@
 import type {
-  GenieEditorDebugState,
-  GenieEditorEditedSnapshot,
-  GenieEditorExternalEditingState,
-  GenieEditorExternalEditingTaskRef,
-  GenieEditorExternalEditingStateResult,
-  GenieEditorExternalEditingTargetRef,
-  GenieEditorHostToolbarAction,
-  GenieEditorHostToolbarState,
-  GenieEditorHostResource,
-  GenieEditorToolbarMode,
+  CommentaryDebugState,
+  CommentaryEditedSnapshot,
+  CommentaryExternalEditingState,
+  CommentaryExternalEditingTaskRef,
+  CommentaryExternalEditingStateResult,
+  CommentaryExternalEditingTargetRef,
+  CommentaryHostToolbarAction,
+  CommentaryHostToolbarState,
+  CommentaryHostResource,
+  CommentaryToolbarMode,
   WebEditorV2Api,
 } from '@/common/web-editor-types';
 import {
-  createGenieEditor,
-  getGlobalGenieEditorTweakProtocol,
+  createCommentary,
+  getGlobalCommentaryTweakProtocol,
   type PrototypeEditCommentsDocument,
   type PrototypeEditCommentsPersistenceAdapter,
   type PrototypeEditCommentsPersistenceScope,
   type WebEditorV2InitOptions,
-} from 'axhub-genie-editor';
+} from '@axhub/commentary';
 import { getImperativeAppDialog } from '../index/components/dialogs/AppDialogProvider';
 import { buildHostCopyPrompt } from '../common/hostPromptBuilder';
-import { normalizeSkillPath } from '../index/utils/skillPath';
+import { normalizeSkillSource } from '../index/utils/skillPath';
+
+const MARKDOWN_DOCS_BROADCAST_CHANNEL = 'axhub-markdown-docs';
 
 export type WebEditorV2Status = {
   active: boolean;
@@ -34,17 +36,17 @@ export interface WebEditorV2Controller {
   disable: () => void;
   isEnabled: () => boolean;
   getStatus: () => WebEditorV2Status;
-  getDebugState: () => GenieEditorDebugState | null;
-  getHostToolbarState: () => GenieEditorHostToolbarState;
-  subscribeHostToolbarState: (listener: (state: GenieEditorHostToolbarState) => void) => () => void;
-  runHostToolbarAction: (action: GenieEditorHostToolbarAction) => Promise<boolean>;
-  getEditedSnapshot: () => GenieEditorEditedSnapshot | null;
+  getDebugState: () => CommentaryDebugState | null;
+  getHostToolbarState: () => CommentaryHostToolbarState;
+  subscribeHostToolbarState: (listener: (state: CommentaryHostToolbarState) => void) => () => void;
+  runHostToolbarAction: (action: CommentaryHostToolbarAction) => Promise<boolean>;
+  getEditedSnapshot: () => CommentaryEditedSnapshot | null;
   setNodeEditingState: (
     elementKey: string,
-    nextState: GenieEditorExternalEditingState,
-    taskRef: Partial<GenieEditorExternalEditingTaskRef> | null,
-    targetRef?: GenieEditorExternalEditingTargetRef | null,
-  ) => Promise<GenieEditorExternalEditingStateResult>;
+    nextState: CommentaryExternalEditingState,
+    taskRef: Partial<CommentaryExternalEditingTaskRef> | null,
+    targetRef?: CommentaryExternalEditingTargetRef | null,
+  ) => Promise<CommentaryExternalEditingStateResult>;
   saveTextChanges: () => Promise<void>;
   saveStyleChanges: () => Promise<void>;
   clearForcedStyles: () => Promise<void>;
@@ -52,15 +54,19 @@ export interface WebEditorV2Controller {
   disablePanelOnly: () => void;
   isPanelOnlyMode: () => boolean;
   getCopyPromptText?: () => string;
+  getElementPromptText?: (elementKey: string) => string;
   getDecisionDataCount: () => number;
 }
 
 export interface WebEditorV2EnableOptions {
-  toolbarMode?: GenieEditorToolbarMode;
+  toolbarMode?: CommentaryToolbarMode;
   initialDarkMode?: boolean;
   mobileMode?: boolean;
   assistantPanelOpen?: boolean;
   commentPageScope?: string;
+  annotationApiBaseUrl?: string;
+  annotationProjectId?: string;
+  agentRunConcurrency?: number;
 }
 
 function normalizeString(value: unknown): string {
@@ -77,11 +83,11 @@ function normalizeBooleanFlag(value: unknown): boolean | undefined {
 
 function isDebugTitleEnabled(search: string): boolean {
   const params = new URLSearchParams(search);
-  const normalized = normalizeString(params.get('genieDebugTitle')).toLowerCase();
+  const normalized = normalizeString(params.get('editorDebugTitle')).toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(normalized);
 }
 
-function buildEditorDebugTitle(debugState: GenieEditorDebugState | null): string {
+function buildEditorDebugTitle(debugState: CommentaryDebugState | null): string {
   if (!debugState) {
     return '[EditorDebug] unavailable';
   }
@@ -108,7 +114,7 @@ function buildEditorDebugTitle(debugState: GenieEditorDebugState | null): string
   ].join(' ');
 }
 
-function resolveTargetPathFromResource(resource: GenieEditorHostResource | null): string {
+function resolveTargetPathFromResource(resource: CommentaryHostResource | null): string {
   return normalizeString(resource?.path);
 }
 
@@ -129,6 +135,29 @@ function buildPrototypeCommentsUrl(
   if (!targetPath) return '';
   const params = new URLSearchParams({ targetPath, ...extraSearchParams });
   return `/api/prototype-comments?${params.toString()}`;
+}
+
+function appendPrototypeAnnotationProjectId(
+  path: string,
+  projectId: string,
+): string {
+  if (!path || !projectId) return path;
+  try {
+    const url = new URL(path, 'http://localhost');
+    url.searchParams.set('projectId', projectId);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return path;
+  }
+}
+
+function buildPrototypeAnnotationUrl(targetPath: string, projectId = ''): string {
+  if (!targetPath) return '';
+  const params = new URLSearchParams({ targetPath });
+  if (projectId) {
+    params.set('projectId', projectId);
+  }
+  return `/api/prototype-annotation?${params.toString()}`;
 }
 
 function normalizeOrigin(value: unknown): string {
@@ -155,6 +184,590 @@ async function resolvePrototypeCommentsApiOrigin(): Promise<string> {
     // Standalone previews do not expose the Make server status endpoint.
   }
   return '';
+}
+
+function createElementAnnotationLocator(element: Element): {
+  selectors: string[];
+  fingerprint: string;
+  path: Array<{ tag: string; index: number }>;
+} {
+  const selectors: string[] = [];
+  const annotationId = element.getAttribute('data-annotation-id');
+  if (annotationId) {
+    selectors.push(`[data-annotation-id="${annotationId.replace(/["\\]/g, '\\$&')}"]`);
+  }
+  if (element.id) {
+    selectors.push(`#${escapeCssIdentifier(element.id)}`);
+  }
+  for (const className of readElementClassNames(element)) {
+    selectors.push(`.${escapeCssIdentifier(className)}`);
+  }
+  const panelNodeId = element.getAttribute('data-axhub-annotation-panel-node-id');
+  if (panelNodeId) {
+    selectors.push(`[data-axhub-annotation-panel-node-id="${panelNodeId.replace(/["\\]/g, '\\$&')}"]`);
+  }
+  if (selectors.length === 0) {
+    selectors.push(element.tagName.toLowerCase());
+  }
+  const pathParts: Array<{ tag: string; index: number }> = [];
+  const structuralSelectorParts: string[] = [];
+  let current: Element | null = element;
+  while (current && current.tagName && current.tagName.toLowerCase() !== 'body') {
+    const parentElement: Element | null = current.parentElement;
+    const currentTagName = current.tagName;
+    const currentTag = current.tagName.toLowerCase();
+    const siblings = parentElement
+      ? Array.from(parentElement.children).filter((child) => child.tagName === currentTagName)
+      : [];
+    const siblingIndex = Math.max(0, siblings.indexOf(current));
+    pathParts.unshift({
+      tag: currentTag,
+      index: siblingIndex,
+    });
+    structuralSelectorParts.unshift(
+      siblings.length > 1 ? `${currentTag}:nth-of-type(${siblingIndex + 1})` : currentTag,
+    );
+    current = parentElement;
+  }
+  if (structuralSelectorParts.length > 0) {
+    selectors.push(structuralSelectorParts.join(' > '));
+  }
+  return {
+    selectors: Array.from(new Set(selectors)),
+    fingerprint: `${element.tagName.toLowerCase()}${element.id ? `|id=${element.id}` : ''}`,
+    path: pathParts,
+  };
+}
+
+function escapeCssIdentifier(value: string): string {
+  return value.replace(/([ !"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/gu, '\\$1');
+}
+
+function readElementClassNames(element: Element): string[] {
+  const classAttribute = readElementAttribute(element, 'class');
+  if (!classAttribute) return [];
+  return classAttribute
+    .split(/\s+/u)
+    .map((className) => className.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+function getAnnotationPanelNodeId(element: Element | null): string {
+  if (!element) return '';
+  const direct = readElementAttribute(element, 'data-axhub-annotation-panel-node-id');
+  if (direct) return direct;
+  const closest = element.closest?.('[data-axhub-annotation-panel-node-id]');
+  return readElementAttribute(closest ?? null, 'data-axhub-annotation-panel-node-id');
+}
+
+function getAnnotationMarkerNodeId(element: Element | null): string {
+  if (!element) return '';
+  const direct = readElementAttribute(element, 'data-axhub-annotation-node-id');
+  if (direct) return direct;
+  const closest = element.closest?.('[data-axhub-annotation-node-id]');
+  return readElementAttribute(closest ?? null, 'data-axhub-annotation-node-id');
+}
+
+function getCurrentAnnotationNodeId(element: Element | null): string {
+  return getAnnotationPanelNodeId(element) || getAnnotationMarkerNodeId(element);
+}
+
+function readElementAttribute(element: Element | null, name: string): string {
+  if (!element || typeof element.getAttribute !== 'function') return '';
+  try {
+    return element.getAttribute(name) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function isAnnotationBubblePanelTarget(element: Element | null): boolean {
+  if (!element) return false;
+  if (readElementAttribute(element, 'data-axhub-annotation-panel-target') === 'true') {
+    return true;
+  }
+  return Boolean(element.closest?.('[data-axhub-annotation-panel-target="true"]'));
+}
+
+function isAnnotationRuntimeCommentTarget(element: Element | null): boolean {
+  if (!element) return false;
+  if (readElementAttribute(element, 'data-axhub-annotation-comment-target') === 'true') {
+    return true;
+  }
+  return Boolean(element.closest?.('[data-axhub-annotation-comment-target="true"]'));
+}
+
+function getDirectoryMarkdownNodeId(element: Element | null): string {
+  if (!element) return '';
+  const block = element.closest?.('[data-axhub-annotation-directory-markdown-block="true"]');
+  return readElementAttribute(block ?? null, 'data-axhub-annotation-directory-markdown-id');
+}
+
+function canEditLocalAnnotationMarkdown(element: Element | null): boolean {
+  if (!element) return false;
+  if (isAnnotationBubblePanelTarget(element)) return true;
+  return !isAnnotationRuntimeCommentTarget(element);
+}
+
+async function replaceRuntimeAnnotationSource(source: AnnotationSourceDocument): Promise<void> {
+  type AnnotationRuntimeRef = {
+    replaceSource?: (source: AnnotationSourceDocument) => void | Promise<void>;
+    refresh?: () => void | Promise<void>;
+  };
+  const runtime = typeof window !== 'undefined'
+    ? (window as Window & {
+        __AXHUB_MAKE_ANNOTATION_RUNTIME__?: AnnotationRuntimeRef;
+        __AXHUB_ANNOTATION_RUNTIME__?: AnnotationRuntimeRef;
+      }).__AXHUB_MAKE_ANNOTATION_RUNTIME__
+      ?? (window as Window & {
+        __AXHUB_ANNOTATION_RUNTIME__?: AnnotationRuntimeRef;
+      }).__AXHUB_ANNOTATION_RUNTIME__
+    : null;
+
+  const refreshRuntime = () => {
+    void runtime?.refresh?.();
+  };
+  const scheduleRefresh = () => {
+    refreshRuntime();
+    const scheduleTimeout = typeof window !== 'undefined' && typeof window.setTimeout === 'function'
+      ? window.setTimeout.bind(window)
+      : typeof globalThis.setTimeout === 'function'
+        ? globalThis.setTimeout.bind(globalThis)
+        : null;
+    if (!scheduleTimeout) return;
+    [120, 360].forEach((delay) => {
+      scheduleTimeout(refreshRuntime, delay);
+    });
+  };
+  const result = runtime?.replaceSource?.(source);
+  if (result && typeof (result as PromiseLike<void>).then === 'function') {
+    try {
+      await result;
+    } catch {
+      // Runtime refresh below re-reads the mounted source; a failed local replace should not
+      // turn an already persisted annotation write into a save failure.
+    } finally {
+      scheduleRefresh();
+    }
+    return;
+  }
+  scheduleRefresh();
+}
+
+function safeDecodePathSegmentValue(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return '';
+  }
+}
+
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[a-z]:[\\/]/iu.test(value);
+}
+
+function normalizeDirectoryMarkdownPath(markdownPath: unknown): string {
+  const rawPath = normalizeString(markdownPath);
+  const decodedPath = safeDecodePathSegmentValue(rawPath);
+  if (
+    !rawPath
+    || !decodedPath
+    || rawPath.includes('\0')
+    || decodedPath.includes('\0')
+    || rawPath.startsWith('/')
+    || decodedPath.startsWith('/')
+    || isWindowsAbsolutePath(rawPath)
+    || isWindowsAbsolutePath(decodedPath)
+    || rawPath.includes('\\')
+    || decodedPath.includes('\\')
+  ) {
+    return '';
+  }
+
+  const segments = [...rawPath.split('/'), ...decodedPath.split('/')];
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    return '';
+  }
+  return decodedPath;
+}
+
+function resolvePrototypeIdFromTargetPath(targetPath: string): string {
+  const match = normalizeString(targetPath).match(/^prototypes\/([^/]+)$/u);
+  const prototypeId = match?.[1] || '';
+  return isSafePrototypeResourceName(prototypeId) ? prototypeId : '';
+}
+
+function buildDirectoryMarkdownProjectRelativePath(
+  targetPath: string,
+  markdownPath: unknown,
+): string {
+  const prototypeId = resolvePrototypeIdFromTargetPath(targetPath);
+  const normalizedMarkdownPath = normalizeDirectoryMarkdownPath(markdownPath);
+  return prototypeId && normalizedMarkdownPath
+    ? `src/prototypes/${prototypeId}/${normalizedMarkdownPath}`
+    : '';
+}
+
+function buildDirectoryMarkdownEditUrl(
+  projectRelativeMarkdownPath: string,
+  options: { origin?: string; projectId?: string } = {},
+): string {
+  const params = new URLSearchParams();
+  const projectId = normalizeString(options.projectId);
+  if (projectId) {
+    params.set('projectId', projectId);
+  }
+  params.set('docPath', projectRelativeMarkdownPath);
+  const editUrl = `/?${params.toString()}`;
+  const origin = normalizeOrigin(options.origin);
+  return origin ? new URL(editUrl, origin).toString() : editUrl;
+}
+
+function findDirectoryMarkdownNodeById(
+  source: AnnotationSourceDocument | null,
+  nodeId: string,
+): AnnotationDirectoryNode | null {
+  const nodes = source?.directory?.nodes;
+  if (!Array.isArray(nodes)) return null;
+  const walk = (items: readonly AnnotationDirectoryNode[]): AnnotationDirectoryNode | null => {
+    for (const node of items) {
+      if (!node || typeof node !== 'object') continue;
+      if (node.type === 'folder' && Array.isArray(node.children)) {
+        const found = walk(node.children);
+        if (found) return found;
+      }
+      if (node.type === 'markdown' && normalizeString(node.id) === nodeId) {
+        return node;
+      }
+    }
+    return null;
+  };
+  return walk(nodes);
+}
+
+function resolveDirectoryMarkdownEditUrl(
+  source: AnnotationSourceDocument | null,
+  targetPath: string,
+  nodeId: string,
+  options: { origin?: string; projectId?: string } = {},
+): string {
+  const node = findDirectoryMarkdownNodeById(source, nodeId);
+  if (!node) return '';
+  const projectRelativePath = buildDirectoryMarkdownProjectRelativePath(targetPath, node.markdownPath);
+  return projectRelativePath ? buildDirectoryMarkdownEditUrl(projectRelativePath, options) : '';
+}
+
+function collectDirectoryMarkdownProjectRelativePaths(
+  source: AnnotationSourceDocument | null,
+  targetPath: string,
+): string[] {
+  const nodes = source?.directory?.nodes;
+  if (!Array.isArray(nodes)) return [];
+  const paths: string[] = [];
+  const walk = (items: readonly AnnotationDirectoryNode[]) => {
+    for (const node of items) {
+      if (!node || typeof node !== 'object') continue;
+      if (node.type === 'folder' && Array.isArray(node.children)) {
+        walk(node.children);
+        continue;
+      }
+      if (node.type !== 'markdown') continue;
+      const projectRelativePath = buildDirectoryMarkdownProjectRelativePath(targetPath, node.markdownPath);
+      if (projectRelativePath) {
+        paths.push(projectRelativePath);
+      }
+    }
+  };
+  walk(nodes);
+  return paths;
+}
+
+function normalizeMarkdownDocsBroadcastPath(pathValue: unknown): string {
+  return normalizeString(pathValue).replace(/\\/gu, '/');
+}
+
+function readMountedAnnotationSourceDocument(): AnnotationSourceDocument | null {
+  if (typeof window === 'undefined') return null;
+  const source = (window as Window & {
+    __AXHUB_ANNOTATION_SOURCE_DOCUMENT__?: AnnotationSourceDocument;
+  }).__AXHUB_ANNOTATION_SOURCE_DOCUMENT__;
+  return source && typeof source === 'object' && source.data && Array.isArray(source.data.nodes)
+    ? source
+    : null;
+}
+
+function hasMountedAnnotationRuntime(): boolean {
+  if (typeof window === 'undefined') return false;
+  const runtimeWindow = window as Window & {
+    __AXHUB_MAKE_ANNOTATION_RUNTIME__?: unknown;
+    __AXHUB_ANNOTATION_RUNTIME__?: unknown;
+  };
+  const runtime = runtimeWindow.__AXHUB_ANNOTATION_RUNTIME__
+    ?? runtimeWindow.__AXHUB_MAKE_ANNOTATION_RUNTIME__;
+  return Boolean(runtime && typeof runtime === 'object');
+}
+
+function hasMountedAnnotationRuntimeSource(): boolean {
+  if (!hasMountedAnnotationRuntime()) return false;
+  const sourceDocument = (window as Window & {
+    __AXHUB_ANNOTATION_SOURCE_DOCUMENT__?: unknown;
+  }).__AXHUB_ANNOTATION_SOURCE_DOCUMENT__;
+  if (sourceDocument && typeof sourceDocument === 'object') {
+    return true;
+  }
+  const sourceSnapshot = (window as Window & {
+    __AXHUB_ANNOTATION_SOURCE__?: {
+      nodes?: unknown;
+      directory?: unknown;
+    };
+  }).__AXHUB_ANNOTATION_SOURCE__;
+  return Array.isArray(sourceSnapshot?.nodes);
+}
+
+function findMountedAnnotationSnapshotText(nodeId: string): string {
+  if (!nodeId || typeof window === 'undefined') return '';
+  const sourceSnapshot = (window as Window & {
+    __AXHUB_ANNOTATION_SOURCE__?: {
+      nodes?: Array<{ id?: unknown; annotationText?: unknown }>;
+    };
+  }).__AXHUB_ANNOTATION_SOURCE__;
+  const node = Array.isArray(sourceSnapshot?.nodes)
+    ? sourceSnapshot.nodes.find((item) => item.id === nodeId)
+    : null;
+  return typeof node?.annotationText === 'string' ? node.annotationText : '';
+}
+
+function readLocatorSelectors(locator: unknown): string[] {
+  if (!locator || typeof locator !== 'object' || Array.isArray(locator)) return [];
+  const selectors = (locator as { selectors?: unknown }).selectors;
+  if (!Array.isArray(selectors)) return [];
+  return selectors
+    .map((selector) => normalizeString(selector))
+    .filter(Boolean);
+}
+
+function findAnnotationNodeByLocator(
+  source: AnnotationSourceDocument,
+  locator: unknown,
+): { id?: unknown; locator?: unknown } | null {
+  const serializedLocator = JSON.stringify(locator ?? null);
+  const exactMatch = source.data.nodes.find((item) => JSON.stringify(item.locator ?? null) === serializedLocator);
+  if (exactMatch) return exactMatch;
+
+  const selectorSet = new Set(readLocatorSelectors(locator));
+  if (selectorSet.size === 0) return null;
+  return source.data.nodes.find((item) => (
+    readLocatorSelectors(item.locator).some((selector) => selectorSet.has(selector))
+  )) ?? null;
+}
+
+function createPrototypeAnnotationClient() {
+  let cachedApiOrigin = '';
+  let cachedTargetPath = '';
+  let cachedSource: AnnotationSourceDocument | null = null;
+  let cachedEnabled = false;
+  let enableLoading = false;
+  let configuredApiOrigin = '';
+  let configuredProjectId = '';
+
+  const resolveRequestUrl = async (path: string): Promise<string> => {
+    if (!path) return '';
+    if (configuredApiOrigin) {
+      return new URL(path, configuredApiOrigin).toString();
+    }
+    if (!cachedApiOrigin) {
+      cachedApiOrigin = await resolvePrototypeCommentsApiOrigin();
+    }
+    return cachedApiOrigin ? new URL(path, cachedApiOrigin).toString() : path;
+  };
+
+  const resolveTargetPath = (): string => {
+    const resource = typeof window !== 'undefined'
+      ? resolveHostResourceContextFromLocation(window.location.pathname, window.location.href)
+      : null;
+    const targetPath = resolveTargetPathFromResource(resource);
+    return targetPath.startsWith('prototypes/') ? targetPath : '';
+  };
+
+  const resolveCurrentPageId = (): string => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return readInternalPrototypePageIdFromLocationUrl(new URL(window.location.href, 'http://localhost'));
+    } catch {
+      return '';
+    }
+  };
+
+  const readStatus = async (): Promise<{ enabled: boolean; source: AnnotationSourceDocument | null }> => {
+    const targetPath = resolveTargetPath();
+    cachedTargetPath = targetPath;
+    if (!targetPath) {
+      cachedEnabled = false;
+      cachedSource = null;
+      return { enabled: false, source: null };
+    }
+    const url = await resolveRequestUrl(buildPrototypeAnnotationUrl(targetPath, configuredProjectId));
+    const response = await fetch(url, { method: 'GET' });
+    if (!response.ok) {
+      cachedEnabled = false;
+      cachedSource = null;
+      return { enabled: false, source: null };
+    }
+    const payload = await response.json().catch(() => null) as {
+      enabled?: boolean;
+      source?: AnnotationSourceDocument | null;
+    } | null;
+    cachedEnabled = payload?.enabled === true || hasMountedAnnotationRuntime();
+    cachedSource = payload?.source ?? readMountedAnnotationSourceDocument() ?? null;
+    return { enabled: cachedEnabled, source: cachedSource };
+  };
+
+  const refreshSource = async (): Promise<AnnotationSourceDocument | null> => {
+    const status = await readStatus();
+    if (status.source) {
+      replaceRuntimeAnnotationSource(status.source);
+    }
+    return status.source;
+  };
+
+  const getDirectoryMarkdownProjectRelativePaths = (): string[] => (
+    collectDirectoryMarkdownProjectRelativePaths(cachedSource, cachedTargetPath || resolveTargetPath())
+  );
+
+  const getDocumentEditUrl = (element: Element | null): string => {
+    if (!cachedEnabled && !hasMountedAnnotationRuntimeSource()) return '';
+    const nodeId = getDirectoryMarkdownNodeId(element);
+    if (!nodeId) return '';
+    const source = cachedSource ?? readMountedAnnotationSourceDocument();
+    return resolveDirectoryMarkdownEditUrl(source, cachedTargetPath || resolveTargetPath(), nodeId, {
+      origin: configuredApiOrigin || cachedApiOrigin,
+      projectId: configuredProjectId,
+    });
+  };
+
+  const enable = async (): Promise<boolean> => {
+    if (cachedEnabled) return true;
+    const targetPath = cachedTargetPath || resolveTargetPath();
+    if (!targetPath || enableLoading) return false;
+    enableLoading = true;
+    try {
+      const url = await resolveRequestUrl(appendPrototypeAnnotationProjectId(
+        '/api/prototype-annotation/enable',
+        configuredProjectId,
+      ));
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetPath,
+          ...(configuredProjectId ? { projectId: configuredProjectId } : {}),
+        }),
+      });
+      const payload = await response.json().catch(() => null) as {
+        enabled?: boolean;
+        source?: AnnotationSourceDocument | null;
+        changedIndex?: boolean;
+        error?: string;
+      } | null;
+      if (!response.ok || payload?.enabled !== true) {
+        throw new Error(payload?.error || '开启需求标注失败');
+      }
+      cachedSource = payload.source ?? cachedSource;
+      const runtimeMounted = hasMountedAnnotationRuntime();
+      if (runtimeMounted && payload.source) {
+        replaceRuntimeAnnotationSource(payload.source);
+      }
+      cachedEnabled = true;
+      return true;
+    } finally {
+      enableLoading = false;
+    }
+  };
+
+  const getMarkdown = async (element: Element | null): Promise<string> => {
+    const annotationNodeId = getCurrentAnnotationNodeId(element);
+    const source = cachedSource
+      ?? readMountedAnnotationSourceDocument()
+      ?? (await readStatus()).source
+      ?? readMountedAnnotationSourceDocument();
+    if (!source) return annotationNodeId ? findMountedAnnotationSnapshotText(annotationNodeId) : '';
+    const node = annotationNodeId
+      ? source.data.nodes.find((item) => item.id === annotationNodeId)
+      : findAnnotationNodeByLocator(source, element ? createElementAnnotationLocator(element) : null);
+    if (!node?.id) return '';
+    const markdown = source.markdownMap?.[node.id];
+    return typeof markdown === 'string' ? markdown : findMountedAnnotationSnapshotText(node.id);
+  };
+
+  const writeMarkdown = async (element: Element, markdown: string): Promise<void> => {
+    const targetPath = cachedTargetPath || resolveTargetPath();
+    if (!targetPath) return;
+    const locator = createElementAnnotationLocator(element);
+    const source = cachedSource ?? readMountedAnnotationSourceDocument();
+    const matchedAnnotationNodeId = source
+      ? normalizeString(findAnnotationNodeByLocator(source, locator)?.id)
+      : '';
+    const annotationNodeId = getCurrentAnnotationNodeId(element) || matchedAnnotationNodeId;
+    const pageId = annotationNodeId ? '' : resolveCurrentPageId();
+    const url = await resolveRequestUrl(appendPrototypeAnnotationProjectId(
+      '/api/prototype-annotation/node',
+      configuredProjectId,
+    ));
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetPath,
+        ...(configuredProjectId ? { projectId: configuredProjectId } : {}),
+        ...(annotationNodeId ? { nodeId: annotationNodeId } : { locator, ...(pageId ? { pageId } : {}) }),
+        markdown,
+      }),
+    });
+    const payload = await response.json().catch(() => null) as {
+      source?: AnnotationSourceDocument;
+      error?: string;
+    } | null;
+    if (!response.ok || !payload?.source) {
+      throw new Error(payload?.error || '保存需求标注失败');
+    }
+    cachedEnabled = true;
+    cachedSource = payload.source;
+    await replaceRuntimeAnnotationSource(payload.source);
+  };
+
+  return {
+    configure: (config: { apiBaseUrl?: unknown; projectId?: unknown }) => {
+      const nextApiOrigin = normalizeOrigin(config.apiBaseUrl);
+      const nextProjectId = normalizeString(config.projectId);
+      const changed = (
+        (nextApiOrigin && nextApiOrigin !== configuredApiOrigin)
+        || nextProjectId !== configuredProjectId
+      );
+      if (nextApiOrigin && nextApiOrigin !== configuredApiOrigin) {
+        configuredApiOrigin = nextApiOrigin;
+        cachedApiOrigin = nextApiOrigin;
+      }
+      if (nextProjectId !== configuredProjectId) {
+        configuredProjectId = nextProjectId;
+      }
+      if (changed) {
+        cachedTargetPath = '';
+        cachedSource = null;
+        cachedEnabled = hasMountedAnnotationRuntimeSource();
+      }
+    },
+    readStatus,
+    refreshSource,
+    enable,
+    getDocumentEditUrl,
+    getDirectoryMarkdownProjectRelativePaths,
+    getMarkdown,
+    writeMarkdown,
+    isEnabled: () => cachedEnabled || hasMountedAnnotationRuntime(),
+    isAvailable: () => Boolean(cachedTargetPath || resolveTargetPath()),
+    isLoading: () => enableLoading,
+  };
 }
 
 export function createPrototypeCommentsPersistenceAdapter(): PrototypeEditCommentsPersistenceAdapter {
@@ -245,7 +858,7 @@ type PreviewDialogResponse = {
 type PrototypeEditorHostToolbarActionRequest = {
   type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_REQUEST';
   requestId: string;
-  action: GenieEditorHostToolbarAction;
+  action: CommentaryHostToolbarAction;
 };
 
 type PrototypeEditorHostToolbarActionResult = {
@@ -263,6 +876,41 @@ type TextChangeGroup = {
 type TextChangeConflict = {
   before: string;
   afterValues: string[];
+};
+
+type AnnotationDirectoryNode = {
+  type?: unknown;
+  id?: unknown;
+  markdownPath?: unknown;
+  children?: AnnotationDirectoryNode[];
+  [key: string]: unknown;
+};
+
+type AnnotationSourceDocument = {
+  documentVersion: 1;
+  format: 'axhub-annotation-source';
+  data: {
+    version: 2;
+    prototypeName: string;
+    pageId?: string;
+    nodes: Array<{
+      id: string;
+      locator?: unknown;
+      annotationText?: string;
+      hasMarkdown?: boolean;
+      controls?: unknown[];
+      [key: string]: unknown;
+    }>;
+    updatedAt: number;
+    [key: string]: unknown;
+  };
+  markdownMap?: Record<string, string>;
+  assetMap?: Record<string, string>;
+  directory?: {
+    nodes?: AnnotationDirectoryNode[];
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
 };
 
 let previewDialogRequestSequence = 0;
@@ -356,7 +1004,7 @@ async function requestParentDialog(request: Omit<PreviewDialogRequest, 'type' | 
   });
 }
 
-async function requestParentHostToolbarAction(action: GenieEditorHostToolbarAction): Promise<boolean> {
+async function requestParentHostToolbarAction(action: CommentaryHostToolbarAction): Promise<boolean> {
   if (!canUseParentHostToolbarBridge()) {
     return false;
   }
@@ -470,6 +1118,70 @@ async function confirmAction(message: string): Promise<boolean> {
   return true;
 }
 
+async function confirmEnableAnnotation(): Promise<boolean> {
+  const description = '开启需求标注功能后，你可以在当前原型里查看和编辑需求标注。这个入口开启后不能在这里关闭；如果之后需要关闭，请让 AI 帮你处理。';
+  const parentResult = await requestParentDialog({
+    kind: 'confirm',
+    title: '开启需求标注',
+    description,
+    confirmText: '开启',
+    cancelText: '取消',
+    tone: 'brand',
+    dismissible: false,
+  });
+  if (parentResult !== null) {
+    return parentResult;
+  }
+
+  const dialog = getImperativeAppDialog();
+  if (dialog) {
+    return dialog.confirm({
+      title: '开启需求标注',
+      description,
+      confirmText: '开启',
+      cancelText: '取消',
+      tone: 'brand',
+      dismissible: false,
+    });
+  }
+
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    return window.confirm(description);
+  }
+  return true;
+}
+
+async function alertEnableAnnotationFailed(): Promise<void> {
+  const description = '需求标注没有开启成功，请刷新页面后再试。如果仍然失败，请让 AI 帮你处理。';
+  const parentResult = await requestParentDialog({
+    kind: 'alert',
+    title: '开启失败',
+    description,
+    confirmText: '知道了',
+    tone: 'default',
+    dismissible: true,
+  });
+  if (parentResult !== null) {
+    return;
+  }
+
+  const dialog = getImperativeAppDialog();
+  if (dialog) {
+    await dialog.alert({
+      title: '开启失败',
+      description,
+      confirmText: '知道了',
+      tone: 'default',
+      dismissible: true,
+    });
+    return;
+  }
+
+  if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+    window.alert(description);
+  }
+}
+
 function notifyPreview(
   level: 'info' | 'warning' | 'error' | 'success',
   message: string,
@@ -495,14 +1207,14 @@ function readEditorMobileModeFromSearch(search: string): boolean | undefined {
 
 export function readHostToolbarModeFromSearch(
   search: string,
-): GenieEditorToolbarMode | undefined {
+): CommentaryToolbarMode | undefined {
   const params = new URLSearchParams(search);
-  return normalizeString(params.get('genieToolbar')).toLowerCase() === 'host'
+  return normalizeString(params.get('agentToolbar')).toLowerCase() === 'host'
     ? 'host'
     : undefined;
 }
 
-function buildFallbackHostToolbarState(toolbarMode: GenieEditorToolbarMode = 'inline'): GenieEditorHostToolbarState {
+function buildFallbackHostToolbarState(toolbarMode: CommentaryToolbarMode = 'inline'): CommentaryHostToolbarState {
   return {
     toolbarMode,
     visible: false,
@@ -535,6 +1247,11 @@ function buildFallbackHostToolbarState(toolbarMode: GenieEditorToolbarMode = 'in
     copySkillInstallPromptDisabled: true,
     selectionModeActive: true,
     fullExitAvailable: false,
+    annotationEnabled: false,
+    annotationEnableAvailable: false,
+    annotationEnableLoading: false,
+    annotationEnableDisabled: true,
+    annotationEnableTitle: '开启需求标注',
   };
 }
 
@@ -543,7 +1260,7 @@ function countPageDecisionData(): number {
     return 0;
   }
   try {
-    return getGlobalGenieEditorTweakProtocol()?.listEntries(document).length ?? 0;
+    return getGlobalCommentaryTweakProtocol()?.listEntries(document).length ?? 0;
   } catch {
     return 0;
   }
@@ -644,7 +1361,7 @@ function buildCommentPageScope(
   indexDeepLink: boolean,
 ): string {
   const scopeParams = new URLSearchParams(url.search);
-  for (const key of ['editor', 'axhubPane', 'axhubQuickEditContext', 'genieToolbar']) {
+  for (const key of ['editor', 'axhubPane', 'axhubQuickEditContext', 'agentToolbar']) {
     scopeParams.delete(key);
   }
   if (indexDeepLink) {
@@ -666,7 +1383,7 @@ export function resolveHostResourceContextFromLocation(
   pathname: string,
   href: string,
   overrides: { commentPageScope?: string } = {},
-): GenieEditorHostResource | null {
+): CommentaryHostResource | null {
   const normalizedPathname = normalizeString(pathname);
   const normalizedHref = normalizeString(href);
   let locationUrl: URL | null = null;
@@ -752,12 +1469,104 @@ export const createWebEditorV2Controller = (
 ): WebEditorV2Controller => {
   let editor: WebEditorV2Api | null = null;
   let editorInitPromise: Promise<WebEditorV2Api> | null = null;
-  let runtimeToolbarMode: GenieEditorToolbarMode | undefined;
+  let runtimeToolbarMode: CommentaryToolbarMode | undefined;
   let runtimeAssistantPanelOpen = false;
   let runtimeCommentPageScope = '';
-  let editorToolbarMode: GenieEditorToolbarMode | undefined;
+  let runtimeAnnotationApiBaseUrl = '';
+  let runtimeAnnotationProjectId = '';
   let debugTitleTimer: number | null = null;
   let baseDocumentTitle = '';
+  const annotationClient = createPrototypeAnnotationClient();
+  let annotationMarkdownDocsChannel: BroadcastChannel | null = null;
+  let annotationMarkdownDocsRefreshInFlight: Promise<void> | null = null;
+  let annotationMarkdownDocsFocusRefreshTimer: number | null = null;
+
+  const refreshAnnotationStatus = async () => {
+    try {
+      await annotationClient.readStatus();
+    } catch {
+      // Standalone or third-party previews simply hide local annotation actions.
+    }
+  };
+
+  const refreshDirectoryMarkdownSource = async (): Promise<void> => {
+    if (annotationMarkdownDocsRefreshInFlight) {
+      return annotationMarkdownDocsRefreshInFlight;
+    }
+    annotationMarkdownDocsRefreshInFlight = (async () => {
+      try {
+        await annotationClient.refreshSource();
+        editor?.refresh?.();
+      } catch {
+        // Standalone previews may not have Make annotation APIs.
+      } finally {
+        annotationMarkdownDocsRefreshInFlight = null;
+      }
+    })();
+    return annotationMarkdownDocsRefreshInFlight;
+  };
+
+  const handleMarkdownDocsWindowFocus = () => {
+    if (typeof window === 'undefined') return;
+    if (annotationClient.getDirectoryMarkdownProjectRelativePaths().length === 0) return;
+    if (
+      annotationMarkdownDocsFocusRefreshTimer !== null
+      && typeof window.clearTimeout === 'function'
+    ) {
+      window.clearTimeout(annotationMarkdownDocsFocusRefreshTimer);
+    }
+    const setTimeoutFn = typeof window.setTimeout === 'function'
+      ? window.setTimeout.bind(window)
+      : typeof globalThis.setTimeout === 'function'
+        ? globalThis.setTimeout.bind(globalThis)
+        : null;
+    if (!setTimeoutFn) {
+      void refreshDirectoryMarkdownSource();
+      return;
+    }
+    annotationMarkdownDocsFocusRefreshTimer = setTimeoutFn(() => {
+      annotationMarkdownDocsFocusRefreshTimer = null;
+      void refreshDirectoryMarkdownSource();
+    }, 120);
+  };
+
+  const handleMarkdownDocsMessage = (event: MessageEvent) => {
+    const knownPaths = annotationClient.getDirectoryMarkdownProjectRelativePaths();
+    if (knownPaths.length === 0) return;
+    const savedPath = normalizeMarkdownDocsBroadcastPath((event.data as { path?: unknown } | null)?.path);
+    if (savedPath && !knownPaths.includes(savedPath)) return;
+    void refreshDirectoryMarkdownSource();
+  };
+
+  const stopDirectoryMarkdownDocsSync = () => {
+    if (typeof window !== 'undefined') {
+      if (
+        annotationMarkdownDocsFocusRefreshTimer !== null
+        && typeof window.clearTimeout === 'function'
+      ) {
+        window.clearTimeout(annotationMarkdownDocsFocusRefreshTimer);
+      }
+      annotationMarkdownDocsFocusRefreshTimer = null;
+      if (typeof window.removeEventListener === 'function') {
+        window.removeEventListener('focus', handleMarkdownDocsWindowFocus);
+      }
+    }
+    annotationMarkdownDocsChannel?.close();
+    annotationMarkdownDocsChannel = null;
+  };
+
+  const startDirectoryMarkdownDocsSync = () => {
+    stopDirectoryMarkdownDocsSync();
+    if (typeof window === 'undefined') return;
+    if (annotationClient.getDirectoryMarkdownProjectRelativePaths().length === 0) return;
+    if (typeof BroadcastChannel !== 'undefined') {
+      annotationMarkdownDocsChannel = new BroadcastChannel(MARKDOWN_DOCS_BROADCAST_CHANNEL);
+      annotationMarkdownDocsChannel.addEventListener('message', handleMarkdownDocsMessage);
+    }
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('focus', handleMarkdownDocsWindowFocus);
+    }
+  };
 
   const createEditorInstance = (): WebEditorV2Api => {
     if (!editor) {
@@ -771,7 +1580,7 @@ export const createWebEditorV2Controller = (
           : undefined;
       const { skillInstallSource, ...restUiOptions } = options.ui ?? {};
       const normalizedSkillInstallSource =
-        typeof skillInstallSource === 'string' ? normalizeSkillPath(skillInstallSource) : null;
+        typeof skillInstallSource === 'string' ? normalizeSkillSource(skillInstallSource) : null;
       const resolvedToolbarMode = runtimeToolbarMode ?? searchToolbarMode ?? restUiOptions.toolbarMode;
       const resolvedUi = {
         breadcrumbs: true,
@@ -781,6 +1590,36 @@ export const createWebEditorV2Controller = (
         ...(resolvedToolbarMode === 'host'
           ? { onHostToolbarAction: requestParentHostToolbarAction }
           : {}),
+        onEnableAnnotation: async () => {
+          if (annotationClient.isEnabled()) return true;
+          if (resolvedToolbarMode === 'host') {
+            const enabled = await requestParentHostToolbarAction({ type: 'enable-annotation' });
+            if (enabled) {
+              await annotationClient.refreshSource();
+              editor?.refresh?.();
+              startDirectoryMarkdownDocsSync();
+              scheduleAnnotationToolbarRefresh();
+            }
+            return enabled;
+          }
+          if (!await confirmEnableAnnotation()) return false;
+          try {
+            const enabled = await annotationClient.enable();
+            if (enabled && typeof window !== 'undefined') {
+              editor?.refresh?.();
+              startDirectoryMarkdownDocsSync();
+              scheduleAnnotationToolbarRefresh();
+            }
+            return enabled;
+          } catch (error) {
+            notifyPreview('error', error instanceof Error ? error.message : '需求标注没有开启成功。');
+            await alertEnableAnnotationFailed();
+            return false;
+          }
+        },
+        getAnnotationEnabled: annotationClient.isEnabled,
+        getAnnotationEnableAvailable: annotationClient.isAvailable,
+        getAnnotationEnableLoading: annotationClient.isLoading,
         ...restUiOptions,
         ...(searchToolbarMode ? { toolbarMode: searchToolbarMode } : {}),
         ...(runtimeToolbarMode ? { toolbarMode: runtimeToolbarMode } : {}),
@@ -788,7 +1627,6 @@ export const createWebEditorV2Controller = (
           ? { skillInstallSource: normalizedSkillInstallSource }
           : {}),
       };
-      editorToolbarMode = resolvedUi.toolbarMode ?? 'inline';
       const resolvedMobileMode =
         typeof options.mobileMode === 'boolean'
           ? options.mobileMode
@@ -796,15 +1634,15 @@ export const createWebEditorV2Controller = (
       const {
         ui: _ignoredUi,
         mobileMode: _ignoredMobileMode,
-        genieBridge: _ignoredGenieBridge,
+        agentBridge: _ignoredAgentBridge,
         integrationWs: _ignoredIntegrationWs,
         ...editorOptions
       } = options as WebEditorV2InitOptions & {
-        genieBridge?: unknown;
+        agentBridge?: unknown;
         integrationWs?: unknown;
       };
 
-      editor = createGenieEditor({
+      editor = createCommentary({
         ...editorOptions,
         ...(typeof resolvedMobileMode === 'boolean' ? { mobileMode: resolvedMobileMode } : {}),
         ui: resolvedUi,
@@ -826,6 +1664,14 @@ export const createWebEditorV2Controller = (
           persistenceAdapter:
             options.host?.persistenceAdapter
             ?? createPrototypeCommentsPersistenceAdapter(),
+          canEditAnnotationMarkdown: (element) => Boolean(
+            annotationClient.isEnabled()
+            && canEditLocalAnnotationMarkdown(element),
+          ),
+          getAnnotationDocumentEditUrl: (element) => annotationClient.getDocumentEditUrl(element),
+          getAnnotationMarkdown: (element) => annotationClient.getMarkdown(element),
+          onAnnotationMarkdownChange: (element, markdown) => annotationClient.writeMarkdown(element, markdown),
+          onDeleteAnnotationNode: (element) => annotationClient.writeMarkdown(element, ''),
         },
       });
     }
@@ -851,9 +1697,24 @@ export const createWebEditorV2Controller = (
     const nextInitialDarkMode = enableOptions?.initialDarkMode;
     const nextCommentPageScope = normalizeString(enableOptions?.commentPageScope);
     const hasExplicitCommentPageScope = typeof enableOptions?.commentPageScope === 'string';
+    const nextAnnotationApiBaseUrl = normalizeString(enableOptions?.annotationApiBaseUrl);
+    const nextAnnotationProjectId = normalizeString(enableOptions?.annotationProjectId);
+    const nextAgentRunConcurrency = Number(enableOptions?.agentRunConcurrency);
     let shouldRecreateInactiveEditor = false;
     let shouldRefreshActiveEditor = false;
     let shouldRefreshRouteState = false;
+
+    if (
+      nextAnnotationApiBaseUrl !== runtimeAnnotationApiBaseUrl
+      || nextAnnotationProjectId !== runtimeAnnotationProjectId
+    ) {
+      runtimeAnnotationApiBaseUrl = nextAnnotationApiBaseUrl;
+      runtimeAnnotationProjectId = nextAnnotationProjectId;
+      annotationClient.configure({
+        apiBaseUrl: runtimeAnnotationApiBaseUrl,
+        projectId: runtimeAnnotationProjectId,
+      });
+    }
 
     if (nextToolbarMode && nextToolbarMode !== runtimeToolbarMode) {
       runtimeToolbarMode = nextToolbarMode;
@@ -867,6 +1728,17 @@ export const createWebEditorV2Controller = (
       options.ui = {
         ...(options.ui ?? {}),
         initialDarkMode: nextInitialDarkMode,
+      };
+      shouldRecreateInactiveEditor = true;
+    }
+
+    if (
+      Number.isFinite(nextAgentRunConcurrency)
+      && options.ui?.agentRunConcurrency !== nextAgentRunConcurrency
+    ) {
+      options.ui = {
+        ...(options.ui ?? {}),
+        agentRunConcurrency: nextAgentRunConcurrency,
       };
       shouldRecreateInactiveEditor = true;
     }
@@ -951,14 +1823,36 @@ export const createWebEditorV2Controller = (
     };
   };
 
+  const scheduleAnnotationToolbarRefresh = () => {
+    if (typeof window === 'undefined') return;
+    const scheduleTimeout = typeof window.setTimeout === 'function'
+      ? window.setTimeout.bind(window)
+      : typeof globalThis.setTimeout === 'function'
+        ? globalThis.setTimeout.bind(globalThis)
+        : null;
+    if (!scheduleTimeout) {
+      editor?.refresh?.();
+      return;
+    }
+    [0, 120, 360].forEach((delay) => {
+      scheduleTimeout(() => {
+        editor?.refresh?.();
+      }, delay);
+    });
+  };
+
   return {
     enable: async (enableOptions) => {
       if (typeof window === 'undefined') return;
       applyEnableOptions(enableOptions);
+      await refreshAnnotationStatus();
       (await ensureEditorReady()).start();
+      startDirectoryMarkdownDocsSync();
+      scheduleAnnotationToolbarRefresh();
       startDebugTitleSync();
     },
     disable: () => {
+      stopDirectoryMarkdownDocsSync();
       editor?.stop();
       clearDebugTitleSync();
     },
@@ -1138,6 +2032,7 @@ export const createWebEditorV2Controller = (
     },
     isPanelOnlyMode: () => editor?.getState().panelOnlyMode ?? false,
     getCopyPromptText: () => editor?.getCopyPromptText?.() ?? '',
+    getElementPromptText: (elementKey) => editor?.getElementPromptText?.(elementKey) ?? '',
     getDecisionDataCount: () => countPageDecisionData(),
   };
 };

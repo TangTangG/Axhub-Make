@@ -1,11 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execa } from 'execa';
 
 import { isPathInside, resolveProjectPath } from './projectCore/index.ts';
+import { getConfigPath } from './projectCore/paths.ts';
 
 import { readJsonBody, sendFile, sendJson } from './http.ts';
-import { runLocalCommand } from './localCommand.ts';
+import { buildLocalCommandEnv, runLocalCommand } from './localCommand.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 
 interface GitProjectContext {
@@ -16,11 +18,9 @@ interface GitProjectContext {
   metadata: {
     resources: {
       prototypes: any[];
-      docs: any[];
       themes: any[];
-      data: any[];
-      templates: any[];
     };
+    resourceWriteTargets?: Record<string, { type?: string; path?: string } | undefined>;
   };
 }
 
@@ -32,7 +32,74 @@ interface GitApiHandlers {
     mode: 'active-fallback',
   ) => GitProjectContext | null;
   findProjectResourceByPath: (metadata: GitProjectContext['metadata'], rawPath: string) => any | undefined;
+  commandExecutor?: GitWorkspaceCommandExecutor;
 }
+
+export type GitWorkspaceCommandExecutor = (
+  command: string,
+  args: string[],
+  options: { cwd: string },
+) => Promise<{ stdout: string; stderr: string }>;
+
+type GitWorkspacePromptScene =
+  | 'create-remote'
+  | 'auth-failed'
+  | 'branch-management'
+  | 'merge-required'
+  | 'conflict-required'
+  | 'push-rejected';
+
+type WorkspaceChangeGroupKey = 'prototypes' | 'resources' | 'themes' | 'skills' | 'rules' | 'other';
+
+interface WorkspaceGitRemoteConfig {
+  url?: string;
+  defaultBranch?: string;
+}
+
+interface WorkspaceGitProjectConfig {
+  versionCollaboration?: {
+    remote?: WorkspaceGitRemoteConfig;
+  };
+}
+
+interface WorkspaceChangeItem {
+  id: string;
+  name: string;
+  fileCount: number;
+}
+
+interface WorkspaceChangeGroup {
+  key: WorkspaceChangeGroupKey;
+  label: string;
+  fileCount: number;
+  items: WorkspaceChangeItem[];
+}
+
+interface WorkspaceChangedFile {
+  status: string;
+  file: string;
+}
+
+interface WorkspaceVersionCommit {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  email: string;
+  timestamp: number;
+  date: string;
+}
+
+const WORKSPACE_CHANGE_GROUP_ORDER: Array<{ key: WorkspaceChangeGroupKey; label: string }> = [
+  { key: 'prototypes', label: '原型' },
+  { key: 'resources', label: '资源' },
+  { key: 'themes', label: '主题' },
+  { key: 'skills', label: '技能' },
+  { key: 'rules', label: '规范' },
+  { key: 'other', label: '其他' },
+];
+
+const DEFAULT_REMOTE_NAME = 'origin';
 
 function resourceSourcePathForGit(resource: any): string {
   const candidate = String(resource?.absoluteFilePath || resource?.filePath || resource?.path || '').trim();
@@ -136,16 +203,319 @@ function parseGitPorcelainStatus(stdout: string) {
   return stdout.split('\n').filter(Boolean).map((line) => {
     const match = line.match(/^(.{1,2})\s+(.+)$/u);
     if (match) {
+      const file = match[2].split(' -> ').pop() || match[2];
       return {
         status: match[1].trim(),
-        file: match[2],
+        file,
       };
     }
+    const file = line.slice(2).trim().split(' -> ').pop() || line.slice(2).trim();
     return {
       status: line.slice(0, 2).trim(),
-      file: line.slice(2).trim(),
+      file,
     };
   });
+}
+
+function parseGitNameStatus(stdout: string): WorkspaceChangedFile[] {
+  return stdout.split('\n').filter(Boolean).map((line) => {
+    const parts = line.split('\t').filter(Boolean);
+    const status = parts[0] || '';
+    const file = parts.length > 2 ? parts[parts.length - 1] : parts[1] || '';
+    return {
+      status: status.trim(),
+      file: file.trim(),
+    };
+  }).filter((item) => item.file);
+}
+
+function parseWorkspaceVersionCommit(stdout: string): WorkspaceVersionCommit | null {
+  const line = stdout.split('\n').find(Boolean);
+  if (!line) return null;
+  const [hash = '', author = '', email = '', timestamp = '', ...messageParts] = line.split('|');
+  const normalizedHash = hash.trim();
+  if (!normalizedHash) return null;
+  const ms = Number(timestamp) * 1000;
+  return {
+    hash: normalizedHash,
+    shortHash: normalizedHash.slice(0, 7),
+    author: author.trim(),
+    email: email.trim(),
+    timestamp: Number.isFinite(ms) ? ms : 0,
+    date: Number.isFinite(ms) ? new Date(ms).toISOString() : '',
+    message: messageParts.join('|').trim(),
+  };
+}
+
+function normalizeGitVersionRef(value: unknown): string {
+  const ref = String(value || '').trim();
+  return /^[0-9a-f]{7,40}$/iu.test(ref) ? ref : '';
+}
+
+function normalizeSlashPath(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+}
+
+function stripIndexEntryPath(value: string): string {
+  return normalizeSlashPath(value).replace(/\/index\.(t|j)sx?$/iu, '').replace(/\/+$/, '');
+}
+
+function stripWorkspacePrefix(value: string): string {
+  return stripIndexEntryPath(value)
+    .replace(/^(?:client\/)?src\//u, '')
+    .replace(/^client\//u, '');
+}
+
+function displayNameFromResource(resource: any, fallback: string): string {
+  return String(resource?.title || resource?.displayName || resource?.name || resource?.id || fallback).trim() || fallback;
+}
+
+function getWorkspaceResourceSourceCandidates(resource: any): string[] {
+  return [
+    resource?.absoluteFilePath,
+    resource?.filePath,
+    resource?.sourcePath,
+    resource?.path,
+  ]
+    .map(stripIndexEntryPath)
+    .filter(Boolean);
+}
+
+function findResourceBySourcePath(resources: any[], filePath: string): any | null {
+  const normalizedFile = stripIndexEntryPath(filePath);
+  const normalizedFileWithoutPrefix = stripWorkspacePrefix(filePath);
+  for (const resource of resources) {
+    const candidates = getWorkspaceResourceSourceCandidates(resource);
+    if (candidates.some((candidate) => (
+      normalizedFile === candidate
+      || normalizedFile.startsWith(`${candidate}/`)
+      || normalizedFile.endsWith(`/${candidate}`)
+      || normalizedFile.includes(`/${candidate}/`)
+      || normalizedFileWithoutPrefix === stripWorkspacePrefix(candidate)
+      || normalizedFileWithoutPrefix.startsWith(`${stripWorkspacePrefix(candidate)}/`)
+    ))) {
+      return resource;
+    }
+  }
+  return null;
+}
+
+function getPathSegmentName(filePath: string, marker: string): string {
+  const normalized = normalizeSlashPath(filePath);
+  const markerIndex = normalized.indexOf(marker);
+  if (markerIndex < 0) {
+    return path.basename(stripIndexEntryPath(normalized)) || normalized;
+  }
+  const rest = normalized.slice(markerIndex + marker.length).split('/').filter(Boolean);
+  return rest[0] || path.basename(stripIndexEntryPath(normalized)) || normalized;
+}
+
+function getWorkspaceWriteTargetPath(metadata: GitProjectContext['metadata'], type: string): string {
+  const target = metadata.resourceWriteTargets?.[type];
+  if (!target || target.type !== 'project-relative-path') {
+    return '';
+  }
+  return normalizeSlashPath(target.path || '');
+}
+
+function isPathInsideWorkspaceTarget(filePath: string, targetPath: string): boolean {
+  if (!targetPath) return false;
+  const normalizedFile = normalizeSlashPath(filePath);
+  const normalizedTarget = normalizeSlashPath(targetPath);
+  return normalizedFile === normalizedTarget
+    || normalizedFile.startsWith(`${normalizedTarget}/`)
+    || normalizedFile.endsWith(`/${normalizedTarget}`)
+    || normalizedFile.includes(`/${normalizedTarget}/`);
+}
+
+function pathContainsWorkspaceMarker(filePath: string, marker: string): boolean {
+  const normalizedFile = normalizeSlashPath(filePath);
+  const normalizedMarker = normalizeSlashPath(marker);
+  return normalizedFile === normalizedMarker
+    || normalizedFile.startsWith(`${normalizedMarker}/`)
+    || normalizedFile.includes(`/${normalizedMarker}/`);
+}
+
+function getWorkspaceMarkerForFile(filePath: string, markers: string[]): string {
+  return markers.find((marker) => pathContainsWorkspaceMarker(filePath, marker)) || '';
+}
+
+function classifyWorkspaceChangedFile(metadata: GitProjectContext['metadata'], changedFile: WorkspaceChangedFile): {
+  key: WorkspaceChangeGroupKey;
+  id: string;
+  name: string;
+} {
+  const filePath = normalizeSlashPath(changedFile.file);
+  const prototypeTarget = getWorkspaceWriteTargetPath(metadata, 'prototypes');
+  const themesTarget = getWorkspaceWriteTargetPath(metadata, 'themes');
+  const prototype = findResourceBySourcePath(metadata.resources.prototypes || [], filePath);
+  const prototypeMarker = getWorkspaceMarkerForFile(filePath, [prototypeTarget, 'src/prototypes', 'prototypes'].filter(Boolean));
+  if (prototype || prototypeMarker) {
+    const fallback = getPathSegmentName(filePath, prototypeTarget && isPathInsideWorkspaceTarget(filePath, prototypeTarget)
+      ? `${prototypeTarget}/`
+      : prototypeMarker ? `${prototypeMarker}/` : 'prototypes/');
+    return {
+      key: 'prototypes',
+      id: `prototype:${String(prototype?.id || prototype?.name || fallback)}`,
+      name: displayNameFromResource(prototype, fallback),
+    };
+  }
+
+  const theme = findResourceBySourcePath(metadata.resources.themes || [], filePath);
+  const themeMarker = getWorkspaceMarkerForFile(filePath, [themesTarget, 'src/themes', 'themes', 'design-systems'].filter(Boolean));
+  if (theme || themeMarker) {
+    const fallback = getPathSegmentName(filePath, themesTarget && isPathInsideWorkspaceTarget(filePath, themesTarget)
+      ? `${themesTarget}/`
+      : themeMarker ? `${themeMarker}/` : 'themes/');
+    return {
+      key: 'themes',
+      id: `theme:${String(theme?.id || theme?.name || fallback)}`,
+      name: displayNameFromResource(theme, fallback),
+    };
+  }
+
+  const resourceMarker = getWorkspaceMarkerForFile(filePath, ['src/resources', 'resources']);
+  if (resourceMarker) {
+    const fallback = getPathSegmentName(
+      filePath,
+      `${resourceMarker}/`,
+    );
+    return {
+      key: 'resources',
+      id: `resource:${fallback}`,
+      name: fallback,
+    };
+  }
+
+  if (/^(?:apps\/skills\/)?skills\//u.test(filePath) || filePath.includes('/skills/')) {
+    const normalized = filePath.replace(/^apps\/skills\/skills\//u, 'skills/');
+    return {
+      key: 'skills',
+      id: `skill:${getPathSegmentName(normalized, 'skills/')}`,
+      name: getPathSegmentName(normalized, 'skills/'),
+    };
+  }
+
+  if (/^(?:\.?agents\/|rules\/|\.rules\/)/u.test(filePath) || /(?:^|\/)AGENTS\.md$/u.test(filePath) || /(?:^|\/)rules\//u.test(filePath)) {
+    const name = filePath.includes('/rules/') || filePath.startsWith('rules/')
+      ? getPathSegmentName(filePath, 'rules/')
+      : path.basename(filePath);
+    return {
+      key: 'rules',
+      id: `rule:${name}`,
+      name,
+    };
+  }
+
+  const fallback = path.basename(stripIndexEntryPath(filePath)) || filePath;
+  return {
+    key: 'other',
+    id: `other:${filePath}`,
+    name: fallback,
+  };
+}
+
+function createWorkspaceChangeSummary(
+  metadata: GitProjectContext['metadata'],
+  changedFiles: WorkspaceChangedFile[],
+): { totalFiles: number; groups: WorkspaceChangeGroup[] } {
+  const groupMap = new Map<WorkspaceChangeGroupKey, Map<string, WorkspaceChangeItem>>();
+  const fileCountMap = new Map<WorkspaceChangeGroupKey, number>();
+
+  for (const changedFile of changedFiles) {
+    const classified = classifyWorkspaceChangedFile(metadata, changedFile);
+    fileCountMap.set(classified.key, (fileCountMap.get(classified.key) || 0) + 1);
+    const items = groupMap.get(classified.key) || new Map<string, WorkspaceChangeItem>();
+    const existing = items.get(classified.id);
+    if (existing) {
+      existing.fileCount += 1;
+    } else {
+      items.set(classified.id, {
+        id: classified.id,
+        name: classified.name,
+        fileCount: 1,
+      });
+    }
+    groupMap.set(classified.key, items);
+  }
+
+  return {
+    totalFiles: changedFiles.length,
+    groups: WORKSPACE_CHANGE_GROUP_ORDER
+      .map(({ key, label }) => {
+        const items = Array.from(groupMap.get(key)?.values() || []);
+        return {
+          key,
+          label,
+          fileCount: fileCountMap.get(key) || 0,
+          items,
+        };
+      })
+      .filter((group) => group.fileCount > 0),
+  };
+}
+
+function filterWorkspaceChangedFilesByScope(
+  changedFiles: WorkspaceChangedFile[],
+  scopePath?: string,
+): WorkspaceChangedFile[] {
+  const normalizedScopePath = normalizeSlashPath(scopePath);
+  if (!normalizedScopePath) {
+    return changedFiles;
+  }
+  return changedFiles.filter((changedFile) => {
+    const filePath = normalizeSlashPath(changedFile.file);
+    return filePath === normalizedScopePath || filePath.startsWith(`${normalizedScopePath}/`);
+  });
+}
+
+function readWorkspaceGitProjectConfig(projectRoot: string): WorkspaceGitProjectConfig {
+  const configPath = getConfigPath(projectRoot);
+  if (!fs.existsSync(configPath)) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeWorkspaceRemoteConfig(projectRoot: string, remote: WorkspaceGitRemoteConfig): WorkspaceGitProjectConfig {
+  const configPath = getConfigPath(projectRoot);
+  const current = readWorkspaceGitProjectConfig(projectRoot) as Record<string, any>;
+  const next = {
+    ...current,
+    versionCollaboration: {
+      ...(current.versionCollaboration && typeof current.versionCollaboration === 'object'
+        ? current.versionCollaboration
+        : {}),
+      remote: {
+        url: String(remote.url || '').trim(),
+        ...(remote.defaultBranch ? { defaultBranch: remote.defaultBranch } : {}),
+      },
+    },
+  };
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf8');
+  return next;
+}
+
+function getConfiguredWorkspaceRemote(projectRoot: string): WorkspaceGitRemoteConfig {
+  const config = readWorkspaceGitProjectConfig(projectRoot);
+  const remote = config.versionCollaboration?.remote;
+  if (!remote || typeof remote !== 'object') {
+    return {};
+  }
+  return {
+    url: typeof remote.url === 'string' ? remote.url.trim() : '',
+    defaultBranch: typeof remote.defaultBranch === 'string' ? remote.defaultBranch.trim() : '',
+  };
 }
 
 function encodePreviewPathSegments(value: string): string {
@@ -174,17 +544,143 @@ function normalizePreviewResourcePath(value: string): string {
     .replace(/\/+$/u, '');
 }
 
-async function execGit(args: string[], cwd: string): Promise<{ stdout: string; stderr: string }> {
+function getPrototypeIndexGitPathCandidates(...paths: string[]): string[] {
+  const candidates = new Set<string>();
+  for (const rawPath of paths) {
+    const normalizedPath = normalizePreviewResourcePath(rawPath);
+    if (!normalizedPath) continue;
+    const folderPath = normalizedPath.replace(/\/index\.(t|j)sx?$/iu, '');
+    candidates.add(`${folderPath}/index.tsx`);
+    if (!folderPath.startsWith('src/')) {
+      candidates.add(`src/${folderPath}/index.tsx`);
+    }
+  }
+  return Array.from(candidates);
+}
+
+async function hasPrototypeAtCommit(
+  projectRoot: string,
+  commitHash: string,
+  candidatePaths: string[],
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<boolean> {
+  for (const candidatePath of candidatePaths) {
+    try {
+      await execGit(['cat-file', '-e', `${commitHash}:${candidatePath}`], projectRoot, executor);
+      return true;
+    } catch {
+      // Try the next likely prototype entry path.
+    }
+  }
+  return false;
+}
+
+async function execGit(
+  args: string[],
+  cwd: string,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<{ stdout: string; stderr: string }> {
   try {
+    if (executor) {
+      return await executor('git', args, { cwd });
+    }
     return await runLocalCommand('git', args, { cwd, maxBuffer: 1024 * 1024 * 10 });
   } catch (error: any) {
-    throw new Error(String(error?.stderr || error?.message || 'Git command failed').trim());
+    throw new Error(
+      decodeCommandOutput(error?.stderr || error?.message || 'Git command failed').trim(),
+    );
   }
 }
 
-async function probeGitAvailability(projectRoot: string) {
+function decodeCommandOutput(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Buffer.isBuffer(value)) return value.toString('utf8');
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('utf8');
+  return value == null ? '' : String(value);
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return decodeCommandOutput(error).trim() || fallback;
+}
+
+function parseGitNullSeparatedOutput(output: Buffer): string[] {
+  return output.toString('utf8').split('\0').filter(Boolean);
+}
+
+async function execGitBlob(
+  args: string[],
+  cwd: string,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<Buffer> {
   try {
-    await execGit(['--version'], projectRoot);
+    if (executor) {
+      const result = await executor('git', args, { cwd });
+      return Buffer.from(String(result.stdout || ''), 'utf8');
+    }
+    const result = await execa('git', args, {
+      cwd,
+      env: buildLocalCommandEnv(),
+      encoding: 'buffer',
+      maxBuffer: 1024 * 1024 * 10,
+      reject: true,
+    });
+    return Buffer.from(result.stdout as Uint8Array);
+  } catch (error: any) {
+    throw new Error(
+      decodeCommandOutput(error?.stderr || error?.message || 'Git command failed').trim(),
+    );
+  }
+}
+
+async function execGitBinary(
+  args: string[],
+  cwd: string,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<Buffer> {
+  try {
+    if (executor) {
+      const result = await executor('git', args, { cwd });
+      return Buffer.from(decodeCommandOutput(result.stdout), 'utf8');
+    }
+    const result = await execa('git', args, {
+      cwd,
+      env: buildLocalCommandEnv(),
+      encoding: 'buffer',
+      maxBuffer: 1024 * 1024 * 10,
+      reject: true,
+    });
+    return Buffer.from(result.stdout as Uint8Array);
+  } catch (error: any) {
+    throw new Error(
+      decodeCommandOutput(error?.stderr || error?.message || 'Git command failed').trim(),
+    );
+  }
+}
+
+async function execWorkspaceCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<{ stdout: string; stderr: string }> {
+  try {
+    if (executor) {
+      return await executor(command, args, { cwd });
+    }
+    return await runLocalCommand(command, args, { cwd, maxBuffer: 1024 * 1024 * 10 });
+  } catch (error: any) {
+    throw new Error(
+      decodeCommandOutput(error?.stderr || error?.message || `${command} command failed`).trim(),
+    );
+  }
+}
+
+async function probeGitAvailability(projectRoot: string, executor?: GitWorkspaceCommandExecutor) {
+  try {
+    await execGit(['--version'], projectRoot, executor);
   } catch (error: any) {
     return {
       available: false,
@@ -198,7 +694,7 @@ async function probeGitAvailability(projectRoot: string) {
   }
 
   try {
-    const { stdout } = await execGit(['rev-parse', '--is-inside-work-tree'], projectRoot);
+    const { stdout } = await execGit(['rev-parse', '--is-inside-work-tree'], projectRoot, executor);
     if (stdout !== 'true') {
       return {
         available: false,
@@ -223,7 +719,7 @@ async function probeGitAvailability(projectRoot: string) {
   }
 
   try {
-    await execGit(['rev-parse', '--verify', 'HEAD'], projectRoot);
+    await execGit(['rev-parse', '--verify', 'HEAD'], projectRoot, executor);
   } catch {
     return {
       available: false,
@@ -244,6 +740,281 @@ async function probeGitAvailability(projectRoot: string) {
   };
 }
 
+async function getWorkspaceCurrentBranch(projectRoot: string, executor?: GitWorkspaceCommandExecutor): Promise<string> {
+  const branch = await execGit(['branch', '--show-current'], projectRoot, executor);
+  return branch.stdout || 'main';
+}
+
+async function getWorkspaceChangedFiles(projectRoot: string, executor?: GitWorkspaceCommandExecutor): Promise<WorkspaceChangedFile[]> {
+  const status = await execGit(['status', '--porcelain', '-uall'], projectRoot, executor);
+  return parseGitPorcelainStatus(status.stdout);
+}
+
+async function getWorkspaceHeadFiles(projectRoot: string, executor?: GitWorkspaceCommandExecutor): Promise<WorkspaceChangedFile[]> {
+  const headFiles = await execGit(['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', 'HEAD'], projectRoot, executor);
+  return parseGitNameStatus(headFiles.stdout);
+}
+
+async function getWorkspaceVersionCommit(
+  projectRoot: string,
+  ref: string,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<WorkspaceVersionCommit | null> {
+  try {
+    const log = await execGit(['log', '-1', '--pretty=format:%H|%an|%ae|%at|%s', ref], projectRoot, executor);
+    return parseWorkspaceVersionCommit(log.stdout);
+  } catch {
+    return null;
+  }
+}
+
+async function getWorkspaceVersionChangedFiles(
+  projectRoot: string,
+  ref: string,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<WorkspaceChangedFile[]> {
+  const changedFiles = await execGit(['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', ref], projectRoot, executor);
+  return parseGitNameStatus(changedFiles.stdout);
+}
+
+async function getWorkspaceRemoteComparison(
+  projectRoot: string,
+  metadata: GitProjectContext['metadata'],
+  remote: WorkspaceGitRemoteConfig,
+  currentBranch: string,
+  executor?: GitWorkspaceCommandExecutor,
+  scopePath?: string,
+) {
+  if (!remote.url) {
+    return {
+      available: false,
+      reason: 'remote-not-configured',
+      incoming: { totalFiles: 0, groups: [] },
+      outgoing: { totalFiles: 0, groups: [] },
+    };
+  }
+
+  const branch = remote.defaultBranch || currentBranch;
+  const targetRef = `${DEFAULT_REMOTE_NAME}/${branch}`;
+  try {
+    await execGit(['rev-parse', '--verify', targetRef], projectRoot, executor);
+  } catch {
+    const outgoing = filterWorkspaceChangedFilesByScope(await getWorkspaceHeadFiles(projectRoot, executor), scopePath);
+    return {
+      available: true,
+      branch,
+      targetRef,
+      reason: 'remote-branch-missing',
+      incoming: { totalFiles: 0, groups: [] },
+      outgoing: createWorkspaceChangeSummary(metadata, outgoing),
+    };
+  }
+
+  try {
+    const incoming = await execGit(['diff', '--name-status', 'HEAD..' + targetRef], projectRoot, executor);
+    const outgoing = await execGit(['diff', '--name-status', targetRef + '..HEAD'], projectRoot, executor);
+    const incomingFiles = filterWorkspaceChangedFilesByScope(parseGitNameStatus(incoming.stdout), scopePath);
+    const outgoingFiles = filterWorkspaceChangedFilesByScope(parseGitNameStatus(outgoing.stdout), scopePath);
+    return {
+      available: true,
+      branch,
+      targetRef,
+      incoming: createWorkspaceChangeSummary(metadata, incomingFiles),
+      outgoing: createWorkspaceChangeSummary(metadata, outgoingFiles),
+    };
+  } catch (error: any) {
+    return {
+      available: false,
+      branch,
+      targetRef,
+      reason: error?.message || 'remote-comparison-unavailable',
+      incoming: { totalFiles: 0, groups: [] },
+      outgoing: { totalFiles: 0, groups: [] },
+    };
+  }
+}
+
+async function getWorkspaceBranchOverview(projectRoot: string, executor?: GitWorkspaceCommandExecutor) {
+  let localBranches: string[] = [];
+  let remoteBranches: string[] = [];
+  try {
+    const local = await execGit(['branch', '--format=%(refname:short)'], projectRoot, executor);
+    localBranches = local.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+  } catch {
+    localBranches = [];
+  }
+  try {
+    const remote = await execGit(['branch', '-r', '--format=%(refname:short)'], projectRoot, executor);
+    remoteBranches = remote.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+  } catch {
+    remoteBranches = [];
+  }
+  return { localBranches, remoteBranches };
+}
+
+function buildWorkspacePrompt(params: {
+  scene: GitWorkspacePromptScene;
+  projectRoot: string;
+  currentBranch?: string;
+  remote?: WorkspaceGitRemoteConfig;
+  repositoryName?: string;
+  branchOverview?: { localBranches: string[]; remoteBranches: string[] };
+  reason?: string;
+}): string {
+  const remoteUrl = params.remote?.url || '(未配置)';
+  const repositoryName = params.repositoryName || '';
+  const branch = params.currentBranch || '(未检测)';
+  const localBranches = params.branchOverview?.localBranches?.length
+    ? params.branchOverview.localBranches.map((item, index) => `${index + 1}. ${item}`).join('\n')
+    : '(未检测到本地分支)';
+  const remoteBranches = params.branchOverview?.remoteBranches?.length
+    ? params.branchOverview.remoteBranches.map((item, index) => `${index + 1}. ${item}`).join('\n')
+    : '(未检测到在线分支)';
+  const reason = params.reason || '需要人工判断';
+
+  if (params.scene === 'branch-management') {
+    return [
+      '请帮我解释并处理 Axhub Make 项目的分支情况。',
+      '',
+      `项目路径：${params.projectRoot}`,
+      `当前分支：${branch}`,
+      `在线仓库：${remoteUrl}`,
+      '',
+      '本地分支：',
+      localBranches,
+      '',
+      '在线分支：',
+      remoteBranches,
+      '',
+      '请用普通用户能理解的语言说明当前有哪些分支、哪些可以切换、哪些可以合并或删除。',
+      '如果需要我选择，请告诉我可以简单回复序号或名称；在我确认前不要执行切换、合并或删除。',
+    ].join('\n');
+  }
+
+  if (params.scene === 'create-remote') {
+    return [
+      '请帮我创建并连接 Axhub Make 项目的在线仓库。',
+      '',
+      `项目路径：${params.projectRoot}`,
+      repositoryName ? `仓库名称：${repositoryName}` : `目标仓库地址：${remoteUrl}`,
+      `当前分支：${branch}`,
+      '',
+      '请根据仓库地址判断平台；如果只有仓库名称，请结合本机登录状态判断平台。如果需要登录、创建仓库、配置 SSH 或凭据，请先给出步骤。',
+      '完成后把在线仓库设置为 origin，并推送当前分支。',
+    ].join('\n');
+  }
+
+  return [
+    '请帮我处理 Axhub Make 项目的版本同步问题。',
+    '',
+    `项目路径：${params.projectRoot}`,
+    `当前分支：${branch}`,
+    `在线仓库：${remoteUrl}`,
+    `阻塞原因：${reason}`,
+    '',
+    '请先检查 git status、git remote -v、git branch -vv、git fetch 的结果。',
+    '不要自动合并，不要强制覆盖。若需要合并或解决冲突，请先解释风险并等待我确认。',
+  ].join('\n');
+}
+
+function isLikelyGitHubUrl(url: string): boolean {
+  return /(?:^https?:\/\/github\.com\/|^git@github\.com:)/iu.test(url);
+}
+
+function isLikelyGitLabUrl(url: string): boolean {
+  return /(?:gitlab\.com|gitlab)/iu.test(url);
+}
+
+function parseRepositoryPathFromGitUrl(url: string): { owner: string; repo: string; host: string } | null {
+  const value = String(url || '').trim().replace(/\/+$/u, '');
+  if (!value) return null;
+  const ssh = value.match(/^git@([^:]+):(.+)$/u);
+  if (ssh) {
+    const [owner, repo] = ssh[2].replace(/\.git$/u, '').split('/').filter(Boolean).slice(-2);
+    return owner && repo ? { host: ssh[1], owner, repo } : null;
+  }
+  try {
+    const parsed = new URL(value);
+    const segments = parsed.pathname.replace(/^\/+|\/+$/gu, '').replace(/\.git$/u, '').split('/').filter(Boolean);
+    if (segments.length < 2) return null;
+    return {
+      host: parsed.hostname,
+      owner: segments[segments.length - 2],
+      repo: segments[segments.length - 1],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRepositoryName(value: string): string {
+  return String(value || '').trim().replace(/\.git$/u, '').replace(/^\/+|\/+$/gu, '');
+}
+
+async function tryCreateRemoteRepository(params: {
+  projectRoot: string;
+  url?: string;
+  repositoryName?: string;
+  visibility: 'private' | 'public';
+  executor?: GitWorkspaceCommandExecutor;
+}): Promise<{ created: boolean; mode: string; message: string }> {
+  const repositoryName = normalizeRepositoryName(params.repositoryName || '');
+  const parsed = params.url ? parseRepositoryPathFromGitUrl(params.url) : null;
+
+  if (params.url && isLikelyGitHubUrl(params.url) && parsed) {
+    const visibilityFlag = params.visibility === 'public' ? '--public' : '--private';
+    await execWorkspaceCommand(
+      'gh',
+      ['repo', 'create', `${parsed.owner}/${parsed.repo}`, visibilityFlag, '--confirm'],
+      params.projectRoot,
+      params.executor,
+    );
+    return { created: true, mode: 'gh', message: '已通过 GitHub CLI 创建在线仓库' };
+  }
+
+  if (params.url && isLikelyGitLabUrl(params.url) && parsed) {
+    const visibilityFlag = params.visibility === 'public' ? '--public' : '--private';
+    await execWorkspaceCommand(
+      'glab',
+      ['repo', 'create', `${parsed.owner}/${parsed.repo}`, visibilityFlag, '--yes'],
+      params.projectRoot,
+      params.executor,
+    );
+    return { created: true, mode: 'glab', message: '已通过 GitLab CLI 创建在线仓库' };
+  }
+
+  if (repositoryName) {
+    const visibilityFlag = params.visibility === 'public' ? '--public' : '--private';
+    try {
+      await execWorkspaceCommand(
+        'gh',
+        ['repo', 'create', repositoryName, visibilityFlag, '--confirm'],
+        params.projectRoot,
+        params.executor,
+      );
+      return { created: true, mode: 'gh', message: '已通过 GitHub CLI 创建在线仓库' };
+    } catch (githubError: any) {
+      try {
+        await execWorkspaceCommand(
+          'glab',
+          ['repo', 'create', repositoryName, visibilityFlag, '--yes'],
+          params.projectRoot,
+          params.executor,
+        );
+        return { created: true, mode: 'glab', message: '已通过 GitLab CLI 创建在线仓库' };
+      } catch (gitlabError: any) {
+        throw new Error(gitlabError?.message || githubError?.message || '无法自动创建在线仓库');
+      }
+    }
+  }
+
+  if (!params.url || !parsed) {
+    throw new Error('无法识别仓库地址');
+  }
+
+  throw new Error('当前 Git 服务暂不支持自动创建');
+}
+
 export function handleGitApi(
   req: IncomingMessage,
   res: ServerResponse,
@@ -258,6 +1029,438 @@ export function handleGitApi(
 
   const context = handlers.resolveProjectContext(req, res, options, 'active-fallback');
   if (!context) {
+    return true;
+  }
+
+  const executor = handlers.commandExecutor || (options as any).gitWorkspaceCommandExecutor;
+
+  const sendPathError = (rawPath: string) => {
+    sendJson(res, {
+      error: 'Resolved path is outside project root',
+      code: 'PATH_OUTSIDE_PROJECT',
+      projectId: context.project.id,
+      path: rawPath,
+    }, { status: 403 });
+  };
+
+  const getScopedGitTargetPath = (rawPath: unknown): string => {
+    const requestedPath = String(rawPath || '').trim();
+    if (!requestedPath) return '';
+    return normalizeGitTargetPath(context, requestedPath, handlers).gitScopePath;
+  };
+
+  if (pathname.startsWith('/api/git/workspace/')) {
+    (async () => {
+      const projectRoot = context.project.root;
+      const method = req.method;
+      const body = method === 'GET' ? {} : await readJsonBody(req);
+
+      if (pathname === '/api/git/workspace/status' && method === 'GET') {
+        const requestedVersionRef = normalizeGitVersionRef(url.searchParams.get('gitVersion'));
+        let scopedGitPath = '';
+        try {
+          scopedGitPath = getScopedGitTargetPath(url.searchParams.get('path'));
+        } catch {
+          sendPathError(String(url.searchParams.get('path') || ''));
+          return;
+        }
+        const availability = await probeGitAvailability(projectRoot, executor);
+        if (!availability.available) {
+          sendJson(res, {
+            ...availability,
+            projectId: context.project.id,
+            projectRoot,
+            remote: getConfiguredWorkspaceRemote(projectRoot),
+            isHistoricalVersion: Boolean(requestedVersionRef),
+            hasChanges: false,
+            changeSummary: { totalFiles: 0, groups: [] },
+          });
+          return;
+        }
+        const currentBranch = await getWorkspaceCurrentBranch(projectRoot, executor);
+        const versionRef = requestedVersionRef || 'HEAD';
+        const currentCommit = await getWorkspaceVersionCommit(projectRoot, versionRef, executor);
+        if (requestedVersionRef && !currentCommit) {
+          sendJson(res, { error: 'Version not found', code: 'VERSION_NOT_FOUND', projectId: context.project.id }, { status: 404 });
+          return;
+        }
+        const changedFiles = requestedVersionRef
+          ? await getWorkspaceVersionChangedFiles(projectRoot, requestedVersionRef, executor)
+          : await getWorkspaceChangedFiles(projectRoot, executor);
+        const scopedChangedFiles = filterWorkspaceChangedFilesByScope(changedFiles, scopedGitPath);
+        const branchOverview = await getWorkspaceBranchOverview(projectRoot, executor);
+        const remote = getConfiguredWorkspaceRemote(projectRoot);
+        const remoteComparison = await getWorkspaceRemoteComparison(projectRoot, context.metadata, remote, currentBranch, executor, scopedGitPath);
+        sendJson(res, {
+          ...availability,
+          projectId: context.project.id,
+          projectRoot,
+          currentBranch,
+          currentCommit,
+          isHistoricalVersion: Boolean(requestedVersionRef),
+          hasChanges: scopedChangedFiles.length > 0,
+          changedFilesCount: scopedChangedFiles.length,
+          changeSummary: createWorkspaceChangeSummary(context.metadata, scopedChangedFiles),
+          remote,
+          branchOverview,
+          remoteComparison,
+        });
+        return;
+      }
+
+      if (pathname === '/api/git/workspace/init' && method === 'POST') {
+        try {
+          await execGit(['--version'], projectRoot, executor);
+        } catch (error: any) {
+          sendJson(res, {
+            available: false,
+            gitAvailable: false,
+            isGitRepo: false,
+            hasCommits: false,
+            code: 'git-unavailable',
+            errorCode: 'git-not-available',
+            message: error?.message || 'Git is not available',
+            projectId: context.project.id,
+            projectRoot,
+          }, { status: 409 });
+          return;
+        }
+        try {
+          await execGit(['rev-parse', '--is-inside-work-tree'], projectRoot, executor);
+        } catch {
+          await execGit(['init'], projectRoot, executor);
+        }
+        try {
+          await execGit(['config', 'user.email'], projectRoot, executor);
+        } catch {
+          await execGit(['config', 'user.email', 'axhub-make@example.local'], projectRoot, executor);
+        }
+        try {
+          await execGit(['config', 'user.name'], projectRoot, executor);
+        } catch {
+          await execGit(['config', 'user.name', 'Axhub Make'], projectRoot, executor);
+        }
+        let hasHead = true;
+        try {
+          await execGit(['rev-parse', '--verify', 'HEAD'], projectRoot, executor);
+        } catch {
+          hasHead = false;
+        }
+        const changedFiles = await getWorkspaceChangedFiles(projectRoot, executor).catch(() => []);
+        if (!hasHead || changedFiles.length > 0) {
+          await execGit(['add', '.'], projectRoot, executor);
+          await execGit(['commit', '-m', hasHead ? '保存当前版本' : '初始化项目版本'], projectRoot, executor);
+        }
+        sendJson(res, {
+          success: true,
+          initialized: true,
+          projectId: context.project.id,
+          currentBranch: await getWorkspaceCurrentBranch(projectRoot, executor).catch(() => 'main'),
+        });
+        return;
+      }
+
+      const availability = await probeGitAvailability(projectRoot, executor);
+      if (!availability.available) {
+        sendJson(res, { ...availability, projectId: context.project.id, projectRoot }, { status: 409 });
+        return;
+      }
+
+      const currentBranch = await getWorkspaceCurrentBranch(projectRoot, executor);
+      const remote = getConfiguredWorkspaceRemote(projectRoot);
+      const branchOverview = await getWorkspaceBranchOverview(projectRoot, executor);
+
+      if (pathname === '/api/git/workspace/branch' && method === 'POST') {
+        const targetBranch = String((body as any)?.branch || '').trim();
+        if (!targetBranch) {
+          sendJson(res, { error: 'Missing branch parameter' }, { status: 400 });
+          return;
+        }
+        if (!branchOverview.localBranches.includes(targetBranch)) {
+          sendJson(res, { error: 'Branch does not exist', code: 'BRANCH_NOT_FOUND', branchOverview }, { status: 400 });
+          return;
+        }
+        if (targetBranch === currentBranch) {
+          sendJson(res, {
+            success: true,
+            projectId: context.project.id,
+            currentBranch,
+            branchOverview,
+          });
+          return;
+        }
+        const changedFiles = await getWorkspaceChangedFiles(projectRoot, executor);
+        if (changedFiles.length > 0) {
+          const prompt = buildWorkspacePrompt({
+            scene: 'branch-management',
+            projectRoot,
+            currentBranch,
+            remote,
+            branchOverview,
+            reason: '当前项目还有未提交的变更，切换分支可能覆盖或混合内容',
+          });
+          sendJson(res, {
+            error: 'Local changes must be committed before switching branches',
+            code: 'DIRTY_WORKTREE',
+            promptScene: 'branch-management',
+            prompt,
+            projectId: context.project.id,
+          }, { status: 409 });
+          return;
+        }
+        await execGit(['switch', targetBranch], projectRoot, executor);
+        sendJson(res, {
+          success: true,
+          projectId: context.project.id,
+          currentBranch: targetBranch,
+          branchOverview: await getWorkspaceBranchOverview(projectRoot, executor),
+        });
+        return;
+      }
+
+      if (pathname === '/api/git/workspace/commit' && method === 'POST') {
+        const message = String((body as any)?.message || '').trim();
+        let scopedGitPath = '';
+        try {
+          scopedGitPath = getScopedGitTargetPath((body as any)?.path);
+        } catch {
+          sendPathError(String((body as any)?.path || ''));
+          return;
+        }
+        if (!message) {
+          sendJson(res, { error: 'Missing message parameter' }, { status: 400 });
+          return;
+        }
+        const changedFiles = filterWorkspaceChangedFilesByScope(await getWorkspaceChangedFiles(projectRoot, executor), scopedGitPath);
+        if (changedFiles.length === 0) {
+          sendJson(res, { error: 'No changes to commit' }, { status: 400 });
+          return;
+        }
+        const addArgs = scopedGitPath ? ['add', '-A', '--', scopedGitPath] : ['add', '.'];
+        await execGit(addArgs, projectRoot, executor);
+        const commit = await execGit(['commit', '-m', message], projectRoot, executor);
+        sendJson(res, { success: true, message: 'Changes committed successfully', output: commit.stdout, projectId: context.project.id });
+        return;
+      }
+
+      if (pathname === '/api/git/workspace/remote' && method === 'POST') {
+        const remoteUrl = String((body as any)?.url || '').trim();
+        const defaultBranch = String((body as any)?.defaultBranch || '').trim();
+        if (!remoteUrl) {
+          sendJson(res, { error: 'Missing url parameter' }, { status: 400 });
+          return;
+        }
+        const existingRemotes = await execGit(['remote'], projectRoot, executor).catch(() => ({ stdout: '', stderr: '' }));
+        if (existingRemotes.stdout.split('\n').map((line) => line.trim()).includes(DEFAULT_REMOTE_NAME)) {
+          await execGit(['remote', 'set-url', DEFAULT_REMOTE_NAME, remoteUrl], projectRoot, executor);
+        } else {
+          await execGit(['remote', 'add', DEFAULT_REMOTE_NAME, remoteUrl], projectRoot, executor);
+        }
+        writeWorkspaceRemoteConfig(projectRoot, { url: remoteUrl, defaultBranch });
+        sendJson(res, {
+          success: true,
+          projectId: context.project.id,
+          remote: {
+            url: remoteUrl,
+            ...(defaultBranch ? { defaultBranch } : {}),
+          },
+        });
+        return;
+      }
+
+      if (pathname === '/api/git/workspace/fetch' && method === 'POST') {
+        try {
+          await execGit(['fetch', DEFAULT_REMOTE_NAME, '--prune'], projectRoot, executor);
+        } catch (error: any) {
+          const prompt = buildWorkspacePrompt({
+            scene: 'auth-failed',
+            projectRoot,
+            currentBranch,
+            remote,
+            branchOverview,
+            reason: error?.message || '无法连接在线仓库',
+          });
+          sendJson(res, {
+            error: error?.message || 'Fetch failed',
+            code: 'REMOTE_FETCH_FAILED',
+            promptScene: 'auth-failed',
+            prompt,
+            projectId: context.project.id,
+          }, { status: 409 });
+          return;
+        }
+        sendJson(res, {
+          success: true,
+          projectId: context.project.id,
+          branchOverview: await getWorkspaceBranchOverview(projectRoot, executor),
+        });
+        return;
+      }
+
+      if (pathname === '/api/git/workspace/sync-down' && method === 'POST') {
+        const changedFiles = await getWorkspaceChangedFiles(projectRoot, executor);
+        if (changedFiles.length > 0) {
+          const prompt = buildWorkspacePrompt({
+            scene: 'merge-required',
+            projectRoot,
+            currentBranch,
+            remote,
+            branchOverview,
+            reason: '本地还有未提交的变更',
+          });
+          sendJson(res, {
+            error: 'Local changes must be committed before sync',
+            code: 'DIRTY_WORKTREE',
+            promptScene: 'merge-required',
+            prompt,
+            projectId: context.project.id,
+          }, { status: 409 });
+          return;
+        }
+        try {
+          await execGit(['fetch', DEFAULT_REMOTE_NAME, '--prune'], projectRoot, executor);
+        } catch (error: any) {
+          const prompt = buildWorkspacePrompt({
+            scene: 'auth-failed',
+            projectRoot,
+            currentBranch,
+            remote,
+            branchOverview,
+            reason: error?.message || '无法连接在线仓库',
+          });
+          sendJson(res, {
+            error: error?.message || 'Fetch failed',
+            code: 'REMOTE_FETCH_FAILED',
+            promptScene: 'auth-failed',
+            prompt,
+            projectId: context.project.id,
+          }, { status: 409 });
+          return;
+        }
+        const remoteBranch = remote.defaultBranch || currentBranch;
+        const targetRef = `${DEFAULT_REMOTE_NAME}/${remoteBranch}`;
+        try {
+          await execGit(['merge', '--ff-only', targetRef], projectRoot, executor);
+        } catch (error: any) {
+          const prompt = buildWorkspacePrompt({
+            scene: 'merge-required',
+            projectRoot,
+            currentBranch,
+            remote,
+            branchOverview,
+            reason: error?.message || '在线版本无法直接快进同步',
+          });
+          sendJson(res, {
+            error: error?.message || 'Fast-forward sync failed',
+            code: 'FAST_FORWARD_REQUIRED',
+            promptScene: 'merge-required',
+            prompt,
+            projectId: context.project.id,
+          }, { status: 409 });
+          return;
+        }
+        sendJson(res, { success: true, projectId: context.project.id, currentBranch });
+        return;
+      }
+
+      if (pathname === '/api/git/workspace/push' && method === 'POST') {
+        try {
+          await execGit(['push', '-u', DEFAULT_REMOTE_NAME, currentBranch], projectRoot, executor);
+          sendJson(res, { success: true, projectId: context.project.id, currentBranch });
+        } catch (error: any) {
+          const prompt = buildWorkspacePrompt({
+            scene: 'push-rejected',
+            projectRoot,
+            currentBranch,
+            remote,
+            branchOverview,
+            reason: error?.message || '在线同步被拒绝',
+          });
+          sendJson(res, {
+            error: error?.message || 'Push failed',
+            code: 'PUSH_REJECTED',
+            promptScene: 'push-rejected',
+            prompt,
+            projectId: context.project.id,
+          }, { status: 409 });
+        }
+        return;
+      }
+
+      if (pathname === '/api/git/workspace/create-remote-repository' && method === 'POST') {
+        const remoteUrl = String((body as any)?.url || '').trim();
+        const repositoryName = normalizeRepositoryName(String((body as any)?.repositoryName || ''));
+        const visibility = (body as any)?.visibility === 'public' ? 'public' : 'private';
+        if (!remoteUrl && !repositoryName) {
+          sendJson(res, { error: 'Missing url or repositoryName parameter' }, { status: 400 });
+          return;
+        }
+        try {
+          const created = await tryCreateRemoteRepository({
+            projectRoot,
+            url: remoteUrl || undefined,
+            repositoryName,
+            visibility,
+            executor,
+          });
+          sendJson(res, {
+            success: true,
+            projectId: context.project.id,
+            ...(remoteUrl ? { remote: { url: remoteUrl } } : {}),
+            ...created,
+          });
+        } catch (error: any) {
+          const prompt = buildWorkspacePrompt({
+            scene: 'create-remote',
+            projectRoot,
+            currentBranch,
+            remote: remoteUrl ? { url: remoteUrl } : undefined,
+            repositoryName,
+            branchOverview,
+            reason: error?.message || '无法自动创建在线仓库',
+          });
+          sendJson(res, {
+            error: error?.message || 'Create remote repository failed',
+            code: 'CREATE_REMOTE_PROMPT_REQUIRED',
+            promptScene: 'create-remote',
+            prompt,
+            projectId: context.project.id,
+          }, { status: 409 });
+        }
+        return;
+      }
+
+      if (pathname === '/api/git/workspace/prompt' && method === 'POST') {
+        const scene = String((body as any)?.scene || 'branch-management') as GitWorkspacePromptScene;
+        const allowedScenes: GitWorkspacePromptScene[] = [
+          'create-remote',
+          'auth-failed',
+          'branch-management',
+          'merge-required',
+          'conflict-required',
+          'push-rejected',
+        ];
+        const promptScene = allowedScenes.includes(scene) ? scene : 'branch-management';
+        sendJson(res, {
+          success: true,
+          scene: promptScene,
+          prompt: buildWorkspacePrompt({
+            scene: promptScene,
+            projectRoot,
+            currentBranch,
+            remote,
+            branchOverview,
+            reason: String((body as any)?.reason || '').trim(),
+          }),
+          projectId: context.project.id,
+        });
+        return;
+      }
+
+      sendJson(res, { error: 'API endpoint not found' }, { status: 404 });
+    })().catch((error) => {
+      sendJson(res, { error: error?.message || 'Git workspace API failed', projectId: context.project.id }, { status: 500 });
+    });
     return true;
   }
 
@@ -283,15 +1486,6 @@ export function handleGitApi(
     }
     return true;
   }
-
-  const sendPathError = (rawPath: string) => {
-    sendJson(res, {
-      error: 'Resolved path is outside project root',
-      code: 'PATH_OUTSIDE_PROJECT',
-      projectId: context.project.id,
-      path: rawPath,
-    }, { status: 403 });
-  };
 
   (async () => {
     if (pathname === '/api/git/status' && req.method === 'GET') {
@@ -352,12 +1546,21 @@ export function handleGitApi(
     if (pathname === '/api/git/history' && req.method === 'GET') {
       const status = await execGit(['status', '--porcelain', '--', gitScopePath], context.project.root);
       const log = await execGit(['log', '-20', '--pretty=format:%H|%an|%ae|%at|%s', '--', gitScopePath], context.project.root);
+      const prototypeEntryCandidates = getPrototypeIndexGitPathCandidates(gitScopePath, versionFileBasePath);
       const commits = log.stdout
-        ? log.stdout.split('\n').filter(Boolean).map((line) => {
-          const [hash, author, email, timestamp, message] = line.split('|');
+        ? await Promise.all(log.stdout.split('\n').filter(Boolean).map(async (line) => {
+          const [hash = '', author = '', email = '', timestamp = '', ...messageParts] = line.split('|');
           const ms = Number(timestamp) * 1000;
-          return { hash, author, email, timestamp: ms, message, date: new Date(ms).toISOString() };
-        })
+          return {
+            hash,
+            author,
+            email,
+            timestamp: ms,
+            message: messageParts.join('|'),
+            date: new Date(ms).toISOString(),
+            hasPrototype: await hasPrototypeAtCommit(context.project.root, hash, prototypeEntryCandidates, executor),
+          };
+        })).then((items) => items.filter((commit) => commit.hasPrototype))
         : [];
       sendJson(res, {
         commits,
@@ -414,14 +1617,25 @@ export function handleGitApi(
       }
       const versionId = commitHash.slice(0, 8);
       const tempDir = path.join(context.project.root, '.git-versions', versionId);
+      fs.rmSync(tempDir, { recursive: true, force: true });
       fs.mkdirSync(tempDir, { recursive: true });
-      const fileList = await execGit(['ls-tree', '-r', '--name-only', commitHash, gitScopePath], context.project.root);
-      for (const file of fileList.stdout.split('\n').filter(Boolean)) {
-        const targetFile = path.join(tempDir, file);
-        if (!isPathInside(tempDir, targetFile)) continue;
-        fs.mkdirSync(path.dirname(targetFile), { recursive: true });
-        const content = await execGit(['show', `${commitHash}:${file}`], context.project.root);
-        fs.writeFileSync(targetFile, content.stdout, 'utf8');
+      try {
+        const fileList = await execGitBinary(['ls-tree', '-rz', '--name-only', commitHash], context.project.root, executor);
+        for (const file of parseGitNullSeparatedOutput(fileList)) {
+          const targetFile = path.join(tempDir, file);
+          if (!isPathInside(tempDir, targetFile)) continue;
+          fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+          const content = await execGitBlob(['show', `${commitHash}:${file}`], context.project.root, executor);
+          fs.writeFileSync(targetFile, content);
+        }
+      } catch (error) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        sendJson(res, {
+          error: '这个历史版本文件不完整，无法预览当前原型。',
+          detail: getErrorMessage(error, 'Git version snapshot failed'),
+          projectId: context.project.id,
+        }, { status: 500 });
+        return;
       }
       const versionResourceDirs = Array.from(new Set([
         path.join(tempDir, versionFileBasePath),
@@ -431,16 +1645,13 @@ export function handleGitApi(
       const hasPrototype = versionResourceDirs.some((resourceDir) => fs.existsSync(path.join(resourceDir, 'index.tsx')));
       const previewName = previewResourceName || targetPath;
       const previewPath = previewName ? `/prototypes/${encodePreviewPathSegments(previewName)}` : '';
-      const defaultPreviewGitPath = normalizePreviewResourcePath(`prototypes/${previewName}`);
-      const previewGitPath = normalizePreviewResourcePath(versionFileBasePath) === defaultPreviewGitPath
-        ? ''
-        : versionFileBasePath;
+      const previewGitPath = normalizePreviewResourcePath(gitScopePath || versionFileBasePath);
       sendJson(res, {
         success: true,
         versionId,
         hasPrototype,
         prototypeUrl: hasPrototype && previewPath
-          ? appendSearchParams(previewPath, { gitVersion: versionId, gitPath: previewGitPath })
+          ? appendSearchParams(previewPath, { projectId: context.project.id, gitVersion: versionId, gitPath: previewGitPath })
           : null,
         projectId: context.project.id,
       });

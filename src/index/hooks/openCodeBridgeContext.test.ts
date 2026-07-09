@@ -17,7 +17,7 @@ describe('OpenCode bridge current file context resolution', () => {
 	    filePath: 'src/pages/Login/index.tsx',
   };
 
-  it('resolves prototype demo and canvas files from the selected page', () => {
+  it('resolves prototype views from the selected page without deriving prototype canvas files', () => {
     expect(resolveOpenCodeCurrentFilePath({
       selectedItem: prototype,
       selectedDoc: null,
@@ -32,7 +32,7 @@ describe('OpenCode bridge current file context resolution', () => {
       selectedCanvas: null,
       sidebarTab: 'prototype',
       viewMode: 'canvas',
-    })).toBe('src/pages/Login/canvas.excalidraw');
+    })).toBe('src/pages/Login/index.tsx');
   });
 
   it('resolves document and canvas tab files while clearing assets tab context', () => {
@@ -54,13 +54,12 @@ describe('OpenCode bridge current file context resolution', () => {
       selectedItem: prototype,
       selectedDoc: null,
       selectedCanvas: {
-        name: 'Flow',
+        name: 'flows/flow.excalidraw',
         displayName: 'Flow',
-        filePath: 'canvas/flow.excalidraw',
       } as any,
       sidebarTab: 'canvas',
       viewMode: 'demo',
-    })).toBe('canvas/flow.excalidraw');
+    })).toBe('src/resources/flows/flow.excalidraw');
 
     expect(resolveOpenCodeCurrentFilePath({
       selectedItem: prototype,
@@ -133,10 +132,10 @@ describe('OpenCode bridge current file context resolution', () => {
       type: 'rectangle',
       annotation: '  调整按钮文案  ',
       title: '保存按钮',
-    }, 'src/pages/Login/canvas.excalidraw')).toEqual({
+    }, 'src/resources/flows/login.excalidraw')).toEqual({
       id: 'axhub:canvas-annotation:el-1',
       type: 'file',
-      path: 'src/pages/Login/canvas.excalidraw',
+      path: 'src/resources/flows/login.excalidraw',
       comment: '标注: 调整按钮文案',
       commentID: 'axhub:canvas-annotation:el-1',
       commentOrigin: 'file',
@@ -148,6 +147,6 @@ describe('OpenCode bridge current file context resolution', () => {
       type: 'text',
       annotation: '',
       title: '空标注',
-    }, 'src/pages/Login/canvas.excalidraw')).toBeNull();
+    }, 'src/resources/flows/login.excalidraw')).toBeNull();
   });
 });

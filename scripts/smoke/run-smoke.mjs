@@ -56,6 +56,19 @@ const report = {
   journeys: [],
 };
 
+function encodeResourceCanvasApiPath(resourcePath) {
+  return String(resourcePath || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+}
+
+function getSmokeCanvasResourcePath(prototypeName) {
+  const safeName = String(prototypeName || 'smoke')
+    .replace(/[^a-z0-9-]+/giu, '-')
+    .replace(/-+/gu, '-')
+    .replace(/^-|-$/gu, '')
+    .toLowerCase() || 'smoke';
+  return `smoke/${safeName}.excalidraw`;
+}
+
 try {
   makeServer = await startMakeServer({
     projectRoot: project.projectRoot,
@@ -211,7 +224,7 @@ async function runCreatePrototypeAndImageJourney(context, entry) {
 
   const prototypeDir = path.join(context.projectRoot, 'src/prototypes', created.body.name);
   assertOk(fs.existsSync(path.join(prototypeDir, 'index.tsx')), '新建原型缺少 index.tsx');
-  assertOk(fs.existsSync(path.join(prototypeDir, 'canvas.excalidraw')), '新建原型缺少 canvas.excalidraw');
+  assertOk(!fs.existsSync(path.join(prototypeDir, 'canvas.excalidraw')), '新建原型不应再创建 canvas.excalidraw');
 
   const metadata = readJson(path.join(context.projectRoot, '.axhub/make/project.json'));
   assertOk(
@@ -241,11 +254,8 @@ async function runCreatePrototypeAndImageJourney(context, entry) {
 
 async function runCanvasAiGenerationJourney(context, entry) {
   const prototype = ensurePrototype(context);
-  const ensure = await fetchJson(`${context.origin}/api/canvas/prototypes/${encodeURIComponent(prototype.name)}/ensure`, {
-    method: 'POST',
-  });
-  addStep(entry, 'prototype canvas is ensured', ensure.body);
-  assertOk(ensure.body.success === true, '画布 ensure 失败', ensure.body);
+  const canvasResourcePath = getSmokeCanvasResourcePath(prototype.name);
+  const canvasApiPath = encodeResourceCanvasApiPath(canvasResourcePath);
 
   const canvas = createDefaultCanvasData();
   canvas.elements.push(
@@ -304,7 +314,7 @@ async function runCanvasAiGenerationJourney(context, entry) {
     lastRetrieved: Date.now(),
   };
 
-  const put = await fetchJson(`${context.origin}/api/canvas/prototypes/${encodeURIComponent(prototype.name)}/canvas.excalidraw`, {
+  const put = await fetchJson(`${context.origin}/api/canvas/resources/${canvasApiPath}`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ content: canvas }),
@@ -312,7 +322,7 @@ async function runCanvasAiGenerationJourney(context, entry) {
   addStep(entry, 'canvas stores prototype image and drawio elements', put.body);
   assertOk(put.body.success === true, '画布保存失败', put.body);
 
-  const saved = await fetchJson(`${context.origin}/api/canvas/prototypes/${encodeURIComponent(prototype.name)}/canvas.excalidraw`);
+  const saved = await fetchJson(`${context.origin}/api/canvas/resources/${canvasApiPath}`);
   const elementTypes = saved.body.elements.map((element) => element.customData?.type || element.type);
   addStep(entry, 'canvas readback contains expected generated nodes', { elementTypes });
   assertOk(elementTypes.includes('embeddable'), '画布读回缺少原型节点', saved.body);
@@ -323,7 +333,7 @@ async function runCanvasAiGenerationJourney(context, entry) {
     scene: 'prototype',
     prompt: '在画布中生成原型和 drawio 图表',
     targetPath: `prototypes/${prototype.name}`,
-    canvasName: `prototypes/${prototype.name}/canvas`,
+    canvasName: `resources/${canvasResourcePath}`,
     generatorElementId: 'smoke-prototype-embed',
     taskId: 'smoke-canvas-task',
     runId: 'smoke-canvas-run',
@@ -642,12 +652,15 @@ async function runResourceCrudJourney(context, entry) {
   await fetchJson(`${context.origin}/api/data/tables/smoke-orders`, { method: 'DELETE' });
   await fetchJson(`${context.origin}/api/themes/${encodeURIComponent(theme.body.name)}`, { method: 'DELETE' });
   const metadata = readJson(path.join(context.projectRoot, '.axhub/make/project.json'));
-  addStep(entry, 'resource deletes remove metadata entries', {
-    hasDeletedDoc: metadata.resources.docs.some((doc) => doc.name === 'smoke-spec-renamed'),
-    hasDeletedData: metadata.resources.data.some((data) => data.name === 'smoke-orders'),
+  const renamedDocPath = path.join(context.projectRoot, 'src/resources', renamedDoc.body.path || renamedDoc.body.name);
+  const dataTablePath = path.join(context.projectRoot, 'src/resources/data/smoke-orders.json');
+  addStep(entry, 'resource deletes remove filesystem entries', {
+    hasDeletedDoc: fs.existsSync(renamedDocPath),
+    hasDeletedData: fs.existsSync(dataTablePath),
     hasDeletedTheme: metadata.resources.themes.some((item) => item.name === theme.body.name),
   });
-  assertOk(!metadata.resources.data.some((data) => data.name === 'smoke-orders'), '数据删除后 metadata 仍有记录', metadata.resources.data);
+  assertOk(!fs.existsSync(renamedDocPath), '文档删除后资源文件仍存在', renamedDocPath);
+  assertOk(!fs.existsSync(dataTablePath), '数据删除后资源文件仍存在', dataTablePath);
   assertOk(!metadata.resources.themes.some((item) => item.name === theme.body.name), '主题删除后 metadata 仍有记录', metadata.resources.themes);
 }
 
@@ -888,9 +901,6 @@ export default function SmokePrototype() {
   font-family: Arial, sans-serif;
 }
 `);
-  if (!fs.existsSync(path.join(prototypeDir, 'canvas.excalidraw'))) {
-    writeJson(path.join(prototypeDir, 'canvas.excalidraw'), createDefaultCanvasData());
-  }
   syncPrototypeMetadata(context, safeName, title, sourcePath);
   context.createdPrototype = {
     name: safeName,
@@ -1002,10 +1012,10 @@ export default function ImportedHome() {
     },
     resourceWriteTargets: {
       prototypes: { type: 'project-relative-path', path: 'src/prototypes' },
-      docs: { type: 'project-relative-path', path: 'src/docs' },
+      docs: { type: 'project-relative-path', path: 'src/resources' },
       themes: { type: 'project-relative-path', path: 'src/themes' },
-      data: { type: 'project-relative-path', path: 'src/data' },
-      templates: { type: 'project-relative-path', path: 'src/templates' },
+      data: { type: 'project-relative-path', path: 'src/resources/data' },
+      templates: { type: 'project-relative-path', path: 'src/resources/templates' },
       media: { type: 'project-relative-path', path: 'src/resources/media' },
     },
     updatedAt: new Date().toISOString(),

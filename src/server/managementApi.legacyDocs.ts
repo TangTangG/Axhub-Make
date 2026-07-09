@@ -24,23 +24,27 @@ function buildMarkdownFileUrl(markdownPath: string): string {
   return `/api/markdown-file?path=${encodeURIComponent(markdownPath)}`;
 }
 
-function findProjectDocByRouteName(metadata: ProjectMetadata, routeName: string) {
+function findProjectDocByRouteName(projectRoot: string, routeName: string) {
   const normalizedRouteName = String(routeName || '')
     .trim()
     .replace(/\\/g, '/')
     .replace(/\.md$/iu, '');
-  if (!normalizedRouteName) {
+  if (!normalizedRouteName || normalizedRouteName.startsWith('/') || normalizedRouteName.split('/').some((segment) => segment === '.' || segment === '..')) {
     return null;
   }
 
-  return metadata.resources.docs.find((doc) => {
-    const candidates = [
-      doc.id,
-      doc.name,
-      String(doc.name || '').replace(/\.md$/iu, ''),
-    ];
-    return candidates.some((candidate) => String(candidate || '').trim().replace(/\.md$/iu, '') === normalizedRouteName);
-  }) || null;
+  const relativePath = normalizedRouteName.endsWith('.md') ? normalizedRouteName : `${normalizedRouteName}.md`;
+  const docsDir = path.join(projectRoot, 'src', 'resources');
+  const docPath = path.resolve(docsDir, relativePath);
+  if (!isPathInside(docsDir, docPath) || !fs.existsSync(docPath) || !fs.statSync(docPath).isFile()) {
+    return null;
+  }
+  return {
+    id: normalizedRouteName,
+    name: normalizedRouteName,
+    title: fs.readFileSync(docPath, 'utf8').match(/^#\s+(.+)$/m)?.[1]?.trim() || normalizedRouteName,
+    path: docPath,
+  };
 }
 
 function sendLegacyDocRedirect(res: ServerResponse, location: string): void {
@@ -154,7 +158,7 @@ function handleLegacyDocsPreview(
   const previewMatch = pathname.match(/^\/docs\/(.+?)(?:\/spec\.html)?$/u);
   const encodedDocName = markdownMatch?.[1] || previewMatch?.[1] || '';
   const routeName = decodeURIComponent(encodedDocName);
-  const doc = findProjectDocByRouteName(context.metadata, routeName);
+  const doc = findProjectDocByRouteName(context.project.root, routeName);
   if (!doc || !isPathInside(context.project.root, doc.path)) {
     return false;
   }

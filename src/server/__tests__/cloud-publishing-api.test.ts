@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getConfigPath,
+  getGlobalServerConfigPath,
   getMakeClientMarkerPath,
   getProjectExportsDir,
   getProjectMetadataPath,
@@ -17,12 +18,14 @@ import {
 
 import { buildExportHtmlStaticFiles } from '../exportHtmlArchive.ts';
 import { startMakeServer } from '../index.ts';
+import { __cloudPublishingTestUtils } from '../managementApi.cloudPublishing.ts';
 import { buildOnDemand } from '../onDemandBuild.ts';
 
 vi.mock('../onDemandBuild.ts', () => ({
   buildOnDemand: vi.fn(async () => ({
     jsCode: 'var UserComponent = function Home(){};',
     cssText: '.home{color:red;}',
+    metadata: { usesAnnotationRuntime: false },
   })),
 }));
 
@@ -107,9 +110,16 @@ function writeProject(projectRoot: string) {
   });
 }
 
+function getTestMakeHome(projectRoot: string): string {
+  return path.join(projectRoot, '.test-make-home');
+}
+
+function getTestServerConfigPath(projectRoot: string): string {
+  return getGlobalServerConfigPath(getTestMakeHome(projectRoot));
+}
+
 function writeCloudConfig(projectRoot: string, cloudPublishing: unknown) {
-  writeJson(getConfigPath(projectRoot), {
-    server: { host: 'localhost', allowLAN: true },
+  writeJson(getTestServerConfigPath(projectRoot), {
     cloudPublishing,
   });
 }
@@ -120,7 +130,7 @@ async function startTestServer(projectRoot: string, extraOptions: Record<string,
     host: 'localhost',
     port: 0,
     adminRoot: path.join(projectRoot, 'missing-admin'),
-    registryPath: getProjectRegistryPath(createTempRoot('axhub-cloud-publishing-registry-')),
+    registryPath: getProjectRegistryPath(getTestMakeHome(projectRoot)),
     ...extraOptions,
   });
   try {
@@ -242,6 +252,60 @@ function mockGitHubPagesRest(input: RequestInfo | URL, init?: RequestInit) {
   return jsonResponse({ message: `Unexpected GitHub request ${method} ${url}` }, 500);
 }
 
+function mockGitHubPagesRestWithResourcePrefix(input: RequestInfo | URL, init?: RequestInit) {
+  const url = String(input);
+  const method = String(init?.method || 'GET').toUpperCase();
+  const headers = new Headers(init?.headers);
+  expect(headers.get('authorization')).toBe('Bearer gh-test-token');
+
+  if (method === 'GET' && url.endsWith('/repos/lintendo/axhub-pages-demo')) {
+    return jsonResponse({
+      default_branch: 'main',
+      html_url: 'https://github.com/lintendo/axhub-pages-demo',
+    });
+  }
+  if (method === 'GET' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/ref/heads/gh-pages')) {
+    return jsonResponse({ message: 'Not Found' }, 404);
+  }
+  if (method === 'GET' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/ref/heads/main')) {
+    return jsonResponse({ object: { sha: 'main-sha' } });
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/refs')) {
+    return jsonResponse({ ref: 'refs/heads/gh-pages', object: { sha: 'main-sha' } }, 201);
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/blobs')) {
+    return jsonResponse({ sha: 'blob-sha' }, 201);
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/trees')) {
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.base_tree).toBe('main-sha');
+    expect(payload.tree.map((entry: any) => entry.path)).toEqual(expect.arrayContaining([
+      'home/index.html',
+      'home/index.js',
+    ]));
+    expect(payload.tree.map((entry: any) => entry.path)).not.toEqual(expect.arrayContaining([
+      'index.html',
+      'index.js',
+    ]));
+    return jsonResponse({ sha: 'tree-sha' }, 201);
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/commits')) {
+    return jsonResponse({ sha: 'commit-sha' }, 201);
+  }
+  if (method === 'PATCH' && url.endsWith('/repos/lintendo/axhub-pages-demo/git/refs/heads/gh-pages')) {
+    return jsonResponse({ ref: 'refs/heads/gh-pages', object: { sha: 'commit-sha' } });
+  }
+  if (method === 'POST' && url.endsWith('/repos/lintendo/axhub-pages-demo/pages')) {
+    const payload = JSON.parse(String(init?.body));
+    expect(payload).toMatchObject({ source: { branch: 'gh-pages', path: '/' } });
+    return jsonResponse({ html_url: 'https://lintendo.github.io/axhub-pages-demo/' }, 201);
+  }
+  if (method === 'PUT' && url.endsWith('/repos/lintendo/axhub-pages-demo/pages')) {
+    return jsonResponse({ html_url: 'https://lintendo.github.io/axhub-pages-demo/' });
+  }
+  return jsonResponse({ message: `Unexpected GitHub request ${method} ${url}` }, 500);
+}
+
 function writeCloudPublishRecord(projectRoot: string, input: {
   target: 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages';
   status: 'success' | 'failed';
@@ -311,6 +375,7 @@ describe('cloud publishing API', () => {
     vi.mocked(buildOnDemand).mockResolvedValueOnce({
       jsCode: 'var UserComponent = function Home(){return "/api/media/file/banner/city.jpg";};',
       cssText: '.hero{background-image:url("/api/media/file/banner/city.jpg")}',
+      metadata: { usesAnnotationRuntime: false },
     });
 
     const files = await buildExportHtmlStaticFiles({
@@ -348,6 +413,7 @@ describe('cloud publishing API', () => {
     vi.mocked(buildOnDemand).mockResolvedValueOnce({
       jsCode: 'var UserComponent = function Home(){return "/api/media/file/banner/city.jpg";};',
       cssText: '.hero{background-image:url("/api/media/file/banner/city.jpg")}',
+      metadata: { usesAnnotationRuntime: false },
     });
     const server = await startTestServer(projectRoot);
 
@@ -372,6 +438,34 @@ describe('cloud publishing API', () => {
     }
   });
 
+  it('injects review submit globals when streaming HTML export ZIPs for enabled prototypes', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeJson(path.join(projectRoot, 'src/prototypes/home/.spec/reviews/config.json'), {
+      schemaVersion: 1,
+      lanSubmitEnabled: true,
+    });
+    writeJson(getConfigPath(projectRoot), {
+      server: { host: 'localhost', allowLAN: true, lanHost: '10.0.8.42' },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/export-html?path=${encodeURIComponent('prototypes/home')}`);
+      const body = new Uint8Array(await response.arrayBuffer());
+      const entries = unzipSync(body);
+      const html = Buffer.from(entries['index.html']).toString('utf8');
+      const port = new URL(server.origin).port;
+
+      expect(response.status).toBe(200);
+      expect(html).toContain('window.__AXHUB_REVIEW_SUBMIT__');
+      expect(html).toContain(`http://10.0.8.42:${port}/api/review-reports/submit?projectId=cloud-client&prototypeId=home`);
+      expect(html).toContain(`http://10.0.8.42:${port}/api/review-reports/exists?projectId=cloud-client&prototypeId=home`);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects media export roots outside the project root', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
@@ -386,15 +480,17 @@ describe('cloud publishing API', () => {
     })).rejects.toThrow('媒体资源目录不在项目根目录内');
   });
 
-  it('can include source files while excluding canvas and spec resources', async () => {
+  it('can include source files while excluding spec resources', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
     writeFile(path.join(projectRoot, 'src/prototypes/home/components/Card.tsx'), 'export function Card() { return null; }\n');
     writeFile(path.join(projectRoot, 'src/prototypes/home/Home.spec.tsx'), 'test("home", () => {});\n');
-    writeFile(path.join(projectRoot, 'src/prototypes/home/canvas.excalidraw'), '{}\n');
-    writeFile(path.join(projectRoot, 'src/prototypes/home/canvas.fig'), 'FIG');
-    writeFile(path.join(projectRoot, 'src/prototypes/home/canvas-assets/screenshot.png'), 'PNG');
     writeFile(path.join(projectRoot, 'src/prototypes/home/.spec/generation-artifacts.json'), '{}\n');
+    vi.mocked(buildOnDemand).mockResolvedValueOnce({
+      jsCode: 'var UserComponent = function Home(){};',
+      cssText: '.home{color:red;}',
+      metadata: { usesAnnotationRuntime: true },
+    });
 
     const files = await buildExportHtmlStaticFiles({
       projectRoot,
@@ -408,16 +504,93 @@ describe('cloud publishing API', () => {
     const paths = files.map((file) => file.path).sort();
 
     expect(paths).toEqual(expect.arrayContaining([
+      'source/manifest.json',
       'source/components/Card.tsx',
       'source/index.tsx',
     ]));
+    const manifest = JSON.parse(String(files.find((file) => file.path === 'source/manifest.json')?.body ?? 'null'));
+    expect(manifest).toMatchObject({
+      version: 1,
+      format: 'axhub-published-source',
+      sourceRoot: 'source',
+      entry: 'index.tsx',
+    });
+    expect(manifest.files).toEqual(expect.arrayContaining([
+      { path: 'index.tsx', kind: 'entry' },
+      { path: 'components/Card.tsx', kind: 'source' },
+    ]));
+    const html = String(files.find((file) => file.path === 'index.html')?.body ?? '');
+    const sourceReferenceAssignment = 'window.__AXHUB_ANNOTATION_SOURCE_REFERENCE__={root:"source",manifest:"source/manifest.json"};';
+    expect(html).toContain(sourceReferenceAssignment);
+    expect(html).toContain(`await loadEntryScript('./index.js');\n        ${sourceReferenceAssignment}`);
     expect(paths).not.toEqual(expect.arrayContaining([
       'source/Home.spec.tsx',
-      'source/canvas.excalidraw',
-      'source/canvas.fig',
-      'source/canvas-assets/screenshot.png',
       'source/.spec/generation-artifacts.json',
     ]));
+  });
+
+  it('does not inject annotation source references for non-annotation pages', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    vi.mocked(buildOnDemand).mockResolvedValueOnce({
+      jsCode: 'var UserComponent = function Home(){};',
+      cssText: '.home{color:red;}',
+      metadata: { usesAnnotationRuntime: false },
+    });
+
+    const files = await buildExportHtmlStaticFiles({
+      projectRoot,
+      sourceFile: path.join(projectRoot, 'src/prototypes/home/index.tsx'),
+      entryName: 'home',
+      displayName: 'Home',
+      group: 'prototypes',
+      includeSource: true,
+    });
+
+    const paths = files.map((file) => file.path).sort();
+    const html = String(files.find((file) => file.path === 'index.html')?.body ?? '');
+
+    expect(paths).toEqual(expect.arrayContaining([
+      'source/manifest.json',
+      'source/index.tsx',
+    ]));
+    expect(html).not.toContain('__AXHUB_ANNOTATION_SOURCE_REFERENCE__');
+  });
+
+  it('injects review submit globals only when export options provide review submit context', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+
+    const files = await buildExportHtmlStaticFiles({
+      projectRoot,
+      sourceFile: path.join(projectRoot, 'src/prototypes/home/index.tsx'),
+      entryName: 'home',
+      displayName: 'Home',
+      group: 'prototypes',
+      reviewSubmit: {
+        url: 'http://10.0.8.42:53817/api/review-reports/submit?projectId=cloud-client&prototypeId=home',
+        existsUrl: 'http://10.0.8.42:53817/api/review-reports/exists?projectId=cloud-client&prototypeId=home',
+        projectId: 'cloud-client',
+        prototypeId: 'home',
+      },
+    });
+    const html = String(files.find((file) => file.path === 'index.html')?.body ?? '');
+
+    expect(html).toContain('window.__AXHUB_REVIEW_SUBMIT__');
+    expect(html).toContain('"url":"http://10.0.8.42:53817/api/review-reports/submit?projectId=cloud-client&prototypeId=home"');
+    expect(html).toContain('"existsUrl":"http://10.0.8.42:53817/api/review-reports/exists?projectId=cloud-client&prototypeId=home"');
+    expect(html).toContain('"projectId":"cloud-client"');
+    expect(html).toContain('"prototypeId":"home"');
+
+    const filesWithoutReviewSubmit = await buildExportHtmlStaticFiles({
+      projectRoot,
+      sourceFile: path.join(projectRoot, 'src/prototypes/home/index.tsx'),
+      entryName: 'home',
+      displayName: 'Home',
+      group: 'prototypes',
+    });
+    const htmlWithoutReviewSubmit = String(filesWithoutReviewSubmit.find((file) => file.path === 'index.html')?.body ?? '');
+    expect(htmlWithoutReviewSubmit).not.toContain('__AXHUB_REVIEW_SUBMIT__');
   });
 
   it('extracts large CSS data URIs into static asset files for cloud publishing limits', async () => {
@@ -427,6 +600,7 @@ describe('cloud publishing API', () => {
     vi.mocked(buildOnDemand).mockResolvedValueOnce({
       jsCode: 'var UserComponent = function Home(){};',
       cssText: `@font-face{font-family:Demo;src:url("data:font/ttf;base64,${fontBody.toString('base64')}")} .home{font-family:Demo}`,
+      metadata: { usesAnnotationRuntime: false },
     });
 
     const files = await buildExportHtmlStaticFiles({
@@ -448,9 +622,12 @@ describe('cloud publishing API', () => {
     expect(extractedFont?.body.equals(fontBody)).toBe(true);
   });
 
-  it('saves and reads project cloud publishing configuration with configured flags', async () => {
+  it('saves and reads server-owned cloud publishing configuration without exposing secrets', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
+    writeJson(getConfigPath(projectRoot), {
+      server: { host: 'localhost', allowLAN: true },
+    });
     const server = await startTestServer(projectRoot);
 
     try {
@@ -470,6 +647,7 @@ describe('cloud publishing API', () => {
           },
           publishSettings: {
             includeSource: false,
+            visibleTargets: ['axhub', 's3', 'vercel'],
           },
         }),
       });
@@ -479,29 +657,159 @@ describe('cloud publishing API', () => {
       const config = await readJsonResponse(configResponse);
 
       expect(configResponse.status).toBe(200);
+      const projectConfig = JSON.parse(fs.readFileSync(getConfigPath(projectRoot), 'utf8'));
+      expect(projectConfig.cloudPublishing).toBeUndefined();
+      const serverConfig = JSON.parse(fs.readFileSync(getTestServerConfigPath(projectRoot), 'utf8'));
+      expect(serverConfig.cloudPublishing).toMatchObject({
+        vercel: { token: 'vercel-token', projectName: 'axhub-home', teamId: 'team_123' },
+        cloudflarePages: { apiToken: 'cf-token', accountId: 'account-1', projectName: 'axhub-home', productionBranch: 'main' },
+        s3: {
+          accessKeyId: 'AKIA_TEST',
+          secretAccessKey: 'secret',
+          region: 'us-east-1',
+          bucket: 'axhub-sites',
+          prefix: 'home',
+          baseUrl: 'https://cdn.example.com/home/',
+        },
+        publishSettings: {
+          includeSource: false,
+          visibleTargets: ['axhub', 's3', 'vercel'],
+        },
+      });
       expect(config.targets.vercel).toMatchObject({
         configured: true,
-        token: 'vercel-token',
+        tokenConfigured: true,
         projectName: 'axhub-home',
         teamId: 'team_123',
       });
+      expect(config.targets.vercel.token).toBeUndefined();
       expect(config.targets.cloudflarePages).toMatchObject({
         configured: true,
-        apiToken: 'cf-token',
+        apiTokenConfigured: true,
         accountId: 'account-1',
         projectName: 'axhub-home',
         productionBranch: 'main',
       });
+      expect(config.targets.cloudflarePages.apiToken).toBeUndefined();
       expect(config.targets.s3).toMatchObject({
         configured: true,
-        accessKeyId: 'AKIA_TEST',
+        accessKeyId: 'AKIA...TEST',
+        accessKeyIdConfigured: true,
+        secretAccessKeyConfigured: true,
         region: 'us-east-1',
         bucket: 'axhub-sites',
         prefix: 'home',
         baseUrl: 'https://cdn.example.com/home/',
       });
+      expect(config.targets.s3.secretAccessKey).toBeUndefined();
       expect(config.targets.publishSettings).toMatchObject({
         includeSource: false,
+        visibleTargets: ['axhub', 's3', 'vercel'],
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('defaults visible cloud publishing platforms to Axhub only', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      vercel: { token: 'vercel-token', projectName: 'axhub-home' },
+      publishSettings: { includeSource: true },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const configResponse = await fetch(`${server.origin}/api/cloud-publishing/config`);
+      const config = await readJsonResponse(configResponse);
+
+      expect(configResponse.status).toBe(200);
+      expect(config.targets.publishSettings).toMatchObject({
+        includeSource: true,
+        visibleTargets: ['axhub'],
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('ignores legacy project cloud publishing config when no server config exists', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeJson(getConfigPath(projectRoot), {
+      server: { host: 'localhost', allowLAN: true },
+      cloudPublishing: {
+        vercel: { token: 'legacy-token', projectName: 'legacy-project' },
+        publishSettings: { includeSource: true, visibleTargets: ['vercel'] },
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const configResponse = await fetch(`${server.origin}/api/cloud-publishing/config`);
+      const config = await readJsonResponse(configResponse);
+
+      expect(configResponse.status).toBe(200);
+      expect(config.targets.vercel).toMatchObject({
+        configured: false,
+        tokenConfigured: false,
+        projectName: '',
+        missingFields: ['token', 'projectName'],
+      });
+      expect(config.targets.publishSettings).toMatchObject({
+        includeSource: false,
+        visibleTargets: ['axhub'],
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('preserves existing server secrets when saving blank secret fields', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      vercel: { token: 'old-vercel-token', projectName: 'axhub-home' },
+      cloudflarePages: { apiToken: 'old-cf-token', accountId: 'account-1', productionBranch: 'main' },
+      s3: {
+        accessKeyId: 'OLD_AKIA_TEST',
+        secretAccessKey: 'old-s3-secret',
+        region: 'us-east-1',
+        bucket: 'axhub-sites',
+        baseUrl: 'https://cdn.example.com/',
+      },
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const saveResponse = await fetch(`${server.origin}/api/cloud-publishing/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vercel: { token: '', projectName: 'axhub-updated' },
+          cloudflarePages: { apiToken: '', accountId: 'account-2', productionBranch: 'main' },
+          s3: {
+            accessKeyId: 'NEW_AKIA_TEST',
+            secretAccessKey: '',
+            region: 'us-west-2',
+            bucket: 'axhub-updated',
+            baseUrl: 'https://cdn.example.com/updated/',
+          },
+        }),
+      });
+      expect(saveResponse.status).toBe(200);
+
+      const serverConfig = JSON.parse(fs.readFileSync(getTestServerConfigPath(projectRoot), 'utf8'));
+      expect(serverConfig.cloudPublishing).toMatchObject({
+        vercel: { token: 'old-vercel-token', projectName: 'axhub-updated' },
+        cloudflarePages: { apiToken: 'old-cf-token', accountId: 'account-2' },
+        s3: {
+          accessKeyId: 'NEW_AKIA_TEST',
+          secretAccessKey: 'old-s3-secret',
+          region: 'us-west-2',
+          bucket: 'axhub-updated',
+        },
       });
     } finally {
       await server.close();
@@ -566,6 +874,44 @@ describe('cloud publishing API', () => {
         'source/index.tsx',
         'source/components/Card.tsx',
       ]));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('injects review submit globals into cloud publishing files when the prototype config enables it', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeJson(path.join(projectRoot, 'src/prototypes/home/.spec/reviews/config.json'), {
+      schemaVersion: 1,
+      lanSubmitEnabled: true,
+    });
+    writeJson(getConfigPath(projectRoot), {
+      server: { host: 'localhost', allowLAN: true, lanHost: '10.0.8.42' },
+    });
+    writeCloudConfig(projectRoot, {
+      vercel: { token: 'vercel-token', projectName: 'axhub-home' },
+    });
+    const fetchMock = mockExternalFetch(() => jsonResponse({
+      url: 'axhub-home.vercel.app',
+    }));
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'vercel', path: 'prototypes/home' }),
+      });
+
+      expect(response.status).toBe(200);
+      const [, requestInit] = fetchMock.mock.calls.find(([requestUrl]) => String(requestUrl).includes('api.vercel.com')) || [];
+      const payload = JSON.parse(String(requestInit?.body));
+      const htmlFile = payload.files.find((file: any) => file.file === 'index.html');
+      const html = Buffer.from(String(htmlFile?.data || ''), 'base64').toString('utf8');
+      const port = new URL(server.origin).port;
+      expect(html).toContain('window.__AXHUB_REVIEW_SUBMIT__');
+      expect(html).toContain(`http://10.0.8.42:${port}/api/review-reports/submit?projectId=cloud-client&prototypeId=home`);
     } finally {
       await server.close();
     }
@@ -798,7 +1144,7 @@ describe('cloud publishing API', () => {
       }
       throw new Error(`unexpected command ${command} ${args.join(' ')}`);
     });
-    const fetchMock = mockExternalFetch((input, init) => mockGitHubPagesRest(input, init));
+    const fetchMock = mockExternalFetch((input, init) => mockGitHubPagesRestWithResourcePrefix(input, init));
     const server = await startTestServer(projectRoot, { cloudPublishingCommandExecutor: commandMock });
 
     try {
@@ -812,7 +1158,7 @@ describe('cloud publishing API', () => {
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
         target: 'github-pages',
-        url: 'https://lintendo.github.io/axhub-pages-demo/',
+        url: 'https://lintendo.github.io/axhub-pages-demo/home/',
       });
       expect(fetchMock.mock.calls.some(([requestUrl]) => String(requestUrl).includes('/git/blobs'))).toBe(true);
       expect(fetchMock.mock.calls.some(([requestUrl]) => String(requestUrl).includes('/git/trees'))).toBe(true);
@@ -828,6 +1174,70 @@ describe('cloud publishing API', () => {
           repository: 'lintendo/axhub-pages-demo',
           branch: 'gh-pages',
           sourceDirectory: '/',
+          pathPrefix: 'home',
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('auto-generates a GitHub Pages path prefix from the resource path when no path prefix is configured', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      githubPages: {
+        repository: 'lintendo/axhub-pages-demo',
+        branch: 'gh-pages',
+        sourceDirectory: '/',
+        pathPrefix: '',
+      },
+    });
+    const commandMock = mockCommandExecutor(async (command, args) => {
+      if (command === 'gh' && args.join(' ') === 'auth status') {
+        return { stdout: '', stderr: '' };
+      }
+      if (command === 'gh' && args.join(' ') === 'auth token') {
+        return { stdout: 'gh-test-token\n', stderr: '' };
+      }
+      throw new Error(`unexpected command ${command} ${args.join(' ')}`);
+    });
+    const fetchMock = mockExternalFetch((input, init) => mockGitHubPagesRestWithResourcePrefix(input, init));
+    const server = await startTestServer(projectRoot, { cloudPublishingCommandExecutor: commandMock });
+
+    try {
+      const configResponse = await fetch(`${server.origin}/api/cloud-publishing/config`);
+      const config = await readJsonResponse(configResponse);
+      expect(config.targets.githubPages).toMatchObject({
+        configured: true,
+        pathPrefix: '',
+        missingFields: [],
+      });
+
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'github-pages', path: 'prototypes/home' }),
+      });
+      const body = await readJsonResponse(response);
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        target: 'github-pages',
+        url: 'https://lintendo.github.io/axhub-pages-demo/home/',
+      });
+      expect(fetchMock.mock.calls.some(([requestUrl]) => String(requestUrl).includes('/git/trees'))).toBe(true);
+
+      const exportRecords = fs.readdirSync(getProjectExportsDir(projectRoot));
+      const latestRecord = JSON.parse(fs.readFileSync(path.join(getProjectExportsDir(projectRoot), exportRecords[0]), 'utf8'));
+      expect(latestRecord).toMatchObject({
+        operationType: 'cloud.publish.github-pages',
+        status: 'success',
+        metadata: {
+          repository: 'lintendo/axhub-pages-demo',
+          branch: 'gh-pages',
+          sourceDirectory: '/',
+          pathPrefix: 'home',
         },
       });
     } finally {
@@ -920,6 +1330,149 @@ describe('cloud publishing API', () => {
     }
   });
 
+  it('returns the Cloudflare Pages production subdomain from the project API when it differs from the configured project name', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      cloudflarePages: {
+        apiToken: 'cf-token',
+        accountId: 'account-1',
+        projectName: 'axhub',
+        productionBranch: 'main',
+      },
+    });
+    mockExternalFetch((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/upload-token')) {
+        return jsonResponse({ success: true, result: { jwt: 'cf-upload-jwt' } });
+      }
+      if (url.endsWith('/assets/check-missing')) {
+        const payload = JSON.parse(String(init?.body));
+        return jsonResponse({ success: true, result: payload.hashes });
+      }
+      if (url.endsWith('/assets/upload') || url.endsWith('/assets/upsert-hashes')) {
+        return jsonResponse({ success: true, result: {} });
+      }
+      if (url.endsWith('/pages/projects/axhub')) {
+        return jsonResponse({
+          success: true,
+          result: {
+            name: 'axhub',
+            subdomain: 'axhub-4sd.pages.dev',
+            domains: ['custom.example.com'],
+          },
+        });
+      }
+      return jsonResponse({
+        success: true,
+        result: {
+          id: 'deployment-1',
+          url: 'https://6450f361.axhub-4sd.pages.dev',
+        },
+      });
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'cloudflare-pages', path: 'prototypes/home' }),
+      });
+      const body = await readJsonResponse(response);
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        target: 'cloudflare-pages',
+        url: 'https://axhub-4sd.pages.dev',
+      });
+      const records = fs.readdirSync(getProjectExportsDir(projectRoot))
+        .map((fileName) => JSON.parse(fs.readFileSync(path.join(getProjectExportsDir(projectRoot), fileName), 'utf8')));
+      expect(records[0].metadata).toMatchObject({
+        url: 'https://axhub-4sd.pages.dev',
+        deploymentUrl: 'https://6450f361.axhub-4sd.pages.dev',
+        cloudflarePagesProjectName: 'axhub',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('auto-generates a Cloudflare Pages project name from the resource path when no project name is configured', async () => {
+    const projectRoot = createTempRoot();
+    writeProject(projectRoot);
+    writeCloudConfig(projectRoot, {
+      cloudflarePages: {
+        apiToken: 'cf-token',
+        accountId: 'account-1',
+        projectName: '',
+        productionBranch: 'main',
+      },
+    });
+    const fetchMock = mockExternalFetch((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/upload-token')) {
+        return jsonResponse({ success: true, result: { jwt: 'cf-upload-jwt' } });
+      }
+      if (url.endsWith('/assets/check-missing')) {
+        const payload = JSON.parse(String(init?.body));
+        return jsonResponse({ success: true, result: payload.hashes });
+      }
+      if (url.endsWith('/assets/upload') || url.endsWith('/assets/upsert-hashes')) {
+        return jsonResponse({ success: true, result: {} });
+      }
+      if (url.endsWith('/pages/projects/home')) {
+        return jsonResponse({
+          success: true,
+          result: {
+            name: 'home',
+            subdomain: 'home.pages.dev',
+          },
+        });
+      }
+      return jsonResponse({
+        success: true,
+        result: {
+          id: 'deployment-1',
+          url: 'https://6450f361.home.pages.dev',
+        },
+      });
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const configResponse = await fetch(`${server.origin}/api/cloud-publishing/config`);
+      const config = await readJsonResponse(configResponse);
+      expect(config.targets.cloudflarePages).toMatchObject({
+        configured: true,
+        projectName: '',
+        missingFields: [],
+      });
+
+      const response = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'cloudflare-pages', path: 'prototypes/home' }),
+      });
+      const body = await readJsonResponse(response);
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        target: 'cloudflare-pages',
+        url: 'https://home.pages.dev',
+      });
+      const [deploymentUrl] = fetchMock.mock.calls.find(([requestUrl]) => String(requestUrl).includes('/deployments')) || [];
+      expect(String(deploymentUrl)).toContain('/accounts/account-1/pages/projects/home/deployments');
+      const records = fs.readdirSync(getProjectExportsDir(projectRoot))
+        .map((fileName) => JSON.parse(fs.readFileSync(path.join(getProjectExportsDir(projectRoot), fileName), 'utf8')));
+      expect(records[0].metadata).toMatchObject({
+        cloudflarePagesProjectName: 'home',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('splits oversized Cloudflare Pages upload batches and rejects single files over the Pages asset limit', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
@@ -973,6 +1526,7 @@ describe('cloud publishing API', () => {
       vi.mocked(buildOnDemand).mockResolvedValueOnce({
         jsCode: 'var UserComponent = function Home(){};',
         cssText: 'x'.repeat(26 * 1024 * 1024),
+        metadata: { usesAnnotationRuntime: false },
       });
       const tooLargeResponse = await fetch(`${server.origin}/api/cloud-publishing/publish`, {
         method: 'POST',
@@ -1208,7 +1762,7 @@ describe('cloud publishing API', () => {
     }
   });
 
-  it('uses an S3-compatible endpoint derived from an Alibaba OSS base URL', async () => {
+  it('auto-generates an S3 prefix from the resource path when no prefix is configured', async () => {
     const projectRoot = createTempRoot();
     writeProject(projectRoot);
     writeCloudConfig(projectRoot, {
@@ -1235,15 +1789,57 @@ describe('cloud publishing API', () => {
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
         target: 's3',
-        url: 'https://webpp.oss-cn-hangzhou.aliyuncs.com/index.html',
+        url: 'https://webpp.oss-cn-hangzhou.aliyuncs.com/home/index.html',
       });
       const s3Calls = fetchMock.mock.calls.filter(([requestUrl]) => String(requestUrl).includes('webpp.s3.oss-cn-hangzhou.aliyuncs.com'));
       expect(s3Calls.length).toBeGreaterThan(1);
       const [requestUrl, requestInit] = s3Calls[0];
-      expect(String(requestUrl)).toContain('https://webpp.s3.oss-cn-hangzhou.aliyuncs.com/');
+      expect(String(requestUrl)).toContain('https://webpp.s3.oss-cn-hangzhou.aliyuncs.com/home/');
       expect((requestInit?.headers as Record<string, string>).Authorization).toContain('Credential=OSS_TEST/');
     } finally {
       await server.close();
     }
+  });
+
+  it('normalizes native Aliyun OSS endpoints to virtual-hosted S3-compatible upload URLs', () => {
+    const signed = __cloudPublishingTestUtils.signS3PutObject({
+      config: {
+        accessKeyId: 'OSS_TEST',
+        secretAccessKey: 'secret',
+        region: 'cn-hangzhou',
+        bucket: 'webpp',
+        prefix: 'home',
+        baseUrl: 'https://webpp.oss-cn-hangzhou.aliyuncs.com',
+        endpoint: 'https://oss-cn-hangzhou.aliyuncs.com/',
+      },
+      key: 'home/index.html',
+      body: Buffer.from('<html></html>'),
+      contentType: 'text/html',
+      now: new Date('2026-01-02T03:04:05Z'),
+    });
+
+    expect(signed.url).toBe('https://webpp.s3.oss-cn-hangzhou.aliyuncs.com/home/index.html');
+    expect(signed.headers.Authorization).toContain('Credential=OSS_TEST/20260102/cn-hangzhou/s3/aws4_request');
+  });
+
+  it('does not apply the Aliyun OSS endpoint rewrite to other S3-compatible providers', () => {
+    const signed = __cloudPublishingTestUtils.signS3PutObject({
+      config: {
+        accessKeyId: 'COS_TEST',
+        secretAccessKey: 'secret',
+        region: 'ap-guangzhou',
+        bucket: 'gtest-1251531633',
+        prefix: 'home',
+        baseUrl: 'https://gtest-1251531633.cos.ap-guangzhou.myqcloud.com',
+        endpoint: 'https://gtest-1251531633.cos.ap-guangzhou.myqcloud.com',
+      },
+      key: 'home/index.html',
+      body: Buffer.from('<html></html>'),
+      contentType: 'text/html',
+      now: new Date('2026-01-02T03:04:05Z'),
+    });
+
+    expect(signed.url).toBe('https://gtest-1251531633.cos.ap-guangzhou.myqcloud.com/home/index.html');
+    expect(signed.headers.Authorization).toContain('Credential=COS_TEST/20260102/ap-guangzhou/s3/aws4_request');
   });
 });

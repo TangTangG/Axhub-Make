@@ -100,13 +100,12 @@ describe('excalidraw compact canvas styles', () => {
         expect(iconRule).toContain('height: var(--axhub-excalidraw-prominent-icon-size) !important;');
     });
 
-    it('hides native image crop hints only for unified generator placeholders', () => {
+    it('does not keep selected AI generator placeholder hint overrides after removing the old composer node', () => {
         const css = readCompactCss();
 
-        expect(css).toContain('[data-axhub-ai-generation-generator-selected=\'true\'] .excalidraw .HintViewer');
+        expect(css).not.toContain('[data-axhub-ai-generation-generator-selected=\'true\'] .excalidraw .HintViewer');
         expect(css).not.toContain('[data-axhub-ai-image-generator-selected=\'true\'] .excalidraw .HintViewer');
         expect(css).not.toContain('[data-axhub-prototype-generator-selected=\'true\'] .excalidraw .HintViewer');
-        expect(css).toContain('display: none !important;');
     });
 
     it('keeps the injected prototype toolbar button on the same hover surface as native tools', () => {
@@ -117,16 +116,12 @@ describe('excalidraw compact canvas styles', () => {
         expect(css).toContain('background: var(--button-hover-bg, var(--axhub-excalidraw-control-hover-bg)) !important;');
     });
 
-    it('keeps canvas welcome hints from intercepting toolbar hover events', () => {
+    it('does not ship custom canvas welcome hint overlay styles', () => {
         const css = readCompactCss();
-        const hintRule = readRuleBlock(css, '.axhub-canvas-welcome-hints');
-        const hintChildrenRule = readRuleBlock(
-            css,
-            '.axhub-canvas-welcome-hints *',
-        );
 
-        expect(hintRule).toContain('pointer-events: none;');
-        expect(hintChildrenRule).toContain('pointer-events: none;');
+        expect(css).not.toContain('.axhub-canvas-welcome-hints');
+        expect(css).not.toContain('.axhub-canvas-welcome-hint');
+        expect(css).not.toContain('axhub-canvas-welcome-hint__arrow');
     });
 
     it('removes the duplicate footer help button and moves undo redo to the footer right', () => {

@@ -15,6 +15,7 @@ import type { Duplex } from 'node:stream';
 import type { IncomingMessage } from 'node:http';
 
 import { isPathInside } from './projectCore/index.ts';
+import { normalizeResourceRelativePath, resolveResourceFilePath } from './resourceFiles.ts';
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -180,7 +181,7 @@ const DEFAULT_REFRESH_MAX_WAIT_MS = 8_000;
 const DEFAULT_SUPPRESS_TTL_MS = 12_000;
 const DEFAULT_CANVAS_COMMAND_TIMEOUT_MS = 15_000;
 
-interface ResolvedPrototypeCanvas {
+interface ResolvedResourceCanvas {
   canvasName: string;
   filePath: string;
 }
@@ -240,30 +241,29 @@ function isJsonParseable(content: string): boolean {
   }
 }
 
-function normalizePrototypeCanvasName(canvasName: string): string | null {
-  const normalized = String(canvasName || '')
+function normalizeResourceCanvasName(canvasName: string): string | null {
+  const raw = String(canvasName || '')
     .trim()
     .replace(/\\/gu, '/')
-    .replace(/^\/+/u, '')
-    .replace(/^src\//u, '');
-  const match = normalized.match(/^prototypes\/([^/]+)\/canvas(?:\.excalidraw)?$/iu);
-  if (!match?.[1]) {
+    .replace(/^\/+/u, '');
+  if (raw.startsWith('src/') && !raw.startsWith('src/resources/')) {
     return null;
   }
-  const prototypeId = match[1];
-  if (
-    prototypeId === '.'
-    || prototypeId === '..'
-    || prototypeId.includes('/')
-    || prototypeId.includes('\\')
-  ) {
+  if (/^prototypes\/[^/]+\/canvas(?:\.excalidraw)?$/iu.test(raw) || raw.startsWith('canvas/')) {
     return null;
   }
-  return `prototypes/${prototypeId}/canvas`;
+  const normalized = raw
+    .replace(/^src\/resources\//u, '')
+    .replace(/^resources\//u, '');
+  const resourcePath = normalizeResourceRelativePath(normalized);
+  if (!resourcePath || path.extname(resourcePath).toLowerCase() !== '.excalidraw') {
+    return null;
+  }
+  return `resources/${resourcePath}`;
 }
 
 function normalizeClientCanvasName(canvasName: string): string {
-  return normalizePrototypeCanvasName(canvasName) || String(canvasName || '').trim();
+  return normalizeResourceCanvasName(canvasName) || String(canvasName || '').trim();
 }
 
 function createRequestId(): string {
@@ -639,36 +639,30 @@ export class CanvasBridgeHub {
 
   // ---- Canvas watcher helpers ---------------------------------------------
 
-  private resolvePrototypeCanvasFile(canvasName: string): ResolvedPrototypeCanvas | null {
+  private resolveResourceCanvasFile(canvasName: string): ResolvedResourceCanvas | null {
     if (!this.projectRoot) {
       return null;
     }
-    const normalizedCanvasName = normalizePrototypeCanvasName(canvasName);
+    const normalizedCanvasName = normalizeResourceCanvasName(canvasName);
     if (!normalizedCanvasName) {
       return null;
     }
-    const match = normalizedCanvasName.match(/^prototypes\/([^/]+)\/canvas$/u);
-    const prototypeId = match?.[1];
-    if (!prototypeId) {
-      return null;
-    }
-    const prototypesDir = path.resolve(this.projectRoot, 'src', 'prototypes');
-    const prototypeDir = path.resolve(prototypesDir, prototypeId);
-    const filePath = path.resolve(prototypeDir, 'canvas.excalidraw');
+    const resourcePath = normalizedCanvasName.replace(/^resources\//u, '');
+    const resolved = resolveResourceFilePath(this.projectRoot, resourcePath);
     if (
-      !isPathInside(this.projectRoot, filePath)
-      || !isPathInside(prototypesDir, prototypeDir)
-      || !isPathInside(prototypeDir, filePath)
-      || !fs.existsSync(filePath)
+      !resolved
+      || path.extname(resolved.relativePath).toLowerCase() !== '.excalidraw'
+      || !isPathInside(this.projectRoot, resolved.absolutePath)
+      || !fs.existsSync(resolved.absolutePath)
     ) {
       return null;
     }
-    return { canvasName: normalizedCanvasName, filePath };
+    return { canvasName: normalizedCanvasName, filePath: resolved.absolutePath };
   }
 
   private registerClientCanvas(client: CanvasBridgeClient, msg: CanvasBridgeMessage): void {
     const rawCanvasName = String(msg.canvas || '').trim();
-    const resolved = this.resolvePrototypeCanvasFile(rawCanvasName);
+    const resolved = this.resolveResourceCanvasFile(rawCanvasName);
 
     this.detachClientFromFileWatcher(client);
 
@@ -738,7 +732,7 @@ export class CanvasBridgeHub {
     pending.reject(error);
   }
 
-  private attachClientToFileWatcher(client: CanvasBridgeClient, resolved: ResolvedPrototypeCanvas): void {
+  private attachClientToFileWatcher(client: CanvasBridgeClient, resolved: ResolvedResourceCanvas): void {
     let watcher = this.fileWatchers.get(resolved.filePath);
     if (!watcher) {
       watcher = this.createFileWatcher(resolved);
@@ -774,7 +768,7 @@ export class CanvasBridgeHub {
     }
   }
 
-  private createFileWatcher(resolved: ResolvedPrototypeCanvas): CanvasFileWatcher | null {
+  private createFileWatcher(resolved: ResolvedResourceCanvas): CanvasFileWatcher | null {
     let fsWatcher: fs.FSWatcher;
     try {
       fsWatcher = fs.watch(resolved.filePath, { persistent: false });

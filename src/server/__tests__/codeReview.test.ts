@@ -67,6 +67,25 @@ export default Component;
     });
   });
 
+  it('accepts the Axure export rules header path relative to the client root', () => {
+    const filePath = createAxureExportFixture(`/**
+ * @name 演示页面
+ * @mode axure
+ * rules/axure-export-workflow.md
+ */
+
+const Component = () => null;
+
+export default Component;
+`);
+
+    const result = reviewFile(filePath, { mode: 'axure-export' });
+
+    expect(result.passed).toBe(true);
+    expect(result.summary.warnings).toBe(0);
+    expect(getIssueRules(filePath, { mode: 'axure-export' })).not.toContain('file-header-axure-rule');
+  });
+
   it('returns a blocking file-not-found issue for missing files', () => {
     const missingPath = path.join(os.tmpdir(), `axhub-missing-${Date.now()}`, 'index.tsx');
     const result = reviewFile(missingPath);
@@ -159,7 +178,7 @@ export default Demo;
     const filePath = createAxureExportFixture(`/**
  * @name Demo
  * @mode axure
- * /rules/axure-export-workflow.md
+ * rules/axure-export-workflow.md
  */
 import { AnnotationViewer } from '@axhub/annotation';
 
@@ -187,7 +206,7 @@ export default Component;
     const filePath = createAxureExportFixture(`/**
    * @name Demo
    * @mode axure
-   * /rules/axure-export-workflow.md
+   * rules/axure-export-workflow.md
  */
 import { AnnotationViewer, type AnnotationSourceDocument } from '@axhub/annotation';
 import annotationSourceDocument from './annotation-source.json';
@@ -206,7 +225,7 @@ export default Component;
     const filePath = createAxureExportFixture(`/**
    * @name Demo
    * @mode axure
-   * /rules/axure-export-workflow.md
+   * rules/axure-export-workflow.md
    */
 import { AnnotationViewer, type AnnotationSourceDocument } from '@axhub/annotation';
 import annotationSourceDocument from './annotation-source.json';
@@ -237,7 +256,7 @@ export default Component;
     const filePath = createAxureExportFixture(`/**
  * @name Demo
  * @mode axure
- * /rules/axure-export-workflow.md
+ * rules/axure-export-workflow.md
  */
 import { forwardRef, useImperativeHandle } from 'react';
 import type { AxureHandle, AxureProps } from '../../common/axure-types';

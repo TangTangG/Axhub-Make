@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    isBrowsingResourceSidebarInPrototypeCanvas,
     resolveIndexContentMode,
 } from './contentMode';
 
 describe('index page content mode', () => {
-    it('keeps prototype canvas content visible while browsing resource sidebar tabs', () => {
+    it('uses normal resource content modes while the current view mode is canvas', () => {
         expect(resolveIndexContentMode({
             sidebarTab: 'prototype',
             resourceSection: 'themes',
@@ -17,16 +16,37 @@ describe('index page content mode', () => {
             sidebarTab: 'document',
             resourceSection: 'themes',
             viewMode: 'canvas',
-        })).toBe('preview');
+        })).toBe('doc');
 
         expect(resolveIndexContentMode({
             sidebarTab: 'assets',
             resourceSection: 'themes',
             viewMode: 'canvas',
-        })).toBe('preview');
+        })).toBe('theme');
+
+        expect(resolveIndexContentMode({
+            sidebarTab: 'assets',
+            resourceSection: 'templates',
+            viewMode: 'canvas',
+        })).toBe('template');
+
+        expect(resolveIndexContentMode({
+            sidebarTab: 'assets',
+            resourceSection: 'data',
+            viewMode: 'canvas',
+        })).toBe('data');
     });
 
-    it('still opens file canvas mode only from the canvas sidebar tab', () => {
+    it('opens Excalidraw resource files as canvas content from the resource tree', () => {
+        expect(resolveIndexContentMode({
+            sidebarTab: 'document',
+            resourceSection: 'themes',
+            viewMode: 'demo',
+            selectedDocOpenMode: 'canvas',
+        })).toBe('canvas');
+    });
+
+    it('still opens file canvas mode from the legacy canvas sidebar tab while it exists', () => {
         expect(resolveIndexContentMode({
             sidebarTab: 'canvas',
             resourceSection: 'themes',
@@ -57,18 +77,7 @@ describe('index page content mode', () => {
         })).toBe('data');
     });
 
-    it('identifies resource tab browsing while a prototype canvas is active', () => {
-        expect(isBrowsingResourceSidebarInPrototypeCanvas({
-            sidebarTab: 'document',
-            viewMode: 'canvas',
-        })).toBe(true);
-        expect(isBrowsingResourceSidebarInPrototypeCanvas({
-            sidebarTab: 'canvas',
-            viewMode: 'canvas',
-        })).toBe(false);
-        expect(isBrowsingResourceSidebarInPrototypeCanvas({
-            sidebarTab: 'document',
-            viewMode: 'demo',
-        })).toBe(false);
+    it('does not export prototype-canvas resource browsing special cases', () => {
+        expect('isBrowsingResourceSidebarInPrototypeCanvas' in { resolveIndexContentMode }).toBe(false);
     });
 });

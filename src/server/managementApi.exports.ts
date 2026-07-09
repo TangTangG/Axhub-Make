@@ -8,6 +8,10 @@ import { wrapSourceAsAxureExportCode } from './axureExportCodeWrap.ts';
 import { buildOnDemand } from './onDemandBuild.ts';
 import { streamExportHtmlArchive } from './exportHtmlArchive.ts';
 import {
+  createReviewSubmitInjectionOptions,
+  resolvePrototypeIdForReviewSubmit,
+} from './reviewLanSubmitConfig.ts';
+import {
   analyzeFigmaMakeArtifact,
   buildFigmaMakeExportPrompt,
   buildFigmaMakeProbePayload,
@@ -393,6 +397,11 @@ export async function handleSourceBackedExports(
       communicationStore.ensureDirectories();
       const resourceId = String(resource?.id || resource?.name || targetPath);
       const resourceType = String(targetPath.split('/')[0] || 'prototype').replace(/s$/u, '') || 'prototype';
+      const reviewSubmitPrototypeId = resolvePrototypeIdForReviewSubmit({
+        resource,
+        targetPath,
+        sourceFile,
+      });
 
       try {
         await streamExportHtmlArchive(res, {
@@ -403,6 +412,14 @@ export async function handleSourceBackedExports(
           group: targetPath.split('/')[0] || 'prototypes',
           includeSource,
           mediaRoot: handlers.getDeclaredResourceWriteDir?.(context, 'media') || undefined,
+          reviewSubmit: reviewSubmitPrototypeId
+            ? createReviewSubmitInjectionOptions({
+              projectRoot: context.project.root,
+              projectId: context.project.id,
+              prototypeId: reviewSubmitPrototypeId,
+              makeOrigin: options.origin,
+            })
+            : undefined,
         }, handlers.buildAttachmentContentDisposition);
 
         communicationStore.appendExportRecord({

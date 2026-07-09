@@ -16,6 +16,8 @@
  * controls that trigger the original menu buttons.
  */
 
+import { applyContextSubmenuFlyoutLayout } from './contextMenuViewport';
+
 /* ── SVG icon paths (from lucide-react 24×24 viewBox) ─────────────── */
 
 const ICONS: Record<string, string> = {
@@ -204,8 +206,8 @@ function ensureTooltipStyles() {
         }
         .axhub-ctx-submenu-flyout {
             display: none;
-            position: absolute;
-            left: 100%;
+            position: fixed;
+            left: 0;
             top: 0;
             min-width: 180px;
             background: var(--popup-secondary-bg-color, #fff);
@@ -213,15 +215,11 @@ function ensureTooltipStyles() {
             border-radius: 4px;
             box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
             padding: 0.5rem 0;
-            z-index: 100;
+            z-index: calc(var(--zIndex-ui-context-menu, 90) + 1);
             flex-direction: column;
         }
         .axhub-ctx-submenu-flyout.axhub-ctx-submenu-expanded {
             display: flex;
-        }
-        .axhub-ctx-submenu-flyout.axhub-ctx-submenu-flip {
-            left: auto;
-            right: 100%;
         }
         [data-axhub-ctx-hidden="true"] {
             display: none !important;
@@ -366,17 +364,14 @@ function buildSubmenu(
     const openSubmenu = () => {
         flyout.classList.add('axhub-ctx-submenu-expanded');
         requestAnimationFrame(() => {
-            const rect = flyout.getBoundingClientRect();
-            if (rect.right > window.innerWidth) {
-                flyout.classList.add('axhub-ctx-submenu-flip');
-            } else {
-                flyout.classList.remove('axhub-ctx-submenu-flip');
-            }
+            applyContextSubmenuFlyoutLayout({
+                triggerEl: triggerBtn,
+                flyoutEl: flyout,
+            });
         });
     };
     const closeSubmenu = () => {
         flyout.classList.remove('axhub-ctx-submenu-expanded');
-        flyout.classList.remove('axhub-ctx-submenu-flip');
     };
     const toggleSubmenu = () => {
         if (flyout.classList.contains('axhub-ctx-submenu-expanded')) {

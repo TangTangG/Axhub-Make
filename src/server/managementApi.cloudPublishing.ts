@@ -4,15 +4,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { blake3 } from '@noble/hashes/blake3';
-import { createProjectCommunicationStore, getConfigPath, getProjectExportsDir, type ProjectMetadata, type StoredProjectRecord } from './projectCore/index.ts';
+import {
+  createProjectCommunicationStore,
+  getProjectExportsDir,
+  normalizeServerCloudPublishingConfig,
+  type ProjectMetadata,
+  type ServerCloudPublishingConfig,
+  type StoredProjectRecord,
+} from './projectCore/index.ts';
 
 import { buildExportHtmlStaticFiles, type ExportHtmlStaticFile } from './exportHtmlArchive.ts';
 import { readJsonBody, sendJson } from './http.ts';
 import { runLocalCommand } from './localCommand.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { normalizeProjectResourcePath } from './managementApi.resourceLookup.ts';
+import { publishAxhubHtmlTarget } from './managementApi.axhub.ts';
+import {
+  createReviewSubmitInjectionOptions,
+  resolvePrototypeIdForReviewSubmit,
+} from './reviewLanSubmitConfig.ts';
 
-export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages';
+export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages' | 'axhub';
 export type CommandExecutor = (
   command: string,
   args: string[],
@@ -38,7 +50,10 @@ interface CloudPublishingHandlers {
   resolveSourceFileFromMetadata: (context: CloudPublishingContext, targetPath: string) => string | null;
   findProjectResourceByPath: (metadata: unknown, targetPath: string) => any;
   getDeclaredResourceWriteDir?: (context: CloudPublishingContext, type: 'media') => string | null;
-  readProjectConfig: (projectRoot: string) => any;
+  getServerConfigStoreForRequest: (options: ManagementApiOptions) => {
+    getConfig: (params: { activeProjectRoot: string }) => { cloudPublishing: CloudPublishingConfig };
+    saveConfig: (config: { cloudPublishing?: CloudPublishingConfig }) => { cloudPublishing: CloudPublishingConfig };
+  };
   commandExecutor?: CommandExecutor;
   sendDisabledCapability: (
     res: ServerResponse,
@@ -54,48 +69,19 @@ interface CloudPublishingHandlers {
   ) => void;
 }
 
-interface VercelConfig {
-  token?: string;
-  projectName?: string;
-  teamId?: string;
+type CloudPublishingConfig = ServerCloudPublishingConfig;
+type VercelConfig = NonNullable<CloudPublishingConfig['vercel']>;
+type CloudflarePagesConfig = NonNullable<CloudPublishingConfig['cloudflarePages']>;
+
+interface EffectiveCloudflarePagesConfig extends CloudflarePagesConfig {
+  projectName: string;
 }
 
-interface CloudflarePagesConfig {
-  apiToken?: string;
-  accountId?: string;
-  projectName?: string;
-  productionBranch?: string;
-}
+type S3Config = NonNullable<CloudPublishingConfig['s3']>;
+type GitHubPagesConfig = NonNullable<CloudPublishingConfig['githubPages']>;
 
-interface S3Config {
-  accessKeyId?: string;
-  secretAccessKey?: string;
-  region?: string;
-  bucket?: string;
-  prefix?: string;
-  baseUrl?: string;
-  endpoint?: string;
-}
-
-interface GitHubPagesConfig {
-  repository?: string;
-  branch?: string;
-  sourceDirectory?: string;
-}
-
-interface PublishSettingsConfig {
-  includeSource: boolean;
-}
-
-interface CloudPublishingConfig {
-  vercel?: VercelConfig;
-  cloudflarePages?: CloudflarePagesConfig;
-  s3?: S3Config;
-  githubPages?: GitHubPagesConfig;
-  publishSettings?: PublishSettingsConfig;
-}
-
-const TARGETS = new Set<CloudPublishTarget>(['vercel', 'cloudflare-pages', 's3', 'github-pages']);
+const TARGETS = new Set<CloudPublishTarget>(['vercel', 'cloudflare-pages', 's3', 'github-pages', 'axhub']);
+const DEFAULT_VISIBLE_PUBLISH_TARGETS: CloudPublishTarget[] = ['axhub'];
 const CLOUDFLARE_PAGES_MAX_ASSET_BYTES = 25 * 1024 * 1024;
 const CLOUDFLARE_PAGES_MAX_UPLOAD_BATCH_BYTES = 40 * 1024 * 1024;
 const CLOUDFLARE_PAGES_MAX_UPLOAD_BATCH_COUNT = 40;
@@ -130,42 +116,11 @@ class CloudPublishingTargetError extends Error {
   }
 }
 
-function normalizeCloudPublishingConfig(value: unknown): CloudPublishingConfig {
-  const raw = value && typeof value === 'object' ? value as Record<string, any> : {};
-  const vercel = raw.vercel && typeof raw.vercel === 'object' ? raw.vercel : {};
-  const cloudflarePages = raw.cloudflarePages && typeof raw.cloudflarePages === 'object' ? raw.cloudflarePages : {};
-  const s3 = raw.s3 && typeof raw.s3 === 'object' ? raw.s3 : {};
-  const githubPages = raw.githubPages && typeof raw.githubPages === 'object' ? raw.githubPages : {};
-  return {
-    vercel: {
-      token: stringValue(vercel.token),
-      projectName: stringValue(vercel.projectName),
-      teamId: stringValue(vercel.teamId),
-    },
-    cloudflarePages: {
-      apiToken: stringValue(cloudflarePages.apiToken),
-      accountId: stringValue(cloudflarePages.accountId),
-      projectName: stringValue(cloudflarePages.projectName),
-      productionBranch: stringValue(cloudflarePages.productionBranch) || 'main',
-    },
-    s3: {
-      accessKeyId: stringValue(s3.accessKeyId),
-      secretAccessKey: stringValue(s3.secretAccessKey),
-      region: stringValue(s3.region),
-      bucket: stringValue(s3.bucket),
-      prefix: stringValue(s3.prefix),
-      baseUrl: stringValue(s3.baseUrl),
-      endpoint: stringValue(s3.endpoint),
-    },
-    githubPages: {
-      repository: stringValue(githubPages.repository),
-      branch: stringValue(githubPages.branch) || 'gh-pages',
-      sourceDirectory: normalizeGithubPagesSourceDirectory(githubPages.sourceDirectory),
-    },
-    publishSettings: {
-      includeSource: raw.publishSettings?.includeSource === true,
-    },
-  };
+function normalizeCloudPublishingConfig(
+  value: unknown,
+  fallback?: CloudPublishingConfig,
+): CloudPublishingConfig {
+  return normalizeServerCloudPublishingConfig(value, fallback) as CloudPublishingConfig;
 }
 
 function parseGithubRepositoryFromRemote(remoteUrl: string): string {
@@ -257,17 +212,21 @@ function effectiveGithubPagesConfig(config: CloudPublishingConfig, projectRoot?:
     repository: stringValue(githubPages.repository) || (projectRoot ? inferGithubRepository(projectRoot) : ''),
     branch: stringValue(githubPages.branch) || 'gh-pages',
     sourceDirectory: normalizeGithubPagesSourceDirectory(githubPages.sourceDirectory),
+    pathPrefix: stringValue(githubPages.pathPrefix),
   };
 }
 
 function getMissingFields(target: CloudPublishTarget, config: CloudPublishingConfig, projectRoot?: string): string[] {
+  if (target === 'axhub') {
+    return [];
+  }
   if (target === 'vercel') {
     const vercel = config.vercel || {};
     return ['token', 'projectName'].filter((field) => !stringValue((vercel as any)[field]));
   }
   if (target === 'cloudflare-pages') {
     const cf = config.cloudflarePages || {};
-    return ['apiToken', 'accountId', 'projectName', 'productionBranch'].filter((field) => !stringValue((cf as any)[field]));
+    return ['apiToken', 'accountId', 'productionBranch'].filter((field) => !stringValue((cf as any)[field]));
   }
   if (target === 'github-pages') {
     const githubPages = effectiveGithubPagesConfig(config, projectRoot);
@@ -277,26 +236,57 @@ function getMissingFields(target: CloudPublishTarget, config: CloudPublishingCon
   return ['accessKeyId', 'secretAccessKey', 'region', 'bucket', 'baseUrl'].filter((field) => !stringValue((s3 as any)[field]));
 }
 
+function isConfigured(value: unknown): boolean {
+  return Boolean(stringValue(value));
+}
+
+function maskCredential(value: unknown): string {
+  const secret = stringValue(value);
+  if (!secret) {
+    return '';
+  }
+  if (secret.length <= 8) {
+    return `${secret.slice(0, 2)}...${secret.slice(-2)}`;
+  }
+  return `${secret.slice(0, 4)}...${secret.slice(-4)}`;
+}
+
 function toConfigResponse(config: CloudPublishingConfig, projectRoot?: string) {
   const githubPages = effectiveGithubPagesConfig(config, projectRoot);
   const vercelMissing = getMissingFields('vercel', config, projectRoot);
   const cfMissing = getMissingFields('cloudflare-pages', config, projectRoot);
   const s3Missing = getMissingFields('s3', config, projectRoot);
   const githubPagesMissing = getMissingFields('github-pages', config, projectRoot);
+  const axhubMissing = getMissingFields('axhub', config, projectRoot);
+  const vercel = config.vercel || {};
+  const cloudflarePages = config.cloudflarePages || {};
+  const s3 = config.s3 || {};
   return {
     targets: {
       vercel: {
-        ...(config.vercel || {}),
+        projectName: stringValue(vercel.projectName),
+        teamId: stringValue(vercel.teamId),
+        tokenConfigured: isConfigured(vercel.token),
         configured: vercelMissing.length === 0,
         missingFields: vercelMissing,
       },
       cloudflarePages: {
-        ...(config.cloudflarePages || {}),
+        accountId: stringValue(cloudflarePages.accountId),
+        projectName: stringValue(cloudflarePages.projectName),
+        productionBranch: stringValue(cloudflarePages.productionBranch) || 'main',
+        apiTokenConfigured: isConfigured(cloudflarePages.apiToken),
         configured: cfMissing.length === 0,
         missingFields: cfMissing,
       },
       s3: {
-        ...(config.s3 || {}),
+        accessKeyId: maskCredential(s3.accessKeyId),
+        accessKeyIdConfigured: isConfigured(s3.accessKeyId),
+        secretAccessKeyConfigured: isConfigured(s3.secretAccessKey),
+        region: stringValue(s3.region),
+        bucket: stringValue(s3.bucket),
+        prefix: stringValue(s3.prefix),
+        baseUrl: stringValue(s3.baseUrl),
+        endpoint: stringValue(s3.endpoint),
         configured: s3Missing.length === 0,
         missingFields: s3Missing,
       },
@@ -305,29 +295,38 @@ function toConfigResponse(config: CloudPublishingConfig, projectRoot?: string) {
         configured: githubPagesMissing.length === 0,
         missingFields: githubPagesMissing,
       },
+      axhub: {
+        configured: axhubMissing.length === 0,
+        missingFields: axhubMissing,
+      },
       publishSettings: {
         includeSource: config.publishSettings?.includeSource === true,
+        visibleTargets: config.publishSettings?.visibleTargets || [...DEFAULT_VISIBLE_PUBLISH_TARGETS],
       },
     },
   };
 }
 
-function readConfig(projectRoot: string, readProjectConfig: (projectRoot: string) => any): CloudPublishingConfig {
-  const projectConfig = readProjectConfig(projectRoot);
-  return normalizeCloudPublishingConfig(projectConfig?.cloudPublishing);
+function getServerCloudPublishingConfig(
+  context: CloudPublishingContext,
+  options: ManagementApiOptions,
+  handlers: CloudPublishingHandlers,
+): CloudPublishingConfig {
+  return normalizeCloudPublishingConfig(
+    handlers.getServerConfigStoreForRequest(options).getConfig({ activeProjectRoot: context.project.root }).cloudPublishing,
+  );
 }
 
-function saveConfig(projectRoot: string, readProjectConfig: (projectRoot: string) => any, next: CloudPublishingConfig) {
-  const configPath = getConfigPath(projectRoot);
-  const current = readProjectConfig(projectRoot);
-  const saved = {
-    ...current,
-    server: current?.server || { host: 'localhost', allowLAN: true },
-    cloudPublishing: normalizeCloudPublishingConfig(next),
-  };
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(saved, null, 2), 'utf8');
-  return saved.cloudPublishing;
+function saveServerCloudPublishingConfig(
+  context: CloudPublishingContext,
+  options: ManagementApiOptions,
+  handlers: CloudPublishingHandlers,
+  value: unknown,
+): CloudPublishingConfig {
+  const store = handlers.getServerConfigStoreForRequest(options);
+  const current = getServerCloudPublishingConfig(context, options, handlers);
+  const next = normalizeCloudPublishingConfig(value, current);
+  return store.saveConfig({ cloudPublishing: next }).cloudPublishing;
 }
 
 function base64Body(file: ExportHtmlStaticFile): string {
@@ -453,14 +452,80 @@ async function publishCloudflarePages(config: CloudflarePagesConfig, files: Expo
   const deploymentId = stringValue(payload?.result?.id);
   const deploymentShortId = stringValue(payload?.result?.short_id);
   const projectName = stringValue(config.projectName);
+  const projectUrl = await resolveCloudflarePagesProjectUrl(config, deploymentUrl);
   return {
-    url: projectName ? `https://${projectName}.pages.dev` : deploymentUrl,
+    url: projectUrl || deploymentUrl || (projectName ? `https://${projectName}.pages.dev` : ''),
     metadata: {
       ...(deploymentUrl ? { deploymentUrl } : {}),
       ...(deploymentId ? { deploymentId } : {}),
       ...(deploymentShortId ? { deploymentShortId } : {}),
+      ...(projectName ? { cloudflarePagesProjectName: projectName } : {}),
     },
   };
+}
+
+function normalizeCloudflarePagesProjectDomain(value: unknown): string {
+  const domain = stringValue(value).replace(/^https?:\/\//iu, '').replace(/\/.*$/u, '');
+  return domain ? `https://${domain}` : '';
+}
+
+function inferCloudflarePagesProjectUrlFromDeploymentUrl(deploymentUrl: string): string {
+  const normalizedDeploymentUrl = normalizeCloudflarePagesProjectDomain(deploymentUrl);
+  if (!normalizedDeploymentUrl) {
+    return '';
+  }
+  try {
+    const parsed = new URL(normalizedDeploymentUrl);
+    const match = parsed.hostname.match(/^[^.]+\.([^.]+\.pages\.dev)$/u);
+    return match?.[1] ? `https://${match[1]}` : '';
+  } catch {
+    return '';
+  }
+}
+
+async function fetchCloudflarePagesProject(config: CloudflarePagesConfig): Promise<any | null> {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(config.accountId || '')}/pages/projects/${encodeURIComponent(config.projectName || '')}`,
+    {
+      headers: {
+        Authorization: `Bearer ${config.apiToken}`,
+      },
+    },
+  );
+  if (!response.ok) {
+    return null;
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (payload?.success === false) {
+    return null;
+  }
+  if (!payload?.result || typeof payload.result !== 'object') {
+    return null;
+  }
+  const projectName = stringValue(config.projectName);
+  const resultName = stringValue(payload.result.name);
+  const hasProjectDomain = stringValue(payload.result.subdomain) || Array.isArray(payload.result.domains);
+  return resultName === projectName || hasProjectDomain ? payload.result : null;
+}
+
+async function resolveCloudflarePagesProjectUrl(config: CloudflarePagesConfig, deploymentUrl: string): Promise<string> {
+  const project = await fetchCloudflarePagesProject(config).catch(() => null);
+  const subdomainUrl = normalizeCloudflarePagesProjectDomain(project?.subdomain);
+  if (subdomainUrl) {
+    return subdomainUrl;
+  }
+  const domains = Array.isArray(project?.domains) ? project.domains : [];
+  const pagesDevDomain = domains.find((domain) => /\.pages\.dev$/iu.test(stringValue(domain)));
+  const pagesDevUrl = normalizeCloudflarePagesProjectDomain(pagesDevDomain);
+  if (pagesDevUrl) {
+    return pagesDevUrl;
+  }
+  const deploymentProjectUrl = inferCloudflarePagesProjectUrlFromDeploymentUrl(deploymentUrl);
+  if (deploymentProjectUrl) {
+    return deploymentProjectUrl;
+  }
+  const projectName = stringValue(config.projectName);
+  return projectName ? `https://${projectName}.pages.dev` : '';
 }
 
 async function readCloudflarePayload(response: Response, fallbackMessage: string) {
@@ -789,11 +854,31 @@ async function ensureGithubPagesBranch(params: {
   return defaultSha;
 }
 
-function githubPagesTreePath(sourceDirectory: string | undefined, filePath: string) {
+function joinGithubPagesPath(...parts: Array<string | undefined>) {
+  return parts
+    .map((part) => stringValue(part).replace(/^\/+|\/+$/gu, ''))
+    .filter(Boolean)
+    .join('/');
+}
+
+function normalizeGithubPagesPathPrefix(value: unknown): string {
+  return stringValue(value)
+    .replace(/\\/gu, '/')
+    .replace(/^\/+|\/+$/gu, '')
+    .replace(/\/{2,}/gu, '/');
+}
+
+function resolveGithubPagesPathPrefix(config: GitHubPagesConfig, resourcePath?: string): string {
+  return normalizeGithubPagesPathPrefix(config.pathPrefix)
+    || normalizeGithubPagesPathPrefix(normalizeS3AutoPrefixFromResourcePath(resourcePath));
+}
+
+function githubPagesTreePath(sourceDirectory: string | undefined, pathPrefix: string | undefined, filePath: string) {
   const normalizedFilePath = filePath.replace(/^\/+/u, '');
+  const prefixedPath = joinGithubPagesPath(pathPrefix, normalizedFilePath);
   return normalizeGithubPagesSourceDirectory(sourceDirectory) === '/docs'
-    ? `docs/${normalizedFilePath}`
-    : normalizedFilePath;
+    ? joinGithubPagesPath('docs', prefixedPath)
+    : prefixedPath;
 }
 
 async function createGithubBlob(params: {
@@ -825,6 +910,15 @@ function deriveGithubPagesUrl(owner: string, repo: string) {
   return repo.toLowerCase() === `${owner.toLowerCase()}.github.io`
     ? `https://${owner}.github.io/`
     : `https://${owner}.github.io/${repo}/`;
+}
+
+function appendGithubPagesUrlPath(baseUrl: string, pathPrefix: string) {
+  const normalizedBaseUrl = stringValue(baseUrl).replace(/\/?$/u, '/');
+  const normalizedPathPrefix = normalizeGithubPagesPathPrefix(pathPrefix);
+  if (!normalizedPathPrefix) {
+    return normalizedBaseUrl;
+  }
+  return `${normalizedBaseUrl}${normalizedPathPrefix.split('/').map(encodeS3PathSegment).join('/')}/`;
 }
 
 async function configureGithubPages(params: {
@@ -868,6 +962,7 @@ async function publishGithubPages(
   files: ExportHtmlStaticFile[],
   projectRoot: string,
   commandExecutor?: CommandExecutor,
+  resourcePath?: string,
 ) {
   const effectiveConfig = effectiveGithubPagesConfig({ githubPages: config }, projectRoot);
   const repository = stringValue(effectiveConfig.repository);
@@ -882,12 +977,13 @@ async function publishGithubPages(
   const { owner, repo } = parseGithubRepository(repository);
   const branch = stringValue(effectiveConfig.branch) || 'gh-pages';
   const sourceDirectory = normalizeGithubPagesSourceDirectory(effectiveConfig.sourceDirectory);
+  const pathPrefix = resolveGithubPagesPathPrefix(effectiveConfig, resourcePath);
   const token = await getGithubCliToken(projectRoot, commandExecutor);
   const baseSha = await ensureGithubPagesBranch({ token, owner, repo, branch });
   const tree = [];
   for (const file of files) {
     tree.push({
-      path: githubPagesTreePath(sourceDirectory, file.path),
+      path: githubPagesTreePath(sourceDirectory, pathPrefix, file.path),
       mode: '100644',
       type: 'blob',
       sha: await createGithubBlob({ token, owner, repo, file }),
@@ -941,11 +1037,13 @@ async function publishGithubPages(
       force: true,
     },
   }), '更新 GitHub Pages 发布分支失败');
+  const pagesUrl = await configureGithubPages({ token, owner, repo, branch, sourceDirectory });
   return {
-    url: await configureGithubPages({ token, owner, repo, branch, sourceDirectory }),
+    url: appendGithubPagesUrlPath(pagesUrl, pathPrefix),
     repository: `${owner}/${repo}`,
     branch,
     sourceDirectory,
+    pathPrefix,
   };
 }
 
@@ -965,6 +1063,50 @@ function joinS3Key(prefix: string | undefined, filePath: string): string {
   return [stringValue(prefix).replace(/^\/+|\/+$/gu, ''), filePath.replace(/^\/+/u, '')]
     .filter(Boolean)
     .join('/');
+}
+
+function normalizeS3AutoPrefixFromResourcePath(resourcePath: unknown): string {
+  const normalized = stringValue(resourcePath)
+    .replace(/\\/gu, '/')
+    .replace(/^\/+|\/+$/gu, '')
+    .replace(/\/index\.(t|j)sx?$/iu, '');
+  const prototypeMatch = normalized.match(/^(?:src\/)?prototypes\/(.+)$/u);
+  if (prototypeMatch?.[1]) {
+    return prototypeMatch[1].replace(/^\/+|\/+$/gu, '');
+  }
+  const themeMatch = normalized.match(/^(?:src\/)?themes\/(.+)$/u);
+  if (themeMatch?.[1]) {
+    return `themes/${themeMatch[1]}`.replace(/^\/+|\/+$/gu, '');
+  }
+  return normalized.replace(/^src\//u, '');
+}
+
+function resolveS3PublishPrefix(config: S3Config, resourcePath?: string): string {
+  return stringValue(config.prefix) || normalizeS3AutoPrefixFromResourcePath(resourcePath);
+}
+
+function normalizeCloudflarePagesProjectName(value: unknown): string {
+  const normalized = stringValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/gu, '-')
+    .replace(/-+/gu, '-')
+    .replace(/^-+|-+$/gu, '')
+    .slice(0, 63)
+    .replace(/-+$/gu, '');
+  return normalized || 'axhub-make';
+}
+
+function normalizeCloudflarePagesAutoProjectNameFromResourcePath(resourcePath: unknown): string {
+  return normalizeCloudflarePagesProjectName(
+    normalizeS3AutoPrefixFromResourcePath(resourcePath).replace(/\//gu, '-'),
+  );
+}
+
+function resolveCloudflarePagesConfig(config: CloudflarePagesConfig, resourcePath?: string): EffectiveCloudflarePagesConfig {
+  return {
+    ...config,
+    projectName: stringValue(config.projectName) || normalizeCloudflarePagesAutoProjectNameFromResourcePath(resourcePath),
+  };
 }
 
 function buildS3Url(bucket: string, region: string, key: string): string {
@@ -1009,12 +1151,20 @@ function resolveS3Endpoint(config: S3Config): URL {
     || new URL(`https://${config.bucket}.s3.${config.region}.amazonaws.com`);
 }
 
+function resolveAliyunOssVirtualHostedS3Endpoint(endpoint: URL, bucket: string): URL {
+  if (/^s3\.oss-[^.]+\.aliyuncs\.com$/u.test(endpoint.hostname)) {
+    return new URL(`${endpoint.protocol}//${bucket}.${endpoint.host}${endpoint.pathname}`);
+  }
+  if (/^oss-[^.]+\.aliyuncs\.com$/u.test(endpoint.hostname)) {
+    return new URL(`${endpoint.protocol}//${bucket}.s3.${endpoint.host}${endpoint.pathname}`);
+  }
+  return endpoint;
+}
+
 function resolveS3RequestLocation(config: S3Config, key: string) {
   const bucket = stringValue(config.bucket);
   const configuredEndpoint = resolveS3Endpoint(config);
-  const endpoint = /^s3\.oss-[^.]+\.aliyuncs\.com$/u.test(configuredEndpoint.hostname)
-    ? new URL(`${configuredEndpoint.protocol}//${bucket}.${configuredEndpoint.host}`)
-    : configuredEndpoint;
+  const endpoint = resolveAliyunOssVirtualHostedS3Endpoint(configuredEndpoint, bucket);
   const endpointPath = endpoint.pathname.replace(/\/+$/u, '');
   const encodedKey = key.split('/').map(encodeS3PathSegment).join('/');
   const usesPathStyle = endpoint.hostname.startsWith('s3.')
@@ -1082,10 +1232,11 @@ function signS3PutObject(params: {
   };
 }
 
-async function publishS3(config: S3Config, files: ExportHtmlStaticFile[]) {
+async function publishS3(config: S3Config, files: ExportHtmlStaticFile[], resourcePath?: string) {
   const now = new Date();
+  const prefix = resolveS3PublishPrefix(config, resourcePath);
   for (const file of files) {
-    const key = joinS3Key(config.prefix, file.path);
+    const key = joinS3Key(prefix, file.path);
     const signed = signS3PutObject({
       config,
       key,
@@ -1104,7 +1255,7 @@ async function publishS3(config: S3Config, files: ExportHtmlStaticFile[]) {
     }
   }
   const baseUrl = stringValue(config.baseUrl).replace(/\/?$/u, '/');
-  const indexKey = joinS3Key(config.prefix, 'index.html').replace(/^\/+/u, '');
+  const indexKey = joinS3Key(prefix, 'index.html').replace(/^\/+/u, '');
   return `${baseUrl}${indexKey.split('/').map(encodeS3PathSegment).join('/')}`;
 }
 
@@ -1114,25 +1265,54 @@ async function publishTarget(
   files: ExportHtmlStaticFile[],
   projectRoot: string,
   commandExecutor?: CommandExecutor,
+  options?: {
+    managementOptions?: ManagementApiOptions;
+    axhubProjectId?: number;
+    resourcePath?: string;
+  },
 ) {
+  if (target === 'axhub') {
+    const axhubProjectId = Number(options?.axhubProjectId);
+    if (!Number.isInteger(axhubProjectId) || axhubProjectId <= 0 || !options?.managementOptions) {
+      throw new CloudPublishingTargetError('请选择要发布的 Axhub HTML 项目', {
+        code: 'AXHUB_PROJECT_REQUIRED',
+        target: 'axhub',
+        statusCode: 400,
+      });
+    }
+    const result = await publishAxhubHtmlTarget({
+      options: options.managementOptions,
+      pid: axhubProjectId,
+      files,
+    });
+    return {
+      url: result.url,
+      metadata: {
+        axhubProjectId,
+        axhubProjectPath: result.path,
+        htmlUsedSpace: result.htmlUsedSpace,
+      },
+    };
+  }
   if (target === 'vercel') {
     return { url: await publishVercel(config.vercel || {}, files) };
   }
   if (target === 'cloudflare-pages') {
-    return publishCloudflarePages(config.cloudflarePages || {}, files);
+    return publishCloudflarePages(resolveCloudflarePagesConfig(config.cloudflarePages || {}, options?.resourcePath), files);
   }
   if (target === 'github-pages') {
-    const result = await publishGithubPages(config.githubPages || {}, files, projectRoot, commandExecutor);
+    const result = await publishGithubPages(config.githubPages || {}, files, projectRoot, commandExecutor, options?.resourcePath);
     return {
       url: result.url,
       metadata: {
         repository: result.repository,
         branch: result.branch,
         sourceDirectory: result.sourceDirectory,
+        pathPrefix: result.pathPrefix,
       },
     };
   }
-  return { url: await publishS3(config.s3 || {}, files) };
+  return { url: await publishS3(config.s3 || {}, files, options?.resourcePath) };
 }
 
 function parseCloudPublishTarget(operationType: unknown): CloudPublishTarget | null {
@@ -1173,6 +1353,7 @@ function getLatestCloudPublishUrls(
     'cloudflare-pages': null,
     s3: null,
     'github-pages': null,
+    axhub: null,
   };
 
   for (const record of readExportRecords(projectRoot)) {
@@ -1205,6 +1386,7 @@ function getLatestCloudPublishUrls(
     cloudflarePages: latest['cloudflare-pages'],
     s3: latest.s3,
     githubPages: latest['github-pages'],
+    axhub: latest.axhub,
   };
 }
 
@@ -1231,12 +1413,12 @@ export function handleCloudPublishingApi(
     const context = handlers.resolveProjectContext(req, res, options, 'active-fallback');
     if (!context) return true;
     if (req.method === 'GET') {
-      sendJson(res, toConfigResponse(readConfig(context.project.root, handlers.readProjectConfig), context.project.root));
+      sendJson(res, toConfigResponse(getServerCloudPublishingConfig(context, options, handlers), context.project.root));
       return true;
     }
     if (req.method === 'POST') {
       readJsonBody(req).then((body) => {
-        const saved = saveConfig(context.project.root, handlers.readProjectConfig, normalizeCloudPublishingConfig(body));
+        const saved = saveServerCloudPublishingConfig(context, options, handlers, body);
         sendJson(res, {
           success: true,
           targets: toConfigResponse(saved, context.project.root).targets,
@@ -1284,7 +1466,7 @@ export function handleCloudPublishingApi(
       const normalizedTargetPath = metadata
         ? normalizeProjectResourcePath(metadata, targetPath)
         : targetPath;
-      const config = readConfig(context.project.root, handlers.readProjectConfig);
+      const config = getServerCloudPublishingConfig(context, options, handlers);
       const missingFields = getMissingFields(target, config, context.project.root);
       if (missingFields.length > 0) {
         sendJson(res, {
@@ -1310,6 +1492,11 @@ export function handleCloudPublishingApi(
 
       const resource = handlers.findProjectResourceByPath(metadata, normalizedTargetPath);
       const identity = resourceIdentity(resource, normalizedTargetPath);
+      const reviewSubmitPrototypeId = resolvePrototypeIdForReviewSubmit({
+        resource,
+        targetPath: normalizedTargetPath,
+        sourceFile,
+      });
       const communicationStore = createProjectCommunicationStore(context.project.root);
       communicationStore.ensureDirectories();
       try {
@@ -1321,8 +1508,20 @@ export function handleCloudPublishingApi(
           group: normalizedTargetPath.replace(/^src\//u, '').split('/')[0] || 'prototypes',
           includeSource: config.publishSettings?.includeSource === true,
           mediaRoot: handlers.getDeclaredResourceWriteDir?.(context, 'media') || undefined,
+          reviewSubmit: reviewSubmitPrototypeId
+            ? createReviewSubmitInjectionOptions({
+              projectRoot: context.project.root,
+              projectId: context.project.id,
+              prototypeId: reviewSubmitPrototypeId,
+              makeOrigin: options.origin,
+            })
+            : undefined,
         });
-        const result = await publishTarget(target, config, files, context.project.root, handlers.commandExecutor);
+        const result = await publishTarget(target, config, files, context.project.root, handlers.commandExecutor, {
+          managementOptions: options,
+          axhubProjectId: Number(body?.axhubProjectId || body?.pid),
+          resourcePath: normalizedTargetPath,
+        });
         const url = result.url;
         const deployedAt = new Date().toISOString();
         communicationStore.appendExportRecord({
@@ -1349,7 +1548,7 @@ export function handleCloudPublishingApi(
           errorMessage: error?.message || '云服务发布失败',
           metadata: { path: normalizedTargetPath },
         });
-        const statusCode = Number(error?.statusCode) || 500;
+        const statusCode = Number(error?.status) || Number(error?.statusCode) || 500;
         sendJson(res, {
           error: error?.message || '云服务发布失败',
           ...(error?.code ? { code: error.code } : {}),

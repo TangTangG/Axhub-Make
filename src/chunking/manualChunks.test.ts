@@ -64,10 +64,10 @@ describe('getManualChunkName', () => {
     ).toBe('vendor-common');
   });
 
-  it('keeps assistant nanoid runtime with assistant packages to avoid chunk initialization cycles', () => {
+  it('keeps shared nanoid runtime in vendor-common so common chunks do not import assistant chunks', () => {
     expect(
       getManualChunkName('/repo/node_modules/.pnpm/nanoid@5.1.11/node_modules/nanoid/index.browser.js'),
-    ).toBe('vendor-assistant');
+    ).toBe('vendor-common');
   });
 
   it('keeps Ant Design reset css on the spec-template styles entry instead of shared homepage chunks', () => {
@@ -122,6 +122,15 @@ describe('getManualChunkName', () => {
     expect(
       getManualChunkName('/repo/node_modules/.pnpm/@axhub+acp@file+..+acp-ui_@assistant-ui+react-ai-sdk@1.3.26/node_modules/@axhub/acp/dist/public-api/ui.mjs'),
     ).toBe('vendor-assistant');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/ai@6.0.195_zod@4.4.3/node_modules/ai/dist/index.mjs'),
+    ).toBe('vendor-assistant');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/@ai-sdk+react@3.0.188_react@18.2.0_zod@4.4.3/node_modules/@ai-sdk/react/dist/index.mjs'),
+    ).toBe('vendor-assistant');
+    expect(
+      getManualChunkName('/repo/node_modules/.pnpm/@ai-sdk+provider-utils@4.0.27_zod@4.4.3/node_modules/@ai-sdk/provider-utils/dist/index.mjs'),
+    ).toBe('vendor-assistant');
   });
 
   it('falls back to vendor-common for other third-party packages', () => {
@@ -150,14 +159,14 @@ describe('getManualChunkName', () => {
       getManualChunkName('/repo/packages/axhub-export-core/src/export-core/figma/figma-clipboard-encoder.ts'),
     ).toBe('vendor-export');
     expect(
-      getManualChunkName('/repo/packages/axhub-genie-editor/src/index.ts'),
-    ).toBe('vendor-genie');
+      getManualChunkName('/repo/packages/axhub-commentary/src/index.ts'),
+    ).toBe('vendor-commentary');
     expect(
-      getManualChunkName('/repo/vendor/axhub-genie-editor/dist/index.mjs'),
-    ).toBe('vendor-genie');
+      getManualChunkName('/repo/vendor/axhub-commentary/dist/index.mjs'),
+    ).toBe('vendor-commentary');
     expect(
-      getManualChunkName('/repo/node_modules/.pnpm/axhub-genie-editor@file+vendor+axhub-genie-editor/node_modules/axhub-genie-editor/dist/index.mjs'),
-    ).toBe('vendor-genie');
+      getManualChunkName('/repo/node_modules/.pnpm/@axhub/commentary@file+vendor+@axhub/commentary/node_modules/@axhub/commentary/dist/index.mjs'),
+    ).toBe('vendor-commentary');
     expect(
       getManualChunkName('/repo/node_modules/.pnpm/@axhub+excalidraw@file+vendor+axhub-excalidraw/node_modules/@axhub/excalidraw/index.js'),
     ).toBe('vendor-excalidraw');

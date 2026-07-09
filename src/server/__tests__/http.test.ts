@@ -945,7 +945,7 @@ describe('make-server HTTP server', () => {
       }).then((response) => response.json());
       expect(configUpdate).toMatchObject({ success: true });
       expect(JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub/make/axhub.config.json'), 'utf8'))).toMatchObject({
-        server: { host: 'localhost', allowLAN: false },
+        server: { host: 'localhost' },
       });
 
       const entries = await fetch(`${first.origin}/api/entries.json`).then((response) => response.json());
@@ -1102,6 +1102,9 @@ describe('make-server HTTP server', () => {
         projectRoot: getGlobalMakeStateDir(registryHome),
         origin: server.origin,
         devMode: true,
+        capabilities: {
+          reviewReports: true,
+        },
       });
     } finally {
       await server.close();
@@ -1286,7 +1289,7 @@ describe('make-server HTTP server', () => {
       const requestPath = '/@fs/workspace/make14/node_modules/.vite/deps/@axhub_annotation.js?v=a8419558';
       const response = await fetch(`${server.origin}${requestPath}`, {
         headers: {
-          referer: `${server.origin}/prototypes/annotation-demo?genieToolbar=host`,
+          referer: `${server.origin}/prototypes/annotation-demo?agentToolbar=host`,
         },
       });
       const body = await response.text();

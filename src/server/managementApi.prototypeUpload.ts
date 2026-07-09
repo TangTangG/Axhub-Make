@@ -13,9 +13,9 @@ import {
 
 import { sendJson } from './http.ts';
 import { runLocalCommand } from './localCommand.ts';
-import { createDefaultCanvasData } from './managementApi.canvas.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { PROTOTYPE_PLACEHOLDER_GUIDE } from './prototypePlaceholderGuide.ts';
+import { extractZipFileToDirectory } from './zipArchive.ts';
 
 interface PrototypeUploadProjectContext {
   project: RegisteredProject;
@@ -449,30 +449,9 @@ async function execFilePromise(command: string, args: string[], cwd: string): Pr
   return runLocalCommand(command, args, { cwd, maxBuffer: 1024 * 1024 * 10 });
 }
 
-function assertSafeZipEntries(zipPath: string): Promise<void> {
-  return execFilePromise('unzip', ['-Z1', zipPath], path.dirname(zipPath)).then(({ stdout }) => {
-    const entries = stdout.split(/\r?\n/u).map((entry) => entry.trim()).filter(Boolean);
-    if (entries.length === 0) {
-      throw new Error('ZIP 文件为空');
-    }
-    for (const entry of entries) {
-      const normalized = entry.replace(/\\/g, '/');
-      const parts = normalized.split('/').filter(Boolean);
-      if (
-        path.isAbsolute(normalized)
-        || normalized.startsWith('/')
-        || parts.some((part) => part === '..')
-      ) {
-        throw new Error('ZIP 包含不安全路径，已拒绝解压');
-      }
-    }
-  });
-}
-
 async function extractZipToDirectory(zipPath: string, targetDir: string): Promise<void> {
-  await assertSafeZipEntries(zipPath);
   fs.mkdirSync(targetDir, { recursive: true });
-  await execFilePromise('unzip', ['-q', zipPath, '-d', targetDir], path.dirname(zipPath));
+  extractZipFileToDirectory(zipPath, targetDir);
 }
 
 function getUploadPromptTargetLabel(targetType: string): string {
@@ -1235,9 +1214,6 @@ export async function handleCreatePlaceholderPrototype(
     fs.writeFileSync(path.join(targetDir, 'index.tsx'), createPlaceholderIndexTsx(displayName), 'utf8');
     fs.writeFileSync(path.join(targetDir, 'style.css'), createPlaceholderStyleCss(), 'utf8');
 
-    const canvasPath = path.join(targetDir, 'canvas.excalidraw');
-    fs.writeFileSync(canvasPath, JSON.stringify(createDefaultCanvasData(), null, 2), 'utf8');
-
     const indexPath = path.join(targetDir, 'index.tsx');
     const clientUrl = resolvePrototypeClientUrl(options, context, folderName);
     updatePrototypeMetadataAfterUpload(context, {
@@ -1257,8 +1233,6 @@ export async function handleCreatePlaceholderPrototype(
       path: `prototypes/${folderName}`,
       filePath: createProjectRelativePath(context.project.root, indexPath),
       absoluteFilePath: indexPath,
-      canvasFilePath: createProjectRelativePath(context.project.root, canvasPath),
-      absoluteCanvasFilePath: canvasPath,
       clientUrl,
       placeholder: true,
       placeholderGuide: PROTOTYPE_PLACEHOLDER_GUIDE,

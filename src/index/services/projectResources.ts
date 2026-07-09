@@ -179,6 +179,43 @@ function pickNonNegativeNumber(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+function normalizeResourceOpenMode(value: unknown): ItemData['openMode'] | undefined {
+    return value === 'document'
+        || value === 'canvas'
+        || value === 'drawio'
+        || value === 'image'
+        || value === 'file'
+        ? value
+        : undefined;
+}
+
+function getResourceFileExtension(value: unknown): string {
+    const normalized = String(value || '').trim().replace(/\\/g, '/').toLowerCase();
+    if (normalized.endsWith('.drawio.svg')) {
+        return '.drawio.svg';
+    }
+    const fileName = normalized.split('/').filter(Boolean).pop() || '';
+    const dotIndex = fileName.lastIndexOf('.');
+    return dotIndex >= 0 ? fileName.slice(dotIndex) : '';
+}
+
+function inferResourceOpenMode(...values: unknown[]): ItemData['openMode'] | undefined {
+    for (const value of values) {
+        const ext = getResourceFileExtension(value);
+        if (ext === '.excalidraw') return 'canvas';
+        if (ext === '.drawio' || ext === '.drawio.svg') return 'drawio';
+    }
+    return undefined;
+}
+
+function buildResourceFilePath(resourceRouteName: string, explicitFilePath: string): string {
+    if (explicitFilePath) {
+        return explicitFilePath;
+    }
+    const normalizedRouteName = String(resourceRouteName || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    return normalizedRouteName ? `src/resources/${normalizedRouteName}` : '';
+}
+
 const PAGE_ID_RE = /^[a-z0-9-]+$/u;
 
 function normalizePageId(value: unknown): string {
@@ -421,7 +458,12 @@ export function normalizeProjectDocResource(
 
     const displayName = pickString(resource.title) || pickString(resource.displayName) || pickString(resource.name) || name;
     const markdownPath = pickString(resource.path);
-    const fileSize = pickNonNegativeNumber(resource.fileSize);
+    const explicitFilePath = pickString(resource.filePath);
+    const absoluteFilePath = pickString(resource.absoluteFilePath);
+    const fileSize = pickNonNegativeNumber(resource.fileSize) ?? pickNonNegativeNumber(resource.size);
+    const ext = pickString(resource.ext);
+    const openMode = normalizeResourceOpenMode(resource.openMode)
+        || inferResourceOpenMode(ext, name, displayName, markdownPath, explicitFilePath, absoluteFilePath);
     const contentEndpoint = buildDocContentEndpoint(projectId, name);
     const isMarkdown = [
         name,
@@ -439,6 +481,11 @@ export function normalizeProjectDocResource(
         ? contentEndpoint
         : directDocsFileUrl || buildMarkdownFileUrl(markdownPath) || contentEndpoint;
     const shouldUseSpecTemplatePreview = isMarkdown || (!markdownPath && !directDocsFileUrl);
+    const resourceRelativePath = getDocRelativePathFromResourcePath(markdownPath);
+    const filePath = explicitFilePath
+        || (resourceRelativePath ? `src/resources/${resourceRelativePath}` : '')
+        || (openMode ? buildResourceFilePath(itemName, '') : '')
+        || markdownPath;
 
     return {
         name: itemName,
@@ -446,10 +493,13 @@ export function normalizeProjectDocResource(
         jsUrl: '',
         specUrl: markdownUrl,
         previewUrl: shouldUseSpecTemplatePreview ? buildSpecTemplatePreviewUrl(markdownUrl) : markdownUrl,
-        filePath: markdownPath || undefined,
-        absoluteFilePath: markdownPath || undefined,
+        filePath: filePath || markdownPath || undefined,
+        absoluteFilePath: absoluteFilePath || markdownPath || undefined,
         projectId: projectId || undefined,
         resourceId: name,
+        ...(openMode ? { openMode } : {}),
+        ...(openMode === 'canvas' && filePath ? { canvasFilePath: filePath } : {}),
+        ...(ext ? { ext } : {}),
         ...(fileSize !== undefined ? { fileSize } : {}),
     };
 }

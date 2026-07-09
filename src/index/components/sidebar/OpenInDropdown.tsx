@@ -4,7 +4,6 @@ import {
     ClaudeCode,
     Codex,
     Cursor,
-    GeminiCLI,
     Microsoft,
     OpenCode,
     Qoder,
@@ -25,12 +24,14 @@ import {
 } from '../../../common/ide';
 import {
     CLI_AGENT_OPTIONS,
+    LOCAL_APP_AGENT_APP_NAMES,
     LOCAL_APP_AGENT_OPTIONS,
     type CLIAgent,
     type LocalAppAgent,
     type RuntimeAgentAvailability,
     type WebAgent,
 } from '../../../common/agent';
+import { formatLocalAppOpenFailureMessage } from '../../../common/localAppOpenMessage';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -47,7 +48,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { toast } from 'sonner';
 import { apiService } from '../../services/api';
 import { cn } from '@/lib/utils';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 
 interface OpenInDropdownProps {
     handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
@@ -57,7 +58,7 @@ interface OpenInDropdownProps {
     targetPath?: string | null;
     ideAvailability?: IDEAvailabilityMap;
     agentAvailability?: RuntimeAgentAvailability;
-    onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+    onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
     onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
     webAgentPanelOpen?: boolean;
     aiPanelMode?: 'general-ai' | 'image-ai' | null;
@@ -80,7 +81,7 @@ const LOCAL_APP_GROUP_HELP = [
     },
     {
         title: '本地 CLI',
-        items: ['Codex', 'Gemini', 'Claude Code', 'OpenCode'],
+        items: ['Codex', 'Claude Code', 'OpenCode'],
     },
 ] as const;
 const WEB_AGENT_GROUP_HELP = '打开浏览器内置的 Web AI 面板。';
@@ -95,7 +96,7 @@ type LocalAppOpenOption =
 
 const WEB_AI_OPEN_OPTION = {
     label: '对话 AI',
-    webAgent: 'genie' as const,
+    webAgent: 'acp' as const,
 };
 
 const IMAGE_AI_OPEN_OPTION = {
@@ -106,11 +107,11 @@ const resolveStoredWebOpenMethod = (method: OpenMethod) => {
     if (method.type !== 'web') {
         return null;
     }
-    if (method.value === 'genie') {
-        return { agent: 'genie' as const };
+    if (method.value === 'acp') {
+        return { agent: 'acp' as const };
     }
-    if (method.value === 'claude' || method.value === 'codex' || method.value === 'gemini' || method.value === 'opencode') {
-        return { agent: 'genie' as const, provider: method.value as GenieProvider };
+    if (method.value === 'claude' || method.value === 'codex' || method.value === 'opencode') {
+        return { agent: 'acp' as const, provider: method.value as AcpProvider };
     }
     return null;
 };
@@ -122,7 +123,7 @@ export default function OpenInDropdown({
     targetProjectId,
     targetPath,
     ideAvailability,
-    onOpenGenieWebAgent,
+    onOpenAcpWebAgent,
     webAgentPanelOpen,
     aiPanelMode,
     onOpenImageAiPanel,
@@ -170,7 +171,7 @@ export default function OpenInDropdown({
     const shouldUpdateDefaultOpenMethod = !buttonActive;
     const storedWebOpenMethod = resolveStoredWebOpenMethod(openMethod);
     const displayOpenMethod = buttonActive && !storedWebOpenMethod
-        ? { type: 'web' as const, value: 'genie' }
+        ? { type: 'web' as const, value: 'acp' }
         : openMethod;
 
     const getIDEIcon = (ide: MainIDE) => {
@@ -185,7 +186,6 @@ export default function OpenInDropdown({
 
     const getCLIAgentIcon = (agent: CLIAgent) => {
         if (agent === 'codex') return <Codex.Color size={14} />;
-        if (agent === 'gemini') return <GeminiCLI.Color size={14} />;
         if (agent === 'claudecode') return <ClaudeCode.Color size={14} />;
         if (agent === 'opencode') return <OpenCode size={14} />;
         return <SquareTerminal className="h-3.5 w-3.5" />;
@@ -199,7 +199,7 @@ export default function OpenInDropdown({
 
     const getWebAgentIcon = (agent: WebAgent) => {
         if (agent === 'opencode') return <OpenCode size={14} />;
-        if (agent === 'genie') return <Sparkles className="h-3.5 w-3.5" />;
+        if (agent === 'acp') return <Sparkles className="h-3.5 w-3.5" />;
         return <SquareTerminal className="h-3.5 w-3.5" />;
     };
 
@@ -269,21 +269,21 @@ export default function OpenInDropdown({
                 window.location.href = result.url;
             }
             toast.success('已在本地应用中打开');
-        } catch (error: any) {
-            toast.warning(error?.message || '打开本地应用失败');
+        } catch {
+            toast.warning(formatLocalAppOpenFailureMessage(LOCAL_APP_AGENT_APP_NAMES[agent]));
         } finally {
             setOpenLoading(false);
         }
     };
 
-    const handleOpenWithWebAgent = async (agent: WebAgent, provider?: GenieProvider) => {
+    const handleOpenWithWebAgent = async (agent: WebAgent, provider?: AcpProvider) => {
         if (openLoading) return;
 
-        if (agent === 'genie' && onOpenGenieWebAgent) {
+        if (agent === 'acp' && onOpenAcpWebAgent) {
             void savePreference({ type: 'web', value: provider || agent }).catch(() => {});
             setOpenLoading(true);
             try {
-                await Promise.resolve(onOpenGenieWebAgent(openTargetPath, provider));
+                await Promise.resolve(onOpenAcpWebAgent(openTargetPath, provider));
             } finally {
                 setOpenLoading(false);
             }

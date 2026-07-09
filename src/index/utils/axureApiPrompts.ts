@@ -1,13 +1,13 @@
 import type { TabType } from '../types';
 
 const FIXED_RULE_PATHS = [
-    '/rules/axure-export-workflow.md',
-    '/rules/axure-api-guide.md',
+    'rules/axure-export-workflow.md',
+    'rules/axure-api-guide.md',
 ] as const;
 
-const FIXED_GUIDANCE_NAMES = [
-    'Axure 导出工作流',
-    'Axure API 规范',
+const FIXED_GUIDANCE = [
+    { name: 'Axure 导出工作流', path: FIXED_RULE_PATHS[0] },
+    { name: 'Axure API 规范', path: FIXED_RULE_PATHS[1] },
 ] as const;
 
 interface BuildAxureApiUpdatePromptParams {
@@ -21,7 +21,7 @@ export function buildAxureApiUpdatePrompt(params: BuildAxureApiUpdatePromptParam
     return `请为当前项目执行「新增或更新 Axure API（代码+文档）」任务，严格按固定要求处理，不依赖已有解析结果。
 
 必须先阅读并遵循以下固定规则/规范（由系统上下文提供）：
-${FIXED_GUIDANCE_NAMES.map((ruleName) => `- ${ruleName}`).join('\n')}
+${FIXED_GUIDANCE.map((rule) => `- ${rule.name}：\`${rule.path}\``).join('\n')}
 
 目标资源：
 - \`${itemName}\`

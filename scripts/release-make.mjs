@@ -34,7 +34,10 @@ const bundledCanvasFigSyncPath = path.join(tmpDir, 'canvas-fig-sync.mjs');
 const makeClientTemplateSourceDir = path.join(makeServerRoot, 'client');
 const makeClientTemplatePackageJsonPath = path.join(makeClientTemplateSourceDir, 'package.json');
 const makeClientTemplateSourcePath = path.join(makeServerRoot, 'src/common/makeClientTemplate.ts');
+const makeClientTemplateReleaseNotesFileName = 'RELEASE_NOTES.md';
 const makeClientTemplateZipName = 'axhub-make-client-template.zip';
+const makeClientTemplateLatestManifestName = 'axhub-make-client-template.latest.json';
+const makeClientTemplateLatestManifestGiteeTagName = 'make-client-template-latest';
 const includeOpenCodeWebUi = false;
 const npmPackagePackedSizeLimit = 35 * 1024 * 1024;
 const npmPackageUnpackedSizeLimit = 80 * 1024 * 1024;
@@ -123,12 +126,18 @@ const templateCopyIgnoredNames = new Set([
   'dist',
   '.vite',
   '.local',
+  '.logs',
+  'logs',
+  '.codegraph',
+  '.codex',
   '.drawio-tmp',
   '.opencode',
   '.trae',
+  '.workbuddy',
   'coverage',
   'tests',
   '.cache',
+  'tmp-midscene',
   'tmp',
   'temp',
 ]);
@@ -156,6 +165,28 @@ const templateCopyAllowedAxhubMakeFiles = new Set([
   '.axhub/make/README.md',
   '.axhub/make/sidebar-tree.json',
 ]);
+const makeClientTemplateDefaultPrototypes = new Set([
+  'annotation-demo',
+  'beginner-guide',
+  'touch-and-talk-annotation-demo',
+]);
+const makeClientTemplateDefaultPrototypeItemKeys = new Set(
+  Array.from(makeClientTemplateDefaultPrototypes, (id) => `prototypes/${id}`),
+);
+const makeClientTemplateAllowedResourceFiles = new Set([
+  'src/resources/.gitkeep',
+  'src/resources/README.md',
+  'src/resources/templates/prd-template.md',
+  'src/resources/templates/prototype-review-report-template.md',
+  'src/resources/templates/ui-review-report-template.md',
+]);
+const makeClientTemplateIgnoredLocalThemes = new Set([
+  'trae',
+  'whop',
+]);
+const makeClientTemplateIgnoredThemeItemKeys = new Set(
+  Array.from(makeClientTemplateIgnoredLocalThemes, (id) => `themes/${id}`),
+);
 
 const executableTargets = [
   { id: 'macos-arm64', bunTarget: 'bun-darwin-arm64', executableName: 'axhub-make' },
@@ -430,6 +461,20 @@ function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
   if (templateCopyIgnoredNames.has(entryName) || templateCopyIgnoredFiles.has(entryName)) {
     return true;
   }
+  const prototypeMatch = normalizedRelativePath.match(/^src\/prototypes\/([^/]+)(?:\/|$)/u);
+  if (prototypeMatch && !makeClientTemplateDefaultPrototypes.has(prototypeMatch[1])) {
+    return true;
+  }
+  if (normalizedRelativePath === 'src/resources' || normalizedRelativePath === 'src/resources/templates') {
+    return false;
+  }
+  if (normalizedRelativePath.startsWith('src/resources/')) {
+    return !makeClientTemplateAllowedResourceFiles.has(normalizedRelativePath);
+  }
+  const themeMatch = normalizedRelativePath.match(/^src\/themes\/([^/]+)(?:\/|$)/u);
+  if (themeMatch && makeClientTemplateIgnoredLocalThemes.has(themeMatch[1])) {
+    return true;
+  }
   if (entryName.endsWith('.tsbuildinfo')) {
     return true;
   }
@@ -439,13 +484,76 @@ function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
   if (/^src\/prototypes\/[^/]+\/\.spec\/prototype-comments\.json$/u.test(normalizedRelativePath)) {
     return true;
   }
+  if (/^src\/prototypes\/[^/]+\/\.spec\/reviews\/config\.json$/u.test(normalizedRelativePath)) {
+    return true;
+  }
+  if (/^src\/prototypes\/[^/]+\/canvas\.excalidraw$/u.test(normalizedRelativePath)) {
+    return true;
+  }
+  if (/^src\/prototypes\/[^/]+\/canvas-assets(?:\/|$)/u.test(normalizedRelativePath)) {
+    return true;
+  }
   if (/\.(?:otf|ttf)$/iu.test(entryName)) {
     return true;
   }
   if (/^\.env\./u.test(entryName)) {
     return true;
   }
+  if (/\.pid$/iu.test(entryName)) {
+    return true;
+  }
   return false;
+}
+
+function pruneMakeClientTemplateSidebarItems(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items
+    .map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        return null;
+      }
+      if (item.kind === 'folder') {
+        return {
+          ...item,
+          children: pruneMakeClientTemplateSidebarItems(item.children),
+        };
+      }
+      return item;
+    })
+    .filter((item) => {
+      if (!item) {
+        return false;
+      }
+      if (item.kind === 'folder') {
+        return Array.isArray(item.children) && item.children.length > 0;
+      }
+      return !makeClientTemplateIgnoredThemeItemKeys.has(String(item.itemKey || ''));
+    });
+}
+
+function createTemplateZipEntryBytes(relativePath, fullPath) {
+  const normalizedRelativePath = relativePath.split(path.sep).join('/');
+  const source = fs.readFileSync(fullPath);
+  if (normalizedRelativePath === '.axhub/make/sidebar-tree.json') {
+    const tree = JSON.parse(source.toString('utf8'));
+    tree.prototypes = (Array.isArray(tree.prototypes) ? tree.prototypes : [])
+      .filter((item) => makeClientTemplateDefaultPrototypeItemKeys.has(String(item?.itemKey || '')));
+    tree.themesTree = pruneMakeClientTemplateSidebarItems(tree.themesTree);
+    return Buffer.from(`${JSON.stringify(tree, null, 2)}\n`, 'utf8');
+  }
+  if (normalizedRelativePath === '.axhub/make/axhub.config.json') {
+    const config = JSON.parse(source.toString('utf8'));
+    if (config.server && typeof config.server === 'object') {
+      delete config.server.lanHost;
+    }
+    if (config.cloudPublishing && typeof config.cloudPublishing === 'object') {
+      delete config.cloudPublishing.s3;
+    }
+    return Buffer.from(`${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  }
+  return source;
 }
 
 function buildTemplateZippable(sourceDir, currentDir = sourceDir, relativeDir = '') {
@@ -461,7 +569,7 @@ function buildTemplateZippable(sourceDir, currentDir = sourceDir, relativeDir = 
       continue;
     }
     if (entry.isFile()) {
-      entries[relativePath.split(path.sep).join('/')] = new Uint8Array(fs.readFileSync(fullPath));
+      entries[relativePath.split(path.sep).join('/')] = new Uint8Array(createTemplateZipEntryBytes(relativePath, fullPath));
     }
   }
   return entries;
@@ -483,6 +591,45 @@ export function createTemplateZipMetadata({
     githubReleaseAssetName: makeClientTemplateZipName,
     primaryUrl: `https://github.com/${githubRepo}/releases/download/${tagName}/${makeClientTemplateZipName}`,
     mirrorUrl: `${mirrorBaseUrl}/${tagName}/${makeClientTemplateZipName}`,
+  };
+}
+
+export function createMakeClientTemplateLatestManifest({
+  templateVersion,
+  releaseNotes,
+  zipMetadata,
+  publishedAt = new Date().toISOString(),
+} = {}) {
+  const normalizedTemplateVersion = normalizeTemplateVersion(templateVersion);
+  const normalizedReleaseNotes = String(releaseNotes || '').trim();
+  if (!normalizedTemplateVersion) {
+    throw new Error('templateVersion is required for Make client template latest manifest');
+  }
+  if (!normalizedReleaseNotes) {
+    throw new Error('releaseNotes is required for Make client template latest manifest');
+  }
+  if (!zipMetadata?.primaryUrl || !zipMetadata?.mirrorUrl) {
+    throw new Error('zipMetadata primaryUrl and mirrorUrl are required for Make client template latest manifest');
+  }
+  return {
+    schemaVersion: 1,
+    version: normalizedTemplateVersion,
+    releaseNotes: normalizedReleaseNotes,
+    publishedAt,
+    sources: [
+      {
+        id: 'github',
+        url: zipMetadata.primaryUrl,
+        markerRepository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+        templateVersion: normalizedTemplateVersion,
+      },
+      {
+        id: 'gitee',
+        url: zipMetadata.mirrorUrl,
+        markerRepository: 'https://gitee.com/axhub/Axhub-Make/tree/main/client',
+        templateVersion: normalizedTemplateVersion,
+      },
+    ],
   };
 }
 
@@ -527,6 +674,70 @@ export function syncDefaultMakeClientTemplateVersion({
     pattern,
     `export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '${normalizedVersion}';`,
   );
+  if (nextSource === source) {
+    return { changed: false, sourceFile, templateVersion: normalizedVersion };
+  }
+  fs.writeFileSync(sourceFile, nextSource, 'utf8');
+  return { changed: true, sourceFile, templateVersion: normalizedVersion };
+}
+
+function readReleaseNotesDeclaredVersion(releaseNotes) {
+  const firstLine = String(releaseNotes || '').split(/\r?\n/u)[0]?.trim() || '';
+  const match = firstLine.match(/^#\s+Axhub Make Client\s+([0-9A-Za-z][0-9A-Za-z.+-]*)\s*$/u);
+  return match?.[1] || '';
+}
+
+export function readMakeClientTemplateReleaseNotes({
+  sourceClientDir = makeClientTemplateSourceDir,
+  templateVersion,
+} = {}) {
+  const normalizedVersion = normalizeTemplateVersion(templateVersion);
+  if (!normalizedVersion) {
+    throw new Error('templateVersion is required to read Make client template release notes');
+  }
+  const releaseNotesPath = path.join(sourceClientDir, makeClientTemplateReleaseNotesFileName);
+  if (!fs.existsSync(releaseNotesPath)) {
+    throw new Error(`Make client template release notes file is required: ${releaseNotesPath}`);
+  }
+  const releaseNotes = fs.readFileSync(releaseNotesPath, 'utf8').trim();
+  if (!releaseNotes) {
+    throw new Error(`Make client template release notes file must not be empty: ${releaseNotesPath}`);
+  }
+  if (readReleaseNotesDeclaredVersion(releaseNotes) !== normalizedVersion) {
+    throw new Error(`Make client template release notes must mention template version ${normalizedVersion}`);
+  }
+  return releaseNotes;
+}
+
+export function syncDefaultMakeClientTemplateReleaseNotes({
+  sourceFile = makeClientTemplateSourcePath,
+  templateVersion,
+  releaseNotes,
+} = {}) {
+  const normalizedVersion = normalizeTemplateVersion(templateVersion);
+  if (!normalizedVersion) {
+    throw new Error('templateVersion is required to sync the default Make client template release notes');
+  }
+  const normalizedReleaseNotes = String(releaseNotes || '').trim();
+  if (!normalizedReleaseNotes) {
+    throw new Error('releaseNotes is required to sync the default Make client template release notes');
+  }
+  if (readReleaseNotesDeclaredVersion(normalizedReleaseNotes) !== normalizedVersion) {
+    throw new Error(`Make client template release notes must mention template version ${normalizedVersion}`);
+  }
+  const source = fs.readFileSync(sourceFile, 'utf8');
+  const nextExport = `export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = ${JSON.stringify(normalizedReleaseNotes)};`;
+  const pattern = /export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = (?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`);/u;
+  let nextSource = '';
+  if (pattern.test(source)) {
+    nextSource = source.replace(pattern, nextExport);
+  } else {
+    const versionPattern = /export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = ['"][^'"]+['"];\n/u;
+    if (!versionPattern.test(source)) {
+      throw new Error(`DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION export was not found: ${sourceFile}`);
+    }
+    nextSource = source.replace(versionPattern, (match) => `${match}${nextExport}\n`);
+  }
   if (nextSource === source) {
     return { changed: false, sourceFile, templateVersion: normalizedVersion };
   }
@@ -860,6 +1071,25 @@ export function createExecutableBundleArgs(target, executablePath, entryPath) {
   ];
 }
 
+function shouldCodesignExecutableTarget(target) {
+  return String(target.bunTarget || '').startsWith('bun-darwin-');
+}
+
+export function finalizeExecutableBundle(target, executablePath, {
+  sanitizeFile = sanitizeLocalMachinePathsInFile,
+  runCommand = run,
+} = {}) {
+  const sanitizeResult = sanitizeFile(executablePath);
+  const codesigned = shouldCodesignExecutableTarget(target);
+  if (codesigned) {
+    runCommand('codesign', ['--force', '--sign', '-', executablePath]);
+  }
+  return {
+    ...sanitizeResult,
+    codesigned,
+  };
+}
+
 function createPlatformArtifact(target, executablePath, sourcePackage, canvasFigSyncScriptPath = bundledCanvasFigSyncPath) {
   const artifactBaseName = `axhub-make-${sourcePackage.version}-${target.id}`;
   const artifactDir = path.join(artifactsDir, artifactBaseName);
@@ -891,7 +1121,7 @@ function createPlatformArtifact(target, executablePath, sourcePackage, canvasFig
 
 function buildSanitizedExecutableTarget(target, entryPath) {
   const executablePath = bundleExecutableTarget(target, entryPath);
-  sanitizeLocalMachinePathsInFile(executablePath);
+  finalizeExecutableBundle(target, executablePath);
   return executablePath;
 }
 
@@ -1008,6 +1238,14 @@ function prepareTemplateRelease(options = {}) {
   if (versionSync.changed) {
     logStep(`Synced DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION to ${templateVersion}`);
   }
+  const releaseNotes = readMakeClientTemplateReleaseNotes({ templateVersion });
+  const releaseNotesSync = syncDefaultMakeClientTemplateReleaseNotes({
+    templateVersion,
+    releaseNotes,
+  });
+  if (releaseNotesSync.changed) {
+    logStep(`Synced DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES for ${templateVersion}`);
+  }
 
   fs.rmSync(templateReleaseRoot, { recursive: true, force: true });
   fs.mkdirSync(templateReleaseRoot, { recursive: true });
@@ -1018,9 +1256,17 @@ function prepareTemplateRelease(options = {}) {
     templateVersion,
     githubRepo: process.env.GITHUB_REPOSITORY || 'lintendo/Axhub-Make',
   });
+  const latestManifestPath = path.join(templateArtifactsDir, makeClientTemplateLatestManifestName);
+  const latestManifest = createMakeClientTemplateLatestManifest({
+    templateVersion,
+    releaseNotes,
+    zipMetadata: templateMetadata,
+  });
+  writeJson(latestManifestPath, latestManifest);
   const manifest = {
     packageName: sourcePackage.name,
     templateVersion,
+    releaseNotes,
     tagName: templateMetadata.tagName,
     preparedAt: new Date().toISOString(),
     templateSourceDir: makeClientTemplateSourceDir,
@@ -1028,6 +1274,12 @@ function prepareTemplateRelease(options = {}) {
       path: templateArchive.path,
       sha256: templateArchive.sha256,
       ...templateMetadata,
+    },
+    latestManifest: {
+      path: latestManifestPath,
+      name: makeClientTemplateLatestManifestName,
+      mirrorUrl: `https://gitee.com/axhub/Axhub-Make/releases/download/${makeClientTemplateLatestManifestGiteeTagName}/${makeClientTemplateLatestManifestName}`,
+      manifest: latestManifest,
     },
   };
   writeJson(templateManifestPath, manifest);
@@ -1077,6 +1329,9 @@ function assertPreparedTemplateManifestCurrent(manifest, options = {}) {
   }
   if (!manifest.templateZip?.path || !fs.existsSync(manifest.templateZip.path)) {
     throw new Error(`Prepared template zip is missing: ${manifest.templateZip?.path || '(none)'}`);
+  }
+  if (!manifest.latestManifest?.path || !fs.existsSync(manifest.latestManifest.path)) {
+    throw new Error(`Prepared template latest manifest is missing: ${manifest.latestManifest?.path || '(none)'}`);
   }
 }
 
@@ -1277,6 +1532,9 @@ function printTemplateArtifacts(manifest) {
   console.log(`  template version: ${manifest.templateVersion}`);
   console.log(`  template tag: ${manifest.tagName}`);
   console.log(`  make client template: ${manifest.templateZip.path}`);
+  if (manifest.latestManifest?.path) {
+    console.log(`  make client template latest manifest: ${manifest.latestManifest.path}`);
+  }
   console.log(`  make client template mirror upload target: ${manifest.templateZip.mirrorUrl}`);
 }
 
@@ -1308,6 +1566,7 @@ export function publishTemplateCommands(manifest, options) {
     'create',
     manifest.tagName,
     manifest.templateZip.path,
+    ...(manifest.latestManifest?.path ? [manifest.latestManifest.path] : []),
     '--repo',
     options.githubRepo,
     '--title',

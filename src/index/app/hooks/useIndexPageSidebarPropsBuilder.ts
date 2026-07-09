@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
 import type { RuntimeAgentAvailability } from '../../../common/agent';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import type { SettingsDialogInitialTab } from '../../components/SettingsDialog';
 import type { ItemData, TabType, ViewMode } from '../../types';
 import type {
@@ -32,6 +32,8 @@ interface UseIndexPageSidebarPropsBuilderParams {
         projectTitle: string;
         activeProjectId: string | null;
         projectSetupRequired?: boolean;
+        makeClientUpdateAvailable?: boolean;
+        makeClientUpdateReminderVisible?: boolean;
         projects: any[];
         resourceWriteCapabilities: ResourceWriteCapabilities;
         localExportCapabilities: LocalExportCapabilities;
@@ -45,6 +47,8 @@ interface UseIndexPageSidebarPropsBuilderParams {
         selectedCanvas: any;
         selectedTheme: any;
         prototypeStartDraftActive?: boolean;
+        resourceStartDraftActive?: boolean;
+        themeStartDraftActive?: boolean;
         prototypeStartPageActive?: boolean;
     };
     deps: {
@@ -55,6 +59,7 @@ interface UseIndexPageSidebarPropsBuilderParams {
         setPreferredIDE: (ide: MainIDEPreference) => void;
         setIsDarkMode: (dark: boolean) => void;
         openSettingsDialog: (tab?: SettingsDialogInitialTab) => void;
+        setVersionCollaborationDrawerOpen: Dispatch<SetStateAction<boolean>>;
         setActiveTab: Dispatch<SetStateAction<TabType>>;
         setSidebarTab: Dispatch<SetStateAction<SidebarTab>>;
         setViewMode: Dispatch<SetStateAction<ViewMode>>;
@@ -69,6 +74,12 @@ interface UseIndexPageSidebarPropsBuilderParams {
             folderName: string;
             projectName?: string;
         }) => Promise<unknown>;
+        cloneMakeProject: (params: {
+            parentRoot: string;
+            folderName: string;
+            projectName?: string;
+            gitUrl: string;
+        }) => Promise<unknown>;
         copyMakeProject: (params: {
             parentRoot: string;
             folderName: string;
@@ -81,8 +92,10 @@ interface UseIndexPageSidebarPropsBuilderParams {
         handleMenuClick: (params: { key: string; pageId?: string | null }) => void | Promise<void>;
         setSelectedPrototypePageId?: Dispatch<SetStateAction<string | null>>;
         handleCreatePrototypeStartDraft?: () => void;
+        handleCreateResourceStartDraft?: () => void;
+        handleCreateThemeStartDraft?: () => void;
         handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
-        handleOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+        handleOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
         handleOpenImageAiPanel?: () => void | Promise<void>;
         handleOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
         onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
@@ -130,6 +143,8 @@ export function useIndexPageSidebarPropsBuilder({
             projectTitle: state.projectTitle,
             activeProjectId: state.activeProjectId,
             projectSetupRequired: state.projectSetupRequired,
+            makeClientUpdateAvailable: state.makeClientUpdateAvailable,
+            makeClientUpdateReminderVisible: state.makeClientUpdateReminderVisible,
             projects: state.projects,
             resourceWriteCapabilities: state.resourceWriteCapabilities,
             localExportCapabilities: state.localExportCapabilities,
@@ -139,6 +154,8 @@ export function useIndexPageSidebarPropsBuilder({
             webAgentPanelOpen: prototypeStartPageActive ? false : state.webAgentPanelOpen,
             aiPanelMode: prototypeStartPageActive ? null : state.aiPanelMode,
             prototypeStartPageActive: state.prototypeStartPageActive,
+            resourceStartDraftActive: state.resourceStartDraftActive,
+            themeStartDraftActive: state.themeStartDraftActive,
         },
         actions: {
             handleTabChange: deps.handleTabChange,
@@ -191,7 +208,6 @@ export function useIndexPageSidebarPropsBuilder({
                 deps.setInitialCreateDialogTab(initialTab);
                 deps.setCreateDialogVisible(true);
             },
-            onImportTheme: deps.resources.handleImportThemeResource,
             onCreatePlaceholderPrototype: () => {
                 if (deps.handleCreatePrototypeStartDraft) {
                     deps.handleCreatePrototypeStartDraft();
@@ -199,14 +215,22 @@ export function useIndexPageSidebarPropsBuilder({
                 }
                 void deps.resources.handleCreatePlaceholderPrototype();
             },
+            onCreateResourceStart: () => {
+                deps.handleCreateResourceStartDraft?.();
+            },
+            onCreateThemeStart: () => {
+                deps.handleCreateThemeStartDraft?.();
+            },
+            onCreateResourceCanvasFile: (targetFolder) => {
+                void deps.resources.handleCreateResourceCanvasFile?.(targetFolder);
+            },
+            onCreateDrawioResourceFile: (targetFolder) => {
+                void deps.resources.handleCreateDrawioResourceFile?.(targetFolder);
+            },
             onUploadedResourceFiles: (files) => { void deps.resources.handleUploadedResourceFiles(files); },
-            onCreateCanvasFile: () => { void deps.resources.handleCreateCanvasFile(); },
-            handleRenameCanvasItem: deps.resources.handleRenameCanvasItem,
-            handleDuplicateCanvasItem: deps.resources.handleDuplicateCanvasItem,
-            handleDeleteCanvasItem: deps.resources.handleDeleteCanvasItem,
-            handleCopyCanvasPath: deps.resources.handleCopyCanvasPath,
             onCreateFolder: deps.resources.handleCreateFolder,
-            onSettingsClick: () => deps.openSettingsDialog('project'),
+            onSettingsClick: (tab = 'project') => deps.openSettingsDialog(tab),
+            onVersionCollaborationClick: () => deps.setVersionCollaborationDrawerOpen(true),
             onToggleTheme: () => deps.setIsDarkMode(!state.isDarkMode),
             onTitleChange: deps.resources.handleProjectTitleChange,
             onProjectSwitch: deps.switchProject,
@@ -224,6 +248,11 @@ export function useIndexPageSidebarPropsBuilder({
                 resetToPrototypeStartView();
                 return result;
             },
+            onCloneMakeProject: async (params) => {
+                const result = await deps.cloneMakeProject(params);
+                resetToPrototypeStartView();
+                return result;
+            },
             onCopyMakeProject: async (params) => {
                 const result = await deps.copyMakeProject(params);
                 resetToPrototypeStartView();
@@ -234,7 +263,7 @@ export function useIndexPageSidebarPropsBuilder({
             onSidebarTreePersist: deps.resources.handleSidebarTreePersist,
             handleVersionManagement: deps.resources.handleVersionManagement,
             handleOpenProjectInIDE: deps.handleOpenProjectInIDE,
-            onOpenGenieWebAgent: prototypeStartPageActive ? undefined : deps.handleOpenGenieWebAgent,
+            onOpenAcpWebAgent: prototypeStartPageActive ? undefined : deps.handleOpenAcpWebAgent,
             onOpenImageAiPanel: prototypeStartPageActive ? undefined : deps.handleOpenImageAiPanel,
             onOpenWebAgentInPanel: deps.handleOpenWebAgentInPanel,
             onExecutePrompt: deps.onExecutePrompt,

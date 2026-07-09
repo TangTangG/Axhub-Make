@@ -560,6 +560,44 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         return payload;
     }, [loadProjectResourcesFor, loadProjects, messageApi, resetProjectScopedState]);
 
+    const cloneMakeProject = useCallback(async (params: {
+        parentRoot: string;
+        folderName: string;
+        projectName?: string;
+        gitUrl: string;
+    }) => {
+        const response = await fetch('/api/projects/make/clone', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params),
+        });
+        const payload = await response.json().catch(() => null);
+        logMakeClientCreateProgress(payload);
+        if (!response.ok) {
+            const error = new Error(formatMakeClientProjectError(payload, '克隆项目失败'));
+            (error as Error & { diagnostic?: unknown }).diagnostic = payload;
+            throw error;
+        }
+        const projectId = typeof payload?.project?.id === 'string' ? payload.project.id.trim() : '';
+        if (!projectId) {
+            throw new Error('克隆项目后未返回项目 ID');
+        }
+        resetProjectScopedState();
+        setActiveProjectId(projectId);
+        setProjectTitle(typeof payload?.project?.name === 'string' ? payload.project.name || UNTITLED_PROJECT_LABEL : projectId);
+        setLoading(true);
+        try {
+            await loadProjects();
+            const loaded = await loadProjectResourcesFor(projectId);
+            if (!loaded) {
+                messageApi.error('项目已克隆，但加载资源失败，请刷新或重新切换项目');
+            }
+        } finally {
+            setLoading(false);
+        }
+        return payload;
+    }, [loadProjectResourcesFor, loadProjects, messageApi, resetProjectScopedState]);
+
     const copyMakeProject = useCallback(async (params: {
         parentRoot: string;
         folderName: string;
@@ -656,14 +694,8 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
     }, [activeProjectId]);
 
     const reloadCanvasItems = useCallback(async (): Promise<CanvasItem[]> => {
-        const response = await fetch('/api/canvas');
-        if (!response.ok) {
-            throw new Error('Failed to fetch canvas items');
-        }
-        const items = await response.json();
-        const list: CanvasItem[] = Array.isArray(items) ? items : [];
-        setCanvasItems(list);
-        return list;
+        setCanvasItems([]);
+        return [];
     }, []);
 
     const getSidebarTabItems = useCallback((tab: SidebarTreeTab): ItemData[] => {
@@ -671,7 +703,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             return docsItems;
         }
         if (tab === 'canvas') {
-            return normalizeCanvasItems(canvasItems);
+            return docsItems.filter((item) => item.openMode === 'canvas');
         }
         if (tab === 'themes') {
             return themes.map((theme) => ({
@@ -682,7 +714,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             }));
         }
         return data.prototypes;
-    }, [canvasItems, data.prototypes, docsItems, themes]);
+    }, [data.prototypes, docsItems, themes]);
 
     const loadSidebarTree = useCallback(async (tab: SidebarTreeTab, options?: { force?: boolean; items?: ItemData[] }) => {
         if (!options?.force && loadedSidebarTreeTabsRef.current.has(tab)) {
@@ -850,6 +882,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
         deleteProject,
         addProjectFromLocalPath,
         createBlankMakeProject,
+        cloneMakeProject,
         copyMakeProject,
         reloadSidebarAssets,
         reloadDocsItems,

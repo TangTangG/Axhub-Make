@@ -122,8 +122,8 @@ function writeCanvasFile(filePath: string, marker: string): void {
 
 function createProjectRoot(): { projectRoot: string; canvasPath: string; alternateCanvasPath: string } {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-canvas-bridge-'));
-  const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
-  const alternateCanvasPath = path.join(projectRoot, 'src', 'prototypes', 'about', 'canvas.excalidraw');
+  const canvasPath = path.join(projectRoot, 'src', 'resources', 'flows', 'home.excalidraw');
+  const alternateCanvasPath = path.join(projectRoot, 'src', 'resources', 'flows', 'about.excalidraw');
   writeCanvasFile(canvasPath, 'initial');
   writeCanvasFile(alternateCanvasPath, 'alternate');
   return { projectRoot, canvasPath, alternateCanvasPath };
@@ -168,22 +168,22 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
     return { hub, canvasPath, alternateCanvasPath, refreshes };
   }
 
-  it('starts watching a prototype canvas only after registration and closes after the last client leaves', () => {
+  it('starts watching a resource canvas only after registration and closes after the last client leaves', () => {
     const { hub, canvasPath } = createHub();
 
     expect(watchSpy).not.toHaveBeenCalled();
 
-    const first = registerClient(hub, 'prototypes/home/canvas.excalidraw');
+    const first = registerClient(hub, 'resources/flows/home.excalidraw');
     expect(watchSpy).toHaveBeenCalledTimes(1);
     expect(watchSpy.mock.calls[0][0]).toBe(canvasPath);
     expect(hub.getActiveCanvasWatchers()).toEqual([{
-      canvas: 'prototypes/home/canvas',
+      canvas: 'resources/flows/home.excalidraw',
       filePath: canvasPath,
       refCount: 1,
       dirtyClientCount: 0,
     }]);
 
-    const second = registerClient(hub, 'prototypes/home/canvas');
+    const second = registerClient(hub, 'src/resources/flows/home.excalidraw');
     expect(watchSpy).toHaveBeenCalledTimes(1);
     expect(hub.getActiveCanvasWatchers()[0].refCount).toBe(2);
 
@@ -198,12 +198,12 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
     hub.destroy();
   });
 
-  it('moves a client watcher when the client registers a different prototype canvas', () => {
+  it('moves a client watcher when the client registers a different resource canvas', () => {
     const { hub, canvasPath, alternateCanvasPath } = createHub();
-    const socket = registerClient(hub, 'prototypes/home/canvas');
+    const socket = registerClient(hub, 'resources/flows/home.excalidraw');
 
     expect(hub.getActiveCanvasWatchers()).toEqual([{
-      canvas: 'prototypes/home/canvas',
+      canvas: 'resources/flows/home.excalidraw',
       filePath: canvasPath,
       refCount: 1,
       dirtyClientCount: 0,
@@ -211,7 +211,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
     socket.emit('data', encodeClientTextFrame({
       type: 'canvas.register',
-      canvas: 'prototypes/about/canvas',
+      canvas: 'flows/about.excalidraw',
       dirty: false,
     }));
 
@@ -219,7 +219,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
     expect(watchers[0].closed).toBe(true);
     expect(watchers[1].closed).toBe(false);
     expect(hub.getActiveCanvasWatchers()).toEqual([{
-      canvas: 'prototypes/about/canvas',
+      canvas: 'resources/flows/about.excalidraw',
       filePath: alternateCanvasPath,
       refCount: 1,
       dirtyClientCount: 0,
@@ -230,7 +230,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('closes active watchers when the active project root changes', () => {
     const { hub } = createHub();
-    registerClient(hub, 'prototypes/home/canvas');
+    registerClient(hub, 'resources/flows/home.excalidraw');
     expect(hub.getActiveCanvasWatchers()).toHaveLength(1);
 
     const { projectRoot: nextProjectRoot } = createProjectRoot();
@@ -243,11 +243,13 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
     hub.destroy();
   });
 
-  it('ignores standalone src/canvas registrations for hot reload watching', () => {
+  it('ignores missing standalone and removed prototype registrations for hot reload watching', () => {
     const { hub } = createHub();
 
     registerClient(hub, 'legacy.excalidraw');
     registerClient(hub, 'canvas/legacy.excalidraw');
+    registerClient(hub, 'prototypes/home/canvas.excalidraw');
+    registerClient(hub, 'src/prototypes/home/canvas.excalidraw');
 
     expect(watchSpy).not.toHaveBeenCalled();
     expect(hub.getActiveCanvasWatchers()).toEqual([]);
@@ -257,7 +259,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('suppresses make-server saves by hash and refreshes stable external writes once', async () => {
     const { hub, canvasPath, refreshes } = createHub();
-    registerClient(hub, 'prototypes/home/canvas.excalidraw');
+    registerClient(hub, 'resources/flows/home.excalidraw');
 
     writeCanvasFile(canvasPath, 'server-save');
     hub.recordCanvasSave(canvasPath, fs.readFileSync(canvasPath, 'utf8'));
@@ -275,19 +277,19 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
     expect(refreshes).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(refreshes).toEqual(['prototypes/home/canvas']);
+    expect(refreshes).toEqual(['resources/flows/home.excalidraw']);
 
     await vi.advanceTimersByTimeAsync(9000);
-    expect(refreshes).toEqual(['prototypes/home/canvas']);
+    expect(refreshes).toEqual(['resources/flows/home.excalidraw']);
 
     hub.destroy();
   });
 
   it('broadcasts make-server canvas saves to other clean clients without echoing the watcher event', async () => {
     const { hub, canvasPath } = createHub();
-    const source = registerClient(hub, 'prototypes/home/canvas.excalidraw', true);
-    const other = registerClient(hub, 'prototypes/home/canvas.excalidraw');
-    const otherCanvas = registerClient(hub, 'prototypes/about/canvas.excalidraw');
+    const source = registerClient(hub, 'resources/flows/home.excalidraw', true);
+    const other = registerClient(hub, 'resources/flows/home.excalidraw');
+    const otherCanvas = registerClient(hub, 'resources/flows/about.excalidraw');
 
     writeCanvasFile(canvasPath, 'server-save');
     hub.recordCanvasSave(canvasPath, fs.readFileSync(canvasPath, 'utf8'), {
@@ -307,7 +309,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('does not refresh while any same-canvas client is dirty', async () => {
     const { hub, canvasPath, refreshes } = createHub();
-    registerClient(hub, 'prototypes/home/canvas.excalidraw', true);
+    registerClient(hub, 'resources/flows/home.excalidraw', true);
 
     writeCanvasFile(canvasPath, 'dirty-skip');
     watchers[0].emit('change', 'change');
@@ -319,7 +321,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('defers a stable external write while dirty and refreshes when the canvas becomes clean', async () => {
     const { hub, canvasPath, refreshes } = createHub();
-    const socket = registerClient(hub, 'prototypes/home/canvas.excalidraw', true);
+    const socket = registerClient(hub, 'resources/flows/home.excalidraw', true);
 
     writeCanvasFile(canvasPath, 'deferred-external');
     watchers[0].emit('change', 'change');
@@ -328,21 +330,21 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
     socket.emit('data', encodeClientTextFrame({
       type: 'canvas.status',
-      canvas: 'prototypes/home/canvas.excalidraw',
+      canvas: 'resources/flows/home.excalidraw',
       dirty: false,
     }));
 
-    expect(refreshes).toEqual(['prototypes/home/canvas']);
+    expect(refreshes).toEqual(['resources/flows/home.excalidraw']);
     hub.destroy();
   });
 
   it('sends refresh requests to every matching registered canvas client', () => {
     const { hub } = createHub();
-    const first = registerClient(hub, 'prototypes/home/canvas.excalidraw');
-    const second = registerClient(hub, 'src/prototypes/home/canvas.excalidraw');
-    const other = registerClient(hub, 'prototypes/about/canvas.excalidraw');
+    const first = registerClient(hub, 'resources/flows/home.excalidraw');
+    const second = registerClient(hub, 'src/resources/flows/home.excalidraw');
+    const other = registerClient(hub, 'resources/flows/about.excalidraw');
 
-    expect(hub.requestRefresh('prototypes/home/canvas')).toBe(true);
+    expect(hub.requestRefresh('flows/home.excalidraw')).toBe(true);
     expect(first.sentMessages).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'canvas.reload' }),
     ]));
@@ -359,7 +361,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('sends canvas command requests to a registered canvas client and resolves result payloads', async () => {
     const { hub } = createHub();
-    const socket = registerClient(hub, 'prototypes/home/canvas.excalidraw');
+    const socket = registerClient(hub, 'resources/flows/home.excalidraw');
 
     const resultPromise = hub.sendCommand('canvas_get_state', { includeElements: true }, {
       requestId: 'command-1',
@@ -370,7 +372,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
       expect.objectContaining({
         type: 'canvas.command.request',
         requestId: 'command-1',
-        canvasName: 'prototypes/home/canvas',
+        canvasName: 'resources/flows/home.excalidraw',
         command: 'canvas_get_state',
         payload: { includeElements: true },
         timeoutMs: 5000,
@@ -381,11 +383,11 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
       type: 'canvas.command.result',
       requestId: 'command-1',
       ok: true,
-      payload: { canvasName: 'prototypes/home/canvas', selectedElementIds: [] },
+      payload: { canvasName: 'resources/flows/home.excalidraw', selectedElementIds: [] },
     }));
 
     await expect(resultPromise).resolves.toEqual({
-      canvasName: 'prototypes/home/canvas',
+      canvasName: 'resources/flows/home.excalidraw',
       selectedElementIds: [],
     });
     hub.destroy();
@@ -405,7 +407,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('rejects duplicate canvas command request ids while a command is pending', async () => {
     const { hub } = createHub();
-    const socket = registerClient(hub, 'prototypes/home/canvas.excalidraw');
+    const socket = registerClient(hub, 'resources/flows/home.excalidraw');
 
     const firstResultPromise = hub.sendCommand('canvas_get_state', {}, {
       requestId: 'duplicate-command',
@@ -432,7 +434,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('rejects canvas commands when the browser does not answer before timeout', async () => {
     const { hub } = createHub();
-    registerClient(hub, 'prototypes/home/canvas.excalidraw');
+    registerClient(hub, 'resources/flows/home.excalidraw');
 
     const resultPromise = hub.sendCommand('canvas_capture', { scope: 'viewport' }, {
       requestId: 'timeout-command',
@@ -449,12 +451,12 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('routes canvas commands to the requested canvas name when multiple tabs are connected', async () => {
     const { hub } = createHub();
-    const home = registerClient(hub, 'prototypes/home/canvas.excalidraw');
-    const about = registerClient(hub, 'src/prototypes/about/canvas.excalidraw');
+    const home = registerClient(hub, 'resources/flows/home.excalidraw');
+    const about = registerClient(hub, 'src/resources/flows/about.excalidraw');
 
     const resultPromise = hub.sendCommand('canvas_focus', { target: 'all' }, {
       requestId: 'about-command',
-      canvasName: 'src/prototypes/about/canvas.excalidraw',
+      canvasName: 'src/resources/flows/about.excalidraw',
       timeoutMs: 5000,
     });
 
@@ -465,7 +467,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
       expect.objectContaining({
         type: 'canvas.command.request',
         requestId: 'about-command',
-        canvasName: 'prototypes/about/canvas',
+        canvasName: 'resources/flows/about.excalidraw',
         command: 'canvas_focus',
       }),
     ]));
@@ -483,7 +485,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('rejects pending canvas commands when the target browser tab disconnects', async () => {
     const { hub } = createHub();
-    const socket = registerClient(hub, 'prototypes/home/canvas.excalidraw');
+    const socket = registerClient(hub, 'resources/flows/home.excalidraw');
 
     const resultPromise = hub.sendCommand('canvas_get_state', {}, {
       requestId: 'disconnect-command',
@@ -500,7 +502,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('responds to ping frames and ignores malformed text frames without dropping the client', () => {
     const { hub } = createHub();
-    const socket = registerClient(hub, 'prototypes/home/canvas');
+    const socket = registerClient(hub, 'resources/flows/home.excalidraw');
     const beforeCount = hub.clientCount;
 
     socket.emit('data', encodeClientTextFrame({ type: 'ping' }));
@@ -516,7 +518,7 @@ describe('CanvasBridgeHub hot reload watcher lifecycle', () => {
 
   it('handles websocket control frames and extended client frames', () => {
     const { hub } = createHub();
-    const socket = registerClient(hub, 'prototypes/home/canvas');
+    const socket = registerClient(hub, 'resources/flows/home.excalidraw');
 
     socket.emit('data', encodeClientFrame(0x09, Buffer.from('still-here')));
     expect(socket.rawFrames).toEqual(expect.arrayContaining([

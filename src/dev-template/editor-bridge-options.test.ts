@@ -12,10 +12,12 @@ describe('dev template editor bridge launch options', () => {
     expect(enableStart).toBeGreaterThan(-1);
     expect(enableEnd).toBeGreaterThan(enableStart);
     expect(enableSource).toContain('event.data.options');
-    expect(enableSource).not.toContain('genieBridge');
+    expect(enableSource).not.toContain('agentBridge');
     expect(enableSource).not.toContain('integrationWs');
     expect(enableSource).toContain('mobileMode');
     expect(enableSource).toContain('commentPageScope');
+    expect(enableSource).toContain('annotationApiBaseUrl');
+    expect(enableSource).toContain('annotationProjectId');
     expect(enableSource).toContain('readPrototypeEditorBridgeCommentPageScope');
     expect(enableSource).toContain("editorModeManager?.api.enable('webEditorV2'");
   });
@@ -31,5 +33,12 @@ describe('dev template editor bridge launch options', () => {
     expect(source).toContain('event.data.nextState');
     expect(source).toContain('event.data.taskRef ?? null');
     expect(source).toContain('event.data.targetRef ?? null');
+  });
+
+  it('returns web editor debug state to the parent bridge state query', () => {
+    const source = readFileSync(resolve(__dirname, './index.tsx'), 'utf8');
+
+    expect(source).toContain("event.data.type === 'AXHUB_PROTOTYPE_EDITOR_QUERY_STATE'");
+    expect(source).toContain('debugState: editorModeManager?.api.getWebEditorDebugState?.() ?? null');
   });
 });

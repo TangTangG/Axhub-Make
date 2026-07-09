@@ -1,26 +1,33 @@
 import { createWebEditorV2Controller } from './webEditorV2Integration';
 import type {
-  GenieEditorDebugState,
-  GenieEditorEditedSnapshot,
-  GenieEditorExternalEditingState,
-  GenieEditorExternalEditingTaskRef,
-  GenieEditorExternalEditingStateResult,
-  GenieEditorExternalEditingTargetRef,
-  GenieEditorHostToolbarAction,
-  GenieEditorHostToolbarState,
-  GenieEditorToolbarMode,
+  CommentaryDebugState,
+  CommentaryEditedSnapshot,
+  CommentaryExternalEditingState,
+  CommentaryExternalEditingTaskRef,
+  CommentaryExternalEditingStateResult,
+  CommentaryExternalEditingTargetRef,
+  CommentaryHostToolbarAction,
+  CommentaryHostToolbarState,
+  CommentaryToolbarMode,
 } from '@/common/web-editor-types';
 
 export type EditorMode = 'none' | 'webEditorV2';
 export interface DevEditorEnableOptions {
-  toolbarMode?: GenieEditorToolbarMode;
+  toolbarMode?: CommentaryToolbarMode;
   initialDarkMode?: boolean;
   mobileMode?: boolean;
   assistantPanelOpen?: boolean;
   commentPageScope?: string;
+  annotationApiBaseUrl?: string;
+  annotationProjectId?: string;
 }
 
-const MAKE_GENIE_EDITOR_SKILL_INSTALL_SOURCE = '.agents/skills/prototype-comments/SKILL.md';
+const MAKE_COMMENTARY_SKILL_INSTALL_SOURCE = [
+  '.agents/skills/explore-options/SKILL.md',
+  '.claude/skills/explore-options/SKILL.md',
+  '.agents/skills/prototype-comments/SKILL.md',
+  '.claude/skills/prototype-comments/SKILL.md',
+].join('\n');
 
 export interface DevEditorsApi {
   getMode: () => EditorMode;
@@ -32,17 +39,18 @@ export interface DevEditorsApi {
   saveWebEditorTextChanges: () => Promise<void> | void;
   saveWebEditorStyleChanges: () => Promise<void> | void;
   clearWebEditorForcedStyles: () => Promise<void> | void;
-  getWebEditorDebugState: () => GenieEditorDebugState | null;
-  getHostToolbarState: () => GenieEditorHostToolbarState;
-  subscribeHostToolbarState: (listener: (state: GenieEditorHostToolbarState) => void) => () => void;
-  runHostToolbarAction: (action: GenieEditorHostToolbarAction) => Promise<boolean>;
-  getEditedSnapshot: () => GenieEditorEditedSnapshot | null;
+  getWebEditorDebugState: () => CommentaryDebugState | null;
+  getHostToolbarState: () => CommentaryHostToolbarState;
+  subscribeHostToolbarState: (listener: (state: CommentaryHostToolbarState) => void) => () => void;
+  runHostToolbarAction: (action: CommentaryHostToolbarAction) => Promise<boolean>;
+  getEditedSnapshot: () => CommentaryEditedSnapshot | null;
+  getElementPromptText?: (elementKey: string) => string;
   setNodeEditingState: (
     elementKey: string,
-    nextState: GenieEditorExternalEditingState,
-    taskRef: Partial<GenieEditorExternalEditingTaskRef> | null,
-    targetRef?: GenieEditorExternalEditingTargetRef | null,
-  ) => Promise<GenieEditorExternalEditingStateResult>;
+    nextState: CommentaryExternalEditingState,
+    taskRef: Partial<CommentaryExternalEditingTaskRef> | null,
+    targetRef?: CommentaryExternalEditingTargetRef | null,
+  ) => Promise<CommentaryExternalEditingStateResult>;
   getCopyPromptText?: () => string;
   getDecisionDataCount: () => number;
   getStatus: () => {
@@ -67,7 +75,7 @@ export const createEditorModeManager = (initialMode?: EditorMode) => {
 
   const webEditorController = createWebEditorV2Controller({
     ui: {
-      skillInstallSource: MAKE_GENIE_EDITOR_SKILL_INSTALL_SOURCE,
+      skillInstallSource: MAKE_COMMENTARY_SKILL_INSTALL_SOURCE,
       hideExecutionControls: true,
     },
   });
@@ -127,6 +135,7 @@ export const createEditorModeManager = (initialMode?: EditorMode) => {
     subscribeHostToolbarState: (listener) => webEditorController.subscribeHostToolbarState(listener),
     runHostToolbarAction: (action) => webEditorController.runHostToolbarAction(action),
     getEditedSnapshot: () => webEditorController.getEditedSnapshot(),
+    getElementPromptText: (elementKey) => webEditorController.getElementPromptText?.(elementKey) ?? '',
     setNodeEditingState: (elementKey, nextState, taskRef, targetRef) => webEditorController.setNodeEditingState(elementKey, nextState, taskRef, targetRef ?? null),
     getCopyPromptText: () => webEditorController.getCopyPromptText?.() ?? '',
     getDecisionDataCount: () => webEditorController.getDecisionDataCount(),

@@ -52,6 +52,7 @@ interface PendingPreviewCommand {
 }
 
 interface ParsedFrame {
+  fin: boolean;
   opcode: number;
   payload: Buffer;
   consumed: number;
@@ -61,6 +62,10 @@ interface PreviewBridgeClient {
   id: string;
   socket: Duplex;
   buffer: Buffer;
+  fragmentedMessage: {
+    opcode: number;
+    chunks: Buffer[];
+  } | null;
   alive: boolean;
   registered: boolean;
   registeredAt: number;
@@ -105,6 +110,7 @@ function parseFrame(buffer: Buffer): ParsedFrame | null {
 
   const firstByte = buffer[0];
   const secondByte = buffer[1];
+  const fin = (firstByte & 0x80) !== 0;
   const opcode = firstByte & 0x0f;
   const masked = (secondByte & 0x80) !== 0;
   let payloadLength = secondByte & 0x7f;
@@ -135,7 +141,7 @@ function parseFrame(buffer: Buffer): ParsedFrame | null {
     payload = buffer.subarray(offset, offset + payloadLength);
   }
 
-  return { opcode, payload, consumed: totalLength };
+  return { fin, opcode, payload, consumed: totalLength };
 }
 
 function createRequestId(): string {
@@ -207,6 +213,7 @@ export class PreviewBridgeHub {
       id: clientId,
       socket,
       buffer: head.length > 0 ? Buffer.from(head) : Buffer.alloc(0),
+      fragmentedMessage: null,
       alive: true,
       registered: false,
       registeredAt: 0,
@@ -296,7 +303,28 @@ export class PreviewBridgeHub {
 
       switch (frame.opcode) {
         case 0x01:
-          this.handleTextMessage(client, frame.payload.toString('utf8'));
+          if (frame.fin) {
+            client.fragmentedMessage = null;
+            this.handleTextMessage(client, frame.payload.toString('utf8'));
+          } else {
+            client.fragmentedMessage = {
+              opcode: frame.opcode,
+              chunks: [frame.payload],
+            };
+          }
+          break;
+        case 0x00:
+          if (!client.fragmentedMessage) {
+            break;
+          }
+          client.fragmentedMessage.chunks.push(frame.payload);
+          if (frame.fin) {
+            const fragmentedMessage = client.fragmentedMessage;
+            client.fragmentedMessage = null;
+            if (fragmentedMessage.opcode === 0x01) {
+              this.handleTextMessage(client, Buffer.concat(fragmentedMessage.chunks).toString('utf8'));
+            }
+          }
           break;
         case 0x08:
           this.removeClient(client.id);

@@ -1,12 +1,27 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { ChevronDown, SlidersHorizontal, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
 
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { resolveAcpPromptClientProvider } from '@/common/acpModelConfig';
+import { normalizePromptClientPreference } from '@/common/promptExecution';
 import type { ItemData, PromptClientPreference } from '../../types';
 import type { ThemeResourceItem } from '../resources/resource.types';
-import type { CanvasAiScene, CanvasAiSubmitRequest } from '../shared/CanvasGenerationComposer';
-import CanvasGenerationComposer from '../shared/CanvasGenerationComposer';
-import type { CanvasImageArtifactEvent } from '../ai-image/canvasImageArtifacts';
+import type { CanvasAiScene, CanvasAiSubmitRequest, CanvasGenerationAttachmentPart, CanvasPromptOptimizationRequest } from '../shared/CanvasGenerationComposer';
+import { CanvasGenerationDisplayComposer } from '../shared/CanvasGenerationComposer';
 import type { GenerationArtifactRecord } from './generationArtifactHistoryStore';
 import {
   createCanvasReferenceSnapshot,
@@ -14,73 +29,61 @@ import {
   type CanvasLocalContextRef,
   type CanvasReferenceSnapshot,
 } from '../ai-image/canvasReferenceImages';
-import PrototypeGenerationComposer, { type PrototypeGenerationComposerSettings } from '../prototype-generation/PrototypeGenerationComposer';
 import {
-  resolveCanvasGeneratorPlacement,
-  type CanvasGeneratorPlacement,
-} from '../shared/canvasGeneratorPlacement';
-import { shouldDeleteCanvasGeneratorFromComposerKeydown } from '../shared/canvasGeneratorComposerKeydown';
-import { createCanvasGenerationComposerDraftStorageKey } from '../shared/canvasGenerationComposerDraft';
-import CanvasNodeTitleLabel, {
-  CANVAS_NODE_TITLE_LABEL_HEIGHT,
-  CANVAS_NODE_TITLE_LABEL_MAX_WIDTH,
-  CANVAS_NODE_TITLE_LABEL_OFFSET,
-} from '../../components/content/canvas-embeds/CanvasNodeTitleLabel';
-import { shouldFitElementIntoCanvasViewport } from '../../components/content/canvas-embeds/activePreviewViewport';
+  NO_PROTOTYPE_THEME_VALUE,
+  resolvePrototypeGenerationInitialThemeName,
+  resolvePrototypeGenerationSyncedThemeName,
+} from '../prototype-generation/prototypeGenerationThemeSelection';
+import { PrototypeThemeSearchSelect } from '../prototype-generation/PrototypeThemeSearchSelect';
 import {
-  CANVAS_AI_GENERATION_PLACEHOLDER_FILE_ID,
-  CANVAS_AI_GENERATION_TITLE,
-  createCanvasAiGenerationElement,
-  createCanvasAiGenerationPlaceholderFile,
-  isCanvasAiGenerationElement,
-  migrateCanvasAiGenerationElement,
-  normalizeCanvasAiScene,
-  resolveCanvasAiGenerationArtifactKind,
-  resolveCanvasAiGenerationScene,
-} from './canvasAiGeneration';
+  createCanvasGenerationComposerDraftStorageKey,
+  getCanvasGenerationComposerDraftStorage,
+  readCanvasGenerationComposerDraft,
+  writeCanvasGenerationComposerDraft,
+} from '../shared/canvasGenerationComposerDraft';
 import {
-  CANVAS_AI_GENERATOR_NODE_SCENE_OPTIONS,
+  appendCanvasAiPrototypeStartSystemPrompt,
+  CANVAS_AI_SCENE_OPTIONS,
   getCanvasAiSceneDefinition,
-  getCanvasAiSceneQuickPrompts,
-  pickCanvasAiScenePlaceholder,
+  getCanvasAiPrototypeStartPlaceholders,
+  getCanvasAiPrototypeStartSystemPrompt,
+  pickCanvasAiPrototypeStartPlaceholder,
 } from './canvasAiSceneRegistry';
-import { appendCanvasGenerationPromptSettings } from './canvasGenerationPromptSettings';
-
-export const AI_GENERATION_INSERT_EVENT_NAME = 'axhub:insertAiGeneration';
-export const CANVAS_LOCAL_AI_RUNTIME_DISABLED = true;
-
-/* Legacy local canvas AI runtime (disabled by CANVAS_LOCAL_AI_RUNTIME_DISABLED).
- * Keep these entry points documented until the sidebar-owned generation path is
- * fully settled, then remove them in a dedicated cleanup:
- * - import { runAiStream } from './aiRunClient';
- * - getAiImageTaskStore().submit
- * - getPrototypeGenerationTaskStore().submit
- * - createAiImageGenerationSlots / finishAiImageGenerationSlots
- * - createPrototypeGenerationSlots / finishPrototypeGenerationSlots
- * - createCanvasImageArtifactEventFromAiImageTask
- * - replacePrototypeGeneratorWithEmbeddable
- * - generatorStatusOverlays
- * - stageLabel(overlay.task)
- * - formatElapsed(overlay.task)
- * End legacy local canvas AI runtime.
- */
+import {
+  appendCanvasGenerationPromptSettings,
+  type CanvasDocumentFormat,
+  type CanvasDocumentPromptSettings,
+  type CanvasImagePromptSettings,
+  type CanvasPrototypePromptSettings,
+} from './canvasGenerationPromptSettings';
+import {
+  createCanvasDirectRunController,
+  type CanvasDirectRunController,
+  type CanvasDirectRunSubmitPayload,
+} from './canvasDirectRun';
+import type { CanvasDirectRunOverlayController, CanvasDirectRunOverlayTaskDetails } from './CanvasDirectRunOverlay';
+import { optimizeCanvasPrompt } from './canvasPromptOptimization';
 
 export interface CanvasAiGenerationRequest {
   scene: CanvasAiScene;
   prompt?: string;
-  source?: 'placeholder-start' | 'canvas-toolbar' | 'canvas-node';
+  source?: 'placeholder-start' | 'resource-start' | 'theme-start' | 'canvas-start';
   generatorId?: string;
   canvasFilePath?: string;
   createdPrototype?: ItemData;
+  attachments?: CanvasGenerationAttachmentPart[];
   referenceImages?: string[];
   localContextRefs?: CanvasLocalContextRef[];
-  referencePlacement?: CanvasGeneratorPlacement;
   provider?: string | null;
   model?: string | null;
   mode?: string | null;
   thought?: string | null;
   contextBundle?: CanvasAiSubmitRequest['contextBundle'];
   sceneSettings?: CanvasAiSubmitRequest['sceneSettings'];
+  statusTaskId?: string;
+  signal?: AbortSignal;
+  onPrepared?: (payload: CanvasDirectRunSubmitPayload) => void | Promise<void>;
+  onAccepted?: (payload: CanvasDirectRunSubmitPayload) => void | Promise<void>;
 }
 
 export interface CanvasAiGenerationResult {
@@ -88,519 +91,547 @@ export interface CanvasAiGenerationResult {
   artifacts?: GenerationArtifactRecord[];
 }
 
-interface CanvasAiGenerationSceneSnapshot {
-  elements: readonly any[];
-  appState: any;
-}
-
 interface CanvasAiGenerationToolProps {
   excalidrawAPI: any;
-  containerRef: React.RefObject<HTMLDivElement>;
+  canvasDirectRunOverlayController?: CanvasDirectRunOverlayController;
   canvasFilePath?: string;
   assistantProjectPath?: string;
   preferredPromptClient?: PromptClientPreference;
-  prototypes?: ItemData[];
   themes?: ThemeResourceItem[];
   defaultThemeName?: string | null;
-  onImageArtifact?: (event: CanvasImageArtifactEvent) => void;
-  onRefreshPrototypes?: () => Promise<ItemData[]>;
+  agentRunConcurrency?: number;
   onOpenAISettings?: () => void;
-  onSceneMutated?: (snapshot?: CanvasAiGenerationSceneSnapshot) => void;
   onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
 }
 
-interface SelectedAiGenerationInfo {
-  element: any;
-  kind: 'generator';
-  left: number;
-  top: number;
-  composerPlacement: {
-    left: number;
-    top: number;
-    width: number;
-  };
+const CANVAS_START_SELECT_CONTENT_STYLE = { zIndex: 1400 } satisfies CSSProperties;
+const CANVAS_START_COUNT_OPTIONS = [1, 2, 3, 4] as const;
+const CANVAS_START_IMAGE_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+const CANVAS_START_UNSPECIFIED_SETTING_VALUE = '__unspecified__';
+const CANVAS_START_IMAGE_SIZE_OPTIONS = [
+  { label: '自动', value: 'auto' },
+  { label: '手机整屏 768x1664', value: '768x1664' },
+  { label: '手机高清 1168x2528', value: '1168x2528' },
+  { label: 'PC 工作台 1440x896', value: '1440x896' },
+  { label: 'PC 高清 1920x1200', value: '1920x1200' },
+  { label: '方图 1024x1024', value: '1024x1024' },
+] as const;
+const CANVAS_START_IMAGE_QUALITY_OPTIONS = [
+  { label: '自动', value: 'auto' },
+  { label: '高', value: 'high' },
+  { label: '中', value: 'medium' },
+  { label: '低', value: 'low' },
+] as const;
+const CANVAS_START_IMAGE_FORMAT_OPTIONS = [
+  { label: 'PNG', value: 'png' },
+  { label: 'JPEG', value: 'jpeg' },
+  { label: 'WebP', value: 'webp' },
+] as const;
+const CANVAS_START_DOCUMENT_FORMAT_OPTIONS = [
+  { label: 'Markdown 文档', value: 'md' },
+  { label: 'HTML 文档', value: 'html' },
+  { label: 'Mermaid 图表', value: 'mermaid' },
+  { label: 'Drawio 图表', value: 'drawio' },
+] as const satisfies readonly { label: string; value: CanvasDocumentFormat }[];
+const DEFAULT_CANVAS_START_IMAGE_SETTINGS: CanvasImagePromptSettings = {
+  size: 'auto',
+  quality: 'auto',
+  output_format: undefined,
+  background: 'auto',
+  n: undefined,
+  disable_prompt_optimization: false,
+};
+
+function getCanvasDirectRunConcurrency(value: unknown): number {
+  const normalized = Math.floor(Number(value));
+  return Number.isFinite(normalized) ? Math.max(1, normalized) : 1;
 }
 
-interface GeneratorTitleLabel {
-  elementId: string;
-  title: string;
-  left: number;
-  top: number;
-  maxWidth: number;
-  isSelected: boolean;
+function getCanvasStartDirectTaskError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || 'AI 执行失败');
 }
 
-const AI_GENERATION_COMPOSER_WIDTH = 640;
-const AI_GENERATION_COMPOSER_GAP = 10;
-const AI_GENERATION_COMPOSER_ESTIMATED_HEIGHT = 128;
-const AI_GENERATION_COMPOSER_BOTTOM_INSET = 16;
-const AI_GENERATION_TITLE_COLOR = '#008F5D';
-
-function canvasToScreen(
-  canvasX: number,
-  canvasY: number,
-  scrollX: number,
-  scrollY: number,
-  zoom: number,
-  containerLeft: number,
-  containerTop: number,
-) {
-  return {
-    x: containerLeft + (canvasX + scrollX) * zoom,
-    y: containerTop + (canvasY + scrollY) * zoom,
-  };
+function getCanvasStartSceneLabel(scene: CanvasAiScene): string {
+  if (scene === 'design') return '设计图';
+  if (scene === 'document') return '文档';
+  return '原型';
 }
 
-function clampComposerTop(anchorTop: number, containerHeight: number): number {
-  const lowestVisibleTop = Math.max(
-    AI_GENERATION_COMPOSER_BOTTOM_INSET,
-    containerHeight - AI_GENERATION_COMPOSER_ESTIMATED_HEIGHT - AI_GENERATION_COMPOSER_BOTTOM_INSET,
-  );
-  return Math.max(
-    AI_GENERATION_COMPOSER_BOTTOM_INSET,
-    Math.min(anchorTop, lowestVisibleTop),
-  );
+function getAttachmentLabel(attachment: CanvasGenerationAttachmentPart, index: number): string {
+  const filename = attachment.filename?.trim();
+  if (filename) return filename;
+  return attachment.type === 'image' ? `图片附件 ${index + 1}` : `文件附件 ${index + 1}`;
 }
 
-function refreshPlaceholderFile(excalidrawAPI: any) {
-  excalidrawAPI.addFiles([createCanvasAiGenerationPlaceholderFile()]);
+function getLocalContextRefLabel(ref: CanvasLocalContextRef): string {
+  return ref.title?.trim()
+    || ref.resourceId?.trim()
+    || ref.paths.find((path) => path.trim())?.trim()
+    || ref.resourceType;
 }
 
-function migrateGeneratorPlaceholders(excalidrawAPI: any): boolean {
-  let changed = false;
-  const elements = excalidrawAPI.getSceneElements().map((element: any) => {
-    const migrated = migrateCanvasAiGenerationElement(element);
-    if (migrated !== element) changed = true;
-    return migrated;
-  });
-  if (changed) {
-    excalidrawAPI.updateScene({ elements });
+function getContextBundleLabels(contextBundle: CanvasAiSubmitRequest['contextBundle']): string[] {
+  const rawItems = Array.isArray((contextBundle as any)?.items) ? (contextBundle as any).items : [];
+  return rawItems
+    .map((item: any, index: number) => String(item?.name || item?.path || item?.title || item?.id || `上下文 ${index + 1}`).trim())
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function appendDefinedSetting(target: string[], label: string, value: unknown) {
+  if (value === undefined || value === null || value === '' || value === false) return;
+  target.push(`${label}: ${value === true ? '开启' : String(value)}`);
+}
+
+function getCanvasStartSettingsSummary(
+  scene: CanvasAiScene,
+  settings: CanvasImagePromptSettings | CanvasDocumentPromptSettings | CanvasPrototypePromptSettings,
+): string[] {
+  const result: string[] = [];
+  if (scene === 'design') {
+    const imageSettings = settings as CanvasImagePromptSettings;
+    appendDefinedSetting(result, '尺寸', imageSettings.size && imageSettings.size !== 'auto' ? imageSettings.size : undefined);
+    appendDefinedSetting(result, '质量', imageSettings.quality && imageSettings.quality !== 'auto' ? imageSettings.quality : undefined);
+    appendDefinedSetting(result, '方案数量', imageSettings.n);
+    appendDefinedSetting(result, '格式', imageSettings.output_format);
+    appendDefinedSetting(result, '背景', imageSettings.background && imageSettings.background !== 'auto' ? imageSettings.background : undefined);
+    appendDefinedSetting(result, '设计系统', imageSettings.themeName);
+    appendDefinedSetting(result, '禁止优化提示词', imageSettings.disable_prompt_optimization);
+    return result;
   }
-  return changed;
+  if (scene === 'document') {
+    const documentSettings = settings as CanvasDocumentPromptSettings;
+    appendDefinedSetting(result, '格式', documentSettings.format);
+    appendDefinedSetting(result, '需求分析', documentSettings.needsRequirementsAnalysis);
+    return result;
+  }
+  const prototypeSettings = settings as CanvasPrototypePromptSettings;
+  appendDefinedSetting(result, '方案数量', prototypeSettings.count);
+  appendDefinedSetting(result, '设计系统', prototypeSettings.themeName);
+  appendDefinedSetting(result, '需求分析', prototypeSettings.needsRequirementsAnalysis);
+  return result;
 }
 
-function GenericCanvasAiGenerationComposer({
-  assistantProjectPath,
-  canPasteReferenceImages,
-  draftStorageKey,
-  initialLocalContextRefs,
-  initialReferenceImages,
-  onPasteReferenceImages,
-  onOpenAISettings,
-  onSubmitPrompt,
-  placement,
-  preferredPromptClient,
+function buildCanvasDirectRunOverlayTaskDetails({
+  attachments,
+  canvasFilePath,
+  contextBundle,
+  localContextRefs,
+  prompt,
+  referenceImages,
   scene,
-  topContent,
+  settings,
 }: {
-  assistantProjectPath?: string;
-  canPasteReferenceImages?: boolean;
-  draftStorageKey?: string | null;
-  initialLocalContextRefs?: CanvasLocalContextRef[];
-  initialReferenceImages?: string[];
-  onPasteReferenceImages?: () => Promise<string[]>;
-  onOpenAISettings?: () => void;
-  onSubmitPrompt: (request: CanvasAiSubmitRequest) => Promise<{ ok: boolean; text: string; error?: string }>;
-  placement: { left: number; top: number; width: number };
-  preferredPromptClient?: PromptClientPreference;
+  attachments: CanvasGenerationAttachmentPart[];
+  canvasFilePath?: string;
+  contextBundle: CanvasAiSubmitRequest['contextBundle'] | undefined;
+  localContextRefs: CanvasLocalContextRef[];
+  prompt: string;
+  referenceImages: string[];
   scene: CanvasAiScene;
-  topContent?: React.ReactNode;
+  settings: CanvasImagePromptSettings | CanvasDocumentPromptSettings | CanvasPrototypePromptSettings;
+}): CanvasDirectRunOverlayTaskDetails {
+  const context = [
+    ...(canvasFilePath ? [`画布: ${canvasFilePath}`] : []),
+    ...attachments.map(getAttachmentLabel),
+    ...(referenceImages.length ? [`参考图: ${referenceImages.length} 张`] : []),
+    ...localContextRefs.map(getLocalContextRefLabel),
+    ...getContextBundleLabels(contextBundle),
+  ];
+  const config = [
+    `类型: ${getCanvasStartSceneLabel(scene)}`,
+    ...getCanvasStartSettingsSummary(scene, settings),
+  ];
+  return { prompt, context, config };
+}
+
+function CanvasStartSettingsPopover({
+  documentFormat,
+  documentNeedsRequirementsAnalysis,
+  imageSettings,
+  onDocumentFormatChange,
+  onDocumentNeedsRequirementsAnalysisChange,
+  onImageSettingsChange,
+  onPrototypeCountChange,
+  onPrototypeNeedsRequirementsAnalysisChange,
+  onThemeChange,
+  prototypeCount,
+  prototypeNeedsRequirementsAnalysis,
+  scene,
+  selectedThemeName,
+  themeLabel,
+  themes,
+}: {
+  documentFormat: CanvasDocumentFormat | '';
+  documentNeedsRequirementsAnalysis: boolean;
+  imageSettings: CanvasImagePromptSettings;
+  onDocumentFormatChange: (format: CanvasDocumentFormat | '') => void;
+  onDocumentNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
+  onImageSettingsChange: (settings: CanvasImagePromptSettings) => void;
+  onPrototypeCountChange: (count?: number) => void;
+  onPrototypeNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
+  onThemeChange: (themeName: string) => void;
+  prototypeCount?: number;
+  prototypeNeedsRequirementsAnalysis: boolean;
+  scene: CanvasAiScene;
+  selectedThemeName: string;
+  themeLabel: string;
+  themes?: ThemeResourceItem[];
 }) {
-  const [submitting, setSubmitting] = useState(false);
-  const [placeholder] = useState(() => pickCanvasAiScenePlaceholder(scene));
-  const handleSubmitPrompt = useCallback(async (request: CanvasAiSubmitRequest) => {
-    setSubmitting(true);
-    try {
-      return await onSubmitPrompt(request);
-    } finally {
-      setSubmitting(false);
-    }
-  }, [onSubmitPrompt]);
+  const hasPrototypeCount = typeof prototypeCount === 'number';
+  const hasSelectedTheme = selectedThemeName !== NO_PROTOTYPE_THEME_VALUE;
+  const updateImageSetting = <K extends keyof CanvasImagePromptSettings>(key: K, value: CanvasImagePromptSettings[K]) => {
+    onImageSettingsChange({
+      ...imageSettings,
+      [key]: value,
+    });
+  };
+  const imageSizeLabel = CANVAS_START_IMAGE_SIZE_OPTIONS.find((option) => option.value === imageSettings.size)?.label || imageSettings.size;
+  const imageQualityLabel = CANVAS_START_IMAGE_QUALITY_OPTIONS.find((option) => option.value === imageSettings.quality)?.label || imageSettings.quality;
+  const imageFormatLabel = imageSettings.output_format
+    ? CANVAS_START_IMAGE_FORMAT_OPTIONS.find((option) => option.value === imageSettings.output_format)?.label || imageSettings.output_format.toUpperCase()
+    : '';
+  const transparentBackgroundChecked = imageSettings.output_format === 'png' && imageSettings.background === 'transparent';
+  const disablePromptOptimizationChecked = imageSettings.disable_prompt_optimization === true || hasSelectedTheme;
+  const sceneTitle = scene === 'design' ? '设计图设置' : scene === 'document' ? '文档设置' : '原型设置';
+  const summary = scene === 'design'
+    ? [
+      imageSettings.size && imageSettings.size !== 'auto' ? imageSizeLabel : null,
+      imageSettings.quality && imageSettings.quality !== 'auto' ? imageQualityLabel : null,
+      typeof imageSettings.n === 'number' ? `${imageSettings.n} 个` : null,
+      imageSettings.output_format ? imageFormatLabel : null,
+      hasSelectedTheme ? themeLabel : null,
+      transparentBackgroundChecked ? '透明背景' : null,
+    ].filter(Boolean).join(' · ') || '未指定'
+    : scene === 'document'
+      ? [
+        CANVAS_START_DOCUMENT_FORMAT_OPTIONS.find((option) => option.value === documentFormat)?.label || null,
+        documentNeedsRequirementsAnalysis ? '需求分析' : null,
+      ].filter(Boolean).join(' · ') || '未指定'
+      : [
+        hasPrototypeCount ? `${prototypeCount} 个` : null,
+        hasSelectedTheme ? themeLabel : null,
+        prototypeNeedsRequirementsAnalysis ? '需求分析' : null,
+      ].filter(Boolean).join(' · ') || '未指定';
 
   return (
-    <CanvasGenerationComposer
-      scene={scene}
-      dataAttribute="data-axhub-ai-generation-composer"
-      className="aui-root ax-ai-image-composer-host pointer-events-auto absolute z-[1200]"
-      placement={placement}
-      placementMode="fixed-bottom-center"
-      topContent={topContent}
-      workspacePath={assistantProjectPath}
-      placeholder={placeholder}
-      preferredPromptClient={preferredPromptClient}
-      ariaLabel="AI 生成提示词"
-      sendTooltip="AI 生成"
-      addAttachmentTooltip="添加参考"
-      allowAttachments={true}
-      showSelectors={true}
-      canPasteReferenceImages={canPasteReferenceImages}
-      draftStorageKey={draftStorageKey}
-      quickPrompts={getCanvasAiSceneQuickPrompts(scene)}
-      rootClassName="ax-ai-image-composer-root"
-      footerLeadingActionsClassName="ax-ai-image-composer-footer-leading-actions"
-      footerActionsClassName="ax-ai-image-composer-footer-actions"
-      initialLocalContextRefs={initialLocalContextRefs}
-      initialReferenceImages={initialReferenceImages}
-      onOpenAISettings={onOpenAISettings}
-      onPasteReferenceImages={onPasteReferenceImages}
-      submitting={submitting}
-      onSubmitPrompt={handleSubmitPrompt}
-    />
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="ax-ai-image-settings-trigger"
+          aria-label={sceneTitle}
+        >
+          <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="ax-ai-image-settings-summary">{summary}</span>
+          <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
+        <div className="space-y-3">
+          <div className="min-w-0 space-y-1">
+            <div className="text-sm font-medium text-foreground">{sceneTitle}</div>
+            <div className="truncate text-xs text-muted-foreground">{summary}</div>
+          </div>
+
+          {scene === 'design' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">尺寸</span>
+                <Select value={imageSettings.size || 'auto'} onValueChange={(value) => updateImageSetting('size', value)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent style={CANVAS_START_SELECT_CONTENT_STYLE}>
+                    {CANVAS_START_IMAGE_SIZE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">质量</span>
+                <Select value={imageSettings.quality || 'auto'} onValueChange={(value) => updateImageSetting('quality', value)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent style={CANVAS_START_SELECT_CONTENT_STYLE}>
+                    {CANVAS_START_IMAGE_QUALITY_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">方案数量</span>
+                <Select
+                  value={typeof imageSettings.n === 'number' ? String(imageSettings.n) : CANVAS_START_UNSPECIFIED_SETTING_VALUE}
+                  onValueChange={(value) => updateImageSetting('n', value === CANVAS_START_UNSPECIFIED_SETTING_VALUE ? undefined : Number(value))}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent style={CANVAS_START_SELECT_CONTENT_STYLE}>
+                    <SelectItem value={CANVAS_START_UNSPECIFIED_SETTING_VALUE}>未指定</SelectItem>
+                    {CANVAS_START_IMAGE_COUNT_OPTIONS.map((count) => (
+                      <SelectItem key={count} value={String(count)}>
+                        {count} 个
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">格式</span>
+                <Select
+                  value={imageSettings.output_format || CANVAS_START_UNSPECIFIED_SETTING_VALUE}
+                  onValueChange={(value) => updateImageSetting('output_format', value === CANVAS_START_UNSPECIFIED_SETTING_VALUE ? undefined : value)}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent style={CANVAS_START_SELECT_CONTENT_STYLE}>
+                    <SelectItem value={CANVAS_START_UNSPECIFIED_SETTING_VALUE}>未指定</SelectItem>
+                    {CANVAS_START_IMAGE_FORMAT_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+
+              <label className="col-span-2 space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">设计系统</span>
+                <PrototypeThemeSearchSelect
+                  themes={themes}
+                  value={selectedThemeName}
+                  onValueChange={onThemeChange}
+                />
+              </label>
+
+              <label className="space-y-1.5 text-xs font-medium text-foreground">
+                <span className="text-xs font-medium text-muted-foreground">禁止优化提示词</span>
+                <div className="flex h-8 items-center gap-2">
+                  <Switch
+                    checked={disablePromptOptimizationChecked}
+                    disabled={hasSelectedTheme}
+                    onCheckedChange={(checked) => updateImageSetting('disable_prompt_optimization', checked === true)}
+                    aria-label="画布 AI 禁止优化提示词"
+                  />
+                  <span>开启</span>
+                </div>
+              </label>
+
+              <label className="space-y-1.5 text-xs font-medium text-foreground">
+                <span className="text-xs font-medium text-muted-foreground">透明背景</span>
+                <div className="flex h-8 items-center gap-2">
+                  <Switch
+                    checked={transparentBackgroundChecked}
+                    disabled={imageSettings.output_format !== 'png'}
+                    onCheckedChange={(checked) => updateImageSetting('background', checked === true ? 'transparent' : 'auto')}
+                    aria-label="画布 AI 透明背景"
+                  />
+                  <span>开启</span>
+                </div>
+              </label>
+            </div>
+          ) : scene === 'document' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">文档格式</span>
+                <Select
+                  value={documentFormat || CANVAS_START_UNSPECIFIED_SETTING_VALUE}
+                  onValueChange={(value) => onDocumentFormatChange(value === CANVAS_START_UNSPECIFIED_SETTING_VALUE ? '' : value as CanvasDocumentFormat)}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent style={CANVAS_START_SELECT_CONTENT_STYLE}>
+                    <SelectItem value={CANVAS_START_UNSPECIFIED_SETTING_VALUE}>未指定</SelectItem>
+                    {CANVAS_START_DOCUMENT_FORMAT_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+
+              <label className="space-y-1.5 text-xs font-medium text-foreground">
+                <span className="text-xs font-medium text-muted-foreground">需求分析</span>
+                <div className="flex h-8 items-center gap-2">
+                  <Switch
+                    checked={documentNeedsRequirementsAnalysis}
+                    onCheckedChange={(checked) => onDocumentNeedsRequirementsAnalysisChange(checked === true)}
+                    aria-label="画布 AI 文档需要需求分析"
+                  />
+                  <span>开启</span>
+                </div>
+              </label>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">方案数量</span>
+                <Select
+                  value={hasPrototypeCount ? String(prototypeCount) : CANVAS_START_UNSPECIFIED_SETTING_VALUE}
+                  onValueChange={(value) => onPrototypeCountChange(value === CANVAS_START_UNSPECIFIED_SETTING_VALUE ? undefined : Number(value))}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent style={CANVAS_START_SELECT_CONTENT_STYLE}>
+                    <SelectItem value={CANVAS_START_UNSPECIFIED_SETTING_VALUE}>未指定</SelectItem>
+                    {CANVAS_START_COUNT_OPTIONS.map((count) => (
+                      <SelectItem key={count} value={String(count)}>
+                        {count} 个
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">设计系统</span>
+                <PrototypeThemeSearchSelect
+                  themes={themes}
+                  value={selectedThemeName}
+                  onValueChange={onThemeChange}
+                />
+              </label>
+
+              <label className="col-span-2 space-y-1.5 text-xs font-medium text-foreground">
+                <span className="text-xs font-medium text-muted-foreground">需求分析</span>
+                <div className="flex h-8 items-center gap-2">
+                  <Switch
+                    checked={prototypeNeedsRequirementsAnalysis}
+                    onCheckedChange={(checked) => onPrototypeNeedsRequirementsAnalysisChange(checked === true)}
+                    aria-label="画布 AI 原型需要需求分析"
+                  />
+                  <span>开启</span>
+                </div>
+              </label>
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
 export default function CanvasAiGenerationTool({
   excalidrawAPI,
-  containerRef,
+  canvasDirectRunOverlayController,
   canvasFilePath,
   assistantProjectPath,
+  preferredPromptClient,
   themes,
   defaultThemeName,
+  agentRunConcurrency,
   onOpenAISettings,
-  onSceneMutated,
   onSubmitCanvasAssistantPrompt,
 }: CanvasAiGenerationToolProps) {
-  const [pendingInitialReferenceImagesState, setPendingInitialReferenceImages] = useState<string[]>([]);
-  const [pendingInitialReferenceImagesGeneratorId, setPendingInitialReferenceImagesGeneratorId] = useState<string | null>(null);
-  const [pendingInitialLocalContextRefsState, setPendingInitialLocalContextRefs] = useState<CanvasLocalContextRef[]>([]);
-  const [pendingInitialLocalContextRefsGeneratorId, setPendingInitialLocalContextRefsGeneratorId] = useState<string | null>(null);
-  const [selectedInfo, setSelectedInfo] = useState<SelectedAiGenerationInfo | null>(null);
-  const [canvasOverlayRevision, setCanvasOverlayRevision] = useState(0);
-  const [pendingAutoSubmitRequest, setPendingAutoSubmitRequest] = useState<(CanvasAiGenerationRequest & { generatorId: string }) | null>(null);
+  const [canvasStartComposerOpen, setCanvasStartComposerOpen] = useState(false);
+  const [canvasStartScene, setCanvasStartScene] = useState<CanvasAiScene>('page');
+  const [canvasStartPlaceholder, setCanvasStartPlaceholder] = useState(() => pickCanvasAiPrototypeStartPlaceholder('page'));
+  const [canvasStartPrototypeCount, setCanvasStartPrototypeCount] = useState<number | undefined>(undefined);
+  const [canvasStartPrototypeNeedsRequirementsAnalysis, setCanvasStartPrototypeNeedsRequirementsAnalysis] = useState(false);
+  const [canvasStartImageParams, setCanvasStartImageParams] = useState<CanvasImagePromptSettings>(DEFAULT_CANVAS_START_IMAGE_SETTINGS);
+  const [canvasStartDocumentFormat, setCanvasStartDocumentFormat] = useState<CanvasDocumentFormat | ''>('');
+  const [canvasStartDocumentNeedsRequirementsAnalysis, setCanvasStartDocumentNeedsRequirementsAnalysis] = useState(false);
+  const [canvasStartSelectedThemeName, setCanvasStartSelectedThemeName] = useState(() => resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
+  const [canvasStartLocalContextRefs, setCanvasStartLocalContextRefs] = useState<CanvasLocalContextRef[]>([]);
+  const [hasCopiedCanvasReference, setHasCopiedCanvasReference] = useState(false);
+  const [canvasStartDraftRestoreVersion, setCanvasStartDraftRestoreVersion] = useState(0);
   const copiedCanvasReferenceRef = useRef<CanvasReferenceSnapshot | null>(null);
-  const canvasOverlaySignatureRef = useRef('');
-  const selectedGeneratorViewportFitRef = useRef<{ elementId: string | null; raf: number }>({
-    elementId: null,
-    raf: 0,
-  });
+  const canvasStartPreviousDefaultThemeNameRef = useRef(defaultThemeName);
+  const canvasStartUserSelectedThemeRef = useRef(false);
+  const canvasDirectRunControllerRef = useRef<CanvasDirectRunController | null>(null);
+  const canvasDirectRunControllerMaxRef = useRef(0);
+  const onSubmitCanvasAssistantPromptRef = useRef(onSubmitCanvasAssistantPrompt);
+  const activeStatusTaskRunsRef = useRef(new Map<string, { abort: () => Promise<boolean> }>());
+  const maxCanvasDirectRuns = useMemo(() => getCanvasDirectRunConcurrency(agentRunConcurrency), [agentRunConcurrency]);
 
-  const cancelPendingSelectedGeneratorViewportFit = useCallback(() => {
-    if (selectedGeneratorViewportFitRef.current.raf) {
-      cancelAnimationFrame(selectedGeneratorViewportFitRef.current.raf);
-      selectedGeneratorViewportFitRef.current.raf = 0;
+  useEffect(() => {
+    onSubmitCanvasAssistantPromptRef.current = onSubmitCanvasAssistantPrompt;
+  }, [onSubmitCanvasAssistantPrompt]);
+
+  const getCanvasDirectRunController = useCallback(() => {
+    const existingController = canvasDirectRunControllerRef.current;
+    if (
+      existingController
+      && existingController.getActiveRunCount() > 0
+    ) {
+      return existingController;
     }
+    if (
+      !existingController
+      || canvasDirectRunControllerMaxRef.current !== maxCanvasDirectRuns
+    ) {
+      canvasDirectRunControllerRef.current = createCanvasDirectRunController({
+        maxActiveRuns: maxCanvasDirectRuns,
+        submit: ({ request, signal, onPrepared, onAccepted }) => {
+          const submitter = onSubmitCanvasAssistantPromptRef.current;
+          if (!submitter) return Promise.resolve(false);
+          return Promise.resolve(submitter({
+            ...request,
+            signal,
+            onPrepared,
+            onAccepted,
+          }));
+        },
+        onEvent: (event) => {
+          const statusTaskId = String(event.request.statusTaskId || '').trim();
+          if (!statusTaskId || event.type === 'settled' || event.type === 'completed') return;
+          if (event.type === 'error') {
+            canvasDirectRunOverlayController?.markStatusTaskFailed(
+              statusTaskId,
+              getCanvasStartDirectTaskError(event.error),
+            );
+            return;
+          }
+          canvasDirectRunOverlayController?.updateStatusTaskRef(statusTaskId, {
+            status: event.type === 'aborted' ? 'aborted' : 'running',
+            provider: event.taskRef.provider,
+            runId: event.taskRef.requestId,
+            threadId: event.taskRef.sessionId,
+            conversationId: event.taskRef.sessionId,
+          });
+        },
+      });
+      canvasDirectRunControllerMaxRef.current = maxCanvasDirectRuns;
+    }
+    return canvasDirectRunControllerRef.current;
+  }, [canvasDirectRunOverlayController, maxCanvasDirectRuns]);
+
+  useEffect(() => () => {
+    void canvasDirectRunControllerRef.current?.abortAll();
+    activeStatusTaskRunsRef.current.clear();
   }, []);
 
-  const ensurePlaceholderFile = useCallback(() => {
-    const files = excalidrawAPI.getFiles?.() || {};
-    if (!files[CANVAS_AI_GENERATION_PLACEHOLDER_FILE_ID]) {
-      refreshPlaceholderFile(excalidrawAPI);
-    }
-  }, [excalidrawAPI]);
-
-  const updateSelectedGeneratorScene = useCallback((generatorId: string, scene: CanvasAiScene) => {
-    const artifactKind = resolveCanvasAiGenerationArtifactKind(scene);
-    const elements = excalidrawAPI.getSceneElements().map((element: any) => (
-      element.id === generatorId
-        ? {
-          ...element,
-          version: (element.version || 0) + 1,
-          versionNonce: Math.floor(Math.random() * 2147483647),
-          updated: Date.now(),
-          customData: {
-            ...element.customData,
-            title: CANVAS_AI_GENERATION_TITLE,
-            scene,
-            artifactKind,
-          },
-      }
-        : element
-    ));
-    excalidrawAPI.updateScene({ elements });
-    onSceneMutated?.({ elements, appState: excalidrawAPI.getAppState() });
-  }, [excalidrawAPI, onSceneMutated]);
-
-  const insertGenerator = useCallback((request: CanvasAiGenerationRequest = { scene: 'page', source: 'canvas-toolbar' }) => {
-    const scene = normalizeCanvasAiScene(request.scene);
-    const referenceImages = request.referenceImages || [];
-    const localContextRefs = request.localContextRefs || [];
-    setPendingInitialReferenceImages(referenceImages);
-    setPendingInitialLocalContextRefs(localContextRefs);
-    ensurePlaceholderFile();
-    const appState = excalidrawAPI.getAppState();
-    const currentElements = excalidrawAPI.getSceneElements();
-    const placement = request.referencePlacement || resolveCanvasGeneratorPlacement({
-      elements: currentElements,
-      appState,
-    });
-    const generator = createCanvasAiGenerationElement({
-      x: placement.x,
-      y: placement.y,
-      width: placement.width,
-      height: placement.height,
-      scene,
-      artifactKind: resolveCanvasAiGenerationArtifactKind(scene),
-      initialPrompt: request.prompt,
-    });
-    selectedGeneratorViewportFitRef.current.elementId = generator.id;
-    setPendingInitialReferenceImagesGeneratorId(referenceImages.length ? generator.id : null);
-    setPendingInitialLocalContextRefsGeneratorId(localContextRefs.length ? generator.id : null);
-    const autoSubmitSource = request.source || 'placeholder-start';
-    if (request.prompt?.trim()) {
-      setPendingAutoSubmitRequest({
-        ...request,
-        scene,
-        source: autoSubmitSource,
-        generatorId: generator.id,
-      });
-    }
-    const nextElements = [...currentElements, generator];
-    const nextAppState = {
-      ...appState,
-      selectedElementIds: { [generator.id]: true },
-      selectedGroupIds: {},
-    };
-    excalidrawAPI.updateScene({
-      elements: nextElements,
-      appState: nextAppState,
-    });
-    if (placement.needsScroll) {
-      const currentZoom = appState.zoom?.value || 1;
-      requestAnimationFrame(() => {
-        excalidrawAPI.scrollToContent(generator.id, {
-          fitToContent: true,
-          animate: true,
-          minZoom: currentZoom,
-          maxZoom: currentZoom,
-        });
-      });
-    }
-    onSceneMutated?.({ elements: nextElements, appState: nextAppState });
-  }, [ensurePlaceholderFile, excalidrawAPI, onSceneMutated]);
+  useEffect(() => {
+    setCanvasStartPlaceholder(pickCanvasAiPrototypeStartPlaceholder(canvasStartScene));
+  }, [canvasStartScene]);
 
   useEffect(() => {
-    const handleUnifiedInsert = (event: Event) => {
-      const detail = (event as CustomEvent<CanvasAiGenerationRequest>).detail || {};
-      insertGenerator({
-        scene: normalizeCanvasAiScene(detail.scene),
-        prompt: detail.prompt,
-        referenceImages: detail.referenceImages,
-        localContextRefs: detail.localContextRefs,
-        referencePlacement: detail.referencePlacement,
-        source: detail.source || 'canvas-toolbar',
-        provider: detail.provider,
-        model: detail.model,
-        mode: detail.mode,
-        thought: detail.thought,
-        contextBundle: detail.contextBundle,
-      });
-    };
-    document.addEventListener(AI_GENERATION_INSERT_EVENT_NAME, handleUnifiedInsert as EventListener);
-    return () => {
-      document.removeEventListener(AI_GENERATION_INSERT_EVENT_NAME, handleUnifiedInsert as EventListener);
-    };
-  }, [insertGenerator]);
-
-  const refreshCanvasOverlayRevision = useCallback(() => {
-    const container = containerRef.current;
-    if (!container || !excalidrawAPI) {
-      if (canvasOverlaySignatureRef.current) {
-        canvasOverlaySignatureRef.current = '';
-        setCanvasOverlayRevision((revision) => (revision + 1) % 1000000);
-      }
-      return;
-    }
-    const generatorElements = excalidrawAPI.getSceneElements()
-      .filter((element: any) => isCanvasAiGenerationElement(element) && !element.isDeleted);
-    const appState = excalidrawAPI.getAppState();
-    const selectedIds = appState?.selectedElementIds || {};
-    const signature = generatorElements.length
-      ? [
-          appState.scrollX || 0,
-          appState.scrollY || 0,
-          appState.zoom?.value || 1,
-          ...(() => {
-            const rect = container.getBoundingClientRect();
-            return [rect.left, rect.top, rect.width, rect.height];
-          })(),
-          ...generatorElements.map((element: any) => [
-            element.id,
-            element.x,
-            element.y,
-            element.width,
-            element.height,
-            element.customData?.title || '',
-            element.customData?.scene || '',
-            selectedIds[element.id] ? 1 : 0,
-          ].join(':')),
-        ].join('|')
-      : 'empty';
-    if (signature === canvasOverlaySignatureRef.current) return;
-    canvasOverlaySignatureRef.current = signature;
-    setCanvasOverlayRevision((revision) => (revision + 1) % 1000000);
-  }, [containerRef, excalidrawAPI]);
-
-  const refreshSelection = useCallback(() => {
-    const container = containerRef.current;
-    if (!container || !excalidrawAPI) {
-      setSelectedInfo(null);
-      return;
-    }
-    const hasGenerator = excalidrawAPI.getSceneElements().some((element: any) => (
-      isCanvasAiGenerationElement(element) && !element.isDeleted
-    ));
-    if (hasGenerator) {
-      ensurePlaceholderFile();
-      if (migrateGeneratorPlaceholders(excalidrawAPI)) {
-        onSceneMutated?.();
-      }
-    }
-    const appState = excalidrawAPI.getAppState();
-    const selectedIds = Object.keys(appState?.selectedElementIds || {});
-    if (selectedIds.length !== 1) {
-      selectedGeneratorViewportFitRef.current.elementId = null;
-      cancelPendingSelectedGeneratorViewportFit();
-      setSelectedInfo(null);
-      return;
-    }
-    const element = excalidrawAPI.getSceneElements().find((item: any) => item.id === selectedIds[0] && !item.isDeleted);
-    if (!element || !isCanvasAiGenerationElement(element)) {
-      selectedGeneratorViewportFitRef.current.elementId = null;
-      cancelPendingSelectedGeneratorViewportFit();
-      setSelectedInfo(null);
-      return;
-    }
-    if (selectedGeneratorViewportFitRef.current.elementId !== element.id) {
-      selectedGeneratorViewportFitRef.current.elementId = element.id;
-      if (shouldFitElementIntoCanvasViewport({ element, appState })) {
-        if (selectedGeneratorViewportFitRef.current.raf) {
-          cancelAnimationFrame(selectedGeneratorViewportFitRef.current.raf);
-        }
-        selectedGeneratorViewportFitRef.current.raf = requestAnimationFrame(() => {
-          selectedGeneratorViewportFitRef.current.raf = 0;
-          excalidrawAPI.scrollToContent(element.id, {
-            fitToContent: true,
-            animate: false,
-            maxZoom: 1.4,
-          });
-        });
-      }
-    }
-    const rect = container.getBoundingClientRect();
-    const zoom = appState.zoom?.value || 1;
-    const topLeft = canvasToScreen(
-      element.x,
-      element.y,
-      appState.scrollX || 0,
-      appState.scrollY || 0,
-      zoom,
-      rect.left,
-      rect.top,
-    );
-    const topRight = canvasToScreen(
-      element.x + (element.width || 0),
-      element.y,
-      appState.scrollX || 0,
-      appState.scrollY || 0,
-      zoom,
-      rect.left,
-      rect.top,
-    );
-    const bottomCenter = canvasToScreen(
-      element.x + (element.width || 0) / 2,
-      element.y + (element.height || 0),
-      appState.scrollX || 0,
-      appState.scrollY || 0,
-      zoom,
-      rect.left,
-      rect.top,
-    );
-    const composerWidth = Math.min(AI_GENERATION_COMPOSER_WIDTH, Math.max(320, rect.width - 32));
-    const composerLeft = Math.max(
-      16,
-      Math.min(rect.width - composerWidth - 16, bottomCenter.x - rect.left - composerWidth / 2),
-    );
-    setSelectedInfo({
-      element,
-      kind: 'generator',
-      left: topRight.x - rect.left + 8,
-      top: topLeft.y - rect.top,
-      composerPlacement: {
-        left: composerLeft,
-        top: clampComposerTop(bottomCenter.y - rect.top + AI_GENERATION_COMPOSER_GAP, rect.height),
-        width: composerWidth,
-      },
-    });
-  }, [cancelPendingSelectedGeneratorViewportFit, containerRef, ensurePlaceholderFile, excalidrawAPI, onSceneMutated]);
-
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      refreshSelection();
-      refreshCanvasOverlayRevision();
-      raf = requestAnimationFrame(tick);
-    };
-    tick();
-    return () => {
-      cancelAnimationFrame(raf);
-      cancelPendingSelectedGeneratorViewportFit();
-    };
-  }, [cancelPendingSelectedGeneratorViewportFit, refreshCanvasOverlayRevision, refreshSelection]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return undefined;
-    if (selectedInfo?.kind === 'generator') {
-      container.setAttribute('data-axhub-ai-generation-generator-selected', 'true');
-    } else {
-      container.removeAttribute('data-axhub-ai-generation-generator-selected');
-    }
-    return () => {
-      container.removeAttribute('data-axhub-ai-generation-generator-selected');
-    };
-  }, [containerRef, selectedInfo?.kind]);
-
-  useEffect(() => {
-    if (!excalidrawAPI) return;
-    const hasGenerator = excalidrawAPI.getSceneElements().some((element: any) => (
-      isCanvasAiGenerationElement(element) && !element.isDeleted
-    ));
-    if (hasGenerator) {
-      ensurePlaceholderFile();
-      if (migrateGeneratorPlaceholders(excalidrawAPI)) {
-        onSceneMutated?.();
-      }
-    }
-  }, [ensurePlaceholderFile, excalidrawAPI, onSceneMutated]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !excalidrawAPI) return undefined;
-    const handleComposerKeyDown = (event: KeyboardEvent) => {
-      if (selectedInfo?.kind !== 'generator') return;
-      const composerRoot = container.querySelector('[data-axhub-ai-image-composer], [data-axhub-prototype-composer], [data-axhub-ai-generation-composer]');
-      if (!shouldDeleteCanvasGeneratorFromComposerKeydown({
-        key: event.key,
-        target: event.target,
-        composerRoot,
-      })) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const elements = excalidrawAPI.getSceneElements().map((element: any) => (
-        element.id === selectedInfo.element.id
-          ? {
-            ...element,
-            isDeleted: true,
-            version: (element.version || 0) + 1,
-            versionNonce: Math.floor(Math.random() * 2147483647),
-            updated: Date.now(),
-          }
-          : element
-      ));
-      const nextAppState = {
-        ...excalidrawAPI.getAppState(),
-        selectedElementIds: {},
-        selectedGroupIds: {},
-      };
-      excalidrawAPI.updateScene({
-        elements,
-        appState: nextAppState,
-      });
-      onSceneMutated?.({ elements, appState: nextAppState });
-    };
-    document.addEventListener('keydown', handleComposerKeyDown, true);
-    return () => document.removeEventListener('keydown', handleComposerKeyDown, true);
-  }, [containerRef, excalidrawAPI, onSceneMutated, selectedInfo]);
+    const previousDefaultThemeName = canvasStartPreviousDefaultThemeNameRef.current;
+    setCanvasStartSelectedThemeName((current) => resolvePrototypeGenerationSyncedThemeName({
+      currentThemeName: current,
+      defaultThemeName,
+      previousDefaultThemeName,
+      themes,
+      userSelectedTheme: canvasStartUserSelectedThemeRef.current,
+    }));
+    canvasStartPreviousDefaultThemeNameRef.current = defaultThemeName;
+  }, [defaultThemeName, themes]);
 
   useEffect(() => {
     if (!excalidrawAPI) return undefined;
@@ -610,6 +641,7 @@ export default function CanvasAiGenerationTool({
         files: excalidrawAPI.getFiles?.() || {},
         appState: excalidrawAPI.getAppState(),
       });
+      setHasCopiedCanvasReference(Boolean(copiedCanvasReferenceRef.current));
     };
     document.addEventListener('copy', handleCopy, true);
     return () => document.removeEventListener('copy', handleCopy, true);
@@ -620,193 +652,274 @@ export default function CanvasAiGenerationTool({
     if (!snapshot) return [];
     const context = await renderCanvasReferenceContext(snapshot);
     const images = context.referenceImages;
-    if (selectedInfo?.kind === 'generator') {
-      setPendingInitialLocalContextRefs((previous) => {
-        const next = [...previous];
-        const existingKeys = new Set(next.map((ref) => `${ref.resourceType}:${ref.resourceId}:${ref.paths.join('|')}`));
-        for (const ref of context.localContextRefs) {
-          const key = `${ref.resourceType}:${ref.resourceId}:${ref.paths.join('|')}`;
-          if (!existingKeys.has(key)) {
-            existingKeys.add(key);
-            next.push(ref);
-          }
+    setCanvasStartLocalContextRefs((previous) => {
+      const next = [...previous];
+      const existingKeys = new Set(next.map((ref) => `${ref.resourceType}:${ref.resourceId}:${ref.paths.join('|')}`));
+      for (const ref of context.localContextRefs) {
+        const key = `${ref.resourceType}:${ref.resourceId}:${ref.paths.join('|')}`;
+        if (!existingKeys.has(key)) {
+          existingKeys.add(key);
+          next.push(ref);
         }
-        return next;
-      });
-      setPendingInitialLocalContextRefsGeneratorId(context.localContextRefs.length ? selectedInfo.element.id : pendingInitialLocalContextRefsGeneratorId);
-    }
+      }
+      return next;
+    });
     if (images.length) {
       toast.info(`已添加 ${images.length} 张画布参考图`);
     }
     if (context.localContextRefs.length) {
       toast.info(`已添加 ${context.localContextRefs.length} 个本地上下文`);
     }
-    return images;
-  }, [pendingInitialLocalContextRefsGeneratorId, selectedInfo]);
+    return context;
+  }, []);
 
-  const pendingInitialReferenceImages = useMemo(() => (
-    selectedInfo?.kind === 'generator' && selectedInfo.element?.id === pendingInitialReferenceImagesGeneratorId
-      ? pendingInitialReferenceImagesState
-      : []
-  ), [pendingInitialReferenceImagesGeneratorId, pendingInitialReferenceImagesState, selectedInfo]);
-  const pendingInitialLocalContextRefs = useMemo(() => (
-    selectedInfo?.kind === 'generator' && selectedInfo.element?.id === pendingInitialLocalContextRefsGeneratorId
-      ? pendingInitialLocalContextRefsState
-      : []
-  ), [pendingInitialLocalContextRefsGeneratorId, pendingInitialLocalContextRefsState, selectedInfo]);
-
-  const submitCanvasAssistantPrompt = useCallback(async (
-    request: CanvasAiSubmitRequest,
-    options: {
-      generatorId?: string;
-      sceneSettings?: PrototypeGenerationComposerSettings;
-      source?: CanvasAiGenerationRequest['source'];
-      localContextRefs?: CanvasLocalContextRef[];
-    } = {},
-  ) => {
-    const generatorId = options.generatorId || (selectedInfo?.element ? String(selectedInfo.element.id) : '');
-    if (!generatorId) {
-      return { ok: false, text: '请先选择 AI 生成节点', error: '请先选择 AI 生成节点' };
-    }
-    if (!onSubmitCanvasAssistantPrompt) {
-      return { ok: false, text: 'AI 助手未就绪', error: 'AI 助手未就绪' };
-    }
-    const referenceImages = request.referenceImages || [];
-    const localContextRefs = options.localContextRefs || pendingInitialLocalContextRefs;
-    const submitted = await onSubmitCanvasAssistantPrompt({
-      scene: normalizeCanvasAiScene(request.scene),
-      prompt: appendCanvasGenerationPromptSettings({
-        scene: normalizeCanvasAiScene(request.scene),
-        prompt: request.prompt,
-        settings: options.sceneSettings ?? request.sceneSettings,
-        canvasContext: {
-          canvasFilePath,
-          canvasName: canvasFilePath,
-          generatorElementId: generatorId,
-          source: options.source || 'canvas-node',
-        },
-      }),
-      source: options.source || 'canvas-node',
-      generatorId,
+  const canvasStartSelectedTheme = useMemo(() => (
+    themes?.find((theme) => theme.name === canvasStartSelectedThemeName) || null
+  ), [canvasStartSelectedThemeName, themes]);
+  const canvasStartThemeLabel = canvasStartSelectedTheme?.displayName || canvasStartSelectedTheme?.name || '无设计系统';
+  const canvasStartPrototypeSettings = useMemo<CanvasPrototypePromptSettings>(() => ({
+    count: canvasStartPrototypeCount,
+    themeName: canvasStartSelectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : canvasStartSelectedTheme?.name || '',
+    needsRequirementsAnalysis: canvasStartPrototypeNeedsRequirementsAnalysis,
+  }), [
+    canvasStartPrototypeCount,
+    canvasStartPrototypeNeedsRequirementsAnalysis,
+    canvasStartSelectedTheme?.name,
+    canvasStartSelectedThemeName,
+  ]);
+  const canvasStartImageSettings = useMemo<CanvasImagePromptSettings>(() => ({
+    ...canvasStartImageParams,
+    themeName: canvasStartSelectedThemeName === NO_PROTOTYPE_THEME_VALUE ? '' : canvasStartSelectedTheme?.name || '',
+    disable_prompt_optimization: canvasStartImageParams.disable_prompt_optimization === true
+      || canvasStartSelectedThemeName !== NO_PROTOTYPE_THEME_VALUE,
+    background: canvasStartImageParams.output_format === 'png' ? canvasStartImageParams.background : 'auto',
+  }), [canvasStartImageParams, canvasStartSelectedTheme?.name, canvasStartSelectedThemeName]);
+  const canvasStartDocumentSettings = useMemo<CanvasDocumentPromptSettings>(() => ({
+    ...(canvasStartDocumentFormat ? { format: canvasStartDocumentFormat } : {}),
+    ...(canvasStartDocumentNeedsRequirementsAnalysis ? { needsRequirementsAnalysis: true } : {}),
+  }), [canvasStartDocumentFormat, canvasStartDocumentNeedsRequirementsAnalysis]);
+  const canvasStartDraftStorageKey = useMemo(() => (
+    createCanvasGenerationComposerDraftStorageKey([
+      assistantProjectPath,
       canvasFilePath,
-      referenceImages,
-      localContextRefs,
+      'canvas-start',
+      canvasStartScene,
+    ])
+  ), [assistantProjectPath, canvasFilePath, canvasStartScene]);
+
+  const optimizeCanvasStartPrompt = useCallback((request: CanvasPromptOptimizationRequest) => {
+    if (!resolveAcpPromptClientProvider(normalizePromptClientPreference(preferredPromptClient))) {
+      toast.warning('请先在 AI 设置中选择本地 AI Agent');
+      throw { action: 'open-ai-settings' };
+    }
+    return optimizeCanvasPrompt({
+      prompt: request.prompt,
+      scene: canvasStartScene,
+      sceneSettings: canvasStartScene === 'design' ? canvasStartImageSettings : canvasStartScene === 'document' ? canvasStartDocumentSettings : canvasStartPrototypeSettings,
+      canvasFilePath,
+      workspacePath: assistantProjectPath,
+      contextBundle: request.contextBundle,
+      attachments: request.attachments,
       provider: request.provider,
       model: request.model,
       mode: request.mode,
       thought: request.thought,
-      contextBundle: request.contextBundle,
     });
-    const submittedOk = typeof submitted === 'object' && submitted !== null
-      ? submitted.ok !== false
-      : Boolean(submitted);
-    return submittedOk
-      ? { ok: true, text: '已发送到右侧 AI 助手' }
-      : { ok: false, text: 'AI 助手未提交提示词', error: 'AI 助手未提交提示词' };
   }, [
+    assistantProjectPath,
     canvasFilePath,
-    onSubmitCanvasAssistantPrompt,
-    pendingInitialLocalContextRefs,
-    selectedInfo,
+    canvasStartDocumentSettings,
+    canvasStartImageSettings,
+    canvasStartPrototypeSettings,
+    canvasStartScene,
+    preferredPromptClient,
   ]);
 
-  const submitAutoStartRequest = useCallback(async (request: CanvasAiGenerationRequest & { generatorId: string }) => {
-    const prompt = request.prompt?.trim();
-    if (!prompt) return;
-    await submitCanvasAssistantPrompt({
-      scene: request.scene,
-      prompt,
-      message: {
-        id: request.generatorId,
-        role: 'user',
-        createdAt: new Date(),
-        content: [{ type: 'text', text: prompt }] as any,
-        attachments: [],
-      } as any,
-      referenceImages: request.referenceImages || [],
-      contextBundle: request.contextBundle ?? null,
-      provider: request.provider || '',
-      model: request.model ?? null,
-      mode: request.mode ?? null,
-      thought: request.thought ?? null,
-    }, {
-      generatorId: request.generatorId,
-      source: request.source,
-      localContextRefs: request.localContextRefs || [],
-      sceneSettings: request.sceneSettings,
-    });
-  }, [submitCanvasAssistantPrompt]);
+  const resetCanvasStartSubmitState = useCallback(() => {
+    setCanvasStartLocalContextRefs([]);
+    copiedCanvasReferenceRef.current = null;
+    setHasCopiedCanvasReference(false);
+    setCanvasStartPrototypeCount(undefined);
+    setCanvasStartPrototypeNeedsRequirementsAnalysis(false);
+    setCanvasStartImageParams({ ...DEFAULT_CANVAS_START_IMAGE_SETTINGS });
+    setCanvasStartDocumentFormat('');
+    setCanvasStartDocumentNeedsRequirementsAnalysis(false);
+    canvasStartUserSelectedThemeRef.current = false;
+    setCanvasStartSelectedThemeName(resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
+  }, [defaultThemeName, themes]);
 
-  useEffect(() => {
-    if (!pendingAutoSubmitRequest) return;
-    setPendingAutoSubmitRequest(null);
-    void submitAutoStartRequest(pendingAutoSubmitRequest);
-  }, [pendingAutoSubmitRequest, submitAutoStartRequest]);
-
-  const generatorTitleLabels = useMemo<GeneratorTitleLabel[]>(() => {
-    const container = containerRef.current;
-    if (!container || !excalidrawAPI) return [];
-    const appState = excalidrawAPI.getAppState();
-    const selectedIds = appState?.selectedElementIds || {};
-    const rect = container.getBoundingClientRect();
-    const zoom = appState.zoom?.value || 1;
-    return excalidrawAPI.getSceneElements()
-      .filter((element: any) => isCanvasAiGenerationElement(element) && !element.isDeleted)
-      .map((element: any) => {
-        const topLeft = canvasToScreen(
-          element.x,
-          element.y,
-          appState.scrollX || 0,
-          appState.scrollY || 0,
-          zoom,
-          rect.left,
-          rect.top,
-        );
-        const width = Math.max(1, (element.width || 0) * zoom);
-        return {
-          elementId: element.id,
-          title: String(element.customData?.title || CANVAS_AI_GENERATION_TITLE),
-          left: topLeft.x - rect.left,
-          top: topLeft.y - rect.top - CANVAS_NODE_TITLE_LABEL_HEIGHT - CANVAS_NODE_TITLE_LABEL_OFFSET,
-          maxWidth: Math.min(CANVAS_NODE_TITLE_LABEL_MAX_WIDTH, width),
-          isSelected: Boolean(selectedIds[element.id]),
-        };
-      });
-  }, [canvasOverlayRevision, containerRef, excalidrawAPI, selectedInfo]);
-
-  const selectedScene = selectedInfo?.kind === 'generator'
-    ? resolveCanvasAiGenerationScene(selectedInfo.element)
-    : 'page';
-  const selectedSceneDefinition = getCanvasAiSceneDefinition(selectedScene);
-  const selectedGeneratorId = selectedInfo?.kind === 'generator' ? String(selectedInfo.element.id) : null;
-  const selectedGeneratorComposerDraftStorageKey = useMemo(() => (
-    selectedInfo?.kind === 'generator'
-      ? createCanvasGenerationComposerDraftStorageKey([
-        assistantProjectPath,
+  const submitCanvasStartPrompt = useCallback(async (prompt: string, selection?: {
+    contextBundle: CanvasAiSubmitRequest['contextBundle'];
+    provider: string;
+    model: string | null;
+    mode: string | null;
+    thought: string | null;
+    referenceImages: string[];
+    localContextRefs: CanvasLocalContextRef[];
+    attachments: CanvasGenerationAttachmentPart[];
+  }) => {
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) return false;
+    if (!onSubmitCanvasAssistantPromptRef.current) {
+      toast.error('AI 助手未就绪');
+      return false;
+    }
+    if (!canvasDirectRunOverlayController) {
+      toast.error('画布生成占位未就绪');
+      return false;
+    }
+    const referenceImages = selection?.referenceImages || [];
+    const localContextRefs = selection?.localContextRefs || canvasStartLocalContextRefs;
+    const attachments = selection?.attachments || [];
+    const sceneSettings = canvasStartScene === 'design' ? canvasStartImageSettings : canvasStartScene === 'document' ? canvasStartDocumentSettings : canvasStartPrototypeSettings;
+    const statusTask = canvasDirectRunOverlayController.createStatusTask({
+      prompt: trimmedPrompt,
+      scene: canvasStartScene,
+      details: buildCanvasDirectRunOverlayTaskDetails({
+        attachments,
         canvasFilePath,
-        selectedInfo.element.id,
-        'canvas-node',
-        selectedScene,
-      ])
-      : null
-  ), [assistantProjectPath, canvasFilePath, selectedInfo, selectedScene]);
-  const generatorSceneSwitcher = selectedGeneratorId ? (
+        contextBundle: selection?.contextBundle,
+        localContextRefs,
+        prompt: trimmedPrompt,
+        referenceImages,
+        scene: canvasStartScene,
+        settings: sceneSettings,
+      }),
+    });
+    if (!statusTask) {
+      toast.error('无法创建画布生成状态');
+      return false;
+    }
+    const startSystemPrompt = getCanvasAiPrototypeStartSystemPrompt(canvasStartScene);
+    const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(trimmedPrompt, startSystemPrompt);
+    const request: CanvasAiGenerationRequest = {
+      scene: canvasStartScene,
+      prompt: appendCanvasGenerationPromptSettings({
+        scene: canvasStartScene,
+        prompt: promptWithStartSystemPrompt,
+        settings: sceneSettings,
+        canvasContext: {
+          canvasFilePath,
+          canvasName: canvasFilePath,
+          statusTaskBounds: {
+            x: statusTask.x,
+            y: statusTask.y,
+            width: statusTask.width,
+            height: statusTask.height,
+          },
+          statusTaskId: statusTask.id,
+          source: 'canvas-start',
+        },
+      }),
+      source: 'canvas-start',
+      sceneSettings,
+      canvasFilePath,
+      provider: selection?.provider,
+      model: selection?.model,
+      mode: selection?.mode,
+      thought: selection?.thought,
+      contextBundle: selection?.contextBundle,
+      attachments,
+      referenceImages,
+      localContextRefs,
+      statusTaskId: statusTask.id,
+    };
+    const controller = getCanvasDirectRunController();
+    const startResult = controller?.start(request);
+    if (!startResult?.started) {
+      canvasDirectRunOverlayController.removeStatusTask(statusTask.id);
+      if (startResult?.reason === 'concurrency') {
+        toast.warning(`已有 ${startResult.activeRunCount} 个画布 AI 任务进行中，请稍后再试`);
+      } else {
+        toast.error('AI 助手未提交提示词');
+      }
+      return false;
+    }
+    activeStatusTaskRunsRef.current.set(statusTask.id, {
+      abort: startResult.abort,
+    });
+    let unregisterStatusTaskStopped = () => {};
+    unregisterStatusTaskStopped = canvasDirectRunOverlayController.registerStatusTaskStopped(statusTask.id, () => {
+      const activeRun = activeStatusTaskRunsRef.current.get(statusTask.id);
+      if (!activeRun) return;
+      activeStatusTaskRunsRef.current.delete(statusTask.id);
+      unregisterStatusTaskStopped();
+      void activeRun.abort();
+      if (canvasDirectRunOverlayController.hasStatusTask(statusTask.id)) {
+        canvasDirectRunOverlayController.updateStatusTaskRef(statusTask.id, { status: 'aborted' });
+      }
+    });
+    const cleanupStatusRun = () => {
+      activeStatusTaskRunsRef.current.delete(statusTask.id);
+      unregisterStatusTaskStopped();
+    };
+    resetCanvasStartSubmitState();
+    void startResult.promise.then((result) => {
+      if (result.aborted) {
+        cleanupStatusRun();
+        if (canvasDirectRunOverlayController.hasStatusTask(statusTask.id)) {
+          canvasDirectRunOverlayController.updateStatusTaskRef(statusTask.id, { status: 'aborted' });
+        }
+        return;
+      }
+      if (result.ok) {
+        cleanupStatusRun();
+        canvasDirectRunOverlayController.removeStatusTask(statusTask.id);
+        return;
+      }
+      const errorMessage = getCanvasStartDirectTaskError(result.error);
+      const draftStorage = getCanvasGenerationComposerDraftStorage();
+      const currentDraft = readCanvasGenerationComposerDraft(draftStorage, canvasStartDraftStorageKey);
+      if (!currentDraft.trim()) {
+        writeCanvasGenerationComposerDraft(draftStorage, canvasStartDraftStorageKey, trimmedPrompt);
+        setCanvasStartDraftRestoreVersion((version) => version + 1);
+      }
+      cleanupStatusRun();
+      if (canvasDirectRunOverlayController.hasStatusTask(statusTask.id)) {
+        canvasDirectRunOverlayController.markStatusTaskFailed(statusTask.id, errorMessage);
+      }
+      toast.error(errorMessage);
+    });
+    return true;
+  }, [
+    canvasFilePath,
+    canvasStartDraftStorageKey,
+    canvasStartDocumentSettings,
+    canvasStartImageSettings,
+    canvasStartLocalContextRefs,
+    canvasStartPrototypeSettings,
+    canvasStartScene,
+    canvasDirectRunOverlayController,
+    getCanvasDirectRunController,
+    resetCanvasStartSubmitState,
+  ]);
+
+  const handleCanvasStartSubmit = useCallback(async (prompt: string, selection?: Parameters<typeof submitCanvasStartPrompt>[1]) => {
+    const submitResult = await submitCanvasStartPrompt(prompt, selection);
+    if (submitResult !== false) {
+      setCanvasStartComposerOpen(false);
+    }
+    return submitResult;
+  }, [submitCanvasStartPrompt]);
+
+  const canvasStartSceneDefinition = getCanvasAiSceneDefinition(canvasStartScene);
+  const canvasStartSceneSwitcher = (
     <div
-      data-axhub-ai-generation-scene-switcher
+      data-axhub-canvas-start-scene-switcher
       className="ax-ai-generation-scene-switcher pointer-events-auto"
       onPointerDown={(event) => event.stopPropagation()}
     >
       <ToggleGroup
         type="single"
-        value={selectedScene}
+        value={canvasStartScene}
         onValueChange={(nextScene) => {
           if (!nextScene) return;
-          updateSelectedGeneratorScene(selectedGeneratorId, nextScene as CanvasAiScene);
+          setCanvasStartScene(nextScene as CanvasAiScene);
         }}
         className="gap-1"
-        aria-label={`AI 生成类型：${selectedSceneDefinition.label}`}
+        aria-label={`画布 AI 生成类型：${canvasStartSceneDefinition.label}`}
       >
-        {CANVAS_AI_GENERATOR_NODE_SCENE_OPTIONS.map((option) => (
+        {CANVAS_AI_SCENE_OPTIONS.map((option) => (
           <ToggleGroupItem
             key={option.value}
             value={option.value}
@@ -817,58 +930,80 @@ export default function CanvasAiGenerationTool({
         ))}
       </ToggleGroup>
     </div>
-  ) : null;
+  );
 
   return (
     <>
-      {generatorTitleLabels.map((label) => (
-        <CanvasNodeTitleLabel
-          key={label.elementId}
-          left={label.left}
-          top={label.top}
-          title={label.title}
-          strokeColor={AI_GENERATION_TITLE_COLOR}
-          opacity={label.isSelected ? 1 : 0.55}
-          maxWidth={label.maxWidth}
-        />
-      ))}
-
-      {selectedInfo?.kind === 'generator' && selectedSceneDefinition.renderSettings === 'prototype' ? (
-        <PrototypeGenerationComposer
-          placement={selectedInfo.composerPlacement}
-          topContent={generatorSceneSwitcher}
-          allowAttachments={true}
-          assistantProjectPath={assistantProjectPath}
-          draftStorageKey={selectedGeneratorComposerDraftStorageKey}
-          canPasteReferenceImages={Boolean(copiedCanvasReferenceRef.current)}
-          initialReferenceImages={pendingInitialReferenceImages}
-          initialLocalContextRefs={pendingInitialLocalContextRefs}
-          onPasteReferenceImages={pasteCanvasReferenceImages}
-          themes={themes}
-          defaultThemeName={defaultThemeName}
-          onOpenAISettings={onOpenAISettings}
-          preferredPromptClient={preferredPromptClient}
-          onSubmitPrompt={(request) => submitCanvasAssistantPrompt(request, {
-            sceneSettings: request.sceneSettings,
-          })}
-        />
+      {!canvasStartComposerOpen ? (
+        <button
+          type="button"
+          data-axhub-canvas-start-ai-launcher
+          className="ax-canvas-start-launcher pointer-events-auto absolute bottom-6 left-1/2 z-[1200] -translate-x-1/2"
+          aria-label="打开画布 AI 输入框"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => setCanvasStartComposerOpen(true)}
+        >
+          <Sparkles className="size-[17px]" aria-hidden="true" />
+        </button>
       ) : null}
 
-      {selectedInfo?.kind === 'generator' && selectedSceneDefinition.renderSettings === 'generic' ? (
-        <GenericCanvasAiGenerationComposer
-          placement={selectedInfo.composerPlacement}
-          scene={selectedScene}
-          topContent={generatorSceneSwitcher}
-          assistantProjectPath={assistantProjectPath}
-          draftStorageKey={selectedGeneratorComposerDraftStorageKey}
-          canPasteReferenceImages={Boolean(copiedCanvasReferenceRef.current)}
-          initialReferenceImages={pendingInitialReferenceImages}
-          initialLocalContextRefs={pendingInitialLocalContextRefs}
-          onOpenAISettings={onOpenAISettings}
-          onPasteReferenceImages={pasteCanvasReferenceImages}
-          preferredPromptClient={preferredPromptClient}
-          onSubmitPrompt={(request) => submitCanvasAssistantPrompt(request)}
-        />
+      {canvasStartComposerOpen ? (
+        <div
+          data-axhub-canvas-start-composer
+          className="ax-canvas-start-composer pointer-events-auto absolute bottom-6 left-1/2 z-[1200] w-[min(720px,calc(100%-32px))] -translate-x-1/2"
+          onPointerDown={(event) => event.stopPropagation()}
+          onWheel={(event) => event.stopPropagation()}
+        >
+          <div className="ax-canvas-start-composer-topbar">
+            {canvasStartSceneSwitcher}
+            <button
+              type="button"
+              className="ax-canvas-start-composer-topbar__close"
+              aria-label="关闭画布 AI 输入框"
+              onClick={() => setCanvasStartComposerOpen(false)}
+            >
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          </div>
+          <CanvasGenerationDisplayComposer
+            key={`${canvasStartDraftStorageKey}:${canvasStartDraftRestoreVersion}`}
+            placeholder={canvasStartPlaceholder || getCanvasAiPrototypeStartPlaceholders(canvasStartScene)[0] || canvasStartSceneDefinition.placeholders[0] || '描述你想创建的内容'}
+            ariaLabel="画布 AI 输入"
+            className="ax-canvas-start-display-composer"
+            preferredPromptClient={preferredPromptClient}
+            showSelectors
+            workspacePath={assistantProjectPath}
+            draftStorageKey={canvasStartDraftStorageKey}
+            onOpenAISettings={onOpenAISettings}
+            onOptimizePrompt={optimizeCanvasStartPrompt}
+            onSubmit={handleCanvasStartSubmit}
+            canPasteReferenceImages={hasCopiedCanvasReference}
+            initialLocalContextRefs={canvasStartLocalContextRefs}
+            onPasteReferenceImages={pasteCanvasReferenceImages}
+            postSelectorActions={() => (
+              <CanvasStartSettingsPopover
+                scene={canvasStartScene}
+                prototypeCount={canvasStartPrototypeCount}
+                prototypeNeedsRequirementsAnalysis={canvasStartPrototypeNeedsRequirementsAnalysis}
+                imageSettings={canvasStartImageParams}
+                documentFormat={canvasStartDocumentFormat}
+                documentNeedsRequirementsAnalysis={canvasStartDocumentNeedsRequirementsAnalysis}
+                selectedThemeName={canvasStartSelectedThemeName}
+                themeLabel={canvasStartThemeLabel}
+                themes={themes}
+                onPrototypeCountChange={setCanvasStartPrototypeCount}
+                onPrototypeNeedsRequirementsAnalysisChange={setCanvasStartPrototypeNeedsRequirementsAnalysis}
+                onImageSettingsChange={setCanvasStartImageParams}
+                onDocumentFormatChange={setCanvasStartDocumentFormat}
+                onDocumentNeedsRequirementsAnalysisChange={setCanvasStartDocumentNeedsRequirementsAnalysis}
+                onThemeChange={(themeName) => {
+                  canvasStartUserSelectedThemeRef.current = true;
+                  setCanvasStartSelectedThemeName(themeName);
+                }}
+              />
+            )}
+          />
+        </div>
       ) : null}
     </>
   );

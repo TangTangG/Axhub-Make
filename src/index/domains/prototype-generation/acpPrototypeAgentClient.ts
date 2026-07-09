@@ -1,4 +1,4 @@
-import type { GenieProvider as AcpPromptProvider } from '../../../common/genie/types';
+import type { AcpProvider as AcpPromptProvider } from '../../../common/assistant-context/types';
 import type { ContextBundleV2 } from '@axhub/acp/runtime';
 import { getGenerationArtifactHistoryStore } from '../ai-generation/generationArtifactHistoryStore';
 
@@ -106,21 +106,18 @@ function formatKnownPrototypes(prototypes: PrototypeGenerationPrototypeContext[]
     .join('\n');
 }
 
-function derivePrototypeIdFromCanvasPath(canvasFilePath: string | undefined): string | null {
-  const normalized = String(canvasFilePath || '').trim().replace(/\\/g, '/').replace(/^src\//, '');
-  const match = normalized.match(/(?:^|\/)prototypes\/([^/]+)\/canvas(?:\.excalidraw)?$/u);
-  return match?.[1] || null;
+function deriveTargetPathFromPrototype(prototype: PrototypeGenerationPrototypeContext | null | undefined): string | undefined {
+  return prototype?.name ? `prototypes/${prototype.name}` : undefined;
 }
 
-function deriveTargetPathFromCanvasPath(canvasFilePath: string | undefined): string | undefined {
-  const prototypeId = derivePrototypeIdFromCanvasPath(canvasFilePath);
-  return prototypeId ? `prototypes/${prototypeId}` : undefined;
+function formatPrototypeDirectoryFromTargetPath(targetPath: string | undefined): string {
+  const normalized = String(targetPath || '').trim().replace(/\\/g, '/').replace(/^src\//u, '').replace(/^\/+|\/+$/gu, '');
+  return normalized ? `src/${normalized}/` : 'unknown';
 }
 
 export function buildPrototypeGenerationPrompt({
   prompt,
-  canvasFilePath,
-  generatorElementId,
+  targetPath,
   currentPrototype,
   knownPrototypes,
   settings,
@@ -132,8 +129,9 @@ export function buildPrototypeGenerationPrompt({
   const theme = settings?.theme?.name
     ? `${settings.theme.name}${settings.theme.displayName && settings.theme.displayName !== settings.theme.name ? ` (${settings.theme.displayName})` : ''}`
     : '';
-  const targetPrototypeName = currentPrototype?.name || derivePrototypeIdFromCanvasPath(canvasFilePath);
-  const targetPrototypeDirectory = targetPrototypeName ? `src/prototypes/${targetPrototypeName}/` : 'unknown';
+  const targetPrototypeDirectory = currentPrototype?.name
+    ? `src/prototypes/${currentPrototype.name}/`
+    : formatPrototypeDirectoryFromTargetPath(targetPath);
   const explicitScopeLines = [
     requestedCount == null ? '' : `- 数量：${requestedCount}（当前 prototype 下页面/方案数）`,
     theme ? `- 设计系统：${theme}` : '',
@@ -151,20 +149,11 @@ export function buildPrototypeGenerationPrompt({
     '- 无页面时创建默认页面并补齐 metadata；不覆盖无关页面。',
     '- 原型 id 使用小写字母、数字和连字符；直接改文件生成可预览原型。',
     '',
-    `画布上下文：canvasFilePath: ${canvasFilePath || 'unknown'}；generatorElementId: ${generatorElementId}`,
-    '',
     '当前 prototype：',
     formatPrototypeContext(currentPrototype),
     '',
     '当前已知 prototypes：',
     formatKnownPrototypes(knownPrototypes),
-    '',
-    '画布更新要求：',
-    '- 更新 `canvas.excalidraw`：保留画布既有元素、files、appState，确保 JSON 可解析。',
-    '- 找到 `generatorElementId` 对应的原型生成占位节点，替换/删除它；用 prototype embeddable 节点承载生成页面，多页面/多方案时平铺并保持间距。',
-    '- prototype embeddable 使用 runtime URL（如 `/prototypes/<prototypeId>` 或页面 URL），不要使用 Make 管理端首页 deep link。',
-    '- 默认预览态：customData.embedViewMode 设置为 `preview`，previewKind=`web`，previewUrl/openUrl/link 可用；设置 captureScreenshotOnMount=true，不手写 screenshotUrl。',
-    '- 节点约 720x450；customData.embedSizePreset=`desktop`、embedContentScale=0.5、storedPreviewSize={width:720,height:450}；不要把网页内部布局做小，网页仍按 1440x900 设计。',
     '',
     '最终消息：已完成',
   ].join('\n');
@@ -297,7 +286,7 @@ export async function runAcpPrototypeAgent(options: RunAcpPrototypeAgentOptions)
     options.onEvent?.({ stage: 'running' });
     const result = await executePrototypeSessionRun({
       taskId: options.taskId,
-      targetPath: options.targetPath || deriveTargetPathFromCanvasPath(options.canvasFilePath),
+      targetPath: options.targetPath || deriveTargetPathFromPrototype(options.currentPrototype),
       generatorElementId: options.generatorElementId,
       prompt: buildPrototypeGenerationPrompt(options),
       preferredPromptClient: options.provider,

@@ -9,6 +9,7 @@ import {
 } from './projectCore/index.ts';
 
 import { getLocalNetworkHosts, readJsonBody, sendJson, streamDirectoryAsZip } from './http.ts';
+import { syncProjectAgentInstructions } from './projectAgentInstructions.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 
 const makePackageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -90,9 +91,8 @@ function normalizeProjectServerConfig(server: unknown, availableLANHosts: string
   const configuredLANHost = normalizeString(raw.lanHost);
   const fallbackLANHost = availableLANHosts.find(Boolean) || '';
   return {
-    ...raw,
+    ...Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'allowLAN')),
     host,
-    allowLAN: raw.allowLAN !== false,
     ...(configuredLANHost || fallbackLANHost ? { lanHost: configuredLANHost || fallbackLANHost } : {}),
   };
 }
@@ -368,7 +368,7 @@ export function handleConfigApi(
         }
         if (hasProjectConfigFields && (!nextConfig.server || typeof nextConfig.server !== 'object')) {
           const currentProjectConfig = handlers.readProjectConfig(requestProjectRoot);
-          nextConfig.server = currentProjectConfig.server || { host: 'localhost', allowLAN: true };
+          nextConfig.server = currentProjectConfig.server || { host: 'localhost' };
         }
         if (nextConfig.automation || nextConfig.assistant || nextConfig.ai || nextConfig.uiPreferences || nextConfig.toolOpenState) {
           serverConfigStore.saveConfig({
@@ -391,6 +391,7 @@ export function handleConfigApi(
         }
         if (hasProjectConfigFields) {
           const currentProjectConfig = handlers.readProjectConfig(requestProjectRoot);
+          let effectiveProject = activeProject;
           const projectConfig: Record<string, unknown> = {
             ...currentProjectConfig,
             server: {
@@ -399,6 +400,9 @@ export function handleConfigApi(
           };
           if ('port' in (projectConfig.server as Record<string, unknown>)) {
             delete (projectConfig.server as Record<string, unknown>).port;
+          }
+          if ('allowLAN' in (projectConfig.server as Record<string, unknown>)) {
+            delete (projectConfig.server as Record<string, unknown>).allowLAN;
           }
           if (nextConfig.projectInfo && typeof nextConfig.projectInfo === 'object') {
             const nextProjectName = handlers.stringValue((nextConfig.projectInfo as Record<string, unknown>).name);
@@ -409,7 +413,7 @@ export function handleConfigApi(
             } else {
               delete projectConfig.projectInfo;
             }
-            handlers.updateRegisteredProjectTitle(options, activeProject, nextProjectName);
+            effectiveProject = handlers.updateRegisteredProjectTitle(options, activeProject, nextProjectName);
           }
           if (nextConfig.projectDefaults && typeof nextConfig.projectDefaults === 'object') {
             projectConfig.projectDefaults = nextConfig.projectDefaults;
@@ -419,6 +423,12 @@ export function handleConfigApi(
           delete projectConfig.ai;
           fs.mkdirSync(path.dirname(configPath), { recursive: true });
           fs.writeFileSync(configPath, JSON.stringify(projectConfig, null, 2), 'utf8');
+          syncProjectAgentInstructions({
+            projectRoot: requestProjectRoot,
+            projectName: handlers.toProjectIdentity(effectiveProject).name,
+            projectDescription: (projectConfig.projectInfo as Record<string, unknown> | undefined)?.description as string | undefined,
+            defaultThemeName: (projectConfig.projectDefaults as Record<string, unknown> | undefined)?.defaultTheme as string | undefined,
+          });
         }
         sendJson(res, {
           success: true,

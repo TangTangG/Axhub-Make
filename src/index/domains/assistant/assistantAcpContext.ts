@@ -1,8 +1,8 @@
 import {
-  getGenieCurrentFilePath,
-  normalizeGenieCurrentFileV1,
-} from '../../../common/genie/bridge';
-import type { GenieContextElementV1, GenieContextV1 } from '../../../common/genie/types';
+  getAssistantCurrentFilePath,
+  normalizeAssistantCurrentFileV1,
+} from '../../../common/assistant-context/bridge';
+import type { AssistantContextElementV1, AssistantContextV1 } from '../../../common/assistant-context/types';
 
 type AcpContextItemKind = 'file' | 'annotation';
 export type AcpPostMessageFilter = 'snapshot' | 'artifacts';
@@ -151,6 +151,11 @@ export interface AssistantPreviewMcpConfig {
   canvasToken?: string | null;
 }
 
+export interface AssistantCanvasMcpConfig {
+  makeOrigin?: string | null;
+  token?: string | null;
+}
+
 function normalizeContextPath(value: unknown): string {
   return typeof value === 'string' ? value.trim().replace(/\\/g, '/') : '';
 }
@@ -197,13 +202,13 @@ function resolveFileDisplayName(filePath: string, displayName?: string): string 
   return fileName.replace(/\.(?:[cm]?[tj]sx?|mdx?|json|excalidraw)$/i, '');
 }
 
-function getContextSource(context: GenieContextV1): string {
+function getContextSource(context: AssistantContextV1): string {
   const source = context.extensions?.source;
   return typeof source === 'string' && source.trim() ? source.trim() : 'axhub-runtime';
 }
 
-function buildFileItem(context: GenieContextV1): AcpContextFileItem | null {
-  const currentFile = normalizeGenieCurrentFileV1(context.currentFile);
+function buildFileItem(context: AssistantContextV1): AcpContextFileItem | null {
+  const currentFile = normalizeAssistantCurrentFileV1(context.currentFile);
   const filePath = normalizeContextPath(currentFile.path);
   if (!filePath) return null;
 
@@ -221,8 +226,8 @@ function buildFileItem(context: GenieContextV1): AcpContextFileItem | null {
 }
 
 function buildSelectedElementAnnotation(
-  item: GenieContextElementV1,
-  context: GenieContextV1,
+  item: AssistantContextElementV1,
+  context: AssistantContextV1,
   filePath: string,
 ): AcpContextAnnotationItem | null {
   const selector = String(item?.selector || '').trim();
@@ -252,7 +257,7 @@ function buildSelectedElementAnnotation(
   };
 }
 
-function buildCanvasCommentAnnotation(comment: any, context: GenieContextV1): AcpContextAnnotationItem | null {
+function buildCanvasCommentAnnotation(comment: any, context: AssistantContextV1): AcpContextAnnotationItem | null {
   const target = comment?.target || {};
   const elementId = String(target.elementId || '').trim();
   const filePath = normalizeContextPath(target.filePath);
@@ -283,30 +288,141 @@ function buildCanvasCommentAnnotation(comment: any, context: GenieContextV1): Ac
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function getAcpContextItemKey(item: AcpContextItem): string {
+  if (item.id) return `${item.kind}:${item.id}`;
+  if (item.kind === 'file') return `file:${item.path}`;
+  return `annotation:${item.body}:${JSON.stringify(item.target)}`;
+}
+
+function appendAcpContextItem(items: AcpContextItem[], seenKeys: Set<string>, item: AcpContextItem | null | undefined) {
+  if (!item) return;
+  const key = getAcpContextItemKey(item);
+  if (seenKeys.has(key)) return;
+  seenKeys.add(key);
+  items.push(item);
+}
+
+function normalizeEmbeddedAcpContextItem(value: unknown): AcpContextItem | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === 'file') {
+    const path = normalizeContextPath(value.path);
+    if (!path) return null;
+    const id = normalizeOptionalPostMessageString(value.id);
+    const name = normalizeOptionalPostMessageString(value.name);
+    const mimeType = normalizeOptionalPostMessageString(value.mimeType);
+    return {
+      kind: 'file',
+      ...(id ? { id } : {}),
+      ...(typeof value.hidden === 'boolean' ? { hidden: value.hidden } : {}),
+      ...(typeof value.pinned === 'boolean' ? { pinned: value.pinned } : {}),
+      path,
+      ...(name ? { name } : {}),
+      ...(mimeType ? { mimeType } : {}),
+      ...(isRecord(value.metadata) ? { metadata: value.metadata } : {}),
+    };
+  }
+  if (value.kind === 'annotation') {
+    const body = normalizeOptionalPostMessageString(value.body);
+    if (!body || !isRecord(value.target)) return null;
+    const id = normalizeOptionalPostMessageString(value.id);
+    const title = normalizeOptionalPostMessageString(value.title);
+    const source = normalizeOptionalPostMessageString(value.source);
+    return {
+      kind: 'annotation',
+      ...(id ? { id } : {}),
+      ...(typeof value.hidden === 'boolean' ? { hidden: value.hidden } : {}),
+      ...(typeof value.pinned === 'boolean' ? { pinned: value.pinned } : {}),
+      body,
+      target: value.target as AcpContextAnnotationItem['target'],
+      ...(title ? { title } : {}),
+      ...(value.status === 'open' || value.status === 'resolved' ? { status: value.status } : {}),
+      ...(source ? { source } : {}),
+      ...(isRecord(value.metadata) ? { metadata: value.metadata } : {}),
+    };
+  }
+  return null;
+}
+
+function getCanvasGenerationExtension(context: AssistantContextV1): Record<string, unknown> | null {
+  const extension = context.extensions?.canvasAiGeneration;
+  return isRecord(extension) ? extension : null;
+}
+
+function getCanvasGenerationEmbeddedContextItems(context: AssistantContextV1): AcpContextItem[] {
+  const extension = getCanvasGenerationExtension(context);
+  const bundle = isRecord(extension?.contextBundle) ? extension.contextBundle : null;
+  const items = Array.isArray(bundle?.items) ? bundle.items : [];
+  return items.flatMap((item) => {
+    const normalized = normalizeEmbeddedAcpContextItem(item);
+    return normalized ? [normalized] : [];
+  });
+}
+
+function getCanvasLocalContextRefFileItems(context: AssistantContextV1): AcpContextFileItem[] {
+  const extension = getCanvasGenerationExtension(context);
+  const refs = Array.isArray(extension?.localContextRefs) ? extension.localContextRefs : [];
+  const items: AcpContextFileItem[] = [];
+  for (const ref of refs) {
+    if (!isRecord(ref)) continue;
+    const resourceType = normalizeOptionalPostMessageString(ref.resourceType);
+    const resourceId = normalizeOptionalPostMessageString(ref.resourceId);
+    if (!resourceType || !resourceId) continue;
+    const paths = Array.isArray(ref.paths)
+      ? ref.paths.map(normalizeContextPath).filter(Boolean)
+      : [];
+    const name = normalizeOptionalPostMessageString(ref.title) || resolveFileDisplayName(paths[0] || resourceId);
+    const description = normalizeOptionalPostMessageString(ref.description);
+    for (const path of Array.from(new Set(paths))) {
+      items.push({
+        kind: 'file',
+        id: `axhub:canvas-local-context:${resourceType}:${resourceId}:${path}`,
+        path,
+        name,
+        ...(description ? { description } : {}),
+        metadata: {
+          source: 'axhub-make-canvas',
+          resourceType,
+          resourceId,
+        },
+      });
+    }
+  }
+  return items;
+}
+
 export function mapAssistantContextToAcpContextBundle(
-  context: GenieContextV1,
+  context: AssistantContextV1,
   now: Date = new Date(),
 ): AcpContextBundleV2 {
   const items: AcpContextItem[] = [];
+  const seenKeys = new Set<string>();
   const fileItem = buildFileItem(context);
-  const filePath = fileItem?.path || getGenieCurrentFilePath(context.currentFile);
+  const filePath = fileItem?.path || getAssistantCurrentFilePath(context.currentFile);
   if (fileItem) {
-    items.push(fileItem);
+    appendAcpContextItem(items, seenKeys, fileItem);
   }
 
   for (const selectedElement of Array.isArray(context.selectedElements) ? context.selectedElements : []) {
     const annotation = buildSelectedElementAnnotation(selectedElement, context, filePath);
-    if (annotation) {
-      items.push(annotation);
-    }
+    appendAcpContextItem(items, seenKeys, annotation);
   }
 
   const comments = Array.isArray(context.extensions?.comments) ? context.extensions.comments : [];
   for (const comment of comments) {
     const annotation = buildCanvasCommentAnnotation(comment, context);
-    if (annotation) {
-      items.push(annotation);
-    }
+    appendAcpContextItem(items, seenKeys, annotation);
+  }
+
+  for (const item of getCanvasGenerationEmbeddedContextItems(context)) {
+    appendAcpContextItem(items, seenKeys, item);
+  }
+
+  for (const item of getCanvasLocalContextRefFileItems(context)) {
+    appendAcpContextItem(items, seenKeys, item);
   }
 
   return {
@@ -317,7 +433,7 @@ export function mapAssistantContextToAcpContextBundle(
 }
 
 export function buildAcpContextPostMessage(
-  context: GenieContextV1,
+  context: AssistantContextV1,
   mode: 'replace' | 'append' = 'replace',
   requestId?: string,
   now: Date = new Date(),
@@ -467,18 +583,37 @@ function buildPreviewMcpServers(config: AssistantPreviewMcpConfig | null | undef
 
   const canvasToken = normalizeOptionalPostMessageString(config?.canvasToken);
   if (config?.includeCanvas === true && canvasToken) {
-    servers.push({
-      name: ACP_CANVAS_MCP_NAME,
-      type: 'http',
-      url: `${makeOrigin}${ACP_CANVAS_MCP_PATH}`,
-      headers: [{
-        name: ACP_CANVAS_MCP_TOKEN_HEADER,
-        ...(redactSecrets ? { hasValue: true } : { value: canvasToken }),
-      }],
-    });
+    const canvasServers = buildAcpCanvasMcpServers({
+      makeOrigin,
+      token: canvasToken,
+    }, redactSecrets);
+    if (canvasServers) {
+      servers.push(...canvasServers);
+    }
   }
 
   return servers;
+}
+
+export function buildAcpCanvasMcpServers(
+  config: AssistantCanvasMcpConfig | null | undefined,
+  redactSecrets = false,
+): unknown[] | null {
+  const makeOrigin = normalizeMakeOrigin(config?.makeOrigin);
+  const token = normalizeOptionalPostMessageString(config?.token);
+  if (!makeOrigin || !token) {
+    return null;
+  }
+
+  return [{
+    name: ACP_CANVAS_MCP_NAME,
+    type: 'http',
+    url: `${makeOrigin}${ACP_CANVAS_MCP_PATH}`,
+    headers: [{
+      name: ACP_CANVAS_MCP_TOKEN_HEADER,
+      ...(redactSecrets ? { hasValue: true } : { value: token }),
+    }],
+  }];
 }
 
 export function buildAcpPreviewMcpPostMessage(
@@ -529,12 +664,11 @@ export function getAcpPreviewMcpConfigSignature(
 }
 
 export function buildAcpCanvasMcpPostMessage(
-  config: { makeOrigin?: string | null; token?: string | null } | null | undefined,
+  config: AssistantCanvasMcpConfig | null | undefined,
   requestId?: string,
 ): AcpCanvasMcpPostMessage {
-  const makeOrigin = normalizeMakeOrigin(config?.makeOrigin);
-  const token = normalizeOptionalPostMessageString(config?.token);
-  if (!makeOrigin || !token) {
+  const mcpServers = buildAcpCanvasMcpServers(config, false);
+  if (!mcpServers) {
     return {
       type: 'acp.runtime.clear',
       ...(requestId ? { requestId } : {}),
@@ -549,25 +683,16 @@ export function buildAcpCanvasMcpPostMessage(
     ...(requestId ? { requestId } : {}),
     payload: {
       merge: true,
-      mcpServers: [{
-        name: ACP_CANVAS_MCP_NAME,
-        type: 'http',
-        url: `${makeOrigin}${ACP_CANVAS_MCP_PATH}`,
-        headers: [{
-          name: ACP_CANVAS_MCP_TOKEN_HEADER,
-          value: token,
-        }],
-      }],
+      mcpServers,
     },
   };
 }
 
 export function getAcpCanvasMcpConfigSignature(
-  config: { makeOrigin?: string | null; token?: string | null } | null | undefined,
+  config: AssistantCanvasMcpConfig | null | undefined,
 ): string {
-  const makeOrigin = normalizeMakeOrigin(config?.makeOrigin);
-  const token = normalizeOptionalPostMessageString(config?.token);
-  if (!makeOrigin || !token) {
+  const mcpServers = buildAcpCanvasMcpServers(config, true);
+  if (!mcpServers) {
     return JSON.stringify({
       type: 'acp.runtime.clear',
       payload: {
@@ -580,15 +705,7 @@ export function getAcpCanvasMcpConfigSignature(
     type: 'acp.runtime.configure',
     payload: {
       merge: true,
-      mcpServers: [{
-        name: ACP_CANVAS_MCP_NAME,
-        type: 'http',
-        url: `${makeOrigin}${ACP_CANVAS_MCP_PATH}`,
-        headers: [{
-          name: ACP_CANVAS_MCP_TOKEN_HEADER,
-          hasValue: true,
-        }],
-      }],
+      mcpServers,
     },
   });
 }

@@ -76,7 +76,7 @@ describe('buildQuickEditAcpPrompt', () => {
     })).toThrow('当前文件路径为空');
   });
 
-  it('does not expose the obsolete Genie prompt builder name', () => {
+  it('does not expose the obsolete Agent prompt builder name', () => {
     expect('buildQuickEditGeniePrompt' in { buildQuickEditAcpPrompt }).toBe(false);
   });
 });

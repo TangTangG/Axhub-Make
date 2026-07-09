@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 
 import type { ItemData, SidebarTreeNode } from '../../types';
 import {
-  buildResourceFolderCanvasPayload,
   getResourceFolderDisplayName,
   getResourceFolderPreviewNodes,
   resolveResourceFolderPreviewKind,
@@ -55,58 +54,14 @@ describe('ResourceFolderPreview helpers', () => {
     ]);
   });
 
-  it('classifies image and markdown resources for canvas drops', () => {
+  it('classifies image and markdown resources for folder previews', () => {
     expect(resolveResourceFolderPreviewKind(['assets/logo.png'])).toBe('image');
     expect(resolveResourceFolderPreviewKind(['assets/icons/logo.svg'])).toBe('image');
     expect(resolveResourceFolderPreviewKind(['notes.md'])).toBe('doc');
     expect(resolveResourceFolderPreviewKind(['archive.zip'])).toBe('none');
   });
 
-  it('builds an image canvas payload from a resource file', () => {
-    const item: ItemData = {
-      name: 'assets/logo.png',
-      displayName: 'Logo',
-      jsUrl: '',
-      specUrl: '/api/docs/assets%2Flogo.png',
-      previewUrl: '/api/docs/assets%2Flogo.png',
-      resourceId: 'assets/logo.png',
-    };
-
-    expect(buildResourceFolderCanvasPayload(item)).toMatchObject({
-      type: 'preview',
-      resourceType: 'preview',
-      sourceResourceType: 'doc',
-      resourceId: 'assets/logo.png',
-      name: 'assets/logo.png',
-      displayName: 'Logo',
-      previewKind: 'image',
-      embedViewMode: 'link',
-      previewUrl: '/api/docs/assets%2Flogo.png',
-    });
-  });
-
-  it('builds markdown document canvas payloads in preview mode by default', () => {
-    const item: ItemData = {
-      name: 'docs/spec.md',
-      displayName: 'Spec',
-      jsUrl: '',
-      specUrl: '/api/docs/docs%2Fspec.md',
-      previewUrl: '/api/docs/docs%2Fspec.md',
-      resourceId: 'docs/spec.md',
-    };
-
-    expect(buildResourceFolderCanvasPayload(item)).toMatchObject({
-      type: 'preview',
-      resourceType: 'preview',
-      sourceResourceType: 'doc',
-      resourceId: 'docs/spec.md',
-      previewKind: 'doc',
-      embedViewMode: 'preview',
-      previewUrl: '/api/docs/docs%2Fspec.md',
-    });
-  });
-
-  it('adds assistant-context drag payloads while preserving canvas drop payloads', () => {
+  it('adds assistant-context drag payloads without writing canvas drop payloads', () => {
     const source = readResourceFolderPreviewSource();
     const dragSource = source.slice(
       source.indexOf('onDragStart={(event) => {'),
@@ -115,7 +70,8 @@ describe('ResourceFolderPreview helpers', () => {
 
     expect(source).toContain("import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';");
     expect(source).toContain("import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';");
-    expect(dragSource).toContain('event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
+    expect(source).not.toContain("import { CANVAS_DROP_MIME } from './canvasDropTypes';");
+    expect(source).not.toContain('CANVAS_DROP_MIME');
     expect(dragSource).toContain('event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
     expect(dragSource).toContain("source: 'resource-folder'");
     expect(dragSource).toContain('items: buildAssistantContextItemsFromResource({');

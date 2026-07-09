@@ -1,6 +1,8 @@
 export interface PersistPrototypeScreenshotParams {
     previewUrl: string;
     dataUrl: string;
+    canvasFilePath?: string | null;
+    canvasName?: string | null;
     prototypeId?: string | null;
     pageId?: string | null;
     elementId?: string;
@@ -17,7 +19,6 @@ export interface PersistedPrototypeScreenshot {
     height?: number;
 }
 
-const PROTOTYPE_CANVAS_ASSETS_DIR = 'canvas-assets';
 const PROTOTYPE_PAGE_ID_RE = /^[a-z0-9-]+$/u;
 
 function normalizePrototypeId(value: string): string | null {
@@ -50,10 +51,8 @@ function normalizePrototypePageId(value: unknown): string | null {
 }
 
 export function getPrototypeIdFromCanvasName(canvasName: string): string | null {
-    if (!canvasName) return null;
-    const normalized = String(canvasName).trim();
-    const match = normalized.match(/^prototypes\/([^/]+)\/canvas\.excalidraw$/iu);
-    return match?.[1] ? normalizePrototypeId(match[1]) : null;
+    void canvasName;
+    return null;
 }
 
 export function createElementScreenshotFileName(elementId: string): string | undefined {
@@ -78,15 +77,8 @@ export function getPrototypeIdFromPreviewUrl(previewUrl: string): string | null 
 }
 
 export function derivePrototypeScreenshotUrl(previewUrl: string): string | undefined {
-    if (!previewUrl) return undefined;
-    try {
-        const parsed = new URL(previewUrl, window.location.origin);
-        const prototypeId = getPrototypeIdFromPreviewUrl(previewUrl);
-        if (!prototypeId) return undefined;
-        return `${parsed.origin}/prototypes/${encodeURIComponent(prototypeId)}/${PROTOTYPE_CANVAS_ASSETS_DIR}/screenshot.png`;
-    } catch {
-        return undefined;
-    }
+    void previewUrl;
+    return undefined;
 }
 
 export function derivePrototypePageScreenshotUrl(
@@ -108,13 +100,49 @@ export function derivePrototypeScreenshotUrlFromId(
     prototypeId: string | null | undefined,
     fileName = 'screenshot.png',
 ): string | undefined {
-    if (!previewUrl || !prototypeId) return undefined;
-    const normalizedPrototypeId = normalizePrototypeId(prototypeId);
-    const normalizedFileName = normalizeScreenshotFileBase(fileName.replace(/\.png$/iu, ''));
-    if (!normalizedPrototypeId || !normalizedFileName) return undefined;
+    void previewUrl;
+    void prototypeId;
+    void fileName;
+    return undefined;
+}
+
+function encodeCanvasApiPath(canvasPath: string): string {
+    return canvasPath.split('/').filter(Boolean).map((segment) => encodeURIComponent(segment)).join('/');
+}
+
+export function resolveResourceCanvasPath(canvasFilePath?: string | null, canvasName?: string | null): string {
+    const resourcesMarker = 'src/resources/';
+    const candidates = [canvasFilePath, canvasName];
+    for (const candidate of candidates) {
+        const normalized = String(candidate || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+        if (!normalized) continue;
+        if (normalized.startsWith(resourcesMarker)) {
+            return normalized.slice(resourcesMarker.length);
+        }
+        const markerIndex = normalized.indexOf(`/${resourcesMarker}`);
+        if (markerIndex >= 0) {
+            return normalized.slice(markerIndex + resourcesMarker.length + 1);
+        }
+    }
+    return '';
+}
+
+export function deriveResourceCanvasScreenshotUrl(
+    canvasFilePath?: string | null,
+    fileName = 'screenshot.png',
+    canvasName?: string | null,
+): string | undefined {
+    const resourceCanvasPath = resolveResourceCanvasPath(canvasFilePath, canvasName);
+    if (fileName.includes('/') || fileName.includes('\\')) return undefined;
+    const safeFileBase = normalizeScreenshotFileBase(fileName.replace(/\.png$/iu, ''));
+    if (!resourceCanvasPath || !safeFileBase) return undefined;
+    const canvasBase = resourceCanvasPath.split('/').pop()?.replace(/\.excalidraw$/iu, '') || '';
+    const assetPath = `${canvasBase}.assets/${safeFileBase}.png`;
     try {
-        const parsed = new URL(previewUrl, window.location.origin);
-        return `${parsed.origin}/prototypes/${encodeURIComponent(normalizedPrototypeId)}/${PROTOTYPE_CANVAS_ASSETS_DIR}/${encodeURIComponent(`${normalizedFileName}.png`)}`;
+        return new URL(
+            `/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}/${encodeCanvasApiPath(assetPath)}`,
+            window.location.origin,
+        ).toString();
     } catch {
         return undefined;
     }
@@ -123,8 +151,8 @@ export function derivePrototypeScreenshotUrlFromId(
 export async function persistPrototypeScreenshot(
     params: PersistPrototypeScreenshotParams,
 ): Promise<PersistedPrototypeScreenshot | null> {
-    const prototypeId = normalizePrototypeId(params.prototypeId || '') || getPrototypeIdFromPreviewUrl(params.previewUrl);
-    if (!prototypeId) {
+    const resourceCanvasPath = resolveResourceCanvasPath(params.canvasFilePath, params.canvasName);
+    if (!resourceCanvasPath) {
         return null;
     }
 
@@ -135,7 +163,7 @@ export async function persistPrototypeScreenshot(
     const elementId = pageScreenshotFileName ? undefined : params.elementId;
     const pageId = pageScreenshotFileName ? normalizePrototypePageId(params.pageId) : undefined;
 
-    const response = await fetch(`/api/canvas/prototypes/${encodeURIComponent(prototypeId)}/screenshot`, {
+    const response = await fetch(`/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -159,8 +187,7 @@ export async function persistPrototypeScreenshot(
     let resolvedScreenshotUrl = screenshotUrl;
     if (screenshotUrl.startsWith('/')) {
         try {
-            const previewOrigin = new URL(params.previewUrl, window.location.origin).origin;
-            resolvedScreenshotUrl = new URL(screenshotUrl, previewOrigin).toString();
+            resolvedScreenshotUrl = new URL(screenshotUrl, window.location.origin).toString();
         } catch {
             resolvedScreenshotUrl = screenshotUrl;
         }

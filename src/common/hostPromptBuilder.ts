@@ -1,12 +1,12 @@
 /**
  * Host-side prompt builder.
  *
- * Centralizes all host-level prompt customization so the genie-editor
+ * Centralizes all host-level prompt customization so the Commentary
  * package stays generic while the host can inject project-specific
  * context (skill paths, extra constraints, etc.).
  */
 
-import type { GenieEditorCopyPromptContext } from 'axhub-genie-editor';
+import type { CommentaryCopyPromptContext } from '@axhub/commentary';
 
 /**
  * Host-side implementation of `buildCopyPrompt`.
@@ -18,13 +18,13 @@ import type { GenieEditorCopyPromptContext } from 'axhub-genie-editor';
  * @example
  * ```ts
  * // Extend default prompt with a skill reference:
- * export function buildHostCopyPrompt(context: GenieEditorCopyPromptContext): string {
+ * export function buildHostCopyPrompt(context: CommentaryCopyPromptContext): string {
  *   const skill = '`/skills/my-visual-review/SKILL.md`';
  *   return `请先阅读 ${skill}\n\n${context.defaultPrompt}`;
  * }
  * ```
  */
-export function buildHostCopyPrompt(context: GenieEditorCopyPromptContext): string {
+export function buildHostCopyPrompt(context: CommentaryCopyPromptContext): string {
     // Default: pass through the editor's built-in prompt.
     // Host teams can customise this function to inject project-specific context:
     // - Prepend skill / workflow references

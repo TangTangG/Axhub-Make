@@ -2,8 +2,10 @@ import type { ItemData } from '../types';
 
 export const UI_REVIEW_RULE_PATH = 'rules/ui-review-guide.md';
 export const UI_REVIEW_FILE_NAME = 'ui-review.md';
+export const UI_REVIEW_REPORT_TEMPLATE_PATH = 'client/src/resources/templates/ui-review-report-template.md';
 export const PROTOTYPE_REVIEW_RULE_PATH = 'rules/prototype-review-guide.md';
 export const PROTOTYPE_REVIEW_FILE_NAME = 'prototype-review.md';
+export const PROTOTYPE_REVIEW_REPORT_TEMPLATE_PATH = 'client/src/resources/templates/prototype-review-report-template.md';
 
 export type ReviewKind = 'design' | 'requirements';
 
@@ -12,41 +14,38 @@ export interface ReviewKindConfig {
     label: string;
     title: string;
     rulePath: string;
+    templatePath: string;
     fileName: string;
     fallbackPath: string;
     targetDescription: string;
     emptyDescription: string;
     requiredBasis: string;
-    executionRequirement: string;
-    minimumSections: string;
 }
 
 export const REVIEW_KIND_CONFIGS: Record<ReviewKind, ReviewKindConfig> = {
     design: {
         kind: 'design',
         label: '设计',
-        title: 'UI Review',
+        title: 'UI 评审',
         rulePath: UI_REVIEW_RULE_PATH,
+        templatePath: UI_REVIEW_REPORT_TEMPLATE_PATH,
         fileName: UI_REVIEW_FILE_NAME,
-        fallbackPath: `src/prototypes/<prototype-id>/.spec/${UI_REVIEW_FILE_NAME}`,
-        targetDescription: '当前原型执行 UI Review',
-        emptyDescription: '复制提示词给 AI，让它帮你检查页面设计质量，并整理出可改进的问题清单。',
-        requiredBasis: '只使用选定的 DESIGN.md 作为设计依据；没有 DESIGN.md 时先停止并说明需要提供。',
-        executionRequirement: '按 rules/ui-review-guide.md 的 Impeccable 参考流程做评审，不要调用 /impeccable 命令。',
-        minimumSections: '总体点评、P0-P3 优先级问题、核心元件/关键区块点评。',
+        fallbackPath: `src/prototypes/<prototype-id>/.spec/reviews/${UI_REVIEW_FILE_NAME}`,
+        targetDescription: '当前原型执行 UI 评审',
+        emptyDescription: '发起评审后，AI 会检查页面设计质量，并整理出可改进的问题清单。',
+        requiredBasis: '优先读取当前原型附近的 DESIGN.md；如果没有 DESIGN.md，则按常规设计评审执行。',
     },
     requirements: {
         kind: 'requirements',
         label: '需求',
-        title: 'Prototype Review',
+        title: '原型评审',
         rulePath: PROTOTYPE_REVIEW_RULE_PATH,
+        templatePath: PROTOTYPE_REVIEW_REPORT_TEMPLATE_PATH,
         fileName: PROTOTYPE_REVIEW_FILE_NAME,
-        fallbackPath: `src/prototypes/<prototype-id>/.spec/${PROTOTYPE_REVIEW_FILE_NAME}`,
-        targetDescription: '当前原型执行 Prototype Review / 需求评审',
-        emptyDescription: '复制提示词给 AI，让它帮你检查原型需求是否完整，并整理出遗漏、冲突和风险。',
-        requiredBasis: '使用用户资料、最新 .spec 决策、src/resources 资料和当前原型源码建立业务基线；如资料冲突需标记为待确认。',
-        executionRequirement: '按 rules/prototype-review-guide.md 的需求评审流程做评审，不要引用 Impeccable。',
-        minimumSections: '总体点评、P0-P3 优先级问题、完整性与项目对齐。',
+        fallbackPath: `src/prototypes/<prototype-id>/.spec/reviews/${PROTOTYPE_REVIEW_FILE_NAME}`,
+        targetDescription: '当前原型执行原型评审 / 需求评审',
+        emptyDescription: '发起评审后，AI 会检查原型需求是否完整，并整理出遗漏、冲突和风险。',
+        requiredBasis: '优先读取需求规范文件 src/prototypes/<prototype-id>/.spec/requirements.md；如果没有该文件，则按项目资料、.spec 决策和 src/resources 资料做常规需求评审。',
     },
 };
 
@@ -70,11 +69,24 @@ export function resolveReviewDocumentPath(
     const explicitSourcePath = normalizePath(selectedItem?.absoluteFilePath || selectedItem?.filePath);
     const sourceBasePath = stripIndexFilePath(explicitSourcePath);
     if (sourceBasePath) {
-        return `${sourceBasePath}/.spec/${config.fileName}`;
+        return `${sourceBasePath}/.spec/reviews/${config.fileName}`;
     }
 
     const prototypeId = normalizePath(selectedItem?.resourceId || selectedItem?.name);
-    return prototypeId ? `src/prototypes/${prototypeId}/.spec/${config.fileName}` : '';
+    return prototypeId ? `src/prototypes/${prototypeId}/.spec/reviews/${config.fileName}` : '';
+}
+
+export function resolveRequirementsSpecPath(
+    selectedItem: Pick<ItemData, 'absoluteFilePath' | 'filePath' | 'name' | 'resourceId'> | null | undefined,
+): string {
+    const explicitSourcePath = normalizePath(selectedItem?.absoluteFilePath || selectedItem?.filePath);
+    const sourceBasePath = stripIndexFilePath(explicitSourcePath);
+    if (sourceBasePath) {
+        return `${sourceBasePath}/.spec/requirements.md`;
+    }
+
+    const prototypeId = normalizePath(selectedItem?.resourceId || selectedItem?.name);
+    return prototypeId ? `src/prototypes/${prototypeId}/.spec/requirements.md` : 'src/prototypes/<prototype-id>/.spec/requirements.md';
 }
 
 export function buildUiReviewPrompt(params: {
@@ -94,12 +106,16 @@ export function buildReviewPrompt(params: {
     const prototypeLabel = String(selectedItem?.displayName || selectedItem?.name || selectedItem?.resourceId || '当前原型').trim();
     const sourcePath = normalizePath(selectedItem?.filePath || selectedItem?.absoluteFilePath);
     const reviewDocumentPath = normalizePath(params.reviewDocumentPath || resolveReviewDocumentPath(selectedItem, config.kind));
+    const requiredBasis = config.kind === 'requirements'
+        ? config.requiredBasis.replace('src/prototypes/<prototype-id>/.spec/requirements.md', resolveRequirementsSpecPath(selectedItem))
+        : config.requiredBasis;
 
     return [
         `请对${config.targetDescription}，并把结果写成 Markdown。`,
         '',
         '【前置阅读】',
         `- 请先读取并严格遵循：${config.rulePath}`,
+        `- 请先读取并套用报告模板：${config.templatePath}`,
         '',
         '【评审目标】',
         `- 原型：${prototypeLabel}`,
@@ -107,11 +123,10 @@ export function buildReviewPrompt(params: {
         `- 评审结果写入：${reviewDocumentPath || config.fallbackPath}`,
         '',
         '【执行要求】',
-        `1. ${config.executionRequirement}`,
-        `2. ${config.requiredBasis}`,
-        '3. 输出 Markdown，不要输出 JSON，不要写 .impeccable 产物作为交付。',
+        '1. 细节以规则文档和报告模板为准；这里不重复展开。',
+        `2. ${requiredBasis}`,
+        '3. 输出 Markdown，不写 .impeccable 产物作为交付。',
         '4. 优先级只使用 P0-P3，最多列出 5 条优先级问题。',
-        `5. Markdown 至少包含：${config.minimumSections}`,
         '',
         '【最终回复要求】',
         `- 说明已写入的路径：${reviewDocumentPath || config.fallbackPath}`,

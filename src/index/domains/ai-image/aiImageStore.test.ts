@@ -107,6 +107,19 @@ describe('AI image task store', () => {
     });
   });
 
+  it('uses resource canvas file paths when loading image task history', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      tasks: [],
+      artifacts: [],
+    }), { status: 200 }));
+    const store = createAiImageTaskStore({ storage: null });
+
+    await store.configure({ targetPath: 'src/resources/flows/home.excalidraw' });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/ai/generation-tasks?targetPath=src%2Fresources%2Fflows%2Fhome.excalidraw');
+    expect(fetchMock).toHaveBeenCalledWith('/api/ai/artifact-history?targetPath=src%2Fresources%2Fflows%2Fhome.excalidraw');
+  });
+
   it('tracks running, incremental images, done state, and only submits through /api/ai/runs', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);

@@ -75,6 +75,56 @@ const DEFAULT_IMAGE_REQUEST_PARAMS: AiImageTaskParams = {
   disable_prompt_optimization: false,
 };
 
+const SUPPORTED_IMAGE_REQUEST_SIZES = new Set([
+  'auto',
+  '1024x1024',
+  '1024x1536',
+  '1536x1024',
+]);
+
+interface NormalizeAiImageRequestParamsOptions {
+  model?: string | null;
+}
+
+function normalizeImageModel(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function isGptImage2Model(value: unknown): boolean {
+  return normalizeImageModel(value) === 'gpt-image-2';
+}
+
+function parseImageSize(value: string): { width: number; height: number } | null {
+  const match = value.match(/^(\d+)x(\d+)$/u);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) return null;
+  return { width, height };
+}
+
+function isSupportedGptImage2Size(value: string): boolean {
+  if (value === 'auto') return true;
+  const parsed = parseImageSize(value);
+  if (!parsed) return false;
+  const { width, height } = parsed;
+  const pixels = width * height;
+  const maxSide = Math.max(width, height);
+  const ratio = maxSide / Math.min(width, height);
+  return width % 16 === 0
+    && height % 16 === 0
+    && maxSide < 3840
+    && ratio <= 3
+    && pixels >= 655_360
+    && pixels <= 8_294_400;
+}
+
+function isSupportedImageRequestSize(value: string, model: unknown): boolean {
+  return isGptImage2Model(model)
+    ? isSupportedGptImage2Size(value)
+    : SUPPORTED_IMAGE_REQUEST_SIZES.has(value);
+}
+
 export interface AiImageGeneratedMetadata {
   url?: string;
   fileName?: string;
@@ -92,6 +142,7 @@ export interface AiImageGeneratedMetadata {
 export function normalizeAiImageRequestParams(
   input: Partial<AiImageTaskParams> | undefined,
   defaults: Partial<AiImageTaskParams> = DEFAULT_IMAGE_REQUEST_PARAMS,
+  options: NormalizeAiImageRequestParamsOptions = {},
 ): AiImageTaskParams {
   const resolvedDefaults = {
     ...DEFAULT_IMAGE_REQUEST_PARAMS,
@@ -120,9 +171,16 @@ export function normalizeAiImageRequestParams(
     : typeof input.output_compression === 'number' && Number.isFinite(input.output_compression)
       ? Math.min(100, Math.max(0, Math.round(input.output_compression)))
       : resolvedDefaults.output_compression;
+  const requestedSize = typeof input?.size === 'string' ? input.size.trim() : '';
+  const defaultSize = typeof resolvedDefaults.size === 'string' ? resolvedDefaults.size.trim() : '';
+  const size = isSupportedImageRequestSize(requestedSize, options.model)
+    ? requestedSize
+    : isSupportedImageRequestSize(defaultSize, options.model)
+      ? defaultSize
+      : DEFAULT_IMAGE_REQUEST_PARAMS.size;
 
   return {
-    size: typeof input?.size === 'string' && input.size.trim() ? input.size.trim() : resolvedDefaults.size,
+    size,
     quality,
     output_format: outputFormat,
     output_compression: outputCompression,
@@ -187,17 +245,24 @@ export function buildImageGenerationPrompt(params: {
   prompt: string;
   requestParams: AiImageTaskParams;
   referenceImages: string[];
+  imageModel?: string;
   savePathPattern?: string;
 }): string {
   const requestParams = params.requestParams;
+  const model = normalizeImageModel(params.imageModel);
   return [
     'Generate image assets for Axhub Make.',
     'Use the generate_image tool and return the generated image metadata.',
     'Do not call any direct image generation HTTP endpoint.',
+    'For UI, web, app, interface, product-screen, or design-mockup requests, first use the project-local $ui-design-image skill and follow its device/aspect-ratio defaults when size is auto or the user did not specify a canvas ratio.',
+    isGptImage2Model(model)
+      ? 'When passing image size to gpt-image-2, custom WxH sizes must use dimensions divisible by 16, max side below 3840px, aspect ratio no wider than 3:1, and total pixels from 655,360 to 8,294,400; express exact phone/desktop proportions in the prompt text.'
+      : 'When passing image size to non-gpt-image-2 models, use only auto, 1024x1024, 1024x1536, or 1536x1024; express exact phone/desktop proportions in the prompt text.',
     '',
     `Prompt: ${params.prompt}`,
     '',
     'Requested image parameters:',
+    ...(params.imageModel ? [`- model: ${params.imageModel}`] : []),
     `- size: ${requestParams.size}`,
     `- quality: ${requestParams.quality}`,
     `- output format: ${requestParams.output_format}`,
@@ -462,7 +527,8 @@ export async function generateAiImages(options: AiImageGenerateOptions): Promise
     throw new Error('请输入提示词');
   }
 
-  const requestParams = normalizeAiImageRequestParams(options.params);
+  const imageModel = typeof options.config.model === 'string' ? options.config.model.trim() : '';
+  const requestParams = normalizeAiImageRequestParams(options.params, undefined, { model: imageModel });
   const referenceImages = Array.isArray(options.referenceImages)
     ? options.referenceImages.filter((image): image is string => typeof image === 'string' && image.trim().length > 0)
     : [];
@@ -476,7 +542,7 @@ export async function generateAiImages(options: AiImageGenerateOptions): Promise
       threadId,
       provider: normalizeImageProvider(options.provider),
       workspacePath: options.workspacePath,
-      prompt: buildImageGenerationPrompt({ prompt, requestParams, referenceImages }),
+      prompt: buildImageGenerationPrompt({ prompt, requestParams, referenceImages, imageModel }),
       builtinTools: ['image-generation'],
       builtinToolSettings: buildImageBuiltinToolSettings(options.config),
     }, {

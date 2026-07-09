@@ -4,7 +4,7 @@ import type { AiPanelMode, PresentationAreaGroupedProps, PrototypeCreateDialogOp
 import type { ViewMode } from '../../types';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
 import type { CanvasElementContextInfo } from '../../components/content/canvas-embeds/AnnotationOverlay';
-import type { GenieProvider } from '@/common/genie/types';
+import type { AcpProvider } from '@/common/assistant-context/types';
 import type { CanvasAiGenerationRequest, CanvasAiGenerationResult } from '../../domains/ai-generation/CanvasAiGenerationTool';
 import type { AssistantImageAttachmentPayload } from '../../domains/assistant/assistantContextPayload';
 import type { SettingsDialogInitialTab } from '../../components/SettingsDialog';
@@ -14,15 +14,19 @@ interface UseIndexPagePresentationPropsBuilderParams {
             collapsed: boolean;
             selectedItem: any;
             prototypeStartDraftActive?: boolean;
+            resourceStartDraftActive?: boolean;
+            themeStartDraftActive?: boolean;
             viewMode: ViewMode;
         activeTab: 'prototypes';
         assistantVisible: boolean;
         isDarkMode: boolean;
         contentMode: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
         docsItems?: any[];
+        sidebarTrees?: any;
         selectedDoc: any;
         selectedResourceFolder?: any;
         selectedCanvas: any;
+        canvasItems?: any[];
         selectedTemplate: any;
         selectedTheme: any;
         selectedDataTable: any;
@@ -77,9 +81,9 @@ interface UseIndexPagePresentationPropsBuilderParams {
         onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;
         onCanvasAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
         onOpenCanvasInIDE?: (canvasFilePath: string) => void | Promise<void>;
-        onOpenCanvasGenie?: () => void | Promise<void>;
+        onOpenCanvasAgent?: () => void | Promise<void>;
         handleOpenProjectInIDE?: (ideOverride?: any, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
-        onOpenGenieWebAgent?: (targetPath?: string, provider?: GenieProvider) => void | Promise<void>;
+        onOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
         onOpenImageAiPanel?: () => void | Promise<void>;
         onOpenWebAgentInPanel?: (url: string) => boolean | void | Promise<boolean | void>;
         onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null }) => Promise<boolean | void> | boolean | void;
@@ -88,7 +92,12 @@ interface UseIndexPagePresentationPropsBuilderParams {
         onPreferredIDEChange?: (ide: any) => void;
         openSettingsDialog?: (tab?: SettingsDialogInitialTab) => void;
         onCreatePrototypeForDraftStart?: () => Promise<any | null>;
+        onUploadResourceFiles?: () => void;
+        onCreateResourceCanvasFile?: () => void | Promise<void>;
+        onCreateDrawioResourceFile?: () => void | Promise<void>;
+        onOpenDesignImport?: () => void;
         onRefreshPrototypes?: (preferredName?: string) => Promise<any[]>;
+        agentRunConcurrency?: number;
         onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     };
 }
@@ -104,11 +113,14 @@ export function useIndexPagePresentationPropsBuilder({
             collapsed: state.collapsed,
             selectedItem: state.selectedItem,
             prototypeStartDraftActive: state.prototypeStartDraftActive,
+            resourceStartDraftActive: state.resourceStartDraftActive,
+            themeStartDraftActive: state.themeStartDraftActive,
             viewMode: state.viewMode,
             activeTab: state.activeTab,
             selectedDeviceId: preview.selectedDeviceId,
             previewConfig: preview.previewConfig,
             deviceSegmentOptions: preview.deviceSegmentOptions,
+            visibleCloudPublishTargets: preview.visibleCloudPublishTargets,
             qrCodeVisible: preview.qrCodeVisible,
             quickEditAvailable: preview.quickEditAvailable,
             quickEditActive: preview.editorStatus.mode === 'quickEdit',
@@ -116,18 +128,23 @@ export function useIndexPagePresentationPropsBuilder({
             markdownPromptCopying: preview.markdownPromptCopying,
             drawioResourceEditAvailable: preview.drawioResourceEditAvailable,
             reviewPanelOpen: preview.reviewPanelOpen,
-            activeReviewKind: preview.activeReviewKind,
-            reviewMarkdown: preview.reviewMarkdown,
-            reviewUpdatedAt: preview.reviewUpdatedAt,
+            activeReviewReportId: preview.activeReviewReportId,
+            reviewReports: preview.reviewReports,
+            selectedReviewReport: preview.selectedReviewReport,
             reviewLoading: preview.reviewLoading,
+            reviewDetailLoading: preview.reviewDetailLoading,
+            reviewUploadLoading: preview.reviewUploadLoading,
             reviewError: preview.reviewError,
-            reviewPageZoomEnabled: preview.reviewPageZoomEnabled,
+            reviewLanSubmitConfig: preview.reviewLanSubmitConfig,
             reviewPrompt: preview.reviewPrompt,
             reviewDocumentPath: preview.reviewDocumentPath,
+            reviewPrompts: preview.reviewPrompts,
+            reviewDocumentPaths: preview.reviewDocumentPaths,
             quickEditRuntimeStatus: preview.quickEditRuntimeStatus,
             exportAvailability: preview.exportAvailability,
             editorMode: preview.editorStatus.mode,
             hostToolbarState: preview.hostToolbarState,
+            prototypeDecisionDataAvailable: preview.prototypeDecisionDataAvailable,
             allowLAN: state.lanAccessAllowed !== false,
             assistantVisible: state.assistantVisible,
             containerRef: preview.containerRef,
@@ -145,9 +162,11 @@ export function useIndexPagePresentationPropsBuilder({
             elementIframeSize: preview.elementIframeSize,
             contentMode: state.contentMode,
             docsItems: state.docsItems || [],
+            sidebarTrees: state.sidebarTrees,
             selectedDoc: state.selectedDoc,
             selectedResourceFolder: state.selectedResourceFolder,
             selectedCanvas: state.selectedCanvas,
+            canvasItems: state.canvasItems || [],
             selectedTemplate: state.selectedTemplate,
             isDarkMode: state.isDarkMode,
             selectedTheme: state.selectedTheme,
@@ -200,9 +219,12 @@ export function useIndexPagePresentationPropsBuilder({
             handleOpenDrawioResourceEditor: preview.handleOpenDrawioResourceEditor,
             handleCopyMarkdownPrompt: preview.handleCopyMarkdownPrompt,
             handleReviewPanelToggle: preview.handleReviewPanelToggle,
-            handleReviewKindChange: preview.handleReviewKindChange,
-            handleCopyReviewPrompt: preview.handleCopyReviewPrompt,
-            handleToggleReviewPageZoom: preview.handleToggleReviewPageZoom,
+            handleSelectReviewReport: preview.handleSelectReviewReport,
+            handleBackToReviewList: preview.handleBackToReviewList,
+            handleStartReview: preview.handleStartReview,
+            handleRunReviewDirect: preview.handleRunReviewDirect,
+            handleUploadReviewReport: preview.handleUploadReviewReport,
+            handleReviewLanSubmitEnabledChange: preview.handleReviewLanSubmitEnabledChange,
             handleRunHostToolbarAction: preview.runHostToolbarAction,
             handleRunPrototypePanePromptAction: preview.runPrototypePanePromptAction,
             handleRunQuickEditSaveAction: preview.runQuickEditSaveAction,
@@ -218,6 +240,7 @@ export function useIndexPagePresentationPropsBuilder({
             handleExportHtml: preview.handleExportHtml,
             handlePublishCloudTarget: preview.handlePublishCloudTarget,
             handleOpenCloudPublishSettings: preview.handleOpenCloudPublishSettings,
+            handleOpenAxhubPublishDialog: preview.handleOpenAxhubPublishDialog,
             currentPublishResourcePath: preview.currentPublishResourcePath,
             latestCloudPublishUrl: preview.latestCloudPublishUrl,
             handleCopyLatestCloudPublishUrl: preview.handleCopyLatestCloudPublishUrl,
@@ -247,9 +270,9 @@ export function useIndexPagePresentationPropsBuilder({
             onAddCanvasImageToAI: actions.onAddCanvasImageToAI,
             onCanvasAnnotationsChange: actions.onCanvasAnnotationsChange,
             onOpenCanvasInIDE: actions.onOpenCanvasInIDE,
-            onOpenCanvasGenie: actions.onOpenCanvasGenie,
+            onOpenCanvasAgent: actions.onOpenCanvasAgent,
             handleOpenProjectInIDE: actions.handleOpenProjectInIDE,
-            onOpenGenieWebAgent: actions.onOpenGenieWebAgent,
+            onOpenAcpWebAgent: actions.onOpenAcpWebAgent,
             onOpenImageAiPanel: actions.onOpenImageAiPanel,
             onOpenWebAgentInPanel: actions.onOpenWebAgentInPanel,
             onExecutePrompt: actions.onExecutePrompt,
@@ -258,7 +281,12 @@ export function useIndexPagePresentationPropsBuilder({
             onPreferredIDEChange: actions.onPreferredIDEChange,
             onOpenAISettings: actions.openSettingsDialog ? () => actions.openSettingsDialog?.('ai') : undefined,
             onCreatePrototypeForDraftStart: actions.onCreatePrototypeForDraftStart,
+            onUploadResourceFiles: actions.onUploadResourceFiles,
+            onCreateResourceCanvasFile: actions.onCreateResourceCanvasFile,
+            onCreateDrawioResourceFile: actions.onCreateDrawioResourceFile,
+            onOpenDesignImport: actions.onOpenDesignImport,
             onRefreshPrototypes: actions.onRefreshPrototypes,
+            agentRunConcurrency: actions.agentRunConcurrency,
             onSubmitCanvasAssistantPrompt: actions.onSubmitCanvasAssistantPrompt,
         },
     }), [actions, preview, state, ui]) satisfies PresentationAreaGroupedProps;

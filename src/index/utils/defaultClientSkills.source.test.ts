@@ -69,7 +69,10 @@ describe('default client skills', () => {
       expect(source).toContain('图片：');
       expect(source).toContain('流程图：');
       expect(source).toContain('产物类型不清时先问一个问题');
-      expect(source).toContain('canvas.excalidraw');
+      expect(source).toContain('src/resources/**/*.excalidraw');
+      expect(source).toContain('src/resources/**/<name>.assets/');
+      expect(source).not.toContain('src/prototypes/<prototype-name>/canvas.excalidraw');
+      expect(source).not.toContain('src/prototypes/<prototype-name>/canvas-assets/');
       expect(source).not.toContain('$flowchart');
     }
   });
@@ -83,7 +86,7 @@ describe('default client skills', () => {
     for (const source of skillSources) {
       expect(source).toContain('文档、说明、PRD、清单、列表、报告或其他文本内容');
       expect(source).toContain('默认先生成 Markdown 文档到 `src/resources/`');
-      expect(source).toContain('再把该文档作为文档节点创建或更新到当前 `canvas.excalidraw`');
+      expect(source).toContain('再把该文档作为文档节点创建或更新到当前资源画布');
       expect(source).toContain('不要把正文直接拆成大量画布文本框');
     }
   });
@@ -141,6 +144,21 @@ describe('default client skills', () => {
     }
   });
 
+  it('documents preview mode as the default for AI generated canvas resource nodes', () => {
+    const skillRoots = [
+      '.agents/skills/canvas-workspace',
+      '.claude/skills/canvas-workspace',
+    ];
+
+    for (const root of skillRoots) {
+      const nodesReference = readClientFile(`${root}/references/axhub-nodes.md`);
+
+      expect(nodesReference).toContain('AI 生成或新建资源节点默认使用 `customData.embedViewMode: "preview"`');
+      expect(nodesReference).toContain('只有用户明确要求紧凑入口或资源无法预览时，才使用 `link`');
+      expect(nodesReference).toContain('"embedViewMode": "preview"');
+    }
+  });
+
   it('bundles the Write PRD skill with Axhub resource and template rules', () => {
     const skillRoots = [
       '.agents/skills/write-prd',
@@ -154,10 +172,40 @@ describe('default client skills', () => {
       expect(skillSource).toContain('name: write-prd');
       expect(skillSource).toContain('src/resources/');
       expect(skillSource).toContain('用户提供的模板');
-      expect(skillSource).toContain('canvas.excalidraw');
+      expect(skillSource).toContain('src/resources/**/*.excalidraw');
       expect(skillSource).not.toContain('ready-for-agent');
       expect(skillSource).not.toContain('/setup-matt-pocock-skills');
       expect(interfaceSource).toContain('display_name: "写 PRD"');
+    }
+  });
+
+  it('keeps UI design image skill size guidance within GPT Image 2 API constraints', () => {
+    const skillRoots = [
+      '.agents/skills/ui-design-image',
+      '.claude/skills/ui-design-image',
+    ];
+
+    for (const root of skillRoots) {
+      const skillSource = readClientFile(`${root}/SKILL.md`);
+
+      expect(skillSource).toContain('`gpt-image-2` 的 API 参数 `size` 可以使用符合约束的自定义尺寸');
+      expect(skillSource).toContain('`768x1664`');
+      expect(skillSource).toContain('`1168x2528`');
+      expect(skillSource).toContain('`1440x896`');
+      expect(skillSource).toContain('`1920x1200`');
+      expect(skillSource).toContain('`1024x1024`');
+      expect(skillSource).toContain('接近 `390x844`');
+      expect(skillSource).toContain('接近 `1440x900`');
+      expect(skillSource).toContain('宽高都必须是 `16` 的倍数');
+      expect(skillSource).toContain('最长边必须小于 `3840px`');
+      expect(skillSource).toContain('设备真实比例写进提示词');
+      expect(skillSource).not.toContain('`1024x1536`');
+      expect(skillSource).not.toContain('`1536x1024`');
+      expect(skillSource).not.toContain('`1152x2048`');
+      expect(skillSource).not.toContain('`2048x1152`');
+      expect(skillSource).not.toContain('`1170x2532`');
+      expect(skillSource).not.toContain('`2160x3840`');
+      expect(skillSource).not.toContain('`3840x2160`');
     }
   });
 });

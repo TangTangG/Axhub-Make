@@ -24,10 +24,9 @@ class FakeSocket extends EventEmitter {
   }
 }
 
-function encodeClientTextFrame(payload: unknown): Buffer {
-  const data = Buffer.from(JSON.stringify(payload), 'utf8');
+function encodeClientFrame(opcode: number, data: Buffer, options: { fin?: boolean } = {}): Buffer {
   const header = Buffer.alloc(data.length < 126 ? 6 : 8);
-  header[0] = 0x81;
+  header[0] = (options.fin === false ? 0 : 0x80) | opcode;
   if (data.length < 126) {
     header[1] = 0x80 | data.length;
     header.writeUInt32BE(0, 2);
@@ -37,6 +36,10 @@ function encodeClientTextFrame(payload: unknown): Buffer {
   header.writeUInt16BE(data.length, 2);
   header.writeUInt32BE(0, 4);
   return Buffer.concat([header, data]);
+}
+
+function encodeClientTextFrame(payload: unknown): Buffer {
+  return encodeClientFrame(0x01, Buffer.from(JSON.stringify(payload), 'utf8'));
 }
 
 function decodeServerTextFrame(frame: Buffer): any {
@@ -200,6 +203,41 @@ describe('preview bridge websocket hub', () => {
         resourceType: 'prototype',
         resourceId: 'latest-page',
       },
+    });
+    hub.destroy();
+  });
+
+  it('resolves command results split across websocket continuation frames', async () => {
+    const { hub } = createHub();
+    const socket = connectPreviewClient(hub);
+
+    const resultPromise = hub.sendCommand('preview_capture', {}, {
+      requestId: 'preview-command-fragmented-result',
+      timeoutMs: 50,
+    });
+
+    const payload = Buffer.from(JSON.stringify({
+      type: 'preview.command.result',
+      requestId: 'preview-command-fragmented-result',
+      ok: true,
+      payload: {
+        screenshots: [{
+          viewportId: 'desktop',
+          dataUrl: `data:image/png;base64,${'a'.repeat(1024)}`,
+        }],
+      },
+    }), 'utf8');
+    const splitAt = Math.floor(payload.length / 2);
+
+    socket.emit('data', Buffer.concat([
+      encodeClientFrame(0x01, payload.subarray(0, splitAt), { fin: false }),
+      encodeClientFrame(0x00, payload.subarray(splitAt)),
+    ]));
+
+    await expect(resultPromise).resolves.toMatchObject({
+      screenshots: [{
+        viewportId: 'desktop',
+      }],
     });
     hub.destroy();
   });

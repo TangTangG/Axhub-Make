@@ -40,6 +40,7 @@ describe('prototype generation task store', () => {
     const store = createPrototypeGenerationTaskStore({ now: vi.fn()
       .mockReturnValueOnce(1000)
       .mockReturnValueOnce(2500) });
+    await store.configure({ targetPath: 'prototypes/home' });
     const seenStages: string[] = [];
     store.subscribe(() => {
       const task = store.getTasks()[0];
@@ -48,9 +49,9 @@ describe('prototype generation task store', () => {
 
     const result = await store.submit({
       prompt: '生成 CRM 原型',
-      preferredPromptClient: 'genie:codex',
-      canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
-      canvasName: 'prototypes/home/canvas',
+      preferredPromptClient: 'acp:codex',
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
+      canvasName: 'flows/home.excalidraw',
       generatorElementId: 'generator-1',
     }, {
       onAgentDone: async () => ({
@@ -75,8 +76,8 @@ describe('prototype generation task store', () => {
     expect(runnerMock.runAcpPrototypeAgent).toHaveBeenCalledWith(expect.objectContaining({
       provider: 'codex',
       prompt: '生成 CRM 原型',
-      canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
-      canvasName: 'prototypes/home/canvas',
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
+      canvasName: 'flows/home.excalidraw',
       generatorElementId: 'generator-1',
       targetPath: 'prototypes/home',
     }));
@@ -102,9 +103,9 @@ describe('prototype generation task store', () => {
 
     const result = await store.submit({
       prompt: '生成当前原型',
-      preferredPromptClient: 'genie:codex',
-      canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
-      canvasName: 'prototypes/home/canvas',
+      preferredPromptClient: 'acp:codex',
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
+      canvasName: 'flows/home.excalidraw',
       generatorElementId: 'generator-1',
     }, {
       onArtifact: onArtifactMock,
@@ -144,9 +145,9 @@ describe('prototype generation task store', () => {
 
     const submitPromise = store.submit({
       prompt: '生成当前原型',
-      preferredPromptClient: 'genie:codex',
-      canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
-      canvasName: 'prototypes/home/canvas',
+      preferredPromptClient: 'acp:codex',
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
+      canvasName: 'flows/home.excalidraw',
       generatorElementId: 'generator-1',
     }, {
       onArtifact: async () => {
@@ -192,5 +193,55 @@ describe('prototype generation task store', () => {
       error: 'ACP chat failed',
       provider: 'codex',
     });
+  });
+
+  it('does not derive a prototype target path from a resource canvas path', async () => {
+    runnerMock.runAcpPrototypeAgent.mockResolvedValue({
+      status: 'done',
+      sessionId: 'axhub-session-run-client-home',
+    });
+    const store = createPrototypeGenerationTaskStore({ now: vi.fn()
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(1200) });
+
+    await store.submit({
+      prompt: '生成当前原型',
+      preferredPromptClient: 'acp:codex',
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
+      canvasName: 'flows/home.excalidraw',
+      generatorElementId: 'generator-1',
+    }, {
+      onAgentDone: async () => null,
+    });
+
+    expect(runnerMock.runAcpPrototypeAgent).toHaveBeenCalledWith(expect.objectContaining({
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
+      targetPath: undefined,
+    }));
+  });
+
+  it('uses resource canvas file paths as configured task targets', async () => {
+    runnerMock.runAcpPrototypeAgent.mockResolvedValue({
+      status: 'done',
+      sessionId: 'axhub-session-run-client-home',
+    });
+    const store = createPrototypeGenerationTaskStore({ now: vi.fn()
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(1200) });
+
+    await store.configure({ targetPath: 'src/resources/flows/home.excalidraw' });
+    await store.submit({
+      prompt: '生成当前原型',
+      preferredPromptClient: 'acp:codex',
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
+      canvasName: 'flows/home.excalidraw',
+      generatorElementId: 'generator-1',
+    }, {
+      onAgentDone: async () => null,
+    });
+
+    expect(runnerMock.runAcpPrototypeAgent).toHaveBeenCalledWith(expect.objectContaining({
+      targetPath: 'src/resources/flows/home.excalidraw',
+    }));
   });
 });

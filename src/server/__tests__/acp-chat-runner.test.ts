@@ -42,6 +42,25 @@ function createTimeoutReadResponse(): Response {
   });
 }
 
+function createDanglingDoneResponse(events: string[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(new ReadableStream({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(encoder.encode(event));
+      }
+    },
+    pull() {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    },
+  }), {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+    },
+  });
+}
+
 describe('ACP chat runner', () => {
   it('creates URL-safe one-shot thread ids', async () => {
     const mod = await loadRunnerModule();
@@ -76,6 +95,8 @@ describe('ACP chat runner', () => {
           'x-acp-thread-id': encodeURIComponent(body.threadId),
           'x-acp-session-key': encodeURIComponent('codex:/workspace:' + body.threadId),
           'x-acp-session-id': 'acp-session-1',
+          'x-acp-previous-run-cancelled': 'true',
+          'x-acp-previous-session-id': 'acp-session-old',
           'x-acp-cold-start': 'true',
           'x-acp-run-state': 'running',
           'x-acp-warning-count': '2',
@@ -85,7 +106,7 @@ describe('ACP chat runner', () => {
 
     const result = await mod.runAcpChatCommand({
       acpApiBaseUrl: 'http://acp.local/api/',
-      provider: 'genie:codex',
+      provider: 'acp:codex',
       workspacePath: '/workspace',
       conversationStorePath: '/workspace/src/prototypes/home/.spec/acp/conversations.json',
       prompt: 'Run the requested task.',
@@ -126,6 +147,8 @@ describe('ACP chat runner', () => {
         provider: 'codex',
         threadId: result.threadId,
         sessionId: 'acp-session-1',
+        previousRunCancelled: true,
+        previousSessionId: 'acp-session-old',
         coldStart: true,
         runState: 'running',
         warningCount: 2,
@@ -156,7 +179,7 @@ describe('ACP chat runner', () => {
       acpApiBaseUrl: 'http://acp.local/api',
       id: 'chat-run-1',
       threadId: 'existing_thread-1',
-      provider: 'gemini',
+      provider: 'acp:gemini',
       workspacePath: '/workspace',
       messages: [
         {
@@ -170,11 +193,13 @@ describe('ACP chat runner', () => {
       modeId: 'plan',
     }, { fetchImpl });
 
-    const body = JSON.parse(String(fetchImpl.mock.calls[0][1].body));
+    const requestInit = fetchImpl.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(requestInit).toBeDefined();
+    const body = JSON.parse(String(requestInit?.body));
     expect(body).toMatchObject({
       id: 'chat-run-1',
       threadId: 'existing_thread-1',
-      provider: 'gemini',
+      provider: 'codex',
       workspacePath: '/workspace',
       context: { version: 2, items: [] },
       model: 'gemini-model',
@@ -182,6 +207,72 @@ describe('ACP chat runner', () => {
     });
     expect(result.output).toBe('continued');
     expect(result.threadId).toBe('existing_thread-1');
+  });
+
+  it('maps non-2xx ACP JSON errors to typed run errors with diagnostic details', async () => {
+    const mod = await loadRunnerModule();
+    const errorBody = {
+      error: 'Failed to cancel the active ACP run before sending the new prompt.',
+      code: 'ACP_CHAT_CANCEL_FAILED',
+      threadId: 'existing_thread-1',
+      provider: 'codex',
+      cause: 'provider cleanup failed',
+    };
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(errorBody), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    await expect(mod.runAcpChat({
+      acpApiBaseUrl: 'http://acp.local/api',
+      id: 'chat-run-1',
+      threadId: 'existing_thread-1',
+      provider: 'codex',
+      workspacePath: '/workspace',
+      messages: [
+        {
+          id: 'user-2',
+          role: 'user',
+          parts: [{ type: 'text', text: 'Continue.' }],
+        },
+      ],
+    }, { fetchImpl })).rejects.toMatchObject({
+      name: 'AcpChatRunError',
+      code: 'ACP_CHAT_CANCEL_FAILED',
+      statusCode: 502,
+      message: 'Failed to cancel the active ACP run before sending the new prompt.',
+      details: errorBody,
+    });
+  });
+
+  it.each([
+    ['acp:claude', 'claude'],
+    ['acp:codex', 'codex'],
+    ['acp:opencode', 'opencode'],
+    ['acp:cursor', 'cursor'],
+    ['acp:qoder', 'qoder'],
+    ['acp:codebuddy', 'codebuddy'],
+    ['acp:reasonix', 'reasonix'],
+  ])('normalizes prompt client %s to ACP provider %s', async (promptClient, provider) => {
+    const mod = await loadRunnerModule();
+    const fetchImpl = vi.fn(async () => createSseResponse([
+      createJsonEvent({ type: 'text-delta', delta: 'ok' }),
+      createJsonEvent({ type: 'finish', finishReason: 'stop' }),
+      'data: [DONE]\n\n',
+    ]));
+
+    await mod.runAcpChatCommand({
+      acpApiBaseUrl: 'http://acp.local/api',
+      provider: promptClient,
+      workspacePath: '/workspace',
+      prompt: 'Ping.',
+    }, { fetchImpl });
+
+    const fetchMock = fetchImpl as unknown as { mock: { calls: Array<[string, RequestInit]> } };
+    const requestInit = fetchMock.mock.calls[0]?.[1];
+    expect(requestInit).toBeDefined();
+    const body = JSON.parse(String(requestInit?.body));
+    expect(body.provider).toBe(provider);
   });
 
   it('fails stream error chunks with the partial result attached', async () => {
@@ -209,6 +300,33 @@ describe('ACP chat runner', () => {
           },
         ],
       },
+    });
+  });
+
+  it('treats stream error chunks followed by a stop finish as non-fatal diagnostics', async () => {
+    const mod = await loadRunnerModule();
+    const fetchImpl = vi.fn(async () => createSseResponse([
+      createJsonEvent({ type: 'text-delta', delta: 'patch applied' }),
+      createJsonEvent({ type: 'error', errorText: 'session status poll failed' }),
+      createJsonEvent({ type: 'finish', finishReason: 'stop' }),
+      'data: [DONE]\n\n',
+    ]));
+
+    const result = await mod.runAcpChatCommand({
+      acpApiBaseUrl: 'http://acp.local/api',
+      workspacePath: '/workspace',
+      prompt: 'Run.',
+    }, { fetchImpl });
+
+    expect(result).toMatchObject({
+      output: 'patch applied',
+      finishReason: 'stop',
+      errors: [
+        {
+          type: 'error',
+          message: 'session status poll failed',
+        },
+      ],
     });
   });
 
@@ -248,7 +366,60 @@ describe('ACP chat runner', () => {
     });
   });
 
-  it('maps ACP chat fetch timeouts to a readable run error', async () => {
+  it('treats tool errors as diagnostics when explicitly allowed', async () => {
+    const mod = await loadRunnerModule();
+    const fetchImpl = vi.fn(async () => createSseResponse([
+      createJsonEvent({ type: 'text-delta', delta: 'patch applied' }),
+      createJsonEvent({
+        type: 'tool-output-error',
+        toolCallId: 'call-check-ready',
+        toolName: 'run_shell_command',
+        errorText: 'node scripts/check-app-ready.mjs failed',
+      }),
+      'data: [DONE]\n\n',
+    ]));
+
+    const result = await mod.runAcpChatCommand({
+      acpApiBaseUrl: 'http://acp.local/api',
+      workspacePath: '/workspace',
+      prompt: 'Update annotation.',
+      allowToolErrorDiagnostics: true,
+    }, { fetchImpl });
+
+    expect(result).toMatchObject({
+      output: 'patch applied',
+      errors: [
+        {
+          type: 'tool-output-error',
+          toolCallId: 'call-check-ready',
+          toolName: 'run_shell_command',
+          message: 'node scripts/check-app-ready.mjs failed',
+        },
+      ],
+    });
+  });
+
+  it('completes when ACP sends DONE even if the response body remains open', async () => {
+    const mod = await loadRunnerModule();
+    const fetchImpl = vi.fn(async () => createDanglingDoneResponse([
+      createJsonEvent({ type: 'text-delta', delta: 'patch applied' }),
+      'data: [DONE]\n\n',
+    ]));
+
+    const result = await mod.runAcpChatCommand({
+      acpApiBaseUrl: 'http://acp.local/api',
+      workspacePath: '/workspace',
+      prompt: 'Update annotation.',
+      allowToolErrorDiagnostics: true,
+    }, { fetchImpl, timeoutMs: 30_000 });
+
+    expect(result).toMatchObject({
+      output: 'patch applied',
+      errors: [],
+    });
+  });
+
+  it('maps ACP chat fetch no-response aborts to a readable run error', async () => {
     const mod = await loadRunnerModule();
     const fetchImpl = vi.fn(async () => {
       throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
@@ -260,13 +431,13 @@ describe('ACP chat runner', () => {
       prompt: 'Run.',
     }, { fetchImpl, timeoutMs: 30_000 })).rejects.toMatchObject({
       name: 'AcpChatRunError',
-      code: 'ACP_CHAT_TIMEOUT',
+      code: 'ACP_CHAT_NO_RESPONSE',
       statusCode: 504,
-      message: 'ACP 响应超时，请检查本地 ACP UI 或当前模型是否卡住。',
+      message: 'ACP 暂无响应，正在确认任务状态。',
     });
   });
 
-  it('maps ACP chat stream read timeouts to a readable run error', async () => {
+  it('maps ACP chat stream read no-response aborts to a readable run error', async () => {
     const mod = await loadRunnerModule();
     const fetchImpl = vi.fn(async () => createTimeoutReadResponse());
 
@@ -276,9 +447,9 @@ describe('ACP chat runner', () => {
       prompt: 'Run.',
     }, { fetchImpl, timeoutMs: 30_000 })).rejects.toMatchObject({
       name: 'AcpChatRunError',
-      code: 'ACP_CHAT_TIMEOUT',
+      code: 'ACP_CHAT_NO_RESPONSE',
       statusCode: 504,
-      message: 'ACP 响应超时，请检查本地 ACP UI 或当前模型是否卡住。',
+      message: 'ACP 暂无响应，正在确认任务状态。',
     });
   });
 });

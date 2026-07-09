@@ -27,13 +27,13 @@ describe('canvasGenerationComposerDraft', () => {
   it('creates an isolated storage key from project, canvas, and generator scope parts', () => {
     const key = createCanvasGenerationComposerDraftStorageKey([
       '/workspace/demo/project',
-      'src/prototypes/current/canvas.excalidraw',
+      'src/resources/flows/current.excalidraw',
       'generator-1',
     ]);
 
     expect(key).toContain('axhub:canvas-generation-composer-draft:v1:');
     expect(key).toContain('%2Fworkspace%2Fdemo%2Fproject');
-    expect(key).toContain('src%2Fprototypes%2Fcurrent%2Fcanvas.excalidraw');
+    expect(key).toContain('src%2Fresources%2Fflows%2Fcurrent.excalidraw');
     expect(key).toContain('generator-1');
   });
 

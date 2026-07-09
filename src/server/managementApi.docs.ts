@@ -46,25 +46,7 @@ interface DocsApiHandlers {
     route: string,
     details?: Record<string, unknown>,
   ) => void;
-  saveMetadataWithResourceOrder: (
-    context: DocsProjectContext,
-    metadata: ProjectMetadata,
-  ) => ProjectMetadata;
-  prependUnique: (values: string[], value: string) => string[];
   createProjectRelativePath: (projectRoot: string, absolutePath: string) => string;
-  updateGenericResourceMetadata: (
-    context: DocsProjectContext,
-    type: 'templates',
-    previousKey: string,
-    nextResource: Record<string, unknown>,
-    previousOrderKey: string,
-    nextOrderKey: string,
-  ) => void;
-  removeGenericResourceMetadata: (
-    context: DocsProjectContext,
-    type: 'templates',
-    key: string,
-  ) => void;
 }
 
 function sanitizeDocBaseName(input: string): string {
@@ -86,11 +68,15 @@ function getTemplatesDir(projectRoot: string): string {
 }
 
 function getDocsDirForContext(context: DocsProjectContext, handlers: DocsApiHandlers): string {
-  return handlers.getDeclaredResourceWriteDir(context, 'docs') || getDocsDir(context.project.root);
+  return getDocsDir(context.project.root);
 }
 
 function getTemplatesDirForContext(context: DocsProjectContext, handlers: DocsApiHandlers): string {
-  return handlers.getDeclaredResourceWriteDir(context, 'templates') || getTemplatesDir(context.project.root);
+  return getTemplatesDir(context.project.root);
+}
+
+function hasWritableDocsDir(context: DocsProjectContext, handlers: DocsApiHandlers): boolean {
+  return isPathInside(context.project.root, getDocsDir(context.project.root));
 }
 
 function normalizeUploadTargetFolder(targetFolder: string): string | null {
@@ -119,45 +105,9 @@ function normalizeResourceIdFromFileName(fileName: string): string {
   return path.basename(fileName, path.extname(fileName));
 }
 
-function updateDocMetadataAfterRename(context: DocsProjectContext, previousId: string, nextId: string, nextName: string, nextPath: string, handlers: DocsApiHandlers): void {
-  const current = context.metadataStore.getMetadata();
-  handlers.saveMetadataWithResourceOrder(context, {
-    ...current,
-    resources: {
-      ...current.resources,
-      docs: current.resources.docs.map((doc) => (
-        doc.id === previousId || doc.name === previousId
-          ? {
-            ...doc,
-            id: nextId,
-            name: nextId,
-            title: doc.title === previousId ? nextId : doc.title,
-            path: nextPath,
-            updatedAt: new Date().toISOString(),
-          }
-          : doc
-      )),
-    },
-    navigation: {
-      ...current.navigation,
-      docs: current.navigation.docs.map((id) => (id === previousId ? nextId : id)),
-    },
-  });
-}
-
-function removeDocMetadata(context: DocsProjectContext, id: string, handlers: DocsApiHandlers): void {
-  const current = context.metadataStore.getMetadata();
-  handlers.saveMetadataWithResourceOrder(context, {
-    ...current,
-    resources: {
-      ...current.resources,
-      docs: current.resources.docs.filter((doc) => doc.id !== id && doc.name !== id),
-    },
-    navigation: {
-      ...current.navigation,
-      docs: current.navigation.docs.filter((docId) => docId !== id),
-    },
-  });
+function getResourceFileBaseName(filePath: string): string {
+  const normalized = String(filePath || '').replace(/\\/g, '/');
+  return normalized.split('/').filter(Boolean).pop() || normalized;
 }
 
 function isIgnoredResourceRelativePath(relativePath: string): boolean {
@@ -167,16 +117,17 @@ function isIgnoredResourceRelativePath(relativePath: string): boolean {
   return normalized.split('/').some((segment) => segment.startsWith('.'));
 }
 
-function listResourceFiles(rootDir: string, baseDir = rootDir): any[] {
+function listResourceFiles(rootDir: string, baseDir = rootDir, options: { nameMode?: 'relative' | 'basename' } = {}): any[] {
   if (!fs.existsSync(rootDir)) {
     return [];
   }
+  const nameMode = options.nameMode || 'relative';
   const result: any[] = [];
   for (const item of fs.readdirSync(rootDir, { withFileTypes: true })) {
     if (item.name.startsWith('.')) continue;
     const fullPath = path.join(rootDir, item.name);
     if (item.isDirectory()) {
-      result.push(...listResourceFiles(fullPath, baseDir));
+      result.push(...listResourceFiles(fullPath, baseDir, options));
       continue;
     }
     if (!item.isFile()) {
@@ -186,6 +137,7 @@ function listResourceFiles(rootDir: string, baseDir = rootDir): any[] {
     if (isIgnoredResourceRelativePath(relativeName)) {
       continue;
     }
+    const fileName = getResourceFileBaseName(relativeName);
     const ext = path.extname(item.name).toLowerCase();
     let title: string | undefined;
     let description = '';
@@ -205,9 +157,10 @@ function listResourceFiles(rootDir: string, baseDir = rootDir): any[] {
       // ignore stat errors
     }
     result.push({
-      name: relativeName,
-      displayName: title || relativeName.replace(/\.[^.]+$/u, ''),
+      name: nameMode === 'basename' ? fileName : relativeName,
+      displayName: title || fileName.replace(/\.[^.]+$/u, ''),
       description,
+      path: relativeName,
       absoluteFilePath: fullPath,
       ...(fileSize !== undefined ? { fileSize } : {}),
     });
@@ -290,7 +243,7 @@ function createTemplateFile(
   },
   handlers: DocsApiHandlers,
 ): void {
-  if (!handlers.hasResourceWriteCapability(context, 'templateCreate') || !handlers.getDeclaredResourceWriteDir(context, 'templates')) {
+  if (!handlers.hasResourceWriteCapability(context, 'templateCreate')) {
     handlers.sendResourceWriteAdapterRequired(res, context, params.route);
     return;
   }
@@ -313,27 +266,6 @@ function createTemplateFile(
   const rawContent = typeof params.body?.content === 'string' ? params.body.content : '';
   const content = rawContent ? rawContent : `# ${displayName}\n`;
   fs.writeFileSync(filePath, content, 'utf8');
-
-  const current = context.metadataStore.getMetadata();
-  handlers.saveMetadataWithResourceOrder(context, {
-    ...current,
-    resources: {
-      ...current.resources,
-      templates: [
-        {
-          id,
-          name: fileName,
-          title: displayName,
-          path: handlers.createProjectRelativePath(context.project.root, filePath),
-        },
-        ...current.resources.templates.filter((template) => template.id !== id && template.name !== fileName),
-      ],
-    },
-    orders: {
-      ...current.orders,
-      templates: handlers.prependUnique(current.orders.templates, fileName),
-    },
-  });
 
   sendJson(res, {
     success: true,
@@ -484,7 +416,8 @@ export function handleProjectDocsApi(
             targetPath = path.join(uploadDir, `${baseName}-${index}${ext}`);
           }
           fs.writeFileSync(targetPath, filePart.data);
-          const name = path.relative(uploadDocsDir, targetPath).split(path.sep).join('/');
+          const resourcePath = path.relative(uploadDocsDir, targetPath).split(path.sep).join('/');
+          const name = getResourceFileBaseName(resourcePath);
           const id = normalizeResourceIdFromFileName(name);
           const ext = path.extname(name).toLowerCase();
           let displayName = name.replace(/\.[^.]+$/u, '');
@@ -495,34 +428,12 @@ export function handleProjectDocsApi(
               if (title) displayName = title;
             } catch { /* ignore */ }
           }
-          // Update metadata
-          const current = uploadProjectContext.metadataStore.getMetadata();
-          handlers.saveMetadataWithResourceOrder(uploadProjectContext, {
-            ...current,
-            resources: {
-              ...current.resources,
-              docs: [
-                {
-                  id,
-                  name: id,
-                  title: displayName,
-                  path: targetPath,
-                  description: '',
-                  updatedAt: new Date().toISOString(),
-                },
-                ...current.resources.docs.filter((doc) => doc.id !== id && doc.name !== id),
-              ],
-            },
-            navigation: {
-              ...current.navigation,
-              docs: handlers.prependUnique(current.navigation.docs, id),
-            },
-          });
           results.push({
             success: true,
             name,
             id,
             displayName,
+            path: resourcePath,
             absoluteFilePath: targetPath,
           });
         }
@@ -626,7 +537,7 @@ export function handleProjectDocsApi(
           sendJson(res, { error: 'Forbidden' }, { status: 403 });
           return;
         }
-        if (!handlers.hasResourceWriteCapability(projectContext, 'templateDuplicate') || !handlers.getDeclaredResourceWriteDir(projectContext, 'templates')) {
+        if (!handlers.hasResourceWriteCapability(projectContext, 'templateDuplicate')) {
           handlers.sendResourceWriteAdapterRequired(res, projectContext, '/api/docs/templates/:name/copy');
           return;
         }
@@ -642,26 +553,6 @@ export function handleProjectDocsApi(
         fs.copyFileSync(activeTemplatePath, nextPath);
         const name = path.relative(templatesDir, nextPath).split(path.sep).join('/');
         const id = normalizeResourceIdFromFileName(name);
-        const current = projectContext.metadataStore.getMetadata();
-        handlers.saveMetadataWithResourceOrder(projectContext, {
-          ...current,
-          resources: {
-            ...current.resources,
-            templates: [
-              {
-                id,
-                name,
-                title: rawDisplayName || id,
-                path: handlers.createProjectRelativePath(projectRoot, nextPath),
-              },
-              ...current.resources.templates.filter((template) => template.id !== id && template.name !== name),
-            ],
-          },
-          orders: {
-            ...current.orders,
-            templates: handlers.prependUnique(current.orders.templates, name),
-          },
-        });
         sendJson(res, {
           success: true,
           projectId: projectContext.project.id,
@@ -676,7 +567,6 @@ export function handleProjectDocsApi(
     }
     if (req.method === 'DELETE') {
       fs.rmSync(templatePath, { force: true });
-      handlers.removeGenericResourceMetadata(projectContext, 'templates', templateName);
       sendJson(res, { success: true });
       return true;
     }
@@ -697,12 +587,6 @@ export function handleProjectDocsApi(
         const nextPath = createUniqueFilePath(path.dirname(templatePath), nextBaseName, ext);
         fs.renameSync(templatePath, nextPath);
         const nextName = path.relative(templatesDir, nextPath).split(path.sep).join('/');
-        const nextId = normalizeResourceIdFromFileName(nextName);
-        handlers.updateGenericResourceMetadata(projectContext, 'templates', templateName, {
-          id: nextId,
-          name: nextName,
-          path: handlers.createProjectRelativePath(projectRoot, nextPath),
-        }, templateName, nextName);
         sendJson(res, {
           success: true,
           name: nextName,
@@ -717,7 +601,7 @@ export function handleProjectDocsApi(
 
   if (pathname === '/api/docs' || pathname === '/api/docs/') {
     if (req.method === 'GET') {
-      sendJson(res, listResourceFiles(docsDir, docsDir).filter((doc) => !doc.name.startsWith('templates/')));
+      sendJson(res, listResourceFiles(docsDir, docsDir, { nameMode: 'basename' }));
       return true;
     }
   }
@@ -766,7 +650,6 @@ export function handleProjectDocsApi(
         return true;
       }
       fs.rmSync(docPath, { force: true });
-      removeDocMetadata(projectContext, normalizeResourceIdFromFileName(docName), handlers);
       sendJson(res, { success: true });
       return true;
     }
@@ -780,7 +663,7 @@ export function handleProjectDocsApi(
           sendJson(res, { error: 'Forbidden' }, { status: 403 });
           return;
         }
-        if (!handlers.hasResourceWriteCapability(projectContext, 'docCreate') || !handlers.getDeclaredResourceWriteDir(projectContext, 'docs')) {
+        if (!handlers.hasResourceWriteCapability(projectContext, 'docCreate') || !hasWritableDocsDir(projectContext, handlers)) {
           handlers.sendResourceWriteAdapterRequired(res, projectContext, '/api/docs/:name/copy');
           return;
         }
@@ -792,41 +675,20 @@ export function handleProjectDocsApi(
         const rawDisplayName = String(body?.displayName || body?.newBaseName || '').trim();
         const fallbackBaseName = `${path.basename(activeDocPath, ext)}-copy`;
         const baseName = toKebabBaseName(rawDisplayName || fallbackBaseName, fallbackBaseName);
-        const nextPath = createUniqueFilePath(docsDir, baseName, ext);
+        const nextPath = createUniqueFilePath(path.dirname(activeDocPath), baseName, ext);
         fs.copyFileSync(activeDocPath, nextPath);
-        const name = path.relative(docsDir, nextPath).split(path.sep).join('/');
+        const resourcePath = path.relative(docsDir, nextPath).split(path.sep).join('/');
+        const name = getResourceFileBaseName(resourcePath);
         const id = normalizeResourceIdFromFileName(name);
         const content = fs.readFileSync(nextPath, 'utf8');
         const title = rawDisplayName || content.match(/^#\s+(.+)$/m)?.[1]?.trim() || id;
-        const current = projectContext.metadataStore.getMetadata();
-        handlers.saveMetadataWithResourceOrder(projectContext, {
-          ...current,
-          resources: {
-            ...current.resources,
-            docs: [
-              {
-                id,
-                name: id,
-                title,
-                path: nextPath,
-                description: '',
-                updatedAt: new Date().toISOString(),
-              },
-              ...current.resources.docs.filter((doc) => doc.id !== id && doc.name !== id),
-            ],
-          },
-          navigation: {
-            ...current.navigation,
-            docs: handlers.prependUnique(current.navigation.docs, id),
-          },
-        });
         sendJson(res, {
           success: true,
           projectId: projectContext.project.id,
           name,
           id,
           displayName: title,
-          path: nextPath,
+          path: resourcePath,
           absoluteFilePath: nextPath,
         }, { status: 201 });
       }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
@@ -848,14 +710,12 @@ export function handleProjectDocsApi(
         const ext = path.extname(docPath) || '.md';
         const nextPath = createUniqueFilePath(path.dirname(docPath), nextBaseName, ext);
         fs.renameSync(docPath, nextPath);
-        const nextName = path.relative(docsDir, nextPath).split(path.sep).join('/');
-        const previousId = normalizeResourceIdFromFileName(docName);
-        const nextId = normalizeResourceIdFromFileName(nextName);
-        updateDocMetadataAfterRename(projectContext, previousId, nextId, nextName, nextPath, handlers);
+        const nextResourcePath = path.relative(docsDir, nextPath).split(path.sep).join('/');
+        const nextName = getResourceFileBaseName(nextResourcePath);
         sendJson(res, {
           success: true,
           name: nextName,
-          path: nextPath,
+          path: nextResourcePath,
           absoluteFilePath: nextPath,
         });
       }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));

@@ -278,7 +278,7 @@ describe('make-server HTTP routing', () => {
     const server = await startRoutingServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/prototypes/touch-and-talk-annotation-demo?genieToolbar=host`, {
+      const response = await fetch(`${server.origin}/prototypes/touch-and-talk-annotation-demo?agentToolbar=host`, {
         headers: { accept: 'text/html' },
       });
       const body = await response.text();
@@ -286,7 +286,7 @@ describe('make-server HTTP routing', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toContain('text/html');
       expect(body).toContain('<title>Runtime Preview</title>');
-      expect(body).toContain('/prototypes/touch-and-talk-annotation-demo?genieToolbar=host');
+      expect(body).toContain('/prototypes/touch-and-talk-annotation-demo?agentToolbar=host');
       expect(body).not.toContain('/src/index/index.tsx');
       expect(body).not.toContain('可以通过 npx -y @axhub/make@latest 启动管理页面。');
     } finally {
@@ -360,14 +360,14 @@ describe('make-server HTTP routing', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/prototypes/touch-and-talk-annotation-demo?projectId=selected-project&genieToolbar=host`, {
+      const response = await fetch(`${server.origin}/prototypes/touch-and-talk-annotation-demo?projectId=selected-project&agentToolbar=host`, {
         headers: { accept: 'text/html' },
       });
       const body = await response.text();
 
       expect(response.status).toBe(200);
       expect(body).toContain('<title>Selected Runtime</title>');
-      expect(body).toContain('/prototypes/touch-and-talk-annotation-demo?projectId=selected-project&genieToolbar=host');
+      expect(body).toContain('/prototypes/touch-and-talk-annotation-demo?projectId=selected-project&agentToolbar=host');
       expect(body).not.toContain('<title>Active Runtime</title>');
     } finally {
       await server.close();
@@ -436,7 +436,7 @@ describe('make-server HTTP routing', () => {
     try {
       const response = await fetch(`${server.origin}/@vite/client`, {
         headers: {
-          referer: `${server.origin}/prototypes/touch-and-talk-annotation-demo?projectId=selected-project&genieToolbar=host`,
+          referer: `${server.origin}/prototypes/touch-and-talk-annotation-demo?projectId=selected-project&agentToolbar=host`,
         },
       });
       const body = await response.text();
@@ -520,7 +520,7 @@ describe('make-server HTTP routing', () => {
       for (const modulePath of runtimeModulePaths) {
         const response = await fetch(`${server.origin}${modulePath}?projectId=selected-project`, {
           headers: {
-            referer: `${server.origin}/prototypes/beginner-guide?projectId=selected-project&genieToolbar=host#page=advanced-guide`,
+            referer: `${server.origin}/prototypes/beginner-guide?projectId=selected-project&agentToolbar=host#page=advanced-guide`,
           },
         });
         const body = await response.text();

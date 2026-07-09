@@ -2,7 +2,6 @@ import React from 'react';
 import {
     Globe,
     Info,
-    LayoutDashboard,
     Menu,
     Moon,
     Paintbrush,
@@ -67,7 +66,6 @@ export default function IconNavigation({
 
     const navItems = [
         { key: 'prototype', icon: PanelsTopLeft, label: '原型 (Prototype)' },
-        { key: 'canvas', icon: LayoutDashboard, label: '画布 (Canvas)' },
         { key: 'assets', icon: Paintbrush, label: '设计 (Design)' },
     ] as const;
 

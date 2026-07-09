@@ -13,16 +13,26 @@
  */
 
 import path from 'node:path';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import type { Plugin } from 'vite';
+
+import { createAnnotationSourceMarkdownPlugin } from './annotationSourceMarkdown.ts';
 
 const requireFromCurrentModule = createRequire(import.meta.url);
+const currentModuleDir = path.dirname(fileURLToPath(import.meta.url));
+const requireFromMakePackage = createRequire(pathToFileURL(path.resolve(currentModuleDir, '../../package.json')));
 
 export interface OnDemandBuildResult {
   /** The IIFE JS code with `var UserComponent = …` */
   jsCode: string;
   /** Extracted CSS text (empty string if none) */
   cssText: string;
+  /** Build-time facts used by publishing integrations. */
+  metadata: {
+    usesAnnotationRuntime: boolean;
+  };
 }
 
 /**
@@ -50,16 +60,35 @@ function loadVendorAliases(projectRoot: string): Array<{ packageName: string; ru
   }
 }
 
-async function importPackageFromProject<T = any>(projectRoot: string, packageName: string): Promise<T> {
-  let entryPath: string;
+function isPathInside(parentPath: string, childPath: string): boolean {
+  const relativePath = path.relative(parentPath, childPath);
+  return relativePath === '' || (
+    !relativePath.startsWith('..')
+    && !path.isAbsolute(relativePath)
+  );
+}
+
+function resolvePackageFromProject(projectRoot: string, packageName: string): string | null {
   try {
-    entryPath = requireFromCurrentModule.resolve(packageName, {
+    const entryPath = requireFromCurrentModule.resolve(packageName, {
       paths: [projectRoot],
     });
+    return isPathInside(path.resolve(projectRoot), path.resolve(entryPath)) ? entryPath : null;
   } catch {
-    entryPath = requireFromCurrentModule.resolve(packageName);
+    return null;
   }
-  return import(pathToFileURL(entryPath).href) as Promise<T>;
+}
+
+async function importPackageFromProject<T = any>(projectRoot: string, packageName: string): Promise<T> {
+  const projectEntryPath = resolvePackageFromProject(projectRoot, packageName);
+  if (projectEntryPath) {
+    return import(pathToFileURL(projectEntryPath).href) as Promise<T>;
+  }
+  try {
+    return import(pathToFileURL(requireFromMakePackage.resolve(packageName)).href) as Promise<T>;
+  } catch {
+    return import(pathToFileURL(requireFromCurrentModule.resolve(packageName)).href) as Promise<T>;
+  }
 }
 
 function getPackageExport<T = any>(module: any, exportName: string, packageName: string): T {
@@ -76,6 +105,50 @@ function getDefaultExport<T = any>(module: any, packageName: string): T {
     throw new Error(`Package ${packageName} does not provide a default export`);
   }
   return value as T;
+}
+
+function isAnnotationRuntimeModule(moduleId: string): boolean {
+  const normalized = moduleId.replace(/\\/g, '/');
+  return normalized.includes('/node_modules/@axhub/annotation/')
+    || normalized.includes('/packages/axhub-annotation/src/')
+    || normalized.includes('/packages/axhub-annotation/dist/');
+}
+
+function cleanModuleId(id: string): string {
+  return id.split(/[?#]/u)[0] || id;
+}
+
+function resolveComparableFilePath(filePath: string): string {
+  try {
+    return fs.realpathSync.native(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+function hasRelativeStyleImport(code: string): boolean {
+  return /(?:^|\n)\s*import\s+(?:[^'"]+\s+from\s+)?["']\.\/style\.css["']/u.test(code);
+}
+
+function createSameDirectoryStylePlugin(entryFilePath: string): Plugin {
+  const entryPath = resolveComparableFilePath(entryFilePath);
+  const stylePath = path.join(path.dirname(entryPath), 'style.css');
+
+  return {
+    name: 'axhub-on-demand-entry-style',
+    enforce: 'pre',
+    transform(code, id) {
+      if (
+        resolveComparableFilePath(cleanModuleId(id)) !== entryPath
+        || !fs.existsSync(stylePath)
+        || hasRelativeStyleImport(code)
+      ) {
+        return null;
+      }
+      this.addWatchFile(stylePath);
+      return `import './style.css';\n${code}`;
+    },
+  };
 }
 
 /**
@@ -102,6 +175,8 @@ export async function buildOnDemand(projectRoot: string, entryFilePath: string):
     root: projectRoot,
     plugins: [
       tailwindcss(),
+      createSameDirectoryStylePlugin(entryFilePath),
+      createAnnotationSourceMarkdownPlugin(projectRoot, { mode: 'build' }),
       react({
         jsxRuntime: 'classic',
         babel: { configFile: false, babelrc: false },
@@ -160,7 +235,7 @@ export async function buildOnDemand(projectRoot: string, entryFilePath: string):
   const outputs = Array.isArray(bundleResult) ? bundleResult : [bundleResult];
   const outputBundle = outputs.find(
     (item: any) => item && item.output && Array.isArray(item.output),
-  ) as { output: Array<{ type: string; fileName: string; code?: string; source?: string | Uint8Array }> } | undefined;
+  ) as { output: Array<{ type: string; fileName: string; code?: string; source?: string | Uint8Array; modules?: Record<string, unknown> }> } | undefined;
 
   const jsChunk = outputBundle?.output.find(
     (item) => item.type === 'chunk' && typeof item.code === 'string',
@@ -185,10 +260,16 @@ export async function buildOnDemand(projectRoot: string, entryFilePath: string):
   return {
     jsCode: sanitizeProcessEnv(jsChunk.code),
     cssText,
+    metadata: {
+      usesAnnotationRuntime: Object.keys(jsChunk.modules || {}).some(isAnnotationRuntimeModule),
+    },
   };
 }
 
 export const __onDemandBuildTestUtils = {
   getPackageExport,
   getDefaultExport,
+  isAnnotationRuntimeModule,
+  hasRelativeStyleImport,
+  resolvePackageFromProject,
 };

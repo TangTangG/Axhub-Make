@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-export type AcpChatProvider = 'codex' | 'claude' | 'gemini' | 'opencode' | string;
+export type AcpChatProvider = 'codex' | 'claude' | 'opencode' | string;
 export type AcpBuiltinToolId = 'image-generation';
 
 export interface AcpChatMessage {
@@ -15,6 +15,8 @@ export interface AcpChatRequest {
   id?: string;
   threadId?: string;
   provider?: unknown;
+  scene?: string;
+  allowToolErrorDiagnostics?: boolean;
   model?: string | null;
   modeId?: string | null;
   thoughtLevel?: string | null;
@@ -37,6 +39,7 @@ export interface AcpChatCommandRequest {
   provider?: unknown;
   workspacePath: string;
   prompt: unknown;
+  allowToolErrorDiagnostics?: boolean;
   model?: string | null;
   modeId?: string | null;
   thoughtLevel?: string | null;
@@ -57,6 +60,8 @@ export interface AcpRuntimeHeaders {
   sessionKey?: string;
   sessionId?: string;
   resumedSessionId?: string;
+  previousRunCancelled?: boolean;
+  previousSessionId?: string;
   coldStart?: boolean;
   runState?: string;
   model?: string;
@@ -87,6 +92,8 @@ export interface AcpChatRunResult {
   id: string;
   threadId: string;
   provider: string;
+  scene?: string;
+  allowToolErrorDiagnostics?: boolean;
   output: string;
   reasoning: string;
   toolOutputs: AcpToolOutputChunk[];
@@ -100,17 +107,20 @@ export class AcpChatRunError extends Error {
   readonly code: string;
   readonly statusCode: number;
   readonly result?: AcpChatRunResult;
+  readonly details?: unknown;
 
   constructor(message: string, options: {
     code: string;
     statusCode: number;
     result?: AcpChatRunResult;
+    details?: unknown;
   }) {
     super(message);
     this.name = 'AcpChatRunError';
     this.code = options.code;
     this.statusCode = options.statusCode;
     this.result = options.result;
+    this.details = options.details;
   }
 }
 
@@ -137,12 +147,15 @@ export type AcpChatStreamEvent =
     };
 
 const DEFAULT_PROVIDER = 'codex';
+const ACP_SSE_DONE = Symbol('ACP_SSE_DONE');
 const RUNTIME_HEADER_KEYS = [
   'x-acp-provider',
   'x-acp-thread-id',
   'x-acp-session-key',
   'x-acp-session-id',
   'x-acp-resumed-session-id',
+  'x-acp-previous-run-cancelled',
+  'x-acp-previous-session-id',
   'x-acp-cold-start',
   'x-acp-run-state',
   'x-acp-model',
@@ -158,10 +171,15 @@ function normalizeString(value: unknown): string {
 export function normalizeAcpChatProvider(value: unknown): string {
   const normalized = normalizeString(value).toLowerCase();
   if (!normalized) return DEFAULT_PROVIDER;
-  if (normalized === 'openai' || normalized === 'acp:codex' || normalized === 'genie:codex') return 'codex';
-  if (normalized === 'claudecode' || normalized === 'acp:claude' || normalized === 'genie:claude') return 'claude';
-  if (normalized === 'acp:gemini' || normalized === 'genie:gemini') return 'gemini';
-  if (normalized === 'acp:opencode' || normalized === 'genie:opencode') return 'opencode';
+  const acpPrefixMatch = /^acp:([a-z0-9_-]+)$/u.exec(normalized);
+  if (acpPrefixMatch) {
+    const provider = acpPrefixMatch[1];
+    return provider === 'gemini' ? 'codex' : provider;
+  }
+  if (normalized === 'openai' || normalized === 'acp:codex') return 'codex';
+  if (normalized === 'claudecode' || normalized === 'acp:claude') return 'claude';
+  if (normalized === 'gemini' || normalized === 'acp:gemini') return 'codex';
+  if (normalized === 'acp:opencode') return 'opencode';
   return normalized;
 }
 
@@ -225,6 +243,8 @@ function captureRuntimeHeaders(headers: Headers): AcpRuntimeHeaders {
   const sessionKey = raw['x-acp-session-key'];
   const sessionId = raw['x-acp-session-id'];
   const resumedSessionId = raw['x-acp-resumed-session-id'];
+  const previousRunCancelled = parseBooleanHeader(raw['x-acp-previous-run-cancelled'] || '');
+  const previousSessionId = raw['x-acp-previous-session-id'];
   const coldStart = parseBooleanHeader(raw['x-acp-cold-start'] || '');
   const runState = raw['x-acp-run-state'];
   const model = raw['x-acp-model'];
@@ -237,6 +257,8 @@ function captureRuntimeHeaders(headers: Headers): AcpRuntimeHeaders {
   if (sessionKey) runtimeHeaders.sessionKey = safeDecodeURIComponent(sessionKey);
   if (sessionId) runtimeHeaders.sessionId = sessionId;
   if (resumedSessionId) runtimeHeaders.resumedSessionId = resumedSessionId;
+  if (previousRunCancelled !== undefined) runtimeHeaders.previousRunCancelled = previousRunCancelled;
+  if (previousSessionId) runtimeHeaders.previousSessionId = previousSessionId;
   if (coldStart !== undefined) runtimeHeaders.coldStart = coldStart;
   if (runState) runtimeHeaders.runState = runState;
   if (model) runtimeHeaders.model = model;
@@ -265,6 +287,8 @@ function createInitialResult(params: {
   id: string;
   threadId: string;
   provider: string;
+  scene?: string;
+  allowToolErrorDiagnostics?: boolean;
   runtimeHeaders: AcpRuntimeHeaders;
 }): AcpChatRunResult {
   return {
@@ -272,6 +296,8 @@ function createInitialResult(params: {
     id: params.id,
     threadId: params.threadId,
     provider: params.runtimeHeaders.provider || params.provider,
+    ...(params.scene ? { scene: params.scene } : {}),
+    ...(params.allowToolErrorDiagnostics ? { allowToolErrorDiagnostics: true } : {}),
     output: '',
     reasoning: '',
     toolOutputs: [],
@@ -349,7 +375,8 @@ function parseSseEvent(rawEvent: string): unknown[] {
 
   if (!dataLines.length) return [];
   const data = dataLines.join('\n').trim();
-  if (!data || data === '[DONE]') return [];
+  if (!data) return [];
+  if (data === '[DONE]') return [ACP_SSE_DONE];
   try {
     return [JSON.parse(data)];
   } catch (error: any) {
@@ -383,6 +410,7 @@ async function* readSseJson(response: Response): AsyncGenerator<Record<string, u
         const rawEvent = buffer.slice(0, separator.index);
         buffer = buffer.slice(separator.index + separator.length);
         for (const parsed of parseSseEvent(rawEvent)) {
+          if (parsed === ACP_SSE_DONE) return;
           if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
             yield parsed as Record<string, unknown>;
           }
@@ -397,6 +425,7 @@ async function* readSseJson(response: Response): AsyncGenerator<Record<string, u
   buffer += decoder.decode();
   if (buffer.trim()) {
     for (const parsed of parseSseEvent(buffer)) {
+      if (parsed === ACP_SSE_DONE) return;
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         yield parsed as Record<string, unknown>;
       }
@@ -405,8 +434,13 @@ async function* readSseJson(response: Response): AsyncGenerator<Record<string, u
 }
 
 function createFailureFromResult(result: AcpChatRunResult): AcpChatRunError | null {
+  const finishReason = normalizeString(result.finishReason).toLowerCase();
+  const hasSuccessfulFinish = ['stop', 'complete', 'completed', 'success', 'done'].includes(finishReason);
   const toolError = result.errors.find((error) => error.type === 'tool-output-error');
   if (toolError) {
+    if (result.allowToolErrorDiagnostics === true) {
+      return null;
+    }
     return new AcpChatRunError(toolError.message, {
       code: 'ACP_CHAT_TOOL_OUTPUT_ERROR',
       statusCode: 502,
@@ -415,6 +449,9 @@ function createFailureFromResult(result: AcpChatRunResult): AcpChatRunError | nu
   }
   const streamError = result.errors.find((error) => error.type === 'error');
   if (streamError) {
+    if (hasSuccessfulFinish) {
+      return null;
+    }
     return new AcpChatRunError(streamError.message, {
       code: 'ACP_CHAT_STREAM_ERROR',
       statusCode: 502,
@@ -449,8 +486,8 @@ function mapAcpChatRequestError(error: unknown): never {
     throw error;
   }
   if (isAbortOrTimeoutError(error)) {
-    throw new AcpChatRunError('ACP 响应超时，请检查本地 ACP UI 或当前模型是否卡住。', {
-      code: 'ACP_CHAT_TIMEOUT',
+    throw new AcpChatRunError('ACP 暂无响应，正在确认任务状态。', {
+      code: 'ACP_CHAT_NO_RESPONSE',
       statusCode: 504,
     });
   }
@@ -467,6 +504,33 @@ async function readResponseText(response: Response): Promise<string> {
   } catch {
     return '';
   }
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function createHttpErrorFromResponse(response: Response, text: string): AcpChatRunError {
+  const body = parseJsonObject(text);
+  const bodyCode = normalizeString(body?.code);
+  const bodyError = normalizeString(body?.error);
+  const bodyMessage = normalizeString(body?.message);
+  return new AcpChatRunError(
+    bodyError || bodyMessage || text || `ACP chat request failed with status ${response.status}`,
+    {
+      code: bodyCode || 'ACP_CHAT_HTTP_ERROR',
+      statusCode: response.status,
+      ...(body ? { details: body } : {}),
+    },
+  );
 }
 
 async function startAcpChatRequest(
@@ -523,16 +587,15 @@ async function startAcpChatRequest(
 
   if (!response.ok) {
     const text = await readResponseText(response);
-    throw new AcpChatRunError(text || `ACP chat request failed with status ${response.status}`, {
-      code: 'ACP_CHAT_HTTP_ERROR',
-      statusCode: response.status,
-    });
+    throw createHttpErrorFromResponse(response, text);
   }
 
   const result = createInitialResult({
     id,
     threadId,
     provider,
+    scene: normalizeString(request.scene),
+    allowToolErrorDiagnostics: request.allowToolErrorDiagnostics,
     runtimeHeaders: captureRuntimeHeaders(response.headers),
   });
   result.provider = result.runtimeHeaders.provider || provider;
@@ -609,6 +672,8 @@ export async function runAcpChatCommand(
     id,
     threadId,
     provider: request.provider,
+    scene: request.scene,
+    allowToolErrorDiagnostics: request.allowToolErrorDiagnostics,
     workspacePath: request.workspacePath,
     conversationStorePath: request.conversationStorePath,
     model: request.model,

@@ -10,9 +10,14 @@ describe('html-template annotation boundary', () => {
   it('exposes the shared HTML page annotation editor bridge for HTML resources', () => {
     const source = readHtmlTemplateSource();
 
-    expect(source).toContain("import { createGenieEditor");
+    expect(source).toContain("import { createCommentary");
     expect(source).not.toContain("interactionProfile: 'text-comment'");
-    expect(source).toContain("skillInstallSource: '.agents/skills/prototype-comments/SKILL.md'");
+    expect(source).toContain('MAKE_COMMENTARY_SKILL_INSTALL_SOURCE');
+    expect(source).toContain('.agents/skills/explore-options/SKILL.md');
+    expect(source).toContain('.claude/skills/explore-options/SKILL.md');
+    expect(source).toContain('.agents/skills/prototype-comments/SKILL.md');
+    expect(source).toContain('.claude/skills/prototype-comments/SKILL.md');
+    expect(source).toContain('skillInstallSource: MAKE_COMMENTARY_SKILL_INSTALL_SOURCE');
     expect(source).toContain('window.HtmlTemplateBootstrap');
     expect(source).not.toContain('window.SpecTemplateBootstrap.editors');
     expect(source).toContain('enableDocumentEditor');
@@ -46,6 +51,7 @@ describe('html-template annotation boundary', () => {
     expect(source).toContain('await Promise.resolve(editorBridge.setNodeEditingState(');
     expect(source).toContain('data.targetRef ?? null');
     expect(source).toContain("event.data.type === 'AXHUB_PROTOTYPE_EDITOR_QUERY_STATE'");
+    expect(source).toContain('debugState: commentEditor?.getDebugState?.() ?? null');
     expect(source).toContain('ensureParentEditorBridgeHostToolbarBridge');
     expect(source).toContain('teardownParentEditorBridgeHostToolbarBridge');
     expect(source).toContain('parentEditorBridgeUnsubscribe = editorBridge.subscribeHostToolbarState');

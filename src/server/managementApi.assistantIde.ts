@@ -36,7 +36,6 @@ const AGENT_LATEST_VERSION_TIMEOUT_MS = 3_000;
 type AgentVersionKey =
   | 'claude'
   | 'codex'
-  | 'gemini'
   | 'opencode'
   | 'cursor'
   | 'qoder'
@@ -52,7 +51,6 @@ interface AgentVersionCommandSpec {
 const AGENT_VERSION_COMMANDS: Record<AgentVersionKey, AgentVersionCommandSpec[]> = {
   claude: [{ command: 'claude', args: ['--version'] }],
   codex: [{ command: 'codex', args: ['--version'] }],
-  gemini: [{ command: 'gemini', args: ['--version'] }],
   opencode: [{ command: 'opencode', args: ['--version'] }],
   cursor: [{ command: 'agent', args: ['--version'] }],
   qoder: [{ command: 'qodercli', args: ['--version'] }],
@@ -65,12 +63,19 @@ const AGENT_VERSION_COMMANDS: Record<AgentVersionKey, AgentVersionCommandSpec[]>
 const AGENT_NPM_PACKAGES: Partial<Record<AgentVersionKey, string>> = {
   claude: '@anthropic-ai/claude-code',
   codex: '@openai/codex',
-  gemini: '@google/gemini-cli',
   opencode: 'opencode-ai',
   qoder: '@qoder-ai/qodercli',
   codebuddy: '@tencent-ai/codebuddy-code',
   reasonix: 'reasonix',
 };
+
+function normalizeAgentVersionKey(value: unknown): AgentVersionKey | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  return Object.prototype.hasOwnProperty.call(AGENT_VERSION_COMMANDS, normalized)
+    ? normalized as AgentVersionKey
+    : null;
+}
 
 interface AssistantIdeProjectContext {
   project: {
@@ -261,6 +266,26 @@ async function detectAgentVersions() {
   return { agents, latestAgents };
 }
 
+async function detectSingleAgentVersions(agent: AgentVersionKey) {
+  const [version, latestVersion] = await Promise.all([
+    detectAgentVersion(agent),
+    detectLatestAgentVersion(agent),
+  ]);
+  const agents: Partial<Record<AgentVersionResponseKey, AgentVersionInfo>> = {
+    [agent]: version,
+  };
+  const latestAgents: Partial<Record<AgentVersionResponseKey, AgentVersionInfo>> = latestVersion ? {
+    [agent]: latestVersion,
+  } : {};
+  if (agent === 'claude') {
+    agents.claudecode = version;
+    if (latestVersion) {
+      latestAgents.claudecode = latestVersion;
+    }
+  }
+  return { agents, latestAgents };
+}
+
 export function resolvePromptExecutionAcpConfig(scene: unknown, legacyConfig: any) {
   if (typeof scene !== 'string' || scene.trim() !== CANVAS_PROTOTYPE_GENERATION_SCENE) {
     return legacyConfig;
@@ -368,7 +393,19 @@ export function handleAssistantPromptIde(
       sendJson(res, { error: 'Method not allowed' }, { status: 405 });
       return true;
     }
-    detectAgentVersions()
+    const url = getRequestUrl(req);
+    const agentQuery = url.searchParams.get('agent');
+    const agent = agentQuery ? normalizeAgentVersionKey(agentQuery) : null;
+    if (agentQuery && !agent) {
+      sendJson(res, {
+        error: `Unsupported agent: ${agentQuery}`,
+        code: 'AGENT_VERSION_UNSUPPORTED',
+        supported: Object.keys(AGENT_VERSION_COMMANDS),
+      }, { status: 400 });
+      return true;
+    }
+    const detectVersions = agent ? detectSingleAgentVersions(agent) : detectAgentVersions();
+    detectVersions
       .then((result) => sendJson(res, result))
       .catch((error: any) => sendJson(res, {
         error: error?.message || 'Failed to detect agent versions',
@@ -480,7 +517,7 @@ export function handleAssistantPromptIde(
           error: `Unsupported CLI agent: ${rawAgent || '(empty)'}`,
           code: 'CLI_AGENT_UNSUPPORTED',
           projectId: context.project.id,
-          supported: ['codex', 'gemini', 'claudecode', 'opencode'],
+          supported: ['codex', 'claudecode', 'opencode'],
         }, { status: 400 });
         return;
       }
@@ -635,7 +672,7 @@ export function handleAssistantPromptIde(
           error: `Unsupported web agent: ${rawAgent || '(empty)'}`,
           code: 'WEB_AGENT_UNSUPPORTED',
           projectId: context.project.id,
-          supported: ['opencode', 'genie'],
+          supported: ['opencode', 'acp'],
         }, { status: 400 });
         return;
       }

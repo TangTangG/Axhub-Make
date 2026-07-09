@@ -56,8 +56,13 @@ const EMBEDDED_VITE_WATCH_IGNORED = [
   '**/midscene/**',
   '**/vendor/**',
   '**/*.excalidraw',
-  '**/canvas-assets/**',
+  '**/*.assets/**',
 ];
+
+function resolveEmbeddedCommentaryRuntimeAlias(makeServerRoot: string): string | null {
+  const runtimeEntry = path.resolve(makeServerRoot, 'vendor/axhub-commentary/dist/index.mjs');
+  return fs.existsSync(runtimeEntry) ? runtimeEntry : null;
+}
 
 type CapturedHeaderValue = string | number | string[];
 
@@ -364,6 +369,7 @@ export async function createViteDevMiddleware(
   // instance re-optimizing the shared cache can otherwise delete deps still
   // referenced by this server's in-memory metadata.
   const cacheDir = fs.mkdtempSync(path.join(viteCacheRoot, `axhub-make-dev-${process.pid}-`));
+  const commentaryRuntimeAlias = resolveEmbeddedCommentaryRuntimeAlias(makeServerRoot);
 
   async function createEmbeddedViteServer(): Promise<ViteServer> {
     return createServer({
@@ -373,6 +379,16 @@ export async function createViteDevMiddleware(
       plugins: [
         canvasHotUpdateFilterPlugin(),
       ],
+      resolve: commentaryRuntimeAlias
+        ? {
+          alias: [
+            {
+              find: /^@axhub\/commentary$/,
+              replacement: commentaryRuntimeAlias,
+            },
+          ],
+        }
+        : undefined,
       server: {
         middlewareMode: true,
         hmr: { server: httpServer },

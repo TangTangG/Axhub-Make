@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { runAiStream } from './aiRunClient';
+import { resolveAiRunsApiUrl, runAiStream } from './aiRunClient';
 
 const originalFetch = globalThis.fetch;
 
@@ -60,7 +60,7 @@ describe('AI run client', () => {
       taskId: 'task-one',
       conversationId: 'conversation-one',
       generatorElementId: 'generator-1',
-      canvasName: 'prototypes/home/canvas',
+      canvasName: 'resources/flows/home.excalidraw',
     }, ({ event, data }) => {
       seenEvents.push(event);
       if (event === 'artifact.created') {
@@ -102,8 +102,38 @@ describe('AI run client', () => {
       taskId: 'task-one',
       conversationId: 'conversation-one',
       generatorElementId: 'generator-1',
-      canvasName: 'prototypes/home/canvas',
+      canvasName: 'resources/flows/home.excalidraw',
     });
+  });
+
+  it('posts runs to the injected Make API origin when the current page is served elsewhere', async () => {
+    vi.stubGlobal('window', {
+      __AXHUB_MAKE_API_ORIGIN__: 'http://localhost:53817/',
+      location: {
+        origin: 'http://localhost:51720',
+      },
+    });
+    globalThis.fetch = vi.fn(async () => new Response(
+      sseEvent('run.completed', {
+        status: 'done',
+        output: 'ok',
+        artifacts: [],
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      },
+    )) as any;
+
+    await runAiStream({
+      scene: 'direct',
+      prompt: '优化提示词',
+    });
+
+    expect(resolveAiRunsApiUrl()).toBe('http://localhost:53817/api/ai/runs');
+    expect(globalThis.fetch).toHaveBeenCalledWith('http://localhost:53817/api/ai/runs', expect.objectContaining({
+      method: 'POST',
+    }));
   });
 
   it('can pass per-run image generation settings to the AI runs API', async () => {
@@ -142,6 +172,72 @@ describe('AI run client', () => {
           model: 'gpt-image-2',
         },
       },
+    });
+  });
+
+  it('can pass per-run MCP servers to the AI runs API', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(
+      sseEvent('run.completed', {
+        status: 'done',
+        output: 'ok',
+        artifacts: [],
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      },
+    )) as any;
+
+    await runAiStream({
+      scene: 'direct',
+      prompt: '更新画布',
+      mcpServers: [{
+        name: 'axhub-canvas',
+        type: 'http',
+        url: 'http://localhost:5174/api/mcp/axhub-canvas',
+        headers: [{
+          name: 'x-axhub-canvas-mcp-token',
+          value: 'canvas-secret',
+        }],
+      }],
+    });
+
+    const requestBody = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body);
+    expect(requestBody).toMatchObject({
+      scene: 'direct',
+      prompt: '更新画布',
+      mcpServers: [{
+        name: 'axhub-canvas',
+        type: 'http',
+        url: 'http://localhost:5174/api/mcp/axhub-canvas',
+      }],
+    });
+  });
+
+  it('passes the configured agent run concurrency to the AI runs API', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(
+      sseEvent('run.completed', {
+        status: 'done',
+        output: 'ok',
+        artifacts: [],
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      },
+    )) as any;
+
+    await runAiStream({
+      scene: 'direct',
+      prompt: '批量批注',
+      agentRunConcurrency: 4,
+    });
+
+    const requestBody = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body);
+    expect(requestBody).toMatchObject({
+      scene: 'direct',
+      prompt: '批量批注',
+      agentRunConcurrency: 4,
     });
   });
 
@@ -192,6 +288,37 @@ describe('AI run client', () => {
             start: 'npx -y @axhub/acp --port 32124',
           }),
         }),
+      }),
+    });
+  });
+
+  it('maps ACP active-run conflict error codes to user-facing messages while preserving diagnostics', async () => {
+    globalThis.fetch = vi.fn(async () => new Response([
+      sseEvent('run.accepted', {
+        runId: 'run-cancel-failed',
+        threadId: 'thread-home',
+      }),
+      sseEvent('run.error', {
+        status: 'error',
+        error: 'Failed to cancel the active ACP run before sending the new prompt.',
+        code: 'ACP_CHAT_CANCEL_FAILED',
+        threadId: 'thread-home',
+      }),
+    ].join(''), {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    })) as any;
+
+    await expect(runAiStream({
+      scene: 'direct',
+      prompt: '继续修改',
+      threadId: 'thread-home',
+    })).rejects.toMatchObject({
+      message: '当前 AI 任务仍在处理中，停止失败，本次新请求未发送。请稍后重试。',
+      code: 'ACP_CHAT_CANCEL_FAILED',
+      data: expect.objectContaining({
+        error: 'Failed to cancel the active ACP run before sending the new prompt.',
+        threadId: 'thread-home',
       }),
     });
   });

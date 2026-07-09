@@ -21,14 +21,13 @@ export interface AgentVersionInfo {
 
 export const CLI_AGENT_OPTIONS = [
   { value: 'codex', label: 'Codex' },
-  { value: 'gemini', label: 'Gemini' },
   { value: 'claudecode', label: 'Claude Code' },
   { value: 'opencode', label: 'OpenCode' },
 ] as const;
 
 export const WEB_AGENT_OPTIONS = [
   { value: 'opencode', label: 'OpenCode' },
-  { value: 'genie', label: 'ACP UI' },
+  { value: 'acp', label: 'ACP UI' },
 ] as const;
 
 export const LOCAL_APP_AGENT_OPTIONS = [
@@ -46,14 +45,13 @@ export const LOCAL_APP_AGENT_VALUES = LOCAL_APP_AGENT_OPTIONS.map((option) => op
 
 export const CLI_AGENT_APP_NAMES: Record<CLIAgent, string> = {
   codex: 'Codex',
-  gemini: 'Gemini',
   claudecode: 'Claude Code',
   opencode: 'OpenCode',
 };
 
 export const WEB_AGENT_APP_NAMES: Record<WebAgent, string> = {
   opencode: 'OpenCode',
-  genie: 'ACP UI',
+  acp: 'ACP UI',
 };
 
 export const LOCAL_APP_AGENT_APP_NAMES: Record<LocalAppAgent, string> = {

@@ -6,13 +6,13 @@ import { getConfigPath, getGlobalServerConfigPath } from './paths.ts';
 export type ServerPromptClientPreference =
   | 'acp:codex'
   | 'acp:claude'
-  | 'acp:gemini'
   | 'acp:opencode'
   | 'acp:cursor'
   | 'acp:qoder'
   | 'acp:codebuddy'
   | 'acp:reasonix'
   | 'manual';
+export type ServerDefaultPromptClientPreference = ServerPromptClientPreference | null;
 export type ServerAnnotationPromptClientPreference = Exclude<ServerPromptClientPreference, 'manual'> | null;
 export type ServerAcpExecutionMode = 'prompt' | 'exec';
 export type ServerAcpPermissionMode = 'approve-all';
@@ -58,9 +58,62 @@ export interface AiImageGenerationConfig {
   lastTest?: AiImageGenerationLastTest;
 }
 
+export interface LanAccessPasswordConfig {
+  algorithm: 'scrypt';
+  passwordHash: string | null;
+  salt: string | null;
+  secret: string;
+  updatedAt: string | null;
+}
+
+export type ServerCloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages' | 'axhub';
+
+export interface ServerVercelPublishConfig {
+  token?: string;
+  projectName?: string;
+  teamId?: string;
+}
+
+export interface ServerCloudflarePagesPublishConfig {
+  apiToken?: string;
+  accountId?: string;
+  projectName?: string;
+  productionBranch?: string;
+}
+
+export interface ServerS3PublishConfig {
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  region?: string;
+  bucket?: string;
+  prefix?: string;
+  baseUrl?: string;
+  endpoint?: string;
+}
+
+export interface ServerGithubPagesPublishConfig {
+  repository?: string;
+  branch?: string;
+  sourceDirectory?: string;
+  pathPrefix?: string;
+}
+
+export interface ServerPublishSettingsConfig {
+  includeSource: boolean;
+  visibleTargets: ServerCloudPublishTarget[];
+}
+
+export interface ServerCloudPublishingConfig {
+  vercel?: ServerVercelPublishConfig;
+  cloudflarePages?: ServerCloudflarePagesPublishConfig;
+  s3?: ServerS3PublishConfig;
+  githubPages?: ServerGithubPagesPublishConfig;
+  publishSettings?: ServerPublishSettingsConfig;
+}
+
 export interface MakeServerConfig {
   automation: {
-    defaultPromptClient: ServerPromptClientPreference;
+    defaultPromptClient: ServerDefaultPromptClientPreference;
     defaultIDE: ServerIDEPreference;
     acp: {
       mode: ServerAcpExecutionMode;
@@ -69,6 +122,7 @@ export interface MakeServerConfig {
     };
     annotationPromptClient: ServerAnnotationPromptClientPreference;
     annotationModel: string | null;
+    agentRunConcurrency: number;
   };
   assistant: {
     webBaseUrl: string | null;
@@ -82,6 +136,10 @@ export interface MakeServerConfig {
     excalidrawPropertyPanelPosition: ExcalidrawPropertyPanelPositionPreference;
   };
   toolOpenState: ToolOpenState;
+  accessControl: {
+    lanPassword: LanAccessPasswordConfig;
+  };
+  cloudPublishing: ServerCloudPublishingConfig;
 }
 
 export interface ServerConfigStoreOptions {
@@ -97,9 +155,54 @@ type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
 
+export const DEFAULT_AGENT_RUN_CONCURRENCY = 5;
+export const ACP_NO_RESPONSE_MIN_SECONDS = 1200;
+export const DEFAULT_VISIBLE_SERVER_CLOUD_PUBLISH_TARGETS: ServerCloudPublishTarget[] = ['axhub'];
+
+const CLOUD_PUBLISH_TARGETS = new Set<ServerCloudPublishTarget>([
+  'vercel',
+  'cloudflare-pages',
+  's3',
+  'github-pages',
+  'axhub',
+]);
+
+const DEFAULT_CLOUD_PUBLISHING_CONFIG: ServerCloudPublishingConfig = {
+  vercel: {
+    token: '',
+    projectName: '',
+    teamId: '',
+  },
+  cloudflarePages: {
+    apiToken: '',
+    accountId: '',
+    projectName: '',
+    productionBranch: 'main',
+  },
+  s3: {
+    accessKeyId: '',
+    secretAccessKey: '',
+    region: '',
+    bucket: '',
+    prefix: '',
+    baseUrl: '',
+    endpoint: '',
+  },
+  githubPages: {
+    repository: '',
+    branch: 'gh-pages',
+    sourceDirectory: '/',
+    pathPrefix: '',
+  },
+  publishSettings: {
+    includeSource: false,
+    visibleTargets: [...DEFAULT_VISIBLE_SERVER_CLOUD_PUBLISH_TARGETS],
+  },
+};
+
 const DEFAULT_SERVER_CONFIG: MakeServerConfig = {
   automation: {
-    defaultPromptClient: 'acp:codex',
+    defaultPromptClient: null,
     defaultIDE: 'none',
     acp: {
       mode: 'prompt',
@@ -108,6 +211,7 @@ const DEFAULT_SERVER_CONFIG: MakeServerConfig = {
     },
     annotationPromptClient: null,
     annotationModel: null,
+    agentRunConcurrency: DEFAULT_AGENT_RUN_CONCURRENCY,
   },
   assistant: {
     webBaseUrl: null,
@@ -125,12 +229,21 @@ const DEFAULT_SERVER_CONFIG: MakeServerConfig = {
     excalidrawPropertyPanelPosition: 'right',
   },
   toolOpenState: {},
+  accessControl: {
+    lanPassword: {
+      algorithm: 'scrypt',
+      passwordHash: null,
+      salt: null,
+      secret: '',
+      updatedAt: null,
+    },
+  },
+  cloudPublishing: DEFAULT_CLOUD_PUBLISHING_CONFIG,
 };
 
 const PROMPT_CLIENT_VALUES = new Set<ServerPromptClientPreference>([
   'acp:codex',
   'acp:claude',
-  'acp:gemini',
   'acp:opencode',
   'acp:cursor',
   'acp:qoder',
@@ -142,22 +255,15 @@ const PROMPT_CLIENT_VALUES = new Set<ServerPromptClientPreference>([
 const LEGACY_PROMPT_CLIENT_VALUES: Record<string, ServerPromptClientPreference> = {
   codex: 'acp:codex',
   openai: 'acp:codex',
-  'genie:codex': 'acp:codex',
   claude: 'acp:claude',
   claudecode: 'acp:claude',
-  'genie:claude': 'acp:claude',
-  gemini: 'acp:gemini',
-  'genie:gemini': 'acp:gemini',
+  gemini: 'acp:codex',
+  'acp:gemini': 'acp:codex',
   opencode: 'acp:opencode',
-  'genie:opencode': 'acp:opencode',
   cursor: 'acp:cursor',
-  'genie:cursor': 'acp:cursor',
   qoder: 'acp:qoder',
-  'genie:qoder': 'acp:qoder',
   codebuddy: 'acp:codebuddy',
-  'genie:codebuddy': 'acp:codebuddy',
   reasonix: 'acp:reasonix',
-  'genie:reasonix': 'acp:reasonix',
 };
 
 const IDE_VALUES = new Set<ServerIDEPreference>([
@@ -247,6 +353,155 @@ function normalizePositiveInteger(value: unknown, fallback: number, options: { m
   return rounded;
 }
 
+function normalizeAcpNoResponseSeconds(value: unknown, fallback: number): number {
+  const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  const rounded = Math.round(numeric);
+  if (rounded <= 0) {
+    return fallback;
+  }
+  return Math.min(7200, Math.max(ACP_NO_RESPONSE_MIN_SECONDS, rounded));
+}
+
+export function sanitizeAgentRunConcurrency(
+  value: unknown,
+  fallback = DEFAULT_AGENT_RUN_CONCURRENCY,
+): number {
+  const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(10, Math.max(1, Math.trunc(numeric)));
+}
+
+function normalizeGithubPagesSourceDirectory(value: unknown, fallback: string): '/' | '/docs' {
+  const sourceDirectory = normalizeTrimmedString(value).replace(/\/+$/u, '');
+  if (sourceDirectory === 'docs' || sourceDirectory === '/docs') {
+    return '/docs';
+  }
+  if (sourceDirectory === '' && fallback === '/docs') {
+    return '/docs';
+  }
+  return '/';
+}
+
+function normalizeVisibleCloudPublishTargets(
+  value: unknown,
+  fallback: ServerCloudPublishTarget[],
+): ServerCloudPublishTarget[] {
+  if (!Array.isArray(value)) {
+    return [...fallback];
+  }
+  const targets: ServerCloudPublishTarget[] = [];
+  for (const target of value) {
+    if (CLOUD_PUBLISH_TARGETS.has(target as ServerCloudPublishTarget) && !targets.includes(target as ServerCloudPublishTarget)) {
+      targets.push(target as ServerCloudPublishTarget);
+    }
+  }
+  return targets;
+}
+
+function normalizePreservedSecretString(value: unknown, fallback: string): string {
+  const trimmed = normalizeTrimmedString(value);
+  if (!trimmed || trimmed.includes('...')) {
+    return fallback;
+  }
+  return trimmed;
+}
+
+export function normalizeServerCloudPublishingConfig(
+  value: unknown,
+  fallback: ServerCloudPublishingConfig = DEFAULT_CLOUD_PUBLISHING_CONFIG,
+): ServerCloudPublishingConfig {
+  const raw = value && typeof value === 'object' ? value as Record<string, any> : {};
+  const vercel = raw.vercel && typeof raw.vercel === 'object' ? raw.vercel : {};
+  const cloudflarePages = raw.cloudflarePages && typeof raw.cloudflarePages === 'object' ? raw.cloudflarePages : {};
+  const s3 = raw.s3 && typeof raw.s3 === 'object' ? raw.s3 : {};
+  const githubPages = raw.githubPages && typeof raw.githubPages === 'object' ? raw.githubPages : {};
+  const publishSettings = raw.publishSettings && typeof raw.publishSettings === 'object' ? raw.publishSettings : {};
+  const fallbackVercel = fallback.vercel || DEFAULT_CLOUD_PUBLISHING_CONFIG.vercel || {};
+  const fallbackCloudflarePages = fallback.cloudflarePages || DEFAULT_CLOUD_PUBLISHING_CONFIG.cloudflarePages || {};
+  const fallbackS3 = fallback.s3 || DEFAULT_CLOUD_PUBLISHING_CONFIG.s3 || {};
+  const fallbackGithubPages = fallback.githubPages || DEFAULT_CLOUD_PUBLISHING_CONFIG.githubPages || {};
+  const fallbackPublishSettings = fallback.publishSettings || DEFAULT_CLOUD_PUBLISHING_CONFIG.publishSettings;
+
+  return {
+    vercel: {
+      token: hasOwn(vercel, 'token')
+        ? normalizePreservedSecretString(vercel.token, normalizeTrimmedString(fallbackVercel.token))
+        : normalizeTrimmedString(fallbackVercel.token),
+      projectName: hasOwn(vercel, 'projectName')
+        ? normalizeTrimmedString(vercel.projectName)
+        : normalizeTrimmedString(fallbackVercel.projectName),
+      teamId: hasOwn(vercel, 'teamId')
+        ? normalizeTrimmedString(vercel.teamId)
+        : normalizeTrimmedString(fallbackVercel.teamId),
+    },
+    cloudflarePages: {
+      apiToken: hasOwn(cloudflarePages, 'apiToken')
+        ? normalizePreservedSecretString(cloudflarePages.apiToken, normalizeTrimmedString(fallbackCloudflarePages.apiToken))
+        : normalizeTrimmedString(fallbackCloudflarePages.apiToken),
+      accountId: hasOwn(cloudflarePages, 'accountId')
+        ? normalizeTrimmedString(cloudflarePages.accountId)
+        : normalizeTrimmedString(fallbackCloudflarePages.accountId),
+      projectName: hasOwn(cloudflarePages, 'projectName')
+        ? normalizeTrimmedString(cloudflarePages.projectName)
+        : normalizeTrimmedString(fallbackCloudflarePages.projectName),
+      productionBranch: hasOwn(cloudflarePages, 'productionBranch')
+        ? normalizeOptionalString(cloudflarePages.productionBranch, normalizeTrimmedString(fallbackCloudflarePages.productionBranch) || 'main')
+        : normalizeTrimmedString(fallbackCloudflarePages.productionBranch) || 'main',
+    },
+    s3: {
+      accessKeyId: hasOwn(s3, 'accessKeyId')
+        ? normalizePreservedSecretString(s3.accessKeyId, normalizeTrimmedString(fallbackS3.accessKeyId))
+        : normalizeTrimmedString(fallbackS3.accessKeyId),
+      secretAccessKey: hasOwn(s3, 'secretAccessKey')
+        ? normalizePreservedSecretString(s3.secretAccessKey, normalizeTrimmedString(fallbackS3.secretAccessKey))
+        : normalizeTrimmedString(fallbackS3.secretAccessKey),
+      region: hasOwn(s3, 'region')
+        ? normalizeTrimmedString(s3.region)
+        : normalizeTrimmedString(fallbackS3.region),
+      bucket: hasOwn(s3, 'bucket')
+        ? normalizeTrimmedString(s3.bucket)
+        : normalizeTrimmedString(fallbackS3.bucket),
+      prefix: hasOwn(s3, 'prefix')
+        ? normalizeTrimmedString(s3.prefix)
+        : normalizeTrimmedString(fallbackS3.prefix),
+      baseUrl: hasOwn(s3, 'baseUrl')
+        ? normalizeTrimmedString(s3.baseUrl)
+        : normalizeTrimmedString(fallbackS3.baseUrl),
+      endpoint: hasOwn(s3, 'endpoint')
+        ? normalizeTrimmedString(s3.endpoint)
+        : normalizeTrimmedString(fallbackS3.endpoint),
+    },
+    githubPages: {
+      repository: hasOwn(githubPages, 'repository')
+        ? normalizeTrimmedString(githubPages.repository)
+        : normalizeTrimmedString(fallbackGithubPages.repository),
+      branch: hasOwn(githubPages, 'branch')
+        ? normalizeOptionalString(githubPages.branch, normalizeTrimmedString(fallbackGithubPages.branch) || 'gh-pages')
+        : normalizeTrimmedString(fallbackGithubPages.branch) || 'gh-pages',
+      sourceDirectory: hasOwn(githubPages, 'sourceDirectory')
+        ? normalizeGithubPagesSourceDirectory(githubPages.sourceDirectory, normalizeTrimmedString(fallbackGithubPages.sourceDirectory))
+        : normalizeGithubPagesSourceDirectory(fallbackGithubPages.sourceDirectory, '/'),
+      pathPrefix: hasOwn(githubPages, 'pathPrefix')
+        ? normalizeTrimmedString(githubPages.pathPrefix)
+        : normalizeTrimmedString(fallbackGithubPages.pathPrefix),
+    },
+    publishSettings: {
+      includeSource: hasOwn(publishSettings, 'includeSource')
+        ? publishSettings.includeSource === true
+        : fallbackPublishSettings?.includeSource === true,
+      visibleTargets: normalizeVisibleCloudPublishTargets(
+        hasOwn(publishSettings, 'visibleTargets') ? publishSettings.visibleTargets : undefined,
+        fallbackPublishSettings?.visibleTargets || DEFAULT_VISIBLE_SERVER_CLOUD_PUBLISH_TARGETS,
+      ),
+    },
+  };
+}
+
 function normalizeAiImageGenerationLastTest(
   value: unknown,
   fallback?: AiImageGenerationLastTest,
@@ -291,14 +546,20 @@ function normalizeAiImageGenerationConfig(
   return config;
 }
 
-function normalizePromptClient(value: unknown, fallback: ServerPromptClientPreference): ServerPromptClientPreference {
+function normalizePromptClient(
+  value: unknown,
+  fallback: ServerDefaultPromptClientPreference,
+): ServerDefaultPromptClientPreference {
   if (value === null) {
-    return 'manual';
+    return null;
   }
   if (typeof value !== 'string') {
     return fallback;
   }
   const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
   if (LEGACY_PROMPT_CLIENT_VALUES[normalized]) {
     return LEGACY_PROMPT_CLIENT_VALUES[normalized];
   }
@@ -343,7 +604,7 @@ function normalizeAcpExecutionConfig(
     mode,
     permission,
     timeout: hasOwn(data, 'timeout')
-      ? normalizePositiveInteger(data.timeout, fallback.timeout, { min: 30, max: 7200 })
+      ? normalizeAcpNoResponseSeconds(data.timeout, fallback.timeout)
       : fallback.timeout,
   };
 }
@@ -400,6 +661,47 @@ function normalizeToolOpenState(value: unknown, fallback: ToolOpenState = {}): T
   return next;
 }
 
+function normalizeHexString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed && /^[a-f0-9]+$/iu.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
+function normalizeIsoString(value: unknown, fallback: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+  const trimmed = value.trim();
+  return trimmed && !Number.isNaN(Date.parse(trimmed)) ? trimmed : fallback;
+}
+
+function normalizeLanAccessPasswordConfig(
+  value: unknown,
+  fallback: LanAccessPasswordConfig,
+): LanAccessPasswordConfig {
+  const data = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    algorithm: 'scrypt',
+    passwordHash: hasOwn(data, 'passwordHash')
+      ? normalizeHexString(data.passwordHash)
+      : fallback.passwordHash,
+    salt: hasOwn(data, 'salt')
+      ? normalizeHexString(data.salt)
+      : fallback.salt,
+    secret: hasOwn(data, 'secret')
+      ? normalizeHexString(data.secret) || ''
+      : fallback.secret,
+    updatedAt: hasOwn(data, 'updatedAt')
+      ? normalizeIsoString(data.updatedAt, fallback.updatedAt)
+      : fallback.updatedAt,
+  };
+}
+
 function normalizeIDE(value: unknown, fallback: ServerIDEPreference): ServerIDEPreference {
   if (value === null) {
     return 'none';
@@ -451,6 +753,9 @@ function normalizeConfig(input: unknown, fallback: MakeServerConfig = DEFAULT_SE
   const assistant = data.assistant && typeof data.assistant === 'object' ? data.assistant : {};
   const ai = data.ai && typeof data.ai === 'object' ? data.ai as Record<string, unknown> : {};
   const uiPreferences = data.uiPreferences && typeof data.uiPreferences === 'object' ? data.uiPreferences : {};
+  const accessControl = data.accessControl && typeof data.accessControl === 'object'
+    ? data.accessControl as Record<string, unknown>
+    : {};
 
   return {
     automation: {
@@ -472,6 +777,9 @@ function normalizeConfig(input: unknown, fallback: MakeServerConfig = DEFAULT_SE
       annotationModel: hasOwn(automation, 'annotationModel')
         ? normalizeNullableString(automation.annotationModel)
         : fallback.automation.annotationModel,
+      agentRunConcurrency: hasOwn(automation, 'agentRunConcurrency')
+        ? sanitizeAgentRunConcurrency(automation.agentRunConcurrency, fallback.automation.agentRunConcurrency)
+        : fallback.automation.agentRunConcurrency,
     },
     assistant: {
       webBaseUrl: hasOwn(assistant, 'webBaseUrl')
@@ -508,6 +816,14 @@ function normalizeConfig(input: unknown, fallback: MakeServerConfig = DEFAULT_SE
     toolOpenState: hasOwn(data, 'toolOpenState')
       ? normalizeToolOpenState(data.toolOpenState, fallback.toolOpenState)
       : fallback.toolOpenState,
+    accessControl: {
+      lanPassword: hasOwn(accessControl, 'lanPassword')
+        ? normalizeLanAccessPasswordConfig(accessControl.lanPassword, fallback.accessControl.lanPassword)
+        : fallback.accessControl.lanPassword,
+    },
+    cloudPublishing: hasOwn(data, 'cloudPublishing')
+      ? normalizeServerCloudPublishingConfig(data.cloudPublishing, fallback.cloudPublishing)
+      : fallback.cloudPublishing,
   };
 }
 
@@ -519,7 +835,12 @@ function getLegacyProjectConfig(projectRoot?: string | null): MakeServerConfig {
   if (!projectRoot) {
     return DEFAULT_SERVER_CONFIG;
   }
-  return normalizeConfig(readJsonFile(getConfigPath(projectRoot)));
+  const legacyConfig = readJsonFile(getConfigPath(projectRoot));
+  if (legacyConfig && typeof legacyConfig === 'object' && !Array.isArray(legacyConfig)) {
+    const { cloudPublishing: _ignoredCloudPublishing, ...serverConfigFallback } = legacyConfig as Record<string, unknown>;
+    return normalizeConfig(serverConfigFallback);
+  }
+  return normalizeConfig(legacyConfig);
 }
 
 function writeJsonAtomic(filePath: string, value: unknown): void {
@@ -533,6 +854,21 @@ function writeJsonAtomic(filePath: string, value: unknown): void {
       fs.unlinkSync(tempPath);
     }
   }
+}
+
+function serializeServerConfigForStorage(config: MakeServerConfig): Record<string, unknown> {
+  const serialized: Record<string, unknown> = { ...config };
+  const lanPassword = config.accessControl.lanPassword;
+  if (!lanPassword.passwordHash && !lanPassword.salt && !lanPassword.secret && !lanPassword.updatedAt) {
+    delete serialized.accessControl;
+  }
+  if (
+    JSON.stringify(normalizeServerCloudPublishingConfig(config.cloudPublishing))
+    === JSON.stringify(DEFAULT_CLOUD_PUBLISHING_CONFIG)
+  ) {
+    delete serialized.cloudPublishing;
+  }
+  return serialized;
 }
 
 export function createServerConfigStore(options: ServerConfigStoreOptions = {}) {
@@ -553,7 +889,7 @@ export function createServerConfigStore(options: ServerConfigStoreOptions = {}) 
         ? normalizeConfig(readJsonFile(configPath))
         : DEFAULT_SERVER_CONFIG;
       const saved = normalizeConfig(input, current);
-      writeJsonAtomic(configPath, saved);
+      writeJsonAtomic(configPath, serializeServerConfigForStorage(saved));
       return saved;
     },
   };

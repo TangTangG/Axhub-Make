@@ -79,9 +79,9 @@ describe('make-server project docs APIs', () => {
     expect(handleProjectDocsApi).toBeTypeOf('function');
   });
 
-  it('lists, uploads, copies, renames, and deletes docs inside the declared docs target', async () => {
+  it('lists, uploads, copies, renames, and deletes docs inside the fixed resources directory', async () => {
     const projectRoot = createTempRoot();
-    const docsDir = path.join(projectRoot, 'content', 'docs');
+    const docsDir = path.join(projectRoot, 'src', 'resources');
     fs.mkdirSync(path.join(docsDir, 'nested'), { recursive: true });
     fs.writeFileSync(path.join(docsDir, 'guide.md'), '# Guide\n\nTop-level guide.\n', 'utf8');
     fs.writeFileSync(path.join(docsDir, 'nested', 'guide.md'), '# Guide Title\n\nUseful notes.\n', 'utf8');
@@ -91,19 +91,9 @@ describe('make-server project docs APIs', () => {
       project: { id: 'docs-client', name: 'Docs Client' },
       resources: {
         prototypes: [],
-        docs: [
-          {
-            id: 'guide',
-            name: 'guide',
-            title: 'Guide',
-            path: path.join(docsDir, 'guide.md'),
-          },
-        ],
         themes: [],
-        data: [],
-        templates: [],
       },
-      navigation: { prototypes: [], docs: ['guide'] },
+      navigation: { prototypes: [] },
       capabilities: {
         quickEdit: true,
         figmaExport: false,
@@ -225,13 +215,8 @@ describe('make-server project docs APIs', () => {
       expect(fs.existsSync(path.join(docsDir, 'Plan-Draft.md'))).toBe(false);
 
       const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
-      expect(metadata.resources.docs).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: 'Renamed-Guide', name: 'Renamed-Guide' }),
-        expect.objectContaining({ id: 'guide-copy', name: 'guide-copy' }),
-      ]));
-      expect(metadata.resources.docs).not.toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: 'Plan-Draft' }),
-      ]));
+      expect(metadata.resources).not.toHaveProperty('docs');
+      expect(metadata.navigation).not.toHaveProperty('docs');
     } finally {
       await server.close();
     }
@@ -239,26 +224,16 @@ describe('make-server project docs APIs', () => {
 
   it('saves markdown template content without treating the request as a rename', async () => {
     const projectRoot = createTempRoot();
-    const templatesDir = path.join(projectRoot, 'content', 'templates');
+    const templatesDir = path.join(projectRoot, 'src', 'resources', 'templates');
     fs.mkdirSync(templatesDir, { recursive: true });
     fs.writeFileSync(path.join(templatesDir, 'write-prd.md'), '# Write PRD 模板\n\nOriginal body.\n', 'utf8');
     writeProjectMetadata(projectRoot, {
       project: { id: 'template-save-client', name: 'Template Save Client' },
       resources: {
         prototypes: [],
-        docs: [],
         themes: [],
-        data: [],
-        templates: [
-          {
-            id: 'write-prd',
-            name: 'write-prd.md',
-            title: 'Write PRD 模板',
-            path: path.join(templatesDir, 'write-prd.md'),
-          },
-        ],
       },
-      navigation: { prototypes: [], docs: [] },
+      navigation: { prototypes: [] },
       resourceWriteTargets: {
         templates: { path: 'content/templates' },
       },
@@ -291,27 +266,17 @@ describe('make-server project docs APIs', () => {
 
   it('renames nested templates inside their current directory', async () => {
     const projectRoot = createTempRoot();
-    const templatesDir = path.join(projectRoot, 'content', 'templates');
+    const templatesDir = path.join(projectRoot, 'src', 'resources', 'templates');
     fs.mkdirSync(path.join(templatesDir, 'nested'), { recursive: true });
     fs.writeFileSync(path.join(templatesDir, 'nested', 'prd-template.md'), '# Nested PRD\n', 'utf8');
     writeProjectMetadata(projectRoot, {
       project: { id: 'nested-template-rename-client', name: 'Nested Template Rename Client' },
       resources: {
         prototypes: [],
-        docs: [],
         themes: [],
-        data: [],
-        templates: [
-          {
-            id: 'nested-prd-template',
-            name: 'nested/prd-template.md',
-            title: 'Nested PRD',
-            path: path.join(templatesDir, 'nested', 'prd-template.md'),
-          },
-        ],
       },
-      navigation: { prototypes: [], docs: [] },
-      orders: { themes: [], data: [], templates: ['nested/prd-template.md'] },
+      navigation: { prototypes: [] },
+      orders: { themes: [] },
       resourceWriteTargets: {
         templates: { path: 'content/templates' },
       },
@@ -346,32 +311,16 @@ describe('make-server project docs APIs', () => {
 
   it('returns 404 when deleting a document path that does not exist', async () => {
     const projectRoot = createTempRoot();
-    const docsDir = path.join(projectRoot, 'content', 'docs');
+    const docsDir = path.join(projectRoot, 'src', 'resources');
     fs.mkdirSync(docsDir, { recursive: true });
     fs.writeFileSync(path.join(docsDir, 'keep.md'), '# Keep\n', 'utf8');
     writeProjectMetadata(projectRoot, {
       project: { id: 'docs-delete-missing-client', name: 'Docs Delete Missing Client' },
       resources: {
         prototypes: [],
-        docs: [
-          {
-            id: 'missing',
-            name: 'missing',
-            title: 'Missing',
-            path: path.join(docsDir, 'missing.png'),
-          },
-          {
-            id: 'keep',
-            name: 'keep',
-            title: 'Keep',
-            path: path.join(docsDir, 'keep.md'),
-          },
-        ],
         themes: [],
-        data: [],
-        templates: [],
       },
-      navigation: { prototypes: [], docs: ['missing', 'keep'] },
+      navigation: { prototypes: [] },
       resourceWriteTargets: {
         docs: { path: 'content/docs' },
       },
@@ -399,26 +348,16 @@ describe('make-server project docs APIs', () => {
 
   it('shows the unsupported-file preview shell for browser navigation to drawio resources', async () => {
     const projectRoot = createTempRoot();
-    const docsDir = path.join(projectRoot, 'content', 'docs');
+    const docsDir = path.join(projectRoot, 'src', 'resources');
     fs.mkdirSync(docsDir, { recursive: true });
     fs.writeFileSync(path.join(docsDir, 'order-status-flow.drawio'), '<mxfile />\n', 'utf8');
     writeProjectMetadata(projectRoot, {
       project: { id: 'docs-drawio-preview-client', name: 'Docs Drawio Preview Client' },
       resources: {
         prototypes: [],
-        docs: [
-          {
-            id: 'order-status-flow.drawio',
-            name: 'order-status-flow.drawio',
-            title: 'order-status-flow',
-            path: path.join(docsDir, 'order-status-flow.drawio'),
-          },
-        ],
         themes: [],
-        data: [],
-        templates: [],
       },
-      navigation: { prototypes: [], docs: ['order-status-flow.drawio'] },
+      navigation: { prototypes: [] },
       resourceWriteTargets: {
         docs: { path: 'content/docs' },
       },
@@ -466,19 +405,16 @@ describe('make-server project docs APIs', () => {
 
   it('injects the shared HTML annotation bootstrap into browser previews for HTML docs', async () => {
     const projectRoot = createTempRoot();
-    const docsDir = path.join(projectRoot, 'content', 'docs');
+    const docsDir = path.join(projectRoot, 'src', 'resources');
     fs.mkdirSync(docsDir, { recursive: true });
     fs.writeFileSync(path.join(docsDir, 'visual-prd.html'), '<!doctype html><html><body><main>Visual PRD</main></body></html>', 'utf8');
     writeProjectMetadata(projectRoot, {
       project: { id: 'docs-html-preview-client', name: 'Docs HTML Preview Client' },
       resources: {
         prototypes: [],
-        docs: [],
         themes: [],
-        data: [],
-        templates: [],
       },
-      navigation: { prototypes: [], docs: [] },
+      navigation: { prototypes: [] },
       resourceWriteTargets: {
         docs: { path: 'content/docs' },
       },
@@ -507,8 +443,8 @@ describe('make-server project docs APIs', () => {
 
   it('opens unsupported template resources from the templates directory', async () => {
     const projectRoot = createTempRoot();
-    const docsDir = path.join(projectRoot, 'content', 'docs');
-    const templatesDir = path.join(projectRoot, 'content', 'templates');
+    const docsDir = path.join(projectRoot, 'src', 'resources');
+    const templatesDir = path.join(projectRoot, 'src', 'resources', 'templates');
     fs.mkdirSync(docsDir, { recursive: true });
     fs.mkdirSync(templatesDir, { recursive: true });
     fs.writeFileSync(path.join(templatesDir, 'flow.drawio'), '<mxfile />\n', 'utf8');
@@ -516,19 +452,9 @@ describe('make-server project docs APIs', () => {
       project: { id: 'template-drawio-preview-client', name: 'Template Drawio Preview Client' },
       resources: {
         prototypes: [],
-        docs: [],
         themes: [],
-        data: [],
-        templates: [
-          {
-            id: 'flow.drawio',
-            name: 'flow.drawio',
-            title: 'flow',
-            path: path.join(templatesDir, 'flow.drawio'),
-          },
-        ],
       },
-      navigation: { prototypes: [], docs: [] },
+      navigation: { prototypes: [] },
       resourceWriteTargets: {
         docs: { path: 'content/docs' },
         templates: { path: 'content/templates' },
@@ -574,19 +500,16 @@ describe('make-server project docs APIs', () => {
 
   it('opens docs through the shared filesystem opener without shell command strings', async () => {
     const projectRoot = createTempRoot();
-    const docsDir = path.join(projectRoot, 'content', 'docs');
+    const docsDir = path.join(projectRoot, 'src', 'resources');
     fs.mkdirSync(docsDir, { recursive: true });
     fs.writeFileSync(path.join(docsDir, 'guide.md'), '# Guide\n', 'utf8');
     writeProjectMetadata(projectRoot, {
       project: { id: 'docs-open-client', name: 'Docs Open Client' },
       resources: {
         prototypes: [],
-        docs: [],
         themes: [],
-        data: [],
-        templates: [],
       },
-      navigation: { prototypes: [], docs: [] },
+      navigation: { prototypes: [] },
       capabilities: {
         quickEdit: true,
         quickEditMode: 'clientRuntime',

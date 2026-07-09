@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  appendCanvasGenerationFinalGuide,
   appendCanvasGenerationPromptSettings,
   appendDocumentStartPromptSettings,
   appendImageStartPromptSettings,
@@ -24,37 +25,140 @@ describe('appendCanvasGenerationPromptSettings', () => {
     expect(prompt).toContain('加载本地 explore-options（多方案探索）技能提示');
     expect(prompt).toContain('生成 3 个真实不同的可行原型方案');
     expect(prompt).toContain('- 设计系统：linear');
-    expect(prompt).toContain('画布协作说明');
-    expect(prompt).toContain('请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。');
+    expect(prompt).not.toContain('画布写回定位');
+    expect(prompt).not.toContain('请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。');
     expect(prompt).not.toContain('当前文件就是画布文件地址');
     expect(prompt).not.toContain('任务开始时不需要先读取画布落入产物');
   });
 
-  it('appends concrete canvas write requirements when runtime canvas context is provided', () => {
+  it('can switch the final guide from canvas update to local AI acknowledgement', () => {
+    const prompt = appendCanvasGenerationPromptSettings({
+      scene: 'page',
+      prompt: '做一个 CRM 工作台',
+      settings: {
+        count: 2,
+        themeName: 'linear',
+      },
+      finalGuide: 'local-ai-acknowledgement',
+    });
+
+    expect(prompt).toContain('做一个 CRM 工作台');
+    expect(prompt).toContain('原型生成设置');
+    expect(prompt).toContain('- 方案数量：2 个');
+    expect(prompt).toContain('- 设计系统：linear');
+    expect(prompt).not.toContain('画布协作说明');
+    expect(prompt).toContain('请回复了解并等待用户发送需求。');
+    expect(prompt).not.toContain('请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。');
+    expect(prompt.trim().endsWith('请回复了解并等待用户发送需求。')).toBe(true);
+  });
+
+  it('can omit the final guide for homepage placeholder submissions', () => {
+    const prompt = appendCanvasGenerationFinalGuide({
+      prompt: '生成一个 CRM 工作台\n\n请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。',
+      finalGuide: 'none',
+    });
+
+    expect(prompt).toBe('生成一个 CRM 工作台');
+    expect(prompt).not.toContain('canvas-workspace');
+    expect(prompt).not.toContain('请回复了解并等待用户发送需求。');
+  });
+
+  it('appends compact canvas writeback positioning when runtime canvas context is provided', () => {
     const prompt = appendCanvasGenerationPromptSettings({
       scene: 'document',
       prompt: '请生成原型页面、图片、流程图、文档四类产物',
       settings: undefined,
       canvasContext: {
-        canvasFilePath: 'src/prototypes/untitled-75/canvas.excalidraw',
-        canvasName: 'prototypes/untitled-75/canvas.excalidraw',
+        canvasFilePath: 'src/resources/flows/untitled-75.excalidraw',
+        canvasName: 'flows/untitled-75.excalidraw',
         generatorElementId: 'ai-generation-1',
+        statusTaskId: 'canvas-direct-run-1',
         source: 'canvas-node',
       },
     });
 
-    expect(prompt).toContain('画布协作说明');
-    expect(prompt).toContain('src/prototypes/untitled-75/canvas.excalidraw');
-    expect(prompt).toContain('prototypes/untitled-75/canvas.excalidraw');
-    expect(prompt).toContain('ai-generation-1');
-    expect(prompt).toContain('直接编辑并保存当前画布 JSON 文件');
-    expect(prompt).toContain('customData.generatedBy');
-    expect(prompt).toContain('axhub-ai-generation');
-    expect(prompt).toContain('原型页面、图片、流程图、文档等产物');
-    expect(prompt).not.toContain('prototype、image、drawio、document');
-    expect(prompt).toContain('完成前必须重新读取画布文件');
+    expect(prompt).toContain('画布写回定位');
+    expect(prompt).toContain('- 画布文件：src/resources/flows/untitled-75.excalidraw');
+    expect(prompt).toContain('- 占位节点：canvas-direct-run-1');
+    expect(prompt).toContain('- 首个产物必须覆盖或替换占位节点；多个产物从该位置向右排列。');
+    expect(prompt).toContain('- 写回方式按 canvas-workspace 技能执行。');
+    expect(prompt).not.toContain('当前画布名称');
+    expect(prompt).not.toContain('ai-generation-1');
+    expect(prompt).not.toContain('直接编辑并保存当前画布 JSON 文件');
+    expect(prompt).not.toContain('customData.generatedBy');
+    expect(prompt).not.toContain('axhub-ai-generation');
+    expect(prompt).not.toContain('原型页面、图片、流程图、文档等产物');
+    expect(prompt).not.toContain('当前 AI 生成节点 ID');
+    expect(prompt).not.toContain('完成前必须重新读取画布文件');
+    expect(prompt).not.toContain('请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。');
     expect(prompt).not.toContain('当前文件就是画布文件地址');
     expect(prompt).not.toContain('任务开始时不需要先读取画布落入产物');
+  });
+
+  it('appends image settings for design scene submissions through the unified prompt helper', () => {
+    const prompt = appendCanvasGenerationPromptSettings({
+      scene: 'design',
+      prompt: '生成一个移动端登录页设计图',
+      settings: {
+        size: '1024x1536',
+        quality: 'high',
+        n: 2,
+        output_format: 'png',
+        background: 'transparent',
+        themeName: 'mobile-system',
+        disable_prompt_optimization: true,
+      },
+      canvasContext: {
+        canvasFilePath: 'src/resources/flows/demo.excalidraw',
+        source: 'canvas-start',
+      },
+    });
+
+    expect(prompt).toContain('图片生成设置');
+    expect(prompt).toContain('- 尺寸：1024x1536');
+    expect(prompt).toContain('- 质量：high');
+    expect(prompt).toContain('- 方案数量：2 个');
+    expect(prompt).toContain('生成 2 个真实不同的可行设计方案');
+    expect(prompt).toContain('- 格式：png');
+    expect(prompt).toContain('- 设计系统：mobile-system');
+    expect(prompt).toContain('- 禁止优化提示词：请不要改写用户输入的提示词，直接按原始提示词生成图片。');
+    expect(prompt).toContain('- 背景：transparent');
+    expect(prompt).toContain('- 画布文件：src/resources/flows/demo.excalidraw');
+    expect(prompt).not.toContain('- 当前画布名称：flows/demo.excalidraw');
+    expect(prompt).not.toContain('- 触发来源：canvas-start');
+    expect(prompt).not.toContain('当前 AI 生成节点 ID');
+    expect(prompt).not.toContain('如果画布里存在当前 AI 生成节点');
+  });
+
+  it('adds a compact temporary positioning hint for canvas direct runs', () => {
+    const prompt = appendCanvasGenerationPromptSettings({
+      scene: 'document',
+      prompt: '生成产品需求文档',
+      settings: {
+        format: 'md',
+      },
+      canvasContext: {
+        canvasFilePath: 'src/resources/product.excalidraw',
+        source: 'canvas-start',
+        statusTaskId: 'canvas-direct-run-1',
+        statusTaskBounds: {
+          x: 120,
+          y: 80,
+          width: 420,
+          height: 156,
+        },
+      },
+    });
+
+    expect(prompt).toContain('占位节点：canvas-direct-run-1');
+    expect(prompt).toContain('首个产物必须覆盖或替换占位节点；多个产物从该位置向右排列。');
+    expect(prompt).not.toContain('x=120');
+    expect(prompt).not.toContain('y=80');
+    expect(prompt).not.toContain('w=420');
+    expect(prompt).not.toContain('h=156');
+    expect(prompt).not.toContain('灰色卡片');
+    expect(prompt).not.toContain('扫描带');
+    expect(prompt).not.toContain('如果画布里存在当前 AI 生成节点');
   });
 
   it('appends prototype start settings without canvas workspace instructions', () => {
@@ -301,9 +405,9 @@ describe('appendCanvasGenerationPromptSettings', () => {
     });
 
     expect(prompt).toContain('整理一份需求说明');
-    expect(prompt).toContain('画布协作说明');
-    expect(prompt).toContain('请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。');
+    expect(prompt).not.toContain('画布写回定位');
+    expect(prompt).not.toContain('请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。');
     expect(prompt).not.toContain('图片、原型页面、Markdown/Draw.io 文档等相关产物完成后要落入或更新到当前画布');
-    expect(prompt).not.toBe('整理一份需求说明');
+    expect(prompt).toBe('整理一份需求说明');
   });
 });

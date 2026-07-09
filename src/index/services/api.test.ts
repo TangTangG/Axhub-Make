@@ -39,7 +39,12 @@ describe('apiService source', () => {
     const source = readFileSync(resolve(__dirname, './api.ts'), 'utf8');
 
     expect(source).toContain('export interface MakeClientUpdateStatus');
+    expect(source).toContain('releaseNotes?: string;');
+    expect(source).toContain("metadataSource: 'online' | 'bundled';");
+    expect(source).toContain('metadataError?: string;');
+    expect(source).toContain('export interface MakeClientUpdatePostUpdateWarning');
     expect(source).toContain('export interface MakeClientUpdateApplyResult');
+    expect(source).toContain('postUpdateWarning?: MakeClientUpdatePostUpdateWarning;');
     expect(source).toContain('async getMakeClientUpdateStatus(projectId: string): Promise<MakeClientUpdateStatus>');
     expect(source).toContain('async applyMakeClientUpdate(projectId: string): Promise<MakeClientUpdateApplyResult>');
     expect(source).toContain('const encodedProjectId = encodeURIComponent(projectId);');
@@ -65,10 +70,13 @@ describe('apiService source', () => {
   it('exposes cloud publishing config and publish endpoints', () => {
     const source = readFileSync(resolve(__dirname, './api.ts'), 'utf8');
 
-    expect(source).toContain("export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages';");
+    expect(source).toContain("export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages' | 'axhub';");
     expect(source).toContain('githubPages?: {');
     expect(source).toContain('sourceDirectory?: string;');
+    expect(source).toContain('pathPrefix?: string;');
     expect(source).toContain('githubPages: CloudPublishingConfigured');
+    expect(source).toContain('axhub: CloudPublishingConfigured<Record<string, never>>');
+    expect(source).toContain('visibleTargets?: CloudPublishTarget[];');
     expect(source).toContain('async getCloudPublishingConfig(): Promise<CloudPublishingConfigResponse>');
     expect(source).toContain("fetch('/api/cloud-publishing/config')");
     expect(source).toContain('async saveCloudPublishingConfig(payload: CloudPublishingConfigPayload)');
@@ -77,6 +85,16 @@ describe('apiService source', () => {
     expect(source).toContain("fetch(`/api/cloud-publishing/latest${latestQuery ? `?path=${encodeURIComponent(latestQuery)}` : ''}`)");
     expect(source).toContain('async publishCloudTarget(payload: CloudPublishRequest): Promise<CloudPublishResponse>');
     expect(source).toContain("fetch('/api/cloud-publishing/publish'");
+    expect(source).toContain('export interface AxhubStatusResponse');
+    expect(source).toContain('export interface AxhubHtmlProject');
+    expect(source).toContain('export interface AxhubPublishResponse');
+    expect(source).toContain('async getAxhubStatus(): Promise<AxhubStatusResponse>');
+    expect(source).toContain('async connectAxhub(): Promise<AxhubConnectResponse>');
+    expect(source).toContain('async connectAxhubEnterprise(payload: AxhubEnterpriseConnectRequest): Promise<AxhubEnterpriseConnectResponse>');
+    expect(source).toContain("fetch('/api/axhub/connect-enterprise'");
+    expect(source).toContain('async getAxhubHtmlProjects(keyword?: string): Promise<AxhubHtmlProjectsResponse>');
+    expect(source).toContain('async createAxhubHtmlProject(name: string): Promise<AxhubHtmlProjectResponse>');
+    expect(source).toContain('async publishAxhubHtmlProject(payload: { pid: number; path: string; projectId?: string | null }): Promise<AxhubPublishResponse>');
   });
 
   it('does not expose the obsolete browser prompt-execute wrapper', () => {
@@ -84,9 +102,113 @@ describe('apiService source', () => {
 
     expect(source).not.toContain('executePrompt(');
     expect(source).not.toContain('executeGeniePrompt');
-    expect(source).not.toContain("from '@/common/genie/execute'");
+    expect(source).not.toContain("from '@/common/assistant-context/execute'");
     expect(source).not.toContain('PromptExecuteRequest');
     expect(source).not.toContain('PromptExecuteResponse');
+  });
+
+  it('routes review report APIs through the injected Make API origin when present', async () => {
+    vi.stubGlobal('window', {
+      __AXHUB_MAKE_API_ORIGIN__: 'http://localhost:53817/',
+      location: {
+        origin: 'http://localhost:51720',
+      },
+    });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      projectId: 'review-client',
+      prototypeId: 'home',
+      reports: [],
+      report: { id: 'report-one', title: 'Report', reviewer: 'AI', createdAt: '2026-07-05T00:00:00.000Z', markdown: '# Report' },
+      uploaded: [],
+      lanSubmitEnabled: false,
+      projectLanAllowed: true,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiService.listReviewReports({ projectId: 'review-client', prototypeId: 'home' });
+    await apiService.getReviewReport({ projectId: 'review-client', prototypeId: 'home', reportId: 'report-one' });
+    await apiService.checkReviewReportExists({ projectId: 'review-client', prototypeId: 'home', reportId: 'report-one' });
+    await apiService.uploadReviewReport({
+      projectId: 'review-client',
+      prototypeId: 'home',
+      files: [new File(['# Report'], 'report.md', { type: 'text/markdown' })],
+    });
+    await apiService.submitReviewReport({
+      projectId: 'review-client',
+      prototypeId: 'home',
+      content: '# Report',
+    });
+    await apiService.deleteReviewReport({ projectId: 'review-client', prototypeId: 'home', reportId: 'report-one' });
+    await apiService.getReviewLanSubmitConfig('review-client', 'home');
+    await apiService.updateReviewLanSubmitConfig({ projectId: 'review-client', prototypeId: 'home', lanSubmitEnabled: true });
+
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      'http://localhost:53817/api/review-reports?projectId=review-client&prototypeId=home',
+      'http://localhost:53817/api/review-reports/report-one?projectId=review-client&prototypeId=home',
+      'http://localhost:53817/api/review-reports/exists?projectId=review-client&prototypeId=home&reportId=report-one',
+      'http://localhost:53817/api/review-reports/upload',
+      'http://localhost:53817/api/review-reports/submit',
+      'http://localhost:53817/api/review-reports/report-one',
+      'http://localhost:53817/api/review-reports/lan-submit-config?projectId=review-client&prototypeId=home',
+      'http://localhost:53817/api/review-reports/lan-submit-config',
+    ]);
+  });
+
+  it('requests a single AI agent version when an agent is specified', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      agents: {
+        qoder: {
+          status: 'installed',
+          version: '0.2.15',
+          checkedAt: '2026-07-04T00:00:00.000Z',
+        },
+      },
+      latestAgents: {
+        qoder: {
+          status: 'installed',
+          version: '0.2.16',
+          checkedAt: '2026-07-04T00:00:00.000Z',
+          packageName: '@qoder-ai/qodercli',
+        },
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiService.getAgentVersions({ agent: 'qoder' });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/agent/versions?agent=qoder', { cache: 'no-store' });
+  });
+
+  it('passes prototype path scope to workspace git status and commit APIs', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      available: true,
+      changeSummary: { totalFiles: 0, groups: [] },
+      success: true,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiService.getGitWorkspaceStatus({ gitVersion: 'abc1234', path: 'prototypes/home' });
+    await apiService.commitGitWorkspace('更新首页原型', { path: 'prototypes/home' });
+
+    expect(fetchMock.mock.calls[0]).toEqual([
+      '/api/git/workspace/status?gitVersion=abc1234&path=prototypes%2Fhome',
+      { cache: 'no-store' },
+    ]);
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/git/workspace/commit');
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: '更新首页原型', path: 'prototypes/home' }),
+    });
   });
 
   it('ignores Vite HTML fallback responses when loading hack.css', async () => {

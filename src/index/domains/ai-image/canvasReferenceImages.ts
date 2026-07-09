@@ -11,7 +11,16 @@ export interface CanvasReferenceSnapshot {
   appState: Record<string, any>;
 }
 
-export type CanvasLocalContextResourceType = 'prototype' | 'theme';
+export type CanvasLocalContextResourceType =
+  | 'prototype'
+  | 'doc'
+  | 'resource'
+  | 'template'
+  | 'theme'
+  | 'canvas'
+  | 'drawio'
+  | 'image'
+  | 'data';
 
 export interface CanvasLocalContextRef {
   resourceType: CanvasLocalContextResourceType;
@@ -119,17 +128,11 @@ function isPrototypeElement(element: any): boolean {
     || element?.customData?.resourceType === 'prototype';
 }
 
-function isThemeElement(element: any): boolean {
-  return element?.customData?.sourceResourceType === 'theme'
-    || element?.customData?.resourceType === 'theme'
-    || element?.customData?.type === 'axhub-theme';
-}
-
 function resolveString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function normalizeResourceId(value: unknown): string {
+function normalizeSlugResourceId(value: unknown): string {
   return resolveString(value)
     .replace(/\\/g, '/')
     .split('/')
@@ -137,6 +140,23 @@ function normalizeResourceId(value: unknown): string {
     .at(-1)
     ?.replace(/[^a-z0-9_-]+/giu, '-')
     .replace(/^-+|-+$/gu, '') || '';
+}
+
+function normalizePathResourceId(value: unknown): string {
+  return resolveString(value)
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/gu, '')
+    .replace(/\/+/gu, '/')
+    .replace(/\0/gu, '');
+}
+
+function normalizeProjectRelativePath(value: unknown): string {
+  const normalized = normalizePathResourceId(value);
+  if (!normalized || normalized.includes('..')) return '';
+  const srcIndex = normalized.indexOf('src/');
+  if (srcIndex >= 0) return normalized.slice(srcIndex);
+  if (normalized.startsWith('content/')) return normalized;
+  return normalized;
 }
 
 function dedupeStrings(values: string[]): string[] {
@@ -151,24 +171,89 @@ function getImageElementDataUrl(element: any, files: Record<string, any>): strin
   return resolveString(file?.dataURL || file?.dataUrl);
 }
 
+function normalizeLocalContextResourceType(value: unknown): CanvasLocalContextResourceType | null {
+  const normalized = resolveString(value);
+  if (
+    normalized === 'prototype'
+    || normalized === 'doc'
+    || normalized === 'resource'
+    || normalized === 'template'
+    || normalized === 'theme'
+    || normalized === 'canvas'
+    || normalized === 'drawio'
+    || normalized === 'image'
+    || normalized === 'data'
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function resolveLocalContextResourceType(element: any): CanvasLocalContextResourceType | null {
+  const customData = element?.customData || {};
+  return normalizeLocalContextResourceType(customData.sourceResourceType)
+    || normalizeLocalContextResourceType(customData.resourceType)
+    || (customData.type === 'axhub-doc' ? 'doc' : null)
+    || (customData.type === 'axhub-theme' ? 'theme' : null);
+}
+
+function getExplicitLocalContextPath(customData: Record<string, unknown>): string {
+  return normalizeProjectRelativePath(customData.filePath)
+    || normalizeProjectRelativePath(customData.path)
+    || normalizeProjectRelativePath(customData.absoluteFilePath);
+}
+
+function ensureResourceFilePath(resourceType: CanvasLocalContextResourceType, resourceId: string): string[] {
+  const normalizedId = normalizeProjectRelativePath(resourceId);
+  if (!normalizedId) return [];
+  if (resourceType === 'prototype') {
+    const baseDir = normalizedId.startsWith('src/prototypes/')
+      ? normalizedId.replace(/\/index\.(?:t|j)sx?$/iu, '')
+      : `src/prototypes/${normalizeSlugResourceId(normalizedId)}`;
+    return [`${baseDir}/index.tsx`, `${baseDir}/index.ts`];
+  }
+  if (resourceType === 'theme') {
+    const baseDir = normalizedId.startsWith('src/themes/')
+      ? normalizedId.replace(/\/(?:DESIGN\.md|index\.(?:t|j)sx?)$/iu, '')
+      : `src/themes/${normalizeSlugResourceId(normalizedId)}`;
+    return [`${baseDir}/DESIGN.md`, `${baseDir}/index.tsx`, `${baseDir}/index.ts`];
+  }
+  if (resourceType === 'canvas') {
+    if (normalizedId.startsWith('src/resources/') && /\.excalidraw$/iu.test(normalizedId)) return [normalizedId];
+    if (normalizedId.startsWith('src/') || normalizedId.startsWith('content/')) return [];
+    return [`src/resources/${normalizedId.replace(/\.excalidraw$/iu, '')}.excalidraw`];
+  }
+  if (resourceType === 'drawio') {
+    if (normalizedId.endsWith('.drawio') || normalizedId.endsWith('.drawio.svg')) {
+      return [normalizedId.startsWith('src/') || normalizedId.startsWith('content/') ? normalizedId : `src/resources/${normalizedId}`];
+    }
+    return [`src/resources/${normalizedId}.drawio`];
+  }
+  if (normalizedId.startsWith('src/') || normalizedId.startsWith('content/')) return [normalizedId];
+  return [`src/resources/${normalizedId}`];
+}
+
 function createLocalContextRef(element: any): CanvasLocalContextRef | null {
   const customData = element?.customData || {};
-  const resourceType: CanvasLocalContextResourceType | null = isPrototypeElement(element)
-    ? 'prototype'
-    : isThemeElement(element)
-      ? 'theme'
-      : null;
+  const resourceType = resolveLocalContextResourceType(element);
   if (!resourceType) return null;
-  const resourceId = normalizeResourceId(customData.resourceId || customData.name || customData.title);
+  const rawResourceId = customData.resourceId
+    || customData.name
+    || customData.filePath
+    || customData.path
+    || customData.absoluteFilePath
+    || customData.title;
+  const resourceId = resourceType === 'prototype' || resourceType === 'theme'
+    ? normalizeSlugResourceId(rawResourceId)
+    : normalizePathResourceId(rawResourceId);
   if (!resourceId) return null;
   const title = resolveString(customData.title || customData.displayName);
   const description = resolveString(customData.description || customData.summary);
-  const baseDir = resourceType === 'prototype'
-    ? `src/prototypes/${resourceId}`
-    : `src/themes/${resourceId}`;
-  const paths = resourceType === 'prototype'
-    ? [`${baseDir}/index.tsx`, `${baseDir}/index.ts`]
-    : [`${baseDir}/DESIGN.md`, `${baseDir}/index.tsx`, `${baseDir}/index.ts`];
+  const explicitPath = getExplicitLocalContextPath(customData);
+  const paths = explicitPath
+    ? [explicitPath]
+    : ensureResourceFilePath(resourceType, resourceId);
+  if (!paths.length) return null;
 
   return {
     resourceType,

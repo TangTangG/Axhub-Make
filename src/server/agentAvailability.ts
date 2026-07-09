@@ -38,14 +38,13 @@ const COMMAND_AVAILABILITY_TIMEOUT_MS = 2_000;
 
 const CLI_AGENT_COMMANDS: Record<CLIAgent, string[]> = {
   codex: ['codex'],
-  gemini: ['gemini'],
   claudecode: ['claude'],
   opencode: ['opencode'],
 };
 
 const WEB_AGENT_COMMANDS: Record<WebAgent, string[]> = {
   opencode: [],
-  genie: ['npx'],
+  acp: ['npx'],
 };
 
 const LOCAL_APP_AGENT_COMMANDS: Record<LocalAppAgent, string[]> = {

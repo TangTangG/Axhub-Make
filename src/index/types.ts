@@ -1,5 +1,5 @@
 import { MainIDEPreference } from '../common/ide';
-import type { GenieCurrentFileValueV1 } from '../common/genie/types';
+import type { AssistantCurrentFileValueV1 } from '../common/assistant-context/types';
 
 export interface DeviceConfig {
     id: string;
@@ -30,6 +30,9 @@ export interface ItemData {
     clientUrl?: string;
     projectId?: string;
     resourceId?: string;
+    projectDocumentPath?: string;
+    openMode?: ResourceOpenMode;
+    ext?: string;
     previewDisabled?: boolean;
     placeholder?: boolean;
     placeholderGuide?: PrototypePlaceholderGuide;
@@ -38,6 +41,8 @@ export interface ItemData {
     pages?: { id: string; title: string }[];
     defaultPageId?: string;
 }
+
+export type ResourceOpenMode = 'document' | 'canvas' | 'drawio' | 'image' | 'file';
 
 export interface PrototypePlaceholderGuide {
     kind: string;
@@ -56,22 +61,12 @@ export type AcpPromptClient =
     | 'acp:claude'
     | 'acp:cursor'
     | 'acp:codex'
-    | 'acp:gemini'
     | 'acp:opencode'
     | 'acp:qoder'
     | 'acp:codebuddy'
     | 'acp:reasonix';
-export type GeniePromptClient =
-    | 'genie:claude'
-    | 'genie:cursor'
-    | 'genie:codex'
-    | 'genie:gemini'
-    | 'genie:opencode'
-    | 'genie:qoder'
-    | 'genie:codebuddy'
-    | 'genie:reasonix';
 export type LocalPromptClient = 'local:cursor' | 'local:qoder';
-export type PromptClient = AcpPromptClient | GeniePromptClient | LocalPromptClient;
+export type PromptClient = AcpPromptClient | LocalPromptClient;
 export type PromptClientPreference = PromptClient | null;
 
 export interface AutomationConfig {
@@ -79,6 +74,7 @@ export interface AutomationConfig {
     defaultIDE?: MainIDEPreference;
     annotationPromptClient?: PromptClientPreference;
     annotationModel?: string | null;
+    agentRunConcurrency?: number;
 }
 
 export type ViewMode = 'demo' | 'canvas';
@@ -159,7 +155,7 @@ export interface AssistantContextElementV1 {
 export interface AssistantContextV1 {
     version: '1';
     systemContext: string;
-    currentFile: GenieCurrentFileValueV1;
+    currentFile: AssistantCurrentFileValueV1;
     selectedElements: AssistantContextElementV1[];
     extensions?: Record<string, unknown>;
 }

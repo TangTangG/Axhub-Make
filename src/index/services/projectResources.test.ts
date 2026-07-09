@@ -488,6 +488,97 @@ describe('project resource frontend adapter', () => {
     ]);
   });
 
+  it('normalizes Excalidraw and Drawio files as ordinary resource files with open modes', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        docs: [
+          {
+            id: 'flows/app.excalidraw',
+            name: 'flows/app.excalidraw',
+            title: 'flows/app',
+            path: 'flows/app.excalidraw',
+            filePath: 'src/resources/flows/app.excalidraw',
+            absoluteFilePath: '/workspace/client/src/resources/flows/app.excalidraw',
+            ext: '.excalidraw',
+            openMode: 'canvas',
+          },
+          {
+            id: 'flows/map.drawio',
+            name: 'flows/map.drawio',
+            title: 'flows/map',
+            path: 'flows/map.drawio',
+            filePath: 'src/resources/flows/map.drawio',
+            absoluteFilePath: '/workspace/client/src/resources/flows/map.drawio',
+            ext: '.drawio',
+            openMode: 'drawio',
+          },
+        ],
+      },
+    }, null);
+
+    expect(bundle.docs).toEqual([
+      expect.objectContaining({
+        name: 'flows/app.excalidraw',
+        displayName: 'flows/app',
+        openMode: 'canvas',
+        filePath: 'src/resources/flows/app.excalidraw',
+        canvasFilePath: 'src/resources/flows/app.excalidraw',
+        absoluteFilePath: '/workspace/client/src/resources/flows/app.excalidraw',
+      }),
+      expect.objectContaining({
+        name: 'flows/map.drawio',
+        displayName: 'flows/map',
+        openMode: 'drawio',
+        filePath: 'src/resources/flows/map.drawio',
+        absoluteFilePath: '/workspace/client/src/resources/flows/map.drawio',
+      }),
+    ]);
+  });
+
+  it('infers resource open modes for Excalidraw and Drawio files without metadata openMode', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        docs: [
+          {
+            id: 'untitled-2.excalidraw',
+            name: 'untitled-2.excalidraw',
+            title: 'untitled-2',
+            path: 'untitled-2.excalidraw',
+            absoluteFilePath: '/workspace/client/src/resources/untitled-2.excalidraw',
+            size: 171,
+          },
+          {
+            id: 'flows/map.drawio',
+            name: 'flows/map.drawio',
+            title: 'flows/map',
+            path: 'flows/map.drawio',
+            absoluteFilePath: '/workspace/client/src/resources/flows/map.drawio',
+            ext: '.drawio',
+          },
+        ],
+      },
+    }, null);
+
+    expect(bundle.docs).toEqual([
+      expect.objectContaining({
+        name: 'untitled-2.excalidraw',
+        displayName: 'untitled-2',
+        openMode: 'canvas',
+        filePath: 'src/resources/untitled-2.excalidraw',
+        canvasFilePath: 'src/resources/untitled-2.excalidraw',
+        fileSize: 171,
+      }),
+      expect.objectContaining({
+        name: 'flows/map.drawio',
+        displayName: 'flows/map',
+        openMode: 'drawio',
+        filePath: 'src/resources/flows/map.drawio',
+      }),
+    ]);
+  });
+
   it('recovers nested docs file preview paths from metadata paths when pasted images have basename ids', () => {
     const bundle = normalizeProjectResourcesPayload({
       project: { id: 'make-project', name: 'Make Project' },
@@ -535,6 +626,32 @@ describe('project resource frontend adapter', () => {
         specUrl: '/api/projects/make-project/docs/express-official-home-annotation-source/content',
         previewUrl: '/spec-template.html?url=%2Fapi%2Fprojects%2Fmake-project%2Fdocs%2Fexpress-official-home-annotation-source%2Fcontent',
         absoluteFilePath: '/workspace/axhub-make/client/src/resources/express-official-home-annotation-source.md',
+      }),
+    ]);
+  });
+
+  it('keeps nested markdown files under templates selectable as regular docs', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        docs: [
+          {
+            id: 'templates/prd-template',
+            name: 'templates/prd-template',
+            title: 'PRD Template',
+            path: '/workspace/axhub-make/client/src/resources/templates/prd-template.md',
+          },
+        ],
+      },
+    }, null);
+
+    expect(bundle.docs).toEqual([
+      expect.objectContaining({
+        name: 'templates/prd-template',
+        displayName: 'PRD Template',
+        specUrl: '/api/projects/make-project/docs/templates%2Fprd-template/content',
+        previewUrl: '/spec-template.html?url=%2Fapi%2Fprojects%2Fmake-project%2Fdocs%2Ftemplates%252Fprd-template%2Fcontent',
+        absoluteFilePath: '/workspace/axhub-make/client/src/resources/templates/prd-template.md',
       }),
     ]);
   });

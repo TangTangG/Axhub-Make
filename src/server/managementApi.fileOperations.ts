@@ -70,6 +70,14 @@ function decodePathSegment(value: string): string {
   }
 }
 
+function normalizeProjectRelativePath(projectRoot: string, absolutePath: string): string {
+  return path.relative(projectRoot, absolutePath).split(path.sep).join('/');
+}
+
+function isInvalidFileOperationName(name: string): boolean {
+  return !name || name === '.' || name === '..' || /[/\\:*?"<>|]/.test(name);
+}
+
 function updatePrototypeDisplayName(
   metadataStore: MetadataStore | null,
   prototypeId: string,
@@ -219,12 +227,22 @@ export function handleFileOperationsApi(
       return;
     }
 
+    const explicitTargetPath = pathname === '/api/copy' ? String(body?.targetPath || '').trim() : '';
     const newName = String(body?.newName || body?.targetName || '').trim();
-    if (!newName || /[/\\:*?"<>|]/.test(newName)) {
+    if (!explicitTargetPath && isInvalidFileOperationName(newName)) {
       sendJson(res, { error: 'Invalid newName' }, { status: 400 });
       return;
     }
-    const nextPath = path.join(path.dirname(targetPath), newName);
+    const nextPath = explicitTargetPath
+      ? resolveProjectPath(projectRoot, explicitTargetPath)
+      : path.join(path.dirname(targetPath), newName);
+    if (explicitTargetPath) {
+      const nextName = path.basename(nextPath);
+      if (path.resolve(nextPath) === path.resolve(projectRoot) || isInvalidFileOperationName(nextName)) {
+        sendJson(res, { error: 'Invalid targetPath' }, { status: 400 });
+        return;
+      }
+    }
     if (!isPathInside(projectRoot, nextPath)) {
       sendJson(res, { error: 'Forbidden' }, { status: 403 });
       return;
@@ -232,7 +250,7 @@ export function handleFileOperationsApi(
 
     if (pathname === '/api/rename') {
       fs.renameSync(targetPath, nextPath);
-      sendJson(res, { success: true, path: path.relative(projectRoot, nextPath).split(path.sep).join('/') });
+      sendJson(res, { success: true, path: normalizeProjectRelativePath(projectRoot, nextPath) });
       return;
     }
 
@@ -241,7 +259,7 @@ export function handleFileOperationsApi(
     } else {
       fs.copyFileSync(targetPath, nextPath);
     }
-    sendJson(res, { success: true, path: path.relative(projectRoot, nextPath).split(path.sep).join('/') });
+    sendJson(res, { success: true, path: normalizeProjectRelativePath(projectRoot, nextPath) });
   }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
 
   return true;

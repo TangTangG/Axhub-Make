@@ -7,6 +7,8 @@ import {
   useAuiState,
   type Attachment,
   type AttachmentAdapter,
+  type CompleteAttachment,
+  type PendingAttachment,
   type ThreadMessage,
 } from '@assistant-ui/react';
 import { useChatRuntime } from '@assistant-ui/react-ai-sdk';
@@ -19,9 +21,11 @@ import type {
   UIMessage,
   UIMessageChunk,
 } from 'ai';
-import { ArrowUp, Check, ChevronDown, ChevronRight, Gauge, Network, PlusIcon, Settings2, SlidersHorizontal, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, ChevronRight, FileIcon, Folder, Gauge, Loader2, Network, PlusIcon, Search, Settings2, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { getAcpProviderOption, resolveAcpPromptClientProvider, type AcpProviderKey } from '../../../common/acpModelConfig';
 import {
@@ -29,15 +33,28 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { apiService } from '../../services/index.api';
 import { shouldUseCanvasReferencePaste } from './canvasReferenceClipboard';
-import type { CanvasLocalContextRef } from '../ai-image/canvasReferenceImages';
+import type { CanvasLocalContextRef, CanvasReferenceContext } from '../ai-image/canvasReferenceImages';
+import type { ItemData, PromptClientPreference, SidebarTreeNode } from '../../types';
+import type { ThemeResourceItem } from '../resources/resource.types';
 import {
-  appendCanvasAiQuickPrompt,
-  type CanvasAiQuickPrompt,
-} from '../ai-generation/canvasAiSceneRegistry';
-import type { PromptClientPreference } from '../../types';
+  buildAssistantContextItemsFromResource,
+  type AssistantResourceContextType,
+} from '../assistant/assistantContextPayload';
+import {
+  createSidebarTreeItemLookup,
+  resolveSidebarTreeItem,
+} from '../../utils/sidebarTree';
 import {
   clearCanvasGenerationComposerDraft,
   getCanvasGenerationComposerDraftStorage,
@@ -98,11 +115,16 @@ export interface CanvasAiSubmitResult {
 
 export type CanvasGenerationSubmitResult = CanvasAiSubmitResult;
 
+export type CanvasGenerationAttachmentPart =
+  | { type: 'image'; image: string; filename?: string }
+  | { type: 'file'; data: string; mimeType: string; filename?: string };
+
 export interface CanvasAiSubmitRequest<SceneSettings = unknown> {
   scene: CanvasAiScene;
   prompt: string;
   message: ThreadMessage;
   contextBundle: ContextBundleV2 | null;
+  attachments?: CanvasGenerationAttachmentPart[];
   referenceImages: string[];
   provider: string;
   model: string | null;
@@ -118,22 +140,60 @@ export interface CanvasGenerationDisplaySubmitSelection {
   mode: string | null;
   thought: string | null;
   referenceImages: string[];
+  attachments: CanvasGenerationAttachmentPart[];
+  localContextRefs: CanvasLocalContextRef[];
+}
+
+export interface CanvasPromptOptimizationRequest {
+  prompt: string;
+  contextBundle: ContextBundleV2 | null;
+  provider: string;
+  model: string | null;
+  mode: string | null;
+  thought: string | null;
+  referenceImages: string[];
+  attachments: CanvasGenerationAttachmentPart[];
+  localContextRefs: CanvasLocalContextRef[];
 }
 
 type CanvasGenerationDisplaySubmitResult = boolean | void;
+type CanvasGenerationDisplayPostSelectorActions = React.ReactNode | ((props: { getPromptText: () => string }) => React.ReactNode);
+export type CanvasReferencePasteResult = string[] | Partial<CanvasReferenceContext> | null | undefined;
+
+export type CanvasProjectResourcePickerTab = 'prototypes' | 'docs' | 'themes';
+export type CanvasProjectResourceTrees = Partial<Record<CanvasProjectResourcePickerTab, SidebarTreeNode[]>>;
+export interface CanvasProjectResourceItems {
+  prototypes?: ItemData[];
+  docs?: ItemData[];
+  themes?: ThemeResourceItem[];
+}
+export type CanvasProjectResourceSelectionMode = 'context' | 'canvas-items';
+export interface CanvasProjectResourceItemSelection {
+  key: string;
+  tab: CanvasProjectResourcePickerTab;
+  node: SidebarTreeNode;
+  item: ItemData;
+}
 
 export interface CanvasGenerationDisplayComposerProps {
   placeholder: string;
   ariaLabel: string;
   onSubmit?: (text: string, selection?: CanvasGenerationDisplaySubmitSelection) => CanvasGenerationDisplaySubmitResult | Promise<CanvasGenerationDisplaySubmitResult>;
+  onOptimizePrompt?: (request: CanvasPromptOptimizationRequest) => Promise<string>;
   onOpenAISettings?: () => void;
+  canPasteReferenceImages?: boolean;
   className?: string;
   disabled?: boolean;
   draftStorageKey?: string | null;
+  externalFileDropTargetRef?: React.RefObject<HTMLElement>;
+  initialLocalContextRefs?: CanvasLocalContextRef[];
+  initialReferenceImages?: string[];
   leadingActions?: React.ReactNode;
-  postSelectorActions?: React.ReactNode;
+  onPasteReferenceImages?: () => Promise<CanvasReferencePasteResult>;
+  postSelectorActions?: CanvasGenerationDisplayPostSelectorActions;
   preferredPromptClient?: PromptClientPreference;
-  quickPrompts?: readonly CanvasAiQuickPrompt[];
+  projectResourceItems?: CanvasProjectResourceItems;
+  projectResourceTrees?: CanvasProjectResourceTrees;
   showSelectors?: boolean;
   workspacePath?: string | null;
 }
@@ -146,14 +206,12 @@ interface CanvasGenerationRuntimeComposerProps {
   draftStorageKey?: string | null;
   initialLocalContextRefs?: CanvasLocalContextRef[];
   initialReferenceImages?: string[];
-  onPasteReferenceImages?: () => Promise<string[]>;
+  onPasteReferenceImages?: () => Promise<CanvasReferencePasteResult>;
   placeholder: string;
   preferredPromptClient?: PromptClientPreference;
-  quickPrompts?: readonly CanvasAiQuickPrompt[];
   renderActions?: (props: { submitting: boolean }) => React.ReactNode;
   renderLeadingActions?: (props: { submitting: boolean }) => React.ReactNode;
   renderPostSelectorActions?: (props: { submitting: boolean }) => React.ReactNode;
-  renderTriggerPopovers?: () => React.ReactNode;
   scene: CanvasAiScene;
   rootClassName?: string;
   footerActionsClassName?: string;
@@ -200,10 +258,37 @@ export function extractCanvasGenerationReferenceImagesFromMessage(message: Threa
     }) ?? [];
 }
 
+export function extractCanvasGenerationAttachmentPartsFromMessage(message: ThreadMessage): CanvasGenerationAttachmentPart[] {
+  return message.attachments
+    ?.flatMap((attachment) => attachment.content ?? [])
+    .flatMap((part): CanvasGenerationAttachmentPart[] => {
+      if (part.type === 'image' && typeof part.image === 'string') {
+        return [{
+          type: 'image',
+          image: part.image,
+          ...(part.filename ? { filename: part.filename } : {}),
+        }];
+      }
+      if (part.type === 'file' && typeof part.data === 'string') {
+        return [{
+          type: 'file',
+          data: part.data,
+          mimeType: part.mimeType || 'application/octet-stream',
+          ...(part.filename ? { filename: part.filename } : {}),
+        }];
+      }
+      return [];
+    }) ?? [];
+}
+
+function getCanvasLocalContextItemId(ref: CanvasLocalContextRef, path: string): string {
+  return `axhub:canvas-local-context:${ref.resourceType}:${ref.resourceId}:${path}`;
+}
+
 export function localContextRefsToAcpContextItems(refs: CanvasLocalContextRef[]): ContextItem[] {
   return refs.flatMap((ref) => ref.paths.map((path) => ({
     kind: 'file',
-    id: `axhub:canvas-local-context:${ref.resourceType}:${ref.resourceId}:${path}`,
+    id: getCanvasLocalContextItemId(ref, path),
     path,
     name: ref.title || ref.resourceId,
     ...(ref.description ? { description: ref.description } : {}),
@@ -213,6 +298,351 @@ export function localContextRefsToAcpContextItems(refs: CanvasLocalContextRef[])
       resourceId: ref.resourceId,
     },
   } satisfies ContextItem)));
+}
+
+export function removeCanvasLocalContextRefItem(
+  refs: CanvasLocalContextRef[],
+  itemId: string | undefined,
+): CanvasLocalContextRef[] {
+  if (!itemId) return refs;
+  return refs.flatMap((ref): CanvasLocalContextRef[] => {
+    const paths = ref.paths.filter((path) => getCanvasLocalContextItemId(ref, path) !== itemId);
+    return paths.length ? [{ ...ref, paths }] : [];
+  });
+}
+
+function isCanvasLocalContextRef(value: unknown): value is CanvasLocalContextRef {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const ref = value as Partial<CanvasLocalContextRef>;
+  return typeof ref.resourceType === 'string'
+    && typeof ref.resourceId === 'string'
+    && Array.isArray(ref.paths)
+    && ref.paths.every((path) => typeof path === 'string' && path.trim().length > 0);
+}
+
+function getCanvasLocalContextRefKey(ref: CanvasLocalContextRef): string {
+  return `${ref.resourceType}:${ref.resourceId}:${ref.paths.join('|')}`;
+}
+
+function mergeCanvasLocalContextRefs(
+  existingRefs: CanvasLocalContextRef[],
+  incomingRefs: CanvasLocalContextRef[],
+): CanvasLocalContextRef[] {
+  if (!incomingRefs.length) return existingRefs;
+  const nextRefs = [...existingRefs];
+  const existingKeys = new Set(nextRefs.map(getCanvasLocalContextRefKey));
+  for (const ref of incomingRefs) {
+    const key = getCanvasLocalContextRefKey(ref);
+    if (existingKeys.has(key)) continue;
+    existingKeys.add(key);
+    nextRefs.push(ref);
+  }
+  return nextRefs;
+}
+
+export function normalizeCanvasReferencePasteResult(result: CanvasReferencePasteResult): CanvasReferenceContext {
+  if (Array.isArray(result)) {
+    return {
+      referenceImages: result.filter((image): image is string => typeof image === 'string' && image.trim().length > 0),
+      localContextRefs: [],
+    };
+  }
+  const referenceImages = Array.isArray(result?.referenceImages)
+    ? result.referenceImages.filter((image): image is string => typeof image === 'string' && image.trim().length > 0)
+    : [];
+  const localContextRefs = Array.isArray(result?.localContextRefs)
+    ? result.localContextRefs.filter(isCanvasLocalContextRef)
+    : [];
+  return {
+    referenceImages,
+    localContextRefs,
+  };
+}
+
+const CANVAS_PROJECT_RESOURCE_TAB_LABELS: Record<CanvasProjectResourcePickerTab, string> = {
+  prototypes: '原型',
+  docs: '资源',
+  themes: '设计',
+};
+
+const CANVAS_PROJECT_RESOURCE_TABS = Object.keys(CANVAS_PROJECT_RESOURCE_TAB_LABELS) as CanvasProjectResourcePickerTab[];
+
+function normalizeCanvasProjectResourcePath(value: unknown): string {
+  return typeof value === 'string'
+    ? value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/')
+    : '';
+}
+
+function stripCanvasProjectResourceTabPrefix(tab: CanvasProjectResourcePickerTab, value: string): string {
+  const normalized = normalizeCanvasProjectResourcePath(value);
+  const prefix = `${tab}/`;
+  return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : normalized;
+}
+
+function ensureProjectResourceFolderPath(tab: CanvasProjectResourcePickerTab, path: string): string {
+  const normalized = stripCanvasProjectResourceTabPrefix(tab, path);
+  if (!normalized) return '';
+  if (normalized.startsWith('src/') || normalized.startsWith('content/')) return normalized;
+  if (tab === 'prototypes') return `src/prototypes/${normalized}`;
+  if (tab === 'themes') return normalized.startsWith('themes/') ? `src/${normalized}` : `src/themes/${normalized}`;
+  return normalized.startsWith('resources/') ? `src/${normalized}` : `src/resources/${normalized}`;
+}
+
+function sanitizeCanvasProjectResourceFolderName(value: string): string {
+  return String(value || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function canvasProjectResourceNodeKey(tab: CanvasProjectResourcePickerTab, node: SidebarTreeNode): string {
+  return `${tab}:${node.id}`;
+}
+
+function getCanvasProjectResourceNodeSearchText(node: SidebarTreeNode): string {
+  return [
+    node.title,
+    node.id,
+    node.itemKey,
+    node.path,
+    node.folderPath,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0).join(' ');
+}
+
+export function filterCanvasProjectResourceTreeByQuery(
+  nodes: SidebarTreeNode[],
+  query: string,
+): SidebarTreeNode[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return nodes;
+
+  const walk = (list: SidebarTreeNode[]): SidebarTreeNode[] => {
+    const result: SidebarTreeNode[] = [];
+    for (const node of list) {
+      const selfMatched = getCanvasProjectResourceNodeSearchText(node).toLowerCase().includes(normalizedQuery);
+      if (node.kind === 'folder') {
+        const children = node.children || [];
+        const nextChildren = selfMatched ? children : walk(children);
+        if (selfMatched || nextChildren.length > 0) {
+          result.push({ ...node, children: nextChildren });
+        }
+        continue;
+      }
+      if (selfMatched) {
+        result.push(node);
+      }
+    }
+    return result;
+  };
+
+  return walk(nodes);
+}
+
+function getCanvasProjectResourceFolderPathInfo(
+  tab: CanvasProjectResourcePickerTab,
+  node: SidebarTreeNode,
+): { path: string; inferred: boolean } {
+  const explicitPath = node.folderPath || node.path || node.itemKey || '';
+  if (explicitPath) {
+    return {
+      path: ensureProjectResourceFolderPath(tab, explicitPath),
+      inferred: false,
+    };
+  }
+  return {
+    path: ensureProjectResourceFolderPath(tab, sanitizeCanvasProjectResourceFolderName(node.title)),
+    inferred: true,
+  };
+}
+
+function getCanvasProjectResourceFolderName(path: string, node: SidebarTreeNode): string {
+  const title = String(node.title || '').trim();
+  if (title) return title;
+  return path.split('/').filter(Boolean).pop() || path;
+}
+
+function buildCanvasProjectResourceFolderContextItem(tab: CanvasProjectResourcePickerTab, node: SidebarTreeNode): ContextItem | null {
+  const { path, inferred } = getCanvasProjectResourceFolderPathInfo(tab, node);
+  if (!path) return null;
+  const resourceType = tab === 'prototypes' ? 'prototype' : tab === 'themes' ? 'theme' : 'doc';
+  return {
+    kind: 'file',
+    id: `axhub:project-resource-folder:${tab}:${path}`,
+    path,
+    name: getCanvasProjectResourceFolderName(path, node),
+    metadata: {
+      source: 'axhub-make-placeholder-resource-picker',
+      resourceType,
+      resourceKind: 'folder',
+      ...(inferred ? { inferredFolderPath: true } : {}),
+      tab,
+      nodeId: node.id,
+    },
+  } satisfies ContextItem;
+}
+
+function getCanvasContextItemLabel(item: ContextItem): string {
+  if (item.kind === 'file') return item.name || item.path;
+  return item.title || item.id || '上下文';
+}
+
+function getCanvasContextItemKey(item: ContextItem): string {
+  if (item.id) return item.id;
+  if (item.kind === 'file') return item.path;
+  return getCanvasContextItemLabel(item);
+}
+
+function hasCanvasDraggedLocalFiles(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false;
+  if (dataTransfer.files?.length > 0) return true;
+  return Array.from(dataTransfer.types || []).includes('Files');
+}
+
+function getCanvasProjectResourceType(tab: CanvasProjectResourcePickerTab, item: ItemData): AssistantResourceContextType {
+  if (tab === 'themes') return 'theme';
+  if (tab === 'prototypes') return 'prototype';
+  const path = normalizeCanvasProjectResourcePath((item as ItemData).filePath || (item as ItemData).absoluteFilePath || item.name);
+  return /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i.test(path) ? 'image' : 'doc';
+}
+
+function getCanvasProjectResourceItemPath(tab: CanvasProjectResourcePickerTab, item: ItemData): string {
+  const explicitPath = normalizeCanvasProjectResourcePath(
+    (item as ItemData).filePath
+      || (item as ItemData).absoluteFilePath
+  );
+  if (explicitPath) {
+    const srcIndex = explicitPath.indexOf('src/');
+    return srcIndex >= 0 ? explicitPath.slice(srcIndex) : explicitPath;
+  }
+  if (tab === 'themes') {
+    const name = normalizeCanvasProjectResourcePath(item.name);
+    if (!name) return '';
+    return name.startsWith('src/') ? name : name.startsWith('themes/') ? `src/${name}` : `src/themes/${name}`;
+  }
+  return '';
+}
+
+function createThemeItemData(item: ThemeResourceItem): ItemData {
+  return {
+    name: item.name,
+    displayName: item.displayName || item.name,
+    jsUrl: '',
+    specUrl: '',
+    filePath: item.path,
+    absoluteFilePath: item.absoluteFilePath,
+    previewUrl: item.previewUrl || item.clientUrl,
+    clientUrl: item.clientUrl || item.previewUrl,
+    projectId: item.projectId,
+    resourceId: item.name,
+  };
+}
+
+function findCanvasProjectResourceNode(
+  trees: CanvasProjectResourceTrees,
+  key: string,
+): { tab: CanvasProjectResourcePickerTab; node: SidebarTreeNode } | null {
+  const [rawTab, ...nodeIdParts] = key.split(':');
+  const tab = rawTab as CanvasProjectResourcePickerTab;
+  const nodeId = nodeIdParts.join(':');
+  if (!CANVAS_PROJECT_RESOURCE_TABS.includes(tab) || !nodeId) return null;
+  const walk = (nodes: SidebarTreeNode[]): SidebarTreeNode | null => {
+    for (const node of nodes) {
+      if (node.id === nodeId) return node;
+      if (node.kind === 'folder') {
+        const matched = walk(node.children || []);
+        if (matched) return matched;
+      }
+    }
+    return null;
+  };
+  const node = walk(trees[tab] || []);
+  return node ? { tab, node } : null;
+}
+
+export function buildCanvasProjectResourceContextItems({
+  trees,
+  items,
+  selectedKeys,
+}: {
+  trees: CanvasProjectResourceTrees;
+  items: CanvasProjectResourceItems;
+  selectedKeys: Set<string>;
+}): ContextItem[] {
+  const result: ContextItem[] = [];
+  const lookups = {
+    prototypes: createSidebarTreeItemLookup('prototypes', items.prototypes || []),
+    docs: createSidebarTreeItemLookup('docs', items.docs || []),
+    themes: createSidebarTreeItemLookup('themes', (items.themes || []).map(createThemeItemData)),
+  };
+
+  for (const key of selectedKeys) {
+    const match = findCanvasProjectResourceNode(trees, key);
+    if (!match) continue;
+    const { tab, node } = match;
+    if (node.kind === 'folder') {
+      const folderItem = buildCanvasProjectResourceFolderContextItem(tab, node);
+      if (folderItem) result.push(folderItem);
+      continue;
+    }
+
+    const item = resolveSidebarTreeItem(
+      tab,
+      node,
+      lookups[tab],
+    );
+    if (!item) continue;
+    const filePath = getCanvasProjectResourceItemPath(tab, item);
+    result.push(...buildAssistantContextItemsFromResource({
+      resourceType: getCanvasProjectResourceType(tab, item),
+      resourceId: item.resourceId || item.name,
+      name: item.name,
+      displayName: item.displayName || item.name,
+      filePath,
+      absoluteFilePath: item.absoluteFilePath,
+      metadata: {
+        source: 'axhub-make-placeholder-resource-picker',
+        resourceKind: 'item',
+        tab,
+        nodeId: node.id,
+      },
+    }));
+  }
+
+  return result;
+}
+
+export function buildCanvasProjectResourceItemSelections({
+  trees,
+  items,
+  selectedKeys,
+}: {
+  trees: CanvasProjectResourceTrees;
+  items: CanvasProjectResourceItems;
+  selectedKeys: Set<string>;
+}): CanvasProjectResourceItemSelection[] {
+  const result: CanvasProjectResourceItemSelection[] = [];
+  const lookups = {
+    prototypes: createSidebarTreeItemLookup('prototypes', items.prototypes || []),
+    docs: createSidebarTreeItemLookup('docs', items.docs || []),
+    themes: createSidebarTreeItemLookup('themes', (items.themes || []).map(createThemeItemData)),
+  };
+
+  for (const key of selectedKeys) {
+    const match = findCanvasProjectResourceNode(trees, key);
+    if (!match || match.node.kind === 'folder') continue;
+    const item = resolveSidebarTreeItem(match.tab, match.node, lookups[match.tab]);
+    if (!item) continue;
+    result.push({
+      key,
+      tab: match.tab,
+      node: match.node,
+      item,
+    });
+  }
+
+  return result;
 }
 
 function dataUrlToImageFile(dataUrl: string, index: number): File {
@@ -277,31 +707,65 @@ export const canvasReferenceImageAttachmentAdapter: AttachmentAdapter = {
   },
 };
 
-function extractImageDataUrlsFromAttachmentContent(attachment: Attachment): string[] {
-  return attachment.content?.flatMap((part) => {
-    if (part.type === 'image' && typeof part.image === 'string') {
-      return [part.image];
+export const canvasGeneralFileAttachmentAdapter: AttachmentAdapter = {
+  accept: '*',
+  async add({ file }) {
+    return {
+      id: `${file.name}-${file.lastModified || Date.now()}`,
+      type: file.type.startsWith('image/') ? 'image' : 'file',
+      name: file.name,
+      contentType: file.type || 'application/octet-stream',
+      file,
+      content: [],
+      status: { type: 'requires-action', reason: 'composer-send' },
+    };
+  },
+  async send(attachment) {
+    const dataUrl = await readFileAsDataUrl(attachment.file);
+    if ((attachment.contentType || '').startsWith('image/')) {
+      return {
+        ...attachment,
+        status: { type: 'complete' },
+        content: [{
+          type: 'image',
+          image: dataUrl,
+          filename: attachment.name,
+        }],
+      };
     }
-    if (part.type === 'file' && typeof part.data === 'string' && part.mimeType?.startsWith('image/')) {
-      return [part.data];
-    }
-    return [];
-  }) ?? [];
-}
+    return {
+      ...attachment,
+      status: { type: 'complete' },
+      content: [{
+        type: 'file',
+        data: dataUrl,
+        mimeType: attachment.contentType || 'application/octet-stream',
+        filename: attachment.name,
+      }],
+    };
+  },
+  async remove() {
+    // Local placeholder-start attachments do not need cleanup.
+  },
+};
 
-async function resolveComposerAttachmentReferenceImages(attachments: readonly Attachment[]): Promise<string[]> {
-  const images = await Promise.all(attachments.map(async (attachment) => {
-    const contentImages = extractImageDataUrlsFromAttachmentContent(attachment);
-    if (contentImages.length > 0) {
-      return contentImages;
-    }
+async function resolveComposerAttachmentSubmitSelection(attachments: readonly Attachment[]): Promise<{
+  attachments: CanvasGenerationAttachmentPart[];
+  referenceImages: string[];
+}> {
+  const completedAttachments = await Promise.all(attachments.map(async (attachment): Promise<CompleteAttachment> => {
     if (attachment.status.type === 'complete') {
-      return [];
+      return attachment as CompleteAttachment;
     }
-    const completedAttachment = await canvasReferenceImageAttachmentAdapter.send(attachment);
-    return extractImageDataUrlsFromAttachmentContent(completedAttachment);
+    return canvasGeneralFileAttachmentAdapter.send(attachment as PendingAttachment);
   }));
-  return images.flat();
+  const message = {
+    attachments: completedAttachments,
+  } as unknown as ThreadMessage;
+  return {
+    attachments: extractCanvasGenerationAttachmentPartsFromMessage(message),
+    referenceImages: extractCanvasGenerationReferenceImagesFromMessage(message),
+  };
 }
 
 function isTextPart(part: UIMessage['parts'][number]): part is { type: 'text'; text: string } {
@@ -496,6 +960,7 @@ class CanvasGenerationMakeTransport implements ChatTransport<UIMessage> {
         scene: this.scene,
         prompt,
         message: threadMessage,
+        attachments: extractCanvasGenerationAttachmentPartsFromMessage(threadMessage),
         referenceImages: extractCanvasGenerationReferenceImagesFromMessage(threadMessage),
         contextBundle: submitContext.contextBundle,
         provider: submitContext.provider,
@@ -534,64 +999,316 @@ class CanvasGenerationDisplayTransport implements ChatTransport<UIMessage> {
   }
 }
 
-function CanvasGenerationDisplayQuickPromptsButton({
-  disabled,
-  onSelect,
-  quickPrompts,
+function CanvasProjectResourceTree({
+  nodes,
+  selectedKeys,
+  selectionMode,
+  tab,
+  onToggleNode,
+  depth = 0,
+  emptyText = '暂无资源',
 }: {
-  disabled: boolean;
-  onSelect: (quickPrompt: CanvasAiQuickPrompt) => void;
-  quickPrompts?: readonly CanvasAiQuickPrompt[];
+  nodes: SidebarTreeNode[];
+  selectedKeys: Set<string>;
+  selectionMode: 'context' | 'canvas-items';
+  tab: CanvasProjectResourcePickerTab;
+  onToggleNode: (key: string) => void;
+  depth?: number;
+  emptyText?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  if (!quickPrompts?.length) return null;
-
-  const handleSelect = (quickPrompt: CanvasAiQuickPrompt) => {
-    onSelect(quickPrompt);
-    setOpen(false);
-  };
+  if (!nodes.length && depth === 0) {
+    return (
+      <div className="flex h-48 items-center justify-center text-xs text-muted-foreground">
+        {emptyText}
+      </div>
+    );
+  }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          data-axhub-canvas-generation-prompts-trigger
-          className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={disabled}
-          aria-label="打开提示词"
-        >
-          <Sparkles className="size-3.5" aria-hidden="true" />
-          <span>提示词</span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" side="top" className="z-[1300] w-80 overflow-hidden p-0">
-        <div
-          data-axhub-canvas-generation-prompts-menu
-          className="flex flex-col py-1"
-        >
-          {quickPrompts.map((quickPrompt) => (
-            <button
-              key={quickPrompt.id}
-              type="button"
-              data-axhub-canvas-generation-prompt-option
-              className="flex w-full cursor-pointer flex-col items-start gap-0.5 px-3 py-2 text-start outline-none transition-colors hover:bg-accent focus:bg-accent"
-              onClick={() => handleSelect(quickPrompt)}
+      <div className="space-y-0.5">
+      {nodes.map((node) => {
+        const nodeKey = canvasProjectResourceNodeKey(tab, node);
+        const isFolder = node.kind === 'folder';
+        const folderDisabled = selectionMode === 'canvas-items' && isFolder;
+        return (
+          <div key={nodeKey}>
+            <label
+              className={cn(
+                'flex min-h-7 items-center gap-2 rounded-sm px-2 py-1 text-left text-[13px] leading-5 hover:bg-accent',
+                folderDisabled ? 'cursor-not-allowed text-muted-foreground' : 'cursor-pointer',
+              )}
+              style={{ paddingLeft: `${8 + depth * 16}px` }}
+              title={folderDisabled ? '文件夹不能添加到画布' : undefined}
             >
-              <span className="flex items-center gap-2 text-sm font-medium">
-                <Sparkles className="size-3.5 text-primary" aria-hidden="true" />
-                {quickPrompt.label}
-              </span>
-              {quickPrompt.description ? (
-                <span className="ml-5 text-xs leading-tight text-muted-foreground">
-                  {quickPrompt.description}
-                </span>
-              ) : null}
-            </button>
+              <Checkbox
+                checked={selectedKeys.has(nodeKey)}
+                className="size-3.5 border-muted-foreground/30 shadow-none"
+                disabled={folderDisabled}
+                onCheckedChange={() => onToggleNode(nodeKey)}
+                aria-label={folderDisabled ? `${node.title}，文件夹不能添加到画布` : `选择${node.title}`}
+              />
+              {isFolder ? (
+                <Folder className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              ) : (
+                <FileIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              )}
+              <span className="min-w-0 flex-1 truncate">{node.title}</span>
+            </label>
+            {isFolder && node.children?.length ? (
+              <CanvasProjectResourceTree
+                nodes={node.children}
+                selectedKeys={selectedKeys}
+                selectionMode={selectionMode}
+                tab={tab}
+                onToggleNode={onToggleNode}
+                depth={depth + 1}
+                emptyText={emptyText}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function CanvasProjectResourcePickerDialog({
+  items,
+  open,
+  selectedKeys,
+  selectionMode = 'context',
+  trees,
+  onApply,
+  onOpenChange,
+}: {
+  items?: CanvasProjectResourceItems;
+  open: boolean;
+  selectedKeys: Set<string>;
+  selectionMode?: 'context' | 'canvas-items';
+  trees?: CanvasProjectResourceTrees;
+  onApply: (keys: Set<string>, contextItems: ContextItem[], itemSelections?: CanvasProjectResourceItemSelection[]) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<CanvasProjectResourcePickerTab>('prototypes');
+  const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set(selectedKeys));
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setDraftKeys(new Set(selectedKeys));
+      setSearchQuery('');
+    }
+  }, [open, selectedKeys]);
+
+  const handleToggleNode = useCallback((nodeKey: string) => {
+    if (selectionMode === 'canvas-items') {
+      const match = findCanvasProjectResourceNode(trees || {}, nodeKey);
+      if (!match || match.node.kind === 'folder') return;
+    }
+    setDraftKeys((current) => {
+      const next = new Set(current);
+      if (next.has(nodeKey)) {
+        next.delete(nodeKey);
+      } else {
+        next.add(nodeKey);
+      }
+      return next;
+    });
+  }, [selectionMode, trees]);
+  const handleApply = useCallback(() => {
+    const itemSelections = selectionMode === 'canvas-items'
+      ? buildCanvasProjectResourceItemSelections({
+        trees: trees || {},
+        items: items || {},
+        selectedKeys: draftKeys,
+      })
+      : [];
+    const nextKeys = selectionMode === 'canvas-items'
+      ? new Set(itemSelections.map((selection) => selection.key))
+      : new Set(draftKeys);
+    const contextItems = selectionMode === 'canvas-items'
+      ? []
+      : buildCanvasProjectResourceContextItems({
+        trees: trees || {},
+        items: items || {},
+        selectedKeys: nextKeys,
+      });
+    onApply(nextKeys, contextItems, itemSelections);
+    onOpenChange(false);
+  }, [draftKeys, items, onApply, onOpenChange, selectionMode, trees]);
+  const selectedCount = selectionMode === 'canvas-items'
+    ? buildCanvasProjectResourceItemSelections({
+      trees: trees || {},
+      items: items || {},
+      selectedKeys: draftKeys,
+    }).length
+    : draftKeys.size;
+  const activeTree = trees?.[activeTab] || [];
+  const filteredTree = useMemo(
+    () => filterCanvasProjectResourceTreeByQuery(activeTree, searchQuery),
+    [activeTree, searchQuery],
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="z-[1400] grid h-[520px] max-h-[calc(100vh-96px)] w-[min(720px,calc(100vw-2rem))] grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-0 p-0">
+        <DialogTitle className="sr-only">本项目资源</DialogTitle>
+        <ToggleGroup
+          type="single"
+          value={activeTab}
+          onValueChange={(value) => value && setActiveTab(value as CanvasProjectResourcePickerTab)}
+          className="w-auto justify-start gap-1 px-5 pb-3 pt-5"
+        >
+          {CANVAS_PROJECT_RESOURCE_TABS.map((tab) => (
+            <ToggleGroupItem
+              key={tab}
+              value={tab}
+              className="h-8 w-auto min-w-[44px] px-3 text-sm leading-none whitespace-nowrap rounded-sm bg-transparent hover:bg-muted/50 data-[state=off]:!text-muted-foreground/60 data-[state=off]:hover:!text-muted-foreground data-[state=on]:bg-accent data-[state=on]:!text-foreground data-[state=on]:!font-medium"
+            >
+              {CANVAS_PROJECT_RESOURCE_TAB_LABELS[tab]}
+            </ToggleGroupItem>
           ))}
+        </ToggleGroup>
+        <div className="px-5 pb-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索..."
+              className="h-8 pl-9 pr-3 text-[13px]"
+              aria-label="搜索资源"
+            />
+          </div>
         </div>
-      </PopoverContent>
-    </Popover>
+        <ScrollArea className="min-h-0 border-y px-2 py-2">
+          <CanvasProjectResourceTree
+            nodes={filteredTree}
+            selectedKeys={draftKeys}
+            selectionMode={selectionMode}
+            tab={activeTab}
+            onToggleNode={handleToggleNode}
+            emptyText={searchQuery.trim() ? '没有匹配的资源' : '暂无资源'}
+          />
+        </ScrollArea>
+        <DialogFooter className="flex-row items-center justify-between gap-3 px-5 py-4 sm:justify-between sm:space-x-0">
+          <div className="text-xs text-muted-foreground">
+            已选择 {selectedCount} 项
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleApply}
+            >
+              {selectionMode === 'canvas-items' ? '添加到画布' : '添加到上下文'}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CanvasComposerAttachmentMenu({
+  disabled = false,
+  label,
+  onProjectResourceClick,
+}: {
+  disabled?: boolean;
+  label: string;
+  onProjectResourceClick: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+    }
+  }, [disabled]);
+
+  return (
+    <TooltipProvider>
+      <Popover open={open} onOpenChange={(nextOpen) => setOpen(disabled ? false : nextOpen)}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="aui-composer-add-attachment size-8 rounded-full p-1 font-semibold text-xs hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30"
+                aria-label={label}
+                disabled={disabled}
+              >
+                <PlusIcon className="aui-attachment-add-icon size-5 stroke-[1.5px]" />
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{label}</TooltipContent>
+        </Tooltip>
+        <PopoverContent align="start" side="top" className="z-[1300] w-44 p-1">
+          <ComposerPrimitive.AddAttachment asChild>
+            <button
+              type="button"
+              className="flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+              onClick={() => setOpen(false)}
+            >
+              <FileIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+              <span>本地文件</span>
+            </button>
+          </ComposerPrimitive.AddAttachment>
+          <button
+            type="button"
+            className="flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+            data-axhub-project-resource-picker-trigger
+            onClick={() => {
+              setOpen(false);
+              onProjectResourceClick();
+            }}
+          >
+            <Folder className="size-4 text-muted-foreground" aria-hidden="true" />
+            <span>本项目资源</span>
+          </button>
+        </PopoverContent>
+      </Popover>
+    </TooltipProvider>
+  );
+}
+
+function CanvasPromptOptimizeButton({
+  disabled,
+  optimizing,
+  onClick,
+}: {
+  disabled: boolean;
+  optimizing: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label="优化提示词"
+      title="优化提示词"
+      disabled={disabled}
+      aria-live="polite"
+      className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
+      onClick={onClick}
+    >
+      {optimizing ? (
+        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+      ) : (
+        <Sparkles className="size-3.5" aria-hidden="true" />
+      )}
+      <span>{optimizing ? '正在优化提示词' : '优化提示词'}</span>
+    </button>
   );
 }
 
@@ -690,25 +1407,35 @@ function CanvasComposerSubmitButton({
   );
 }
 
-interface CanvasGenerationDisplayComposerContentProps extends Omit<CanvasGenerationDisplayComposerProps, 'onSubmit' | 'preferredPromptClient' | 'showSelectors' | 'workspacePath'> {
+interface CanvasGenerationDisplayComposerContentProps extends Omit<CanvasGenerationDisplayComposerProps, 'onSubmit' | 'onOptimizePrompt' | 'preferredPromptClient' | 'showSelectors' | 'workspacePath'> {
   onEnsureAcpRuntime?: (autoStart?: boolean) => Promise<boolean>;
-  onSubmitText?: (text: string, referenceImages: string[]) => CanvasGenerationDisplaySubmitResult | Promise<CanvasGenerationDisplaySubmitResult>;
+  onOptimizePrompt?: (text: string, selection: Pick<CanvasGenerationDisplaySubmitSelection, 'attachments' | 'referenceImages' | 'localContextRefs'>) => Promise<string>;
+  onSubmitText?: (text: string, selection: Pick<CanvasGenerationDisplaySubmitSelection, 'attachments' | 'referenceImages' | 'localContextRefs'>) => CanvasGenerationDisplaySubmitResult | Promise<CanvasGenerationDisplaySubmitResult>;
+  replaceContextItems?: (items: ContextItem[]) => void;
   showModelSelectorFallback?: boolean;
   showSelectors?: boolean;
 }
 
 function CanvasGenerationDisplayComposerContent({
   ariaLabel,
+  canPasteReferenceImages,
   className,
   disabled = false,
   draftStorageKey,
+  externalFileDropTargetRef,
+  initialLocalContextRefs,
+  initialReferenceImages,
   onEnsureAcpRuntime,
   onOpenAISettings,
+  onOptimizePrompt,
+  onPasteReferenceImages,
   onSubmitText,
   placeholder,
   leadingActions,
   postSelectorActions,
-  quickPrompts,
+  projectResourceItems,
+  projectResourceTrees,
+  replaceContextItems,
   showModelSelectorFallback = false,
   showSelectors = false,
 }: CanvasGenerationDisplayComposerContentProps) {
@@ -716,16 +1443,47 @@ function CanvasGenerationDisplayComposerContent({
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const displayReferenceAttachments = useAuiState((state) => state.composer.attachments);
   const loadedDisplayDraftStorageKeyRef = useRef<string | null>(null);
+  const loadedInitialReferenceImagesKeyRef = useRef<string | null>(null);
+  const loadedInitialLocalContextRefsKeyRef = useRef<string | null>(null);
+  const currentLocalContextRefsRef = useRef<CanvasLocalContextRef[]>([]);
+  const currentLocalContextItemsRef = useRef<ContextItem[]>([]);
+  const [projectResourceDialogOpen, setProjectResourceDialogOpen] = useState(false);
+  const [projectResourceSelectedKeys, setProjectResourceSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [localContextItems, setLocalContextItems] = useState<ContextItem[]>([]);
+  const [projectResourceContextItems, setProjectResourceContextItems] = useState<ContextItem[]>([]);
+  const [optimizingPrompt, setOptimizingPrompt] = useState(false);
+  const visibleContextItems = [...localContextItems, ...projectResourceContextItems];
+  const controlsDisabled = disabled || optimizingPrompt;
+  const initialReferenceImagesKey = useMemo(
+    () => JSON.stringify(initialReferenceImages ?? []),
+    [initialReferenceImages],
+  );
+  const initialLocalContextRefsKey = useMemo(
+    () => JSON.stringify(initialLocalContextRefs ?? []),
+    [initialLocalContextRefs],
+  );
   const persistDisplayDraft = useCallback((text: string) => {
     const storage = getCanvasGenerationComposerDraftStorage();
     writeCanvasGenerationComposerDraft(storage, draftStorageKey, text);
   }, [draftStorageKey]);
+  const syncDisplayContextItems = useCallback((localItems: ContextItem[], resourceItems: ContextItem[]) => {
+    currentLocalContextItemsRef.current = localItems;
+    setLocalContextItems(localItems);
+    replaceContextItems?.([...localItems, ...resourceItems]);
+  }, [replaceContextItems]);
+  const addFilesToDisplayAttachments = useCallback(async (files: File[]) => {
+    if (controlsDisabled || files.length === 0) return;
+    await Promise.all(files.map((file) => aui.composer().addAttachment(file)));
+  }, [aui, controlsDisabled]);
   const submitDisplayText = useCallback(async () => {
-    if (disabled) return;
+    if (controlsDisabled) return;
     const text = inputRef.current?.value.trim() ?? '';
     if (!text) return;
-    const referenceImages = await resolveComposerAttachmentReferenceImages(displayReferenceAttachments);
-    const submitResult = await onSubmitText?.(text, referenceImages);
+    const attachmentSelection = await resolveComposerAttachmentSubmitSelection(displayReferenceAttachments);
+    const submitResult = await onSubmitText?.(text, {
+      ...attachmentSelection,
+      localContextRefs: currentLocalContextRefsRef.current,
+    });
     if (submitResult === false) {
       persistDisplayDraft(text);
       return;
@@ -736,7 +1494,12 @@ function CanvasGenerationDisplayComposerContent({
       inputRef.current.value = '';
     }
     await aui.composer().clearAttachments();
-  }, [aui, disabled, displayReferenceAttachments, draftStorageKey, onSubmitText, persistDisplayDraft]);
+    setProjectResourceSelectedKeys(new Set());
+    setProjectResourceContextItems([]);
+    currentLocalContextRefsRef.current = [];
+    currentLocalContextItemsRef.current = [];
+    syncDisplayContextItems([], []);
+  }, [aui, controlsDisabled, displayReferenceAttachments, draftStorageKey, onSubmitText, persistDisplayDraft, syncDisplayContextItems]);
   useEffect(() => {
     if (!draftStorageKey) return;
     const storage = getCanvasGenerationComposerDraftStorage();
@@ -761,33 +1524,181 @@ function CanvasGenerationDisplayComposerContent({
     event.preventDefault();
     void submitDisplayText();
   }, [submitDisplayText]);
+  useEffect(() => {
+    if (!initialReferenceImages?.length) return;
+    if (loadedInitialReferenceImagesKeyRef.current === initialReferenceImagesKey) return;
+    loadedInitialReferenceImagesKeyRef.current = initialReferenceImagesKey;
+    const files = initialReferenceImages.map((image, index) => dataUrlToImageFile(image, index));
+    void Promise.all(files.map((file) => aui.composer().addAttachment(file)));
+  }, [aui, initialReferenceImages, initialReferenceImagesKey]);
+  useEffect(() => {
+    const previousLocalContextRefsKey = loadedInitialLocalContextRefsKeyRef.current;
+    if (previousLocalContextRefsKey === initialLocalContextRefsKey) return;
+    loadedInitialLocalContextRefsKeyRef.current = initialLocalContextRefsKey;
+    const localContextRefs = initialLocalContextRefs ?? [];
+    currentLocalContextRefsRef.current = localContextRefs;
+    const contextItems = localContextRefsToAcpContextItems(localContextRefs);
+    if (contextItems.length || previousLocalContextRefsKey !== null) {
+      syncDisplayContextItems(contextItems, projectResourceContextItems);
+    }
+  }, [initialLocalContextRefs, initialLocalContextRefsKey, projectResourceContextItems, syncDisplayContextItems]);
+  useEffect(() => {
+    const dropTarget = externalFileDropTargetRef?.current;
+    if (!dropTarget) return;
+    const handleDragOver = (event: DragEvent) => {
+      if (!hasCanvasDraggedLocalFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    };
+    const handleDrop = (event: DragEvent) => {
+      if (!event.dataTransfer?.files?.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const files = Array.from(event.dataTransfer.files);
+      void addFilesToDisplayAttachments(files);
+    };
+    dropTarget.addEventListener('dragover', handleDragOver);
+    dropTarget.addEventListener('drop', handleDrop);
+    return () => {
+      dropTarget.removeEventListener('dragover', handleDragOver);
+      dropTarget.removeEventListener('drop', handleDrop);
+    };
+  }, [addFilesToDisplayAttachments, externalFileDropTargetRef]);
+  const handlePasteReferenceImages = useCallback(async () => {
+    if (!onPasteReferenceImages) return;
+    const pasteResult = normalizeCanvasReferencePasteResult(await onPasteReferenceImages());
+    if (pasteResult.localContextRefs.length) {
+      const nextLocalContextRefs = mergeCanvasLocalContextRefs(
+        currentLocalContextRefsRef.current,
+        pasteResult.localContextRefs,
+      );
+      currentLocalContextRefsRef.current = nextLocalContextRefs;
+      syncDisplayContextItems(localContextRefsToAcpContextItems(nextLocalContextRefs), projectResourceContextItems);
+    }
+    const files = pasteResult.referenceImages.map((image, index) => dataUrlToImageFile(image, index));
+    await addFilesToDisplayAttachments(files);
+  }, [addFilesToDisplayAttachments, onPasteReferenceImages, projectResourceContextItems, syncDisplayContextItems]);
   const handleDisplayPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (disabled) return;
+    if (controlsDisabled) return;
+    if (canPasteReferenceImages && onPasteReferenceImages && shouldUseCanvasReferencePaste(event.clipboardData)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void handlePasteReferenceImages();
+      return;
+    }
     const pastedFiles = getClipboardImageFiles(event.nativeEvent);
     if (!pastedFiles.length) return;
     event.preventDefault();
     event.stopPropagation();
-    void Promise.all(pastedFiles.map((file) => aui.composer().addAttachment(file)));
-  }, [aui, disabled]);
-  const handleQuickPromptClick = useCallback((quickPrompt: CanvasAiQuickPrompt) => {
-    if (disabled) return;
-    const nextText = appendCanvasAiQuickPrompt(inputRef.current?.value ?? '', quickPrompt.prompt);
-    if (inputRef.current) {
-      inputRef.current.value = nextText;
-      inputRef.current.focus();
+    void addFilesToDisplayAttachments(pastedFiles);
+  }, [addFilesToDisplayAttachments, canPasteReferenceImages, controlsDisabled, handlePasteReferenceImages, onPasteReferenceImages]);
+  const handleOptimizePrompt = useCallback(async () => {
+    if (controlsDisabled) return;
+    if (!onOptimizePrompt) {
+      onOpenAISettings?.();
+      return;
     }
-    persistDisplayDraft(nextText);
-  }, [disabled, persistDisplayDraft]);
+    if (showModelSelectorFallback) {
+      onOpenAISettings?.();
+      return;
+    }
+    const text = inputRef.current?.value.trim() ?? '';
+    if (!text) {
+      toast.error('请输入提示词');
+      return;
+    }
+    setOptimizingPrompt(true);
+    try {
+      const attachmentSelection = await resolveComposerAttachmentSubmitSelection(displayReferenceAttachments);
+      const optimizedPrompt = (await onOptimizePrompt(text, {
+        ...attachmentSelection,
+        localContextRefs: currentLocalContextRefsRef.current,
+      })).trim();
+      if (!optimizedPrompt) {
+        throw new Error('提示词优化结果为空');
+      }
+      if (inputRef.current) {
+        inputRef.current.value = optimizedPrompt;
+        inputRef.current.focus();
+      }
+      persistDisplayDraft(optimizedPrompt);
+    } catch (error) {
+      if (error && typeof error === 'object' && 'action' in error && (error as { action?: unknown }).action === 'open-ai-settings') {
+        onOpenAISettings?.();
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : '提示词优化失败');
+    } finally {
+      setOptimizingPrompt(false);
+    }
+  }, [controlsDisabled, displayReferenceAttachments, onOpenAISettings, onOptimizePrompt, persistDisplayDraft, showModelSelectorFallback]);
+  const getDisplayPromptText = useCallback(() => inputRef.current?.value.trim() ?? '', []);
+  const resolvedPostSelectorActions = typeof postSelectorActions === 'function'
+    ? postSelectorActions({ getPromptText: getDisplayPromptText })
+    : postSelectorActions;
+  const handleApplyProjectResources = useCallback((keys: Set<string>, contextItems: ContextItem[]) => {
+    if (controlsDisabled) return;
+    setProjectResourceSelectedKeys(new Set(keys));
+    setProjectResourceContextItems(contextItems);
+    syncDisplayContextItems(currentLocalContextItemsRef.current, contextItems);
+  }, [controlsDisabled, syncDisplayContextItems]);
+  const handleRemoveProjectResource = useCallback((itemId: string | undefined) => {
+    if (controlsDisabled || !itemId) return;
+    const nextItems = projectResourceContextItems.filter((item) => item.id !== itemId);
+    const nextKeys = new Set(projectResourceSelectedKeys);
+    for (const key of projectResourceSelectedKeys) {
+      const candidateItems = buildCanvasProjectResourceContextItems({
+        trees: projectResourceTrees || {},
+        items: projectResourceItems || {},
+        selectedKeys: new Set([key]),
+      });
+      if (candidateItems.some((item) => item.id === itemId)) {
+        nextKeys.delete(key);
+      }
+    }
+    setProjectResourceSelectedKeys(nextKeys);
+    setProjectResourceContextItems(nextItems);
+    syncDisplayContextItems(currentLocalContextItemsRef.current, nextItems);
+  }, [controlsDisabled, projectResourceContextItems, projectResourceItems, projectResourceSelectedKeys, projectResourceTrees, syncDisplayContextItems]);
+  const handleRemoveLocalContextItem = useCallback((itemId: string | undefined) => {
+    if (controlsDisabled || !itemId) return;
+    const nextLocalContextRefs = removeCanvasLocalContextRefItem(currentLocalContextRefsRef.current, itemId);
+    currentLocalContextRefsRef.current = nextLocalContextRefs;
+    syncDisplayContextItems(localContextRefsToAcpContextItems(nextLocalContextRefs), projectResourceContextItems);
+  }, [controlsDisabled, projectResourceContextItems, syncDisplayContextItems]);
+  const handleRemoveContextItem = useCallback((itemId: string | undefined) => {
+    if (!itemId) return;
+    if (localContextItems.some((item) => item.id === itemId)) {
+      handleRemoveLocalContextItem(itemId);
+      return;
+    }
+    handleRemoveProjectResource(itemId);
+  }, [handleRemoveLocalContextItem, handleRemoveProjectResource, localContextItems]);
+
+  useEffect(() => {
+    if (optimizingPrompt) {
+      setProjectResourceDialogOpen(false);
+    }
+  }, [optimizingPrompt]);
 
   return (
     <TooltipProvider>
       <div className={cn('aui-root ax-acp-ui-scope ax-placeholder-display-composer mx-auto w-full max-w-[720px]', className)}>
+        <CanvasProjectResourcePickerDialog
+          open={projectResourceDialogOpen}
+          onOpenChange={(open) => setProjectResourceDialogOpen(controlsDisabled ? false : open)}
+          trees={projectResourceTrees}
+          items={projectResourceItems}
+          selectedKeys={projectResourceSelectedKeys}
+          selectionMode="context"
+          onApply={handleApplyProjectResources}
+        />
         <div className="aui-composer-root relative flex w-full flex-col">
           <div
             data-slot="aui_composer-shell"
             className={cn(
               'flex min-h-[112px] w-full flex-col gap-2 rounded-2xl border border-border bg-background p-3 shadow-sm transition-colors focus-within:border-border-strong',
-              disabled ? 'opacity-60' : '',
+              controlsDisabled ? 'opacity-60' : '',
             )}
           >
             <textarea
@@ -797,25 +1708,77 @@ function CanvasGenerationDisplayComposerContent({
               rows={1}
               autoFocus
               aria-label={ariaLabel}
-              disabled={disabled}
+              disabled={controlsDisabled}
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
               onPaste={handleDisplayPaste}
             />
-            <ComposerAttachments />
+            <span className="sr-only" aria-live="polite">
+              {optimizingPrompt ? '正在优化提示词' : ''}
+            </span>
+            <div className={cn(controlsDisabled ? 'pointer-events-none opacity-60' : '')}>
+              <ComposerAttachments />
+            </div>
+            {visibleContextItems.length ? (
+              <div className="flex flex-wrap gap-1.5 px-1">
+                {visibleContextItems.map((item) => (
+                  <span
+                    key={getCanvasContextItemKey(item)}
+                    className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground"
+                  >
+                    <FileIcon className="size-3 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{getCanvasContextItemLabel(item)}</span>
+                    <button
+                      type="button"
+                      className="ml-0.5 rounded-sm p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                      aria-label={`移除${getCanvasContextItemLabel(item)}`}
+                      disabled={controlsDisabled}
+                      onClick={() => handleRemoveContextItem(item.id)}
+                    >
+                      <X className="size-3" aria-hidden="true" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <div className="aui-composer-action-wrapper relative flex items-center justify-between text-[13px] md:text-sm">
               <div className="flex min-w-0 items-center gap-1">
-                {disabled ? null : <CanvasComposerAddAttachmentButton label="添加附件" />}
-                {leadingActions}
-                {showSelectors ? <CanvasAcpComposerSelectors /> : null}
-                {showModelSelectorFallback ? (
-                  <CanvasAcpModelSelectorFallback onEnsureAcpRuntime={onEnsureAcpRuntime} onOpenAISettings={onOpenAISettings} />
+                {disabled ? null : (
+                  <CanvasComposerAttachmentMenu
+                    disabled={optimizingPrompt}
+                    label="添加附件"
+                    onProjectResourceClick={() => setProjectResourceDialogOpen(true)}
+                  />
+                )}
+                {leadingActions ? (
+                  <div
+                    aria-disabled={controlsDisabled}
+                    className={cn('inline-flex min-w-0 items-center', controlsDisabled ? 'pointer-events-none opacity-60' : '')}
+                  >
+                    {leadingActions}
+                  </div>
                 ) : null}
-                {postSelectorActions}
-                <CanvasGenerationDisplayQuickPromptsButton
-                  disabled={disabled}
-                  quickPrompts={quickPrompts}
-                  onSelect={handleQuickPromptClick}
+                <div
+                  aria-disabled={controlsDisabled}
+                  className={cn('inline-flex min-w-0 items-center gap-1', controlsDisabled ? 'pointer-events-none opacity-60' : '')}
+                >
+                  {showSelectors ? <CanvasAcpComposerSelectors /> : null}
+                  {showModelSelectorFallback ? (
+                    <CanvasAcpModelSelectorFallback onEnsureAcpRuntime={onEnsureAcpRuntime} onOpenAISettings={onOpenAISettings} />
+                  ) : null}
+                </div>
+                {resolvedPostSelectorActions ? (
+                  <div
+                    aria-disabled={controlsDisabled}
+                    className={cn('inline-flex min-w-0 items-center', controlsDisabled ? 'pointer-events-none opacity-60' : '')}
+                  >
+                    {resolvedPostSelectorActions}
+                  </div>
+                ) : null}
+                <CanvasPromptOptimizeButton
+                  disabled={controlsDisabled}
+                  optimizing={optimizingPrompt}
+                  onClick={() => { void handleOptimizePrompt(); }}
                 />
               </div>
               <div className="flex items-center gap-1">
@@ -823,7 +1786,7 @@ function CanvasGenerationDisplayComposerContent({
                   type="button"
                   aria-label="发送"
                   title="发送"
-                  disabled={disabled}
+                  disabled={controlsDisabled}
                   className="aui-composer-send inline-flex size-8 items-center justify-center rounded-full bg-slate-100 text-slate-700 transition-colors hover:bg-slate-200 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={() => { void submitDisplayText(); }}
                 >
@@ -839,6 +1802,7 @@ function CanvasGenerationDisplayComposerContent({
 }
 
 function CanvasGenerationDisplayComposerWithoutAcp({
+  onOptimizePrompt,
   onSubmit,
   preferredPromptClient: _preferredPromptClient,
   ...props
@@ -847,20 +1811,35 @@ function CanvasGenerationDisplayComposerWithoutAcp({
   const runtime = useChatRuntime<UIMessage>({
     transport,
     adapters: {
-      attachments: canvasReferenceImageAttachmentAdapter,
+      attachments: canvasGeneralFileAttachmentAdapter,
     },
   });
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <CanvasGenerationDisplayComposerContent
         {...props}
-        onSubmitText={(text, referenceImages) => onSubmit?.(text, {
+        onOptimizePrompt={onOptimizePrompt
+          ? (text, attachmentSelection) => onOptimizePrompt({
+              prompt: text,
+              contextBundle: null,
+              provider: '',
+              model: null,
+              mode: null,
+              thought: null,
+              attachments: attachmentSelection.attachments,
+              referenceImages: attachmentSelection.referenceImages,
+              localContextRefs: attachmentSelection.localContextRefs,
+            })
+          : undefined}
+        onSubmitText={(text, attachmentSelection) => onSubmit?.(text, {
           contextBundle: null,
           provider: '',
           model: null,
           mode: null,
           thought: null,
-          referenceImages,
+          attachments: attachmentSelection.attachments,
+          referenceImages: attachmentSelection.referenceImages,
+          localContextRefs: attachmentSelection.localContextRefs,
         })}
       />
     </AssistantRuntimeProvider>
@@ -869,35 +1848,53 @@ function CanvasGenerationDisplayComposerWithoutAcp({
 
 function CanvasGenerationDisplayComposerRuntime({
   onEnsureAcpRuntime,
+  onOptimizePrompt,
   onSubmit,
   showModelSelectorFallback,
   showSelectors,
   ...props
-}: CanvasGenerationDisplayComposerContentProps & Pick<CanvasGenerationDisplayComposerProps, 'onSubmit'>) {
+}: CanvasGenerationDisplayComposerContentProps & Pick<CanvasGenerationDisplayComposerProps, 'onOptimizePrompt' | 'onSubmit'>) {
   const acpContext = useAcpUiRuntimeContext();
   const transport = useMemo(() => new CanvasGenerationDisplayTransport(), []);
   const runtime = useChatRuntime<UIMessage>({
     transport,
     adapters: {
-      attachments: canvasReferenceImageAttachmentAdapter,
+      attachments: canvasGeneralFileAttachmentAdapter,
     },
   });
-  const handleSubmitText = useCallback((text: string, referenceImages: string[]) => {
+  const handleSubmitText = useCallback((text: string, attachmentSelection: Pick<CanvasGenerationDisplaySubmitSelection, 'attachments' | 'referenceImages' | 'localContextRefs'>) => {
     return onSubmit?.(text, {
-      contextBundle: acpContext.consumeContextBundle(),
+      contextBundle: acpContext.consumeContextBundle() as ContextBundleV2 | null,
       provider: acpContext.provider,
       model: acpContext.model,
       mode: acpContext.modeId,
       thought: acpContext.thoughtLevel,
-      referenceImages,
+      attachments: attachmentSelection.attachments,
+      referenceImages: attachmentSelection.referenceImages,
+      localContextRefs: attachmentSelection.localContextRefs,
     });
   }, [acpContext, onSubmit]);
+  const handleOptimizePrompt = useCallback((text: string, attachmentSelection: Pick<CanvasGenerationDisplaySubmitSelection, 'attachments' | 'referenceImages' | 'localContextRefs'>) => {
+    return onOptimizePrompt?.({
+      prompt: text,
+      contextBundle: acpContext.getContextBundle(),
+      provider: acpContext.provider,
+      model: acpContext.model,
+      mode: acpContext.modeId,
+      thought: acpContext.thoughtLevel,
+      attachments: attachmentSelection.attachments,
+      referenceImages: attachmentSelection.referenceImages,
+      localContextRefs: attachmentSelection.localContextRefs,
+    }) ?? Promise.resolve(text);
+  }, [acpContext, onOptimizePrompt]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <CanvasGenerationDisplayComposerContent
         {...props}
         onEnsureAcpRuntime={onEnsureAcpRuntime}
+        onOptimizePrompt={onOptimizePrompt ? handleOptimizePrompt : undefined}
+        replaceContextItems={acpContext.replaceContextItems}
         onSubmitText={handleSubmitText}
         showModelSelectorFallback={showModelSelectorFallback}
         showSelectors={showSelectors}
@@ -966,7 +1963,6 @@ const CANVAS_ACP_PROVIDER_LABELS: Record<AcpProviderKey, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
   opencode: 'OpenCode',
-  gemini: 'Gemini CLI',
   cursor: 'Cursor',
   qoder: 'Qoder',
   codebuddy: 'CodeBuddy',
@@ -977,7 +1973,6 @@ const CANVAS_ACP_PROVIDER_ORDER = [
   'claude',
   'codex',
   'opencode',
-  'gemini',
   'cursor',
   'qoder',
   'codebuddy',
@@ -1461,11 +2456,9 @@ function CanvasGenerationRuntimeComposerContent({
   onEnsureAcpRuntime,
   onOpenAISettings,
   placeholder,
-  quickPrompts,
   renderActions,
   renderLeadingActions,
   renderPostSelectorActions,
-  renderTriggerPopovers,
   rootClassName = 'aui-composer-root',
   sendTooltip,
   showModelSelectorFallback = false,
@@ -1477,6 +2470,7 @@ function CanvasGenerationRuntimeComposerContent({
   const { replaceContextItems } = acpContext;
   const loadedInitialReferenceImagesKeyRef = useRef<string | null>(null);
   const loadedInitialLocalContextRefsKeyRef = useRef<string | null>(null);
+  const currentLocalContextRefsRef = useRef<CanvasLocalContextRef[]>([]);
   const initialReferenceImagesKey = useMemo(
     () => JSON.stringify(initialReferenceImages ?? []),
     [initialReferenceImages],
@@ -1503,7 +2497,9 @@ function CanvasGenerationRuntimeComposerContent({
     const previousLocalContextRefsKey = loadedInitialLocalContextRefsKeyRef.current;
     if (previousLocalContextRefsKey === initialLocalContextRefsKey) return;
     loadedInitialLocalContextRefsKeyRef.current = initialLocalContextRefsKey;
-    const contextItems = localContextRefsToAcpContextItems(initialLocalContextRefs ?? []);
+    const localContextRefs = initialLocalContextRefs ?? [];
+    currentLocalContextRefsRef.current = localContextRefs;
+    const contextItems = localContextRefsToAcpContextItems(localContextRefs);
     if (contextItems.length || previousLocalContextRefsKey !== null) {
       replaceContextItems(contextItems);
     }
@@ -1511,10 +2507,18 @@ function CanvasGenerationRuntimeComposerContent({
 
   const handlePasteReferenceImages = useCallback(async () => {
     if (!onPasteReferenceImages) return;
-    const images = await onPasteReferenceImages();
-    const files = images.map((image, index) => dataUrlToImageFile(image, index));
+    const pasteResult = normalizeCanvasReferencePasteResult(await onPasteReferenceImages());
+    if (pasteResult.localContextRefs.length) {
+      const nextLocalContextRefs = mergeCanvasLocalContextRefs(
+        currentLocalContextRefsRef.current,
+        pasteResult.localContextRefs,
+      );
+      currentLocalContextRefsRef.current = nextLocalContextRefs;
+      replaceContextItems(localContextRefsToAcpContextItems(nextLocalContextRefs));
+    }
+    const files = pasteResult.referenceImages.map((image, index) => dataUrlToImageFile(image, index));
     await Promise.all(files.map((file) => aui.composer().addAttachment(file)));
-  }, [aui, onPasteReferenceImages]);
+  }, [aui, onPasteReferenceImages, replaceContextItems]);
 
   const handleComposerPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     if (canPasteReferenceImages && onPasteReferenceImages && shouldUseCanvasReferencePaste(event.clipboardData)) {
@@ -1543,11 +2547,6 @@ function CanvasGenerationRuntimeComposerContent({
       composer.cancel();
     });
   }, [aui, cancelActiveChatRun]);
-  const handleQuickPromptSelect = useCallback((quickPrompt: CanvasAiQuickPrompt) => {
-    const composer = aui.composer();
-    composer.setText(appendCanvasAiQuickPrompt(composer.getState().text, quickPrompt.prompt));
-  }, [aui]);
-
   return (
     <TooltipProvider>
       <div className={cn('ax-acp-ui-scope', rootClassName)}>
@@ -1569,7 +2568,6 @@ function CanvasGenerationRuntimeComposerContent({
                   onKeyDown={handleComposerKeyDown}
                   onPaste={handleComposerPaste}
                 />
-                {renderTriggerPopovers?.()}
               </ComposerPrimitive.Unstable_TriggerPopoverRoot>
               <div className="aui-composer-action-wrapper relative flex items-center justify-between text-[13px] md:text-sm">
                 <div className="flex min-w-0 items-center gap-1">
@@ -1580,11 +2578,6 @@ function CanvasGenerationRuntimeComposerContent({
                   ) : null}
                   {showSelectors && postSelectorActions ? <CanvasAcpComposerSelectors /> : null}
                   {postSelectorActions}
-                  <CanvasGenerationDisplayQuickPromptsButton
-                    disabled={submitting}
-                    quickPrompts={quickPrompts}
-                    onSelect={handleQuickPromptSelect}
-                  />
                   {renderLeadingActions ? (
                     <div className={footerLeadingActionsClassName}>
                       {renderLeadingActions?.({ submitting })}
@@ -1715,11 +2708,9 @@ export default function CanvasGenerationComposer({
   placementMode = 'absolute',
   placeholder,
   preferredPromptClient,
-  quickPrompts,
   renderActions,
   renderLeadingActions,
   renderPostSelectorActions,
-  renderTriggerPopovers,
   rootClassName,
   scene,
   sendTooltip,
@@ -1773,11 +2764,9 @@ export default function CanvasGenerationComposer({
         onSubmitPrompt={onSubmitPrompt}
         placeholder={placeholder}
         preferredPromptClient={preferredPromptClient}
-        quickPrompts={quickPrompts}
         renderActions={renderActions}
         renderLeadingActions={renderLeadingActions}
         renderPostSelectorActions={renderPostSelectorActions}
-        renderTriggerPopovers={renderTriggerPopovers}
         rootClassName={rootClassName}
         scene={scene}
         sendTooltip={sendTooltip}

@@ -21,11 +21,11 @@ describe('ACP prototype agent client', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('builds a concise prompt that asks the ACP agent to update pages and canvas in the current prototype', () => {
+  it('builds a concise prompt that asks the ACP agent to update pages in the current prototype', () => {
     const prompt = buildPrototypeGenerationPrompt({
       prompt: '做一个 CRM 工作台',
-      canvasFilePath: 'src/prototypes/dashboard/canvas.excalidraw',
-      canvasName: 'prototypes/dashboard/canvas',
+      canvasFilePath: 'src/resources/flows/dashboard.excalidraw',
+      canvasName: 'resources/flows/dashboard.excalidraw',
       generatorElementId: 'generator-1',
       currentPrototype: {
         name: 'dashboard',
@@ -52,7 +52,7 @@ describe('ACP prototype agent client', () => {
       },
     });
 
-    expect(prompt.split('\n')).toHaveLength(29);
+    expect(prompt.split('\n')).toHaveLength(20);
     expect(prompt).toContain('做一个 CRM 工作台');
     expect(prompt).toContain('只在当前 prototype 中新增/更新页面');
     expect(prompt).toContain('src/prototypes/dashboard/');
@@ -73,25 +73,25 @@ describe('ACP prototype agent client', () => {
     expect(prompt).toContain('不要追问用户');
     expect(prompt).toContain('跳过浏览器验证');
     expect(prompt).toContain('不要运行 `check-app-ready.mjs`');
-    expect(prompt).toContain('src/prototypes/dashboard/canvas.excalidraw');
-    expect(prompt).not.toContain('canvasName: prototypes/dashboard/canvas');
-    expect(prompt).toContain('generator-1');
+    expect(prompt).not.toContain('src/resources/flows/dashboard.excalidraw');
+    expect(prompt).not.toContain('canvasFilePath');
+    expect(prompt).not.toContain('canvasName: resources/flows/dashboard.excalidraw');
+    expect(prompt).not.toContain('generator-1');
     expect(prompt).toContain('当前 prototype');
     expect(prompt).toContain('dashboard');
     expect(prompt).toContain('overview');
     expect(prompt).not.toContain('生成数量：3');
     expect(prompt).toContain('设计系统：linear (Linear)');
-    expect(prompt).toContain('更新 `canvas.excalidraw`');
-    expect(prompt).toContain('找到 `generatorElementId` 对应的原型生成占位节点');
-    expect(prompt).toContain('embeddable');
-    expect(prompt).toContain('customData.embedViewMode 设置为 `preview`');
-    expect(prompt).toContain('不要使用 Make 管理端首页 deep link');
-    expect(prompt).toContain('不要把网页内部布局做小');
-    expect(prompt).toContain('embedContentScale');
-    expect(prompt).toContain('720x450');
-    expect(prompt).toContain('1440x900');
-    expect(prompt).toContain('captureScreenshotOnMount');
-    expect(prompt).toContain('保留画布既有元素、files、appState');
+    expect(prompt).not.toContain('更新 `canvas.excalidraw`');
+    expect(prompt).not.toContain('generatorElementId');
+    expect(prompt).not.toContain('embeddable');
+    expect(prompt).not.toContain('customData.embedViewMode 设置为 `preview`');
+    expect(prompt).not.toContain('Make 管理端首页 deep link');
+    expect(prompt).not.toContain('embedContentScale');
+    expect(prompt).not.toContain('720x450');
+    expect(prompt).not.toContain('1440x900');
+    expect(prompt).not.toContain('captureScreenshotOnMount');
+    expect(prompt).not.toContain('保留画布既有元素、files、appState');
     expect(prompt).not.toContain('完成后的刷新');
     expect(prompt).not.toContain('暂时不要在结尾再执行刷新');
     expect(prompt).not.toContain('不在结尾执行刷新');
@@ -104,7 +104,7 @@ describe('ACP prototype agent client', () => {
   it('omits unspecified prototype count and design system from the agent prompt', () => {
     const prompt = buildPrototypeGenerationPrompt({
       prompt: '做一个默认原型',
-      canvasFilePath: 'src/prototypes/untitled/canvas.excalidraw',
+      canvasFilePath: 'src/resources/flows/untitled.excalidraw',
       generatorElementId: 'generator-1',
       settings: {},
     });
@@ -149,8 +149,12 @@ describe('ACP prototype agent client', () => {
     const result = await runAcpPrototypeAgent({
       provider: 'codex',
       prompt: '生成 CRM 原型',
-      canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
       generatorElementId: 'generator-1',
+      currentPrototype: {
+        name: 'home',
+        displayName: 'Home',
+      },
       onEvent: (event) => {
         events.push(event.stage);
         if (event.artifact) artifacts.push(event.artifact);
@@ -186,7 +190,10 @@ describe('ACP prototype agent client', () => {
     expect(requestBody.prompt).toContain('生成 CRM 原型');
     expect(requestBody.prompt).toContain('只在当前 prototype 中新增/更新页面');
     expect(requestBody.prompt).not.toContain('不要创建新的 prototype 目录');
-    expect(requestBody.prompt).not.toContain('canvasName: prototypes/home/canvas');
+    expect(requestBody.prompt).not.toContain('canvasName: resources/flows/home.excalidraw');
+    expect(requestBody.prompt).not.toContain('canvasFilePath');
+    expect(requestBody.prompt).not.toContain('src/resources/flows/home.excalidraw');
+    expect(requestBody.prompt).not.toContain('更新 `canvas.excalidraw`');
     expect(requestBody.prompt).toContain('最终消息：已完成');
     expect(requestBody.settings).toBeUndefined();
   });
@@ -212,7 +219,7 @@ describe('ACP prototype agent client', () => {
     await runAcpPrototypeAgent({
       provider: 'codex',
       prompt: '按参考图生成原型',
-      canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
       generatorElementId: 'generator-1',
       referenceImages: ['data:image/png;base64,cmVm'],
     });
@@ -253,7 +260,7 @@ describe('ACP prototype agent client', () => {
     await runAcpPrototypeAgent({
       provider: 'codex',
       prompt: '按上下文生成原型',
-      canvasFilePath: 'src/prototypes/home/canvas.excalidraw',
+      canvasFilePath: 'src/resources/flows/home.excalidraw',
       generatorElementId: 'generator-1',
       model: 'gpt-5.1-codex',
       mode: 'agent',
@@ -272,7 +279,7 @@ describe('ACP prototype agent client', () => {
     expect(requestBody.thought).toBeUndefined();
   });
 
-  it('derives the AI run targetPath from the current prototype when the canvas path is not canonical', async () => {
+  it('derives the AI run targetPath from the current prototype', async () => {
     globalThis.fetch = vi.fn(async () => new Response([
       sseEvent('run.accepted', {
         runId: 'prototype-task-untitled',
@@ -292,7 +299,7 @@ describe('ACP prototype agent client', () => {
     await runAcpPrototypeAgent({
       provider: 'codex',
       prompt: '生成官网首页',
-      canvasFilePath: 'prototypes/untitled-4/canvas',
+      canvasFilePath: 'src/resources/flows/untitled-4.excalidraw',
       generatorElementId: 'generator-1',
       currentPrototype: {
         name: 'untitled-4',

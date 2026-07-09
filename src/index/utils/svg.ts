@@ -46,9 +46,11 @@ export function generateSvgContent(
           </g>
         </svg>`;
     } else {
-        return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${config.width}" height="${config.height}" viewBox="0 0 ${config.width} ${config.height}">
+        const w = config.screenshotWidth || config.width;
+        const h = config.screenshotHeight || config.height;
+        return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
             <rect width="100%" height="100%" fill="transparent" />
-            <image x="0" y="0" width="${config.width}" height="${config.height}" preserveAspectRatio="xMidYMin meet" xlink:href="${screenshotUrl}"/>
+            <image x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMin meet" xlink:href="${screenshotUrl}"/>
         </svg>`;
     }
 }

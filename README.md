@@ -1,5 +1,7 @@
 # Axhub Make
 
+[![License](https://img.shields.io/github/license/lintendo/Axhub-Make)](https://github.com/lintendo/Axhub-Make/blob/main/LICENSE) [![npm version](https://img.shields.io/npm/v/%40axhub%2Fmake)](https://www.npmjs.com/package/@axhub/make) [![npm downloads](https://img.shields.io/npm/dm/%40axhub%2Fmake)](https://www.npmjs.com/package/@axhub/make)
+
 > Axhub Make 不是“又一个 AI 生成页面工具”。
 > 它是一条从 **需求分析** 到 **原型生成**、**批注微调**、**原型评审**，再到 **发布交付** 的 AI 产品工作流。
 
@@ -7,88 +9,85 @@
 
 你说清楚要什么，Make 会把它变成：
 
-- 可以点击、可以评审、可以发布的交互原型
-- 带批注、标注和业务说明的“活 PRD”
-- 基于设计系统和专业技能生成的 UI/UX 方案
-- 面向新手的免费教程和上手路径
-- 可分享、可导出、可交付的原型成果
+*   可以点击、可以评审、可以发布的交互原型
+*   带批注、标注和业务说明的“活 PRD”
+*   基于设计系统和专业技能生成的 UI/UX 方案
+*   面向新手的免费教程和上手路径
+*   可分享、可导出、可交付的原型成果
 
 ## 直接启动
 
 在你的项目目录里运行：
 
-```bash
+```
 npx -y @axhub/make@latest
 ```
 
 启动后会自动打开管理页面。如果没有打开，复制终端里显示的地址到浏览器。
 
-## 发布后的使用方式
-
-发布到 npm 后，用户不需要手动 clone 本仓库；在项目目录里执行 `npx -y @axhub/make@latest` 就会启动 Axhub Make 管理服务器。
-
-当用户在管理页面里创建原型项目时，Make 会从 GitHub 拉取官方客户端模板代码：
-
-```text
-https://github.com/lintendo/Axhub-Make/tree/main/client
-```
-
-拉取完成后，本地会生成一个可运行的 Make Client 项目，用来承载后续创建的原型、主题、项目资料和预览运行时。
-
-面向用户的运行环境要尽量保守：需要兼容 macOS、Windows 和 Linux，也要考虑用户本机没有 Git 或 pnpm 的情况。Make 管理服务器和生成的 Client 项目在非开发场景不要强制依赖 pnpm；启动、安装和自检流程优先使用用户更容易具备的 `npm` / `npx`。
-
 ## 让 AI 帮你启动
 
-把下面这段发给你的 AI Agent，让它帮你检查环境、启动 Make，并创建一个以后可以直接双击运行的桌面脚本：
+把下面这段发给你的 AI Agent，让它读取启动说明，然后帮你检查环境、启动 Make，并创建一个以后可以直接双击运行的桌面脚本：
 
-```text
-请帮我在当前项目目录启动 Axhub Make，并确保以后可以一键启动。
-
-目标命令：
-npx -y @axhub/make@latest
-
-请按下面要求执行：
-
-1. 先检查当前环境是否可以直接执行 `npx -y @axhub/make@latest`。
-2. 如果命令失败，不要停在报错处。请判断原因并处理，直到这个命令可以直接执行：
-   - 检查 Node.js、npm、npx 是否可用；
-   - 如果缺少依赖，请按当前操作系统安装或引导我安装；
-   - 如果是网络、权限、缓存、PATH、Node 版本或 npm 配置问题，请修复或给出可执行命令；
-   - 每次修复后重新运行 `npx -y @axhub/make@latest` 验证。
-3. 启动成功后，确认管理页面已经打开；如果没有自动打开，请把终端里的访问地址复制给我。
-4. 在我的桌面创建一个启动脚本，用来以后直接启动 Axhub Make：
-   - macOS/Linux：创建可双击或可执行的 `.command` 或 `.sh` 脚本；
-   - Windows：创建 `.bat` 或 `.cmd` 脚本；
-   - 脚本需要进入当前项目目录，然后执行 `npx -y @axhub/make@latest`。
-5. 创建脚本后，请实际运行一次脚本，确认脚本可以正确启动 Axhub Make。
-6. 最后告诉我：
-   - Axhub Make 的访问地址；
-   - 桌面脚本的完整路径；
-   - 如果后续要手动启动，应该双击哪个脚本。
 ```
+请读取这个文档，并按里面的要求在当前项目目录启动 Axhub Make：
+
+https://raw.githubusercontent.com/lintendo/Axhub-Make/main/docs/start-axhub-make-with-ai.md
+```
+
+## 产品流程
+
+Axhub Make 把需求挖掘、Spec 对齐、设计规范、原型生成、批注编辑、AI 评审、交付标注和发布串成一条产品工作流。
+
+### 生成：从需求挖掘到可运行原型
+
+先通过需求挖掘把模糊想法拆成用户角色、业务目标、核心流程、页面结构和关键状态，再完成 Spec 对齐。生成时会自动匹配项目里的设计规范 Design，结合行业模板和组件风格，产出可点击、可预览、可继续编辑的交互原型。
+
+### 编辑（批注）：在真实页面上下文里修改
+
+团队可以直接在页面、模块或具体元素上留下修改意见。批注会成为 AI Agent 可读取的上下文，让文案、布局、状态、流程补充都围绕真实原型完成，不再散落在截图和聊天记录里。
+
+### 评审：用 AI 评审发现产品问题
+
+AI 评审会围绕当前原型、Spec、页面结构和业务流程，检查需求完整性、关键场景覆盖、交互自洽性、信息层级和遗漏状态。团队再基于 AI 扫出的问题做人工确认。
+
+### 标注：把原型沉淀为可交付说明
+
+将页面结构、组件说明、字段含义、交互规则、业务逻辑、状态变化和设计要求沉淀为标注。原型不只是能看、能点，也能作为研发、测试和业务验收可理解的交付说明。
+
+### 发布：把原型变成可分享、可验收、可交付的产品资产
+
+原型可以发布为在线链接，也可以导出 HTML、交付到 Figma，或通过 Axure 发布链路进入既有团队流程。发布后的成果可用于评审、演示、研发对齐和验收确认。
 
 ## 核心特点
 
-| 特点 | 说明 |
-| --- | --- |
-| 原型生产全链路 | 从需求分析、原型生成、批注编辑、原型评审到发布交付，覆盖产品想法落地的完整闭环。 |
-| 原型即 PRD | 用可运行页面承载流程、状态、字段、交互和业务说明，让需求不再散落在文档、截图和聊天记录里。 |
-| 多平台导入 | 支持 Axhub Make ZIP 包、Google Stitch、Axure HTML 原型、Figma Make、V0 App 和 Google AIStudio 等来源统一导入。 |
-| 免费资源库 | 内置新手教程、100+ 设计规范和 10+ 行业原型，帮助团队从模板、规范和案例直接起步。 |
-| 最强发布交付 | 支持云服务发布、HTML 导出、Figma 交付，以及独家 Axure 发布链路，满足评审、分享和正式交付。 |
-| 产品团队工作台 | 开源可自定义，支持多人协作和远程工作，把产品、设计、研发与 AI Agent 放在同一个项目上下文里。 |
+### 支持主流 AI Agent
 
-## 界面演示
+[![Codex](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/codex-color.svg)](https://lobehub.com/icons/codex) [![Claude Code](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/claudecode-color.svg)](https://lobehub.com/icons/claudecode) [![OpenCode](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/opencode.svg)](https://lobehub.com/icons/opencode) [![Cursor](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/cursor.svg)](https://lobehub.com/icons/cursor) [![Trae](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/trae-color.svg)](https://lobehub.com/icons/trae) [![Qwen Code](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/qwen-color.svg)](https://lobehub.com/icons/qwen) [![Qoder](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/qoder-color.svg)](https://lobehub.com/icons/qoder) [![CodeBuddy](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/codebuddy-color.svg)](https://lobehub.com/icons/codebuddy) [![DeepSeek](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/deepseek-color.svg)](https://lobehub.com/icons/deepseek) [![Kimi](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/kimi-color.svg)](https://lobehub.com/icons/kimi) [![Doubao](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/doubao-color.svg)](https://lobehub.com/icons/doubao) [![Yuanbao](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/yuanbao-color.svg)](https://lobehub.com/icons/yuanbao) [![Windsurf](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/windsurf.svg)](https://lobehub.com/icons/windsurf) [![Roo Code](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/roocode.svg)](https://lobehub.com/icons/roocode) [![Antigravity](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/antigravity-color.svg)](https://lobehub.com/icons/antigravity)
 
-![原型即 PRD](assets/images/make-demo-prd-annotation.png)
+Axhub Make 可以和主流 Agent 一起工作，把产品需求、页面上下文、批注、标注和项目文件交给合适的 AI 工具处理。当前重点支持 Codex、Claude Code、OpenCode、Cursor、Qoder、CodeBuddy、DeepSeek / Reasonix 等 Agent 形态，同时覆盖 Trae、Qwen Code、Windsurf、Roo Code、Antigravity 以及 Kimi、Doubao、Yuanbao 等国内常用 AI 工具链。
 
-![新建原型](assets/images/make-demo-empty-prototype.png)
+团队可以按习惯选择工具，同时把产物沉淀在同一个 Make 项目中。
 
-![设计系统浏览](assets/images/make-demo-design-system.png)
+### 支持多平台资源导入
 
-![在线对话](assets/images/make-demo-online-chat.png)
+Axhub Make 支持从多种平台和格式导入原型资源，包括 Axhub Make ZIP 包、Google Stitch、Axure HTML 原型、Figma Make、V0 App、Google AI Studio 等来源。外部工具产出的页面、工程包和设计资源，可以带回 Make 继续整理、编辑、批注、评审和发布。
 
-![在线生图](assets/images/make-demo-online-image.png)
+团队可以从不同工具起步，最终在同一个工作台里完成原型管理和交付。
+
+### IMAGE2 UI/UX 工作流
+
+Axhub Make 支持 IMAGE2 UI/UX 工作流：先生成高质量 UI 设计稿，再还原为可运行、可交互、可继续编辑的原型，用于评审、标注、发布和开发对齐。
+
+### 团队协作、版本管理和移动办公
+
+Axhub Make 面向产品团队协作设计。团队可以围绕同一个原型项目进行需求讨论、批注修改、AI 评审、交付标注和版本沉淀，让产品、设计、研发、测试和业务方共享同一份上下文。
+
+版本管理用于回溯方案、对比变化和管理交付节点。发布链接和移动端预览支持远程评审、移动办公和客户演示。
+
+### 免费资源库和发布交付
+
+Make 内置新手教程、100+ 设计规范和 10+ 行业原型。原型完成后，可以通过云服务发布、HTML 导出、Figma 交付和 Axure 发布链路进入不同团队的既有工作方式。
 
 ## 用户群
 
@@ -96,4 +95,4 @@ npx -y @axhub/make@latest
 
 如果你已经加入过 Axhub 其他用户群，不需要重复添加。
 
-<img src="assets/images/axhub-make-user-group-qrcode.png" alt="Axhub Make 用户群二维码" width="240" />
+![Axhub Make 用户群二维码](assets/images/axhub-make-user-group-qrcode.png)

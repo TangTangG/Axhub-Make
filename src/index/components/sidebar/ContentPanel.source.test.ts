@@ -64,9 +64,11 @@ describe('ContentPanel make client project setup source', () => {
       source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
     );
 
-    expect(source).toContain("type ProjectSetupMode = 'menu' | 'blank' | 'copy';");
+    expect(source).toContain("type ProjectSetupMode = 'menu' | 'blank' | 'clone' | 'copy';");
     expect(dialogPropsSource).toContain('hasActiveProject?: boolean;');
     expect(dialogPropsSource).toContain('copyingProject: boolean;');
+    expect(dialogPropsSource).toContain('cloningProject: boolean;');
+    expect(dialogPropsSource).toContain('onCloneProject: (params: {');
     expect(dialogPropsSource).toContain('onCopyProject: (params: {');
     expect(dialogSource).toContain("hasActiveProject ? (");
     expect(dialogSource).toContain('复制当前项目');
@@ -76,6 +78,8 @@ describe('ContentPanel make client project setup source', () => {
     expect(dialogSource).toContain('复制并启动');
     expect(dialogRenderSource).toContain('hasActiveProject={Boolean(activeProjectId)}');
     expect(dialogRenderSource).toContain('copyingProject={isCopyingProject}');
+    expect(dialogRenderSource).toContain('cloningProject={isCloningProject}');
+    expect(dialogRenderSource).toContain('onCloneProject={handleCloneMakeProject}');
     expect(dialogRenderSource).toContain('onCopyProject={handleCopyMakeProject}');
     expect(source).toContain("const [projectSetupInitialMode, setProjectSetupInitialMode] = useState<'menu'>('menu');");
     expect(source).not.toContain("setProjectSetupInitialMode('copy');");
@@ -179,6 +183,31 @@ describe('ContentPanel make client project setup source', () => {
     expect(prototypeToolbarSource).not.toContain('onImportPrototype');
   });
 
+  it('adds start-page create entries to resource and design toolbars with scoped actions', () => {
+    const source = readContentPanelSource();
+    const documentToolbarSource = source.slice(
+      source.indexOf("{!isSearchExpanded && activeTab === 'document' ? ("),
+      source.indexOf("{!isSearchExpanded && activeTab === 'assets' ? ("),
+    );
+    const assetsToolbarSource = source.slice(
+      source.indexOf("{!isSearchExpanded && activeTab === 'assets' ? ("),
+      source.indexOf('</div>', source.indexOf("{!isSearchExpanded && activeTab === 'assets' ? (")),
+    );
+
+    expect(source).toContain('onCreateResourceStart: () => void;');
+    expect(source).toContain('onCreateThemeStart: () => void;');
+    expect(documentToolbarSource).toContain('onCreateResourceStart');
+    expect(documentToolbarSource).toContain('新建资源');
+    expect(documentToolbarSource).not.toContain('上传资源');
+    expect(documentToolbarSource).not.toContain('docFileInputRef');
+    expect(documentToolbarSource).toContain('新建文件夹');
+    expect(assetsToolbarSource).toContain('onCreateThemeStart');
+    expect(assetsToolbarSource).toContain('新建设计');
+    expect(assetsToolbarSource).not.toContain('导入设计');
+    expect(assetsToolbarSource).not.toContain('onImportTheme');
+    expect(assetsToolbarSource).toContain('新建文件夹');
+  });
+
   it('allows successful required project setup to close the setup dialog', () => {
     const source = readContentPanelSource();
     const dialogSource = source.slice(
@@ -208,15 +237,16 @@ describe('ContentPanel make client project setup source', () => {
       source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
     );
 
-    expect(dialogSource.match(/onSetupComplete\(\);/gu)).toHaveLength(3);
+    expect(dialogSource.match(/onSetupComplete\(\);/gu)).toHaveLength(4);
     expect(renderSource).toContain("onTabChange('prototype');");
   });
 
   it('does not show blue borders or focus rings on setup option buttons', () => {
     const source = readContentPanelSource();
+    const menuStart = source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? (');
     const menuSource = source.slice(
-      source.indexOf('{!forceBlankProjectCreation && setupMode === \'menu\' ? ('),
-      source.indexOf('</div>', source.indexOf('选择已有项目')),
+      menuStart,
+      source.indexOf('</div>', source.indexOf('选择已有项目', menuStart)),
     );
 
     expect(menuSource).not.toContain('border-primary');
@@ -261,8 +291,8 @@ describe('ContentPanel make client project setup source', () => {
     expect(existingOptionSource).toContain('mirrorTemplateDownloadUrl');
     expect(existingOptionSource.match(/onClick=\{stopProjectSetupLinkPropagation\}/gu)).toHaveLength(2);
     expect(existingOptionSource.match(/onKeyDown=\{stopProjectSetupLinkPropagation\}/gu)).toHaveLength(2);
-    expect(menuSource).not.toContain('仓库');
-    expect(menuSource).not.toContain('开发服务');
+    expect(existingOptionSource).not.toContain('仓库');
+    expect(existingOptionSource).not.toContain('开发服务');
   });
 
   it('does not show client version labels in project setup options', () => {
@@ -294,7 +324,7 @@ describe('ContentPanel make client project setup source', () => {
       source.indexOf('export default function ContentPanel'),
     );
 
-    expect(dialogSource).toContain("const showProjectSetupFooter = setupMode === 'blank' || setupMode === 'copy' || !dismissDisabled;");
+    expect(dialogSource).toContain("const showProjectSetupFooter = setupMode === 'blank' || setupMode === 'clone' || setupMode === 'copy' || !dismissDisabled;");
     expect(dialogSource).toContain('{showProjectSetupFooter ? (');
     expect(dialogSource).toContain('<DialogFooter className="border-t p-3 sm:justify-between sm:space-x-0">');
     expect(dialogSource).toContain('</DialogFooter>\n                    ) : null}');
@@ -380,6 +410,42 @@ describe('ContentPanel make client project setup source', () => {
     expect(source).toContain("fetch('/api/projects/make/folder-name-suggestion'");
   });
 
+  it('adds a Git clone setup mode with URL input and collaboration-focused menu copy', () => {
+    const source = readContentPanelSource();
+    const dialogSource = source.slice(
+      source.indexOf('function ProjectSetupDialog'),
+      source.indexOf('export default function ContentPanel'),
+    );
+    const cloneOptionSource = dialogSource.slice(
+      dialogSource.indexOf('Git 链接克隆'),
+      dialogSource.indexOf('{hasActiveProject ? (', dialogSource.indexOf('Git 链接克隆')),
+    );
+    const renderSource = source.slice(
+      source.indexOf('<ProjectSetupDialog'),
+      source.indexOf('/>', source.indexOf('<ProjectSetupDialog')),
+    );
+
+    expect(source).toContain("const MAKE_CLIENT_CLONE_PENDING_LABEL = '克隆并启动项目';");
+    expect(source).toContain("const MAKE_CLIENT_CLONE_FAILED_LABEL = '克隆项目失败';");
+    expect(dialogSource).toContain("const [gitUrl, setGitUrl] = useState('');");
+    expect(dialogSource).toContain("setSetupMode('clone');");
+    expect(dialogSource).toContain('Git 链接克隆');
+    expect(cloneOptionSource).toContain('适合团队协作、异地办公或在多台设备间同步项目，从共享仓库拉取完整项目。');
+    expect(cloneOptionSource).not.toContain('交给 AI 处理');
+    expect(dialogSource).toContain('htmlFor="make-project-git-url"');
+    expect(dialogSource).toContain('id="make-project-git-url"');
+    expect(dialogSource).toContain('value={gitUrl}');
+    expect(dialogSource).toContain('onChange={(event) => setGitUrl(event.target.value)}');
+    expect(dialogSource).toContain('const handleCloneMakeProject = async () => {');
+    expect(dialogSource).toContain("setRunningPhase('cloning')");
+    expect(dialogSource).toContain('gitUrl: normalizedGitUrl,');
+    expect(dialogSource).toContain('setFailedDiagnostic(readProjectSetupPromptFromError(error) || buildMakeClientCloneAiPrompt');
+    expect(dialogSource).toContain("setupMode === 'clone'");
+    expect(dialogSource).toContain('克隆并启动');
+    expect(dialogSource).toContain('disabled={busy || !parentRoot.trim() || !folderName.trim() || (setupMode === \'clone\' && !gitUrl.trim())}');
+    expect(renderSource).toContain('onCloneProject={handleCloneMakeProject}');
+  });
+
   it('remembers the last selected blank project parent directory in browser storage', () => {
     const source = readContentPanelSource();
     const dialogSource = source.slice(
@@ -431,12 +497,14 @@ describe('ContentPanel prototype canvas entry source', () => {
 });
 
 describe('ContentPanel draft wording source', () => {
-  it('uses draft wording for external canvas actions in the sidebar', () => {
+  it('does not expose external add-to-canvas actions in the sidebar', () => {
     const source = readContentPanelSource();
 
-    expect(source).toContain('添加到画布');
-    expect(source).toContain('<TooltipContent>新建画布</TooltipContent>');
-    expect(source).toContain('toast.success(`已添加「${payload.displayName}」到画布`)');
+    expect(source).not.toContain('添加到画布');
+    expect(source).not.toContain("window.dispatchEvent(new CustomEvent('axhub:addToCanvas'");
+    expect(source).not.toContain('toast.success(`已添加「${payload.displayName}」到画布`)');
+    expect(source).not.toContain('<TooltipContent>新建画布</TooltipContent>');
+    expect(source).not.toContain('<TooltipContent>新建资源文件</TooltipContent>');
     expect(source).not.toContain('添加到草稿');
     expect(source).not.toContain('<TooltipContent>新建草稿</TooltipContent>');
     expect(source).not.toContain('toast.success(`已添加「${payload.displayName}」到草稿`)');
@@ -454,6 +522,18 @@ describe('ContentPanel sidebar rename source', () => {
     expect(renderItemActionsSource).toContain('startItemRename(itemNodeId, node?.title || item.displayName || item.name)');
     expect(renderItemActionsSource).not.toContain('startItemRename(itemNodeId, item.displayName || item.name)');
   });
+
+  it('labels per-item version actions as version and collaboration', () => {
+    const source = readContentPanelSource();
+    const renderItemActionsSource = source.slice(
+      source.indexOf('const renderItemActions ='),
+      source.indexOf('const renderFolderActions ='),
+    );
+
+    expect(renderItemActionsSource).toContain('handleVersionManagement(item)');
+    expect(renderItemActionsSource).toContain('版本和协作');
+    expect(renderItemActionsSource).not.toContain('版本管理');
+  });
 });
 
 describe('ContentPanel chrome styles source', () => {
@@ -466,6 +546,7 @@ describe('ContentPanel chrome styles source', () => {
   it('labels the top-left settings entry as settings instead of project settings', () => {
     const source = readContentPanelSource();
     const settingsItemIndex = source.indexOf('onSelect={handleSettingsMenuSelect}');
+    const versionCollaborationItemIndex = source.indexOf('onSelect={handleVersionCollaborationMenuSelect}');
     const menuSource = source.slice(
       source.lastIndexOf('<DropdownMenuContent align="start"', settingsItemIndex),
       source.indexOf('<DropdownMenuSeparator />', settingsItemIndex),
@@ -473,7 +554,42 @@ describe('ContentPanel chrome styles source', () => {
 
     expect(menuSource).toContain('<Settings className="h-3.5 w-3.5" />');
     expect(menuSource).toContain('设置');
+    expect(source).toContain('GitBranch,');
+    expect(menuSource).toContain('<GitBranch className="h-3.5 w-3.5" />');
+    expect(menuSource).toContain('版本和协作');
     expect(menuSource).not.toContain('项目设置');
+    expect(versionCollaborationItemIndex).toBeGreaterThan(settingsItemIndex);
+  });
+
+  it('shows unread update badges on the menu trigger and settings menu without tagging project rows', () => {
+    const source = readContentPanelSource();
+    const triggerAnchor = source.indexOf('<Menu className="h-4 w-4" />');
+    const triggerSource = source.slice(
+      source.lastIndexOf('<DropdownMenuTrigger asChild>', triggerAnchor),
+      source.indexOf('</DropdownMenuTrigger>', triggerAnchor),
+    );
+    const menuSource = source.slice(
+      source.indexOf('<DropdownMenuContent align="start" className="text-sm min-w-[132px]">'),
+      source.indexOf('<DropdownMenuItem className="h-7 gap-2 text-sm" onClick={onToggleTheme}>'),
+    );
+    const switcherSource = source.slice(
+      source.indexOf('<DropdownMenu open={projectSwitcherMenuOpen}'),
+      source.indexOf('</DropdownMenuContent>', source.indexOf('<DropdownMenu open={projectSwitcherMenuOpen}')),
+    );
+
+    expect(source).toContain('makeClientUpdateAvailable?: boolean;');
+    expect(source).toContain('makeClientUpdateReminderVisible?: boolean;');
+    expect(source).toContain('makeClientUpdateAvailable,');
+    expect(source).toContain('makeClientUpdateReminderVisible,');
+    expect(triggerSource).toContain('relative');
+    expect(triggerSource).toContain('{makeClientUpdateReminderVisible ? (');
+    expect(triggerSource).toContain('aria-label="有项目更新"');
+    expect(menuSource).toContain('{makeClientUpdateReminderVisible ? (');
+    expect(menuSource).toContain('aria-label="有项目更新"');
+    expect(menuSource).toContain('bg-destructive');
+    expect(source).toContain("onSettingsClick(makeClientUpdateReminderVisible ? 'update' : 'project');");
+    expect(switcherSource).not.toContain('{active && makeClientUpdateAvailable ? (');
+    expect(switcherSource).not.toContain('border-destructive/30');
   });
 });
 
@@ -483,8 +599,9 @@ describe('ContentPanel resource folder selection source', () => {
 
     expect(source).toContain('selectedFolder?: SelectedResourceFolder | null;');
     expect(source).toContain('onFolderClick?: (folder: SidebarTreeNode) => void;');
+    expect(source).toContain('const canSelectFolders = typeof onFolderClick === \'function\';');
     expect(source).toContain('const isFolderSelected =');
-    expect(source).toContain("dataTab === 'docs'");
+    expect(source).toContain('&& canSelectFolders');
     expect(source).toContain('onFolderClick?.(node);');
     expect(source).toContain('selected={isFolderSelected || isSelected}');
   });
@@ -492,14 +609,46 @@ describe('ContentPanel resource folder selection source', () => {
   it('toggles resource folders from the row without reselecting them while collapsing', () => {
     const source = readContentPanelSource();
     const folderClickSource = source.slice(
-      source.indexOf("if (dataTab === 'docs') {"),
-      source.indexOf("if (item) {", source.indexOf("if (dataTab === 'docs') {")),
+      source.indexOf('if (canSelectFolders) {'),
+      source.indexOf("if (item) {", source.indexOf('if (canSelectFolders) {')),
     );
 
+    expect(folderClickSource).toContain('if (dataTab === \'docs\') {');
     expect(folderClickSource).toContain('const isCollapsingFolder = isExpanded;');
     expect(folderClickSource).toContain('toggleFolder(node.id);');
     expect(folderClickSource).toContain('if (!isCollapsingFolder) {');
     expect(folderClickSource).toContain('onFolderClick?.(node);');
+  });
+
+  it('keeps resource folder paste targeting document-only', () => {
+    const source = readContentPanelSource();
+    const folderClickSource = source.slice(
+      source.indexOf('if (canSelectFolders) {'),
+      source.indexOf("if (item) {", source.indexOf('if (canSelectFolders) {')),
+    );
+
+    expect(folderClickSource).toContain('if (dataTab === \'docs\') {');
+    expect(folderClickSource).toContain('setDocumentPasteTargetFromFolder(node);');
+    expect(folderClickSource).toContain('onFolderClick?.(node);');
+    expect(folderClickSource.indexOf("if (dataTab === 'docs') {"))
+      .toBeLessThan(folderClickSource.indexOf('setDocumentPasteTargetFromFolder(node);'));
+    expect(folderClickSource.indexOf('setDocumentPasteTargetFromFolder(node);'))
+      .toBeLessThan(folderClickSource.indexOf('onFolderClick?.(node);'));
+  });
+
+  it('passes folder selection callbacks for document and design resource trees', () => {
+    const source = readFileSync(resolve(__dirname, './NewSidebar.tsx'), 'utf8');
+    const contentPanelPropsSource = source.slice(
+      source.indexOf('<ContentPanel'),
+      source.indexOf('onSearch={setSearchText}'),
+    );
+
+    expect(source).toContain('const currentSelectedFolder = selectedResourceFolder && selectedResourceFolderTreeTab === currentTreeTab');
+    expect(contentPanelPropsSource).toContain("currentTreeTab === 'docs' || currentTreeTab === 'themes'");
+    expect(contentPanelPropsSource).toContain("onSelectResourceFolder?.(folder, currentTreeTab, { preserveViewMode: viewMode === 'canvas' })");
+    expect(contentPanelPropsSource).not.toContain("currentTreeTab === 'canvas'");
+    expect(contentPanelPropsSource).not.toContain("sidebarTab === 'canvas'");
+    expect(contentPanelPropsSource).not.toContain("sidebarTab === 'document' ? onSelectResourceFolder : undefined");
   });
 
   it('keeps folders collapsed by default when a tree first loads', () => {
@@ -636,11 +785,27 @@ describe('ContentPanel document paste upload source', () => {
     expect(syncEffectSource).toContain('[activeTab, selectedDocumentFolderPath, armDocumentPasteUpload]');
   });
 
+  it('does not expose new resource file creation from the document toolbar', () => {
+    const source = readContentPanelSource();
+    const documentToolbarSource = source.slice(
+      source.indexOf("{!isSearchExpanded && activeTab === 'document' ? ("),
+      source.indexOf("{!isSearchExpanded && activeTab === 'assets' ? ("),
+    );
+
+    expect(source).not.toContain("type ResourceFileCreateKind = 'markdown' | 'excalidraw' | 'drawio' | 'json' | 'csv';");
+    expect(source).not.toContain('onCreateResourceFile?: (kind: ResourceFileCreateKind, targetFolder?: string | null) => void | Promise<void>;');
+    expect(documentToolbarSource).not.toContain('新建资源文件');
+    expect(documentToolbarSource).not.toContain("onCreateResourceFile?.('excalidraw', documentPasteTargetFolder)");
+    expect(documentToolbarSource).not.toContain("onCreateResourceFile?.('markdown', documentPasteTargetFolder)");
+    expect(documentToolbarSource).not.toContain('<FilePlus className="h-4 w-4" />');
+    expect(documentToolbarSource).not.toContain('onCreateCanvasFile');
+  });
+
   it('tracks the document paste target from root and folder focus without switching to file paths', () => {
     const source = readContentPanelSource();
     const folderClickSource = source.slice(
-      source.indexOf("if (dataTab === 'docs') {"),
-      source.indexOf("if (item) {", source.indexOf("if (dataTab === 'docs') {")),
+      source.indexOf('if (canSelectFolders) {'),
+      source.indexOf("if (item) {", source.indexOf('if (canSelectFolders) {')),
     );
     const itemClickSource = source.slice(
       source.indexOf("if (item) {", source.indexOf('const renderTreeNodes =')),
@@ -679,7 +844,7 @@ describe('ContentPanel resource drag and drop source', () => {
     expect(fileDropZoneSource).toContain('if (isSidebarTreeDragEvent(event)) return;');
   });
 
-  it('adds assistant-context drag payloads without changing existing tree and canvas drag payloads', () => {
+  it('adds assistant-context drag payloads without writing canvas drag payloads', () => {
     const source = readContentPanelSource();
     const pageRowsSource = source.slice(
       source.indexOf('const renderPrototypePageRows ='),
@@ -692,11 +857,13 @@ describe('ContentPanel resource drag and drop source', () => {
 
     expect(source).toContain("import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';");
     expect(source).toContain("import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';");
-    expect(pageRowsSource).toContain('event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
+    expect(source).not.toContain("import { CANVAS_DROP_MIME } from '../content/canvasDropTypes';");
+    expect(source).not.toContain('CANVAS_DROP_MIME');
+    expect(pageRowsSource).not.toContain('event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
     expect(pageRowsSource).toContain('event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
     expect(pageRowsSource).toContain("resourceType: 'prototype-page'");
     expect(treeDragSource).toContain('e.dataTransfer.setData(SIDEBAR_TREE_DRAG_MIME, node.id);');
-    expect(treeDragSource).toContain('e.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
+    expect(treeDragSource).not.toContain('e.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
     expect(treeDragSource).toContain('e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
     expect(treeDragSource).toContain('items: buildAssistantContextItemsFromResource({');
   });
@@ -731,58 +898,47 @@ describe('ContentPanel prototype page children source', () => {
     expect(source).toContain('page.title');
     expect(source).toContain('page.id');
     expect(source).toContain('renderPrototypePageRows(item, depth + 1)');
-    expect(source).toContain('buildPrototypePageCanvasPayload(item, page)');
+    expect(source).not.toContain('buildPrototypePageCanvasPayload(item, page)');
+    expect(source).not.toContain('function buildPrototypePageCanvasPayload');
     expect(source).toContain("draggable={true}");
     expect(source).toContain('actions={null}');
     expect(source).toContain('onPrototypePageSelect(item, page.id)');
     expect(source).not.toContain('onTreePersist(page');
   });
 
-  it('drags prototype page rows as generic preview embeds with only page-specific URLs', () => {
+  it('drags prototype page rows only as assistant context resources', () => {
     const source = readContentPanelSource();
     const helperSource = source.slice(
       source.indexOf('function resolvePrototypePageEmbedDisplayName'),
-      source.indexOf('const renderItemActions ='),
-    );
-    const payloadSource = source.slice(
-      source.indexOf('function buildPrototypePageCanvasPayload'),
       source.indexOf('interface ProjectSetupDialogProps'),
     );
+    const pageRowsSource = source.slice(
+      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderTreeNodes ='),
+    );
 
-    expect(helperSource).toContain("type: 'preview'");
-    expect(helperSource).toContain("resourceType: 'preview'");
-    expect(helperSource).toContain("sourceResourceType: 'prototype'");
-    expect(helperSource).toContain('resourceId');
-    expect(helperSource).toContain("previewKind: 'web'");
-    expect(helperSource).toContain("embedViewMode: 'preview'");
-    expect(helperSource).toContain('displayName: resolvePrototypePageEmbedDisplayName(item, page.title)');
     expect(helperSource).toContain('return `${trimmedPageTitle} - ${prototypeTitle}`;');
-    expect(helperSource).toContain('buildPrototypePagePreviewUrl(item, page.id)');
-    expect(helperSource).toContain('buildResourceDeepLinkUrl({');
-    expect(helperSource).toContain('pageId: page.id');
-    expect(payloadSource).not.toContain('pageId,');
-    expect(payloadSource).not.toContain('pageTitle:');
+    expect(pageRowsSource).toContain('const displayName = resolvePrototypePageEmbedDisplayName(item, page.title);');
+    expect(pageRowsSource).toContain('event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
+    expect(pageRowsSource).toContain("resourceType: 'prototype-page'");
+    expect(pageRowsSource).not.toContain('CANVAS_DROP_MIME');
+    expect(source).not.toContain("type: 'preview'");
+    expect(source).not.toContain("embedViewMode: 'preview'");
   });
 
-  it('drags prototype and document items as preview embeds by default', () => {
+  it('drags prototype and document items only as assistant context resources', () => {
     const source = readContentPanelSource();
-    const payloadSource = source.slice(
-      source.indexOf('const payload = {'),
-      source.indexOf('try {', source.indexOf('const payload = {')),
-    );
     const treeDragSource = source.slice(
-      source.indexOf('// Attach canvas-drop payload so the item can be'),
-      source.indexOf('e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME', source.indexOf('// Attach canvas-drop payload so the item can be')),
+      source.indexOf('onDragStart={(e) => {', source.indexOf('const renderTreeNodes =')),
+      source.indexOf('setDraggingNodeId(node.id);', source.indexOf('const renderTreeNodes =')),
     );
 
-    expect(payloadSource).toContain("type: 'preview'");
-    expect(payloadSource).toContain("resourceType: 'preview'");
-    expect(payloadSource).toContain('sourceResourceType');
-    expect(payloadSource).toContain('embedViewMode: \'preview\'');
-    expect(payloadSource).not.toContain('embedViewMode: \'link\'');
-    expect(treeDragSource).toContain("type: 'preview'");
-    expect(treeDragSource).toContain("resourceType: 'preview'");
-    expect(treeDragSource).toContain('sourceResourceType');
+    expect(source).not.toContain('// Attach canvas-drop payload so the item can be');
+    expect(treeDragSource).not.toContain("type: 'preview'");
+    expect(treeDragSource).not.toContain("resourceType: 'preview'");
+    expect(treeDragSource).not.toContain('sourceResourceType');
+    expect(treeDragSource).toContain('e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
+    expect(treeDragSource).toContain('items: buildAssistantContextItemsFromResource({');
   });
 
   it('uses a text-only selected state for prototype pages so parent and first page backgrounds do not stack', () => {
@@ -812,20 +968,24 @@ describe('ContentPanel prototype page children source', () => {
 });
 
 describe('ContentPanel LAN share source', () => {
-  it('hides the whole LAN share group when the active project disallows LAN access', () => {
+  it('generates short-lived LAN share URLs on demand instead of exposing raw LAN URLs', () => {
     const source = readContentPanelSource();
     const itemActionsSource = source.slice(
       source.indexOf('const renderItemActions ='),
       source.indexOf('const renderFolderActions ='),
     );
-    const guardIndex = itemActionsSource.indexOf('const showLANShareGroup = lanAccessAllowed && Boolean(lanShareUrl);');
+    const guardIndex = itemActionsSource.indexOf('const showLANShareGroup = Boolean(lanShareUrl);');
+    const resolverIndex = itemActionsSource.indexOf('resolveLanShareUrl');
     const lanGroupIndex = itemActionsSource.indexOf('{showLANShareGroup ? (');
-    const lanLabelIndex = itemActionsSource.indexOf('局域网链接');
-    const qrIndex = itemActionsSource.indexOf('<QRCode value={lanShareUrl}');
+    const lanLabelIndex = itemActionsSource.indexOf('局域网链接', lanGroupIndex);
+    const qrIndex = itemActionsSource.indexOf('<QRCode value={lanTokenUrl}');
 
-    expect(source).toContain('lanAccessAllowed?: boolean;');
-    expect(source).toContain('lanAccessAllowed = true,');
+    expect(source).toContain('apiService.createLanAccessShareUrl');
+    expect(source).toContain('请先在设置中设置局域网访问密码');
+    expect(source).not.toContain('lanAccessAllowed?: boolean;');
+    expect(source).not.toContain('lanAccessAllowed = true,');
     expect(guardIndex).toBeGreaterThan(-1);
+    expect(resolverIndex).toBeGreaterThan(guardIndex);
     expect(lanGroupIndex).toBeGreaterThan(guardIndex);
     expect(lanLabelIndex).toBeGreaterThan(lanGroupIndex);
     expect(qrIndex).toBeGreaterThan(lanGroupIndex);
@@ -1051,7 +1211,7 @@ describe('ContentPanel settings menu source', () => {
     expect(source).toContain('initialMode={projectSetupInitialMode}');
   });
 
-  it('opens project settings from the dropdown select event after the menu closes', () => {
+  it('opens settings from the dropdown select event after the menu closes and jumps to updates when needed', () => {
     const source = readContentPanelSource();
     const menuSource = source.slice(
       source.indexOf('<DropdownMenuContent align="start"'),
@@ -1060,8 +1220,23 @@ describe('ContentPanel settings menu source', () => {
 
     expect(source).toContain('const handleSettingsMenuSelect = useCallback(() => {');
     expect(source).toContain('window.setTimeout(() => {');
-    expect(source).toContain('onSettingsClick();');
+    expect(source).toContain("onSettingsClick(makeClientUpdateReminderVisible ? 'update' : 'project');");
     expect(menuSource).toContain('onSelect={handleSettingsMenuSelect}');
     expect(menuSource).not.toContain('onClick={onSettingsClick}');
+  });
+
+  it('opens version and collaboration from the dropdown select event after the menu closes', () => {
+    const source = readContentPanelSource();
+    const menuSource = source.slice(
+      source.indexOf('<DropdownMenuContent align="start"'),
+      source.indexOf('<DropdownMenuItem className="h-7 gap-2 text-sm" onClick={onToggleTheme}>'),
+    );
+
+    expect(source).toContain('onVersionCollaborationClick: () => void;');
+    expect(source).toContain('const handleVersionCollaborationMenuSelect = useCallback(() => {');
+    expect(source).toContain('onVersionCollaborationClick();');
+    expect(menuSource).toContain('onSelect={handleVersionCollaborationMenuSelect}');
+    expect(menuSource).toContain('版本和协作');
+    expect(menuSource).not.toContain('onClick={onVersionCollaborationClick}');
   });
 });

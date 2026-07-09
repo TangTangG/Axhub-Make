@@ -7,6 +7,8 @@ import {
   buildProjectPrototypeScreenshotIframeUrl,
   createDefaultHostToolbarState,
   getClientUrlOrigin,
+  resolveActiveAnnotationDirectRunToolbarState,
+  resolvePrototypeAnnotationTargetPath,
   resolveCurrentPublishResourcePath,
   resolveCurrentPreviewScreenshotSize,
   resolveHostToolbarStateForDisplay,
@@ -116,7 +118,7 @@ describe('previewActions.helpers', () => {
     expect(url.origin).toBe('http://localhost:51720');
     expect(url.pathname).toBe('/prototypes/touch-and-talk-annotation-demo');
     expect(url.searchParams.get('variant')).toBe('dark');
-    expect(url.searchParams.get('genieToolbar')).toBe('host');
+    expect(url.searchParams.get('agentToolbar')).toBe('host');
     expect(url.hash).toBe('#page=more-scenarios');
   });
 
@@ -131,13 +133,13 @@ describe('previewActions.helpers', () => {
     const url = new URL(buildProjectPrototypeScreenshotIframeUrl({
       name: 'touch-and-talk-annotation-demo',
       displayName: '批注演示',
-      clientUrl: 'http://localhost:51723/prototypes/touch-and-talk-annotation-demo?genieToolbar=host',
+      clientUrl: 'http://localhost:51723/prototypes/touch-and-talk-annotation-demo?agentToolbar=host',
       previewUrl: 'http://localhost:51723/prototypes/touch-and-talk-annotation-demo',
     }, 'cover'));
 
     expect(url.origin).toBe('http://localhost:53817');
     expect(url.pathname).toBe('/prototypes/touch-and-talk-annotation-demo');
-    expect(url.searchParams.get('genieToolbar')).toBeNull();
+    expect(url.searchParams.get('agentToolbar')).toBeNull();
     expect(url.hash).toBe('#page=cover');
   });
 
@@ -263,6 +265,21 @@ describe('previewActions.helpers', () => {
     })).toBe('src/themes/brand');
   });
 
+  it('resolves prototype annotation target paths for the Make server API', () => {
+    expect(resolvePrototypeAnnotationTargetPath({
+      resourceId: 'home',
+      filePath: 'src/prototypes/home/index.tsx',
+    })).toBe('prototypes/home');
+
+    expect(resolvePrototypeAnnotationTargetPath({
+      filePath: 'src/prototypes/checkout/index.tsx',
+    })).toBe('prototypes/checkout');
+
+    expect(resolvePrototypeAnnotationTargetPath({
+      clientUrl: 'http://localhost:51721/prototypes/untitled-79?mode=demo#page=summary',
+    })).toBe('prototypes/untitled-79');
+  });
+
   it('resolves screenshot copy dimensions from the current preview mode and primary split pane', () => {
     expect(resolveCurrentPreviewScreenshotSize({
       previewMode: 'single',
@@ -303,6 +320,50 @@ describe('previewActions.helpers', () => {
     expect(resolvedState?.sendDisabled).toBe(false);
   });
 
+  it('keeps direct annotation runs interruptible and sendable until concurrency is full', () => {
+    const syncedIdleState = {
+      ...createDefaultHostToolbarState(),
+      robotState: 'awake' as const,
+      sendDisabled: false,
+      sendLoading: false,
+      interruptDisabled: true,
+      interruptLoading: false,
+      propertyPanelOpen: true,
+    };
+
+    const activeRunState = resolveActiveAnnotationDirectRunToolbarState(syncedIdleState, {
+      activeRunCount: 1,
+      maxRunCount: 3,
+    });
+
+    expect(activeRunState).toMatchObject({
+      robotState: 'working',
+      robotLoading: false,
+      sendDisabled: false,
+      sendLoading: false,
+      interruptVisible: true,
+      interruptDisabled: false,
+      interruptLoading: false,
+      propertyPanelOpen: true,
+    });
+    expect(resolveActiveAnnotationDirectRunToolbarState(syncedIdleState, {
+      activeRunCount: 3,
+      maxRunCount: 3,
+    })).toMatchObject({
+      sendDisabled: true,
+      sendLoading: true,
+      interruptDisabled: false,
+    });
+    expect(resolveActiveAnnotationDirectRunToolbarState(syncedIdleState, {
+      activeRunCount: 0,
+      maxRunCount: 3,
+    })).toBe(syncedIdleState);
+    expect(resolveActiveAnnotationDirectRunToolbarState(null, {
+      activeRunCount: 1,
+      maxRunCount: 3,
+    })).toBeNull();
+  });
+
   it('preserves the selection mode flag when showing a hidden host toolbar state', () => {
     const hiddenHostState = {
       ...createDefaultHostToolbarState(),
@@ -314,6 +375,15 @@ describe('previewActions.helpers', () => {
 
     expect(resolvedState?.visible).toBe(true);
     expect(resolvedState?.selectionModeActive).toBe(false);
+  });
+
+  it('keeps copy prompt disabled in the fallback toolbar state until an editor reports promptable edits', () => {
+    const fallbackState = createDefaultHostToolbarState();
+
+    expect(fallbackState.copyPromptVisible).toBe(true);
+    expect(fallbackState.copyPromptDisabled).toBe(true);
+    expect(fallbackState.clearEditsDisabled).toBe(true);
+    expect(fallbackState.modifiedCount).toBe(0);
   });
 
   it('waits for the next host toolbar state when wake starts from a stale sleeping snapshot', async () => {
@@ -332,11 +402,39 @@ describe('previewActions.helpers', () => {
         listener = nextListener;
         return () => undefined;
       },
-    }, { type: 'wake-genie' }, sleepingState);
+    }, { type: 'wake-agent' }, sleepingState);
 
     listener?.(awakeState);
 
     await expect(waitPromise).resolves.toEqual(awakeState);
+    vi.useRealTimers();
+  });
+
+  it('waits for annotation enable state after the enable action starts from a stale snapshot', async () => {
+    vi.useFakeTimers();
+    const disabledState = {
+      ...createDefaultHostToolbarState(),
+      annotationEnableAvailable: true,
+      annotationEnableDisabled: false,
+    };
+    const enabledState = {
+      ...disabledState,
+      annotationEnabled: true,
+      annotationEnableDisabled: true,
+      annotationEnableTitle: '需求标注已开启',
+    };
+    let listener: ((state: typeof disabledState) => void) | null = null;
+    const waitPromise = waitForHostToolbarActionState({
+      getHostToolbarState: () => disabledState,
+      subscribeHostToolbarState: (nextListener) => {
+        listener = nextListener;
+        return () => undefined;
+      },
+    }, { type: 'enable-annotation' }, disabledState);
+
+    listener?.(enabledState);
+
+    await expect(waitPromise).resolves.toEqual(enabledState);
     vi.useRealTimers();
   });
 

@@ -11,6 +11,29 @@ interface ExcalidrawCanvasProps {
 
 const SAVE_DEBOUNCE_MS = 1500;
 
+function encodeCanvasApiPath(canvasName: string): string {
+    return canvasName
+        .split('/')
+        .filter(Boolean)
+        .map((segment) => encodeURIComponent(segment))
+        .join('/');
+}
+
+function resolveResourceCanvasApiPath(canvasName: string): string {
+    const normalized = String(canvasName || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    if (normalized.startsWith('resources/')) {
+        return normalized.slice('resources/'.length);
+    }
+    if (normalized.startsWith('src/resources/')) {
+        return normalized.slice('src/resources/'.length);
+    }
+    return normalized;
+}
+
+function buildCanvasApiUrl(canvasName: string): string {
+    return `/api/canvas/resources/${encodeCanvasApiPath(resolveResourceCanvasApiPath(canvasName))}`;
+}
+
 export default function ExcalidrawCanvas({ canvasName, isDarkMode }: ExcalidrawCanvasProps) {
     const [excalidrawAPI, setExcalidrawAPI] = useState<ExcalidrawAPI | null>(null);
     const [initialData, setInitialData] = useState<any>(null);
@@ -32,7 +55,7 @@ export default function ExcalidrawCanvas({ canvasName, isDarkMode }: ExcalidrawC
 
         const loadCanvas = async () => {
             try {
-                const response = await fetch(`/api/canvas/${encodeURIComponent(canvasName)}`);
+                const response = await fetch(buildCanvasApiUrl(canvasName));
                 if (cancelled) return;
                 if (!response.ok) {
                     throw new Error(`加载画布失败 (${response.status})`);
@@ -77,7 +100,7 @@ export default function ExcalidrawCanvas({ canvasName, isDarkMode }: ExcalidrawC
                 files,
             };
 
-            await fetch(`/api/canvas/${encodeURIComponent(currentNameRef.current)}`, {
+            await fetch(buildCanvasApiUrl(currentNameRef.current), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content: JSON.stringify(payload, null, 2) }),

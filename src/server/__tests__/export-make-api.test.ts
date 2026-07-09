@@ -177,7 +177,7 @@ describe('make-server Figma Make export API', () => {
         hasMakeAssets: false,
         fileName: 'Home Export.fig',
       });
-      expect(body.prompt).toContain('/skills/react-to-figma-make/SKILL.md');
+      expect(body.prompt).toContain('https://github.com/lintendo/Axhub-Skills/blob/main/skills/react-to-figma-make/SKILL.md');
       expect(body.prompt).toContain('.axhub/make/artifacts/figma/home/canvas.fig');
       expect(body.prompt).toContain('/api/export-make?path=prototypes/home');
 
