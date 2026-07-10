@@ -38,6 +38,30 @@ const makeClientTemplateReleaseNotesFileName = 'RELEASE_NOTES.md';
 const makeClientTemplateZipName = 'axhub-make-client-template.zip';
 const makeClientTemplateLatestManifestName = 'axhub-make-client-template.latest.json';
 const makeClientTemplateLatestManifestGiteeTagName = 'make-client-template-latest';
+const makeClientTemplatePackageManager = 'pnpm@10.20.0';
+const makeClientTemplateExactDependencies = new Map([
+  ['@axhub/annotation', '1.0.15'],
+  ['lucide-react', '0.562.0'],
+]);
+const makeClientTemplateExactDevDependencies = new Map([
+  ['react', '18.2.0'],
+  ['react-dom', '18.2.0'],
+]);
+const makeClientTemplateIgnoredScripts = new Set([
+  'test',
+  'test:run',
+  'test:coverage',
+  'test:watch',
+  'test:ui',
+  'coverage',
+  'font:subset:beginner-guide',
+]);
+const makeClientTemplateIgnoredDevDependencies = new Set([
+  'vitest',
+  '@vitest/ui',
+  '@vitest/coverage-v8',
+  'subset-font',
+]);
 const includeOpenCodeWebUi = false;
 const npmPackagePackedSizeLimit = 35 * 1024 * 1024;
 const npmPackageUnpackedSizeLimit = 80 * 1024 * 1024;
@@ -478,6 +502,12 @@ function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
   if (entryName.endsWith('.tsbuildinfo')) {
     return true;
   }
+  if (/\.test\.[^/]+$/u.test(entryName)) {
+    return true;
+  }
+  if (normalizedRelativePath === 'scripts/subset-beginner-guide-fonts.mjs') {
+    return true;
+  }
   if (/^src\/prototypes\/[^/]+\/\.spec\/acp(?:\/|$)/u.test(normalizedRelativePath)) {
     return true;
   }
@@ -573,6 +603,56 @@ function buildTemplateZippable(sourceDir, currentDir = sourceDir, relativeDir = 
     }
   }
   return entries;
+}
+
+export function createMakeClientTemplatePackageJson(sourcePackageJson) {
+  const packageJson = JSON.parse(JSON.stringify(sourcePackageJson || {}));
+  packageJson.packageManager = makeClientTemplatePackageManager;
+
+  packageJson.scripts = Object.fromEntries(
+    Object.entries(packageJson.scripts || {})
+      .filter(([name]) => !makeClientTemplateIgnoredScripts.has(name)),
+  );
+  packageJson.devDependencies = Object.fromEntries(
+    Object.entries(packageJson.devDependencies || {})
+      .filter(([name]) => !makeClientTemplateIgnoredDevDependencies.has(name)),
+  );
+
+  for (const [name, version] of makeClientTemplateExactDependencies) {
+    if (packageJson.dependencies?.[name]) {
+      packageJson.dependencies[name] = version;
+    }
+  }
+  for (const [name, version] of makeClientTemplateExactDevDependencies) {
+    if (packageJson.devDependencies?.[name]) {
+      packageJson.devDependencies[name] = version;
+    }
+  }
+
+  return packageJson;
+}
+
+function createMakeClientTemplateLockfile(packageJson) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-make-client-lock-'));
+  try {
+    writeJson(path.join(tempDir, 'package.json'), packageJson);
+    run(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', [
+      'install',
+      '--lockfile-only',
+      '--ignore-scripts',
+      '--ignore-workspace',
+    ], {
+      cwd: tempDir,
+      capture: true,
+    });
+    const lockfilePath = path.join(tempDir, 'pnpm-lock.yaml');
+    if (!fs.existsSync(lockfilePath)) {
+      throw new Error('pnpm did not create a lockfile for the Make client template');
+    }
+    return fs.readFileSync(lockfilePath);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 export function createTemplateZipMetadata({
@@ -755,7 +835,13 @@ export function createMakeClientTemplateZip({
   fs.mkdirSync(outputDir, { recursive: true });
   const zipPath = path.join(outputDir, makeClientTemplateZipName);
   fs.rmSync(zipPath, { force: true });
-  const zipped = zipSync(buildTemplateZippable(sourceClientDir), { level: 6 });
+  const packageJson = createMakeClientTemplatePackageJson(
+    readJson(path.join(sourceClientDir, 'package.json')),
+  );
+  const zippable = buildTemplateZippable(sourceClientDir);
+  zippable['package.json'] = new Uint8Array(Buffer.from(`${JSON.stringify(packageJson, null, 2)}\n`, 'utf8'));
+  zippable['pnpm-lock.yaml'] = new Uint8Array(createMakeClientTemplateLockfile(packageJson));
+  const zipped = zipSync(zippable, { level: 6 });
   fs.writeFileSync(zipPath, Buffer.from(zipped));
   assertNoLocalMachinePathsInZip(zipPath, 'Make client template zip');
   return {

@@ -1,9 +1,10 @@
 {
   "name": "@axhub/make-client",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "description": "Official Axhub Make client runtime",
   "type": "module",
+  "packageManager": "pnpm@10.20.0",
   "scripts": {
     "vendor:sync": "node scripts/sync-vendor-if-present.mjs",
     "dev": "node scripts/sync-vendor-if-present.mjs && vite",
@@ -40,8 +41,8 @@
     "ws": "^8.18.3"
   },
   "dependencies": {
-    "@axhub/annotation": "^1.0.14",
+    "@axhub/annotation": "1.0.15",
     "@axhub/commentary-react": "^1.0.0",
-    "lucide-react": "^0.562.0"
+    "lucide-react": "0.562.0"
   }
 }

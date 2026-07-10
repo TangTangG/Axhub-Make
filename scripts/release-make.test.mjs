@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { unzipSync } from 'fflate';
 
 process.env.AXHUB_MAKE_RELEASE_SKIP_MAIN = '1';
 
@@ -264,17 +265,69 @@ describe('release make artifact helpers', () => {
     });
   });
 
-  it('keeps make release Vitest companion packages on exact matching versions', () => {
-    const sourcePackageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
-    const devDependencies = sourcePackageJson.devDependencies || {};
+  it('keeps make client Vitest companion packages on exact matching versions', () => {
+    const clientPackageJson = JSON.parse(fs.readFileSync(path.resolve('client/package.json'), 'utf8'));
+    const devDependencies = clientPackageJson.devDependencies || {};
     const vitestVersion = devDependencies.vitest;
 
     assert.match(
       vitestVersion,
       /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u,
-      'devDependencies.vitest must be an exact version to avoid npm peer dependency solver drift',
+      'client devDependencies.vitest must be an exact version to avoid npm peer dependency solver drift',
     );
+    assert.equal(devDependencies['@vitest/ui'], vitestVersion);
     assert.equal(devDependencies['@vitest/coverage-v8'], vitestVersion);
+  });
+
+  it('pins the Make client release dependencies and pnpm version', () => {
+    const clientPackageJson = JSON.parse(fs.readFileSync(path.resolve('client/package.json'), 'utf8'));
+
+    assert.equal(clientPackageJson.version, '0.1.13');
+    assert.equal(clientPackageJson.packageManager, 'pnpm@10.20.0');
+    assert.equal(clientPackageJson.dependencies['@axhub/annotation'], '1.0.15');
+    assert.equal(clientPackageJson.dependencies['lucide-react'], '0.562.0');
+  });
+
+  it('creates a lean pnpm-only package manifest for released client templates', () => {
+    const packageJson = releaseMake.createMakeClientTemplatePackageJson({
+      name: '@axhub/make-client',
+      version: '0.1.13',
+      scripts: {
+        dev: 'vite',
+        test: 'pnpm test:run',
+        'test:run': 'vitest --run',
+        'test:coverage': 'vitest --run --coverage',
+        'test:watch': 'vitest',
+        'test:ui': 'vitest --ui',
+        coverage: 'pnpm test:coverage',
+        'font:subset:beginner-guide': 'node scripts/subset-beginner-guide-fonts.mjs',
+      },
+      dependencies: {
+        '@axhub/annotation': '^1.0.15',
+        'lucide-react': '^0.562.0',
+      },
+      devDependencies: {
+        '@vitest/coverage-v8': '4.0.16',
+        '@vitest/ui': '4.0.16',
+        react: '^18.2.0',
+        'react-dom': '^18.2.0',
+        'subset-font': '^2.5.0',
+        vitest: '4.0.16',
+        vite: '5.4.21',
+      },
+    });
+
+    assert.equal(packageJson.packageManager, 'pnpm@10.20.0');
+    assert.deepEqual(packageJson.scripts, { dev: 'vite' });
+    assert.deepEqual(packageJson.dependencies, {
+      '@axhub/annotation': '1.0.15',
+      'lucide-react': '0.562.0',
+    });
+    assert.deepEqual(packageJson.devDependencies, {
+      react: '18.2.0',
+      'react-dom': '18.2.0',
+      vite: '5.4.21',
+    });
   });
 
   it('keeps ordinary make release commands free of the client template zip', () => {
@@ -327,7 +380,22 @@ describe('release make artifact helpers', () => {
     const sourceRoot = createTempRoot('axhub-release-template-source-');
     const outputRoot = createTempRoot('axhub-release-template-output-');
     const clientRoot = path.join(sourceRoot, 'client');
-    writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
+    writeFile(path.join(clientRoot, 'package.json'), `${JSON.stringify({
+      name: '@axhub/make-client',
+      private: true,
+      scripts: {
+        dev: 'vite',
+        test: 'pnpm test:run',
+        'test:run': 'vitest --run',
+        'font:subset:beginner-guide': 'node scripts/subset-beginner-guide-fonts.mjs',
+      },
+      devDependencies: {
+        react: '^18.2.0',
+        'react-dom': '^18.2.0',
+        'subset-font': '^2.5.0',
+        vitest: '4.0.16',
+      },
+    }, null, 2)}\n`);
     writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/index.tsx'), 'export {};\n');
     writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/canvas.excalidraw'), '{"type":"excalidraw"}\n');
     writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/canvas-assets/screenshot.png'), 'screenshot\n');
@@ -337,6 +405,8 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/TsangerJinKai02-W04.ttf'), 'source font\n');
     writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/TsangerJinKai02-W04.subset.woff2'), 'subset font\n');
     writeFile(path.join(clientRoot, 'tests/template.test.mjs'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'scripts/capture-theme.test.mjs'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'scripts/subset-beginner-guide-fonts.mjs'), 'export {};\n');
     writeFile(path.join(clientRoot, '.git/config'), '[core]\n');
     writeFile(path.join(clientRoot, '.DS_Store'), 'finder\n');
     writeFile(path.join(clientRoot, 'src/resources/.DS_Store'), 'finder\n');
@@ -377,7 +447,20 @@ describe('release make artifact helpers', () => {
     assert.equal(path.basename(result.path), 'axhub-make-client-template.zip');
     assert.match(result.sha256, /^[a-f0-9]{64}$/u);
     const entries = releaseMake.listZipEntries(result.path);
+    const zipEntries = unzipSync(new Uint8Array(fs.readFileSync(result.path)));
+    const packagedPackageJson = JSON.parse(Buffer.from(zipEntries['package.json']).toString('utf8'));
+    const packagedLockfile = Buffer.from(zipEntries['pnpm-lock.yaml']).toString('utf8');
     assert(entries.includes('package.json'));
+    assert(entries.includes('pnpm-lock.yaml'));
+    assert.equal(packagedPackageJson.packageManager, 'pnpm@10.20.0');
+    assert.equal(packagedPackageJson.scripts.test, undefined);
+    assert.equal(packagedPackageJson.scripts['test:run'], undefined);
+    assert.equal(packagedPackageJson.scripts['font:subset:beginner-guide'], undefined);
+    assert.equal(packagedPackageJson.devDependencies.vitest, undefined);
+    assert.equal(packagedPackageJson.devDependencies['subset-font'], undefined);
+    assert.equal(packagedPackageJson.devDependencies.react, '18.2.0');
+    assert.match(packagedLockfile, /react:\n\s+specifier: 18\.2\.0/u);
+    assert.match(packagedLockfile, /react-dom:\n\s+specifier: 18\.2\.0/u);
     assert(entries.includes('src/prototypes/beginner-guide/index.tsx'));
     assert(!entries.includes('src/prototypes/beginner-guide/canvas.excalidraw'));
     assert(!entries.some((entry) => entry.startsWith('src/prototypes/beginner-guide/canvas-assets/')));
@@ -387,6 +470,8 @@ describe('release make artifact helpers', () => {
     assert(!entries.includes('src/prototypes/beginner-guide/TsangerJinKai02-W04.ttf'));
     assert(entries.includes('src/prototypes/beginner-guide/TsangerJinKai02-W04.subset.woff2'));
     assert(!entries.some((entry) => entry.startsWith('tests/')));
+    assert(!entries.some((entry) => /\.test\.[^/]+$/u.test(entry)));
+    assert(!entries.includes('scripts/subset-beginner-guide-fonts.mjs'));
     assert(!entries.some((entry) => entry.startsWith('.git/')));
     assert(!entries.includes('.DS_Store'));
     assert(!entries.includes('src/resources/.DS_Store'));
