@@ -51,6 +51,8 @@ describe('make-server project legacy compatibility APIs', () => {
     writeProjectMetadata(secondRoot, {
       project: { id: 'second-client', name: 'Second Client' },
     });
+    fs.rmSync(path.join(firstRoot, 'src', 'resources', 'spec.md'), { force: true });
+    fs.rmSync(path.join(secondRoot, 'src', 'resources', 'spec.md'), { force: true });
     fs.mkdirSync(path.join(firstRoot, 'src', 'resources'), { recursive: true });
     fs.mkdirSync(path.join(secondRoot, 'src', 'resources'), { recursive: true });
     fs.mkdirSync(path.join(firstRoot, 'src', 'prototypes', 'first-only'), { recursive: true });
@@ -218,6 +220,7 @@ describe('make-server project legacy compatibility APIs', () => {
         docs: { type: 'project-relative-path', path: 'src/resources' },
       },
     });
+    fs.rmSync(path.join(resourcesDir, 'spec.md'), { force: true });
     const server = await startTestServer(projectRoot);
 
     try {

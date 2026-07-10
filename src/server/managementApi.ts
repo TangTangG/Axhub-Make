@@ -1037,7 +1037,10 @@ function createUnavailableProjectResourcesPayload(
       id: project.id,
       name: project.name,
     },
-    resources: createEmptyProjectResources(),
+    resources: {
+      ...createEmptyProjectResources(),
+      docs: [],
+    },
     navigation: {
       prototypes: [],
     },
