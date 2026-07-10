@@ -43,5 +43,5 @@
 
 ## 与 Axhub 规范的边界
 
-- 画布文件仍写入 `src/prototypes/<prototype-name>/canvas.excalidraw`。
+- 画布文件写入 `src/resources/**/*.excalidraw`。
 - 字体、颜色、节点、资源和交付口径仍按本技能主文档与其他 references 执行。

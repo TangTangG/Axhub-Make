@@ -28,15 +28,26 @@
 1. 用户当前消息、附件、截图、链接和已给出的约束。
 2. 当前目录最近的 `AGENTS.md`、`README.md` 和相关 `rules/`。
 3. 关联原型：目录结构、入口文件、必要样式和已有交互。
-4. 资源目录：只做目录级扫描，了解已有原型、主题、文档和资产。
+4. 资源目录：只做目录级扫描，了解已有原型、主题、文档、画布和资产。
 5. 相关文件：只读取会影响本次判断的文件，不批量展开无关文件。
 
 重点看：
 
 - `src/prototypes/`：是否已有同类原型、参考页或可复用页面结构。
 - `src/themes/`：是否已有相近主题或设计系统。
-- `src/resources/`：是否已有业务说明、字段、流程资料或素材。
-- 原型内 `assets/`、`canvas-assets/`：是否有用户提供或历史沉淀的素材。
+- `src/resources/`：是否已有业务说明、字段、流程资料、画布、设计图、图表或素材。
+- 原型内 `assets/`：是否有原型页面专属素材。
+
+## 预览链接口径
+
+给用户看的预览链接必须是当前环境可直接打开的完整 URL，不能只返回运行时相对路径、源码路径或 `DESIGN.md` 文件路径。
+
+- 脚本参数、配置字段和运行时内部数据可以继续使用 `/prototypes/<slug>`、`/themes/<slug>` 这类相对路径。
+- 回复用户、候选方案和验收说明里的“预览链接”必须优先使用 `node scripts/check-app-ready.mjs` 返回的 `targetUrl`。
+- 未运行 ready 检查时，先读取 `.axhub/make/.dev-server-info.json` 的 `origin`，再拼 `origin + /prototypes/<slug>` 或 `origin + /themes/<slug>`。
+- 资源 metadata 里的 `clientUrl` / `previewUrl` 只有在已经是 `http://` 或 `https://` URL 时才能直接发给用户；如果是 `/themes/<slug>` 或 `/prototypes/<slug>`，必须先按当前 `origin` 补齐。
+- 不能确认 dev server `origin` 时，只能把 `/themes/<slug>` 或 `/prototypes/<slug>` 标为“预览路径”，不要称为可打开链接；需要先启动/确认本地预览服务。
+- 主题预览链接的规范路径是 `/themes/<theme-slug>`，原型预览链接的规范路径是 `/prototypes/<prototype-slug>`；不要默认改成 `src/...`、`DESIGN.md`、`index.tsx` 或本机文件路径。
 
 ## 产品需求对齐
 
@@ -61,7 +72,7 @@
 
 整理候选时优先读取主题 `theme.json`，用 `tags.*`、`display.distributionTags`、`identity.title*/description*` 和 `display.variant` 做检索与候选说明；用 `identity.slug` 和 `assets.designMd.path` 校验目录与 `DESIGN.md` 路径。
 
-候选必须提供可打开的主题预览链接。优先使用资源 metadata 里的 `clientUrl` / `previewUrl`；没有时使用 `/themes/<theme-slug>`。同时标出对应 `DESIGN.md` 路径，便于用户核对。
+候选必须提供可打开的主题预览链接。优先使用资源 metadata 里的 `clientUrl` / `previewUrl`，但如果它是相对路径，必须按“预览链接口径”补齐当前 dev server `origin`；没有 metadata 时使用 `origin + /themes/<theme-slug>`。同时标出对应 `DESIGN.md` 路径，便于用户核对。
 
 `DESIGN.md` 确定后，用户零散提出的颜色、字体、布局、动效、组件形态等需求，都作为基于该设计基底的调整处理，不另起一套视觉系统。
 

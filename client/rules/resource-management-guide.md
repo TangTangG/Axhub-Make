@@ -11,13 +11,13 @@
 
 ## 目录边界
 
-- `src/resources/` 存放长期项目资料、文档、图表、数据样例和业务附件。
+- `src/resources/` 存放长期项目资料、文档、画布、图表、数据样例和业务附件。
 - `src/resources/templates/` 存放可复用文档模板；模板也是文档资源的一种。
+- 画布是普通资源文件，保存为 `src/resources/**/*.excalidraw`；画布内图片、截图和 AI 生成图保存到同级 `<画布文件名去扩展名>.assets/`。
 - 原型页面专属素材放在对应原型目录内，例如 `src/prototypes/<name>/assets/`。
-- 画布截图、原型占位位图、画布生成图等放在对应原型的 `canvas-assets/`，不要搬到资源目录。
 - 主题素材放在对应主题目录内，例如 `src/themes/<theme-key>/assets/`。
 
-图片、截图、参考图等素材只在需要长期保留为项目资料时放入 `src/resources/`。
+设计图、流程图、图表、参考图等 AI 产物默认保存到 `src/resources/`，需要时再作为资源嵌入画布或原型。
 
 ## 资源链接
 
@@ -26,13 +26,15 @@
 - 只读链接：用于预览、嵌入、下载或外部读取。
 - 编辑链接：Make 管理端地址，用于打开资源详情页，带顶部工具栏和系统编辑能力。
 
+本节示例是资源路由格式，可用于文档、metadata 或运行时字段。回复用户时，如果要作为可点击链接使用，必须先按当前 Make 管理端或 runtime origin 补齐完整 URL；无法确认 origin 时，只能标为“资源路径/预览路径”。
+
 编辑链接统一使用 Make 管理端 deep link：
 
 ```text
 /?projectId=<projectId>&doc=<resource-path>
 ```
 
-其中 `resource-path` 是相对 `src/resources/` 的路径，例如 `templates/prd-template.md` 或 `flows/order-status.drawio`。
+其中 `resource-path` 是相对 `src/resources/` 的路径，例如 `templates/prd-template.md`、`flows/app.excalidraw` 或 `flows/order-status.drawio`。
 
 除 Markdown 外，所有资源的只读链接统一使用文档资源文件地址：
 

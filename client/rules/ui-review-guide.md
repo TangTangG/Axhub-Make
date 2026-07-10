@@ -1,4 +1,4 @@
-# UI Review 指导
+# UI 评审指导
 
 用于审查 Axhub Make client 原型页面的 UI 质量、设计一致性、响应式、可访问性和核心元件表现。
 
@@ -19,7 +19,7 @@
 
 1. 用户明确指定的 `DESIGN.md` 或主题目录下的 `DESIGN.md`
 2. 用户未指定时，使用项目默认设计的 `DESIGN.md`
-3. 如果没有用户指定或项目默认的 `DESIGN.md`，必须停止，要求用户提供
+3. 如果没有用户指定或项目默认的 `DESIGN.md`，按常规设计评审执行，并在报告中说明未使用设计规范
 
 禁止把以下内容作为审查依据：
 
@@ -40,11 +40,11 @@
 Use the copied Impeccable critique reference as the review method, but follow Axhub rules:
 1. Use only the selected DESIGN.md as the design basis.
 2. Ignore PRODUCT.md and all other design files as normative criteria.
-3. If no DESIGN.md is available, stop and ask for one.
+3. If no DESIGN.md is available, continue with a conventional design review and state that no design spec was used.
 4. Do not call /impeccable commands or run Impeccable context injection scripts.
 5. Produce a Markdown report, not JSON.
 6. Write the result to the target prototype .spec directory.
-7. Include sections in order: 总体点评, P0-P3 优先级问题, 核心元件.
+7. Include sections in order: 总体点评, 评分依据, P0-P3 优先级问题, 核心元件.
 8. Priorities must contain at most 5 P0-P3 findings.
 9. Do not write .impeccable critique artifacts as the deliverable.
 ```
@@ -61,7 +61,7 @@ Use the copied Impeccable critique reference as the review method, but follow Ax
 2. **确定 DESIGN.md**
    - 用户指定主题时，读取 `src/themes/<theme-id>/DESIGN.md`
    - 用户指定路径时，只读取该 `DESIGN.md`
-   - 未指定且项目默认不存在时，停止
+   - 未指定且项目默认不存在时，按常规设计评审执行，并在报告中说明
 
 3. **参考 Impeccable critique**
    - 读取目标源码和本地样式
@@ -76,56 +76,65 @@ Use the copied Impeccable critique reference as the review method, but follow Ax
    - 必须包含核心元件或关键 UI 区块点评
 
 5. **写入 `.spec`**
-   - 原型级：`src/prototypes/<prototype-id>/.spec/ui-review.md`
-   - 页面级如后续需要：`src/prototypes/<prototype-id>/.spec/<page-id>/ui-review.md`
+   - 原型级：`src/prototypes/<prototype-id>/.spec/reviews/ui-review.md`
+   - 页面级如后续需要：`src/prototypes/<prototype-id>/.spec/reviews/<page-id>-ui-review.md`
+
+## 报告元数据与评分
+
+AI 生成报告时，推荐在 Markdown 开头写 frontmatter；人工上传报告可以不写。系统会读取这些字段作为列表元数据，不会用它们推导正文结论。
+
+设计评审报告的 `title` 固定写成 `UI 评审`，不要把原型名、产品名、主题名或页面名写进 `title`。
+正文必须使用 Markdown 标题语法：报告标题、分组标题和问题小节都要使用井号标题；问题小节的优先级按实际判断填写，不要照抄模板占位或固定优先级。
+
+`score` 是百分制整数成熟度评分，可选。它必须用于拉开差距、帮助跨版本对比和判断改进幅度，不是礼貌性的中庸总评。
+不要默认填写某个中庸分，不要沿用模板、示例或历史报告分数；无法给出明确总分时，删除 score 行。
+AI 生成报告时，只要证据足够支撑判断，就应填写 score，并在正文写清楚评分依据。
+
+成熟度评分：
+
+- 90-100：标杆交付。整体设计稳定，符合 DESIGN.md，桌面/移动/键盘/动效等关键体验完整；没有 P0/P1，P2 极少且不影响交付。
+- 80-89：可交付。核心体验和视觉系统成立，只有少量非关键问题；没有 P0/P1，P2 数量少且修复成本可控。
+- 70-79：方向成立但需补齐。视觉方向、核心任务或主要区块可用，但存在 P1 或多个 P2，不能只做 polish 就交付。
+- 60-69：初稿讨论稿。页面有可保留方向，但关键任务效率、响应式、可访问性或 DESIGN.md 一致性仍不稳定。
+- 50-59：需要大改。核心视觉系统、信息层级或主要交互不成立，必须重构关键区块。
+- 低于 50：阻断严重。核心任务难以完成，或与设计目标/用户任务严重冲突。
+
+封顶规则：
+
+- 有任何 `P0`，最高 59。
+- 有 `2 个及以上 P1`，最高 69。
+- 有 `1 个 P1`，最高 79。
+- 有 `3 个及以上 P2`，最高 78。
+- 未检查移动端或关键响应式断点，最高 75。
+- 未检查键盘焦点、基本语义或明显对比度风险，最高 80。
+- 未使用可用的 DESIGN.md 作为依据时，最高 75；确实没有 DESIGN.md 且已说明，则不触发该封顶。
+
+扣分建议：
+
+- P0：每项扣 30 分以上，并应用 P0 封顶。
+- P1：每项扣 10-15 分，并应用 P1 封顶。
+- P2：每项扣 4-8 分，并在 3 个及以上时应用 P2 封顶。
+- P3：每项扣 1-3 分，不应单独把分数压到 80 以下。
+- 证据不足：按缺失范围扣 3-10 分；如果缺失影响判断可信度，直接删除 score 行。
+
+报告必须包含 `评分依据` 分组，至少说明：成熟度档位、触发的封顶规则、覆盖扣分、最终分数为什么成立。
 
 ## Markdown 模板
 
-```markdown
-# UI Review
+读取并套用资源模板：`client/src/resources/templates/ui-review-report-template.md`。
 
-- 审查目标：src/prototypes/<prototype-id>
-- 使用设计依据：src/themes/<theme-id>/DESIGN.md
-- 生成时间：2026-05-22 00:00
-
-## 总体点评
-
-用 1-3 段总结整体设计质量、与 DESIGN.md 的一致性、主要风险和最值得保留的亮点。
-
-## P0-P3 优先级问题
-
-### P1 - Finding title
-
-- 证据：说明出现位置、截图/预览观察或源码线索。
-- 影响：说明对用户任务、理解、可访问性或品牌一致性的影响。
-- 修复方向：给出可执行的设计或实现建议。
-
-## 核心元件
-
-### Hero / Header / Form / Navigation
-
-按关键 UI 区块点评是否符合 DESIGN.md，指出保留点和调整点。
-
-## 响应式与可访问性
-
-记录桌面/移动端差异、键盘/语义/对比度等发现。没有明显问题时也要说明已检查。
-
-## 证据与评估说明
-
-- 浏览器/截图：说明是否使用。
-- Scanner：说明是否使用。
-- 独立评估：full 或 degraded，并说明原因。
-```
+模板是报告结构的唯一来源；本规则只补充评审方法、评分口径和分组约束。输出时保留模板中的 frontmatter、固定一级标题、固定分组顺序和问题条目结构。
 
 ## 分组要求
 
-前三组固定且顺序不可变：
+前四组固定且顺序不可变：
 
 1. `总体点评`
-2. `P0-P3 优先级问题`，最多 5 条
-3. `核心元件`
+2. `评分依据`
+3. `P0-P3 优先级问题`，最多 5 条
+4. `核心元件`
 
-可以追加额外分组，例如 `响应式与可访问性`、`证据与评估说明`，但必须放在前三组之后。
+可以追加额外分组，例如 `响应式与可访问性`、`证据与评估说明`，但必须放在前四组之后。
 
 ## 优先级
 
@@ -145,7 +154,7 @@ Use the copied Impeccable critique reference as the review method, but follow Ax
 
 两个评估完成前不要互相暴露结论。没有子代理时，先完成设计评估笔记，再看 scanner/证据，并在 `证据与评估说明` 中标记独立评估为 `degraded`。
 
-当审查 3 个以上独立页面或组件时，优先按目标拆分并行审查，最后统一综合成 `.spec/ui-review.md`。
+当审查 3 个以上独立页面或组件时，优先按目标拆分并行审查，最后统一综合成 `.spec/reviews/ui-review.md`。
 
 ## 交付说明
 
@@ -153,7 +162,7 @@ Use the copied Impeccable critique reference as the review method, but follow Ax
 
 - 审查目标
 - 使用的 `DESIGN.md`
-- 写入的 `.spec/ui-review.md` 路径
+- 写入的 `.spec/reviews/ui-review.md` 路径
 - P0-P3 数量
 - 是否使用浏览器/截图/scanner
 - 独立评估是否完整

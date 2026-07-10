@@ -36,6 +36,7 @@ vite.config.*.timestamp-*
 !.axhub/make/axhub.config.json
 !.axhub/make/README.md
 !.axhub/make/sidebar-tree.json
+.axhub/make/review-reports.json
 .axhub/sessions/
 components.json
 .dev-server-info.json
@@ -51,6 +52,7 @@ entries.json
 !.agents/skills/
 !.agents/skills/**
 .opencode/
+.codegraph/
 .trae/
 /.drafts/
 *.swp
@@ -72,7 +74,9 @@ Desktop.ini
 
 # Logs
 logs/
+.logs/
 *.log
+*.pid
 
 # Temporary files
 *.tmp
@@ -83,6 +87,7 @@ logs/
 # Runtime review/comment artifacts are project-local by default.
 src/prototypes/**/.spec/acp/
 src/prototypes/**/.spec/prototype-comments.json
+src/prototypes/**/.spec/reviews/config.json
 
 # Coverage reports
 coverage/

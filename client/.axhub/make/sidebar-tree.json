@@ -1,7 +1,13 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-22T14:32:04.943Z",
+  "updatedAt": "2026-07-08T15:54:13.906Z",
   "prototypes": [
+    {
+      "id": "item:prototypes:annotation-demo",
+      "kind": "item",
+      "title": "标注演示",
+      "itemKey": "prototypes/annotation-demo"
+    },
     {
       "id": "item:prototypes:beginner-guide",
       "kind": "item",
@@ -13,12 +19,6 @@
       "kind": "item",
       "title": "批注演示",
       "itemKey": "prototypes/touch-and-talk-annotation-demo"
-    },
-    {
-      "id": "item:prototypes:annotation-demo",
-      "kind": "item",
-      "title": "标注演示",
-      "itemKey": "prototypes/annotation-demo"
     }
   ],
   "docs": [],

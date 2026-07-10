@@ -1,7 +1,6 @@
 {
   "server": {
     "host": "localhost",
-    "allowLAN": true,
     "enableCommandAPI": false
   },
   "projectDefaults": {
@@ -9,5 +8,29 @@
   },
   "projectInfo": {
     "description": null
+  },
+  "cloudPublishing": {
+    "vercel": {
+      "token": "",
+      "projectName": "",
+      "teamId": ""
+    },
+    "cloudflarePages": {
+      "apiToken": "",
+      "accountId": "",
+      "projectName": "",
+      "productionBranch": "main"
+    },
+    "githubPages": {
+      "repository": "",
+      "branch": "gh-pages",
+      "sourceDirectory": "/"
+    },
+    "publishSettings": {
+      "includeSource": false,
+      "visibleTargets": [
+        "axhub"
+      ]
+    }
   }
 }

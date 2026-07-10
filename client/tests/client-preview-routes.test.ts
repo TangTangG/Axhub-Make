@@ -108,18 +108,39 @@ afterEach(async () => {
   await Promise.all(viteServers.splice(0).map((server) => server.close()));
 });
 
-function stubAdminHealth(origins: string[]) {
+function stubAdminHealth(origins: string[], options: { acceptSessionToken?: string } = {}) {
   globalThis.fetch = vi.fn(async (input: any) => {
     const url = new URL(String(input));
     const origin = url.origin;
     if (!origins.includes(origin)) {
       throw new Error(`Unexpected health probe for ${origin}`);
     }
+    if (url.pathname === '/api/access/validate') {
+      if (options.acceptSessionToken) {
+        return {
+          ok: true,
+          json: async () => ({ valid: true, passwordSet: true }),
+        } as any;
+      }
+      return {
+        ok: false,
+        json: async () => ({ valid: false, passwordSet: true }),
+      } as any;
+    }
+    if (url.pathname === '/api/access/status') {
+      return {
+        ok: true,
+        json: async () => ({ passwordSet: true, sessionTtlMs: 604_800_000, shareTokenTtlMs: 600_000 }),
+      } as any;
+    }
     return {
       ok: true,
       json: async () => ({
         ok: true,
         role: 'admin',
+        capabilities: {
+          reviewReports: true,
+        },
         server: {
           pid: origin.endsWith(':5176') ? 5176 : 5174,
           port: Number(origin.split(':').pop()),
@@ -238,6 +259,58 @@ describe('client preview routes', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('does not inject a default admin origin that lacks review report APIs', async () => {
+    const projectRoot = createFixtureProject();
+    globalThis.fetch = vi.fn(async (input: any) => {
+      const url = new URL(String(input));
+      expect(url.origin).toBe('http://localhost:53817');
+      expect(url.pathname).toBe('/api/health');
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          role: 'admin',
+          devMode: true,
+          server: {
+            pid: 12345,
+            port: 53817,
+            host: 'localhost',
+            origin: 'http://localhost:53817',
+            projectRoot,
+            startedAt: '2026-05-08T00:00:00.000Z',
+          },
+        }),
+      } as any;
+    }) as any;
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home',
+      headers: {},
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
+    expect(html).not.toContain('http://localhost:53817/assets/dev-template-bootstrap.js');
+    expect(html).not.toContain('http://localhost:53817/runtime/quick-edit.js');
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('uses a stable preview loader module script URL instead of Vite HTML proxy routing', async () => {
     const projectRoot = createFixtureProject();
     stubAdminHealth(['http://localhost:5174']);
@@ -262,6 +335,175 @@ describe('client preview routes', () => {
     expect(html).not.toContain('html-proxy');
   });
 
+  it('exchanges axhubAccessToken for a client preview cookie and removes the token from the URL', async () => {
+    const projectRoot = createFixtureProject();
+    const adminOrigin = 'http://localhost:5174';
+    const fetchCalls: string[] = [];
+    globalThis.fetch = vi.fn(async (input: any, init?: RequestInit) => {
+      const url = new URL(String(input));
+      fetchCalls.push(`${init?.method || 'GET'} ${url.pathname}`);
+      if (url.origin !== adminOrigin) {
+        throw new Error(`Unexpected admin access call for ${url.origin}`);
+      }
+      if (url.pathname === '/api/health') {
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'admin',
+            capabilities: { reviewReports: true },
+            server: {
+              pid: 5174,
+              port: 5174,
+              host: 'localhost',
+              origin: adminOrigin,
+              projectRoot,
+              startedAt: '2026-05-08T00:00:00.000Z',
+            },
+          }),
+        } as any;
+      }
+      if (url.pathname === '/api/access/exchange') {
+        const body = JSON.parse(String(init?.body || '{}'));
+        expect(body).toMatchObject({ token: 'share-token' });
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            sessionToken: 'client-session-token',
+            expiresAt: '2026-05-08T00:10:00.000Z',
+          }),
+        } as any;
+      }
+      throw new Error(`Unexpected access path ${url.pathname}`);
+    }) as any;
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: adminOrigin,
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+
+    const response = await originalFetch(`${origin}/prototypes/home?axhubAccessToken=share-token&projectId=make-project`, {
+      redirect: 'manual',
+      headers: {
+        'x-forwarded-for': '192.168.1.55',
+      },
+    });
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('/prototypes/home?projectId=make-project');
+    expect(response.headers.get('set-cookie')).toContain('axhub_lan_auth=client-session-token');
+    expect(response.headers.get('set-cookie')).toContain('HttpOnly');
+    expect(fetchCalls).toContain('POST /api/access/exchange');
+  });
+
+  it('treats the machine LAN host as local client preview access', async () => {
+    const projectRoot = createFixtureProject();
+    const fetchCalls: string[] = [];
+    vi.spyOn(os, 'networkInterfaces').mockReturnValue({
+      en0: [{
+        address: '192.168.31.79',
+        netmask: '255.255.255.0',
+        family: 'IPv4',
+        mac: '00:00:00:00:00:00',
+        internal: false,
+        cidr: '192.168.31.79/24',
+      }],
+    } as any);
+    globalThis.fetch = vi.fn(async (input: any) => {
+      const url = new URL(String(input));
+      fetchCalls.push(url.pathname);
+      if (url.pathname.startsWith('/api/access/')) {
+        throw new Error('Local LAN host access should not call admin access APIs');
+      }
+      return {
+        ok: false,
+        json: async () => null,
+      } as any;
+    }) as any;
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+
+    const response = await originalFetch(`${origin}/prototypes/home`, {
+      headers: {
+        host: '192.168.31.79:51720',
+      },
+    });
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('/prototypes/home/__axhub-preview-loader.js');
+    expect(fetchCalls.filter((pathname) => pathname.startsWith('/api/access/'))).toEqual([]);
+  });
+
+  it('blocks non-local client preview access without a token or valid client cookie', async () => {
+    const projectRoot = createFixtureProject();
+    const adminOrigin = 'http://localhost:5174';
+    globalThis.fetch = vi.fn(async (input: any) => {
+      const url = new URL(String(input));
+      if (url.origin !== adminOrigin) {
+        throw new Error(`Unexpected admin access call for ${url.origin}`);
+      }
+      if (url.pathname === '/api/health') {
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'admin',
+            capabilities: { reviewReports: true },
+            server: {
+              pid: 5174,
+              port: 5174,
+              host: 'localhost',
+              origin: adminOrigin,
+              projectRoot,
+              startedAt: '2026-05-08T00:00:00.000Z',
+            },
+          }),
+        } as any;
+      }
+      if (url.pathname === '/api/access/status') {
+        return {
+          ok: true,
+          json: async () => ({
+            passwordSet: true,
+            sessionTtlMs: 604_800_000,
+            shareTokenTtlMs: 600_000,
+          }),
+        } as any;
+      }
+      throw new Error(`Unexpected access path ${url.pathname}`);
+    }) as any;
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: adminOrigin,
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+
+    const response = await originalFetch(`${origin}/prototypes/home`, {
+      headers: {
+        'x-forwarded-for': '192.168.1.55',
+      },
+    });
+    const html = await response.text();
+
+    expect(response.status).toBe(401);
+    expect(html).toContain('请从 Make 管理端复制局域网链接或二维码');
+  });
+
   it('keeps the preview Vite client script free of project query params', async () => {
     const projectRoot = createFixtureProject();
     stubAdminHealth(['http://localhost:5174']);
@@ -284,6 +526,33 @@ describe('client preview routes', () => {
     expect(response.status).toBe(200);
     expect(html).toContain('<script type="module" src="/@vite/client"></script>');
     expect(html).not.toContain('/@vite/client?projectId=');
+  });
+
+  it('installs the React refresh preamble before loading host toolbar React modules', async () => {
+    const projectRoot = createFixtureProject();
+    stubAdminHealth(['http://localhost:5174']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: 'http://localhost:5174',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+    stubAdminHealth(['http://localhost:5174', origin]);
+
+    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&genieToolbar=host`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('data-axhub-react-refresh-preamble');
+    expect(html).toContain('import { injectIntoGlobalHook } from "/@react-refresh";');
+    expect(html).toContain('window.$RefreshReg$ = () => {};');
+    expect(html.indexOf('data-axhub-react-refresh-preamble')).toBeLessThan(html.indexOf('data-axhub-dev-template-bootstrap'));
+    expect(html).not.toContain('preamble?html-proxy');
   });
 
   it('keeps projectId on prototype entry imports inside preview loader modules', async () => {
@@ -518,6 +787,91 @@ describe('client preview routes', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('shows a clean unavailable page instead of falling back to current files when a git-version snapshot entry is missing', async () => {
+    const projectRoot = createFixtureProject();
+    stubAdminHealth(['http://localhost:5174']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: 'http://localhost:5174',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const chunks: Buffer[] = [];
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home?gitVersion=abc12345&gitPath=src%2Fprototypes%2Fhome',
+      headers: {},
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn((chunk?: string | Buffer) => {
+        if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    const html = Buffer.concat(chunks).toString('utf8');
+    expect(res.statusCode).toBe(404);
+    expect(html).toContain('这个历史版本无法预览');
+    expect(html).not.toContain('__axhub-preview-loader.js');
+    expect(server.transformIndexHtml).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('serves absolute source imports from the git-version snapshot instead of current files', async () => {
+    const projectRoot = createFixtureProject();
+    const snapshotPrototypeDir = path.join(projectRoot, '.git-versions', 'abc12345', 'src', 'prototypes', 'home');
+    const snapshotSharedDir = path.join(projectRoot, '.git-versions', 'abc12345', 'src', 'shared');
+    writeFile(
+      path.join(snapshotPrototypeDir, 'index.tsx'),
+      'import { Badge } from "/src/shared/Badge.tsx";\nexport default function OldHome() { return Badge(); }\n',
+    );
+    writeFile(path.join(snapshotSharedDir, 'Badge.tsx'), 'export function Badge() { return "snapshot"; }\n');
+    writeFile(path.join(projectRoot, 'src', 'shared', 'Badge.tsx'), 'export function Badge() { return "current"; }\n');
+    stubAdminHealth(['http://localhost:5174']);
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: 'http://localhost:5174',
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+
+    const loaderResponse = await originalFetch(`${origin}/prototypes/home/__axhub-preview-loader.js?projectId=make-project&gitVersion=abc12345&gitPath=src%2Fprototypes%2Fhome`);
+    const loaderCode = await loaderResponse.text();
+    const entryUrl = loaderCode.match(/import PreviewComponent from "([^"]+)"/u)?.[1] || '';
+    expect(entryUrl).toContain('/.git-versions/abc12345/src/prototypes/home/index.tsx?projectId=make-project');
+
+    const entryResponse = await originalFetch(new URL(entryUrl, origin), {
+      headers: {
+        referer: `${origin}/prototypes/home?projectId=make-project&gitVersion=abc12345&gitPath=src%2Fprototypes%2Fhome`,
+      },
+    });
+    const entryCode = await entryResponse.text();
+
+    expect(entryResponse.status).toBe(200);
+    expect(entryCode).toContain('/.git-versions/abc12345/src/shared/Badge.tsx');
+    expect(entryCode).not.toContain('/src/shared/Badge.tsx";');
+  });
+
   it('uses the embedding admin origin instead of stale stored admin info for runtime injection', async () => {
     const projectRoot = createFixtureProject();
     stubAdminHealth(['http://localhost:5176']);
@@ -647,7 +1001,7 @@ describe('client preview routes', () => {
 
   it('uses the request LAN hostname for direct network preview runtime injection', async () => {
     const projectRoot = createFixtureProject();
-    stubAdminHealth(['http://192.168.31.79:5174']);
+    stubAdminHealth(['http://192.168.31.79:5174'], { acceptSessionToken: 'valid-client-session' });
     writeServerInfo(projectRoot, 'admin', {
       pid: 12345,
       port: 5174,
@@ -664,6 +1018,7 @@ describe('client preview routes', () => {
       url: '/prototypes/home',
       headers: {
         host: '192.168.31.79:51720',
+        cookie: 'axhub_lan_auth=valid-client-session',
       },
     };
     const res = {
@@ -776,6 +1131,77 @@ describe('client preview routes', () => {
     expect(proxyCode).toContain('import PreviewComponent from');
     expect(proxyCode).toContain('index.tsx');
     expect(proxyCode).toContain('path: "/prototypes/未命名"');
+  });
+
+  it('does not mount annotation runtime from the preview loader when annotation source exists', async () => {
+    const projectRoot = createFixtureProject();
+    writeFile(path.join(projectRoot, 'src/prototypes/home/annotation-source.json'), `${JSON.stringify({
+      documentVersion: 1,
+      format: 'axhub-annotation-source',
+      data: {
+        version: 2,
+        prototypeName: 'home',
+        pageId: 'home',
+        nodes: [],
+        updatedAt: 1,
+      },
+      markdownMap: {},
+      assetMap: {},
+    }, null, 2)}\n`);
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+
+    const loaderCode = await loadPluginModule(plugin, '/prototypes/home/__axhub-preview-loader.js');
+
+    expect(loaderCode).toContain('import PreviewComponent from');
+    expect(loaderCode).not.toContain("import { createAnnotationViewer } from '@axhub/annotation';");
+    expect(loaderCode).not.toContain('annotationSourceDocument from');
+    expect(loaderCode).not.toContain('createAnnotationViewer({');
+    expect(loaderCode).not.toContain('__AXHUB_MAKE_ANNOTATION_RUNTIME__');
+    expect(loaderCode).not.toContain('__AXHUB_ANNOTATION_RUNTIME__');
+    expect(loaderCode).not.toContain('annotationVersion');
+  });
+
+  it('serves source preview HTML assets without Vite dev script injection', async () => {
+    const projectRoot = createFixtureProject();
+    const previewHtml = '<!doctype html><html><head><title>xAI</title></head><body><h1>Source Preview</h1></body></html>\n';
+    writeFile(path.join(projectRoot, 'src/themes/xai/index.tsx'), 'export default function Theme() { return null; }\n');
+    writeFile(path.join(projectRoot, 'src/themes/xai/assets/preview.html'), previewHtml);
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+
+    const response = await fetch(`${origin}/themes/xai/assets/preview.html`, {
+      headers: { accept: 'text/html' },
+    });
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    expect(html).toBe(previewHtml);
+    expect(html).not.toContain('/@vite/client');
+    expect(html).not.toContain('/@react-refresh');
+  });
+
+  it('serves nested index HTML assets without treating them as preview entry routes', async () => {
+    const projectRoot = createFixtureProject();
+    const assetHtml = '<!doctype html><html><body><h1>Nested HTML Asset</h1></body></html>\n';
+    writeFile(path.join(projectRoot, 'src/themes/xai/index.tsx'), 'export default function Theme() { return null; }\n');
+    writeFile(path.join(projectRoot, 'src/themes/xai/assets/index.html'), assetHtml);
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+
+    const response = await fetch(`${origin}/themes/xai/assets/index.html`, {
+      headers: { accept: 'text/html' },
+    });
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    expect(html).toBe(assetHtml);
+    expect(html).not.toContain('/@vite/client');
+    expect(html).not.toContain('/@react-refresh');
   });
 
   it('lets Vite transform CSS imported by prototype modules', async () => {
@@ -982,7 +1408,39 @@ describe('client preview routes', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('serves persisted prototype screenshots from the canvas-assets folder', async () => {
+  it('lets Vite transform direct stylesheet requests that contain Tailwind imports', async () => {
+    const projectRoot = createFixtureProject();
+    writeFile(path.join(projectRoot, 'src/prototypes/home/style.css'), '@import "tailwindcss";\n.home { color: red; }\n');
+    process.chdir(projectRoot);
+    const plugin = clientPreviewPlugin();
+    const { server, getMiddleware } = createMockPreviewServer();
+    const req = {
+      method: 'GET',
+      url: '/prototypes/home/style.css',
+      headers: {
+        accept: 'text/css,*/*;q=0.1',
+      },
+    };
+    const res = {
+      statusCode: 0,
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    const next = vi.fn();
+
+    const configureServer = plugin.configureServer;
+    if (typeof configureServer === 'function') {
+      await configureServer(server as any);
+    } else {
+      await configureServer?.handler(server as any);
+    }
+    await getMiddleware()(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.end).not.toHaveBeenCalled();
+  });
+
+  it('does not serve removed prototype canvas-assets routes', async () => {
     const projectRoot = createFixtureProject();
     const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const screenshotPath = path.join(projectRoot, 'src/prototypes/home/canvas-assets/screenshot.png');
@@ -1016,14 +1474,12 @@ describe('client preview routes', () => {
     }
     await getMiddleware()(req, res, next);
 
-    expect(res.statusCode).toBe(200);
-    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/png');
-    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
-    expect(Buffer.concat(chunks)).toEqual(pngBytes);
-    expect(next).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.end).not.toHaveBeenCalled();
+    expect(Buffer.concat(chunks)).toEqual(Buffer.alloc(0));
   });
 
-  it('serves persisted element screenshots from the canvas-assets folder', async () => {
+  it('does not serve removed element screenshot canvas-assets routes', async () => {
     const projectRoot = createFixtureProject();
     const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const screenshotPath = path.join(projectRoot, 'src/prototypes/home/canvas-assets/embed-embed-1.png');
@@ -1057,13 +1513,12 @@ describe('client preview routes', () => {
     }
     await getMiddleware()(req, res, next);
 
-    expect(res.statusCode).toBe(200);
-    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/png');
-    expect(Buffer.concat(chunks)).toEqual(pngBytes);
-    expect(next).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.end).not.toHaveBeenCalled();
+    expect(Buffer.concat(chunks)).toEqual(Buffer.alloc(0));
   });
 
-  it('serves persisted page screenshots from the canvas-assets folder', async () => {
+  it('does not serve removed page screenshot canvas-assets routes', async () => {
     const projectRoot = createFixtureProject();
     const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const screenshotPath = path.join(projectRoot, 'src/prototypes/home/canvas-assets/page-order-detail.png');
@@ -1097,10 +1552,9 @@ describe('client preview routes', () => {
     }
     await getMiddleware()(req, res, next);
 
-    expect(res.statusCode).toBe(200);
-    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/png');
-    expect(Buffer.concat(chunks)).toEqual(pngBytes);
-    expect(next).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.end).not.toHaveBeenCalled();
+    expect(Buffer.concat(chunks)).toEqual(Buffer.alloc(0));
   });
 
   it('serves safely nested static assets from a prototype directory', async () => {

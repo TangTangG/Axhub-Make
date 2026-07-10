@@ -15,7 +15,7 @@ description: Use when the user explicitly asks to write, draft, create, update, 
 2. `src/resources/` 中已有产品资料、PRD、模板、素材和长期文档。
 3. 相关 `src/prototypes/<prototype-id>/.spec/` 文档。
 4. 相关原型页面、`annotation-source.json`、批注、状态定义和可见文案。
-5. 相关 `src/prototypes/<prototype-id>/canvas.excalidraw` 和 `canvas-assets/`，用于识别跨原型关系、流程草图和补充说明。
+5. 相关 `src/resources/**/*.excalidraw` 和同级 `<name>.assets/`，用于识别跨原型关系、流程草图和补充说明。
 
 ## 模板优先级
 

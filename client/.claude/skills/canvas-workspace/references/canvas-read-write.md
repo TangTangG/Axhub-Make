@@ -9,15 +9,15 @@
 | 读取画布元素、批注、节点信息 | 直接读 `.excalidraw` |
 | 修改画布内容 | 直接改 `.excalidraw` |
 | 从用户给的画布链接定位元素 | 从链接提取画布名和元素 ID，再读文件 |
-| 获取画布截图 | 优先使用已有 `canvas-assets` 截图；需要当前浏览器画布时用全局截图 API |
+| 获取画布截图 | 优先使用同级 `<name>.assets/` 截图；需要当前浏览器画布时用全局截图 API |
 
 ## 文件位置
 
 常见路径：
 
 ```text
-src/prototypes/<prototype-name>/canvas.excalidraw
-src/prototypes/<prototype-name>/canvas-assets/embed-<elementId>.png
+src/resources/<folder>/<name>.excalidraw
+src/resources/<folder>/<name>.assets/embed-<elementId>.png
 ```
 
 `.excalidraw` 是 JSON。主要关注：
@@ -57,7 +57,7 @@ Axhub 节点字段见 `axhub-nodes.md`。
 
 ## CLI
 
-没有画布专用 CLI。读取元素、节点和批注时仍以 `.excalidraw` 文件为准；需要截图时，优先使用已有 `canvas-assets` 截图或浏览器页面能力。
+没有画布专用 CLI。读取元素、节点和批注时仍以 `.excalidraw` 文件为准；需要截图时，优先使用已有同级 `<name>.assets/` 截图或浏览器页面能力。
 
 ## 浏览器截图 API
 
@@ -103,7 +103,7 @@ await window.__AXHUB_EXCALIDRAW_CAPTURE__.captureElement('<elementId>')
 1. 从 URL 中提取画布名和元素 ID。
 2. 找到对应 `.excalidraw` 文件。
 3. 在 `elements` 中找同 ID 元素。
-4. 如果是原型节点，预览截图通常在 `canvas-assets/embed-<elementId>.png`。
+4. 如果是原型节点，预览截图通常在同级 `<name>.assets/embed-<elementId>.png`。
 5. 如果是图片元素，按 `fileId` 找 `files[fileId]`。
 6. 如果是嵌入节点，结合 `customData.resourceType`、`customData.previewUrl` 和 `customData.screenshotUrl` 判断资源来源。
 

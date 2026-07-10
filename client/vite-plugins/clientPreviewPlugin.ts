@@ -1,17 +1,21 @@
 import fs from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 
 import {
   fetchHealth,
+  hasAdminCapability,
   normalizeHealthServerInfo,
   readServerInfo,
 } from '../scripts/utils/serverInfo.mjs';
 
 import {
-  appendProjectIdToModuleSpecifiersInCode,
-  appendSearchParamToModuleSpecifier,
+  appendSearchParamsToModuleSpecifier,
+  appendSearchParamsToModuleSpecifiersInCode,
+  rewriteModuleSpecifiersInCode,
+  type ModuleSpecifierSearchParam,
 } from './utils/moduleSpecifierQuery';
 import { buildPreviewTitle, readEntryDisplayName } from './utils/previewTitle';
 
@@ -27,9 +31,18 @@ interface AxhubServerInfo {
 }
 
 const PREVIEW_TYPES = new Set<ResourceType>(['prototypes', 'themes']);
-const PROTOTYPE_CANVAS_ASSETS_DIR = 'canvas-assets';
 const PREVIEW_LOADER_FILE = '__axhub-preview-loader.js';
 const DEFAULT_ADMIN_ORIGIN = 'http://localhost:53817';
+const REACT_REFRESH_PREAMBLE_MARKER = 'data-axhub-react-refresh-preamble';
+const LAN_ACCESS_COOKIE = 'axhub_lan_auth';
+const LAN_ACCESS_TOKEN_PARAM = 'axhubAccessToken';
+const LAN_ACCESS_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const REACT_REFRESH_PREAMBLE_SCRIPT = `<script type="module" ${REACT_REFRESH_PREAMBLE_MARKER}>
+import { injectIntoGlobalHook } from "/@react-refresh";
+injectIntoGlobalHook(window);
+window.$RefreshReg$ = () => {};
+window.$RefreshSig$ = () => (type) => type;
+</script>`;
 
 function escapeRegExp(input: string) {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -93,11 +106,20 @@ function appendPreviewLoaderSearchParams(loaderPath: string, requestUrl: string)
   return search ? `${loaderPath}?${search}` : loaderPath;
 }
 
+function getPreviewContextSearchParams(requestUrl: string): ModuleSpecifierSearchParam[] {
+  return ['projectId', 'gitVersion', 'gitPath']
+    .map((key) => ({
+      key,
+      value: getSearchParamFromRequestUrl(requestUrl, key),
+    }))
+    .filter((param) => param.value);
+}
+
 function handleHtmlProxyModuleRequestWithProjectContext(
   req: IncomingMessage,
   res: ServerResponse,
   next: () => void,
-  projectId: string,
+  contextParams: ModuleSpecifierSearchParam[],
 ): void {
   const chunks: Buffer[] = [];
   const originalWrite = res.write.bind(res);
@@ -138,7 +160,7 @@ function handleHtmlProxyModuleRequestWithProjectContext(
       return originalEnd(body.length > 0 ? body : undefined, done);
     }
 
-    const rewritten = Buffer.from(appendProjectIdToModuleSpecifiersInCode(body.toString('utf8'), projectId), 'utf8');
+    const rewritten = Buffer.from(appendSearchParamsToModuleSpecifiersInCode(body.toString('utf8'), contextParams), 'utf8');
     res.setHeader('Content-Length', String(rewritten.length));
     return originalEnd(rewritten, done);
   } as ServerResponse['end'];
@@ -146,54 +168,81 @@ function handleHtmlProxyModuleRequestWithProjectContext(
   next();
 }
 
-function normalizeRoute(
-  url: string,
-  projectRoot = process.cwd(),
-): { type: ResourceType; name: string; action: 'preview' | 'spec'; assetPath?: string } | null {
-  const pathname = (url.split('?')[0] || '').replace(/\/index\.html$/u, '').replace(/\.html$/u, '');
-  const parts = pathname.split('/').filter(Boolean).map((part) => {
+function decodePathParts(pathname: string): string[] {
+  return pathname.split('/').filter(Boolean).map((part) => {
     try {
       return decodeURIComponent(part);
     } catch {
       return part;
     }
   });
-  if (parts.some((part) => part.includes('/') || part.includes('\\') || part.includes('\0'))) {
+}
+
+function isSafePathPart(part: string): boolean {
+  return Boolean(part) && !part.includes('/') && !part.includes('\\') && !part.includes('\0');
+}
+
+function hasPreviewEntry(projectRoot: string, type: ResourceType, nameParts: string[]): boolean {
+  if (!PREVIEW_TYPES.has(type) || nameParts.length === 0 || nameParts.some((part) => !isSafePathPart(part) || part === '..')) {
+    return false;
+  }
+  const resourceDir = path.resolve(projectRoot, 'src', type, ...nameParts);
+  return fs.existsSync(path.join(resourceDir, 'index.tsx'))
+    || fs.existsSync(path.join(resourceDir, 'index.ts'));
+}
+
+function stripPreviewEntryHtmlSuffix(pathname: string, suffixPattern: RegExp, projectRoot: string): string {
+  if (!suffixPattern.test(pathname)) {
+    return pathname;
+  }
+  const previewPathname = pathname.replace(suffixPattern, '');
+  const previewParts = decodePathParts(previewPathname);
+  const previewType = previewParts[0] as ResourceType;
+  const previewNameParts = previewParts.slice(1);
+  return hasPreviewEntry(projectRoot, previewType, previewNameParts) ? previewPathname : pathname;
+}
+
+function normalizeRoute(
+  url: string,
+  projectRoot = process.cwd(),
+): { type: ResourceType; name: string; action: 'preview' | 'spec'; assetPath?: string } | null {
+  const rawPathname = url.split('?')[0] || '';
+  let pathname = stripPreviewEntryHtmlSuffix(rawPathname, /\/index\.html$/iu, projectRoot);
+  pathname = stripPreviewEntryHtmlSuffix(pathname, /\.html$/iu, projectRoot);
+  const parts = decodePathParts(pathname);
+  if (parts.some((part) => !isSafePathPart(part))) {
     return null;
   }
   const type = parts[0] as ResourceType;
   if (!PREVIEW_TYPES.has(type) || parts.length < 2) {
     return null;
   }
+  if (type === 'prototypes' && parts.includes('canvas-assets')) {
+    return null;
+  }
   const lastPart = parts[parts.length - 1] || '';
-  const isAssetRequest = /\.(css|png|jpe?g|webp|svg|gif|avif|ico|json|txt|woff2?|ttf|otf|eot)$/iu.test(lastPart);
+  const isAssetRequest = /\.(css|html?|png|jpe?g|webp|svg|gif|avif|ico|json|txt|woff2?|ttf|otf|eot)$/iu.test(lastPart);
   const action = parts[parts.length - 1] === 'spec' ? 'spec' : 'preview';
   let nameParts = action === 'spec' || isAssetRequest ? parts.slice(1, -1) : parts.slice(1);
   let assetParts = isAssetRequest ? [lastPart] : [];
   if (isAssetRequest) {
-    const canvasAssetsIndex = parts.indexOf(PROTOTYPE_CANVAS_ASSETS_DIR, 1);
-    if (canvasAssetsIndex > 1) {
-      nameParts = parts.slice(1, canvasAssetsIndex);
-      assetParts = parts.slice(canvasAssetsIndex);
-    } else {
-      const resourceRoot = path.resolve(projectRoot, 'src', type);
-      let resolvedNameParts = nameParts;
-      let resolvedAssetParts = assetParts;
-      for (let splitIndex = 2; splitIndex < parts.length; splitIndex += 1) {
-        const candidateNameParts = parts.slice(1, splitIndex);
-        const candidateResourceDir = path.resolve(resourceRoot, ...candidateNameParts);
-        if (
-          fs.existsSync(path.join(candidateResourceDir, 'index.tsx'))
-          || fs.existsSync(path.join(candidateResourceDir, 'index.ts'))
-        ) {
-          resolvedNameParts = candidateNameParts;
-          resolvedAssetParts = parts.slice(splitIndex);
-          break;
-        }
+    const resourceRoot = path.resolve(projectRoot, 'src', type);
+    let resolvedNameParts = nameParts;
+    let resolvedAssetParts = assetParts;
+    for (let splitIndex = 2; splitIndex < parts.length; splitIndex += 1) {
+      const candidateNameParts = parts.slice(1, splitIndex);
+      const candidateResourceDir = path.resolve(resourceRoot, ...candidateNameParts);
+      if (
+        fs.existsSync(path.join(candidateResourceDir, 'index.tsx'))
+        || fs.existsSync(path.join(candidateResourceDir, 'index.ts'))
+      ) {
+        resolvedNameParts = candidateNameParts;
+        resolvedAssetParts = parts.slice(splitIndex);
+        break;
       }
-      nameParts = resolvedNameParts;
-      assetParts = resolvedAssetParts;
     }
+    nameParts = resolvedNameParts;
+    assetParts = resolvedAssetParts;
   }
   const name = nameParts.join('/');
   if (!name || nameParts.some((part) => part === '..')) {
@@ -241,6 +290,77 @@ function toViteFsPath(filePath: string): string {
   return normalized.startsWith('/') ? `/@fs${normalized}` : `/@fs/${normalized}`;
 }
 
+function stripViteQuery(value: string): string {
+  const queryIndex = value.indexOf('?');
+  const hashIndex = value.indexOf('#');
+  const indexes = [queryIndex, hashIndex].filter((index) => index >= 0).sort((left, right) => left - right);
+  return indexes.length > 0 ? value.slice(0, indexes[0]) : value;
+}
+
+function splitModuleSpecifier(specifier: string): { pathname: string; suffix: string } {
+  const queryIndex = specifier.indexOf('?');
+  const hashIndex = specifier.indexOf('#');
+  const indexes = [queryIndex, hashIndex].filter((index) => index >= 0).sort((left, right) => left - right);
+  if (indexes.length === 0) {
+    return { pathname: specifier, suffix: '' };
+  }
+  const suffixIndex = indexes[0];
+  return {
+    pathname: specifier.slice(0, suffixIndex),
+    suffix: specifier.slice(suffixIndex),
+  };
+}
+
+function getGitVersionIdFromModuleId(id: string): string {
+  const queryValue = normalizeGitVersionId(getSearchParamFromRequestUrl(id, 'gitVersion'));
+  if (queryValue) {
+    return queryValue;
+  }
+  const cleanId = stripViteQuery(id).replace(/\\/g, '/');
+  const match = cleanId.match(/\/\.git-versions\/([a-f0-9]{7,64})(?:\/|$)/iu);
+  return normalizeGitVersionId(match?.[1] || '');
+}
+
+function getGitVersionSnapshotRoot(projectRoot: string, id: string): string {
+  const versionId = getGitVersionIdFromModuleId(id);
+  if (!versionId) {
+    return '';
+  }
+  const versionsRoot = path.resolve(projectRoot, '.git-versions');
+  const versionRoot = path.resolve(versionsRoot, versionId);
+  return versionRoot.startsWith(versionsRoot + path.sep) ? versionRoot : '';
+}
+
+function rewriteGitVersionSnapshotSpecifier(projectRoot: string, importerId: string, specifier: string): string {
+  const contextParams = getPreviewContextSearchParams(importerId);
+  const versionRoot = getGitVersionSnapshotRoot(projectRoot, importerId);
+  if (!versionRoot || !specifier.startsWith('/')) {
+    return appendSearchParamsToModuleSpecifier(specifier, contextParams);
+  }
+
+  const { pathname, suffix } = splitModuleSpecifier(specifier);
+  if (pathname === '/@vite/client' || pathname === '/@react-refresh') {
+    return specifier;
+  }
+  if (pathname === '/src' || pathname.startsWith('/src/')) {
+    const snapshotPath = path.resolve(versionRoot, pathname.replace(/^\/+/u, ''));
+    if (snapshotPath.startsWith(versionRoot + path.sep)) {
+      return appendSearchParamsToModuleSpecifier(`${toViteFsPath(snapshotPath)}${suffix}`, contextParams);
+    }
+  }
+  return appendSearchParamsToModuleSpecifier(specifier, contextParams);
+}
+
+function rewriteGitVersionSnapshotModuleCode(projectRoot: string, code: string, id: string): string {
+  if (!getGitVersionSnapshotRoot(projectRoot, id)) {
+    return code;
+  }
+  return rewriteModuleSpecifiersInCode(
+    code,
+    (specifier) => rewriteGitVersionSnapshotSpecifier(projectRoot, id, specifier),
+  );
+}
+
 function normalizeSafeRelativePath(value: string): string {
   const normalized = String(value || '')
     .trim()
@@ -257,6 +377,11 @@ function normalizeSafeRelativePath(value: string): string {
 function normalizeGitVersionId(value: string): string {
   const trimmed = String(value || '').trim();
   return /^[a-f0-9]{7,64}$/iu.test(trimmed) ? trimmed : '';
+}
+
+function hasGitVersionPreviewRequest(route: { type: ResourceType }, requestUrl: string): boolean {
+  return route.type === 'prototypes'
+    && Boolean(normalizeGitVersionId(getSearchParamFromRequestUrl(requestUrl, 'gitVersion')));
 }
 
 export function createQuickEditRuntimeScriptTag(serverOrigin: string | null | undefined): string {
@@ -319,6 +444,22 @@ export function injectQuickEditRuntimeScript(html: string, serverOrigin: string 
   return html.includes('</body>')
     ? html.replace('</body>', `  ${tag}\n</body>`)
     : `${html}\n${tag}`;
+}
+
+export function injectReactRefreshPreambleScript(html: string): string {
+  if (
+    html.includes(REACT_REFRESH_PREAMBLE_MARKER)
+    || (
+      html.includes('injectIntoGlobalHook(window)')
+      && html.includes('window.$RefreshReg$')
+      && html.includes('/@react-refresh')
+    )
+  ) {
+    return html;
+  }
+  return html.includes('</head>')
+    ? html.replace('</head>', `  ${REACT_REFRESH_PREAMBLE_SCRIPT}\n</head>`)
+    : `${REACT_REFRESH_PREAMBLE_SCRIPT}\n${html}`;
 }
 
 export function injectPreviewScrollbarStyle(html: string): string {
@@ -436,8 +577,8 @@ function createPreviewLoader(
   previewSource: PreviewSource,
   requestUrl: string,
 ) {
-  const projectId = getSearchParamFromRequestUrl(requestUrl, 'projectId');
-  const importPath = appendSearchParamToModuleSpecifier(previewSource.importPath, 'projectId', projectId);
+  const contextParams = getPreviewContextSearchParams(requestUrl);
+  const importPath = appendSearchParamsToModuleSpecifier(previewSource.importPath, contextParams);
   const previewPath = createRawRoutePath(type, name);
   return `
 import React from 'react';
@@ -537,12 +678,21 @@ if (import.meta.hot) {
 `;
 }
 
-function createPreviewLoaderScriptTag(type: ResourceType, name: string, requestUrl: string): string {
+function createPreviewLoaderScriptTag(
+  type: ResourceType,
+  name: string,
+  requestUrl: string,
+): string {
   const src = appendPreviewLoaderSearchParams(createPreviewLoaderPath(type, name), requestUrl);
   return `<script type="module" src="${src}"></script>`;
 }
 
-function replacePreviewLoaderPlaceholder(html: string, type: ResourceType, name: string, requestUrl: string): string {
+function replacePreviewLoaderPlaceholder(
+  html: string,
+  type: ResourceType,
+  name: string,
+  requestUrl: string,
+): string {
   const scriptTag = createPreviewLoaderScriptTag(type, name, requestUrl);
   const inlineModulePattern = /(\s*)<script\b[^>]*type=["']module["'][^>]*>\s*\{\{PREVIEW_LOADER\}\}\s*<\/script>/u;
   if (inlineModulePattern.test(html)) {
@@ -562,6 +712,8 @@ function sendPreviewFile(res: {
   const ext = path.extname(filePath).toLowerCase();
   const contentTypes: Record<string, string> = {
     '.css': 'text/css; charset=utf-8',
+    '.html': 'text/html; charset=utf-8',
+    '.htm': 'text/html; charset=utf-8',
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
@@ -585,8 +737,137 @@ function sendPreviewFile(res: {
   return true;
 }
 
+function createGitVersionPreviewUnavailableHtml(): string {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>历史版本无法预览</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f9; color: #111827; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+    main { width: min(420px, 100%); background: #fff; border: 1px solid #d7dce3; border-radius: 8px; box-shadow: 0 18px 50px rgba(17, 24, 39, 0.10); padding: 28px; box-sizing: border-box; text-align: center; }
+    h1 { margin: 0 0 12px; font-size: 22px; line-height: 1.3; letter-spacing: 0; }
+    p { margin: 0; color: #4b5563; line-height: 1.7; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>这个历史版本无法预览</h1>
+    <p>这个版本里缺少当前原型的入口文件，请选择包含该原型入口的历史版本。</p>
+  </main>
+</body>
+</html>`;
+}
+
+function createGitVersionPreviewUnavailableLoader(): string {
+  return `
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  rootElement.innerHTML = '<main style="min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:#f6f7f9;color:#111827;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif"><section style="width:min(420px,100%);background:#fff;border:1px solid #d7dce3;border-radius:8px;box-shadow:0 18px 50px rgba(17,24,39,.10);padding:28px;box-sizing:border-box;text-align:center"><h1 style="margin:0 0 12px;font-size:22px;line-height:1.3;letter-spacing:0">这个历史版本无法预览</h1><p style="margin:0;color:#4b5563;line-height:1.7">这个版本里缺少当前原型的入口文件，请选择包含该原型入口的历史版本。</p></section></main>';
+}
+`;
+}
+
+function sendGitVersionPreviewUnavailable(res: ServerResponse): void {
+  res.statusCode = 404;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(createGitVersionPreviewUnavailableHtml());
+}
+
 function getHeaderValue(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] || '' : value || '';
+}
+
+function normalizeAddress(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/^\[/u, '').replace(/\]$/u, '');
+  return normalized.startsWith('::ffff:') ? normalized.slice('::ffff:'.length) : normalized;
+}
+
+function getLocalPreviewNetworkHosts(): string[] {
+  const hosts = new Set<string>();
+  for (const nets of Object.values(networkInterfaces())) {
+    for (const net of nets || []) {
+      if (net.family === 'IPv4' && !net.internal) {
+        hosts.add(normalizeAddress(net.address));
+      }
+    }
+  }
+  return Array.from(hosts);
+}
+
+function isLocalPreviewAddress(value: string): boolean {
+  const normalized = normalizeAddress(value);
+  return !normalized
+    || normalized === 'localhost'
+    || normalized === '0.0.0.0'
+    || normalized === '::'
+    || normalized === '::1'
+    || /^127(?:\.\d{1,3}){3}$/u.test(normalized)
+    || getLocalPreviewNetworkHosts().includes(normalized);
+}
+
+function getHostHeaderHostname(hostHeader: string): string {
+  try {
+    return new URL(`http://${hostHeader}`).hostname;
+  } catch {
+    return hostHeader.split(':')[0] || '';
+  }
+}
+
+function isLocalPreviewRequest(req: IncomingMessage): boolean {
+  const forwardedFor = getHeaderValue(req.headers['x-forwarded-for']).split(',')[0]?.trim();
+  if (forwardedFor) {
+    return isLocalPreviewAddress(forwardedFor);
+  }
+  const remoteAddress = req.socket?.remoteAddress || '';
+  if (remoteAddress && !isLocalPreviewAddress(remoteAddress)) {
+    return false;
+  }
+  return isLocalPreviewAddress(getHostHeaderHostname(getHeaderValue(req.headers.host)));
+}
+
+function getRequestCookie(req: IncomingMessage, name: string): string {
+  const cookieHeader = getHeaderValue(req.headers.cookie);
+  for (const part of cookieHeader.split(';')) {
+    const [key, ...rawValue] = part.trim().split('=');
+    if (key === name) {
+      return rawValue.join('=').trim();
+    }
+  }
+  return '';
+}
+
+function createClientLanAccessCookie(sessionToken: string): string {
+  return `${LAN_ACCESS_COOKIE}=${sessionToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${LAN_ACCESS_SESSION_MAX_AGE_SECONDS}`;
+}
+
+function cleanLanAccessTokenFromRequestUrl(requestUrl: string): string {
+  const url = new URL(requestUrl || '/', 'http://localhost');
+  url.searchParams.delete(LAN_ACCESS_TOKEN_PARAM);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function sendClientLanAccessMessage(
+  res: ServerResponse,
+  status: number,
+  message: string,
+): void {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(`<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>局域网预览访问</title></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;color:#111827;background:#f8fafc">
+  <main style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:24px">
+    <h1 style="font-size:20px;margin:0 0 12px">局域网预览访问</h1>
+    <p style="margin:0;color:#4b5563;line-height:1.7">${message}</p>
+  </main>
+</body>
+</html>`);
 }
 
 function isCssModuleRequest(
@@ -610,6 +891,18 @@ function isCssModuleRequest(
   try {
     const pathname = new URL(referer).pathname;
     return /\.(?:[cm]?[jt]sx?|mjs)$/iu.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
+function requiresViteCssTransform(filePath: string): boolean {
+  if (path.extname(filePath).toLowerCase() !== '.css') {
+    return false;
+  }
+  try {
+    const source = fs.readFileSync(filePath, 'utf8');
+    return /@import\s+(?:url\(\s*)?["']tailwindcss(?:\/[^"')]*)?["']/u.test(source);
   } catch {
     return false;
   }
@@ -713,7 +1006,9 @@ async function isHealthyAdminOrigin(origin: string | null | undefined): Promise<
     return false;
   }
   const health = await fetchHealth(origin, 600);
-  return isAdminHealthPayload(health) && Boolean(normalizeHealthServerInfo(health)?.origin);
+  return isAdminHealthPayload(health)
+    && hasAdminCapability(health, 'reviewReports')
+    && Boolean(normalizeHealthServerInfo(health)?.origin);
 }
 
 async function resolveAdminServerOrigin(
@@ -746,17 +1041,92 @@ async function resolveAdminServerOrigin(
   return null;
 }
 
+async function handleClientLanAccess(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRoot: string,
+): Promise<boolean> {
+  if (isLocalPreviewRequest(req)) {
+    return false;
+  }
+
+  const adminOrigin = await resolveAdminServerOrigin(projectRoot, req);
+  if (!adminOrigin) {
+    sendClientLanAccessMessage(res, 503, '无法连接 Make 管理端，请回到本机确认 Make 服务正在运行。');
+    return true;
+  }
+
+  const requestUrl = new URL(req.url || '/', 'http://localhost');
+  const shareToken = requestUrl.searchParams.get(LAN_ACCESS_TOKEN_PARAM)?.trim() || '';
+  if (shareToken) {
+    const exchangeResponse = await fetch(new URL('/api/access/exchange', adminOrigin), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: shareToken }),
+    });
+    const body = await exchangeResponse.json().catch(() => ({}));
+    if (exchangeResponse.ok && typeof body?.sessionToken === 'string' && body.sessionToken.trim()) {
+      res.statusCode = 302;
+      res.setHeader('Set-Cookie', createClientLanAccessCookie(body.sessionToken.trim()));
+      res.setHeader('Location', cleanLanAccessTokenFromRequestUrl(req.url || '/'));
+      res.end();
+      return true;
+    }
+    sendClientLanAccessMessage(res, 401, '局域网链接已过期，请回到 Make 管理端重新复制链接或刷新二维码。');
+    return true;
+  }
+
+  const sessionToken = getRequestCookie(req, LAN_ACCESS_COOKIE);
+  if (sessionToken) {
+    const validateResponse = await fetch(new URL('/api/access/validate', adminOrigin), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionToken }),
+    });
+    if (validateResponse.ok) {
+      return false;
+    }
+  }
+
+  const statusResponse = await fetch(new URL('/api/access/status', adminOrigin), {
+    headers: { accept: 'application/json' },
+  });
+  const status = await statusResponse.json().catch(() => ({}));
+  if (!status?.passwordSet) {
+    sendClientLanAccessMessage(res, 403, '请先回到本机 Make 管理端，在左上角设置里设置局域网访问密码。');
+    return true;
+  }
+  sendClientLanAccessMessage(res, 401, '请从 Make 管理端复制局域网链接或二维码。');
+  return true;
+}
+
 export function clientPreviewPlugin(): Plugin {
   const projectRoot = process.cwd();
 
   return {
     name: 'make-project-client-preview',
     apply: 'serve',
+    config() {
+      return {
+        server: {
+          fs: {
+            allow: [
+              projectRoot,
+              path.resolve(projectRoot, '.git-versions'),
+            ],
+          },
+        },
+      };
+    },
     resolveId(id) {
       if (normalizePreviewLoaderRoute(id)) {
         return id;
       }
       return null;
+    },
+    transform(code, id) {
+      const rewritten = rewriteGitVersionSnapshotModuleCode(projectRoot, code, id);
+      return rewritten === code ? null : { code: rewritten, map: null };
     },
     load(id) {
       const loaderRoute = normalizePreviewLoaderRoute(id);
@@ -764,7 +1134,14 @@ export function clientPreviewPlugin(): Plugin {
         return null;
       }
 
-      const previewSource = resolvePreviewSource(projectRoot, loaderRoute, id);
+      const gitVersionPreview = hasGitVersionPreviewRequest(loaderRoute, id);
+      const gitVersionPreviewSource = gitVersionPreview
+        ? resolveGitVersionPreviewSource(projectRoot, loaderRoute, id)
+        : null;
+      if (gitVersionPreview && !gitVersionPreviewSource) {
+        return createGitVersionPreviewUnavailableLoader();
+      }
+      const previewSource = gitVersionPreviewSource || resolvePreviewSource(projectRoot, loaderRoute, id);
       if (!fs.existsSync(previewSource.entryPath)) {
         return null;
       }
@@ -784,10 +1161,15 @@ export function clientPreviewPlugin(): Plugin {
           }
 
           if (isHtmlProxyModuleRequest(req.url)) {
-            const projectId = getSearchParamFromRequestUrl(req.url, 'projectId')
-              || getSearchParamFromRequestReferer(req, 'projectId');
-            if (projectId) {
-              handleHtmlProxyModuleRequestWithProjectContext(req, res, next, projectId);
+            const contextParams = ['projectId', 'gitVersion', 'gitPath']
+              .map((key) => ({
+                key,
+                value: getSearchParamFromRequestUrl(req.url || '', key)
+                  || getSearchParamFromRequestReferer(req, key),
+              }))
+              .filter((param) => param.value);
+            if (contextParams.length > 0) {
+              handleHtmlProxyModuleRequestWithProjectContext(req, res, next, contextParams);
               return;
             }
             next();
@@ -800,7 +1182,15 @@ export function clientPreviewPlugin(): Plugin {
             return;
           }
 
-          const previewSource = resolvePreviewSource(projectRoot, route, req.url);
+          const gitVersionPreview = hasGitVersionPreviewRequest(route, req.url);
+          const gitVersionPreviewSource = gitVersionPreview
+            ? resolveGitVersionPreviewSource(projectRoot, route, req.url)
+            : null;
+          if (gitVersionPreview && !gitVersionPreviewSource) {
+            sendGitVersionPreviewUnavailable(res);
+            return;
+          }
+          const previewSource = gitVersionPreviewSource || resolvePreviewSource(projectRoot, route, req.url);
           const entryPath = previewSource.entryPath;
           if (!fs.existsSync(entryPath)) {
             next();
@@ -822,6 +1212,10 @@ export function clientPreviewPlugin(): Plugin {
               assetPath: route.assetPath,
               resourceDir: previewSource.resourceDir,
             });
+            if (assetPath && requiresViteCssTransform(assetPath)) {
+              next();
+              return;
+            }
             if (assetPath && sendPreviewFile(res, assetPath)) {
               return;
             }
@@ -831,6 +1225,10 @@ export function clientPreviewPlugin(): Plugin {
 
           if (route.action === 'spec') {
             next();
+            return;
+          }
+
+          if (await handleClientLanAccess(req, res, projectRoot)) {
             return;
           }
 
@@ -867,7 +1265,7 @@ export function clientPreviewPlugin(): Plugin {
             createPreviewTransformUrl(route.type, route.name),
             html,
           );
-          res.end(transformedHtml);
+          res.end(injectReactRefreshPreambleScript(transformedHtml));
         } catch (error) {
           next(error);
         }

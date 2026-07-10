@@ -106,3 +106,11 @@ export function normalizeHealthServerInfo(data) {
   }
   return normalizeServerInfo(data.server ?? data);
 }
+
+export function hasAdminCapability(data, capability) {
+  if (!data || typeof data !== 'object' || typeof capability !== 'string' || !capability) {
+    return false;
+  }
+  const capabilities = data.capabilities;
+  return Boolean(capabilities && typeof capabilities === 'object' && capabilities[capability] === true);
+}

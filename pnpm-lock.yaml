@@ -231,8 +231,11 @@ importers:
   client:
     dependencies:
       '@axhub/annotation':
-        specifier: ^1.0.6
-        version: 1.0.6(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+        specifier: ^1.0.14
+        version: 1.0.14(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+      '@axhub/commentary-react':
+        specifier: ^1.0.0
+        version: 1.0.0(react@18.2.0)
       lucide-react:
         specifier: ^0.562.0
         version: 0.562.0(react@18.2.0)
@@ -271,10 +274,10 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
       vite:
-        specifier: ^5.0.0
+        specifier: 5.4.21
         version: 5.4.21(@types/node@24.10.13)(lightningcss@1.30.2)(sass-embedded@1.97.3)(sass@1.97.3)(terser@5.44.1)
       vitest:
-        specifier: ^4.0.16
+        specifier: 4.0.16
         version: 4.0.16(@opentelemetry/api@1.9.1)(@types/node@24.10.13)(@vitest/ui@4.0.16)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@24.10.13)(typescript@5.9.3))(sass-embedded@1.97.3)(sass@1.97.3)(terser@5.44.1)(tsx@4.21.0)
       ws:
         specifier: ^8.18.3
@@ -476,11 +479,16 @@ packages:
       react: 18.2.0
       react-dom: 18.2.0
 
-  '@axhub/annotation@1.0.6':
-    resolution: {integrity: sha512-Fqw8o6FRgK64cjeFTXjkJ3etRvwtAae5I9OARSyUTNzw5dSBdnIN9d+anJikUVHDCIIugYkXaNqOMhXglhmpew==}
+  '@axhub/annotation@1.0.14':
+    resolution: {integrity: sha512-8FrbRY4ad8xFwmvO1/VG9n1yyIqPQYEHnc/KQAppKOWCp9eYWVRNJIjgkJyTJIGHwIU/povAVM2ofv7oVaYY6w==}
     peerDependencies:
       react: 18.2.0
       react-dom: 18.2.0
+
+  '@axhub/commentary-react@1.0.0':
+    resolution: {integrity: sha512-2wyrXZxowCr48fo+lLRImd2Vzzvt+IdAT+xXRwq8BIoat0HQXi6vl+MTXvKWQjMS54UVfrGkLdFgAQeEMB7YXQ==}
+    peerDependencies:
+      react: 18.2.0
 
   '@axhub/commentary@file:vendor/axhub-commentary':
     resolution: {directory: vendor/axhub-commentary, type: directory}
@@ -8177,12 +8185,12 @@ snapshots:
       - tailwindcss
       - use-sync-external-store
 
-  '@axhub/annotation@1.0.6(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)':
+  '@axhub/annotation@1.0.14(@emotion/is-prop-valid@1.4.0)(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)':
     dependencies:
-      '@ant-design/cssinjs': 2.1.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
-      '@ant-design/icons': 6.1.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
-      antd: 6.3.0(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
-      motion: 12.38.0(@emotion/is-prop-valid@1.4.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+      '@ant-design/cssinjs': 2.1.2(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+      '@ant-design/icons': 6.3.2(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+      antd: 6.5.0(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+      motion: 12.42.2(@emotion/is-prop-valid@1.4.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       react: 18.2.0
       react-dom: 18.2.0(react@18.2.0)
     transitivePeerDependencies:
@@ -8190,6 +8198,10 @@ snapshots:
       - date-fns
       - luxon
       - moment
+
+  '@axhub/commentary-react@1.0.0(react@18.2.0)':
+    dependencies:
+      react: 18.2.0
 
   '@axhub/commentary@file:vendor/axhub-commentary(@ant-design/cssinjs@2.1.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0))(@ant-design/icons@6.1.0(react-dom@18.2.0(react@18.2.0))(react@18.2.0))(@emotion/is-prop-valid@1.4.0)(antd@6.3.0(date-fns@4.1.0)(react-dom@18.2.0(react@18.2.0))(react@18.2.0))(react-dom@18.2.0(react@18.2.0))(react@18.2.0)':
     dependencies:

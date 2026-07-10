@@ -12,8 +12,9 @@ import { writeDevServerInfoPlugin } from './vite-plugins/writeDevServerInfoPlugi
 import { axhubComponentEnforcer } from './vite-plugins/axhubComponentEnforcer';
 import { websocketPlugin } from './vite-plugins/websocketPlugin';
 import { canvasHotUpdateFilterPlugin } from './vite-plugins/canvasHotUpdateFilter';
+import { annotationRuntimeOptimizeDepsPlugin } from './vite-plugins/annotationRuntimeOptimizeDeps';
+import { createAnnotationSourceMarkdownPlugin } from './vite-plugins/annotationSourceMarkdown';
 import {
-  MAKE_CONFIG_RELATIVE_PATH,
   MAKE_ENTRIES_RELATIVE_PATH,
 } from './vite-plugins/utils/makeConstants';
 import {
@@ -24,20 +25,6 @@ import {
 
 const projectRoot = process.cwd();
 const OFFICIAL_CLIENT_DEV_PORT = 51720;
-
-/** Read allowLAN from the shared make config to align with make-server. */
-function readAllowLAN(): boolean {
-  try {
-    const configPath = path.resolve(projectRoot, MAKE_CONFIG_RELATIVE_PATH);
-    if (fs.existsSync(configPath)) {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      return config?.server?.allowLAN !== false;
-    }
-  } catch {
-    // Fall through to default.
-  }
-  return true;
-}
 
 writeEntriesManifestAtomic(
   projectRoot,
@@ -62,7 +49,7 @@ if (hasSingleEntry) {
 const isIifeBuild = hasSingleEntry;
 const devServerWatchIgnored = [
   '**/.axhub/make/**',
-  '**/canvas-assets/**',
+  '**/*.assets/**',
   '**/.spec/**',
   '**/*.excalidraw',
 ];
@@ -74,11 +61,13 @@ export default defineConfig(({ command }) => {
     plugins: [
       tailwindcss(),
       isServe ? canvasHotUpdateFilterPlugin() : null,
+      isServe ? annotationRuntimeOptimizeDepsPlugin(projectRoot) : null,
       injectStablePageIds(),
       isServe ? writeDevServerInfoPlugin() : null,
       isServe ? autoStartMakeServerPlugin() : null,
       isServe ? websocketPlugin() : null,
       isServe ? clientPreviewPlugin() : null,
+      createAnnotationSourceMarkdownPlugin(projectRoot, { mode: isServe ? 'serve' : 'build' }),
       forceInlineDynamicImportsOff(isIifeBuild),
       isIifeBuild ? axhubComponentEnforcer(jsEntries[entryKey as string]) : null,
       react({
@@ -127,7 +116,7 @@ export default defineConfig(({ command }) => {
     server: {
       port: OFFICIAL_CLIENT_DEV_PORT,
       strictPort: false,
-      host: readAllowLAN() ? '0.0.0.0' : 'localhost',
+      host: '0.0.0.0',
       open: false,
       cors: true,
       hmr: { overlay: false },

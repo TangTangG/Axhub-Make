@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 
 import {
   fetchHealth,
+  hasAdminCapability,
   normalizeHealthServerInfo,
   readServerInfo,
 } from '../scripts/utils/serverInfo.mjs';
@@ -165,6 +166,9 @@ function isReusableAdminHealth(health: unknown, options: ReusableAdminOriginOpti
     return false;
   }
   if (options.requireDevMode && payload.devMode !== true) {
+    return false;
+  }
+  if (!hasAdminCapability(health, 'reviewReports')) {
     return false;
   }
   return isReusableRuntimeOrigin(health, options);

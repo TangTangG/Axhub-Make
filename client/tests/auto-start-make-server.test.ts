@@ -252,6 +252,9 @@ describe('auto make-server registration', () => {
           ok: true,
           role: 'admin',
           projectRoot,
+          capabilities: {
+            reviewReports: true,
+          },
           server: {
             pid: 12345,
             port: 5174,
@@ -375,6 +378,9 @@ describe('auto make-server registration', () => {
         projectRoot,
         devMode: true,
         runtimeOrigin: 'http://localhost:51720',
+        capabilities: {
+          reviewReports: true,
+        },
         server: {
           pid: 12345,
           port: 53817,
@@ -449,6 +455,35 @@ describe('auto make-server registration', () => {
     });
 
     await expect(getReusableAdminOrigin(projectRoot)).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reuse an otherwise healthy admin that lacks review report APIs', async () => {
+    const projectRoot = createTempProjectRoot();
+    const fetchMock = mockFetch((url) => {
+      expect(url.origin).toBe('http://localhost:53817');
+      expect(url.pathname).toBe('/api/health');
+      return jsonResponse({
+        ok: true,
+        role: 'admin',
+        projectRoot,
+        devMode: true,
+        runtimeOrigin: 'http://localhost:51720',
+        server: {
+          pid: 12345,
+          port: 53817,
+          host: 'localhost',
+          origin: 'http://localhost:53817',
+          projectRoot,
+          startedAt: '2026-05-03T00:01:00.000Z',
+        },
+      });
+    });
+
+    await expect(getReusableAdminOrigin(projectRoot, {
+      requireDevMode: true,
+      runtimeOrigin: 'http://localhost:51720',
+    })).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -551,6 +586,9 @@ describe('auto make-server registration', () => {
         role: 'admin',
         projectRoot,
         origin: 'http://localhost:53817',
+        capabilities: {
+          reviewReports: true,
+        },
         server: {
           pid: 12345,
           port: 53817,
@@ -583,6 +621,9 @@ describe('auto make-server registration', () => {
         role: 'admin',
         origin: 'http://localhost:5174',
         projectRoot,
+        capabilities: {
+          reviewReports: true,
+        },
         server: {
           pid: 888888,
           port: 5175,

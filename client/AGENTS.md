@@ -17,8 +17,8 @@
 | 产物/场景 | 位置 | 参考文档 |
 |-----------|------|----------|
 | 主题 | `src/themes/<theme-key>/` | `rules/theme-guide.md` |
-| 项目资料和文档 | `src/resources/` | `rules/resource-management-guide.md` |
-| 画布 | `src/prototypes/<prototype-name>/canvas.excalidraw`、`canvas-assets/` | 原型画布和画布素材 |
+| 项目资料、文档和普通资源 | `src/resources/` | `rules/resource-management-guide.md` |
+| 画布 | `src/resources/**/*.excalidraw`，资产在同级 `<name>.assets/` | `rules/resource-management-guide.md` |
 
 ## ⚠️ 重要原则
 
@@ -46,7 +46,7 @@
 ├── src/
 │   ├── common/      # 公共运行时、类型和工具
 │   ├── prototypes/  # 原型页面目录
-│   ├── resources/   # 项目资料、文档和素材
+│   ├── resources/   # 项目资料、文档、素材和 .excalidraw 画布
 │   └── themes/      # 主题与设计规范
 ├── rules/           # Agent 工作规则
 └── .axhub/make/     # 本地运行数据和项目 metadata

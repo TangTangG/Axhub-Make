@@ -19,6 +19,7 @@ import openAiButtonImage from './assets/open-ai-button.png';
 import planModeMenuImage from './assets/plan-mode-menu.png';
 import workbuddyTraeSoloNewProjectImage from './assets/workbuddy-trae-solo-new-project.png';
 import { defineHashPageRoute, useHashPage } from '../../common/useHashPage';
+import { copyTextToClipboard } from './clipboard';
 import './style.css';
 
 type GuideChapter = {
@@ -318,19 +319,29 @@ function createVerificationPrompt(projectPath: string) {
     ].join('\n');
 }
 
-function InstallAgentChapter({ projectPath }: { projectPath: string }) {
-    const [copied, setCopied] = useState(false);
-    const prompt = useMemo(() => createVerificationPrompt(projectPath), [projectPath]);
+type CopyStatus = 'idle' | 'copied' | 'failed';
+
+function getCopyButtonLabel(copyStatus: CopyStatus) {
+    if (copyStatus === 'copied') return '已复制';
+    if (copyStatus === 'failed') return '复制失败';
+    return '复制';
+}
+
+function usePromptClipboard(prompt: string) {
+    const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle');
 
     const handleCopyPrompt = async () => {
-        try {
-            await navigator.clipboard.writeText(prompt);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1400);
-        } catch {
-            setCopied(false);
-        }
+        const didCopy = await copyTextToClipboard(prompt);
+        setCopyStatus(didCopy ? 'copied' : 'failed');
+        window.setTimeout(() => setCopyStatus('idle'), didCopy ? 1400 : 2200);
     };
+
+    return { copyStatus, handleCopyPrompt };
+}
+
+function InstallAgentChapter({ projectPath }: { projectPath: string }) {
+    const prompt = useMemo(() => createVerificationPrompt(projectPath), [projectPath]);
+    const { copyStatus, handleCopyPrompt } = usePromptClipboard(prompt);
 
     return (
         <>
@@ -410,9 +421,9 @@ function InstallAgentChapter({ projectPath }: { projectPath: string }) {
                 <div className="beginner-guide-prompt-card">
                     <div className="beginner-guide-prompt-head">
                         <span>发给 AI 的提示词</span>
-                        <button type="button" onClick={handleCopyPrompt}>
+                        <button type="button" onClick={handleCopyPrompt} aria-live="polite">
                             <Copy size={14} />
-                            {copied ? '已复制' : '复制'}
+                            {getCopyButtonLabel(copyStatus)}
                         </button>
                     </div>
                     <pre>{prompt}</pre>
@@ -508,17 +519,7 @@ const createPrototypePrompt = [
 ].join('\n');
 
 function GiveInstructionsChapter() {
-    const [copied, setCopied] = useState(false);
-
-    const handleCopyPrompt = async () => {
-        try {
-            await navigator.clipboard.writeText(practicePrompt);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1400);
-        } catch {
-            setCopied(false);
-        }
-    };
+    const { copyStatus, handleCopyPrompt } = usePromptClipboard(practicePrompt);
 
     return (
         <>
@@ -611,9 +612,9 @@ function GiveInstructionsChapter() {
                 <div className="beginner-guide-prompt-card">
                     <div className="beginner-guide-prompt-head">
                         <span>发给 AI 的提示词</span>
-                        <button type="button" onClick={handleCopyPrompt}>
+                        <button type="button" onClick={handleCopyPrompt} aria-live="polite">
                             <Copy size={14} />
-                            {copied ? '已复制' : '复制'}
+                            {getCopyButtonLabel(copyStatus)}
                         </button>
                     </div>
                     <pre>{practicePrompt}</pre>
@@ -624,17 +625,7 @@ function GiveInstructionsChapter() {
 }
 
 function CreatePrototypeChapter() {
-    const [copied, setCopied] = useState(false);
-
-    const handleCopyPrompt = async () => {
-        try {
-            await navigator.clipboard.writeText(createPrototypePrompt);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1400);
-        } catch {
-            setCopied(false);
-        }
-    };
+    const { copyStatus, handleCopyPrompt } = usePromptClipboard(createPrototypePrompt);
 
     return (
         <>
@@ -707,9 +698,9 @@ function CreatePrototypeChapter() {
                 <div className="beginner-guide-prompt-card">
                     <div className="beginner-guide-prompt-head">
                         <span>发给 AI 的提示词</span>
-                        <button type="button" onClick={handleCopyPrompt}>
+                        <button type="button" onClick={handleCopyPrompt} aria-live="polite">
                             <Copy size={14} />
-                            {copied ? '已复制' : '复制'}
+                            {getCopyButtonLabel(copyStatus)}
                         </button>
                     </div>
                     <pre>{createPrototypePrompt}</pre>
