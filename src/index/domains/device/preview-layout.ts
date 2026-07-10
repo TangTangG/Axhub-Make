@@ -61,6 +61,33 @@ export interface PreviewMeasuredContentSize {
   height: number;
 }
 
+export function resolveStablePreviewContainerSize(params: {
+  previous: PreviewMeasuredContentSize;
+  clientWidth: number;
+  clientHeight: number;
+  horizontalInset: number;
+  verticalInset: number;
+}): PreviewMeasuredContentSize {
+  const horizontalInset = Math.max(0, Math.floor(params.horizontalInset));
+  const verticalInset = Math.max(0, Math.floor(params.verticalInset));
+  const width = Number.isFinite(params.clientWidth)
+    ? Math.floor(params.clientWidth) - horizontalInset
+    : 0;
+  const height = Number.isFinite(params.clientHeight)
+    ? Math.floor(params.clientHeight) - verticalInset
+    : 0;
+
+  if (width <= 0 || height <= 0) {
+    return params.previous;
+  }
+
+  if (params.previous.width === width && params.previous.height === height) {
+    return params.previous;
+  }
+
+  return { width, height };
+}
+
 export const DEVICE_PRESET_SIZES: Record<PreviewDeviceId, { width: number; height: number }> = {
   desktop: { width: 1440, height: 900 },
   mobile: { width: 393, height: 852 },
