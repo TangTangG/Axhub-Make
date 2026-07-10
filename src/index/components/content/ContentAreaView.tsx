@@ -39,7 +39,11 @@ import type {
     PreviewScaleMode,
     PreviewSinglePreset,
 } from '../../domains/device/preview-layout';
-import { DEVICE_PRESET_SIZES, resolvePreviewLayout } from '../../domains/device/preview-layout';
+import {
+    DEVICE_PRESET_SIZES,
+    resolvePreviewLayout,
+    resolveStablePreviewContainerSize,
+} from '../../domains/device/preview-layout';
 import type { ProjectRuntimeStatus } from '../../services/projectResources';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
 import type { CanvasElementContextInfo } from './canvas-embeds/AnnotationOverlay';
@@ -2031,21 +2035,30 @@ export default function ContentArea({
         }
 
         const updateSize = () => {
-            setPreviewContainerSize({
-                width: Math.max(1, node.clientWidth - 48),
-                height: Math.max(1, node.clientHeight - 32),
-            });
+            setPreviewContainerSize((previous) => resolveStablePreviewContainerSize({
+                previous,
+                clientWidth: node.clientWidth,
+                clientHeight: node.clientHeight,
+                horizontalInset: 48,
+                verticalInset: 32,
+            }));
         };
 
         updateSize();
         const observer = new ResizeObserver(updateSize);
         observer.observe(node);
+        const animationFrameId = window.requestAnimationFrame(updateSize);
         window.addEventListener('resize', updateSize);
         return () => {
             observer.disconnect();
+            window.cancelAnimationFrame(animationFrameId);
             window.removeEventListener('resize', updateSize);
         };
-    }, [containerRef]);
+    }, [
+        containerRef,
+        previewConfig.previewMode,
+        previewConfig.singlePreset,
+    ]);
 
     const previewLayout = useMemo(() => resolvePreviewLayout({
         config: previewConfig,

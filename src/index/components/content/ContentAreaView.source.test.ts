@@ -1043,6 +1043,26 @@ describe('ContentAreaView review zoom source', () => {
     expect(source).not.toContain('reviewPageZoomEnabled && previewConfig.previewMode === \'split\'');
   });
 
+  it('preserves usable preview dimensions and remeasures after device mode changes', () => {
+    const source = readContentAreaViewSource();
+    const measurementEffect = getSourceSegment(
+      source,
+      '    useEffect(() => {\n        const node = containerRef.current;',
+      '    const previewLayout = useMemo',
+    );
+
+    expect(source).toContain('resolveStablePreviewContainerSize,');
+    expect(measurementEffect).toContain('setPreviewContainerSize((previous) => resolveStablePreviewContainerSize({');
+    expect(measurementEffect).toContain('clientWidth: node.clientWidth,');
+    expect(measurementEffect).toContain('clientHeight: node.clientHeight,');
+    expect(measurementEffect).toContain('const animationFrameId = window.requestAnimationFrame(updateSize);');
+    expect(measurementEffect).toContain('window.cancelAnimationFrame(animationFrameId);');
+    expect(measurementEffect).toContain('previewConfig.previewMode,');
+    expect(measurementEffect).toContain('previewConfig.singlePreset,');
+    expect(measurementEffect).not.toContain('Math.max(1, node.clientWidth - 48)');
+    expect(measurementEffect).not.toContain('Math.max(1, node.clientHeight - 32)');
+  });
+
   it('shows pane-scoped prompt buttons in split preview title bars only while quick edit is active', () => {
     const source = readContentAreaViewSource();
     const splitBranch = getSourceSegment(
