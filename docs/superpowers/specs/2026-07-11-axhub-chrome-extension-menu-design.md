@@ -1,24 +1,24 @@
-# Axhub Chrome Extension Menu Design
+# Chrome Extension Menu Removal Design
 
 ## Goal
 
-Add an `Axhub` entry at the top of the existing `Chrome 扩展` submenu in the Make open menu. Selecting it opens `https://axhub.im/chrome/` in a new browser tab.
+Remove the entire `Chrome 扩展` submenu from the Make open menu. No Axhub or ChatGPT extension link remains in this menu.
 
 ## Design
 
-- Keep the existing `CHROME_EXTENSION_OPTIONS` array as the source of menu order and link data.
-- Add `Axhub` before `ChatGPT`, so the rendered submenu order is deterministic.
-- Add a small icon discriminator to each option. Render the existing Lucide `Globe` icon for Axhub and the existing LobeHub `OpenAI` icon for ChatGPT.
-- Keep the shared anchor behavior: `target="_blank"` and `rel="noreferrer"`.
-- Do not change the parent `Chrome 扩展` submenu, the online group placement, or any local application and CLI behavior.
+- Delete `CHROME_EXTENSION_OPTIONS` and `renderChromeExtensionSubmenu` instead of hiding them behind a flag.
+- Remove the submenu call from the online group.
+- Remove Chrome-extension-only icon imports. Keep `OpenAI` because the local ChatGPT application still uses it.
+- Restore the online-group help text so it only describes the built-in Web AI panel.
+- Do not change the online AI actions, AI settings, local applications, CLI agents, or IDE behavior.
 
 ## Verification
 
-Extend `OpenInDropdown.test.ts` to assert:
+Update `OpenInDropdown.test.ts` to assert:
 
-- the Axhub label and exact URL are present;
-- Axhub appears before ChatGPT in `CHROME_EXTENSION_OPTIONS`;
-- the submenu selects the correct icon for each option;
-- extension links continue to open in a new tab with `noreferrer`.
+- the `Chrome 扩展` submenu and extension option data are absent;
+- both extension URLs are absent;
+- the online-group help text only mentions the built-in Web AI panel;
+- the local ChatGPT application keeps its OpenAI icon.
 
 Run the focused Vitest file for `OpenInDropdown` after implementation.
