@@ -606,7 +606,7 @@
   </style>
 </head>
 <body>
-  <a class="skip-link" href="#spec-content">跳到规格正文</a>
+  <a class="skip-link" id="skip-to-content" href="#spec-content">跳到规格正文</a>
   <div class="document-shell">
     <aside class="sidebar" aria-label="规格导航与检索">
       <div class="document-mark">
@@ -627,7 +627,7 @@
       <p class="sidebar-note">本侧栏只控制规格文档自身。关闭 JavaScript 时，五页正文会按顺序全部显示；打印时也会展开全部页面。</p>
     </aside>
 
-    <main id="spec-content" class="spec-main">
+    <main id="spec-content" class="spec-main" tabindex="-1">
       <article class="spec-page" data-spec-page="overview">
         <p class="page-kicker">01 / Overview</p>
         <h1>标注演示规格</h1>
@@ -1113,6 +1113,8 @@
       var acceptanceInputs = Array.prototype.slice.call(document.querySelectorAll('[data-acceptance-id]'));
       var acceptanceStatus = document.getElementById('acceptance-status');
       var resetAcceptance = document.getElementById('reset-acceptance');
+      var skipLink = document.getElementById('skip-to-content');
+      var skipTarget = document.getElementById('spec-content');
       var pageIds = pages.map(function (page) { return page.dataset.specPage; });
 
       function readHashPage() {
@@ -1164,6 +1166,12 @@
           ? '在 5 个规格页中找到 ' + matchCount + ' 页'
           : '在 5 个规格页中没有匹配内容';
       }
+
+      skipLink.addEventListener('click', function (event) {
+        event.preventDefault();
+        skipTarget.focus();
+        skipTarget.scrollIntoView();
+      });
 
       navItems.forEach(function (navItem) {
         navItem.addEventListener('click', function () {
