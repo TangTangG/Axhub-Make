@@ -792,8 +792,13 @@
             <li>开启标注后，通过 AI 或手动方式编辑标注。</li>
             <li>开发 Agent 通过技能读取源码、标注、文档和截图，用于后续开发。</li>
           </ol>
-          <pre class="mermaid" data-mermaid-source>flowchart LR; A[提交需求] --> B[生成结果]</pre>
-          <p class="boundary">上方 Mermaid 源码是规格文档稳定 DOM 契约中的可读最小图示；当前原型的结果卡没有提交处理函数。完整协作顺序以本节六步文字和下方状态矩阵为准。</p>
+          <pre class="mermaid" data-mermaid-source>flowchart LR
+  A[维护可运行原型] --> B[补充内容标注]
+  B --> C[增加状态标注]
+  C --> D[整理原型目录]
+  D --> E[编辑标注]
+  E --> F[Agent 读取上下文]</pre>
+          <p class="boundary">上方 Mermaid 与六步正文描述同一协作顺序；源码在未加载渲染器时仍可直接阅读。当前原型的结果卡没有提交处理函数，页面也不会在此流程中自动执行 AI 修改或开发任务。</p>
         </section>
 
         <section id="flow-controls">
@@ -1116,6 +1121,7 @@
       var skipLink = document.getElementById('skip-to-content');
       var skipTarget = document.getElementById('spec-content');
       var pageIds = pages.map(function (page) { return page.dataset.specPage; });
+      var detailsBeforeSearch = null;
 
       function readHashPage() {
         var raw = window.location.hash.replace(/^#/, '');
@@ -1149,13 +1155,41 @@
         searchStatus.textContent = '正在查看“' + navItems[pageIds.indexOf(pageId)].textContent + '”';
       }
 
+      function restoreSearchDetails() {
+        if (!detailsBeforeSearch) return;
+        detailsBeforeSearch.forEach(function (wasOpen, detail) {
+          detail.open = wasOpen;
+        });
+        detailsBeforeSearch = null;
+      }
+
+      function revealMatchingDetails(query) {
+        if (!detailsBeforeSearch) {
+          detailsBeforeSearch = new Map();
+          pages.forEach(function (page) {
+            page.querySelectorAll('details').forEach(function (detail) {
+              detailsBeforeSearch.set(detail, detail.open);
+            });
+          });
+        }
+
+        detailsBeforeSearch.forEach(function (wasOpen, detail) {
+          detail.open = wasOpen;
+          if (detail.textContent.toLocaleLowerCase('zh-CN').indexOf(query) >= 0) {
+            detail.open = true;
+          }
+        });
+      }
+
       function runSearch() {
         var query = searchInput.value.trim().toLocaleLowerCase('zh-CN');
         if (!query) {
+          restoreSearchDetails();
           showActivePage();
           return;
         }
 
+        revealMatchingDetails(query);
         var matchCount = 0;
         pages.forEach(function (page) {
           var isMatch = page.textContent.toLocaleLowerCase('zh-CN').indexOf(query) >= 0;
@@ -1176,6 +1210,7 @@
       navItems.forEach(function (navItem) {
         navItem.addEventListener('click', function () {
           searchInput.value = '';
+          restoreSearchDetails();
           var pageId = navItem.dataset.pageTarget;
           if (window.location.hash === '#' + pageId) {
             showActivePage();
