@@ -23,7 +23,12 @@ function stripFinalPathExtension(value: string): string {
 
 function getDocsResourcePath(value: string): string {
     const normalized = normalizeTreeKey(value);
-    return normalized.startsWith('docs/') ? normalized.slice('docs/'.length) : normalized;
+    for (const prefix of ['src/resources/', 'docs/']) {
+        if (normalized.startsWith(prefix)) {
+            return normalized.slice(prefix.length);
+        }
+    }
+    return normalized;
 }
 
 function isIgnoredDocsResourcePath(value: string): boolean {
@@ -56,7 +61,10 @@ function isGeneratedRepeatedThemeTitle(title: string, item: ItemData): boolean {
 }
 
 function getItemResourceName(tab: SidebarTreeTab, item: ItemData): string {
-    return normalizeTreeKey(tab === 'docs' ? (item.filePath || item.name) : item.name);
+    if (tab === 'docs') {
+        return getDocsResourcePath(item.filePath || item.name);
+    }
+    return normalizeTreeKey(item.name);
 }
 
 function resolveItemTitle(tab: SidebarTreeTab, item: ItemData, persistedTitle?: string): string {
