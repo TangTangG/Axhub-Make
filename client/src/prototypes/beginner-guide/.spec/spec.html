@@ -1,0 +1,1233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <script>document.documentElement.classList.add('js');</script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>新手指导主规格</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: #111827;
+      background: #eef1f5;
+      --paper: #ffffff;
+      --paper-soft: #f7f8fa;
+      --ink: #111827;
+      --muted: #667085;
+      --line: #d8dee8;
+      --accent: #002fa7;
+      --accent-soft: #e8eeff;
+      --orange: #d97706;
+      --green: #059669;
+      --purple: #7c3aed;
+      --danger: #e11d48;
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      padding: 24px 20px 64px;
+    }
+
+    button,
+    input { font: inherit; }
+
+    button { cursor: pointer; }
+
+    a { color: var(--accent); }
+
+    a:hover { text-decoration-thickness: 2px; }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #edf0f5;
+      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+      font-size: .92em;
+      overflow-wrap: anywhere;
+    }
+
+    pre {
+      overflow-x: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .skip-link {
+      position: fixed;
+      left: 16px;
+      top: 12px;
+      z-index: 100;
+      padding: 9px 12px;
+      border-radius: 8px;
+      color: #fff;
+      background: var(--accent);
+      transform: translateY(-160%);
+    }
+
+    .skip-link:focus { transform: translateY(0); }
+
+    .document-shell {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      gap: 24px;
+      width: min(1320px, 100%);
+      margin: 0 auto;
+      align-items: start;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 24px;
+      display: grid;
+      gap: 18px;
+      padding: 20px 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: 0 12px 30px rgb(31 42 68 / 7%);
+    }
+
+    .document-mark {
+      padding: 0 8px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .document-mark strong,
+    .document-mark span { display: block; }
+
+    .document-mark strong {
+      font-size: 16px;
+      line-height: 1.3;
+    }
+
+    .document-mark span {
+      margin-top: 5px;
+      color: var(--muted);
+      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .search-panel {
+      display: grid;
+      gap: 7px;
+    }
+
+    #spec-search {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      background: var(--paper-soft);
+    }
+
+    #spec-search:focus {
+      border-color: var(--accent);
+      outline: 3px solid rgb(0 47 167 / 16%);
+    }
+
+    #search-status,
+    #acceptance-status {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .page-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .page-nav button {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 0;
+      border-left: 3px solid transparent;
+      border-radius: 6px;
+      color: #4b5565;
+      background: transparent;
+      text-align: left;
+    }
+
+    .page-nav button:hover,
+    .page-nav button[aria-current="page"] {
+      border-left-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .page-nav button[aria-current="page"] { font-weight: 700; }
+
+    .page-nav button:focus-visible,
+    .secondary-action:focus-visible,
+    summary:focus-visible,
+    input[type="checkbox"]:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .sidebar-note {
+      margin: 0;
+      padding: 12px;
+      border-radius: 8px;
+      color: var(--muted);
+      background: var(--paper-soft);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .spec-main {
+      min-width: 0;
+      padding: 42px clamp(22px, 4vw, 56px) 56px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--paper);
+      box-shadow: 0 16px 44px rgb(31 42 68 / 8%);
+    }
+
+    .spec-page + .spec-page {
+      margin-top: 64px;
+      padding-top: 56px;
+      border-top: 4px solid var(--line);
+    }
+
+    .js .spec-page[hidden] { display: none; }
+
+    .page-kicker {
+      margin: 0 0 8px;
+      color: var(--accent);
+      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--ink);
+      font-size: clamp(32px, 5vw, 52px);
+      line-height: 1.08;
+      letter-spacing: -.035em;
+    }
+
+    .lead {
+      max-width: 860px;
+      margin: 16px 0 0;
+      color: #344054;
+      font-size: 17px;
+      line-height: 1.75;
+    }
+
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 26px;
+    }
+
+    .status-card {
+      min-width: 0;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--accent);
+      border-radius: 10px;
+      background: var(--paper-soft);
+    }
+
+    .status-card span,
+    .status-card strong { display: block; }
+
+    .status-card span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status-card strong {
+      margin-top: 5px;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    h2 {
+      margin: 48px 0 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+      color: var(--ink);
+      font-size: 23px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      margin: 28px 0 10px;
+      color: var(--ink);
+      font-size: 17px;
+      line-height: 1.4;
+    }
+
+    p,
+    li,
+    td,
+    th,
+    summary,
+    dt,
+    dd {
+      font-size: 14px;
+      line-height: 1.72;
+    }
+
+    p { margin: 10px 0; }
+
+    ul,
+    ol {
+      margin: 10px 0;
+      padding-left: 23px;
+    }
+
+    li + li { margin-top: 5px; }
+
+    .definition,
+    .boundary,
+    .notice {
+      margin: 18px 0;
+      padding: 15px 17px;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      color: #344054;
+      background: #f1f4ff;
+      line-height: 1.7;
+    }
+
+    .boundary {
+      border-left-color: var(--orange);
+      background: #fff8eb;
+    }
+
+    .notice {
+      border-left-color: var(--green);
+      background: #eefbf6;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .fact-card {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper-soft);
+    }
+
+    .fact-card h3 {
+      margin: 0 0 7px;
+      color: var(--accent);
+      font-size: 15px;
+    }
+
+    .fact-card p { margin: 0; }
+
+    .table-wrap {
+      width: 100%;
+      margin-top: 14px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      color: #273142;
+    }
+
+    th,
+    td {
+      min-width: 130px;
+      padding: 11px 12px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th:last-child,
+    td:last-child { border-right: 0; }
+
+    tr:last-child td,
+    tr:last-child th { border-bottom: 0; }
+
+    thead th {
+      color: #344054;
+      background: #f1f3f7;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    tbody th {
+      color: var(--accent);
+      background: #fafbfc;
+    }
+
+    .compact th,
+    .compact td { min-width: 105px; }
+
+    details {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper-soft);
+    }
+
+    summary {
+      padding: 12px 14px;
+      color: #344054;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .details-body { padding: 0 14px 14px; }
+
+    .details-body > :first-child { margin-top: 0; }
+
+    .tree {
+      margin: 16px 0;
+      padding: 16px 18px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: #273142;
+      background: #f8f9fb;
+      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      white-space: pre;
+    }
+
+    .mermaid {
+      margin: 16px 0;
+      padding: 18px;
+      overflow-x: auto;
+      border: 1px solid #bbc7e4;
+      border-radius: 10px;
+      color: #24355f;
+      background: #f1f4ff;
+      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.75;
+      white-space: pre;
+    }
+
+    .acceptance-list {
+      display: grid;
+      gap: 10px;
+      margin: 16px 0;
+    }
+
+    .acceptance-item {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--paper-soft);
+    }
+
+    .acceptance-item input {
+      width: 17px;
+      height: 17px;
+      margin: 4px 0 0;
+      accent-color: var(--accent);
+    }
+
+    .acceptance-item span {
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .acceptance-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .secondary-action {
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: #344054;
+      background: var(--paper);
+    }
+
+    .secondary-action:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .source-list {
+      display: grid;
+      grid-template-columns: minmax(150px, .65fr) minmax(0, 1.35fr);
+      margin: 14px 0 0;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .source-list dt,
+    .source-list dd {
+      margin: 0;
+      padding: 11px 13px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .source-list dt {
+      color: #344054;
+      background: #f1f3f7;
+      font-weight: 700;
+    }
+
+    .source-list dd {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .source-list > :nth-last-child(-n + 2) { border-bottom: 0; }
+
+    @media (max-width: 860px) {
+      body { padding: 0 10px 40px; }
+
+      .document-shell { display: block; }
+
+      .sidebar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        margin: 0 -10px 12px;
+        padding: 9px 10px;
+        border-width: 0 0 1px;
+        border-radius: 0;
+      }
+
+      .document-mark,
+      .sidebar-note { display: none; }
+
+      .search-panel {
+        grid-template-columns: minmax(160px, 1fr) auto;
+        align-items: center;
+      }
+
+      .page-nav {
+        flex-direction: row;
+        gap: 6px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .page-nav::-webkit-scrollbar { display: none; }
+
+      .page-nav button {
+        width: auto;
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+
+      .spec-main {
+        padding: 30px 20px 44px;
+        border-radius: 12px;
+      }
+
+      .status-strip,
+      .card-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 560px) {
+      .search-panel { grid-template-columns: 1fr; }
+      #search-status { display: none; }
+      .source-list { display: block; }
+      .source-list dt,
+      .source-list dd { border-bottom: 1px solid var(--line); }
+      .source-list > :last-child { border-bottom: 0; }
+    }
+
+    @media print {
+      body { padding: 0; background: #fff; }
+      .document-shell { display: block; width: 100%; }
+      .sidebar { display: none; }
+      .spec-main {
+        padding: 0;
+        border: 0;
+        box-shadow: none;
+      }
+      .spec-page,
+      .js .spec-page[hidden] { display: block !important; }
+      .spec-page + .spec-page {
+        break-before: page;
+        margin-top: 0;
+      }
+      details > * { display: block; }
+      .secondary-action { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" id="skip-to-content" href="#spec-content">跳到规格正文</a>
+  <div class="document-shell">
+    <aside class="sidebar" aria-label="规格导航与检索">
+      <div class="document-mark">
+        <strong>Beginner Guide</strong>
+        <span>CURRENT IMPLEMENTATION SPEC</span>
+      </div>
+      <div class="search-panel">
+        <input id="spec-search" type="search" aria-label="搜索规格内容" placeholder="搜索章节、交互或源码">
+        <output id="search-status" aria-live="polite">可搜索全部 5 个规格页</output>
+      </div>
+      <nav class="page-nav" aria-label="规格文档页面">
+        <button type="button" data-page-target="overview" aria-current="page">当前方案</button>
+        <button type="button" data-page-target="learning-journey">学习旅程</button>
+        <button type="button" data-page-target="chapter-specs">章节规格</button>
+        <button type="button" data-page-target="interactions-content">交互与内容</button>
+        <button type="button" data-page-target="evidence-acceptance">证据与验收</button>
+      </nav>
+      <p class="sidebar-note">本侧栏只控制规格文档自身。关闭 JavaScript 时，五页正文会按顺序全部显示；打印时也会展开全部页面。</p>
+    </aside>
+
+    <main id="spec-content" class="spec-main" tabindex="-1">
+      <article class="spec-page" data-spec-page="overview">
+        <p class="page-kicker">Current baseline · 2026-07-13</p>
+        <h1>新手指导主规格</h1>
+        <p class="lead">本规格记录 Make Client 模板中 <code>beginner-guide</code> 的当前工作区实现：七章学习内容、Hash 章节路由、提示词复制、项目路径注入、截图用途、响应式布局和完成标准。它以当前未提交源码为事实基线，不从历史恢复旧的 Agent、模型或 AI 稳定性文案。</p>
+
+        <div class="status-strip" aria-label="当前实现摘要">
+          <div class="status-card"><span>学习范围</span><strong>7 章 · 合计 29 分钟 · 标注字数约 4,400 字</strong></div>
+          <div class="status-card"><span>当前内容重点</span><strong>4 个 Agent · 6 个模型 · AI 效果与时间不确定性</strong></div>
+          <div class="status-card"><span>交互与素材</span><strong>7 个 Hash route · 3 个复制入口 · 8 个本地 PNG</strong></div>
+        </div>
+
+        <section id="overview-baseline">
+          <h2>事实基线</h2>
+          <div class="notice">规格读取的是当前工作区文件。<code>index.tsx</code>、<code>style.css</code> 与 <code>useHashPage.ts</code> 在取证时均有未提交修改，<code>clipboard.ts</code> 与本目录中的 AI 不确定性设计/实施文档尚未跟踪；这些状态是来源属性，不是本规格要修复的缺陷。</div>
+          <div class="card-grid">
+            <article class="fact-card">
+              <h3>运行入口</h3>
+              <p><code>GuideShell</code> 是默认导出。它接收可选 <code>config.projectPath</code>，通过 <code>useHashPage(guideRoute)</code> 选择当前章节，并始终渲染同一个侧栏、章节头、完成标准和前后章页脚。</p>
+            </article>
+            <article class="fact-card">
+              <h3>内容构成</h3>
+              <p>七章均已有专用 React 内容分支，因此当前不会落入 <code>DefaultChapterContent</code> 的占位版式。章节结构、提示词和表格数据均直接定义在 <code>index.tsx</code>。</p>
+            </article>
+            <article class="fact-card">
+              <h3>视觉构成</h3>
+              <p><code>style.css</code> 定义暖纸张底色、墨蓝强调色、TsangerJinKai02 衬线字体与 JetBrains Mono 数据字体；桌面为固定侧栏加正文，窄屏改为顶部目录。</p>
+            </article>
+            <article class="fact-card">
+              <h3>浏览器能力</h3>
+              <p>章节状态来自 URL Hash；复制先尝试带 <code>copy</code> 事件的 <code>execCommand</code> 回退，再尝试 Clipboard API。页面本身没有请求后端，也没有保存学习进度。</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="overview-audience-purpose">
+          <h2>受众与目的</h2>
+          <p><strong>主要受众：</strong>首次使用 Axhub Make、尚未形成 Agent/模型选择和 AI 原型协作习惯的新手。内容允许读者从安装 Agent 开始，依次完成选模型、下指令、创建、编辑、发布和后续学习定位。</p>
+          <p><strong>产品目的：</strong>用短章节和可执行练习建立最小闭环；重点不是讲完所有能力，而是让用户能打开正确项目、选择明确模型、与 AI 沟通、产出和修改原型，并知道交付入口。</p>
+          <p><strong>规格目的：</strong>给实现、评审和验收提供一个可检索的当前态事实源，明确实际文案、状态、素材和边界。规格文档的五页交互独立于原型的七章 Hash。</p>
+        </section>
+
+        <section id="overview-scope">
+          <h2>范围</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>范围内</th><th>事实来源</th><th>验证重点</th></tr></thead>
+              <tbody>
+                <tr><td>七章顺序、标题、摘要、字数、时长和完成标准</td><td><code>guideRoute</code> 与 <code>chapters</code></td><td>route 与章节一一对应，顺序一致</td></tr>
+                <tr><td>章节正文、Agent/模型表、提示词、AI 不确定性与进阶目录</td><td>七个章节组件和内容常量</td><td>当前文案完整，不复用旧历史值</td></tr>
+                <tr><td>Hash、前后章、复制、路径注入和外链</td><td><code>useHashPage.ts</code>、<code>clipboard.ts</code>、事件处理器</td><td>默认值、分支、计时和失败行为明确</td></tr>
+                <tr><td>八个 PNG、字体、响应式断点和可访问属性</td><td>静态 import、JSX 属性与 <code>style.css</code></td><td>用途、替代文本、布局变化可追踪</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="overview-non-goals">
+          <h2>非目标</h2>
+          <ul>
+            <li>不定义或实现账号、付费、Agent 安装器、模型可用性检测、云发布或导出服务。</li>
+            <li>不把静态“完成标准”图标改造成可勾选、持久化或跨章节统计的学习进度。</li>
+            <li>不承诺进阶指导中的“在线原型”入口已经上线；当前正文明确写着“近期上线”。</li>
+            <li>不修正当前内容元数据与正文的轻微差异，例如第三章 <code>sections</code> 尚未列出新增的 AI 不确定性节点。</li>
+            <li>不修改原型源码、素材、路由 hook 或用户工作区中的其他文件。</li>
+          </ul>
+        </section>
+      </article>
+
+      <article class="spec-page" data-spec-page="learning-journey">
+        <p class="page-kicker">Page 02 · Learning journey</p>
+        <h1>学习旅程</h1>
+        <p class="lead">七章组成一条有顺序但无强制锁定的学习路线。所有章节始终显示在目录中，用户可直接跳转；前后章按钮只提供顺序导航，不记录完成状态。</p>
+
+        <section id="journey-sequence">
+          <h2>章节顺序</h2>
+          <pre class="mermaid" data-mermaid-source>flowchart LR
+  A[01 安装 Agent] --> B[02 选对模型]
+  B --> C[03 给 AI 下达指令]
+  C --> D[04 创建原型]
+  D --> E[05 编辑原型]
+  E --> F[06 发布原型]
+  F --> G[07 进阶指导]</pre>
+          <p>上方保留 Mermaid 源码作为可读回退；即使未加载 Mermaid 渲染器，流程文本仍然完整。</p>
+        </section>
+
+        <section id="journey-routes">
+          <h2>Hash route 与章节矩阵</h2>
+          <div class="table-wrap">
+            <table class="compact">
+              <thead><tr><th>顺序 / route</th><th>标题</th><th>摘要</th><th>标注篇幅</th><th>时长</th><th>完成标准</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">01<br><code>install-agent</code></th><td>安装 Agent</td><td>选工具、打开项目、做目录确认。</td><td>约 900 字</td><td>5 分钟</td><td>已选 Agent；已打开本项目；AI 回复“已打开正确项目”。</td></tr>
+                <tr><th scope="row">02<br><code>choose-model</code></th><td>选对模型</td><td>手动选择推荐模型，不默认使用 Auto。</td><td>约 500 字</td><td>3 分钟</td><td>已选推荐模型；未使用非 Cursor 的 Auto；知道输入框附近入口。</td></tr>
+                <tr><th scope="row">03<br><code>give-instructions</code></th><td>给 AI 下达指令</td><td>正常表达想法，用图片和新对话降低成本。</td><td>约 700 字</td><td>5 分钟</td><td>已用普通话描述；已准备截图/参考图；已复制并发送练习提示词。</td></tr>
+                <tr><th scope="row">04<br><code>create-prototype</code></th><td>创建原型</td><td>说出想法，让 AI 补需求和设计后生成。</td><td>约 500 字</td><td>4 分钟</td><td>知道清晰需求的 3 项；知道可让 AI 补全；已复制快递首页提示词。</td></tr>
+                <tr><th scope="row">05<br><code>edit-prototype</code></th><td>编辑原型</td><td>用描述、截图、浏览器和批注指明修改。</td><td>约 700 字</td><td>5 分钟</td><td>会用截图/标注/语音；会把页面加入对话；会让 AI 执行 Make 批注。</td></tr>
+                <tr><th scope="row">06<br><code>publish-prototype</code></th><td>发布原型</td><td>识别发布/导出菜单和开发环境访问菜单。</td><td>约 500 字</td><td>4 分钟</td><td>知道云发布和导出入口；知道 Axure/Figma/HTML；会获取局域网地址。</td></tr>
+                <tr><th scope="row">07<br><code>advanced-guide</code></th><td>进阶指导</td><td>了解三类后续路线，不要求一次学完。</td><td>约 600 字</td><td>3 分钟</td><td>知道三类进阶内容；知道未来从在线原型获取；知道学完可删项目。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="journey-routing-contract">
+          <h2>路由契约</h2>
+          <ol>
+            <li><code>defineHashPageRoute</code> 注册上述七个小写连字符 ID，默认页为 <code>install-agent</code>；本路由不使用 <code>group</code>。</li>
+            <li>初始化先解析 <code>window.location.hash</code> 的 <code>page</code> 参数，再解析查询参数 <code>?page=</code>，最后回到默认页。有效 ID 字符只允许小写字母、数字和连字符。</li>
+            <li><code>setPage(pageId)</code> 将 URL 写为 <code>#page=&lt;pageId&gt;</code>。侧栏、上一章和下一章全部调用同一入口。</li>
+            <li>Hash 变化时，hook 更新章节状态；嵌入父窗口时发送 <code>AXHUB_PROTOTYPE_PAGE_CHANGE</code>。初始化还发送包含 pages、defaultPageId 和 activePageId 的 <code>AXHUB_PROTOTYPE_ROUTE_INFO</code>。</li>
+            <li>若 Hash 中的 ID 字符合法但未注册，<code>chapters.findIndex</code> 得到 -1 后被钳制为 0，因此界面显示第一章；源码不会主动把未知 Hash 改回默认值。</li>
+          </ol>
+        </section>
+
+        <section id="journey-prerequisites-progression">
+          <h2>前置条件、推进与完成</h2>
+          <div class="card-grid">
+            <article class="fact-card"><h3>前置条件</h3><p>页面假定用户从 Axhub Make 项目中进入，并能使用至少一个外部 Agent。第一章负责帮助用户选择 Agent、打开当前项目和验证目录；没有账号或环境自动检测门槛。</p></article>
+            <article class="fact-card"><h3>自由跳转</h3><p>七个目录按钮始终可用。没有章节锁、强制确认或完成后解锁；选择按钮立即改变 Hash。</p></article>
+            <article class="fact-card"><h3>顺序推进</h3><p>上一章/下一章来自当前数组下标。第一章的上一章禁用，末章的下一章禁用；中间章节两侧均可用。</p></article>
+            <article class="fact-card"><h3>完成含义</h3><p>每章底部展示三个 <code>CheckCircle2</code> 图标和文字。它们是阅读清单而不是表单控件，不改变状态，也不会保存到浏览器。</p></article>
+          </div>
+        </section>
+
+        <section id="journey-current-divergence">
+          <h2>当前元数据差异</h2>
+          <div class="boundary">第三章 <code>chapters.sections</code> 仍为“沟通心态 / 三个技巧 / 练习任务”，正文已经在“先接受沟通成本”之后、“三个技巧”之前加入“接受 AI 的不稳定性”。本规格以实际渲染顺序为准，同时保留这项差异作为当前态事实。</div>
+        </section>
+      </article>
+
+      <article class="spec-page" data-spec-page="chapter-specs">
+        <p class="page-kicker">Page 03 · Chapter specifications</p>
+        <h1>章节规格</h1>
+        <p class="lead">以下按实际渲染顺序列出每章的内容节点、数据表、练习和完成标准。引用文字均来自当前工作区实现。</p>
+
+        <section id="chapter-install-agent">
+          <h2>01 · 安装 Agent</h2>
+          <p><strong>目标：</strong>选择一个顺手的 AI 编程工具，在 Agent 中打开当前 Make 项目，并让 AI 只检查目录。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Agent</th><th>简介</th><th>上手</th><th>能力</th><th>官网</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">ChatGPT</th><td>性价比综合高，软件简单，但模型单一</td><td>较难</td><td>强</td><td><a href="https://chatgpt.com/">chatgpt.com</a></td></tr>
+                <tr><th scope="row">Cursor</th><td>费用高，模型齐全，软件体验好</td><td>简单</td><td>强</td><td><a href="https://cursor.com/">cursor.com</a></td></tr>
+                <tr><th scope="row">TRAE CN 系列</th><td>中文友好，国内版免费</td><td>简单</td><td>一般</td><td><a href="https://www.trae.ai/download">trae.ai/download</a></td></tr>
+                <tr><th scope="row">WorkBuddy</th><td>中文友好，使用简单</td><td>简单</td><td>一般</td><td><a href="https://www.codebuddy.cn/docs/workbuddy/Overview">WorkBuddy 文档</a></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <ol>
+            <li><strong>先选一个 Agent：</strong>说明 IDE、CLI、在线 Agent 都可用，后续所有“让 AI 做”的步骤都发给所选工具。</li>
+            <li><strong>在 Agent 中打开这个项目：</strong>第一张步骤卡要求从 Make 首页左上角“打开 AI”；第二张说明 WorkBuddy、TRAE Work、ChatGPT 等工具新建项目时要加入当前目录。</li>
+            <li><strong>最后做一次确认：</strong>复制动态提示词；AI 若在正确目录，只应回复“已打开正确项目”，并且不得修改任何文件。</li>
+          </ol>
+          <p><strong>完成标准：</strong>已选择一个 Agent；已在 Agent 中打开本项目；AI 回复“已打开正确项目”。</p>
+        </section>
+
+        <section id="chapter-choose-model">
+          <h2>02 · 选对模型</h2>
+          <p><strong>目标：</strong>先手动选择推荐模型；当前正文明确写着“除了 Cursor，绝大多数 Agent 的 Auto 都不可信”。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>模型名称</th><th>厂商</th><th>当前特点文案</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">GPT-5.6</th><td>OpenAI</td><td>适合处理复杂问题和任务，性价比高</td></tr>
+                <tr><th scope="row">Claude Opus 4.8</th><td>Anthropic</td><td>综合能力强，但价格高，适合规划</td></tr>
+                <tr><th scope="row">Grok 4.5</th><td>xAI</td><td>综合能力强，速度快，性价比高</td></tr>
+                <tr><th scope="row">GLM-5.2</th><td>智谱 AI</td><td>国产平替，综合能力强，不支持多模态</td></tr>
+                <tr><th scope="row">Kimi K2.7</th><td>Moonshot</td><td>国产平替，UI/UX 设计能力优秀</td></tr>
+                <tr><th scope="row">DeepSeek V4 Pro</th><td>DeepSeek</td><td>国产平替，性价比高，综合能力强，不支持多模态</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>内容顺序：</strong>先选推荐模型 → 不要盲信 Auto → 推荐模型表 → 模型入口通常在对话框。最后的步骤卡用 <code>plan-mode-menu.png</code> 示意输入框附近入口，并写明看到 Auto 就换成表中模型。</p>
+          <p><strong>完成标准：</strong>已选择推荐模型之一；未使用非 Cursor 的 Auto；知道在输入框附近切换模型。</p>
+        </section>
+
+        <section id="chapter-give-instructions">
+          <h2>03 · 给 AI 下达指令</h2>
+          <ol>
+            <li><strong>先正常沟通：</strong>像和同事说话一样讲清楚，不要求背提示词模板；同时接受新增沟通层，新手先追求稳定。</li>
+            <li><strong>先接受沟通成本：</strong>“单人工作”是收到需求 → 构思方案 → 自己执行；“你 + AI”增加告知 AI、确认方案、验收执行三个标为“沟通”的节点。</li>
+            <li><strong>接受 AI 的不稳定性：</strong>这是当前工作区新增节点。引导语使用“Vibe Coding / Vibe Design”；效果卡展示同一提示词分支到结果 A/B，时间卡展示任务开始 → 反复调整（次数不定）→ 任务完成，并要求用一段时间内的平均效率提升评估协作。</li>
+            <li><strong>三个技巧：</strong>一个任务开一个新对话；安装豆包/闪电说语音输入（文案称输入效率提升 4 倍、沟通效率增加 40%）；多提供设计参考、调整反馈和 Bug 截图。</li>
+            <li><strong>练习一下：</strong>把“让 AI 改一张卡片”提示词发给 AI，只修改第 03 章练习卡片的标题、正文和轻量颜色。</li>
+          </ol>
+          <p><strong>完成标准：</strong>已用普通话描述任务；已准备截图或参考图；已复制练习提示词并发给 AI。</p>
+        </section>
+
+        <section id="chapter-create-prototype">
+          <h2>04 · 创建原型</h2>
+          <ol>
+            <li><strong>直接说你要什么：</strong>创建原型不用先写方案；需求清楚时只说做什么、给谁用、看起来像什么。</li>
+            <li><strong>三项示例：</strong>“官网首页 / 后台列表 / 活动页”；“新客户 / 门店店员 / 小商家”；“模块 / 风格 / 参考图”。</li>
+            <li><strong>没想清楚也没关系：</strong>正文声称 Axhub Make 内置多个技能补全需求，并有“80+”设计主题补全设计。</li>
+            <li><strong>重要提醒：</strong>优先使用编辑器的计划模式或 spec 模式，先让 AI 写计划，再确认生成；配图再次使用 <code>plan-mode-menu.png</code>。</li>
+            <li><strong>练习一下：</strong>只提供“快递官网首页、面向个人寄件和小商家用户”两个方向，让 AI 补全内容和设计。</li>
+          </ol>
+          <p><strong>完成标准：</strong>知道清晰需求只要先说 3 项；知道想法不完整时可以让 AI 补全；已复制快递官网首页练习提示词。</p>
+        </section>
+
+        <section id="chapter-edit-prototype">
+          <h2>05 · 编辑原型</h2>
+          <p><strong>起点：</strong>直接描述哪个区域、改成什么样、为什么要改；表达不清时多用“截图 + 标注”和语音。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>方式</th><th>当前说明</th><th>视觉证据</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">截图 + 标注</th><td>适合局部；圈出位置并写一句变化，比长文字清楚。</td><td>纯文字步骤卡，无截图。</td></tr>
+                <tr><th scope="row">IDE 浏览器</th><td>把当前页面添加到对话，让 AI 直接看见目标页面。</td><td><code>add-page-to-chat.png</code></td></tr>
+                <tr><th scope="row">Axhub Make 批注</th><td>直接点页面位置，批注后让 AI 执行，减少上下文解释。</td><td><code>annotation-toolbar.png</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>练习：</strong>“改一处你看不顺眼的地方”，截图或批注均可，只说一处先跑通。该章没有复制按钮。</p>
+          <p><strong>完成标准：</strong>会用截图、标注和语音描述修改；知道把浏览器页面添加到对话；知道用 Axhub Make 批注让 AI 执行。</p>
+        </section>
+
+        <section id="chapter-publish-prototype">
+          <h2>06 · 发布原型</h2>
+          <p><strong>两个入口：</strong>右上角菜单负责云端发布和文件导出；项目菜单负责本地开发环境访问。新手只需先识别入口。</p>
+          <ul>
+            <li><strong>右上角菜单：</strong>支持发布到云端服务，也支持导出到 Axure、Figma 和 HTML；云服务可有多种部署渠道。配图 <code>export-menu.png</code>。</li>
+            <li><strong>项目菜单：</strong>获取开发环境局域网地址；团队沟通或手机调试时可复制链接或扫二维码。配图 <code>access-link-menu.png</code>。</li>
+          </ul>
+          <p><strong>完成标准：</strong>知道右上角菜单可以发布和导出；知道可以导出 Axure、Figma 和 HTML；会从项目菜单获取开发环境的局域网地址。</p>
+        </section>
+
+        <section id="chapter-advanced-guide">
+          <h2>07 · 进阶指导</h2>
+          <p>本章是下一步路线图，不要求新手立即学完。三个分类共八项：</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>分类</th><th>项目</th><th>当前说明</th></tr></thead>
+              <tbody>
+                <tr><th scope="row" rowspan="3">生产与复用<br>把一次生成变成可反复使用的资料和规范。</th><td>设计系统搭建</td><td>整理颜色、字体、组件和页面规则，让后续页面更统一。</td></tr>
+                <tr><td>文档生成</td><td>把需求、流程、页面说明整理成文档，方便交付和复盘。</td></tr>
+                <tr><td>原型导入</td><td>把外部原型或在线原型导入项目，作为学习和改造素材。</td></tr>
+                <tr><th scope="row" rowspan="2">原型能力进阶<br>继续提高新建和修改原型的稳定性。</th><td>进阶新建原型</td><td>从一句想法，升级到更完整的页面结构、业务流程和视觉方向。</td></tr>
+                <tr><td>进阶编辑原型</td><td>学会分批改页面、控制范围，并让 AI 按反馈持续迭代。</td></tr>
+                <tr><th scope="row" rowspan="3">项目与协作<br>让多人、远程和长期项目更好管理。</th><td>版本管理</td><td>保留关键版本，出问题时能回退，也能看清每次改了什么。</td></tr>
+                <tr><td>团队协作</td><td>把任务、批注和验收分清楚，减少团队来回沟通。</td></tr>
+                <tr><td>远程工作</td><td>让不在同一地点的人，也能围绕同一个原型同步讨论。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>获取方式：</strong>正文写明未来从“导入原型”中的“在线原型”获取学习项目，并用“近期上线”标记；<code>online-import-modal.png</code> 是预留入口的当前截图。</p>
+          <p><strong>清理建议：</strong>学完后删除“新手指导”项目，减少 AI 读取项目时的无关上下文。</p>
+          <p><strong>完成标准：</strong>知道进阶指导分为三类；知道后续从“在线原型”获取；知道学完后可以删除本项目。</p>
+        </section>
+      </article>
+
+      <article class="spec-page" data-spec-page="interactions-content">
+        <p class="page-kicker">Page 04 · Interactions and content</p>
+        <h1>交互与内容</h1>
+        <p class="lead">本页记录章节导航、三个复制入口、运行时项目路径、外链、截图、视觉断点和实际可访问属性。</p>
+
+        <section id="interaction-navigation">
+          <h2>章节导航与状态</h2>
+          <ul>
+            <li>侧栏 <code>nav</code> 遍历 <code>chapters</code> 生成七个 <code>button type="button"</code>。当前按钮使用 <code>is-active</code> 类，但没有 <code>aria-current</code>。</li>
+            <li>正文一次只渲染当前章节组件；标题、摘要、字数和时长随 <code>activeChapter</code> 改变。正文 <code>section</code> 由 <code>aria-labelledby</code> 关联到各自 <code>h3 id</code>。</li>
+            <li>前后章按钮依据数组相邻项跳转，并在不存在相邻项时使用原生 <code>disabled</code>。导航只改变 Hash，不滚动正文到顶部。</li>
+            <li>章节完成标准每次只展示当前章的三条静态文字；没有 click、checkbox、storage 或网络行为。</li>
+          </ul>
+        </section>
+
+        <section id="interaction-copy">
+          <h2>复制状态机</h2>
+          <pre class="mermaid" data-mermaid-source>stateDiagram-v2
+  [*] --> idle
+  idle --> copied: 任一复制路径返回 true
+  idle --> failed: 两条复制路径都失败
+  copied --> idle: 1400 ms
+  failed --> idle: 2200 ms</pre>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>状态</th><th>按钮标签</th><th>进入条件</th><th>离开条件</th></tr></thead>
+              <tbody>
+                <tr><th scope="row"><code>idle</code></th><td>复制</td><td>初始状态或计时结束</td><td>异步复制结果返回</td></tr>
+                <tr><th scope="row"><code>copied</code></th><td>已复制</td><td><code>copyTextToClipboard</code> 返回 true</td><td>1,400 ms 后回到 idle</td></tr>
+                <tr><th scope="row"><code>failed</code></th><td>复制失败</td><td><code>copyTextToClipboard</code> 返回 false</td><td>2,200 ms 后回到 idle</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>复制实现先创建屏外只读 textarea，监听捕获阶段的 <code>copy</code> 事件，把 <code>text/plain</code> 写入 clipboardData，再调用 <code>document.execCommand('copy')</code>；完成后移除监听和 textarea，并恢复此前焦点。该路径失败后，才调用 <code>navigator.clipboard.writeText</code>。两个入口都不可用或抛错时返回 false。</p>
+          <p>每个提示词组件各自维护状态；复制按钮自身带 <code>aria-live="polite"</code>，因此标签变化承担成功/失败播报。重复快速点击会创建多个回到 idle 的计时器，当前实现没有取消旧计时器。</p>
+        </section>
+
+        <section id="content-prompts">
+          <h2>三个生成提示词</h2>
+          <details open>
+            <summary>安装 Agent：验证当前项目目录</summary>
+            <div class="details-body">
+              <pre>请帮我确认一下：你现在打开的项目，是不是下面这个目录：
+
+〔运行时插入 config.projectPath 去空白后的值；若为空则插入下节所列回退句〕
+
+不要修改任何文件，只需要检查目录。
+
+如果你已经在这个项目里，请只回复：
+已打开正确项目
+
+如果不是，请告诉我现在打开的是哪个目录，并提醒我重新打开正确项目。</pre>
+            </div>
+          </details>
+          <details>
+            <summary>给 AI 下达指令：修改第 03 章练习卡片</summary>
+            <div class="details-body">
+              <pre>请帮我修改第 03 章里的练习卡片。
+
+我想这样改：
+1. 标题改成：先试着和 AI 说一句
+2. 正文改成：不用写完美提示词，先把想法说清楚。
+3. 卡片颜色稍微更醒目一点，但不要跳出当前页面风格。
+
+改完后告诉我你改了哪些文字和样式。</pre>
+            </div>
+          </details>
+          <details>
+            <summary>创建原型：快递官网首页</summary>
+            <div class="details-body">
+              <pre>请帮我生成一个快递官网首页原型。
+面向个人寄件和小商家用户。</pre>
+            </div>
+          </details>
+        </section>
+
+        <section id="content-path-injection">
+          <h2>项目路径注入</h2>
+          <ol>
+            <li><code>getProjectPath</code> 将可选 <code>config.projectPath</code> 转为字符串并去除首尾空白；缺失、null 或空白结果都是空字符串。</li>
+            <li><code>createVerificationPrompt</code> 把非空结果原样作为单独一行插入安装章提示词。</li>
+            <li>若结果为空，该行精确替换为：“当前页面暂未拿到项目目录，请回到 Axhub Make 管理页打开本项目。”</li>
+            <li><code>useMemo</code> 以 <code>projectPath</code> 为依赖重新生成提示词；不读取 URL、文件系统或浏览器存储。</li>
+          </ol>
+        </section>
+
+        <section id="content-links-assets">
+          <h2>外链与截图证据</h2>
+          <p>只有 Agent 表包含外链。运行时均使用 <code>target="_blank" rel="noreferrer"</code>，链接文本为“打开”并带外链图标；本规格中的同址链接仅用于事实追踪。</p>
+          <div class="table-wrap">
+            <table class="compact">
+              <thead><tr><th>素材 / 尺寸</th><th>出现位置与目的</th><th>当前替代文本</th></tr></thead>
+              <tbody>
+                <tr><th scope="row"><code>open-ai-button.png</code><br>470×234</th><td>安装章步骤 1：定位 Make 左上角“打开 AI”。</td><td>Axhub Make 左上角的打开 AI 按钮</td></tr>
+                <tr><th scope="row"><code>workbuddy-trae-solo-new-project.png</code><br>740×508</th><td>安装章步骤 2：新建项目时选择工作空间。</td><td>WorkBuddy、TRAE Work、ChatGPT 新建项目时选择工作空间</td></tr>
+                <tr><th scope="row"><code>plan-mode-menu.png</code><br>816×564</th><td>模型章示意输入框附近入口；创建章示意计划/spec 模式，同一素材共使用两次。</td><td>对话框中的 Plan 模式选择入口；编辑器对话框中的计划模式入口</td></tr>
+                <tr><th scope="row"><code>add-page-to-chat.png</code><br>1440×530</th><td>编辑章：把当前原型页面加入 IDE 对话。</td><td>IDE 浏览器中把当前原型页面添加到对话</td></tr>
+                <tr><th scope="row"><code>annotation-toolbar.png</code><br>1412×584</th><td>编辑章：定位 Axhub Make 页面批注工具栏。</td><td>Axhub Make 页面批注工具栏</td></tr>
+                <tr><th scope="row"><code>export-menu.png</code><br>586×706</th><td>发布章：定位右上角发布和导出菜单。</td><td>右上角导出菜单入口</td></tr>
+                <tr><th scope="row"><code>access-link-menu.png</code><br>968×572</th><td>发布章：定位项目菜单中的访问链接。</td><td>更多菜单里的访问链接入口</td></tr>
+                <tr><th scope="row"><code>online-import-modal.png</code><br>1230×788</th><td>进阶章：示意尚未上线的在线导入入口。</td><td>导入原型弹窗中的在线导入入口</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="content-visual-responsive">
+          <h2>视觉与响应式</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>范围</th><th>当前规则</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">基础视觉</th><td>纸张色 <code>#f5f4ed</code>、象牙白 <code>#faf9f5</code>、品牌墨蓝 <code>#1b365d</code>；正文和标题使用本地 TsangerJinKai02，数字/标签使用 JetBrains Mono。桌面 shell 为 270px 侧栏 + 流式正文。</td></tr>
+                <tr><th scope="row">≤1080px</th><td>侧栏缩为 230px，内边距收紧；正文最大 920px；章节 hero 从双列变为单列，元信息左对齐。</td></tr>
+                <tr><th scope="row">≤860px</th><td>整体改为单列；侧栏变为顶部相对定位区域；目录为两列；正文宽度最大 760px；三列卡片、双列流程卡和步骤卡均改为单列；进阶主题列表改为单列；截图和卡片尺寸收紧。</td></tr>
+                <tr><th scope="row">≤560px</th><td>目录改为一列；正文左右各留 12px；hero 标题固定 42px，正文 16px；流程卡收紧，AI 六节点网格与时间不确定性五列网格使用更窄轨道；前后章按钮纵向堆叠并占满宽度。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Agent/模型表设置最小宽度并由外层横向滚动。图片统一 <code>object-fit: contain</code>；宽截图跨完整步骤卡。原型 CSS 没有打印样式、暗色主题或 <code>prefers-reduced-motion</code> 分支。</p>
+        </section>
+
+        <section id="content-accessibility">
+          <h2>当前可访问性属性</h2>
+          <ul>
+            <li>侧栏使用 <code>aside aria-label="新手指导目录"</code>，章节信息 <code>dl</code> 使用 <code>aria-label="章节信息"</code>。</li>
+            <li>每个正文 section 的 <code>aria-labelledby</code> 指向同区标题；主要图片都有描述性 <code>alt</code>。</li>
+            <li>沟通成本总图、AI 流程、效果不确定性和时间不确定性分别有 <code>aria-label</code>；仅用于连接的箭头设 <code>aria-hidden="true"</code>。</li>
+            <li>目录有显式 <code>:focus-visible</code> 描边；复制和页脚按钮依赖浏览器原生焦点表现。外链图标没有单独隐藏，但链接仍有文字“打开”。</li>
+            <li>当前活动目录通过颜色、左边框和 <code>is-active</code> 表示；源码没有 <code>aria-current</code>。章节标题复用固定 ID，但任何时刻只渲染一个章节，因此运行 DOM 中不重复。</li>
+          </ul>
+        </section>
+      </article>
+
+      <article class="spec-page" data-spec-page="evidence-acceptance">
+        <p class="page-kicker">Page 05 · Evidence and acceptance</p>
+        <h1>证据与验收</h1>
+        <p class="lead">此页把实现边界、可操作验收清单、源码/素材/组件追踪和本规格决策集中在一起。勾选状态只属于本规格页面，不写回原型。</p>
+
+        <section id="evidence-boundaries">
+          <h2>实现边界与风险</h2>
+          <ul>
+            <li>原型没有后端请求、认证、权限、发布审批、真实导出动作、Agent 启动动作或模型选择动作；教程只解释并截图示意这些外部能力。</li>
+            <li>“发布到云端”“导出 Axure/Figma/HTML”“获取局域网地址”和未来在线原型都是说明性内容，不代表本组件执行对应业务。</li>
+            <li>模型名、版本、价格/能力评价和效率数字是当前静态文案，不由服务端校验，也没有日期或可用性提示。</li>
+            <li>复制使用已弃用但仍常见的 <code>execCommand</code> 作为优先路径；若浏览器限制两个剪贴板路径，UI 会显示“复制失败”2.2 秒。</li>
+            <li>未知但字符合法的章节 ID 会显示第一章而不规范化 Hash；导航后才会写成有效 <code>#page=</code>。</li>
+            <li>当前没有学习完成持久化；底部勾形图标不可交互。只有本规格的验收 checkbox 使用 localStorage。</li>
+          </ul>
+        </section>
+
+        <section id="acceptance-checklist">
+          <h2>验收清单</h2>
+          <p>本清单使用 <code>axhub-spec:beginner-guide:acceptance</code> 保存已勾选的 <code>data-acceptance-id</code>。浏览器拒绝 localStorage 时，勾选在当前页面仍可操作，但刷新后不会保留。</p>
+          <div class="acceptance-list">
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-chapter-routes"><span>七个章节 ID、标题、顺序和默认 <code>install-agent</code> 与 <code>guideRoute</code>/<code>chapters</code> 一一对应。</span></label>
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-metadata"><span>每章摘要、字数、时长和三条完成标准与当前源码一致，且明确完成标准不可交互。</span></label>
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-agent-model-copy"><span>四个 Agent 和六个模型使用当前工作区名称、厂商、说明、难度、能力与链接，没有恢复旧文案。</span></label>
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-ai-uncertainty"><span>第三章顺序包含沟通成本 → AI 不稳定性 → 三个技巧，并完整覆盖效果、时间、Vibe Coding / Vibe Design 与平均效率提升。</span></label>
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-prompts-copy"><span>三个提示词内容、复制两级回退、复制/已复制/复制失败标签和 1400/2200 ms 计时与实现一致。</span></label>
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-project-path"><span>安装章提示词使用去空白后的 <code>config.projectPath</code>，空值时使用精确回退句，且要求 AI 不修改文件。</span></label>
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-links-assets"><span>四个 Agent 外链和八个 PNG 的用途、尺寸、复用位置与替代文本均可追踪。</span></label>
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-responsive-accessibility"><span>1080px、860px、560px 三档变化以及当前 section 标签、图像替代文本、流程标签、箭头隐藏和焦点表现均有记录。</span></label>
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-boundaries"><span>规格明确区分教程说明与外部真实能力，并记录未来在线原型、静态模型评价、未知 Hash 和无学习进度等边界。</span></label>
+            <label class="acceptance-item"><input type="checkbox" data-acceptance-id="beginner-guide-spec-interaction"><span>规格自身五页 Hash、全文搜索、无脚本五页全文、键盘跳转 Hash 隔离、打印展开、Mermaid 源码和验收持久化均独立工作。</span></label>
+          </div>
+          <div class="acceptance-actions">
+            <button id="reset-acceptance" class="secondary-action" type="button">重置验收勾选</button>
+            <output id="acceptance-status" aria-live="polite">尚未勾选验收项</output>
+          </div>
+        </section>
+
+        <section id="evidence-traceability">
+          <h2>组件与资产追踪</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>实现单元</th><th>职责</th><th>输出/依赖</th></tr></thead>
+              <tbody>
+                <tr><th scope="row"><code>GuideShell</code></th><td>组合路由、侧栏、章节 hero、专用章节分支、完成标准和相邻导航。</td><td><code>chapters</code>、<code>useHashPage</code>、可选 config</td></tr>
+                <tr><th scope="row">七个 Chapter 组件</th><td>渲染每章已实现正文、表格、图示、练习和图片。</td><td>内容常量、PNG import、<code>usePromptClipboard</code></td></tr>
+                <tr><th scope="row"><code>usePromptClipboard</code></th><td>管理每个提示词卡的 idle/copied/failed 状态和恢复计时。</td><td><code>copyTextToClipboard</code>、<code>window.setTimeout</code></td></tr>
+                <tr><th scope="row"><code>clipboard.ts</code></th><td>执行 copy-event/execCommand 路径和 Clipboard API 回退，返回布尔结果。</td><td>Document、Navigator；不依赖 React</td></tr>
+                <tr><th scope="row"><code>useHashPage.ts</code></th><td>验证 page ID、解析 Hash/查询参数、写 Hash，并在嵌入时通知父窗口。</td><td>React state/effect/callback、<code>postMessage</code></td></tr>
+                <tr><th scope="row"><code>style.css</code></th><td>本地字体、纸张视觉、桌面/窄屏布局、流程图、卡片、表格和状态样式。</td><td>3 个 woff2；1080/860/560px 断点</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="evidence-sources">
+          <h2>来源</h2>
+          <details open>
+            <summary>当前工作区源码与设计依据</summary>
+            <div class="details-body">
+              <dl class="source-list">
+                <dt><code>index.tsx</code></dt><dd>章节 route、七章元数据、当前 Agent/模型文案、全部正文、提示词、截图 import、React 交互和可访问属性。</dd>
+                <dt><code>style.css</code></dt><dd>字体、色彩、卡片/流程/表格样式、AI 不确定性图示和 1080/860/560px 响应式规则。</dd>
+                <dt><code>clipboard.ts</code></dt><dd>屏外 textarea、copy 事件、execCommand、Clipboard API 回退与焦点恢复。</dd>
+                <dt><code>../../common/useHashPage.ts</code></dt><dd>route 规范化、Hash/查询参数解析、父窗口消息与 <code>#page=</code> 写入。</dd>
+                <dt>AI 不确定性设计</dt><dd><code>.spec/2026-07-11-ai-uncertainty-design.md</code>：节点位置、双卡、平均效率和响应式意图。</dd>
+                <dt>AI 不确定性实施</dt><dd><code>.spec/2026-07-11-ai-uncertainty-implementation.md</code>：批准的文字、DOM 类和 CSS 网格值；当前源码已包含相应结果。</dd>
+                <dt>本地静态素材</dt><dd>8 个 PNG、2 个 TsangerJinKai02 字重文件和 1 个 JetBrains Mono 可变字重文件。</dd>
+              </dl>
+            </div>
+          </details>
+        </section>
+
+        <section id="evidence-decisions">
+          <h2>规格决策记录</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>日期</th><th>决策</th><th>结果</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">2026-07-13</th><td>主规格为一个独立 HTML，并分成五个规格页。</td><td>页面键固定为 overview、learning-journey、chapter-specs、interactions-content、evidence-acceptance。</td></tr>
+                <tr><th scope="row">2026-07-13</th><td>只记录当前工作区实现。</td><td>采用当前 Agent/模型表与 AI 不确定性节点；不从提交历史恢复旧版本。</td></tr>
+                <tr><th scope="row">2026-07-13</th><td>无脚本仍须完整可读。</td><td>五个 article 初始均无 hidden；只有 JavaScript 添加增强标志并运行后才隐藏非活动页，打印始终展开。</td></tr>
+                <tr><th scope="row">2026-07-13</th><td>规格 Hash 与正文键盘跳转隔离。</td><td>跳到正文链接拦截默认锚点，只聚焦并滚动 <code>spec-content</code>，不会覆盖当前规格页 Hash。</td></tr>
+                <tr><th scope="row">2026-07-13</th><td>验收状态只属于规格。</td><td>使用 <code>axhub-spec:beginner-guide:acceptance</code>；存储失败不阻断当前页面勾选。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </article>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var storageKey = 'axhub-spec:beginner-guide:acceptance';
+      var navItems = Array.prototype.slice.call(document.querySelectorAll('[data-page-target]'));
+      var pages = Array.prototype.slice.call(document.querySelectorAll('[data-spec-page]'));
+      var searchInput = document.getElementById('spec-search');
+      var searchStatus = document.getElementById('search-status');
+      var acceptanceInputs = Array.prototype.slice.call(document.querySelectorAll('[data-acceptance-id]'));
+      var acceptanceStatus = document.getElementById('acceptance-status');
+      var resetAcceptance = document.getElementById('reset-acceptance');
+      var skipLink = document.getElementById('skip-to-content');
+      var skipTarget = document.getElementById('spec-content');
+      var pageIds = pages.map(function (page) { return page.dataset.specPage; });
+
+      function readHashPage() {
+        var raw = window.location.hash.replace(/^#/, '');
+        try {
+          raw = decodeURIComponent(raw);
+        } catch (error) {
+          return 'overview';
+        }
+        if (raw.indexOf('page=') === 0) {
+          raw = new URLSearchParams(raw).get('page') || '';
+        }
+        return pageIds.indexOf(raw) >= 0 ? raw : 'overview';
+      }
+
+      function setCurrentNavigation(pageId) {
+        navItems.forEach(function (navItem) {
+          if (navItem.dataset.pageTarget === pageId) {
+            navItem.setAttribute('aria-current', 'page');
+          } else {
+            navItem.removeAttribute('aria-current');
+          }
+        });
+      }
+
+      function showActivePage() {
+        var pageId = readHashPage();
+        setCurrentNavigation(pageId);
+        pages.forEach(function (page) {
+          page.hidden = page.dataset.specPage !== pageId;
+        });
+        searchStatus.textContent = '正在查看“' + navItems[pageIds.indexOf(pageId)].textContent + '”';
+      }
+
+      function runSearch() {
+        var query = searchInput.value.trim().toLocaleLowerCase('zh-CN');
+        if (!query) {
+          showActivePage();
+          return;
+        }
+
+        var matchCount = 0;
+        pages.forEach(function (page) {
+          var isMatch = page.textContent.toLocaleLowerCase('zh-CN').indexOf(query) >= 0;
+          page.hidden = !isMatch;
+          if (isMatch) matchCount += 1;
+        });
+        searchStatus.textContent = matchCount
+          ? '在 5 个规格页中找到 ' + matchCount + ' 页'
+          : '在 5 个规格页中没有匹配内容';
+      }
+
+      skipLink.addEventListener('click', function (event) {
+        event.preventDefault();
+        skipTarget.focus();
+        skipTarget.scrollIntoView();
+      });
+
+      navItems.forEach(function (navItem) {
+        navItem.addEventListener('click', function () {
+          searchInput.value = '';
+          var pageId = navItem.dataset.pageTarget;
+          if (window.location.hash === '#' + pageId) {
+            showActivePage();
+          } else {
+            window.location.hash = pageId;
+          }
+        });
+      });
+
+      window.addEventListener('hashchange', function () {
+        if (!searchInput.value.trim()) showActivePage();
+      });
+      searchInput.addEventListener('input', runSearch);
+
+      function readAcceptance() {
+        try {
+          var parsed = JSON.parse(window.localStorage.getItem(storageKey) || '[]');
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+          return [];
+        }
+      }
+
+      function updateAcceptanceStatus() {
+        var checked = acceptanceInputs.filter(function (input) { return input.checked; }).length;
+        acceptanceStatus.textContent = checked
+          ? '已勾选 ' + checked + ' / ' + acceptanceInputs.length + ' 项'
+          : '尚未勾选验收项';
+      }
+
+      function persistAcceptance() {
+        var checkedIds = acceptanceInputs
+          .filter(function (input) { return input.checked; })
+          .map(function (input) { return input.dataset.acceptanceId; });
+        try {
+          window.localStorage.setItem(storageKey, JSON.stringify(checkedIds));
+        } catch (error) {
+          acceptanceStatus.textContent = '当前浏览器未保存勾选，页面内状态仍有效';
+          return;
+        }
+        updateAcceptanceStatus();
+      }
+
+      var savedAcceptance = readAcceptance();
+      acceptanceInputs.forEach(function (input) {
+        input.checked = savedAcceptance.indexOf(input.dataset.acceptanceId) >= 0;
+        input.addEventListener('change', persistAcceptance);
+      });
+
+      resetAcceptance.addEventListener('click', function () {
+        acceptanceInputs.forEach(function (input) { input.checked = false; });
+        try {
+          window.localStorage.removeItem(storageKey);
+        } catch (error) {
+          acceptanceStatus.textContent = '勾选已在页面内重置，浏览器存储不可用';
+          return;
+        }
+        updateAcceptanceStatus();
+      });
+
+      showActivePage();
+      updateAcceptanceStatus();
+    }());
+  </script>
+</body>
+</html>
