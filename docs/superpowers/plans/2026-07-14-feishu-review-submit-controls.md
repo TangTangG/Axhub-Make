@@ -40,15 +40,21 @@
 在现有主用例中加入或更新以下断言：
 
 ```ts
+const humanReviewStart = source.indexOf('<TabsContent value="human-review"');
+const humanReviewSource = source.slice(
+  humanReviewStart,
+  source.indexOf('</TabsContent>', humanReviewStart),
+);
+
 expect(source).toMatch(/import \{[^}]*ListChecks[^}]*\} from 'lucide-react';/u);
 expect(source.match(/<Checkbox/gu)).toHaveLength(2);
 expect(source).toContain('提交方式');
 expect(source).toContain('飞书提交');
 expect(source).not.toContain('飞书评审');
 expect(source).toContain('<ListChecks className="h-4 w-4 shrink-0 text-muted-foreground" />');
-expect(source.match(/className="flex h-8 items-center justify-between gap-2 px-2"/gu)).toHaveLength(2);
-expect(source.match(/className="flex min-w-0 items-center gap-2 text-\[12px\] font-medium text-foreground"/gu)).toHaveLength(2);
-expect(source).toContain('className="flex shrink-0 items-center gap-3 text-[12px] font-medium text-foreground"');
+expect(humanReviewSource.match(/className="flex h-8 items-center justify-between gap-2 px-2"/gu)).toHaveLength(2);
+expect(humanReviewSource.match(/className="flex min-w-0 items-center gap-2 text-\[12px\] font-medium text-foreground"/gu)).toHaveLength(2);
+expect(humanReviewSource).toContain('className="flex shrink-0 items-center gap-3 text-[12px] font-medium text-foreground"');
 expect(source).toContain('aria-label="打开飞书提交"');
 expect(source).toContain('h-[72px] space-y-1');
 expect(source).not.toContain('>{feishuConfig.url}<');
