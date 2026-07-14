@@ -27,7 +27,7 @@
 ## File Structure
 
 - Create `src/server/feishuReviewBase.ts`: CLI gateway, capability/auth checks, Base binding creation/validation, paginated record reads, record normalization, Markdown synchronization, and stable error mapping.
-- Create `src/server/__tests__/feishu-review-base.test.ts`: isolated command-envelope, Base lifecycle, pagination, mapping, and sync tests with an injected executor.
+- Create `src/server/__tests__/feishu-review-base.test.ts`: isolated flat/enveloped command output, Base lifecycle, pagination, mapping, and sync tests with an injected executor.
 - Modify `src/server/reviewLanSubmitConfig.ts`: merge-safe shared review config plus optional Feishu binding accessors.
 - Modify `src/server/managementApi.reviewReports.ts`: Feishu config/sync routes and Feishu provenance parsing.
 - Modify `src/server/managementApi.ts`, `src/server/index.ts`, and `src/server/__tests__/projects-api.helpers.ts`: optional Feishu command executor injection for API tests.
@@ -202,6 +202,147 @@ Run the Task 2 command again. Expected: PASS with argument-array assertions and 
 - [ ] **Step 6: Leave implementation unstaged**
 
 Do not commit in the dirty workspace.
+
+---
+
+### Task 2A: Current CLI flat JSON compatibility
+
+**Files:**
+- Modify: `src/server/feishuReviewBase.ts`
+- Modify: `src/server/__tests__/feishu-review-base.test.ts`
+
+**Interfaces:**
+- Preserves: `FeishuReviewCommandExecutor` and all public service functions.
+- Extends: `executeJson` accepts both lark-cli 1.0.69 flat JSON objects and legacy `{ ok: true, data }` envelopes.
+
+- [ ] **Step 1: Write failing flat-output regression tests**
+
+Add a result helper beside `jsonResult`:
+
+```ts
+function flatJsonResult(data: unknown) {
+  return { stdout: JSON.stringify(data), stderr: '' };
+}
+```
+
+Add one authentication-error case using the real 1.0.69 output shape:
+
+```ts
+it('maps the current CLI flat auth status to the user-auth error', async () => {
+  const { projectRoot, prototypeDir } = createPrototype();
+  const commandExecutor: FeishuReviewCommandExecutor = async (args) => {
+    if (args.includes('--help')) return capabilityResult();
+    return flatJsonResult({
+      verified: true,
+      identity: 'bot',
+      identities: {
+        bot: { status: 'logged_in', tokenStatus: 'valid' },
+        user: { status: 'missing', tokenStatus: 'expired' },
+      },
+    });
+  };
+
+  await expect(setFeishuReviewEnabled({
+    projectRoot,
+    prototypeDir,
+    prototypeId: 'home',
+    prototypeTitle: 'Home',
+    enabled: true,
+    commandExecutor,
+  })).rejects.toMatchObject({
+    code: 'FEISHU_AUTH_REQUIRED',
+    status: 401,
+  });
+});
+```
+
+Add one successful lifecycle case where auth, Base create/get, and field-list all return flat objects:
+
+```ts
+it('accepts flat success objects from the current CLI', async () => {
+  const { projectRoot, prototypeDir } = createPrototype();
+  const commandExecutor: FeishuReviewCommandExecutor = async (args) => {
+    if (args.includes('--help')) return capabilityResult();
+    if (args[0] === 'auth') {
+      return flatJsonResult({
+        verified: true,
+        identities: { user: { status: 'logged_in', tokenStatus: 'valid' } },
+      });
+    }
+    if (args[1] === '+base-create') {
+      return flatJsonResult({
+        base: {
+          base_token: 'bas_flat',
+          table_id: 'tbl_flat',
+          url: 'https://example.feishu.cn/base/bas_flat',
+        },
+      });
+    }
+    if (args[1] === '+base-get') {
+      return flatJsonResult({ base: { base_token: 'bas_flat', url: 'https://example.feishu.cn/base/bas_flat' } });
+    }
+    if (args[1] === '+field-list') {
+      return flatJsonResult({
+        fields: [
+          { name: '标题', type: 'text' },
+          { name: '评审人', type: 'text' },
+          { name: '评分', type: 'number' },
+          { name: '来源', type: 'text' },
+          { name: 'Markdown 正文', type: 'text' },
+        ],
+      });
+    }
+    throw new Error(`Unexpected command: ${args.join(' ')}`);
+  };
+
+  await expect(setFeishuReviewEnabled({
+    projectRoot,
+    prototypeDir,
+    prototypeId: 'home',
+    prototypeTitle: 'Home',
+    enabled: true,
+    commandExecutor,
+  })).resolves.toMatchObject({ enabled: true, bound: true });
+});
+```
+
+- [ ] **Step 2: Run the focused tests and verify red**
+
+Run:
+
+```bash
+pnpm exec vitest run src/server/__tests__/feishu-review-base.test.ts
+```
+
+Expected: both new tests fail with `FEISHU_CLI_FAILED` because `executeJson` currently requires `ok === true` for every JSON object.
+
+- [ ] **Step 3: Accept flat success objects without weakening envelope errors**
+
+Replace the payload handling in `executeJson` with:
+
+```ts
+const payload = parseJsonObject(String(result.stdout || ''));
+if (!payload) {
+  throw new FeishuReviewError('lark-cli 未返回有效 JSON。', 'FEISHU_CLI_INVALID_JSON', 502);
+}
+if (Object.prototype.hasOwnProperty.call(payload, 'ok')) {
+  if (payload.ok !== true) {
+    throw mapCliFailure({ stderr: JSON.stringify(payload), message: 'lark-cli command failed' });
+  }
+  return objectValue(payload.data);
+}
+return payload;
+```
+
+This keeps legacy error-envelope behavior intact while accepting the current CLI's successful flat objects.
+
+- [ ] **Step 4: Run focused tests and verify green**
+
+Run the Task 2A command again. Expected: all service tests pass, including both flat-output cases and existing envelope/error cases.
+
+- [ ] **Step 5: Leave implementation unstaged**
+
+Do not stage or commit the service and test files because they share the existing dirty feature workspace.
 
 ---
 

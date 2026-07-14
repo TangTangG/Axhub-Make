@@ -99,7 +99,7 @@ Before the first create or fetch operation, the service checks:
 
 Capability checks are authoritative. The implementation does not emulate missing commands for older CLI releases. An unsupported installation returns an update instruction using the official npm/npx-safe installation flow.
 
-The service disables CLI update and skills notices for machine-readable calls, requests JSON output, checks both the process exit status and the CLI `ok` envelope, and maps CLI errors to stable Make error codes. It must not log credential-bearing output.
+The service disables CLI update and skills notices for machine-readable calls, requests JSON output, checks the process exit status, accepts the current CLI's flat success objects and legacy `{ ok, data }` envelopes, and maps CLI errors to stable Make error codes. When an `ok` envelope is present, only `ok: true` is accepted. It must not log credential-bearing output.
 
 ## Enable and Disable Lifecycle
 
@@ -195,7 +195,7 @@ Axhub does not manage the Base's sharing policy. The Base opens under the authen
 
 - capability and authentication probes;
 - argument-array construction without shell interpolation;
-- JSON success and error envelope parsing;
+- current flat JSON success objects, legacy success envelopes, and error envelope parsing;
 - Base creation, schema validation, existing-binding reuse, and partial-creation failures;
 - serial pagination and rate-limit/error mapping;
 - record normalization and score validation;
