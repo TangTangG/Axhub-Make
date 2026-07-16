@@ -7,6 +7,13 @@ function readDialogSource() {
 }
 
 describe('CreateThemeDialogView theme import upload source', () => {
+    it('opens the design-system import drawer from the right-side action area', () => {
+        const source = readDialogSource();
+
+        expect(source).toContain('side="right"');
+        expect(source).not.toContain('side="left"');
+    });
+
     it('only exposes theme import tabs and removes legacy theme prompt creation UI', () => {
         const source = readDialogSource();
 

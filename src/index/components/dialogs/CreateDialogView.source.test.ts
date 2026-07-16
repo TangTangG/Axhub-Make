@@ -11,6 +11,13 @@ function readTemplateLibraryCardSource() {
 }
 
 describe('CreateDialogView online template library source', () => {
+    it('opens the prototype import drawer from the right-side action area', () => {
+        const source = readDialogSource();
+
+        expect(source).toContain('side="right"');
+        expect(source).not.toContain('side="left"');
+    });
+
     it('only exposes prototype import tabs and removes legacy AI create prompt UI', () => {
         const source = readDialogSource();
 

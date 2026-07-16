@@ -221,7 +221,7 @@ export default function CreateThemeDialog({
         <Sheet open={visible} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
             <SheetContent
                 ref={setSheetPortalContainer}
-                side="left"
+                side="right"
                 className="flex w-full max-w-[620px] flex-col p-0 text-sm sm:max-w-[620px] [&>[data-sheet-close]]:hidden"
             >
                 <Tabs
