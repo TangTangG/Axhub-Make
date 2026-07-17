@@ -21,7 +21,7 @@ import {
 
 import { startMakeServer } from '../index.ts';
 import { getLocalNetworkHostsFromInterfaces } from '../http.ts';
-import { handleCanvasApi } from '../managementApi.canvas.ts';
+import { createDefaultCanvasData, handleCanvasApi } from '../managementApi.canvas.ts';
 import { handleCodeReviewApi } from '../managementApi.codeReview.ts';
 import { handleEntriesCompatibilityApi } from '../managementApi.entries.ts';
 import { handleLegacyWebSocketApi } from '../managementApi.legacyWebSocket.ts';
@@ -171,8 +171,8 @@ describe('make-server HTTP server', () => {
   it('serves project registry APIs, active project resources, docs content, and entries compatibility', async () => {
     const projectRoot = createProjectRoot();
     const secondProjectRoot = createProjectRoot();
-    const docPath = path.join(projectRoot, 'docs', 'spec.md');
-    const secondDocPath = path.join(secondProjectRoot, 'docs', 'spec.md');
+    const docPath = path.join(projectRoot, 'src', 'resources', 'spec.md');
+    const secondDocPath = path.join(secondProjectRoot, 'src', 'resources', 'spec.md');
     fs.mkdirSync(path.dirname(docPath), { recursive: true });
     fs.mkdirSync(path.dirname(secondDocPath), { recursive: true });
     fs.writeFileSync(docPath, '# First Spec\n', 'utf8');
@@ -640,7 +640,6 @@ describe('make-server HTTP server', () => {
           project: { id: 'missing-metadata' },
           resources: {
             prototypes: [],
-            docs: [],
             themes: [],
           },
         });
@@ -769,7 +768,7 @@ describe('make-server HTTP server', () => {
   it('serves legacy docs preview routes from make-server before runtime proxy fallback', async () => {
     const projectRoot = createProjectRoot();
     const adminRoot = path.join(projectRoot, 'admin-dist');
-    const docPath = path.join(projectRoot, 'docs', 'spec.md');
+    const docPath = path.join(projectRoot, 'src', 'resources', 'spec.md');
     fs.mkdirSync(path.dirname(docPath), { recursive: true });
     fs.mkdirSync(adminRoot, { recursive: true });
     fs.writeFileSync(docPath, '# Project Spec\n\n## Intro\n', 'utf8');
@@ -1061,15 +1060,15 @@ describe('make-server HTTP server', () => {
         references: [],
       });
 
-      const canvasCreate = await fetch(`${first.origin}/api/canvas/create`, {
+      const canvasCreate = await fetch(`${first.origin}/api/canvas/resources/main-canvas.excalidraw`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: 'Main Canvas' }),
+        body: JSON.stringify({ content: createDefaultCanvasData() }),
       }).then((response) => response.json());
       expect(canvasCreate).toMatchObject({
-        displayName: 'Main Canvas',
+        displayName: 'main-canvas',
       });
-      expect(canvasCreate.name).toMatch(/main-canvas-\d+\.excalidraw|main-canvas\.excalidraw/);
+      expect(canvasCreate.name).toBe('main-canvas.excalidraw');
     } finally {
       await first.close();
     }
@@ -2196,7 +2195,7 @@ describe('make-server HTTP server', () => {
 
   it('accepts project metadata document ids when saving docs workspace navigation', async () => {
     const projectRoot = createProjectRoot();
-    const docPath = path.join(projectRoot, 'docs', 'spec.md');
+    const docPath = path.join(projectRoot, 'src', 'resources', 'spec.md');
     fs.mkdirSync(path.dirname(docPath), { recursive: true });
     fs.writeFileSync(docPath, '# Project Spec\n', 'utf8');
     writeJson(getProjectMetadataPath(projectRoot), {
@@ -2255,7 +2254,7 @@ describe('make-server HTTP server', () => {
                   id: 'item:docs:spec',
                   kind: 'item',
                   title: 'Project Spec',
-                  itemKey: 'docs/spec',
+                  itemKey: 'docs/spec.md',
                 },
               ],
             },
@@ -2267,20 +2266,24 @@ describe('make-server HTTP server', () => {
       expect(response.status).toBe(200);
       expect(update).toMatchObject({ success: true, tab: 'docs' });
       expect(update.tree).toEqual([
-        {
-          id: 'folder:docs:product',
+        expect.objectContaining({
           kind: 'folder',
           title: '产品文档',
+          path: '产品文档',
+          folderPath: '产品文档',
           children: [
-            {
-              id: 'item:docs:spec',
+            expect.objectContaining({
               kind: 'item',
-              title: 'Project Spec',
-              itemKey: 'docs/spec',
-            },
+              title: 'spec',
+              itemKey: 'docs/产品文档/spec.md',
+              path: '产品文档/spec.md',
+            }),
           ],
-        },
+        }),
       ]);
+      expect(fs.existsSync(docPath)).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src', 'resources', '产品文档', 'spec.md'), 'utf8'))
+        .toBe('# Project Spec\n');
     } finally {
       await server.close();
     }

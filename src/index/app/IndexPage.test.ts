@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 describe('IndexPage source', () => {
   it('passes the active markdown resource and content mode into the assistant controller', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
-    const contentModeIndex = source.indexOf('const contentMode = useMemo');
+    const contentModeIndex = source.indexOf('const contentMode: IndexContentMode');
     const markdownResourceIndex = source.indexOf('const currentMarkdownResource = useMemo');
     const assistantControllerIndex = source.indexOf('const assistantController = useAssistantPanelController');
 
@@ -21,7 +21,7 @@ describe('IndexPage source', () => {
   it('passes the selected resource open mode into content mode resolution', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
     const contentModeCall = source.slice(
-      source.indexOf('const contentMode = useMemo'),
+      source.indexOf('const baseContentMode = useMemo'),
       source.indexOf('const currentMarkdownResource = useMemo'),
     );
 
