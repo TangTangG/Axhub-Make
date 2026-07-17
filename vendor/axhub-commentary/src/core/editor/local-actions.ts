@@ -7,6 +7,7 @@ import type {
   EditorSummariesService,
 } from './contracts';
 import type { EditorRuntimeState } from './state';
+import type { CommentaryClearEditsOptions } from '../../web-editor-types';
 
 export function createLocalActionsService(options: {
   state: EditorRuntimeState;
@@ -70,13 +71,16 @@ export function createLocalActionsService(options: {
     }
   }
 
-  async function handleClearEdits(config: { skipConfirm?: boolean } = {}): Promise<void> {
+  async function handleClearEdits(config: CommentaryClearEditsOptions = {}): Promise<void> {
     const tm = options.state.transactionManager;
+    const clearsPrototype = config.scope === 'prototype';
 
     if (!config.skipConfirm) {
       const confirmed = await options.feedback.confirm({
-        title: '清空全部编辑',
-        content: '确定要清空所有待修改内容吗？已保存的修改不受影响。',
+        title: clearsPrototype ? '清空当前原型全部批注' : '清空全部编辑',
+        content: clearsPrototype
+          ? '确定要清空当前原型所有页面的批注吗？已保存的代码修改不受影响。'
+          : '确定要清空所有待修改内容吗？已保存的修改不受影响。',
         confirmText: '清空',
         cancelText: '取消',
         confirmTone: 'primary',
@@ -95,7 +99,7 @@ export function createLocalActionsService(options: {
     await options.changes.revertAllRecordedTweaks();
 
     options.changes.clearAllEditMeta();
-    options.persistence.clearStorage();
+    options.persistence.clearStorage(config.scope);
     options.state.propertyPanel?.refresh();
     options.onStatusChange?.();
   }

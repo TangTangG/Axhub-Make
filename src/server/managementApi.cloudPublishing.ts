@@ -4,7 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { blake3 } from '@noble/hashes/blake3';
-import { createProjectCommunicationStore, getConfigPath, getProjectExportsDir, type ProjectMetadata, type StoredProjectRecord } from './projectCore/index.ts';
+import {
+  createProjectCommunicationStore,
+  getProjectExportsDir,
+  normalizeServerCloudPublishingConfig,
+  type ProjectMetadata,
+  type ServerCloudPublishingConfig,
+  type StoredProjectRecord,
+} from './projectCore/index.ts';
 
 import { buildExportHtmlStaticFiles, type ExportHtmlStaticFile } from './exportHtmlArchive.ts';
 import { readJsonBody, sendJson } from './http.ts';
@@ -12,6 +19,10 @@ import { runLocalCommand } from './localCommand.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { normalizeProjectResourcePath } from './managementApi.resourceLookup.ts';
 import { publishAxhubHtmlTarget } from './managementApi.axhub.ts';
+import {
+  createReviewSubmitInjectionOptions,
+  resolvePrototypeIdForReviewSubmit,
+} from './reviewLanSubmitConfig.ts';
 
 export type CloudPublishTarget = 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages' | 'axhub';
 export type CommandExecutor = (
@@ -39,7 +50,10 @@ interface CloudPublishingHandlers {
   resolveSourceFileFromMetadata: (context: CloudPublishingContext, targetPath: string) => string | null;
   findProjectResourceByPath: (metadata: unknown, targetPath: string) => any;
   getDeclaredResourceWriteDir?: (context: CloudPublishingContext, type: 'media') => string | null;
-  readProjectConfig: (projectRoot: string) => any;
+  getServerConfigStoreForRequest: (options: ManagementApiOptions) => {
+    getConfig: (params: { activeProjectRoot: string }) => { cloudPublishing: CloudPublishingConfig };
+    saveConfig: (config: { cloudPublishing?: CloudPublishingConfig }) => { cloudPublishing: CloudPublishingConfig };
+  };
   commandExecutor?: CommandExecutor;
   sendDisabledCapability: (
     res: ServerResponse,
@@ -55,52 +69,16 @@ interface CloudPublishingHandlers {
   ) => void;
 }
 
-interface VercelConfig {
-  token?: string;
-  projectName?: string;
-  teamId?: string;
-}
-
-interface CloudflarePagesConfig {
-  apiToken?: string;
-  accountId?: string;
-  projectName?: string;
-  productionBranch?: string;
-}
+type CloudPublishingConfig = ServerCloudPublishingConfig;
+type VercelConfig = NonNullable<CloudPublishingConfig['vercel']>;
+type CloudflarePagesConfig = NonNullable<CloudPublishingConfig['cloudflarePages']>;
 
 interface EffectiveCloudflarePagesConfig extends CloudflarePagesConfig {
   projectName: string;
 }
 
-interface S3Config {
-  accessKeyId?: string;
-  secretAccessKey?: string;
-  region?: string;
-  bucket?: string;
-  prefix?: string;
-  baseUrl?: string;
-  endpoint?: string;
-}
-
-interface GitHubPagesConfig {
-  repository?: string;
-  branch?: string;
-  sourceDirectory?: string;
-  pathPrefix?: string;
-}
-
-interface PublishSettingsConfig {
-  includeSource: boolean;
-  visibleTargets: CloudPublishTarget[];
-}
-
-interface CloudPublishingConfig {
-  vercel?: VercelConfig;
-  cloudflarePages?: CloudflarePagesConfig;
-  s3?: S3Config;
-  githubPages?: GitHubPagesConfig;
-  publishSettings?: PublishSettingsConfig;
-}
+type S3Config = NonNullable<CloudPublishingConfig['s3']>;
+type GitHubPagesConfig = NonNullable<CloudPublishingConfig['githubPages']>;
 
 const TARGETS = new Set<CloudPublishTarget>(['vercel', 'cloudflare-pages', 's3', 'github-pages', 'axhub']);
 const DEFAULT_VISIBLE_PUBLISH_TARGETS: CloudPublishTarget[] = ['axhub'];
@@ -116,19 +94,6 @@ function stringValue(value: unknown): string {
 function normalizeGithubPagesSourceDirectory(value: unknown): '/' | '/docs' {
   const sourceDirectory = stringValue(value).replace(/\/+$/u, '');
   return sourceDirectory === 'docs' || sourceDirectory === '/docs' ? '/docs' : '/';
-}
-
-function normalizeVisiblePublishTargets(value: unknown): CloudPublishTarget[] {
-  if (!Array.isArray(value)) {
-    return [...DEFAULT_VISIBLE_PUBLISH_TARGETS];
-  }
-  const targets: CloudPublishTarget[] = [];
-  for (const target of value) {
-    if (TARGETS.has(target as CloudPublishTarget) && !targets.includes(target as CloudPublishTarget)) {
-      targets.push(target as CloudPublishTarget);
-    }
-  }
-  return targets;
 }
 
 class CloudPublishingTargetError extends Error {
@@ -151,44 +116,11 @@ class CloudPublishingTargetError extends Error {
   }
 }
 
-function normalizeCloudPublishingConfig(value: unknown): CloudPublishingConfig {
-  const raw = value && typeof value === 'object' ? value as Record<string, any> : {};
-  const vercel = raw.vercel && typeof raw.vercel === 'object' ? raw.vercel : {};
-  const cloudflarePages = raw.cloudflarePages && typeof raw.cloudflarePages === 'object' ? raw.cloudflarePages : {};
-  const s3 = raw.s3 && typeof raw.s3 === 'object' ? raw.s3 : {};
-  const githubPages = raw.githubPages && typeof raw.githubPages === 'object' ? raw.githubPages : {};
-  return {
-    vercel: {
-      token: stringValue(vercel.token),
-      projectName: stringValue(vercel.projectName),
-      teamId: stringValue(vercel.teamId),
-    },
-    cloudflarePages: {
-      apiToken: stringValue(cloudflarePages.apiToken),
-      accountId: stringValue(cloudflarePages.accountId),
-      projectName: stringValue(cloudflarePages.projectName),
-      productionBranch: stringValue(cloudflarePages.productionBranch) || 'main',
-    },
-    s3: {
-      accessKeyId: stringValue(s3.accessKeyId),
-      secretAccessKey: stringValue(s3.secretAccessKey),
-      region: stringValue(s3.region),
-      bucket: stringValue(s3.bucket),
-      prefix: stringValue(s3.prefix),
-      baseUrl: stringValue(s3.baseUrl),
-      endpoint: stringValue(s3.endpoint),
-    },
-    githubPages: {
-      repository: stringValue(githubPages.repository),
-      branch: stringValue(githubPages.branch) || 'gh-pages',
-      sourceDirectory: normalizeGithubPagesSourceDirectory(githubPages.sourceDirectory),
-      pathPrefix: stringValue(githubPages.pathPrefix),
-    },
-    publishSettings: {
-      includeSource: raw.publishSettings?.includeSource === true,
-      visibleTargets: normalizeVisiblePublishTargets(raw.publishSettings?.visibleTargets),
-    },
-  };
+function normalizeCloudPublishingConfig(
+  value: unknown,
+  fallback?: CloudPublishingConfig,
+): CloudPublishingConfig {
+  return normalizeServerCloudPublishingConfig(value, fallback) as CloudPublishingConfig;
 }
 
 function parseGithubRepositoryFromRemote(remoteUrl: string): string {
@@ -304,6 +236,21 @@ function getMissingFields(target: CloudPublishTarget, config: CloudPublishingCon
   return ['accessKeyId', 'secretAccessKey', 'region', 'bucket', 'baseUrl'].filter((field) => !stringValue((s3 as any)[field]));
 }
 
+function isConfigured(value: unknown): boolean {
+  return Boolean(stringValue(value));
+}
+
+function maskCredential(value: unknown): string {
+  const secret = stringValue(value);
+  if (!secret) {
+    return '';
+  }
+  if (secret.length <= 8) {
+    return `${secret.slice(0, 2)}...${secret.slice(-2)}`;
+  }
+  return `${secret.slice(0, 4)}...${secret.slice(-4)}`;
+}
+
 function toConfigResponse(config: CloudPublishingConfig, projectRoot?: string) {
   const githubPages = effectiveGithubPagesConfig(config, projectRoot);
   const vercelMissing = getMissingFields('vercel', config, projectRoot);
@@ -311,20 +258,35 @@ function toConfigResponse(config: CloudPublishingConfig, projectRoot?: string) {
   const s3Missing = getMissingFields('s3', config, projectRoot);
   const githubPagesMissing = getMissingFields('github-pages', config, projectRoot);
   const axhubMissing = getMissingFields('axhub', config, projectRoot);
+  const vercel = config.vercel || {};
+  const cloudflarePages = config.cloudflarePages || {};
+  const s3 = config.s3 || {};
   return {
     targets: {
       vercel: {
-        ...(config.vercel || {}),
+        projectName: stringValue(vercel.projectName),
+        teamId: stringValue(vercel.teamId),
+        tokenConfigured: isConfigured(vercel.token),
         configured: vercelMissing.length === 0,
         missingFields: vercelMissing,
       },
       cloudflarePages: {
-        ...(config.cloudflarePages || {}),
+        accountId: stringValue(cloudflarePages.accountId),
+        projectName: stringValue(cloudflarePages.projectName),
+        productionBranch: stringValue(cloudflarePages.productionBranch) || 'main',
+        apiTokenConfigured: isConfigured(cloudflarePages.apiToken),
         configured: cfMissing.length === 0,
         missingFields: cfMissing,
       },
       s3: {
-        ...(config.s3 || {}),
+        accessKeyId: maskCredential(s3.accessKeyId),
+        accessKeyIdConfigured: isConfigured(s3.accessKeyId),
+        secretAccessKeyConfigured: isConfigured(s3.secretAccessKey),
+        region: stringValue(s3.region),
+        bucket: stringValue(s3.bucket),
+        prefix: stringValue(s3.prefix),
+        baseUrl: stringValue(s3.baseUrl),
+        endpoint: stringValue(s3.endpoint),
         configured: s3Missing.length === 0,
         missingFields: s3Missing,
       },
@@ -345,22 +307,26 @@ function toConfigResponse(config: CloudPublishingConfig, projectRoot?: string) {
   };
 }
 
-function readConfig(projectRoot: string, readProjectConfig: (projectRoot: string) => any): CloudPublishingConfig {
-  const projectConfig = readProjectConfig(projectRoot);
-  return normalizeCloudPublishingConfig(projectConfig?.cloudPublishing);
+function getServerCloudPublishingConfig(
+  context: CloudPublishingContext,
+  options: ManagementApiOptions,
+  handlers: CloudPublishingHandlers,
+): CloudPublishingConfig {
+  return normalizeCloudPublishingConfig(
+    handlers.getServerConfigStoreForRequest(options).getConfig({ activeProjectRoot: context.project.root }).cloudPublishing,
+  );
 }
 
-function saveConfig(projectRoot: string, readProjectConfig: (projectRoot: string) => any, next: CloudPublishingConfig) {
-  const configPath = getConfigPath(projectRoot);
-  const current = readProjectConfig(projectRoot);
-  const saved = {
-    ...current,
-    server: current?.server || { host: 'localhost', allowLAN: true },
-    cloudPublishing: normalizeCloudPublishingConfig(next),
-  };
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(saved, null, 2), 'utf8');
-  return saved.cloudPublishing;
+function saveServerCloudPublishingConfig(
+  context: CloudPublishingContext,
+  options: ManagementApiOptions,
+  handlers: CloudPublishingHandlers,
+  value: unknown,
+): CloudPublishingConfig {
+  const store = handlers.getServerConfigStoreForRequest(options);
+  const current = getServerCloudPublishingConfig(context, options, handlers);
+  const next = normalizeCloudPublishingConfig(value, current);
+  return store.saveConfig({ cloudPublishing: next }).cloudPublishing;
 }
 
 function base64Body(file: ExportHtmlStaticFile): string {
@@ -1185,12 +1151,20 @@ function resolveS3Endpoint(config: S3Config): URL {
     || new URL(`https://${config.bucket}.s3.${config.region}.amazonaws.com`);
 }
 
+function resolveAliyunOssVirtualHostedS3Endpoint(endpoint: URL, bucket: string): URL {
+  if (/^s3\.oss-[^.]+\.aliyuncs\.com$/u.test(endpoint.hostname)) {
+    return new URL(`${endpoint.protocol}//${bucket}.${endpoint.host}${endpoint.pathname}`);
+  }
+  if (/^oss-[^.]+\.aliyuncs\.com$/u.test(endpoint.hostname)) {
+    return new URL(`${endpoint.protocol}//${bucket}.s3.${endpoint.host}${endpoint.pathname}`);
+  }
+  return endpoint;
+}
+
 function resolveS3RequestLocation(config: S3Config, key: string) {
   const bucket = stringValue(config.bucket);
   const configuredEndpoint = resolveS3Endpoint(config);
-  const endpoint = /^s3\.oss-[^.]+\.aliyuncs\.com$/u.test(configuredEndpoint.hostname)
-    ? new URL(`${configuredEndpoint.protocol}//${bucket}.${configuredEndpoint.host}`)
-    : configuredEndpoint;
+  const endpoint = resolveAliyunOssVirtualHostedS3Endpoint(configuredEndpoint, bucket);
   const endpointPath = endpoint.pathname.replace(/\/+$/u, '');
   const encodedKey = key.split('/').map(encodeS3PathSegment).join('/');
   const usesPathStyle = endpoint.hostname.startsWith('s3.')
@@ -1295,6 +1269,7 @@ async function publishTarget(
     managementOptions?: ManagementApiOptions;
     axhubProjectId?: number;
     resourcePath?: string;
+    reviewContext?: { projectId: string; prototypeId: string };
   },
 ) {
   if (target === 'axhub') {
@@ -1310,6 +1285,7 @@ async function publishTarget(
       options: options.managementOptions,
       pid: axhubProjectId,
       files,
+      reviewContext: options.reviewContext,
     });
     return {
       url: result.url,
@@ -1374,7 +1350,14 @@ function getLatestCloudPublishUrls(
   const normalizedFilterPath = options.path && options.metadata
     ? normalizeProjectResourcePath(options.metadata, options.path)
     : stringValue(options.path);
-  const latest: Record<CloudPublishTarget, null | { url: string; target: CloudPublishTarget; deployedAt: string; path?: string }> = {
+  const latest: Record<CloudPublishTarget, null | {
+    url: string;
+    target: CloudPublishTarget;
+    deployedAt: string;
+    path?: string;
+    axhubProjectId?: number;
+    axhubProjectPath?: string;
+  }> = {
     vercel: null,
     'cloudflare-pages': null,
     s3: null,
@@ -1396,6 +1379,8 @@ function getLatestCloudPublishUrls(
       continue;
     }
     const deployedAt = stringValue(record.createdAt);
+    const axhubProjectId = Number(record.metadata?.axhubProjectId);
+    const axhubProjectPath = stringValue(record.metadata?.axhubProjectPath);
     const current = latest[target];
     if (!current || deployedAt > current.deployedAt) {
       latest[target] = {
@@ -1403,6 +1388,9 @@ function getLatestCloudPublishUrls(
         target,
         deployedAt,
         path: normalizedRecordPath || undefined,
+        ...(target === 'axhub' && Number.isInteger(axhubProjectId) && axhubProjectId > 0
+          ? { axhubProjectId, axhubProjectPath: axhubProjectPath || undefined }
+          : {}),
       };
     }
   }
@@ -1439,12 +1427,12 @@ export function handleCloudPublishingApi(
     const context = handlers.resolveProjectContext(req, res, options, 'active-fallback');
     if (!context) return true;
     if (req.method === 'GET') {
-      sendJson(res, toConfigResponse(readConfig(context.project.root, handlers.readProjectConfig), context.project.root));
+      sendJson(res, toConfigResponse(getServerCloudPublishingConfig(context, options, handlers), context.project.root));
       return true;
     }
     if (req.method === 'POST') {
       readJsonBody(req).then((body) => {
-        const saved = saveConfig(context.project.root, handlers.readProjectConfig, normalizeCloudPublishingConfig(body));
+        const saved = saveServerCloudPublishingConfig(context, options, handlers, body);
         sendJson(res, {
           success: true,
           targets: toConfigResponse(saved, context.project.root).targets,
@@ -1492,7 +1480,7 @@ export function handleCloudPublishingApi(
       const normalizedTargetPath = metadata
         ? normalizeProjectResourcePath(metadata, targetPath)
         : targetPath;
-      const config = readConfig(context.project.root, handlers.readProjectConfig);
+      const config = getServerCloudPublishingConfig(context, options, handlers);
       const missingFields = getMissingFields(target, config, context.project.root);
       if (missingFields.length > 0) {
         sendJson(res, {
@@ -1518,6 +1506,11 @@ export function handleCloudPublishingApi(
 
       const resource = handlers.findProjectResourceByPath(metadata, normalizedTargetPath);
       const identity = resourceIdentity(resource, normalizedTargetPath);
+      const reviewSubmitPrototypeId = resolvePrototypeIdForReviewSubmit({
+        resource,
+        targetPath: normalizedTargetPath,
+        sourceFile,
+      });
       const communicationStore = createProjectCommunicationStore(context.project.root);
       communicationStore.ensureDirectories();
       try {
@@ -1529,11 +1522,22 @@ export function handleCloudPublishingApi(
           group: normalizedTargetPath.replace(/^src\//u, '').split('/')[0] || 'prototypes',
           includeSource: config.publishSettings?.includeSource === true,
           mediaRoot: handlers.getDeclaredResourceWriteDir?.(context, 'media') || undefined,
+          reviewSubmit: target !== 'axhub' && reviewSubmitPrototypeId
+            ? createReviewSubmitInjectionOptions({
+              projectRoot: context.project.root,
+              projectId: context.project.id,
+              prototypeId: reviewSubmitPrototypeId,
+              makeOrigin: options.origin,
+            })
+            : undefined,
         });
         const result = await publishTarget(target, config, files, context.project.root, handlers.commandExecutor, {
           managementOptions: options,
           axhubProjectId: Number(body?.axhubProjectId || body?.pid),
           resourcePath: normalizedTargetPath,
+          reviewContext: reviewSubmitPrototypeId
+            ? { projectId: context.project.id, prototypeId: reviewSubmitPrototypeId }
+            : undefined,
         });
         const url = result.url;
         const deployedAt = new Date().toISOString();
@@ -1547,6 +1551,7 @@ export function handleCloudPublishingApi(
             path: normalizedTargetPath,
             url,
             fileCount: files.length,
+            prototypeId: reviewSubmitPrototypeId,
             ...(result.metadata || {}),
           },
         });

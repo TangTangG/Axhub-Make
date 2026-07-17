@@ -694,14 +694,8 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
     }, [activeProjectId]);
 
     const reloadCanvasItems = useCallback(async (): Promise<CanvasItem[]> => {
-        const response = await fetch('/api/canvas');
-        if (!response.ok) {
-            throw new Error('Failed to fetch canvas items');
-        }
-        const items = await response.json();
-        const list: CanvasItem[] = Array.isArray(items) ? items : [];
-        setCanvasItems(list);
-        return list;
+        setCanvasItems([]);
+        return [];
     }, []);
 
     const getSidebarTabItems = useCallback((tab: SidebarTreeTab): ItemData[] => {
@@ -709,7 +703,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             return docsItems;
         }
         if (tab === 'canvas') {
-            return normalizeCanvasItems(canvasItems);
+            return docsItems.filter((item) => item.openMode === 'canvas');
         }
         if (tab === 'themes') {
             return themes.map((theme) => ({
@@ -720,7 +714,7 @@ export function useWorkspaceNavigationController({ messageApi }: UseWorkspaceNav
             }));
         }
         return data.prototypes;
-    }, [canvasItems, data.prototypes, docsItems, themes]);
+    }, [data.prototypes, docsItems, themes]);
 
     const loadSidebarTree = useCallback(async (tab: SidebarTreeTab, options?: { force?: boolean; items?: ItemData[] }) => {
         if (!options?.force && loadedSidebarTreeTabsRef.current.has(tab)) {

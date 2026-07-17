@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import './AiImageGenerationComposer.css';
-import {
-  unstable_useSlashCommandAdapter,
-  useAui,
-  type Unstable_SlashCommand,
-} from '@assistant-ui/react';
-import { ChevronDown, CircleHelp, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { ChevronDown, CircleHelp, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
-import { ComposerTriggerPopover } from '@/components/assistant-ui/composer-trigger-popover';
 import CanvasGenerationComposer, {
   type CanvasAiSubmitRequest,
   extractCanvasGenerationReferenceImagesFromMessage,
@@ -30,7 +24,6 @@ import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 import { getAiImageTaskStore, type AiImageTaskParams, type AiImageTaskRecord } from './aiImageStore';
-import { AI_IMAGE_SKILLS, appendAiImageSkillPrompt } from './aiImageSkills';
 import type { CanvasLocalContextRef } from './canvasReferenceImages';
 import type { PromptClientPreference } from '../../types';
 import { pickCanvasAiScenePlaceholder } from '../ai-generation/canvasAiSceneRegistry';
@@ -90,12 +83,11 @@ const QUALITY_OPTIONS = [
 ] as const;
 
 const SIZE_PRESETS = [
-  { label: '移动端 1K', value: '1024x1536', width: 1024, height: 1536 },
-  { label: '移动端 2K', value: '1152x2048', width: 1152, height: 2048 },
-  { label: '移动端 4K', value: '2160x3840', width: 2160, height: 3840 },
-  { label: 'PC 端 1K', value: '1536x1024', width: 1536, height: 1024 },
-  { label: 'PC 端 2K', value: '2048x1152', width: 2048, height: 1152 },
-  { label: 'PC 端 4K', value: '3840x2160', width: 3840, height: 2160 },
+  { label: '手机整屏 768x1664', value: '768x1664', width: 768, height: 1664 },
+  { label: '手机高清 1168x2528', value: '1168x2528', width: 1168, height: 2528 },
+  { label: 'PC 工作台 1440x896', value: '1440x896', width: 1440, height: 896 },
+  { label: 'PC 高清 1920x1200', value: '1920x1200', width: 1920, height: 1200 },
+  { label: '方图 1024x1024', value: '1024x1024', width: 1024, height: 1024 },
   { label: '自定义', value: 'custom', width: null, height: null },
   { label: '自动', value: 'auto', width: null, height: null },
 ] as const;
@@ -109,7 +101,7 @@ const FORMAT_OPTIONS = [
 ] as const;
 
 const IMAGE_FIELD_HINTS = {
-  size: '选择移动端或 PC 端的 1K、2K、4K 画布尺寸，也可使用自定义宽高。',
+  size: '选择接近真实手机或桌面产品视口的 Image 2 合规尺寸，也可自定义。自定义宽高需为 16 的倍数，最长边小于 3840px，比例不超过 3:1。',
   quality: '质量越高通常细节越好，但生成时间和消耗也可能更高。',
   count: '选择后会按方案数量生成多个设计方向。',
   format: '选择生成图片的输出格式。',
@@ -157,7 +149,6 @@ function providerToPromptClientPreference(provider: string | null | undefined): 
   if (
     normalized === 'claude'
     || normalized === 'codex'
-    || normalized === 'gemini'
     || normalized === 'opencode'
   ) {
     return `acp:${normalized}` as PromptClientPreference;
@@ -410,99 +401,6 @@ function AiImageComposerAction({
   );
 }
 
-function AiImageSkillTriggers() {
-  const aui = useAui();
-  const commands = useMemo<Unstable_SlashCommand[]>(() => (
-    AI_IMAGE_SKILLS.map((skill) => ({
-      id: skill.id,
-      label: skill.label,
-      description: skill.description,
-      icon: 'Sparkles',
-      execute: () => {
-        const composer = aui.composer();
-        composer.setText(appendAiImageSkillPrompt(composer.getState().text, skill.prompt));
-      },
-    }))
-  ), [aui]);
-  const slash = unstable_useSlashCommandAdapter({
-    commands,
-    removeOnExecute: true,
-    iconMap: { Sparkles },
-    fallbackIcon: Sparkles,
-  });
-
-  return (
-    <ComposerTriggerPopover
-      char="/"
-      emptyItemsLabel="没有匹配的提示词"
-      action={slash.action}
-      adapter={slash.adapter}
-      iconMap={slash.iconMap}
-      fallbackIcon={slash.fallbackIcon}
-    />
-  );
-}
-
-interface AiImageSkillsButtonProps {
-  submitting: boolean;
-}
-
-function AiImageSkillsButton({
-  submitting,
-}: AiImageSkillsButtonProps) {
-  const aui = useAui();
-  const [open, setOpen] = useState(false);
-  const handleSkillSelected = useCallback((skillPrompt: string) => {
-    const composer = aui.composer();
-    composer.setText(appendAiImageSkillPrompt(composer.getState().text, skillPrompt));
-    setOpen(false);
-  }, [aui]);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          data-axhub-ai-image-composer-prompts-trigger
-          className="ax-ai-image-skills-trigger"
-          disabled={submitting}
-          aria-label="打开 AI 生图提示词"
-        >
-          <Sparkles aria-hidden="true" />
-          <span>提示词</span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        side="top"
-        className="z-[1300] w-64 overflow-hidden p-0"
-      >
-        <div
-          data-axhub-ai-image-composer-prompts-menu
-          className="flex flex-col py-1"
-        >
-          {AI_IMAGE_SKILLS.map((skill) => (
-            <button
-              key={skill.id}
-              type="button"
-              className="flex w-full cursor-pointer flex-col items-start gap-0.5 px-3 py-2 text-start outline-none transition-colors hover:bg-accent focus:bg-accent"
-              onClick={() => handleSkillSelected(skill.prompt)}
-            >
-              <span className="flex items-center gap-2 text-sm font-medium">
-                <Sparkles className="size-3.5 text-primary" aria-hidden="true" />
-                {skill.label}
-              </span>
-              <span className="ml-5 text-xs leading-tight text-muted-foreground">
-                {skill.description}
-              </span>
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
 export default function AiImageGenerationComposer({
   canPasteReferenceImages,
   conversationId,
@@ -663,24 +561,18 @@ export default function AiImageGenerationComposer({
       onOpenAISettings={onOpenAISettings}
       submitting={submitting}
       onSubmitPrompt={handleSubmitPrompt}
-      renderLeadingActions={({ submitting: isSubmitting }) => (
-        <>
-          <AiImageSkillsButton
-            submitting={isSubmitting}
-          />
-          <AiImageComposerAction
-            params={params}
-            activeSizeLabel={activeSizeLabel}
-            activeQualityLabel={activeQualityLabel}
-            activeCountLabel={activeCountLabel}
-            activeFormatLabel={activeFormatLabel}
-            currentDimensions={currentDimensions}
-            onCustomDimensionsChanged={setCustomDimensions}
-            updateParam={updateParam}
-          />
-        </>
+      renderLeadingActions={() => (
+        <AiImageComposerAction
+          params={params}
+          activeSizeLabel={activeSizeLabel}
+          activeQualityLabel={activeQualityLabel}
+          activeCountLabel={activeCountLabel}
+          activeFormatLabel={activeFormatLabel}
+          currentDimensions={currentDimensions}
+          onCustomDimensionsChanged={setCustomDimensions}
+          updateParam={updateParam}
+        />
       )}
-      renderTriggerPopovers={() => <AiImageSkillTriggers />}
     />
   );
 }

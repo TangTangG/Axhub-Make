@@ -55,7 +55,7 @@ describe('make-server project declared resource write APIs', () => {
       resourceWriteTargets: {
         docs: { path: 'content/docs' },
         templates: { path: 'content/templates' },
-        data: { path: 'content/data' },
+        data: { path: 'src/resources/data' },
         themes: { path: 'content/themes' },
       },
     });
@@ -102,7 +102,7 @@ describe('make-server project declared resource write APIs', () => {
           projectId: 'write-client',
         },
       });
-      expect(JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/database/customers.json'), 'utf8'))).toEqual({
+      expect(JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/resources/data/customers.json'), 'utf8'))).toEqual({
         tableName: 'Customers',
         records: [],
       });
@@ -164,7 +164,7 @@ describe('make-server project declared resource write APIs', () => {
     const writeTargets = {
       docs: { path: 'content/docs' },
       templates: { path: 'content/templates' },
-      data: { path: 'content/data' },
+      data: { path: 'src/resources/data' },
       themes: { path: 'content/themes' },
     };
     writeProjectMetadata(firstRoot, {
@@ -228,11 +228,11 @@ describe('make-server project declared resource write APIs', () => {
 
       expect(fs.existsSync(path.join(secondRoot, 'content', 'docs', 'second-doc.md'))).toBe(false);
       expect(fs.existsSync(path.join(secondTemplatesDir, 'second-copy.md'))).toBe(true);
-      expect(fs.existsSync(path.join(secondRoot, 'src/database/second-customers.json'))).toBe(true);
+      expect(fs.existsSync(path.join(secondRoot, 'src/resources/data/second-customers.json'))).toBe(true);
       expect(fs.existsSync(path.join(secondRoot, 'content', 'themes', 'second-theme'))).toBe(true);
       expect(fs.existsSync(path.join(firstRoot, 'content', 'docs', 'second-doc.md'))).toBe(false);
       expect(fs.existsSync(path.join(firstTemplatesDir, 'second-copy.md'))).toBe(false);
-      expect(fs.existsSync(path.join(firstRoot, 'src/database/second-customers.json'))).toBe(false);
+      expect(fs.existsSync(path.join(firstRoot, 'src/resources/data/second-customers.json'))).toBe(false);
       expect(fs.existsSync(path.join(firstRoot, 'content', 'themes', 'second-theme'))).toBe(false);
       const firstMetadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(firstRoot), 'utf8'));
       const secondMetadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(secondRoot), 'utf8'));
@@ -550,7 +550,7 @@ describe('make-server project declared resource write APIs', () => {
     const projectRoot = createTempRoot();
     const docsDir = path.join(projectRoot, 'src/resources');
     const templatesDir = path.join(projectRoot, 'src/resources/templates');
-    const dataDir = path.join(projectRoot, 'src/database');
+    const dataDir = path.join(projectRoot, 'src/resources/data');
     const themesDir = path.join(projectRoot, 'content/themes');
     fs.mkdirSync(docsDir, { recursive: true });
     fs.mkdirSync(templatesDir, { recursive: true });
@@ -587,7 +587,7 @@ describe('make-server project declared resource write APIs', () => {
       resourceWriteTargets: {
         docs: { path: 'content/docs' },
         templates: { path: 'content/templates' },
-        data: { path: 'content/data' },
+        data: { path: 'src/resources/data' },
         themes: { path: 'content/themes' },
       },
     });

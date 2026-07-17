@@ -1,6 +1,7 @@
 import type {
     ElementLocator,
     CommentaryEditedSnapshot,
+    CommentaryDebugState,
     CommentaryHostToolbarAction,
     CommentaryHostToolbarState,
 } from '@/common/web-editor-types';
@@ -33,6 +34,38 @@ export type QuickEditMessageType =
     | 'axhub.quickEdit.export.captureScreenshotResult'
     | 'axhub.quickEdit.export.axureJsonResult';
 export type QuickEditSaveAction = 'save-text' | 'save-style' | 'clear-style';
+
+export function createPrototypeSpecMarkdownStatusGate() {
+    let phase: 'idle' | 'waiting' | 'starting' | 'active' = 'idle';
+    return {
+        handle(params: {
+            contentMode: string;
+            enabled: boolean;
+            saving: boolean;
+        }): 'enable' | 'close' | null {
+            if (params.contentMode !== 'prototype-spec') {
+                phase = 'idle';
+                return null;
+            }
+            if (params.enabled) {
+                phase = 'active';
+                return null;
+            }
+            if (phase === 'waiting') {
+                phase = 'starting';
+                return 'enable';
+            }
+            if (phase !== 'active' || params.saving) {
+                return null;
+            }
+            phase = 'idle';
+            return 'close';
+        },
+        reset(options?: { autoEnable?: boolean }) {
+            phase = options?.autoEnable ? 'waiting' : 'idle';
+        },
+    };
+}
 
 export const QUICK_EDIT_RUNTIME_MISSING_TIMEOUT_MS = 1500;
 const QUICK_EDIT_MESSAGE_TYPES = new Set<QuickEditMessageType>([
@@ -134,6 +167,7 @@ export type HostToolbarEditorsApi = {
     subscribeHostToolbarState?: (listener: (state: CommentaryHostToolbarState) => void) => () => void;
     runHostToolbarAction?: (action: CommentaryHostToolbarAction) => Promise<boolean>;
     getCopyPromptText?: () => string;
+    getElementPromptText?: (elementKey: string) => string;
     getEditedSnapshot?: () => CommentaryEditedSnapshot;
     setNodeEditingState?: (
         elementKey: string,
@@ -205,6 +239,7 @@ export type PrototypeEditorBridgeStateMessage = {
     mode?: string;
     error?: string;
     hostToolbarState?: CommentaryHostToolbarState | null;
+    debugState?: CommentaryDebugState | null;
     promptText?: string;
     decisionDataCount?: number;
 };
@@ -347,17 +382,23 @@ export function resolveHostToolbarStateAfterClearEdits(
 
 export function resolveActiveAnnotationDirectRunToolbarState(
     state: CommentaryHostToolbarState | null,
-    active: boolean,
+    options: {
+        activeRunCount: number;
+        maxRunCount: number;
+    },
 ): CommentaryHostToolbarState | null {
-    if (!state || !active) {
+    const activeRunCount = Math.max(0, Math.floor(Number(options.activeRunCount) || 0));
+    if (!state || activeRunCount <= 0) {
         return state;
     }
+    const maxRunCount = Math.max(1, Math.floor(Number(options.maxRunCount) || 1));
+    const concurrencyFull = activeRunCount >= maxRunCount;
     return {
         ...state,
         robotState: 'working',
         robotLoading: false,
-        sendDisabled: true,
-        sendLoading: true,
+        sendDisabled: concurrencyFull,
+        sendLoading: concurrencyFull,
         interruptVisible: true,
         interruptDisabled: false,
         interruptLoading: false,
@@ -473,15 +514,22 @@ export function createDefaultHostToolbarState(): CommentaryHostToolbarState {
         interruptLoading: false,
         copyPromptVisible: true,
         copyPromptTitle: '复制提示词',
-        copyPromptDisabled: false,
+        copyPromptDisabled: true,
         clearEditsTitle: '清空编辑',
         clearEditsDisabled: true,
+        propertyPanelVisible: false,
         propertyPanelOpen: false,
         propertyPanelTitle: '设计决策',
         modifiedCount: 0,
         terminalTaskCount: 0,
         selectedAgent: null,
         agentOptions: [{ value: null, label: '默认' }],
+        aiExecutionConfigSummary: '',
+        aiExecutionConfigConfigured: false,
+        aiExecutionProvider: '',
+        aiExecutionWorkspacePath: '',
+        aiExecutionRunConcurrency: 5,
+        aiExecutionProviderOptions: [],
         darkMode: false,
         disablePageAnimations: false,
         pageZoomEnabled: false,
@@ -969,27 +1017,40 @@ type RuntimeExportRequestType =
 export function createRuntimeExportMessage({
     type,
     selectedItem,
+    resourceType = 'prototype',
     requestId,
     payload = {},
+    clipboardWriteTarget,
 }: {
     type: RuntimeExportRequestType;
     selectedItem: any;
+    resourceType?: 'prototype' | 'theme';
     requestId: string;
     payload?: Record<string, unknown>;
+    clipboardWriteTarget?: 'host';
 }) {
+    const hostOrigin = getHostRuntimeOrigin();
+    const normalizedResourceType = resourceType === 'theme' ? 'theme' : 'prototype';
     return {
         type,
         requestId,
         projectId: selectedItem.projectId,
         resourceId: selectedItem.resourceId || selectedItem.name,
-        resourceType: 'prototypes',
-        clientUrl: selectedItem.clientUrl,
-        runtimeOrigin: getHostRuntimeOrigin(),
+        resourceType: `${normalizedResourceType}s`,
+        clientUrl: selectedItem.clientUrl || selectedItem.previewUrl,
+        runtimeOrigin: hostOrigin,
+        ...(clipboardWriteTarget ? { clipboardWriteTarget } : {}),
+        ...(type === 'axhub.quickEdit.export.axureJson'
+            ? { axureExportModuleUrl: new URL('/assets/axure-export-runtime.js', hostOrigin).href }
+            : {}),
         ...payload,
     };
 }
 
-function getSelectedProjectResourceIdentity(selectedItem: any) {
+function getSelectedProjectResourceIdentity(
+    selectedItem: any,
+    resourceType: 'prototype' | 'theme' = 'prototype',
+) {
     const projectId = typeof selectedItem?.projectId === 'string' ? selectedItem.projectId.trim() : '';
     const resourceId = typeof selectedItem?.resourceId === 'string' && selectedItem.resourceId.trim()
         ? selectedItem.resourceId.trim()
@@ -999,7 +1060,7 @@ function getSelectedProjectResourceIdentity(selectedItem: any) {
     return {
         projectId,
         resourceId,
-        resourceType: 'prototype',
+        resourceType,
     };
 }
 
@@ -1018,8 +1079,9 @@ export async function postProjectCommunicationRecord(
     selectedItem: any,
     target: 'sessions' | 'exports' | 'edit-history' | 'runtime-message',
     payload: Record<string, unknown>,
+    resourceType: 'prototype' | 'theme' = 'prototype',
 ) {
-    const identity = getSelectedProjectResourceIdentity(selectedItem);
+    const identity = getSelectedProjectResourceIdentity(selectedItem, resourceType);
     if (!identity.projectId) {
         return;
     }

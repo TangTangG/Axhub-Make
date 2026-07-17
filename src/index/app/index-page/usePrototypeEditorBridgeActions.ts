@@ -35,6 +35,7 @@ type UsePrototypeEditorBridgeActionsParams = {
     selectedPageId?: string | null;
     isDarkMode: boolean;
     isDarkModeRef: MutableRefObject<boolean>;
+    agentRunConcurrency: number;
     assistantPanelOpen: boolean;
     messageApi: {
         warning: (content: string) => void;
@@ -51,6 +52,7 @@ type PrototypeEditorEnableOptions = {
     commentPageScope?: string;
     annotationApiBaseUrl?: string;
     annotationProjectId?: string;
+    agentRunConcurrency?: number;
 };
 type PrototypeEditorEnterOptions = {
     showMissingWarning?: boolean;
@@ -172,6 +174,7 @@ export function usePrototypeEditorBridgeActions({
     selectedPageId,
     isDarkMode,
     isDarkModeRef,
+    agentRunConcurrency,
     assistantPanelOpen,
     messageApi,
     prototypeHostToolbarUnsubscribeRef,
@@ -243,9 +246,10 @@ export function usePrototypeEditorBridgeActions({
             assistantPanelOpen,
             annotationApiBaseUrl: window.location.origin,
             annotationProjectId: context.projectId,
+            agentRunConcurrency,
             ...(commentPageScope ? { commentPageScope } : {}),
         };
-    }, [assistantPanelOpen, buildPrototypeEditorCommentPageScope, isDarkMode]);
+    }, [agentRunConcurrency, assistantPanelOpen, buildPrototypeEditorCommentPageScope, isDarkMode]);
 
     const buildPrototypeEditorScopedContext = useCallback((context: PrototypeEditorContext): PrototypeEditorContext => {
         const commentPageScope = buildPrototypeEditorCommentPageScope(context);

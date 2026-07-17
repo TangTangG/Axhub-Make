@@ -329,6 +329,7 @@ describe('useWorkspaceNavigationController source', () => {
     const ensureStart = source.indexOf('const ensureSidebarTreeLoaded = useCallback', sanitizeEffectStart);
     const sanitizeEffectSource = source.slice(sanitizeEffectStart, ensureStart);
 
+    expect(source).not.toContain("fetch('/api/canvas')");
     expect(reloadSource).not.toContain("fetch('/api/canvas')");
     expect(sanitizeEffectSource).toContain("const treeTabs: SidebarTreeTab[] = ['prototypes', 'docs', 'themes'];");
     expect(sanitizeEffectSource).not.toContain("['prototypes', 'docs', 'canvas']");

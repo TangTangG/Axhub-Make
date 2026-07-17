@@ -160,6 +160,7 @@ function postPrototypeEditorState(payload: {
     mode: editorModeManager?.api.getMode?.() ?? 'none',
     hostToolbarState: editorModeManager?.api.getHostToolbarState?.() ?? null,
     decisionDataCount: editorModeManager?.api.getDecisionDataCount?.() ?? 0,
+    debugState: editorModeManager?.api.getWebEditorDebugState?.() ?? null,
     ...(typeof payload.handled === 'boolean' ? { handled: payload.handled } : {}),
     ...(payload.error ? { error: payload.error } : {}),
     ...(payload.promptText ? { promptText: payload.promptText } : {}),
@@ -181,6 +182,7 @@ function ensurePrototypeEditorHostToolbarBridge() {
       mode: editorModeManager?.api.getMode?.() ?? 'none',
       hostToolbarState,
       decisionDataCount: editorModeManager?.api.getDecisionDataCount?.() ?? 0,
+      debugState: editorModeManager?.api.getWebEditorDebugState?.() ?? null,
     }, '*');
   }) ?? null;
 }
@@ -342,6 +344,9 @@ if (typeof window !== 'undefined') {
           mobileMode: typeof launchOptions.mobileMode === 'boolean' ? launchOptions.mobileMode : undefined,
           toolbarMode: 'host',
           initialDarkMode: Boolean(launchOptions.initialDarkMode),
+          agentRunConcurrency: Number.isFinite(Number(launchOptions.agentRunConcurrency))
+            ? Number(launchOptions.agentRunConcurrency)
+            : undefined,
           assistantPanelOpen: Boolean(launchOptions.assistantPanelOpen),
           commentPageScope: readPrototypeEditorBridgeCommentPageScope(event.data),
           annotationApiBaseUrl: typeof launchOptions.annotationApiBaseUrl === 'string'
@@ -391,6 +396,9 @@ if (typeof window !== 'undefined') {
           mobileMode: typeof launchOptions.mobileMode === 'boolean' ? launchOptions.mobileMode : undefined,
           toolbarMode: 'host',
           initialDarkMode: Boolean(launchOptions.initialDarkMode),
+          agentRunConcurrency: Number.isFinite(Number(launchOptions.agentRunConcurrency))
+            ? Number(launchOptions.agentRunConcurrency)
+            : undefined,
           assistantPanelOpen: Boolean(launchOptions.assistantPanelOpen),
           commentPageScope: readPrototypeEditorBridgeCommentPageScope(event.data),
           annotationApiBaseUrl: typeof launchOptions.annotationApiBaseUrl === 'string'
@@ -442,6 +450,14 @@ if (typeof window !== 'undefined') {
             requestId: event.data.requestId,
             success: true,
             handled: true,
+            promptText: promptText || undefined,
+          });
+        } else if (action?.type === 'send-to-agent' && action?.elementKey) {
+          const promptText = editorModeManager?.api.getElementPromptText?.(String(action.elementKey || '')) ?? '';
+          postPrototypeEditorState({
+            requestId: event.data.requestId,
+            success: true,
+            handled: Boolean(promptText),
             promptText: promptText || undefined,
           });
         } else {

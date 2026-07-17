@@ -260,11 +260,11 @@ describe('make-server agent open API', () => {
         const versions: Record<string, string> = {
           '@openai/codex': '1.3.0',
           '@anthropic-ai/claude-code': '2.4.0',
-          '@google/gemini-cli': '0.9.5',
           'opencode-ai': '1.5.0',
           '@qoder-ai/qodercli': '0.2.16',
           '@tencent-ai/codebuddy-code': '2.45.0',
           reasonix: '1.9.1',
+          '@xai-official/grok': '0.2.94',
         };
         return new Response(JSON.stringify({ version: versions[packageName] }), {
           status: 200,
@@ -278,11 +278,11 @@ describe('make-server agent open API', () => {
         if (command === 'codex') return { command, escapedCommand: 'codex --version', stdout: 'codex-cli 1.2.3\n', stderr: '' };
         if (command === 'claude') return { command, escapedCommand: 'claude --version', stdout: 'Claude Code 2.3.4 (Claude Code)\n', stderr: '' };
         if (command === 'opencode') throw Object.assign(new Error('command not found'), { code: 'ENOENT' });
-        if (command === 'gemini') return { command, escapedCommand: 'gemini --version', stdout: '', stderr: 'gemini 0.9.0\n' };
         if (command === 'agent') return { command, escapedCommand: 'agent --version', stdout: 'Cursor Agent 0.50.0\n', stderr: '' };
         if (command === 'qodercli') return { command, escapedCommand: 'qodercli --version', stdout: 'qodercli 0.2.15\n', stderr: '' };
         if (command === 'codebuddy') return { command, escapedCommand: 'codebuddy --version', stdout: 'CodeBuddy Code 2.44.0\n', stderr: '' };
         if (command === 'reasonix') throw Object.assign(new Error('unknown flag: --version'), { code: 'EXIT_CODE' });
+        if (command === 'grok') return { command, escapedCommand: 'grok --version', stdout: 'grok 0.2.93\n', stderr: '' };
       }
       if (command === 'reasonix' && args[0] === 'version') {
         return { command, escapedCommand: 'reasonix version', stdout: 'Reasonix CLI v1.8.0\n', stderr: '' };
@@ -296,7 +296,7 @@ describe('make-server agent open API', () => {
       const configAvailabilityResponse = await fetch(`${server.origin}/api/config/availability`);
       expect(configAvailabilityResponse.status).toBe(200);
       expect(runLocalCommandMock).not.toHaveBeenCalledWith(
-        expect.stringMatching(/^(codex|claude|opencode|gemini)$/u),
+        expect.stringMatching(/^(codex|claude|opencode)$/u),
         ['--version'],
         expect.any(Object),
       );
@@ -312,21 +312,21 @@ describe('make-server agent open API', () => {
           claude: { status: 'installed', version: '2.3.4' },
           claudecode: { status: 'installed', version: '2.3.4' },
           opencode: { status: 'missing' },
-          gemini: { status: 'installed', version: '0.9.0' },
           cursor: { status: 'installed', version: '0.50.0' },
           qoder: { status: 'installed', version: '0.2.15' },
           codebuddy: { status: 'installed', version: '2.44.0' },
           reasonix: { status: 'installed', version: '1.8.0' },
+          'grok-build': { status: 'installed', version: '0.2.93' },
         },
         latestAgents: {
           codex: { status: 'installed', version: '1.3.0', packageName: '@openai/codex' },
           claude: { status: 'installed', version: '2.4.0', packageName: '@anthropic-ai/claude-code' },
           claudecode: { status: 'installed', version: '2.4.0', packageName: '@anthropic-ai/claude-code' },
           opencode: { status: 'installed', version: '1.5.0', packageName: 'opencode-ai' },
-          gemini: { status: 'installed', version: '0.9.5', packageName: '@google/gemini-cli' },
           qoder: { status: 'installed', version: '0.2.16', packageName: '@qoder-ai/qodercli' },
           codebuddy: { status: 'installed', version: '2.45.0', packageName: '@tencent-ai/codebuddy-code' },
           reasonix: { status: 'installed', version: '1.9.1', packageName: 'reasonix' },
+          'grok-build': { status: 'installed', version: '0.2.94', packageName: '@xai-official/grok' },
         },
       });
       expect(body.agents.codex.checkedAt).toEqual(expect.any(String));
@@ -334,19 +334,101 @@ describe('make-server agent open API', () => {
       expect(runLocalCommandMock).toHaveBeenCalledWith('codex', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('claude', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('opencode', ['--version'], expect.any(Object));
-      expect(runLocalCommandMock).toHaveBeenCalledWith('gemini', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('agent', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('qodercli', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('codebuddy', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('reasonix', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('reasonix', ['version'], expect.any(Object));
+      expect(runLocalCommandMock).toHaveBeenCalledWith('grok', ['--version'], expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40openai%2Fcodex/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40anthropic-ai%2Fclaude-code/latest', expect.any(Object));
-      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40google%2Fgemini-cli/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/opencode-ai/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40qoder-ai%2Fqodercli/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40tencent-ai%2Fcodebuddy-code/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/reasonix/latest', expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40xai-official%2Fgrok/latest', expect.any(Object));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('detects only the requested local AI agent version when an agent query is provided', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === 'https://registry.npmjs.org/%40qoder-ai%2Fqodercli/latest') {
+        return new Response(JSON.stringify({ version: '0.2.16' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return originalFetch(input, init);
+    });
+    runLocalCommandMock.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'qodercli' && args.includes('--version')) {
+        return { command, escapedCommand: 'qodercli --version', stdout: 'qodercli 0.2.15\n', stderr: '' };
+      }
+      throw new Error(`Unexpected version command: ${command} ${args.join(' ')}`);
+    });
+
+    const server = await startTestServer(projectRoot);
+
+    try {
+      runLocalCommandMock.mockClear();
+      fetchMock.mockClear();
+      const response = await fetch(`${server.origin}/api/agent/versions?agent=qoder`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.agents).toEqual({
+        qoder: expect.objectContaining({ status: 'installed', version: '0.2.15' }),
+      });
+      expect(body.latestAgents).toEqual({
+        qoder: expect.objectContaining({ status: 'installed', version: '0.2.16', packageName: '@qoder-ai/qodercli' }),
+      });
+      expect(runLocalCommandMock).toHaveBeenCalledTimes(1);
+      expect(runLocalCommandMock).toHaveBeenCalledWith('qodercli', ['--version'], expect.any(Object));
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith('codex', ['--version'], expect.any(Object));
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith('claude', ['--version'], expect.any(Object));
+      expect(runLocalCommandMock).not.toHaveBeenCalledWith('opencode', ['--version'], expect.any(Object));
+      const registryCalls = fetchMock.mock.calls
+        .map(([input]) => {
+          const requestInput = input as RequestInfo | URL;
+          return typeof requestInput === 'string'
+            ? requestInput
+            : requestInput instanceof URL
+              ? requestInput.toString()
+              : requestInput.url;
+        })
+        .filter((url) => url.startsWith('https://registry.npmjs.org/'));
+      expect(registryCalls).toEqual(['https://registry.npmjs.org/%40qoder-ai%2Fqodercli/latest']);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reports a local AI agent probe error as unknown instead of missing', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    runLocalCommandMock.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/agent/versions?agent=cursor`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.agents).toEqual({
+        cursor: expect.objectContaining({
+          status: 'unknown',
+          command: 'agent',
+          reason: 'permission denied',
+        }),
+      });
+      expect(body.latestAgents).toEqual({});
     } finally {
       await server.close();
     }
@@ -446,10 +528,9 @@ describe('make-server agent open API', () => {
       });
       const body = await response.json();
 
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(400);
       expect(body).toMatchObject({
-        code: 'CLI_AGENT_MISSING',
-        agent: 'gemini',
+        code: 'CLI_AGENT_UNSUPPORTED',
         projectId: 'agent-client',
       });
       expect(childProcessMock.spawn).not.toHaveBeenCalled();
@@ -458,7 +539,7 @@ describe('make-server agent open API', () => {
     }
   });
 
-  it('uses a stored CLI command path when command discovery reports the agent missing', async () => {
+  it('rejects a stored Gemini CLI command path because Gemini CLI is no longer supported', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot);
     mockDetectedCommands([]);
@@ -482,26 +563,12 @@ describe('make-server agent open API', () => {
       });
       const body = await response.json();
 
-      expect(response.status, JSON.stringify(body)).toBe(200);
+      expect(response.status, JSON.stringify(body)).toBe(400);
       expect(body).toMatchObject({
-        success: true,
-        agent: 'gemini',
-        targetPath: projectRoot,
+        code: 'CLI_AGENT_UNSUPPORTED',
+        projectId: 'agent-client',
       });
-      const firstSpawnCall = childProcessMock.spawn.mock.calls[0] as unknown[] | undefined;
-      if (process.platform === 'darwin') {
-        const spawnArgs = firstSpawnCall?.[1] as string[];
-        const commandScript = fs.readFileSync(String(spawnArgs[2] || ''), 'utf8');
-        expect(commandScript).toContain('"/stored/bin/gemini"');
-      } else {
-        expect(JSON.stringify(childProcessMock.spawn.mock.calls)).toContain('/stored/bin/gemini');
-      }
-
-      const config = await fetch(`${server.origin}/api/config`).then((configResponse) => configResponse.json());
-      expect(config.toolOpenState['cli:gemini']).toMatchObject({
-        commandPath: '/stored/bin/gemini',
-        lastOpenMode: 'terminal',
-      });
+      expect(childProcessMock.spawn).not.toHaveBeenCalled();
     } finally {
       await server.close();
     }
@@ -842,17 +909,11 @@ describe('make-server agent open API', () => {
       targetPath: projectRoot,
     })).rejects.toThrow('Unsupported CLI agent');
 
-    const cli = await openCLIAgent({
-      agent: 'gemini',
+    await expect(openCLIAgent({
+      agent: 'gemini' as any,
       targetPath: projectRoot,
       availability: { status: 'installed', path: '/usr/local/bin/gemini' } as any,
-    });
-    expect(cli).toMatchObject({
-      success: true,
-      agent: 'gemini',
-      targetPath: projectRoot,
-    });
-    expect(cli.command).toContain('gemini');
+    })).rejects.toThrow('Unsupported CLI agent');
 
     await expect(openWebAgent({
       agent: 'opencode',
@@ -911,15 +972,15 @@ describe('make-server agent open API', () => {
       return createSpawnChildMock();
     });
     const cli = openCLIAgent({
-      agent: 'gemini',
+      agent: 'codex',
       targetPath: projectRoot,
-      availability: { status: 'installed', path: '/usr/local/bin/gemini' } as any,
+      availability: { status: 'installed', path: '/usr/local/bin/codex' } as any,
     });
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(2_000);
     await expect(cli).resolves.toMatchObject({
       success: true,
-      agent: 'gemini',
+      agent: 'codex',
       targetPath: projectRoot,
     });
     vi.useRealTimers();

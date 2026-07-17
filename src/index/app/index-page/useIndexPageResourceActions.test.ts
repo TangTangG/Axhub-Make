@@ -137,12 +137,25 @@ describe('useIndexPageResourceActions source', () => {
     const duplicateDocStart = rootSource.indexOf('const handleDuplicateDocItem', docRenameStart);
     const docRenameSource = rootSource.slice(docRenameStart, duplicateDocStart);
 
-    expect(docRenameSource).toContain('const currentResourcePath = String(item.filePath || item.name || \'\').trim();');
+    expect(docRenameSource).toContain('const currentResourcePath = getResourceItemPath(item);');
     expect(docRenameSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}`),');
     expect(docRenameSource).toContain('const renamedResourcePath = renamedPath || renamedDocName;');
     expect(docRenameSource).toContain('const renamedDisplayName = getDocDisplayName(getDocFileName(renamedDocName)) || renamedDocName;');
     expect(docRenameSource).toContain('const oldItemKey = `docs/${currentResourcePath}`;');
     expect(docRenameSource).toContain('const newItemKey = `docs/${renamedResourcePath}`;');
+  });
+
+  it('continues document rename completion without removed theme document selection state', () => {
+    const rootSource = readResourceRootSource();
+    const docRenameStart = rootSource.indexOf('const handleRenameDocItem = useCallback');
+    const duplicateDocStart = rootSource.indexOf('const handleDuplicateDocItem', docRenameStart);
+    const docRenameSource = rootSource.slice(docRenameStart, duplicateDocStart);
+    const reloadIndex = docRenameSource.indexOf('const nextDocs = await reloadDocsItems();');
+    const selectIndex = docRenameSource.indexOf('setSelectedDoc(renamedDoc || nextDocs[0] || null);');
+
+    expect(docRenameSource).not.toContain('setSelectedThemeDocRefs');
+    expect(reloadIndex).toBeGreaterThanOrEqual(0);
+    expect(selectIndex).toBeGreaterThan(reloadIndex);
   });
 
   it('duplicates nested document resources by path and reselects the copied path', () => {
@@ -151,7 +164,7 @@ describe('useIndexPageResourceActions source', () => {
     const deleteDocStart = rootSource.indexOf('const handleDeleteDocItem = useCallback', duplicateDocStart);
     const duplicateDocSource = rootSource.slice(duplicateDocStart, deleteDocStart);
 
-    expect(duplicateDocSource).toContain('const currentResourcePath = String(item.filePath || item.name || \'\').trim();');
+    expect(duplicateDocSource).toContain('const currentResourcePath = getResourceItemPath(item);');
     expect(duplicateDocSource).toContain('fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}/copy`),');
     expect(duplicateDocSource).toContain('const duplicatedPath = String(payload?.path || \'\').trim();');
     expect(duplicateDocSource).toContain('const duplicated = nextDocs.find((doc) => doc.filePath === duplicatedPath || doc.name === payload?.name);');
@@ -220,19 +233,42 @@ describe('useIndexPageResourceActions source', () => {
     expect(source).toContain('handleSetDefaultTheme,');
   });
 
-  it('uses draft wording for canvas resource create, rename, duplicate, and delete messages', () => {
+  it('creates Excalidraw and Drawio resources through docs writes and selects the new files', () => {
     const source = readResourceRootSource();
 
-    expect(source).toContain('创建画布失败');
-    expect(source).toContain('重命名画布失败');
-    expect(source).toContain('复制画布失败');
-    expect(source).toContain('删除画布失败');
-    expect(source).toContain('确定要删除画布 "${item.displayName}" 吗？');
-    expect(source).not.toContain('创建草稿失败');
-    expect(source).not.toContain('重命名草稿失败');
-    expect(source).not.toContain('复制草稿失败');
-    expect(source).not.toContain('删除草稿失败');
-    expect(source).not.toContain('确定要删除草稿 "${item.displayName}" 吗？');
+    expect(source).toContain("import { openDrawioResourceEditor } from '../../domains/drawio/drawioResourceEditor';");
+    expect(source).toContain('const EMPTY_EXCALIDRAW_RESOURCE_CONTENT = JSON.stringify({');
+    expect(source).toContain("type: 'excalidraw'");
+    expect(source).toContain('const EMPTY_DRAWIO_RESOURCE_CONTENT =');
+    expect(source).toContain('<mxfile host="embed.diagrams.net">');
+    expect(source).toContain('function buildUniqueResourceFileName(');
+    expect(source).toContain('const handleCreateResourceCanvasFile = useCallback(async (targetFolder?: string | null) => {');
+    expect(source).toContain("const createdName = buildUniqueResourceFileName(docsItems, targetFolder, 'untitled.excalidraw');");
+    expect(source).toContain("fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(createdName)}`),");
+    expect(source).toContain("body: JSON.stringify(buildResourceBody({ content: EMPTY_EXCALIDRAW_RESOURCE_CONTENT }))");
+    expect(source).toContain("setSidebarTab('document');");
+    expect(source).toContain("const createdCanvasFilePath = `src/resources/${createdName}`;");
+    expect(source).toContain("openMode: 'canvas',");
+    expect(source).toContain('resourceId: createdDoc.resourceId || createdName,');
+    expect(source).toContain("ext: createdDoc.ext || '.excalidraw',");
+    expect(source).toContain('filePath: createdDoc.filePath || createdCanvasFilePath,');
+    expect(source).toContain('canvasFilePath: createdDoc.canvasFilePath || createdDoc.filePath || createdCanvasFilePath,');
+    expect(source).toContain("setViewMode('canvas');");
+    expect(source).toContain('setSelectedDoc(selectedCanvasDoc);');
+    expect(source).toContain('const handleCreateDrawioResourceFile = useCallback(async (targetFolder?: string | null) => {');
+    expect(source).toContain("const createdName = buildUniqueResourceFileName(docsItems, targetFolder, 'untitled.drawio');");
+    expect(source).toContain("body: JSON.stringify(buildResourceBody({ content: EMPTY_DRAWIO_RESOURCE_CONTENT }))");
+    expect(source).toContain('await openDrawioResourceEditor({');
+    expect(source).toContain('resource: createdDoc,');
+    expect(source).toContain("kind: 'doc',");
+    expect(source).toContain('onSaved: reloadDocsItems,');
+    expect(source).toContain('setSelectedDoc(createdDoc);');
+    expect(source).toContain('handleCreateResourceCanvasFile,');
+    expect(source).toContain('handleCreateDrawioResourceFile,');
+    expect(source).not.toContain("fetch('/api/canvas/create'");
+    expect(source).not.toContain('handleRenameCanvasItem');
+    expect(source).not.toContain('handleDuplicateCanvasItem');
+    expect(source).not.toContain('handleDeleteCanvasItem');
   });
 
   it('refreshes docs metadata before reconciling a persisted filesystem sidebar tree', () => {
@@ -273,6 +309,23 @@ describe('useIndexPageResourceActions source', () => {
     expect(syncEffectSource).toContain('return previous;');
   });
 
+  it('does not auto-select the first resource or design while start draft pages are active', () => {
+    const source = readResourceRootSource();
+    const docSyncEffectStart = source.indexOf('useEffect(() => {\n        setSelectedDoc((previous) => {');
+    const docSyncEffectEnd = source.indexOf('    useEffect(() => {\n        setSelectedResourceFolder', docSyncEffectStart);
+    const docSyncEffectSource = source.slice(docSyncEffectStart, docSyncEffectEnd);
+    const themeSyncEffectStart = source.indexOf('useEffect(() => {\n        setSelectedTheme((previous: any) => (');
+    const themeSyncEffectEnd = source.indexOf('    useEffect(() => {\n        setSelectedDataTable', themeSyncEffectStart);
+    const themeSyncEffectSource = source.slice(themeSyncEffectStart, themeSyncEffectEnd);
+
+    expect(source).toContain('resourceStartDraftActive,');
+    expect(source).toContain('themeStartDraftActive,');
+    expect(docSyncEffectSource).toContain('if (resourceStartDraftActive) {\n                return previous;\n            }');
+    expect(docSyncEffectSource).toContain('}, [docsItems, resourceStartDraftActive, selectedDocsResourceFolder]);');
+    expect(themeSyncEffectSource).toContain('themeStartDraftActive\n                ? previous');
+    expect(themeSyncEffectSource).toContain('}, [themeStartDraftActive, themes]);');
+  });
+
   it('cleans the docs sidebar tree after deleting a document resource', () => {
     const source = readResourceRootSource();
     const handlerStart = source.indexOf('const handleDeleteDocItem = useCallback');
@@ -280,7 +333,7 @@ describe('useIndexPageResourceActions source', () => {
     const handlerSource = source.slice(handlerStart, handlerEnd);
 
     expect(handlerSource).toContain('const nextDocs = await reloadDocsItems();');
-    expect(handlerSource).toContain('const currentResourcePath = String(item.filePath || item.name || \'\').trim();');
+    expect(handlerSource).toContain('const currentResourcePath = getResourceItemPath(item);');
     expect(handlerSource).toContain("setSidebarTrees((previous: Record<SidebarTreeTab, SidebarTreeNode[]>) => ({");
     expect(handlerSource).toContain('removeDocsSidebarTreeItem(');
     expect(handlerSource).toContain("sanitizeSidebarTree('docs', previous.docs || [], nextDocs)");

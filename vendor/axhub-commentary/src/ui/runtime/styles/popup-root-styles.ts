@@ -264,9 +264,34 @@ export const WEB_EDITOR_POPUP_ROOT_STYLES = `
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-tooltip,
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-popover,
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-popconfirm,
-  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-select-dropdown,
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-color-picker-dropdown {
     z-index: ${POPUP_LAYER_Z_INDEX + 20};
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-select-dropdown,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-ai-execution-provider-dropdown {
+    z-index: ${POPUP_LAYER_Z_INDEX + 40} !important;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-dark-mode-button.ant-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-dark-mode-button .anticon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-dark-mode-button .anticon svg {
+    display: block;
   }
 
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-dropdown,

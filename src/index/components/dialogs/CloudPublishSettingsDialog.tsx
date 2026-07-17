@@ -98,6 +98,19 @@ const PUBLISH_PLATFORM_OPTIONS: Array<{ id: CloudPublishTarget; label: string }>
     { id: 'github-pages', label: 'GitHub Pages' },
 ];
 
+function buildCloudPublishAiConfigPrompt(target: ConfigurableCloudPublishTarget): string {
+    switch (target) {
+        case 's3':
+            return '请帮我配置 Axhub Make 对象存储发布。配置文件是 Make Server 全局配置：默认 ~/.axhub/make/server.config.json；如果设置了 AXHUB_MAKE_HOME_DIR，则写 $AXHUB_MAKE_HOME_DIR/.axhub/make/server.config.json。请引导我提供 accessKeyId、secretAccessKey、region、bucket、baseUrl，可选 prefix、endpoint，然后写入 JSON 的 cloudPublishing.s3。';
+        case 'vercel':
+            return '请帮我配置 Axhub Make Vercel 发布。配置文件是 Make Server 全局配置：默认 ~/.axhub/make/server.config.json；如果设置了 AXHUB_MAKE_HOME_DIR，则写 $AXHUB_MAKE_HOME_DIR/.axhub/make/server.config.json。请引导我提供 token、projectName，可选 teamId，然后写入 JSON 的 cloudPublishing.vercel。';
+        case 'cloudflare-pages':
+            return '请帮我配置 Axhub Make Cloudflare Pages 发布。配置文件是 Make Server 全局配置：默认 ~/.axhub/make/server.config.json；如果设置了 AXHUB_MAKE_HOME_DIR，则写 $AXHUB_MAKE_HOME_DIR/.axhub/make/server.config.json。请引导我提供 apiToken、accountId，可选 projectName，productionBranch 默认 main，然后写入 JSON 的 cloudPublishing.cloudflarePages。';
+        case 'github-pages':
+            return '请帮我配置 Axhub Make GitHub Pages 发布。配置文件是 Make Server 全局配置：默认 ~/.axhub/make/server.config.json；如果设置了 AXHUB_MAKE_HOME_DIR，则写 $AXHUB_MAKE_HOME_DIR/.axhub/make/server.config.json。请引导我提供 repository、branch、sourceDirectory，可选 pathPrefix；repository 可从 git remote 推断，branch 默认 gh-pages，sourceDirectory 只能是 / 或 /docs。然后写入 JSON 的 cloudPublishing.githubPages。';
+    }
+}
+
 function cloneForm(form: CloudPublishSettingsForm): CloudPublishSettingsForm {
     return {
         vercel: { ...form.vercel },
@@ -156,7 +169,7 @@ function FieldInput({
 }) {
     const inputId = `cloud-publish-${name}`;
     return (
-        <Field>
+        <Field className="content-start">
             <FieldLabelWithHint htmlFor={inputId}>
                 <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                     <span>
@@ -339,6 +352,16 @@ export default function CloudPublishSettingsDialog({
             toast.error(error?.message || '保存云服务发布配置失败');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleCopyAiConfigPrompt = async () => {
+        if (activeTab === 'publish-settings') return;
+        try {
+            await navigator.clipboard.writeText(buildCloudPublishAiConfigPrompt(activeTab));
+            toast.success('AI 配置提示词已复制');
+        } catch {
+            toast.error('复制 AI 配置提示词失败');
         }
     };
 
@@ -577,14 +600,29 @@ export default function CloudPublishSettingsDialog({
                         )}
                     </div>
 
-                    <div className="flex h-14 shrink-0 items-center justify-end gap-2 border-t px-4">
-                        <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-                            取消
-                        </Button>
-                        <Button type="button" size="sm" onClick={() => void handleSave()} disabled={loading || saving}>
-                            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                            保存
-                        </Button>
+                    <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-t px-4">
+                        <div className="min-w-0">
+                            {activeTab !== 'publish-settings' ? (
+                                <Button
+                                    type="button"
+                                    variant="link"
+                                    size="sm"
+                                    className="h-auto px-0 py-0 text-xs"
+                                    onClick={() => void handleCopyAiConfigPrompt()}
+                                >
+                                    复制 AI 配置提示词
+                                </Button>
+                            ) : null}
+                        </div>
+                        <div className="flex items-center justify-end gap-2">
+                            <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+                                取消
+                            </Button>
+                            <Button type="button" size="sm" onClick={() => void handleSave()} disabled={loading || saving}>
+                                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                                保存
+                            </Button>
+                        </div>
                     </div>
                 </Tabs>
             </DialogContent>

@@ -11,6 +11,9 @@ import type { CreateDialogTab, PrototypeUploadType } from '../../types/index-pag
 import PromptActionButton from '../PromptActionButton';
 import CreateDialogContainer from '../dialogs/CreateDialogContainer';
 import CreateThemeDialogContainer from '../dialogs/CreateThemeDialogContainer';
+import PrototypeSpecNavigationDialog, {
+    type PrototypeSpecNavigationDialogProps,
+} from '../dialogs/PrototypeSpecNavigationDialog';
 import { Button } from '@/components/ui/button';
 import type { SettingsDialogAIContext, SettingsDialogInitialTab } from '../SettingsDialog';
 import {
@@ -32,6 +35,12 @@ const WorkspaceVersionCollaborationDrawer = React.lazy(() => import('../Workspac
 const VersionManager = React.lazy(() => import('../VersionManager'));
 
 interface IndexDialogsProps {
+    prototypeSpecPromptDialog: {
+        prompt: string;
+        targetPath: string;
+        onOpenChange: (open: boolean) => void;
+    } | null;
+    prototypeSpecNavigationDialog: PrototypeSpecNavigationDialogProps | null;
     docReferencePromptDialog: DocReferencePromptDialogState | null;
     setDocReferencePromptDialog: (value: DocReferencePromptDialogState | null) => void;
     preferredPromptClient: PromptClientPreference;
@@ -127,10 +136,11 @@ interface IndexDialogsProps {
     versionDialogVisible: boolean;
     setVersionDialogVisible: (open: boolean) => void;
     currentVersionItem: ItemData | null;
-    versionActiveTab: 'prototypes';
 }
 
 export default function IndexDialogs({
+    prototypeSpecPromptDialog,
+    prototypeSpecNavigationDialog,
     docReferencePromptDialog,
     setDocReferencePromptDialog,
     preferredPromptClient,
@@ -162,10 +172,57 @@ export default function IndexDialogs({
     versionDialogVisible,
     setVersionDialogVisible,
     currentVersionItem,
-    versionActiveTab,
 }: IndexDialogsProps) {
     return (
         <>
+            <Dialog
+                open={Boolean(prototypeSpecPromptDialog)}
+                onOpenChange={(open) => prototypeSpecPromptDialog?.onOpenChange(open)}
+            >
+                <DialogContent className="max-w-[640px] text-sm">
+                    <DialogHeader>
+                        <DialogTitle>当前原型缺少主规格</DialogTitle>
+                        <DialogDescription>
+                            让 AI 先询问你选择 HTML 或 Markdown，再按统一规范创建规格文档。
+                        </DialogDescription>
+                    </DialogHeader>
+                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs leading-6 text-foreground">
+                        {prototypeSpecPromptDialog?.prompt || ''}
+                    </pre>
+                    <DialogFooter className="gap-2 sm:justify-between">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => prototypeSpecPromptDialog?.onOpenChange(false)}
+                        >
+                            关闭
+                        </Button>
+                        {prototypeSpecPromptDialog ? (
+                            <PromptActionButton
+                                type="primary"
+                                preferredClient={preferredPromptClient}
+                                preferredIDE={preferredIDE}
+                                ideAvailability={ideAvailability}
+                                assistantOpen={assistantOpen}
+                                getTargetPath={() => prototypeSpecPromptDialog.targetPath}
+                                onExecutePrompt={onExecutePrompt}
+                                scene="prototype-spec-create"
+                                buildPrompt={() => prototypeSpecPromptDialog.prompt}
+                                copySuccessMessage="规格生成提示词已复制"
+                                executeSuccessMessage="已发送到 AI 侧栏"
+                                fallbackMessage="AI 执行失败，已回退为复制提示词"
+                                onAfterCopy={() => prototypeSpecPromptDialog.onOpenChange(false)}
+                                onAfterExecute={() => prototypeSpecPromptDialog.onOpenChange(false)}
+                            />
+                        ) : null}
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {prototypeSpecNavigationDialog ? (
+                <PrototypeSpecNavigationDialog {...prototypeSpecNavigationDialog} />
+            ) : null}
+
             <Dialog
                 open={Boolean(docReferencePromptDialog)}
                 onOpenChange={(open) => {
@@ -394,12 +451,7 @@ export default function IndexDialogs({
                         visible={versionDialogVisible}
                         onCancel={() => setVersionDialogVisible(false)}
                         item={currentVersionItem}
-                        activeTab={versionActiveTab}
-                        preferredPromptClient={preferredPromptClient}
-                        preferredIDE={preferredIDE}
-                        ideAvailability={ideAvailability}
-                        assistantOpen={assistantOpen}
-                        onExecutePrompt={onExecutePrompt}
+                        onOpenWorkspaceVersionCollaboration={onOpenVersionCollaborationFromSettings}
                     />
                 </React.Suspense>
             ) : null}

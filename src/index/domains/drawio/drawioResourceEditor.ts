@@ -22,6 +22,7 @@ interface DrawioMessageApi {
 interface OpenDrawioResourceEditorOptions {
   resource: DrawioResourceLike | null | undefined;
   kind: DrawioResourceKind;
+  popupWindow?: Window | null;
   messageApi?: DrawioMessageApi;
   onSaved?: () => void | Promise<void>;
 }
@@ -226,6 +227,7 @@ export function buildDrawioResourceRawUrl(resource: DrawioResourceLike | null | 
 export async function openDrawioResourceEditor({
   resource,
   kind,
+  popupWindow,
   messageApi,
   onSaved,
 }: OpenDrawioResourceEditorOptions): Promise<boolean> {
@@ -260,12 +262,15 @@ export async function openDrawioResourceEditor({
     return false;
   }
 
-  const popup = window.open(DRAWIO_EMBED_URL, DRAWIO_WINDOW_TARGET);
+  const popup = popupWindow ?? window.open(DRAWIO_EMBED_URL, DRAWIO_WINDOW_TARGET);
   if (!popup) {
     notify(messageApi, 'error', '无法打开 Draw.io 新标签页，请检查浏览器弹窗拦截设置');
     return false;
   }
 
+  if (popupWindow) {
+    popup.location.href = DRAWIO_EMBED_URL;
+  }
   popup.focus?.();
 
   let currentXml = editableXml;

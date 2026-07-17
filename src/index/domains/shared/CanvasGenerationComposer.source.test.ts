@@ -29,7 +29,7 @@ function readPackageJson() {
 }
 
 describe('CanvasGenerationComposer source', () => {
-  it('orders placeholder quick prompts after ACP model selectors and generation settings', () => {
+  it('orders placeholder prompt actions after ACP model selectors and generation settings', () => {
     const source = readCanvasGenerationComposerSource();
     const displayComponentSegment = source.slice(
       source.indexOf('function CanvasGenerationDisplayComposerContent('),
@@ -40,9 +40,10 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment.indexOf('{resolvedPostSelectorActions}')).toBeGreaterThan(
       displayComponentSegment.indexOf('{showSelectors ? <CanvasAcpComposerSelectors /> : null}'),
     );
-    expect(displayComponentSegment.indexOf('<CanvasGenerationDisplayQuickPromptsButton')).toBeGreaterThan(
+    expect(displayComponentSegment.indexOf('<CanvasPromptOptimizeButton')).toBeGreaterThan(
       displayComponentSegment.indexOf('{resolvedPostSelectorActions}'),
     );
+    expect(displayComponentSegment).not.toContain('<CanvasGenerationDisplayQuickPromptsButton');
   });
 
   it('lets placeholder post-selector actions read the current display composer text', () => {
@@ -64,6 +65,63 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment).toContain(': postSelectorActions;');
     expect(displayComponentSegment).toContain('{resolvedPostSelectorActions}');
     expect(displayComponentSegment).not.toContain('{postSelectorActions}');
+  });
+
+  it('wires prompt optimization actions without consuming final submit context', () => {
+    const source = readCanvasGenerationComposerSource();
+    const displayPropsSegment = source.slice(
+      source.indexOf('export interface CanvasGenerationDisplayComposerProps'),
+      source.indexOf('interface CanvasGenerationRuntimeComposerProps'),
+    );
+    const displayComponentSegment = source.slice(
+      source.indexOf('function CanvasGenerationDisplayComposerContent('),
+      source.indexOf('function CanvasGenerationDisplayComposerWithoutAcp'),
+    );
+    const displayRuntimeSegment = source.slice(
+      source.indexOf('function CanvasGenerationDisplayComposerRuntime'),
+      source.indexOf('function CanvasGenerationDisplayComposerWithAcp'),
+    );
+
+    expect(displayPropsSegment).toContain('onOptimizePrompt?: (request: CanvasPromptOptimizationRequest) => Promise<string>;');
+    expect(source).toContain('export interface CanvasPromptOptimizationRequest');
+    expect(source).toContain('function CanvasPromptOptimizeButton');
+    expect(source).toContain('Loader2');
+    expect(displayComponentSegment).toContain('const [optimizingPrompt, setOptimizingPrompt] = useState(false);');
+    expect(displayComponentSegment).toContain('const controlsDisabled = disabled || optimizingPrompt;');
+    expect(displayComponentSegment).toContain('aria-live="polite"');
+    expect(displayComponentSegment).toContain('正在优化提示词');
+    expect(displayComponentSegment).toContain('inputRef.current.value = optimizedPrompt;');
+    expect(displayComponentSegment).toContain('persistDisplayDraft(optimizedPrompt);');
+    expect(displayComponentSegment).toContain('disabled={controlsDisabled}');
+    expect(displayComponentSegment).toContain('<CanvasPromptOptimizeButton');
+    expect(displayRuntimeSegment).toContain('contextBundle: acpContext.getContextBundle()');
+    expect(displayRuntimeSegment).not.toContain('contextBundle: acpContext.consumeContextBundle(),');
+    expect(displayRuntimeSegment).toContain('onOptimizePrompt?.({');
+    expect(displayRuntimeSegment).toContain('provider: acpContext.provider');
+    expect(displayRuntimeSegment).toContain('model: acpContext.model');
+    expect(displayRuntimeSegment).toContain('mode: acpContext.modeId');
+    expect(displayRuntimeSegment).toContain('thought: acpContext.thoughtLevel');
+  });
+
+  it('keeps prompt optimization clickable so ACP setup failures can open AI settings', () => {
+    const source = readCanvasGenerationComposerSource();
+    const displayComponentSegment = source.slice(
+      source.indexOf('function CanvasGenerationDisplayComposerContent('),
+      source.indexOf('function CanvasGenerationDisplayComposerWithoutAcp'),
+    );
+
+    expect(displayComponentSegment).toContain('if (!onOptimizePrompt) {');
+    expect(displayComponentSegment).toContain('onOpenAISettings?.();');
+    expect(displayComponentSegment).toContain('return;');
+    expect(displayComponentSegment).toContain('if (showModelSelectorFallback) {');
+    expect(displayComponentSegment).toContain('onOpenAISettings?.();');
+    expect(displayComponentSegment).toContain('return;');
+    expect(displayComponentSegment).toContain("action === 'open-ai-settings'");
+    expect(displayComponentSegment).toContain('onOpenAISettings?.();');
+    expect(displayComponentSegment).not.toContain('const runtimeReady = await onEnsureAcpRuntime?.(false);');
+    expect(displayComponentSegment).toContain('disabled={controlsDisabled}');
+    expect(displayComponentSegment).not.toContain('promptOptimizationSetupDisabled');
+    expect(displayComponentSegment).not.toContain('disabled={controlsDisabled || !onOptimizePrompt}');
   });
 
   it('orders runtime prompt actions after ACP model selectors and generation settings', () => {
@@ -212,19 +270,20 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayPropsSegment).toContain('onSubmit?: (text: string, selection?: CanvasGenerationDisplaySubmitSelection) => CanvasGenerationDisplaySubmitResult | Promise<CanvasGenerationDisplaySubmitResult>;');
     expect(displayPropsSegment).toContain('className?: string;');
     expect(displayPropsSegment).toContain('disabled?: boolean;');
-    expect(displayPropsSegment).toContain('quickPrompts?: readonly CanvasAiQuickPrompt[];');
+    expect(displayPropsSegment).not.toContain('quickPrompts?: readonly CanvasAiQuickPrompt[];');
     expect(displayPropsSegment).toContain('referenceImages: string[];');
     expect(displayPropsSegment).toContain('attachments: CanvasGenerationAttachmentPart[];');
     expect(displayComponentSegment).toContain('aui-composer-root');
     expect(displayComponentSegment).toContain('data-slot="aui_composer-shell"');
     expect(displayComponentSegment).toContain('aui-composer-input');
-    expect(displayComponentSegment).toContain('appendCanvasAiQuickPrompt(inputRef.current?.value ?? \'\', quickPrompt.prompt)');
-    expect(displayComponentSegment).toContain('inputRef.current.value = nextText;');
-    expect(displayComponentSegment).toContain('CanvasGenerationDisplayQuickPromptsButton');
+    expect(displayComponentSegment).not.toContain('appendCanvasAiQuickPrompt');
+    expect(displayComponentSegment).not.toContain('quickPrompt.prompt');
+    expect(displayComponentSegment).not.toContain('CanvasGenerationDisplayQuickPromptsButton');
     expect(displayComponentSegment).toContain('<ComposerAttachments />');
     expect(displayComponentSegment).toContain('{disabled ? null : (');
     expect(displayComponentSegment).toContain('<CanvasComposerAttachmentMenu');
     expect(displayComponentSegment).toContain('onProjectResourceClick={() => setProjectResourceDialogOpen(true)}');
+    expect(displayComponentSegment).not.toContain('<CanvasProjectResourceButton');
     expect(displayComponentSegment).toContain('aui-composer-send');
     expect(displayComponentSegment).toContain('min-h-[112px]');
     expect(displayComponentSegment).toContain('rounded-2xl border border-border bg-background p-3 shadow-sm');
@@ -247,13 +306,10 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment).not.toContain('CanvasGenerationMakeTransport');
     expect(displayComponentSegment).not.toContain('data-axhub-placeholder-quick-prompt');
     expect(displayComponentSegment).not.toContain('mt-3 flex flex-wrap items-center justify-center gap-2');
-    expect(source).toContain('function CanvasGenerationDisplayQuickPromptsButton');
-    expect(source).toContain('提示词');
-    expect(source).toContain('quickPrompts?.length');
-    expect(source).toContain('data-axhub-canvas-generation-prompts-trigger');
-    expect(source).toContain('className="z-[1300] w-80 overflow-hidden p-0"');
-    expect(source).toContain('data-axhub-canvas-generation-prompt-option');
-    expect(source).toContain('<Sparkles');
+    expect(source).not.toContain('function CanvasGenerationDisplayQuickPromptsButton');
+    expect(source).not.toContain('quickPrompts?.length');
+    expect(source).not.toContain('data-axhub-canvas-generation-prompts-trigger');
+    expect(source).not.toContain('data-axhub-canvas-generation-prompt-option');
     expect(source).not.toContain('import { ArrowUp, Mic, Plus }');
     expect(source).not.toContain('import { ArrowUp, Mic, Plus }');
     expect(indexStyles).toContain('.ax-placeholder-display-composer .aui-composer-input:focus-visible');
@@ -279,6 +335,7 @@ describe('CanvasGenerationComposer source', () => {
     expect(source).toContain("import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';");
     expect(source).toContain("import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';");
     expect(source).toContain('function CanvasComposerAttachmentMenu');
+    expect(source).not.toContain('function CanvasProjectResourceButton');
     expect(source).toContain('<TooltipProvider>');
     expect(source).toContain('<ComposerPrimitive.AddAttachment asChild>');
     expect(source).toContain('本地文件');
@@ -290,6 +347,8 @@ describe('CanvasGenerationComposer source', () => {
     expect(source).not.toContain("canvas: '设计图'");
     expect(source).not.toContain("docs: '文档'");
     expect(source).toContain('data-axhub-project-resource-picker-trigger');
+    expect(source).not.toContain('data-axhub-project-resource-picker-inline-trigger');
+    expect(source).toContain('onProjectResourceClick={() => setProjectResourceDialogOpen(true)}');
     expect(source).toContain('className="aui-composer-add-attachment size-8 rounded-full p-1 font-semibold text-xs hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30"');
     expect(source).not.toContain('Composer,');
     expect(source).not.toContain('ComposerAddAttachment,');
@@ -489,7 +548,7 @@ describe('CanvasGenerationComposer source', () => {
     expect(source).toContain('renderPostSelectorActions={renderPostSelectorActions}');
   });
 
-  it('renders shared quick prompt actions in the runtime composer row', () => {
+  it('does not render shared quick prompt actions in the runtime composer row', () => {
     const source = readCanvasGenerationComposerSource();
     const runtimePropsSegment = source.slice(
       source.indexOf('interface CanvasGenerationRuntimeComposerProps'),
@@ -500,17 +559,15 @@ describe('CanvasGenerationComposer source', () => {
       source.indexOf('function useAssistantUiDialogOverlayDismiss'),
     );
 
-    expect(runtimePropsSegment).toContain('quickPrompts?: readonly CanvasAiQuickPrompt[];');
-    expect(runtimeContentSegment).toContain('quickPrompts,');
-    expect(runtimeContentSegment).toContain('const handleQuickPromptSelect = useCallback');
-    expect(runtimeContentSegment).toContain('composer.setText(appendCanvasAiQuickPrompt(composer.getState().text, quickPrompt.prompt));');
-    expect(runtimeContentSegment).toContain('<CanvasGenerationDisplayQuickPromptsButton');
-    expect(runtimeContentSegment).toContain('quickPrompts={quickPrompts}');
-    expect(runtimeContentSegment).toContain('onSelect={handleQuickPromptSelect}');
-    expect(source).toContain('data-axhub-canvas-generation-prompts-trigger');
-    expect(source).toContain('data-axhub-canvas-generation-prompts-menu');
-    expect(source).toContain('data-axhub-canvas-generation-prompt-option');
-    expect(source).toContain('quickPrompts={quickPrompts}');
+    expect(runtimePropsSegment).not.toContain('quickPrompts?: readonly CanvasAiQuickPrompt[];');
+    expect(runtimeContentSegment).not.toContain('quickPrompts,');
+    expect(runtimeContentSegment).not.toContain('const handleQuickPromptSelect = useCallback');
+    expect(runtimeContentSegment).not.toContain('quickPrompt.prompt');
+    expect(runtimeContentSegment).not.toContain('<CanvasGenerationDisplayQuickPromptsButton');
+    expect(source).not.toContain('data-axhub-canvas-generation-prompts-trigger');
+    expect(source).not.toContain('data-axhub-canvas-generation-prompts-menu');
+    expect(source).not.toContain('data-axhub-canvas-generation-prompt-option');
+    expect(source).not.toContain('quickPrompts={quickPrompts}');
   });
 
   it('keeps canvas reference attachments image-only instead of using the AI SDK default file adapter', () => {
@@ -538,6 +595,8 @@ describe('CanvasGenerationComposer source', () => {
     expect(selectorSegment).toContain("claude: 'Claude Code'");
     expect(selectorSegment).toContain("codex: 'Codex'");
     expect(selectorSegment).toContain("opencode: 'OpenCode'");
+    expect(selectorSegment).toContain("'grok-build': 'Grok Build'");
+    expect(source).toContain("const FIXED_CANVAS_ACP_PROVIDER_OPTIONS = ['claude', 'codex', 'opencode']");
     expect(selectorSegment).toContain('resolveCanvasAcpRuntimeProviderOptions(contextProviderOptions, context.provider)');
     expect(selectorSegment).toContain('runtimeProviderOptions.includes(option.value)');
     expect(selectorSegment).not.toContain('useVisibleAcpProviders');
@@ -587,18 +646,26 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayPropsSegment).toContain('canPasteReferenceImages?: boolean;');
     expect(displayPropsSegment).toContain('initialLocalContextRefs?: CanvasLocalContextRef[];');
     expect(displayPropsSegment).toContain('initialReferenceImages?: string[];');
-    expect(displayPropsSegment).toContain('onPasteReferenceImages?: () => Promise<string[]>;');
+    expect(displayPropsSegment).toContain('onPasteReferenceImages?: () => Promise<CanvasReferencePasteResult>;');
     expect(displayContentPropsSegment).toContain('replaceContextItems?: (items: ContextItem[]) => void;');
     expect(displayContentSegment).toContain('const initialReferenceImagesKey = useMemo');
     expect(displayContentSegment).toContain('const initialLocalContextRefsKey = useMemo');
-    expect(displayContentSegment).toContain('localContextRefsToAcpContextItems(initialLocalContextRefs ?? [])');
+    expect(displayContentSegment).toContain('const [localContextItems, setLocalContextItems] = useState<ContextItem[]>([]);');
+    expect(displayContentSegment).toContain('const visibleContextItems = [...localContextItems, ...projectResourceContextItems];');
+    expect(displayContentSegment).toContain('currentLocalContextRefsRef.current = localContextRefs;');
+    expect(displayContentSegment).toContain('setLocalContextItems(localItems);');
+    expect(displayContentSegment).toContain('localContextRefsToAcpContextItems(localContextRefs)');
     expect(displayContentSegment).toContain('syncDisplayContextItems(contextItems, projectResourceContextItems);');
+    expect(displayContentSegment).toContain('const handleRemoveLocalContextItem = useCallback');
     expect(displayContentSegment).toContain('if (canPasteReferenceImages && onPasteReferenceImages && shouldUseCanvasReferencePaste(event.clipboardData)) {');
     expect(displayContentSegment.indexOf('shouldUseCanvasReferencePaste(event.clipboardData)')).toBeLessThan(
       displayContentSegment.indexOf('const pastedFiles = getClipboardImageFiles(event.nativeEvent);'),
     );
-    expect(displayContentSegment).toContain('const images = await onPasteReferenceImages();');
-    expect(displayContentSegment).toContain('const files = images.map((image, index) => dataUrlToImageFile(image, index));');
+    expect(displayContentSegment).toContain('const pasteResult = normalizeCanvasReferencePasteResult(await onPasteReferenceImages());');
+    expect(displayContentSegment).toContain('syncDisplayContextItems(localContextRefsToAcpContextItems(nextLocalContextRefs), projectResourceContextItems);');
+    expect(displayContentSegment).toContain('const files = pasteResult.referenceImages.map((image, index) => dataUrlToImageFile(image, index));');
+    expect(displayContentSegment).toContain('visibleContextItems.map((item)');
+    expect(displayContentSegment).toContain('onClick={() => handleRemoveContextItem(item.id)}');
     expect(displayRuntimeSegment).toContain('replaceContextItems={acpContext.replaceContextItems}');
   });
 
@@ -625,6 +692,9 @@ describe('CanvasGenerationComposer source', () => {
     expect(source).toContain('buildCanvasProjectResourceFolderContextItem');
     expect(source).toContain("resourceKind: 'folder'");
     expect(source).toContain("source: 'axhub-make-placeholder-resource-picker'");
+    expect(source).toContain('export interface CanvasProjectResourceItemSelection');
+    expect(source).toContain('export function buildCanvasProjectResourceItemSelections');
+    expect(source).toContain("selectionMode?: 'context' | 'canvas-items';");
     expect(source).toContain("prototypes: '原型'");
     expect(source).toContain("docs: '资源'");
     expect(source).toContain("themes: '设计'");
@@ -638,7 +708,31 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayContentSegment).toContain('externalFileDropTargetRef?.current');
     expect(displayContentSegment).toContain("if (!event.dataTransfer?.files?.length) return;");
     expect(displayContentSegment).toContain('<CanvasProjectResourcePickerDialog');
+    expect(displayContentSegment).toContain("selectionMode=\"context\"");
     expect(displayContentSegment).toContain('onApply={handleApplyProjectResources}');
+  });
+
+  it('disables folder selection in project resource picker canvas item mode', () => {
+    const source = readCanvasGenerationComposerSource();
+    const resourceTreeSegment = source.slice(
+      source.indexOf('function CanvasProjectResourceTree('),
+      source.indexOf('export function CanvasProjectResourcePickerDialog('),
+    );
+    const resourceDialogSegment = source.slice(
+      source.indexOf('export function CanvasProjectResourcePickerDialog('),
+      source.indexOf('function CanvasComposerAttachmentMenu'),
+    );
+
+    expect(resourceTreeSegment).toContain("selectionMode: 'context' | 'canvas-items';");
+    expect(resourceTreeSegment).toContain("const folderDisabled = selectionMode === 'canvas-items' && isFolder;");
+    expect(resourceTreeSegment).toContain("title={folderDisabled ? '文件夹不能添加到画布' : undefined}");
+    expect(resourceTreeSegment).toContain('disabled={folderDisabled}');
+    expect(resourceTreeSegment).toContain('aria-label={folderDisabled ? `${node.title}，文件夹不能添加到画布` : `选择${node.title}`}');
+    expect(resourceDialogSegment).toContain("selectionMode = 'context'");
+    expect(resourceDialogSegment).toContain("if (selectionMode === 'canvas-items')");
+    expect(resourceDialogSegment).toContain('buildCanvasProjectResourceItemSelections({');
+    expect(resourceDialogSegment).toContain('onApply(nextKeys, contextItems, itemSelections);');
+    expect(resourceDialogSegment).toContain("{selectionMode === 'canvas-items' ? '添加到画布' : '添加到上下文'}");
   });
 
   it('keeps the project resource picker aligned with sidebar tabs and a fixed-height dialog', () => {
@@ -654,15 +748,25 @@ describe('CanvasGenerationComposer source', () => {
 
     expect(source).toContain("import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';");
     expect(resourceDialogSegment).toContain('h-[520px] max-h-[calc(100vh-96px)]');
+    expect(source).toContain("import { Input } from '@/components/ui/input';");
     expect(resourceDialogSegment).toContain('grid-rows-[auto_auto_minmax(0,1fr)_auto]');
+    expect(resourceDialogSegment).toContain('<DialogTitle className="sr-only">本项目资源</DialogTitle>');
+    expect(resourceDialogSegment).not.toContain('<DialogHeader');
+    expect(resourceDialogSegment).not.toContain('<DialogTitle className="text-base">本项目资源</DialogTitle>');
     expect(resourceDialogSegment).toContain('<ToggleGroup');
     expect(resourceDialogSegment).toContain('type="single"');
     expect(resourceDialogSegment).toContain('value={activeTab}');
     expect(resourceDialogSegment).toContain('onValueChange={(value) => value && setActiveTab(value as CanvasProjectResourcePickerTab)}');
-    expect(resourceDialogSegment).toContain('className="w-auto justify-start gap-1 px-5 pb-3"');
+    expect(resourceDialogSegment).toContain('className="w-auto justify-start gap-1 px-5 pb-3 pt-5"');
     expect(resourceDialogSegment).toContain('<ToggleGroupItem');
-    expect(resourceDialogSegment).toContain('h-6 w-auto min-w-[36px] px-2 text-[11px] leading-none whitespace-nowrap rounded-sm bg-transparent hover:bg-muted/50 data-[state=off]:!text-muted-foreground/60 data-[state=off]:hover:!text-muted-foreground data-[state=on]:bg-accent data-[state=on]:!text-foreground data-[state=on]:!font-medium');
+    expect(resourceDialogSegment).toContain('h-8 w-auto min-w-[44px] px-3 text-sm leading-none whitespace-nowrap rounded-sm bg-transparent hover:bg-muted/50 data-[state=off]:!text-muted-foreground/60 data-[state=off]:hover:!text-muted-foreground data-[state=on]:bg-accent data-[state=on]:!text-foreground data-[state=on]:!font-medium');
     expect(resourceDialogSegment).not.toContain("activeTab === tab ? 'bg-foreground text-background hover:bg-foreground' : 'text-muted-foreground'");
+    expect(resourceDialogSegment).toContain("const [searchQuery, setSearchQuery] = useState('');");
+    expect(resourceDialogSegment).toContain('filterCanvasProjectResourceTreeByQuery(activeTree, searchQuery)');
+    expect(resourceDialogSegment).toContain('<Input');
+    expect(resourceDialogSegment).toContain('placeholder="搜索..."');
+    expect(resourceDialogSegment).toContain('aria-label="搜索资源"');
+    expect(resourceDialogSegment).toContain("emptyText={searchQuery.trim() ? '没有匹配的资源' : '暂无资源'}");
     expect(resourceDialogSegment).toContain('<ScrollArea className="min-h-0 border-y px-2 py-2">');
     expect(resourceTreeSegment).toContain('min-h-7');
     expect(resourceTreeSegment).toContain('rounded-sm px-2 py-1 text-left text-[13px] leading-5 hover:bg-accent');
@@ -725,15 +829,19 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment).toContain('draftStorageKeyChanged');
     expect(displayComponentSegment).toContain('inputRef.current.value = restoreText;');
     expect(displayComponentSegment).toContain('persistDisplayDraft(event.currentTarget.value);');
-    expect(displayComponentSegment).toContain('persistDisplayDraft(nextText);');
+    expect(displayComponentSegment).not.toContain('persistDisplayDraft(nextText);');
     expect(source).toContain('type CanvasGenerationDisplaySubmitResult = boolean | void;');
     expect(displayComponentSegment).toContain('const attachmentSelection = await resolveComposerAttachmentSubmitSelection(displayReferenceAttachments);');
-    expect(displayComponentSegment).toContain('const submitResult = await onSubmitText?.(text, attachmentSelection);');
+    expect(displayComponentSegment).toContain('const submitResult = await onSubmitText?.(text, {');
+    expect(displayComponentSegment).toContain('localContextRefs: currentLocalContextRefsRef.current,');
     expect(displayComponentSegment).toContain('if (submitResult === false) {');
     expect(displayComponentSegment).toContain('persistDisplayDraft(text);');
     expect(displayComponentSegment).toContain('clearCanvasGenerationComposerDraft(storage, draftStorageKey);');
     expect(displayComponentSegment).toContain("inputRef.current.value = '';");
     expect(displayComponentSegment).toContain('await aui.composer().clearAttachments();');
+    expect(displayComponentSegment).toContain('currentLocalContextRefsRef.current = [];');
+    expect(displayComponentSegment).toContain('currentLocalContextItemsRef.current = [];');
+    expect(displayComponentSegment).toContain('syncDisplayContextItems([], []);');
     expect(displayComponentSegment).toContain('onChange={handleInputChange}');
     expect(displayAcpSegment).toContain('return onSubmit?.(text, {');
   });

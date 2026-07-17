@@ -4,6 +4,7 @@ export interface PromptCardSkill {
   description: string;
   keywords?: string;
   prompt: string;
+  chromeOnly?: boolean;
 }
 
 export interface PromptCardSkillTrigger {
@@ -44,10 +45,26 @@ export const PROMPT_CARD_SKILLS: readonly PromptCardSkill[] = [
     keywords: '生图 生成图片 图片生成 设计图 UI图片 UI素材 图标 占位图 视觉参考图 imagegen image generation',
     prompt: '使用本地 ui-design-image 技能，结合当前批注、页面上下文和参考图片，生成 UI 设计图片、素材、图标、占位图或视觉参考图。需要把结果更新到当前画布或相关项目素材时，按当前项目规则落盘并回写。',
   },
+  {
+    id: 'requirements-review',
+    label: '需求评审',
+    description: 'axhub-prototype-context：需求/PRD 评审',
+    keywords: '需求评审 PRD 原型评审 axhub-prototype-context',
+    prompt: [
+      '使用 axhub-prototype-context 技能处理这条批注。',
+      '技能文档：https://github.com/lintendo/Axhub-Skills/blob/main/skills/axhub-prototype-context/SKILL.md',
+      '打开当前原型 URL，等待页面渲染后读取 window.__AXHUB_ANNOTATION_SOURCE__，将页面视为只读上下文。',
+      '评审 source.directory 中的目录/PRD、markdown 节点、批注节点，以及 source.root/source.manifest 中的源码交接线索。',
+    ].join('\n'),
+    chromeOnly: true,
+  },
 ] as const;
 
 const SKILL_TRIGGER_QUERY_PATTERN = /^[\p{Script=Han}\p{Letter}\p{Number}_-]*$/u;
 const SKILL_BY_ID = new Map(PROMPT_CARD_SKILLS.map((skill) => [skill.id, skill]));
+export const PROMPT_CARD_SKILL_OPTIONS = PROMPT_CARD_SKILLS.map(
+  ({ id, label, description }) => ({ id, label, description }),
+);
 
 function normalizeSkillQuery(value: string): string {
   return value.trim().toLocaleLowerCase();
@@ -84,11 +101,20 @@ export function clearPromptCardSkillTrigger(text: string): string {
   return value.slice(0, trigger.start).trimEnd();
 }
 
-export function filterPromptCardSkills(query: string): PromptCardSkill[] {
+export function filterPromptCardSkills(
+  query: string,
+  enabledSkillIds?: readonly unknown[] | null,
+): PromptCardSkill[] {
   const normalizedQuery = normalizeSkillQuery(query);
-  if (!normalizedQuery) return [...PROMPT_CARD_SKILLS];
+  const enabledIds = Array.isArray(enabledSkillIds)
+    ? new Set(enabledSkillIds.map((item) => String(item ?? '').trim()).filter(Boolean))
+    : null;
+  const availableSkills = PROMPT_CARD_SKILLS.filter((skill) =>
+    enabledIds ? enabledIds.has(skill.id) : !skill.chromeOnly,
+  );
+  if (!normalizedQuery) return [...availableSkills];
 
-  return PROMPT_CARD_SKILLS.filter((skill) => {
+  return availableSkills.filter((skill) => {
     const searchableText = `${skill.id} ${skill.label} ${skill.description} ${skill.keywords ?? ''}`.toLocaleLowerCase();
     return searchableText.includes(normalizedQuery);
   });
@@ -142,10 +168,15 @@ export function serializePromptCardSkillSelection(skillIds: readonly string[]): 
 
 export function deserializePromptCardSkillSelection(
   payload: { skillIds?: readonly unknown[] | null } | null | undefined,
+  enabledSkillIds?: readonly unknown[] | null,
 ): PromptCardSkill[] {
+  const enabledIds = Array.isArray(enabledSkillIds)
+    ? new Set(enabledSkillIds.map((item) => String(item ?? '').trim()).filter(Boolean))
+    : null;
   return normalizePromptCardSkillIds(payload?.skillIds ?? [])
     .map((skillId) => SKILL_BY_ID.get(skillId))
-    .filter((skill): skill is PromptCardSkill => Boolean(skill));
+    .filter((skill): skill is PromptCardSkill => Boolean(skill))
+    .filter((skill) => (enabledIds ? enabledIds.has(skill.id) : true));
 }
 
 export function mergePromptCardSkillsIntoPromptNote(

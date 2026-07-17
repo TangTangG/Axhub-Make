@@ -119,15 +119,29 @@ describe('localCommand', () => {
     const windowsEnv = buildLocalCommandEnv({
       platform: 'win32',
       execPath: 'C:\\Program Files\\nodejs\\node.exe',
-      env: { Path: 'C:\\Windows\\System32', APPDATA: 'C:\\Users\\demo\\AppData\\Roaming', PATHEXT: '.EXE' },
+      env: { Path: 'C:\\Windows\\System32', APPDATA: 'C:\\Profiles\\demo\\AppData\\Roaming', PATHEXT: '.EXE' },
     });
     expect(windowsEnv.Path?.split(';')).toEqual(expect.arrayContaining([
       'C:\\Program Files\\nodejs',
-      'C:\\Users\\demo\\AppData\\Roaming\\npm',
+      'C:\\Profiles\\demo\\AppData\\Roaming\\npm',
       'C:\\Windows\\System32',
     ]));
     expect(windowsEnv.PATHEXT?.split(';')).toEqual(expect.arrayContaining(['.EXE', '.CMD']));
     expect(windowsEnv.PATH).toBeUndefined();
+  });
+
+  it('adds the standard user-local bin directory to POSIX command environments', () => {
+    for (const platform of ['darwin', 'linux'] as const) {
+      const env = buildLocalCommandEnv({
+        platform,
+        execPath: '/Applications/Node.app/Contents/MacOS/node',
+        env: { HOME: '/tmp/axhub-home', PATH: '/usr/bin' },
+      });
+      const pathSegments = env.PATH?.split(':') || [];
+
+      expect(pathSegments).toContain('/tmp/axhub-home/.local/bin');
+      expect(pathSegments.indexOf('/tmp/axhub-home/.local/bin')).toBeGreaterThan(pathSegments.indexOf('/usr/bin'));
+    }
   });
 
   it('checks and resolves commands using platform-specific lookup commands', async () => {

@@ -12,6 +12,7 @@ export interface ApplyGenerationArtifactsToCanvasElementsOptions {
   appState: any;
   artifacts: readonly GenerationArtifactRecord[];
   forceInsert?: boolean;
+  replaceElementId?: string;
 }
 
 export interface ApplyGenerationArtifactsToCanvasElementsResult {
@@ -386,6 +387,16 @@ function getViewportAnchor(appState: any): { x: number; y: number } {
   };
 }
 
+function softDeleteElement(element: any): any {
+  return {
+    ...element,
+    isDeleted: true,
+    version: (element.version || 0) + 1,
+    versionNonce: Math.floor(Math.random() * 2147483647),
+    updated: Date.now(),
+  };
+}
+
 function intersects(left: any, right: any): boolean {
   if (left?.isDeleted || right?.isDeleted) return false;
   const leftX = Number(left.x || 0);
@@ -436,6 +447,7 @@ export function applyGenerationArtifactsToCanvasElements(
   const selectedElementIds: Record<string, true> = {};
   const anchor = getViewportAnchor(options.appState);
   let insertionIndex = 0;
+  let pendingReplacement = stringField(options.replaceElementId);
 
   for (const artifact of options.artifacts) {
     const artifactResourceKey = resolveArtifactResourceKey(artifact, resolveArtifactUrl(artifact));
@@ -449,6 +461,12 @@ export function applyGenerationArtifactsToCanvasElements(
         )
       ));
     if (existing) {
+      if (pendingReplacement) {
+        elements = elements.map((element) => (
+          element?.id === pendingReplacement && !element?.isDeleted ? softDeleteElement(element) : element
+        ));
+        pendingReplacement = '';
+      }
       elements = elements.map((element) => {
         if (element?.id !== existing.id) return element;
         const updated = updateArtifactElement(element, artifact);
@@ -459,10 +477,21 @@ export function applyGenerationArtifactsToCanvasElements(
       continue;
     }
 
-    const position = findFreePosition(elements, anchor, insertionIndex);
+    const replacementElement = pendingReplacement
+      ? elements.find((element) => element?.id === pendingReplacement && !element?.isDeleted)
+      : null;
+    const position = replacementElement
+      ? { x: Number(replacementElement.x) || anchor.x, y: Number(replacementElement.y) || anchor.y }
+      : findFreePosition(elements, anchor, insertionIndex);
     const created = createArtifactElement(artifact, position.x, position.y);
     const inserted = 'element' in created ? created.element : created;
     if ('files' in created && created.files?.length) files.push(...created.files);
+    if (replacementElement) {
+      elements = elements.map((element) => (
+        element?.id === pendingReplacement ? softDeleteElement(element) : element
+      ));
+      pendingReplacement = '';
+    }
     elements = [...elements, inserted];
     selectedElementIds[inserted.id] = true;
     insertedElementIds.push(inserted.id);

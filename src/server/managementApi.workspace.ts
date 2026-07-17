@@ -276,18 +276,31 @@ function assertNoDuplicateResourcePath(seen: Set<string>, relativePath: string):
   return true;
 }
 
+function createResourceNameConflictBody(resourcePath: string): {
+  error: string;
+  code: 'RESOURCE_NAME_CONFLICT';
+  path: string;
+} {
+  return {
+    error: `目标文件夹中已存在同名资源：${resourcePath}`,
+    code: 'RESOURCE_NAME_CONFLICT',
+    path: resourcePath,
+  };
+}
+
 function normalizeResourceSidebarTreePayload(tree: unknown): {
   valid: true;
   tree: SidebarTreeNode[];
   folders: Array<{ previousPath: string; nextPath: string }>;
   files: Array<{ previousPath: string; nextPath: string }>;
-} | { valid: false; status: number; error: string } {
+} | { valid: false; status: number; error: string; code?: string; path?: string } {
   if (!Array.isArray(tree)) {
     return { valid: false, status: 400, error: 'tree must be an array' };
   }
 
   const usedIds = new Set<string>();
   const seenPaths = new Set<string>();
+  let duplicateResourcePath = '';
   const folders: Array<{ previousPath: string; nextPath: string }> = [];
   const files: Array<{ previousPath: string; nextPath: string }> = [];
   const makeUniqueId = (seed: string) => {
@@ -329,7 +342,11 @@ function normalizeResourceSidebarTreePayload(tree: unknown): {
         ? sanitizeFolderName(title) || (sourcePath ? path.basename(sourcePath) : '')
         : sourcePath ? path.basename(sourcePath) : '';
       const targetPath = normalizeResourceRelativePath(parentPath ? `${parentPath}/${targetName}` : targetName);
-      if (!targetPath || !assertNoDuplicateResourcePath(seenPaths, targetPath)) {
+      if (!targetPath) {
+        return null;
+      }
+      if (!assertNoDuplicateResourcePath(seenPaths, targetPath)) {
+        duplicateResourcePath = targetPath;
         return null;
       }
       if (!sourcePath) {
@@ -374,6 +391,14 @@ function normalizeResourceSidebarTreePayload(tree: unknown): {
 
   const normalized = normalizeNodes(tree as any[], '', 0);
   if (!normalized) {
+    if (duplicateResourcePath) {
+      const conflict = createResourceNameConflictBody(duplicateResourcePath);
+      return {
+        valid: false,
+        status: 409,
+        ...conflict,
+      };
+    }
     const serialized = JSON.stringify(tree);
     if (serialized.includes('../') || serialized.includes('..\\\\') || serialized.includes('"/')) {
       return { valid: false, status: 403, error: 'Forbidden' };
@@ -465,7 +490,7 @@ function applyResourceSidebarTree(resourceRoot: string, payload: {
     }
     if (!fs.existsSync(sourcePath)) continue;
     if (fs.existsSync(targetPath)) {
-      return { ok: false, status: 409, body: { error: `Target already exists: ${nextPath}` } };
+      return { ok: false, status: 409, body: createResourceNameConflictBody(nextPath) };
     }
     movePathIfNeeded(sourcePath, targetPath);
   }
@@ -493,7 +518,7 @@ function applyResourceSidebarTree(resourceRoot: string, payload: {
       return { ok: false, status: 400, body: { error: `Resource file not found: ${previousPath}` } };
     }
     if (fs.existsSync(targetPath)) {
-      return { ok: false, status: 409, body: { error: `Target already exists: ${nextPath}` } };
+      return { ok: false, status: 409, body: createResourceNameConflictBody(nextPath) };
     }
     movePathIfNeeded(sourcePath, targetPath);
   }
@@ -811,15 +836,29 @@ function collectDocItemKeys(projectRoot: string): Set<string> {
 }
 
 function collectCanvasItemKeys(projectRoot: string): Set<string> {
-  const canvasDir = path.join(projectRoot, 'src/canvas');
-  if (!fs.existsSync(canvasDir)) {
+  const resourcesDir = path.join(projectRoot, 'src/resources');
+  const keys: string[] = [];
+  if (!fs.existsSync(resourcesDir)) {
     return new Set();
   }
-  return new Set(fs
-    .readdirSync(canvasDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(CANVAS_ITEM_EXT))
-    .map((entry) => `canvas/${entry.name}`)
-    .sort((a, b) => a.localeCompare(b)));
+
+  const walk = (currentDir: string) => {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue;
+      const absolutePath = path.join(currentDir, entry.name);
+      const rel = normalizePath(path.relative(resourcesDir, absolutePath));
+      if (isIgnoredResourceRelativePath(rel)) continue;
+      if (entry.isDirectory()) {
+        walk(absolutePath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(CANVAS_ITEM_EXT)) continue;
+      keys.push(`canvas/${rel}`);
+    }
+  };
+
+  walk(resourcesDir);
+  return new Set(keys.sort((a, b) => a.localeCompare(b)));
 }
 
 function getPrototypeResourceRoot(projectRoot: string, metadata?: ProjectMetadata): string {
@@ -892,7 +931,7 @@ function collectThemeKeys(projectRoot: string): Set<string> {
 }
 
 function collectDataTableKeys(projectRoot: string): Set<string> {
-  const databaseDir = path.join(projectRoot, 'src/database');
+  const databaseDir = path.join(projectRoot, 'src/resources/data');
   if (!fs.existsSync(databaseDir)) {
     return new Set();
   }
@@ -1021,7 +1060,11 @@ export function handleWorkspaceApi(
         if (tab === 'docs' && shouldUseFilesystemResourceRoot(projectRoot, context.metadata, 'docs')) {
           const normalized = normalizeResourceSidebarTreePayload(body?.tree);
           if (normalized.valid === false) {
-            sendJson(res, { error: normalized.error }, { status: normalized.status });
+            sendJson(res, {
+              error: normalized.error,
+              ...(normalized.code ? { code: normalized.code } : {}),
+              ...(normalized.path ? { path: normalized.path } : {}),
+            }, { status: normalized.status });
             return;
           }
           const resourceRoot = getDocsResourceRoot(projectRoot);

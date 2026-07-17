@@ -192,30 +192,6 @@ function pickPrototypeFromArtifact(items: ItemData[], artifact: any, fallbackNam
   return pickCreatedPrototype(items, fallbackNames);
 }
 
-function derivePrototypeIdFromCanvasPath(canvasFilePath: string | undefined): string | null {
-  const normalized = String(canvasFilePath || '').trim().replace(/\\/g, '/').replace(/^src\//, '');
-  const match = normalized.match(/(?:^|\/)prototypes\/([^/]+)\/canvas(?:\.excalidraw)?$/u);
-  return match?.[1] || null;
-}
-
-function derivePrototypeCanvasName(canvasFilePath: string | undefined): string | undefined {
-  const prototypeId = derivePrototypeIdFromCanvasPath(canvasFilePath);
-  return prototypeId ? `prototypes/${prototypeId}/canvas` : undefined;
-}
-
-function deriveCurrentPrototypeContext(canvasFilePath: string | undefined, prototypes: ItemData[] | undefined) {
-  const prototypeId = derivePrototypeIdFromCanvasPath(canvasFilePath);
-  if (!prototypeId) return null;
-  const prototype = (prototypes || []).find((item) => item?.name === prototypeId);
-  if (!prototype) return { name: prototypeId };
-  return {
-    name: prototype.name,
-    displayName: prototype.displayName,
-    pages: prototype.pages,
-    defaultPageId: prototype.defaultPageId,
-  };
-}
-
 async function fetchProjectPrototypes(): Promise<ItemData[]> {
   const response = await fetch('/api/entries.json');
   if (!response.ok) return [];
@@ -228,7 +204,6 @@ function providerToPromptClientPreference(provider: string | null | undefined): 
   if (
     normalized === 'claude'
     || normalized === 'codex'
-    || normalized === 'gemini'
     || normalized === 'opencode'
   ) {
     return `acp:${normalized}` as PromptClientPreference;
@@ -595,7 +570,7 @@ export default function CanvasPrototypeGenerationTool({
     if (context.localContextRefs.length) {
       toast.info(`已添加 ${context.localContextRefs.length} 个本地上下文`);
     }
-    return images;
+    return context;
   }, [pendingInitialLocalContextRefsGeneratorId, selectedInfo]);
 
   const handleSubmitPrompt = useCallback(async (
@@ -621,9 +596,9 @@ export default function CanvasPrototypeGenerationTool({
       thought: request.thought,
       contextBundle: request.contextBundle,
       canvasFilePath,
-      canvasName: derivePrototypeCanvasName(canvasFilePath),
+      canvasName: canvasFilePath,
       generatorElementId: generatorId,
-      currentPrototype: deriveCurrentPrototypeContext(canvasFilePath, prototypes),
+      currentPrototype: null,
       knownPrototypes: prototypes,
       ...(referenceImages.length ? { referenceImages } : {}),
       settings: {

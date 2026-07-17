@@ -22,10 +22,13 @@ describe('usePrototypeEditorBridgeActions source', () => {
     expect(source).toContain('annotationApiBaseUrl: window.location.origin');
     expect(source).toContain('annotationProjectId: context.projectId');
     expect(source).toContain('selectedPageId?: string | null;');
+    expect(source).toContain('agentRunConcurrency: number;');
+    expect(source).toContain('agentRunConcurrency,');
     expect(source).toContain('pageId: normalizePrototypeEditorPageId(selectedPageId) || readPrototypeEditorPageIdFromIframe(iframe)');
     expect(source).toContain('const commentPageScope = buildPrototypeEditorCommentPageScope(context);');
     expect(source).toContain('? { ...context, commentPageScope }');
     expect(source).toContain('buildPrototypeEditorEnableOptions(context)');
+    expect(source).toContain('agentRunConcurrency,');
     expect(source).toContain("type: 'AXHUB_PROTOTYPE_EDITOR_ENABLE'");
     expect(source).toContain("type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION'");
   });

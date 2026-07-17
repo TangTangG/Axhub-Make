@@ -17,4 +17,11 @@ describe('ExportModalView source', () => {
     expect(source).not.toContain('动态原型');
     expect(source).not.toContain('复制 runtime 组件');
   });
+
+  it('labels screenshot dimensions as the capture viewport instead of the final export size', () => {
+    const source = readSource();
+
+    expect(source).toContain("imageConfig.contentType === 'screenshot' ? '截图视窗' : '导出尺寸'");
+    expect(source).toContain('按该视窗布局，导出完整页面');
+  });
 });

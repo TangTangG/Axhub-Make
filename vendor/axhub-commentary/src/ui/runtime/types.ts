@@ -154,6 +154,7 @@ export interface PropertyPanelViewProps extends SharedNoteActions, SharedTextAct
   uiMode: CommentEntryMode;
   toolMinimized: boolean;
   selectionModeActive: boolean;
+  propertyPanelVisible?: boolean;
   propertyPanelOpen: boolean;
   inlineTextEditing?: boolean;
   uiSettings: WebEditorUiSettings;
@@ -200,6 +201,7 @@ export interface PromptCardViewProps extends SharedNoteActions, SharedTextAction
   agentVisualState: 'sleeping' | 'awake';
   hideExecutionControls?: boolean;
   hideContextAppendAction?: boolean;
+  enabledSkillIds?: readonly string[] | null;
   onBubbleStyleEditorOpenChange: (open: boolean) => void;
   onSendCurrentElementPromptToAgent?: (element: Element) => void | Promise<void>;
   onWakeAgent?: () => boolean | Promise<boolean>;

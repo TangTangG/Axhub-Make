@@ -19,6 +19,7 @@ import openAiButtonImage from './assets/open-ai-button.png';
 import planModeMenuImage from './assets/plan-mode-menu.png';
 import workbuddyTraeSoloNewProjectImage from './assets/workbuddy-trae-solo-new-project.png';
 import { defineHashPageRoute, useHashPage } from '../../common/useHashPage';
+import { copyTextToClipboard } from './clipboard';
 import './style.css';
 
 type GuideChapter = {
@@ -71,11 +72,11 @@ type GuideShellProps = {
 
 const agentOptions: AgentOption[] = [
     {
-        name: 'Codex App',
+        name: 'ChatGPT',
         description: '性价比综合高，软件简单，但模型单一',
         difficulty: '较难',
         ability: '强',
-        href: 'https://openai.com/codex/',
+        href: 'https://chatgpt.com/',
     },
     {
         name: 'Cursor',
@@ -85,7 +86,7 @@ const agentOptions: AgentOption[] = [
         href: 'https://cursor.com/',
     },
     {
-        name: 'TRAE',
+        name: 'TRAE CN 系列',
         description: '中文友好，国内版免费',
         difficulty: '简单',
         ability: '一般',
@@ -98,30 +99,28 @@ const agentOptions: AgentOption[] = [
         ability: '一般',
         href: 'https://www.codebuddy.cn/docs/workbuddy/Overview',
     },
-    {
-        name: 'Claude Code',
-        description: '上手有门槛，使用成本高，但综合能力强',
-        difficulty: '难',
-        ability: '强',
-        href: 'https://www.anthropic.com/product/claude-code',
-    },
 ];
 
 const modelRecommendations: ModelRecommendation[] = [
+    {
+        name: 'GPT-5.6',
+        vendor: 'OpenAI',
+        feature: '适合处理复杂问题和任务，性价比高',
+    },
     {
         name: 'Claude Opus 4.8',
         vendor: 'Anthropic',
         feature: '综合能力强，但价格高，适合规划',
     },
     {
-        name: 'GPT-5.5',
-        vendor: 'OpenAI',
-        feature: '适合处理复杂问题和任务，UI/UX 能力一般',
+        name: 'Grok 4.5',
+        vendor: 'xAI',
+        feature: '综合能力强，速度快，性价比高',
     },
     {
-        name: 'Gemini 3.1 Pro',
-        vendor: 'Google',
-        feature: 'UI/UX 设计能力优秀，其他一般',
+        name: 'GLM-5.2',
+        vendor: '智谱 AI',
+        feature: '国产平替，综合能力强，不支持多模态',
     },
     {
         name: 'Kimi K2.7',
@@ -132,11 +131,6 @@ const modelRecommendations: ModelRecommendation[] = [
         name: 'DeepSeek V4 Pro',
         vendor: 'DeepSeek',
         feature: '国产平替，性价比高，综合能力强，不支持多模态',
-    },
-    {
-        name: 'GLM-5.2',
-        vendor: '智谱 AI',
-        feature: '国产平替，综合能力强，不支持多模态',
     },
 ];
 
@@ -318,26 +312,36 @@ function createVerificationPrompt(projectPath: string) {
     ].join('\n');
 }
 
-function InstallAgentChapter({ projectPath }: { projectPath: string }) {
-    const [copied, setCopied] = useState(false);
-    const prompt = useMemo(() => createVerificationPrompt(projectPath), [projectPath]);
+type CopyStatus = 'idle' | 'copied' | 'failed';
+
+function getCopyButtonLabel(copyStatus: CopyStatus) {
+    if (copyStatus === 'copied') return '已复制';
+    if (copyStatus === 'failed') return '复制失败';
+    return '复制';
+}
+
+function usePromptClipboard(prompt: string) {
+    const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle');
 
     const handleCopyPrompt = async () => {
-        try {
-            await navigator.clipboard.writeText(prompt);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1400);
-        } catch {
-            setCopied(false);
-        }
+        const didCopy = await copyTextToClipboard(prompt);
+        setCopyStatus(didCopy ? 'copied' : 'failed');
+        window.setTimeout(() => setCopyStatus('idle'), didCopy ? 1400 : 2200);
     };
+
+    return { copyStatus, handleCopyPrompt };
+}
+
+function InstallAgentChapter({ projectPath }: { projectPath: string }) {
+    const prompt = useMemo(() => createVerificationPrompt(projectPath), [projectPath]);
+    const { copyStatus, handleCopyPrompt } = usePromptClipboard(prompt);
 
     return (
         <>
             <section className="beginner-guide-manuscript" aria-labelledby="install-intro-title">
                 <h3 className="beginner-guide-section-title" id="install-intro-title">先选一个 Agent</h3>
                 <p className="beginner-guide-lede">
-                    这里的 Agent，就是你接下来要对话的 AI 编程工具。Axhub Make 不挑工具：IDE、CLI、在线 Agent，或 Claude Code 这类 CLI 都可以。
+                    这里的 Agent，就是你接下来要对话的 AI 编程工具。Axhub Make 不挑工具：IDE、CLI、在线 Agent 都可以。
                     下面这张表列的是我们推荐的 Agent 应用，先挑一个自己顺手的，后面所有“让 AI 做”的步骤都发给它。
                 </p>
 
@@ -379,7 +383,7 @@ function InstallAgentChapter({ projectPath }: { projectPath: string }) {
                         <div className="beginner-guide-step-copy">
                             <span>1</span>
                             <div>
-                                <h4>打开 AI</h4>
+                                <h4>在 Make 首页打开 Agent 软件</h4>
                                 <p>在 Axhub Make 左上角点击“打开 AI”按钮，系统会自动把正确项目打开。你只要确认 Agent 已经启动即可。</p>
                             </div>
                         </div>
@@ -391,12 +395,12 @@ function InstallAgentChapter({ projectPath }: { projectPath: string }) {
                         <div className="beginner-guide-step-copy">
                             <span>2</span>
                             <div>
-                                <h4>特殊工具</h4>
-                                <p>如果你用 WorkBuddy、TRAE SOLO 这类工具，请在新建项目时，把这个目录加入进去。</p>
+                                <h4>在 Agent 软件中打开 Make 项目</h4>
+                                <p>如果你用 WorkBuddy、TRAE Work、ChatGPT 这类工具，请在新建项目时，把这个目录加入进去。</p>
                             </div>
                         </div>
                         <figure className="beginner-guide-step-image">
-                            <img src={workbuddyTraeSoloNewProjectImage} alt="WorkBuddy、TRAE SOLO 新建项目时选择工作空间" />
+                            <img src={workbuddyTraeSoloNewProjectImage} alt="WorkBuddy、TRAE Work、ChatGPT 新建项目时选择工作空间" />
                         </figure>
                     </article>
                 </div>
@@ -410,9 +414,9 @@ function InstallAgentChapter({ projectPath }: { projectPath: string }) {
                 <div className="beginner-guide-prompt-card">
                     <div className="beginner-guide-prompt-head">
                         <span>发给 AI 的提示词</span>
-                        <button type="button" onClick={handleCopyPrompt}>
+                        <button type="button" onClick={handleCopyPrompt} aria-live="polite">
                             <Copy size={14} />
-                            {copied ? '已复制' : '复制'}
+                            {getCopyButtonLabel(copyStatus)}
                         </button>
                     </div>
                     <pre>{prompt}</pre>
@@ -508,17 +512,7 @@ const createPrototypePrompt = [
 ].join('\n');
 
 function GiveInstructionsChapter() {
-    const [copied, setCopied] = useState(false);
-
-    const handleCopyPrompt = async () => {
-        try {
-            await navigator.clipboard.writeText(practicePrompt);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1400);
-        } catch {
-            setCopied(false);
-        }
-    };
+    const { copyStatus, handleCopyPrompt } = usePromptClipboard(practicePrompt);
 
     return (
         <>
@@ -585,6 +579,50 @@ function GiveInstructionsChapter() {
                 </div>
             </section>
 
+            <section className="beginner-guide-manuscript" aria-labelledby="instruction-uncertainty-title">
+                <h3 className="beginner-guide-section-title" id="instruction-uncertainty-title">接受 AI 的不稳定性</h3>
+                <p className="beginner-guide-lede">
+                    这也是 Vibe Coding / Vibe Design 的特点：人负责方向和验收，但单次结果与完成时间不完全可预测。
+                </p>
+                <div className="beginner-guide-flowcards beginner-guide-uncertainty-cards">
+                    <article className="beginner-guide-flowcard">
+                        <div className="beginner-guide-flowcard-head">
+                            <strong>效果不确定性</strong>
+                            <span>RESULT</span>
+                        </div>
+                        <div className="beginner-guide-flowcard-canvas">
+                            <div className="beginner-guide-uncertainty-effect-flow" aria-label="同一个提示词产生不同结果">
+                                <span className="beginner-guide-flow-step beginner-guide-uncertainty-prompt">同一个提示词</span>
+                                <span className="beginner-guide-flow-arrow beginner-guide-uncertainty-arrow-left" aria-hidden="true">↙</span>
+                                <span className="beginner-guide-flow-arrow beginner-guide-uncertainty-arrow-right" aria-hidden="true">↘</span>
+                                <span className="beginner-guide-flow-step beginner-guide-uncertainty-result-a">结果 A</span>
+                                <span className="beginner-guide-flow-step beginner-guide-uncertainty-result-b">结果 B</span>
+                            </div>
+                        </div>
+                        <p>同一个提示词，也可能得到不同结果。人需要判断方向，并决定保留哪一个。</p>
+                    </article>
+                    <article className="beginner-guide-flowcard">
+                        <div className="beginner-guide-flowcard-head">
+                            <strong>时间不确定性</strong>
+                            <span>TIME</span>
+                        </div>
+                        <div className="beginner-guide-flowcard-canvas">
+                            <div className="beginner-guide-uncertainty-time-flow" aria-label="任务完成时间存在波动">
+                                <span className="beginner-guide-flow-step">任务开始</span>
+                                <span className="beginner-guide-flow-arrow" aria-hidden="true">→</span>
+                                <span className="beginner-guide-flow-step beginner-guide-flow-step-extra">
+                                    <span>反复调整</span>
+                                    <small>次数不定</small>
+                                </span>
+                                <span className="beginner-guide-flow-arrow" aria-hidden="true">→</span>
+                                <span className="beginner-guide-flow-step">任务完成</span>
+                            </div>
+                        </div>
+                        <p>单个任务的完成时间会波动。评估 AI 协作时，看一段时间内的平均效率提升。</p>
+                    </article>
+                </div>
+            </section>
+
             <section className="beginner-guide-manuscript" aria-labelledby="instruction-tips-title">
                 <h3 className="beginner-guide-section-title" id="instruction-tips-title">三个技巧</h3>
                 <div className="beginner-guide-card-grid beginner-guide-tip-grid">
@@ -611,9 +649,9 @@ function GiveInstructionsChapter() {
                 <div className="beginner-guide-prompt-card">
                     <div className="beginner-guide-prompt-head">
                         <span>发给 AI 的提示词</span>
-                        <button type="button" onClick={handleCopyPrompt}>
+                        <button type="button" onClick={handleCopyPrompt} aria-live="polite">
                             <Copy size={14} />
-                            {copied ? '已复制' : '复制'}
+                            {getCopyButtonLabel(copyStatus)}
                         </button>
                     </div>
                     <pre>{practicePrompt}</pre>
@@ -624,17 +662,7 @@ function GiveInstructionsChapter() {
 }
 
 function CreatePrototypeChapter() {
-    const [copied, setCopied] = useState(false);
-
-    const handleCopyPrompt = async () => {
-        try {
-            await navigator.clipboard.writeText(createPrototypePrompt);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1400);
-        } catch {
-            setCopied(false);
-        }
-    };
+    const { copyStatus, handleCopyPrompt } = usePromptClipboard(createPrototypePrompt);
 
     return (
         <>
@@ -707,9 +735,9 @@ function CreatePrototypeChapter() {
                 <div className="beginner-guide-prompt-card">
                     <div className="beginner-guide-prompt-head">
                         <span>发给 AI 的提示词</span>
-                        <button type="button" onClick={handleCopyPrompt}>
+                        <button type="button" onClick={handleCopyPrompt} aria-live="polite">
                             <Copy size={14} />
-                            {copied ? '已复制' : '复制'}
+                            {getCopyButtonLabel(copyStatus)}
                         </button>
                     </div>
                     <pre>{createPrototypePrompt}</pre>
@@ -723,7 +751,7 @@ function EditPrototypeChapter() {
     return (
         <>
             <section className="beginner-guide-manuscript" aria-labelledby="edit-start-title">
-                <h3 className="beginner-guide-section-title" id="edit-start-title">直接描述哪里要改</h3>
+                <h3 className="beginner-guide-section-title" id="edit-start-title">你的这个需求</h3>
                 <p className="beginner-guide-lede">
                     编辑原型先直接描述：哪个区域、改成什么样、为什么要改。
                 </p>

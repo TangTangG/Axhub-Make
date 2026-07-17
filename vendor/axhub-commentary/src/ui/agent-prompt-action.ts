@@ -77,16 +77,13 @@ export function getAgentPromptToolbarActionState(options: {
 } {
   const connected = Boolean(options.getAgentBridgeConnected?.() ?? false);
   const pageTaskRunning = Boolean(options.pageTaskRunning);
-  const pageTaskSessionReady = Boolean(options.pageTaskSessionReady);
   const currentTaskRunning = Boolean(options.currentTaskRunning);
   const interruptTaskRunning = currentTaskRunning || pageTaskRunning;
   const currentTaskSessionReady = Boolean(options.currentTaskSessionReady);
-  const interruptTaskSessionReady = currentTaskRunning
+  const canAppendToCurrentSession = currentTaskRunning
     ? currentTaskSessionReady
-    : pageTaskSessionReady;
-  const canAppendToRunningConversation = Boolean(options.hasReusableConversation);
-  const canAppendToSession = canAppendToRunningConversation || (pageTaskRunning && pageTaskSessionReady);
-  const waitingForNewSession = pageTaskRunning && !canAppendToSession;
+    : !pageTaskRunning && Boolean(options.hasReusableConversation);
+  const waitingForCurrentSession = currentTaskRunning && !canAppendToCurrentSession;
   const canWakeAgent = Boolean(options.canWakeAgent);
   const visualState = options.visualState === 'awake' && (connected || pageTaskRunning)
     ? 'awake'
@@ -98,18 +95,16 @@ export function getAgentPromptToolbarActionState(options: {
       : visualState;
   const blockReason = options.getSendPromptToAgentBlockReason?.();
   const showSendAction = !options.toolMinimized && Boolean(options.onSendPromptToAgent);
-  const showInterruptAction = !options.toolMinimized && (robotState === 'awake' || robotState === 'working');
+  const showInterruptAction = !options.toolMinimized && interruptTaskRunning;
   const sendTitle = blockReason
     ?? (!connected && !canWakeAgent
       ? 'AI 连接未建立，请稍后重试。'
-      : canAppendToSession
+      : canAppendToCurrentSession
         ? '继续追加到当前 AI 对话'
-        : waitingForNewSession
+        : waitingForCurrentSession
           ? resolveRunningConversationTitle(false)
           : '发送给 AI');
-  const interruptTitle = interruptTaskRunning
-    ? (options.canInterrupt ? '停止 AI 修改' : resolveRunningConversationTitle(interruptTaskSessionReady))
-    : '停止 AI 修改';
+  const interruptTitle = interruptTaskRunning ? '终止全部修改' : '停止 AI 修改';
   const robotTitle = robotState === 'working'
     ? '正在为你修改'
     : robotState === 'waking'
@@ -127,7 +122,7 @@ export function getAgentPromptToolbarActionState(options: {
     sendDisabled:
       !options.onSendPromptToAgent
       || (!connected && !canWakeAgent)
-      || waitingForNewSession
+      || waitingForCurrentSession
       || Boolean(blockReason),
     sendLoading: Boolean(options.sending),
     sendTitle,
@@ -135,7 +130,6 @@ export function getAgentPromptToolbarActionState(options: {
     interruptVisible: showInterruptAction,
     interruptDisabled:
       !interruptTaskRunning
-      || !options.canInterrupt
       || Boolean(options.interrupting),
     interruptLoading: Boolean(options.interrupting),
     interruptTitle,
@@ -159,6 +153,7 @@ export function getAgentPromptBubbleActionState(options: {
   pageTaskRunning?: boolean | undefined;
   pageTaskSessionReady?: boolean | undefined;
   currentTaskRunning?: boolean | undefined;
+  currentTaskSessionReady?: boolean | undefined;
   onSendCurrentElementPromptToAgent?: SendCurrentElementPromptToAgentHandler | undefined;
   getAgentBridgeConnected?: (() => boolean) | undefined;
   getSendCurrentElementPromptToAgentBlockReason?: (() => string | undefined) | undefined;
@@ -173,11 +168,12 @@ export function getAgentPromptBubbleActionState(options: {
 } {
   const connected = Boolean(options.getAgentBridgeConnected?.() ?? false);
   const pageTaskRunning = Boolean(options.pageTaskRunning);
-  const pageTaskSessionReady = Boolean(options.pageTaskSessionReady);
   const currentTaskRunning = Boolean(options.currentTaskRunning);
-  const canAppendToRunningConversation = Boolean(options.hasReusableConversation);
-  const canAppendToSession = canAppendToRunningConversation || (pageTaskRunning && pageTaskSessionReady);
-  const waitingForNewSession = pageTaskRunning && !canAppendToSession;
+  const currentTaskSessionReady = Boolean(options.currentTaskSessionReady);
+  const canAppendToCurrentSession = currentTaskRunning
+    ? currentTaskSessionReady
+    : !pageTaskRunning && Boolean(options.hasReusableConversation);
+  const waitingForCurrentSession = currentTaskRunning && !canAppendToCurrentSession;
   const canWakeAgent = Boolean(options.canWakeAgent);
   const visualState = options.visualState === 'awake' && (connected || pageTaskRunning)
     ? 'awake'
@@ -186,9 +182,9 @@ export function getAgentPromptBubbleActionState(options: {
   const title = blockReason
     ?? (!connected && !canWakeAgent
       ? 'AI 连接未建立，请稍后重试。'
-      : canAppendToSession
+      : canAppendToCurrentSession
         ? '继续追加到当前 AI 对话'
-        : waitingForNewSession
+        : waitingForCurrentSession
           ? resolveRunningConversationTitle(false)
           : '发送给 AI');
 
@@ -197,7 +193,7 @@ export function getAgentPromptBubbleActionState(options: {
     disabled:
       !options.onSendCurrentElementPromptToAgent
       || (!connected && !canWakeAgent)
-      || waitingForNewSession
+      || waitingForCurrentSession
       || Boolean(blockReason),
     loading: Boolean(options.sending),
     title,

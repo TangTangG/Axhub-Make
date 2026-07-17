@@ -21,7 +21,7 @@ agent:
     You are testing Axhub Make, a Chinese product UI that embeds ACP UI as a
     right-side assistant iframe. Prefer visible controls over DOM selectors.
     Important visible labels include 原型, 画布, 设计, 打开 AI, ACP UI, 项目设置,
-    原型草稿画布, and 好的原型从一份草稿开始.
+    资源画布, and 好的方案从一份草稿开始.
   cache:
     id: axhub-make-acp-host
     strategy: read-write
@@ -75,7 +75,7 @@ tasks:
                 hasPrototypeNav: text.includes('原型'),
                 hasDesignNav: text.includes('设计'),
                 hasGenerationHistoryTrigger: Boolean(generationHistoryTrigger),
-                hasCanvasText: text.includes('原型草稿画布') || text.includes('好的原型从一份草稿开始') || text.includes('画布'),
+                hasCanvasText: text.includes('资源画布') || text.includes('好的方案从一份草稿开始') || text.includes('画布'),
                 textLength: text.trim().length,
                 textSample: text.slice(0, 400),
               };
@@ -103,7 +103,7 @@ tasks:
               hasCanvasNav: text.includes('画布'),
               hasPrototypeNav: text.includes('原型'),
               hasGenerationHistoryTrigger: Boolean(generationHistoryTrigger),
-              hasCanvasText: text.includes('原型草稿画布') || text.includes('好的原型从一份草稿开始') || text.includes('画布'),
+              hasCanvasText: text.includes('资源画布') || text.includes('好的方案从一份草稿开始') || text.includes('画布'),
             };
             if (!state.hasProject || !state.hasCanvasPrototype || !state.hasCanvasMode || !state.hasPrototypeNav || (!state.hasCanvasText && !state.hasGenerationHistoryTrigger)) {
               throw new Error('Canvas workspace deterministic verification failed: ' + JSON.stringify(state));
@@ -278,9 +278,9 @@ tasks:
               { id: 'make-e2e-realtime-assistant-drawio-' + runId, kind: 'drawio', previewKind: 'drawio', title: 'E2E 实时 Drawio 产物' },
               { id: 'make-e2e-realtime-assistant-document-' + runId, kind: 'document', previewKind: 'doc', title: 'E2E 实时文档产物' },
             ];
-            const canvasName = 'prototypes/' + '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}' + '/canvas.excalidraw';
+            const canvasName = 'regression/' + '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}' + '.excalidraw';
             const encodeCanvasApiPath = (name) => String(name || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
-            const canvasUrl = new URL('/api/canvas/' + encodeCanvasApiPath(canvasName), window.location.origin);
+            const canvasUrl = new URL('/api/canvas/resources/' + encodeCanvasApiPath(canvasName), window.location.origin);
             const readResponse = await fetch(canvasUrl);
             if (!readResponse.ok) {
               throw new Error('Failed to read canvas before active-write regression: HTTP ' + readResponse.status);
@@ -467,11 +467,11 @@ tasks:
               { id: 'make-e2e-realtime-assistant-drawio-' + runId },
               { id: 'make-e2e-realtime-assistant-document-' + runId },
             ]).map((artifact) => artifact.id);
-            const canvasName = 'prototypes/' + '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}' + '/canvas.excalidraw';
+            const canvasName = 'regression/' + '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}' + '.excalidraw';
             const encodeCanvasApiPath = (name) => String(name || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
             const originalCanvas = window.__AXHUB_E2E_REALTIME_ORIGINAL_CANVAS_DOCUMENT__;
             if (originalCanvas) {
-              const canvasUrl = new URL('/api/canvas/' + encodeCanvasApiPath(canvasName), window.location.origin);
+              const canvasUrl = new URL('/api/canvas/resources/' + encodeCanvasApiPath(canvasName), window.location.origin);
               await fetch(canvasUrl, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -547,7 +547,7 @@ tasks:
               lastState = {
                 href: window.location.href,
                 hasGenerationHistoryTrigger: Boolean(trigger),
-                hasCanvasWelcomeCopy: text.includes('原型草稿画布') || text.includes('好的原型从一份草稿开始'),
+                hasCanvasWelcomeCopy: text.includes('资源画布') || text.includes('好的方案从一份草稿开始'),
                 hasCanvasApi: Boolean(window.__AXHUB_EXCALIDRAW_API__?.getSceneElements),
                 textSample: text.slice(0, 400),
               };
@@ -729,7 +729,7 @@ tasks:
                 hasCanvasPrototype: url.searchParams.get('p') === '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}',
                 hasCanvasMode: url.searchParams.get('v') === 'canvas',
                 hasGenerationHistoryTrigger: Boolean(trigger),
-                hasCanvasWelcomeCopy: text.includes('原型草稿画布') || text.includes('好的原型从一份草稿开始'),
+                hasCanvasWelcomeCopy: text.includes('资源画布') || text.includes('好的方案从一份草稿开始'),
                 hasCanvasApi: Boolean(window.__AXHUB_EXCALIDRAW_API__?.getSceneElements),
                 textSample: text.slice(0, 400),
               };
@@ -1424,8 +1424,8 @@ tasks:
                 hasProject: url.searchParams.get('projectId') === '${AXHUB_MAKE_E2E_PROJECT_ID}',
                 hasCanvasPrototype: url.searchParams.get('p') === '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}',
                 hasCanvasMode: url.searchParams.get('v') === 'canvas',
-                hasPlaceholderOrCanvasCopy: text.includes('原型草稿画布') ||
-                  text.includes('好的原型从一份草稿开始') ||
+                hasPlaceholderOrCanvasCopy: text.includes('资源画布') ||
+                  text.includes('好的方案从一份草稿开始') ||
                   text.includes('请从左侧选择或新建一个画布') ||
                   text.includes('当前项目暂无原型') ||
                   text.includes('新建'),
@@ -1603,7 +1603,7 @@ tasks:
                 prototypeName,
                 hasCanvasMode: url.searchParams.get('v') === 'canvas',
                 selectedPlaceholder: selected?.placeholder === true,
-                hasPlaceholderGuide: text.includes('这个原型还没有开始创建') || text.includes('原型草稿画布') || text.includes('好的原型从一份草稿开始'),
+                hasPlaceholderGuide: text.includes('这个原型还没有开始创建') || text.includes('资源画布') || text.includes('好的方案从一份草稿开始'),
                 prototypeCount: prototypes.length,
               };
               if (prototypeName && lastState.hasCanvasMode && lastState.selectedPlaceholder && lastState.hasPlaceholderGuide) {
@@ -1683,7 +1683,7 @@ tasks:
             window.dispatchEvent(new CustomEvent('axhub:open-assistant-url', {
               detail: {
                 url: '${AXHUB_MAKE_E2E_MOCK_ACP_WEB_BASE_URL}',
-                targetPath: 'src/prototypes/${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}/canvas.excalidraw',
+                targetPath: 'src/resources/regression/${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}.excalidraw',
               },
             }));
 
@@ -1750,7 +1750,7 @@ tasks:
             }
 
             const requestId = 'make-e2e-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-            const expectedPath = 'prototypes/${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}/canvas.excalidraw';
+            const expectedPath = 'src/resources/regression/${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}.excalidraw';
             const targetOrigin = new URL(iframe.src).origin;
             const result = await new Promise((resolve, reject) => {
               const retryTimers = [];

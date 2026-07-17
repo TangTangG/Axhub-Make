@@ -414,7 +414,7 @@ export function buildFigmaMakeExportPrompt(snapshot: FigmaMakeArtifactSnapshot):
 
   let prompt = `请将当前页面补齐为可导出的 Figma Make 资产结构，并确保最终可通过 \`/api/export-make?path=${snapshot.path}\` 下载产物 \`${snapshot.fileName}\`。\n\n`;
   prompt += `请先阅读以下技能文档：\n`;
-  prompt += `- \`/skills/react-to-figma-make/SKILL.md\`\n\n`;
+  prompt += `- https://github.com/lintendo/Axhub-Skills/blob/main/skills/react-to-figma-make/SKILL.md\n\n`;
   prompt += `目标源码目录：\`${sourceDirRelative || '.'}/\`\n`;
   prompt += `目标产物目录：\`${snapshot.artifactRootRelativePath}/\`\n`;
   prompt += `当前判定：${sceneLabel}\n`;

@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createElementScreenshotFileName,
-  derivePrototypePageScreenshotUrl,
-  derivePrototypeScreenshotUrl,
+  deriveResourceCanvasScreenshotUrl,
   getPrototypePageScreenshotFileName,
   persistPrototypeScreenshot,
 } from './screenshotPersistence';
@@ -21,23 +20,23 @@ describe('screenshot persistence helpers', () => {
     expect(getPrototypePageScreenshotFileName('../outside')).toBeUndefined();
   });
 
-  it('derives page screenshot URLs beside prototype screenshot URLs', () => {
+  it('derives screenshot URLs beside resource canvas files', () => {
     vi.stubGlobal('window', { location: { origin: 'http://admin.local' } });
 
-    expect(derivePrototypeScreenshotUrl('/prototypes/home')).toBe(
-      'http://admin.local/prototypes/home/canvas-assets/screenshot.png',
+    expect(deriveResourceCanvasScreenshotUrl('src/resources/flows/app.excalidraw')).toBe(
+      'http://admin.local/api/canvas/resources/flows/app.excalidraw/app.assets/screenshot.png',
     );
-    expect(derivePrototypePageScreenshotUrl('/prototypes/home', 'settings')).toBe(
-      'http://admin.local/prototypes/home/canvas-assets/page-settings.png',
+    expect(deriveResourceCanvasScreenshotUrl('src/resources/flows/app.excalidraw', 'page-settings.png')).toBe(
+      'http://admin.local/api/canvas/resources/flows/app.excalidraw/app.assets/page-settings.png',
     );
-    expect(derivePrototypePageScreenshotUrl('/prototypes/home', '../settings')).toBeUndefined();
+    expect(deriveResourceCanvasScreenshotUrl('src/resources/flows/app.excalidraw', '../settings.png')).toBeUndefined();
   });
 
-  it('persists page screenshots using pageId instead of element screenshots', async () => {
+  it('persists page screenshots to the current resource canvas assets folder', async () => {
     vi.stubGlobal('window', { location: { origin: 'http://admin.local' } });
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      screenshotUrl: '/prototypes/home/canvas-assets/page-settings.png?v=123',
-      path: 'src/prototypes/home/canvas-assets/page-settings.png',
+      screenshotUrl: '/api/canvas/resources/flows/app.excalidraw/app.assets/page-settings.png?v=123',
+      path: 'src/resources/flows/app.assets/page-settings.png',
       width: 393,
       height: 852,
     }), {
@@ -48,6 +47,7 @@ describe('screenshot persistence helpers', () => {
 
     const result = await persistPrototypeScreenshot({
       previewUrl: '/prototypes/home#page=settings',
+      canvasFilePath: 'src/resources/flows/app.excalidraw',
       pageId: 'settings',
       elementId: 'embed-1',
       dataUrl: 'data:image/png;base64,abc',
@@ -56,7 +56,7 @@ describe('screenshot persistence helpers', () => {
     });
 
     expect(createElementScreenshotFileName('embed-1')).toBe('embed-embed-1.png');
-    expect(fetchMock).toHaveBeenCalledWith('/api/canvas/prototypes/home/screenshot', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('/api/canvas/resources/flows/app.excalidraw/screenshot', expect.objectContaining({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -69,10 +69,22 @@ describe('screenshot persistence helpers', () => {
       }),
     }));
     expect(result).toMatchObject({
-      screenshotUrl: 'http://admin.local/prototypes/home/canvas-assets/page-settings.png?v=123',
-      path: 'src/prototypes/home/canvas-assets/page-settings.png',
+      screenshotUrl: 'http://admin.local/api/canvas/resources/flows/app.excalidraw/app.assets/page-settings.png?v=123',
+      path: 'src/resources/flows/app.assets/page-settings.png',
       width: 393,
       height: 852,
     });
+  });
+
+  it('does not persist screenshots without a resource canvas path', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(persistPrototypeScreenshot({
+      previewUrl: '/prototypes/home#page=settings',
+      pageId: 'settings',
+      dataUrl: 'data:image/png;base64,abc',
+    })).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -9,7 +9,16 @@ export interface ResourceDeepLinkTarget {
     view?: ViewMode;
     pageId?: string;
     projectId?: string;
+    openSpec?: boolean;
     collapseSidebar?: boolean;
+}
+
+export function doesResourceDeepLinkRequireSidebarAssets(
+    target: ResourceDeepLinkTarget | null | undefined,
+): boolean {
+    return target?.resourceType === 'doc'
+        || target?.resourceType === 'template'
+        || target?.resourceType === 'theme';
 }
 
 export type ResolvedResourceDeepLinkSelection =
@@ -24,6 +33,7 @@ export type ResolvedResourceDeepLinkSelection =
         kind: 'doc';
         item: ItemData;
         sidebarTab: Extract<SidebarTab, 'document'>;
+        viewMode: ViewMode;
         collapseSidebar: boolean;
     }
     | {
@@ -78,6 +88,28 @@ function isMarkdownDocumentPath(value: string): boolean {
     return /\.mdx?$/iu.test(normalizeDeepLinkResourceId(value));
 }
 
+function getProjectResourceFileRouteName(value: string): string {
+    const normalizedPath = normalizeDeepLinkResourceId(value);
+    if (!normalizedPath.startsWith('src/resources/')) {
+        return '';
+    }
+    const routeName = normalizedPath.slice('src/resources/'.length);
+    if (
+        !routeName
+        || routeName.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+        || !(/\.excalidraw$/iu.test(routeName) || /\.drawio(?:\.svg)?$/iu.test(routeName))
+    ) {
+        return '';
+    }
+    return routeName;
+}
+
+function buildProjectResourceFileUrl(projectId: string | undefined, routeName: string): string {
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId || !routeName) return '';
+    return `/api/docs/${encodeURIComponent(routeName)}?projectId=${encodeURIComponent(normalizedProjectId)}`;
+}
+
 function buildProjectDocumentContentEndpoint(projectId: string | undefined, documentPath: string): string {
     const normalizedProjectId = String(projectId || '').trim();
     const normalizedPath = normalizeDeepLinkResourceId(documentPath);
@@ -89,9 +121,28 @@ function buildProjectDocumentContentEndpoint(projectId: string | undefined, docu
 
 function buildProjectDocumentDeepLinkItem(target: ResourceDeepLinkTarget): ItemData | null {
     const documentPath = normalizeDeepLinkResourceId(target.resourceId);
-    if (!target.projectId || !documentPath || !isMarkdownDocumentPath(documentPath)) {
+    if (!target.projectId || !documentPath) {
         return null;
     }
+    const resourceRouteName = getProjectResourceFileRouteName(documentPath);
+    if (resourceRouteName) {
+        const fileUrl = buildProjectResourceFileUrl(target.projectId, resourceRouteName);
+        const openMode = /\.excalidraw$/iu.test(resourceRouteName) ? 'canvas' : 'drawio';
+        return {
+            name: resourceRouteName,
+            displayName: getBaseName(resourceRouteName),
+            jsUrl: '',
+            specUrl: fileUrl,
+            previewUrl: fileUrl,
+            filePath: documentPath,
+            projectId: target.projectId,
+            resourceId: resourceRouteName,
+            projectDocumentPath: documentPath,
+            openMode,
+            ...(openMode === 'canvas' ? { canvasFilePath: documentPath } : {}),
+        };
+    }
+    if (!isMarkdownDocumentPath(documentPath)) return null;
     const markdownUrl = buildProjectDocumentContentEndpoint(target.projectId, documentPath);
     if (!markdownUrl) {
         return null;
@@ -142,6 +193,10 @@ function findDocDeepLinkItem(target: ResourceDeepLinkTarget, docs: ItemData[]): 
     }) || null;
 }
 
+function parseOptionalCanvasViewMode(url: URL): Extract<ViewMode, 'canvas'> | undefined {
+    return url.searchParams.get('view')?.trim() === 'canvas' ? 'canvas' : undefined;
+}
+
 export function buildResourceDeepLinkUrl(target: ResourceDeepLinkTarget, baseUrl?: string): string {
     return buildIndexDeepLinkUrl(target, baseUrl);
 }
@@ -155,12 +210,12 @@ export function buildIndexDeepLinkUrl(target: ResourceDeepLinkTarget, baseUrl?: 
 
     if (target.resourceType === 'prototype') {
         url.searchParams.set('p', target.resourceId);
-        if (target.view === 'canvas') {
-            url.searchParams.set('v', 'canvas');
-        }
         const pageId = String(target.pageId || '').trim();
-        if (target.view !== 'canvas' && pageId) {
+        if (pageId) {
             url.searchParams.set('page', pageId);
+        }
+        if (target.openSpec) {
+            url.searchParams.set('spec', '1');
         }
     } else if (target.resourceType === 'doc') {
         url.searchParams.set('doc', target.resourceId);
@@ -173,6 +228,9 @@ export function buildIndexDeepLinkUrl(target: ResourceDeepLinkTarget, baseUrl?: 
         }
     } else if (target.resourceType === 'theme') {
         url.searchParams.set('theme', target.resourceId);
+    }
+    if (target.collapseSidebar) {
+        url.searchParams.set('sidebar', 'collapsed');
     }
     return url.toString();
 }
@@ -213,15 +271,18 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
     }
 
     const projectId = url.searchParams.get('projectId')?.trim() || undefined;
+    const canvasView = parseOptionalCanvasViewMode(url);
+    const collapseSidebar = url.searchParams.get('sidebar') === 'collapsed';
     const prototypeId = url.searchParams.get('p')?.trim();
     if (prototypeId) {
         return {
             resourceType: 'prototype',
             resourceId: prototypeId,
-            view: url.searchParams.get('v')?.trim() === 'canvas' ? 'canvas' : 'demo',
+            view: 'demo',
             ...(url.searchParams.get('page')?.trim() ? { pageId: url.searchParams.get('page')?.trim() } : {}),
             ...(projectId ? { projectId } : {}),
-            collapseSidebar: false,
+            ...(url.searchParams.get('spec') === '1' ? { openSpec: true } : {}),
+            collapseSidebar,
         };
     }
 
@@ -233,14 +294,15 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
                 resourceType: 'template',
                 resourceId: templateId,
                 ...(projectId ? { projectId } : {}),
-                collapseSidebar: false,
+                collapseSidebar,
             };
         }
         return {
             resourceType: 'doc',
             resourceId: docId,
+            ...(canvasView ? { view: canvasView } : {}),
             ...(projectId ? { projectId } : {}),
-            collapseSidebar: false,
+            collapseSidebar,
         };
     }
 
@@ -249,6 +311,7 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
         return {
             resourceType: 'project-doc',
             resourceId: docPath,
+            ...(canvasView ? { view: canvasView } : {}),
             ...(projectId ? { projectId } : {}),
             collapseSidebar: true,
         };
@@ -260,7 +323,7 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
             resourceType: 'theme',
             resourceId: themeId,
             ...(projectId ? { projectId } : {}),
-            collapseSidebar: false,
+            collapseSidebar,
         };
     }
 
@@ -279,16 +342,24 @@ export function parseIndexDeepLink(value?: string): ResourceDeepLinkTarget | nul
         return null;
     }
 
-    const viewParam = url.searchParams.get('view')?.trim();
-    const view = viewParam === 'canvas' ? 'canvas' : 'demo';
     const pageId = url.searchParams.get('page')?.trim();
     return {
         resourceType,
         resourceId,
-        ...(resourceType === 'prototype' ? { view } : {}),
+        ...(resourceType === 'prototype' ? { view: canvasView || 'demo' } : {}),
+        ...(
+            (
+                resourceType === 'doc'
+                || resourceType === 'project-doc'
+            )
+            && canvasView
+                ? { view: canvasView }
+                : {}
+        ),
         ...(resourceType === 'prototype' && pageId ? { pageId } : {}),
         ...(projectId ? { projectId } : {}),
-        collapseSidebar: url.searchParams.get('sidebar') === 'collapsed',
+        ...(resourceType === 'prototype' && url.searchParams.get('spec') === '1' ? { openSpec: true } : {}),
+        collapseSidebar,
     };
 }
 
@@ -341,6 +412,7 @@ export function resolveIndexDeepLinkSelection(
                 kind: 'doc',
                 item: docItem,
                 sidebarTab: 'document',
+                viewMode: target.view || 'demo',
                 collapseSidebar: Boolean(target.collapseSidebar),
             };
         }
@@ -372,6 +444,7 @@ export function resolveIndexDeepLinkSelection(
             kind: 'doc',
             item,
             sidebarTab: 'document',
+            viewMode: target.view || 'demo',
             collapseSidebar: Boolean(target.collapseSidebar),
         };
     }
@@ -384,6 +457,7 @@ export function resolveIndexDeepLinkSelection(
         kind: 'doc',
         item,
         sidebarTab: 'document',
+        viewMode: target.view || 'demo',
         collapseSidebar: Boolean(target.collapseSidebar),
     };
 }

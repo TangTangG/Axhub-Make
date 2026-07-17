@@ -21,7 +21,6 @@ export interface AgentVersionInfo {
 
 export const CLI_AGENT_OPTIONS = [
   { value: 'codex', label: 'Codex' },
-  { value: 'gemini', label: 'Gemini' },
   { value: 'claudecode', label: 'Claude Code' },
   { value: 'opencode', label: 'OpenCode' },
 ] as const;
@@ -32,7 +31,7 @@ export const WEB_AGENT_OPTIONS = [
 ] as const;
 
 export const LOCAL_APP_AGENT_OPTIONS = [
-  { value: 'codex', label: 'Codex' },
+  { value: 'codex', label: 'ChatGPT' },
   { value: 'opencode', label: 'OpenCode' },
 ] as const;
 
@@ -46,7 +45,6 @@ export const LOCAL_APP_AGENT_VALUES = LOCAL_APP_AGENT_OPTIONS.map((option) => op
 
 export const CLI_AGENT_APP_NAMES: Record<CLIAgent, string> = {
   codex: 'Codex',
-  gemini: 'Gemini',
   claudecode: 'Claude Code',
   opencode: 'OpenCode',
 };
@@ -57,7 +55,7 @@ export const WEB_AGENT_APP_NAMES: Record<WebAgent, string> = {
 };
 
 export const LOCAL_APP_AGENT_APP_NAMES: Record<LocalAppAgent, string> = {
-  codex: 'Codex',
+  codex: 'ChatGPT',
   opencode: 'OpenCode',
 };
 

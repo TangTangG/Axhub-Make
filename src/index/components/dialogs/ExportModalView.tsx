@@ -138,6 +138,8 @@ export default function ExportModal({
     const canUseSourceFeatures = exportAvailability.canUseSourceFeatures;
     const axureRuntimeDisabledReason = exportAvailability.axureRuntimeDisabledReason;
     const axureSourceDisabledReason = exportAvailability.axureSourceDisabledReason;
+    const dimensionLabel = imageConfig.contentType === 'screenshot' ? '截图视窗' : '导出尺寸';
+    const dimensionHint = imageConfig.contentType === 'screenshot' ? '按该视窗布局，导出完整页面' : '';
 
     useEffect(() => {
         preferencesHydratedRef.current = false;
@@ -560,7 +562,10 @@ export default function ExportModal({
                                 </div>
                                 <div className="space-y-4">
                                     <div className="space-y-2">
-                                        <div className="text-sm font-medium">导出尺寸</div>
+                                        <div className="flex items-baseline justify-between gap-2">
+                                            <div className="text-sm font-medium">{dimensionLabel}</div>
+                                            {dimensionHint ? <div className="text-xs text-muted-foreground">{dimensionHint}</div> : null}
+                                        </div>
                                         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
                                             <Input
                                                 type="number"

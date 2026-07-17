@@ -43,29 +43,39 @@ Axhub Make 把需求挖掘、Spec 对齐、设计规范、原型生成、批注�
 
 先通过需求挖掘把模糊想法拆成用户角色、业务目标、核心流程、页面结构和关键状态，再完成 Spec 对齐。生成时会自动匹配项目里的设计规范 Design，结合行业模板和组件风格，产出可点击、可预览、可继续编辑的交互原型。
 
+<img src="assets/images/make-flow-create.png" alt="Axhub Make 生成原型界面" height="320">
+
 ### 编辑（批注）：在真实页面上下文里修改
 
 团队可以直接在页面、模块或具体元素上留下修改意见。批注会成为 AI Agent 可读取的上下文，让文案、布局、状态、流程补充都围绕真实原型完成，不再散落在截图和聊天记录里。
+
+<img src="assets/images/make-flow-comment.png" alt="Axhub Make 批注编辑界面" height="320">
 
 ### 评审：用 AI 评审发现产品问题
 
 AI 评审会围绕当前原型、Spec、页面结构和业务流程，检查需求完整性、关键场景覆盖、交互自洽性、信息层级和遗漏状态。团队再基于 AI 扫出的问题做人工确认。
 
+<img src="assets/images/make-flow-review.png" alt="Axhub Make AI 评审界面" height="320">
+
 ### 标注：把原型沉淀为可交付说明
 
 将页面结构、组件说明、字段含义、交互规则、业务逻辑、状态变化和设计要求沉淀为标注。原型不只是能看、能点，也能作为研发、测试和业务验收可理解的交付说明。
+
+<img src="assets/images/make-flow-annotation.png" alt="Axhub Make 标注交付界面" height="320">
 
 ### 发布：把原型变成可分享、可验收、可交付的产品资产
 
 原型可以发布为在线链接，也可以导出 HTML、交付到 Figma，或通过 Axure 发布链路进入既有团队流程。发布后的成果可用于评审、演示、研发对齐和验收确认。
 
+<img src="assets/images/make-flow-publish.png" alt="Axhub Make 发布交付菜单" height="320">
+
 ## 核心特点
 
 ### 支持主流 AI Agent
 
-[![Codex](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/codex-color.svg)](https://lobehub.com/icons/codex) [![Claude Code](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/claudecode-color.svg)](https://lobehub.com/icons/claudecode) [![Gemini CLI](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/geminicli-color.svg)](https://lobehub.com/icons/geminicli) [![OpenCode](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/opencode.svg)](https://lobehub.com/icons/opencode) [![Cursor](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/cursor.svg)](https://lobehub.com/icons/cursor) [![Trae](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/trae-color.svg)](https://lobehub.com/icons/trae) [![Qwen Code](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/qwen-color.svg)](https://lobehub.com/icons/qwen) [![Qoder](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/qoder-color.svg)](https://lobehub.com/icons/qoder) [![CodeBuddy](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/codebuddy-color.svg)](https://lobehub.com/icons/codebuddy) [![DeepSeek](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/deepseek-color.svg)](https://lobehub.com/icons/deepseek) [![Kimi](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/kimi-color.svg)](https://lobehub.com/icons/kimi) [![Doubao](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/doubao-color.svg)](https://lobehub.com/icons/doubao) [![Yuanbao](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/yuanbao-color.svg)](https://lobehub.com/icons/yuanbao) [![Windsurf](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/windsurf.svg)](https://lobehub.com/icons/windsurf) [![Roo Code](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/roocode.svg)](https://lobehub.com/icons/roocode) [![Antigravity](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/antigravity-color.svg)](https://lobehub.com/icons/antigravity)
+[![Codex](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/codex-color.svg)](https://lobehub.com/icons/codex) [![Claude Code](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/claudecode-color.svg)](https://lobehub.com/icons/claudecode) [![OpenCode](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/opencode.svg)](https://lobehub.com/icons/opencode) [![Cursor](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/cursor.svg)](https://lobehub.com/icons/cursor) [![Trae](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/trae-color.svg)](https://lobehub.com/icons/trae) [![Qwen Code](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/qwen-color.svg)](https://lobehub.com/icons/qwen) [![Qoder](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/qoder-color.svg)](https://lobehub.com/icons/qoder) [![CodeBuddy](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/codebuddy-color.svg)](https://lobehub.com/icons/codebuddy) [![Grok Build](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/grok.svg)](https://lobehub.com/icons/grok) [![DeepSeek](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/deepseek-color.svg)](https://lobehub.com/icons/deepseek) [![Kimi](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/kimi-color.svg)](https://lobehub.com/icons/kimi) [![Doubao](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/doubao-color.svg)](https://lobehub.com/icons/doubao) [![Yuanbao](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/yuanbao-color.svg)](https://lobehub.com/icons/yuanbao) [![Windsurf](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/windsurf.svg)](https://lobehub.com/icons/windsurf) [![Roo Code](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/roocode.svg)](https://lobehub.com/icons/roocode) [![Antigravity](https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons/antigravity-color.svg)](https://lobehub.com/icons/antigravity)
 
-Axhub Make 可以和主流 Agent 一起工作，把产品需求、页面上下文、批注、标注和项目文件交给合适的 AI 工具处理。当前重点支持 Codex、Claude Code、Gemini CLI、OpenCode、Cursor、Qoder、CodeBuddy、DeepSeek / Reasonix 等 Agent 形态，同时覆盖 Trae、Qwen Code、Windsurf、Roo Code、Antigravity 以及 Kimi、Doubao、Yuanbao 等国内常用 AI 工具链。
+Axhub Make 可以和主流 Agent 一起工作，把产品需求、页面上下文、批注、标注和项目文件交给合适的 AI 工具处理。当前重点支持 Codex、Claude Code、OpenCode、Cursor、Qoder、CodeBuddy、Grok Build、DeepSeek / Reasonix 等 Agent 形态，同时覆盖 Trae、Qwen Code、Windsurf、Roo Code、Antigravity 以及 Kimi、Doubao、Yuanbao 等国内常用 AI 工具链。
 
 团队可以按习惯选择工具，同时把产物沉淀在同一个 Make 项目中。
 
@@ -91,8 +101,8 @@ Make 内置新手教程、100+ 设计规范和 10+ 行业原型。原型完成�
 
 ## 用户群
 
-扫码加入 Axhub Make 用户群，获取使用交流、问题反馈和新版本动态。
+扫码添加管理员，加入 Axhub Make 用户群，获取使用交流、问题反馈和新版本动态。
 
 如果你已经加入过 Axhub 其他用户群，不需要重复添加。
 
-![Axhub Make 用户群二维码](assets/images/axhub-make-user-group-qrcode.png)
+<img src="assets/images/axhub-make-user-group-qrcode.png" alt="Axhub Make 用户群二维码" height="128">

@@ -50,7 +50,6 @@ function writeMakeClientPackageForProject(projectRoot: string) {
 function writeGeneratedPlaceholderPrototype(
   prototypesDir: string,
   name: string,
-  options: { elements?: unknown[]; files?: Record<string, unknown> } = {},
 ) {
   const targetDir = path.join(prototypesDir, name);
   fs.mkdirSync(targetDir, { recursive: true });
@@ -70,14 +69,6 @@ export default function Placeholder() {
     );
 }
 `, 'utf8');
-  fs.writeFileSync(path.join(targetDir, 'canvas.excalidraw'), JSON.stringify({
-    type: 'excalidraw',
-    version: 2,
-    source: 'axhub-make',
-    elements: options.elements || [],
-    appState: { viewBackgroundColor: '#ffffff' },
-    files: options.files || {},
-  }, null, 2), 'utf8');
 }
 
 function writeProjectMetadata(projectRoot: string, overrides: Record<string, unknown> = {}) {
@@ -275,7 +266,7 @@ describe('make-server project APIs', () => {
     }
   });
 
-  it('exposes current project LAN access capability from project config', async () => {
+  it('ignores legacy allowLAN when exposing current project LAN access capability', async () => {
     const defaultRoot = createTempRoot();
     writeMakeClientMarkerForProject(defaultRoot, 'lan-disabled', 'LAN Disabled');
     writeMakeClientPackageForProject(defaultRoot);
@@ -293,7 +284,7 @@ describe('make-server project APIs', () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
-      expect(body.capabilities.lanAccessAllowed).toBe(false);
+      expect(body.capabilities.lanAccessAllowed).toBe(true);
     } finally {
       await server.close();
     }
@@ -365,28 +356,13 @@ describe('make-server project APIs', () => {
     const docsDir = path.join(projectRoot, 'src', 'resources');
     const themesDir = path.join(projectRoot, 'content', 'themes');
     writeGeneratedPlaceholderPrototype(prototypesDir, 'draft');
-    writeGeneratedPlaceholderPrototype(prototypesDir, 'placeholder-started', {
-      elements: [{ id: 'pending-image', type: 'image', status: 'pending' }],
-      files: {
-        'pending-file': {
-          mimeType: 'image/png',
-          path: 'canvas-assets/images/pending-file.png',
-        },
-      },
-    });
     fs.mkdirSync(path.join(prototypesDir, 'fresh'), { recursive: true });
     fs.writeFileSync(path.join(prototypesDir, 'fresh', 'index.tsx'), '/**\n * @name Fresh Prototype\n */\nexport default null;\n', 'utf8');
     writeGeneratedPlaceholderPrototype(prototypesDir, 'untitled-2');
     fs.mkdirSync(path.join(prototypesDir, 'edited'), { recursive: true });
     fs.writeFileSync(path.join(prototypesDir, 'edited', 'index.tsx'), '/**\n * @name Edited Prototype\n */\nexport default null;\n', 'utf8');
-    fs.writeFileSync(path.join(prototypesDir, 'edited', 'canvas.excalidraw'), JSON.stringify({
-      type: 'excalidraw',
-      version: 2,
-      source: 'axhub-make',
-      elements: [{ id: 'rect', type: 'rectangle' }],
-      appState: { viewBackgroundColor: '#ffffff' },
-      files: {},
-    }), 'utf8');
+    fs.mkdirSync(path.join(prototypesDir, 'placeholder-started'), { recursive: true });
+    fs.writeFileSync(path.join(prototypesDir, 'placeholder-started', 'index.tsx'), '/**\n * @name Placeholder Started\n */\nexport default function WaitingGeneration() { return <main className="prototype-waiting-generation-page"><span>正在等待生成</span></main>; }\n', 'utf8');
     fs.mkdirSync(path.join(prototypesDir, 'waiting'), { recursive: true });
     fs.writeFileSync(path.join(prototypesDir, 'waiting', 'index.tsx'), '/**\n * @name Waiting Prototype\n */\nexport default function WaitingGeneration() { return <main className="prototype-waiting-generation-page"><span>正在等待生成</span></main>; }\n', 'utf8');
     fs.mkdirSync(path.join(prototypesDir, 'ready'), { recursive: true });
@@ -544,13 +520,19 @@ describe('make-server project APIs', () => {
         expect.objectContaining({
           id: 'nested/guide',
           title: 'Guide Title',
-          path: path.join(docsDir, 'nested', 'guide.md'),
+          path: 'nested/guide.md',
+          filePath: 'src/resources/nested/guide.md',
+          absoluteFilePath: path.join(docsDir, 'nested', 'guide.md'),
+          openMode: 'document',
         }),
         expect.objectContaining({
           id: 'templates/prd-template',
           name: 'templates/prd-template',
           title: 'PRD Template',
-          path: path.join(docsDir, 'templates', 'prd-template.md'),
+          path: 'templates/prd-template.md',
+          filePath: 'src/resources/templates/prd-template.md',
+          absoluteFilePath: path.join(docsDir, 'templates', 'prd-template.md'),
+          openMode: 'document',
         }),
       ]));
       expect(body.resources.docs).not.toEqual(expect.arrayContaining([

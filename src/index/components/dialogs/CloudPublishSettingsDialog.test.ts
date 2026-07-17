@@ -83,6 +83,16 @@ describe('CloudPublishSettingsDialog source', () => {
     expect(source).not.toContain('阿里云 OSS 可从访问地址自动推导');
   });
 
+  it('keeps paired fields top-aligned when only one field has helper text', () => {
+    const source = readDialogSource();
+    const fieldInput = source.slice(
+      source.indexOf('function FieldInput'),
+      source.indexOf('export default function CloudPublishSettingsDialog'),
+    );
+
+    expect(fieldInput).toContain('<Field className="content-start">');
+  });
+
   it('renders the required configuration fields for each cloud target', () => {
     const source = readDialogSource();
 
@@ -135,5 +145,40 @@ describe('CloudPublishSettingsDialog source', () => {
     expect(githubPagesSection).toContain('name="pathPrefix"');
     expect(githubPagesSection).toContain('留空时会按当前发布资源自动生成子目录');
     expect(githubPagesSection).toContain('不同原型可以发布到同一个 GitHub Pages 站点的不同路径');
+  });
+
+  it('copies short target-specific AI configuration prompts from non-Axhub tabs', () => {
+    const source = readDialogSource();
+    const promptBuilderStart = source.indexOf('function buildCloudPublishAiConfigPrompt');
+    const promptBuilderEnd = source.indexOf('function FieldInput');
+    const promptBuilder = source.slice(promptBuilderStart, promptBuilderEnd);
+    const footerStart = source.indexOf("activeTab !== 'publish-settings'");
+    const footer = source.slice(footerStart, footerStart + 900);
+
+    expect(promptBuilderStart).toBeGreaterThan(-1);
+    expect(promptBuilder).toContain("case 's3':");
+    expect(promptBuilder).toContain("case 'vercel':");
+    expect(promptBuilder).toContain("case 'cloudflare-pages':");
+    expect(promptBuilder).toContain("case 'github-pages':");
+    expect(promptBuilder).not.toContain("case 'axhub':");
+    expect(promptBuilder).toContain('~/.axhub/make/server.config.json');
+    expect(promptBuilder).toContain('$AXHUB_MAKE_HOME_DIR/.axhub/make/server.config.json');
+    expect(promptBuilder).toContain('cloudPublishing.s3');
+    expect(promptBuilder).toContain('accessKeyId、secretAccessKey、region、bucket、baseUrl');
+    expect(promptBuilder).toContain('cloudPublishing.vercel');
+    expect(promptBuilder).toContain('token、projectName');
+    expect(promptBuilder).toContain('cloudPublishing.cloudflarePages');
+    expect(promptBuilder).toContain('apiToken、accountId');
+    expect(promptBuilder).toContain('cloudPublishing.githubPages');
+    expect(promptBuilder).toContain('repository、branch、sourceDirectory');
+    expect(promptBuilder).not.toContain('不要写到项目里的 .axhub/make/axhub.config.json');
+
+    expect(source).toContain('handleCopyAiConfigPrompt');
+    expect(source).toContain('navigator.clipboard.writeText(buildCloudPublishAiConfigPrompt(activeTab))');
+    expect(source).toContain("toast.success('AI 配置提示词已复制')");
+    expect(source).toContain("toast.error('复制 AI 配置提示词失败')");
+    expect(footerStart).toBeGreaterThan(-1);
+    expect(footer).toContain('复制 AI 配置提示词');
+    expect(footer).toContain('variant="link"');
   });
 });

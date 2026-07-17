@@ -8,6 +8,7 @@ import type {
   CommentaryModifiedElementSummary,
   CommentaryState,
   CommentaryStyleChangeSet,
+  CommentaryTargetedTextChange,
   CommentaryStatus,
   CommentaryStatusListener,
   CommentaryTextChange,
@@ -20,7 +21,7 @@ import type {
 import { WEB_EDITOR_V2_VERSION } from '../../constants';
 import { createElementLocator, locateElement } from '../locator';
 import { generateFullElementLabel, generateStableElementKey } from '../element-key';
-import type { EditorServices } from './contracts';
+import type { EditorServices, ExternalEditingElementTarget } from './contracts';
 import { createChangesService } from './changes';
 import { createFeedbackService } from './feedback';
 import { createAgentBridgeService } from './agent-bridge';
@@ -31,15 +32,22 @@ import { createLocalActionsService } from './local-actions';
 import { createPersistenceService } from './persistence';
 import { captureElementScreenshot } from './screenshot';
 import {
+  resolveAnnotationElementIdentity,
+  resolveAnnotationNodeIdFromLocator,
+  resolveAnnotationTargetIdentity,
+} from './annotation-target';
+import {
   createEditorRuntimeState,
   DEFAULT_MODIFIERS,
   resolveWebEditorOptions,
+  type ElementAgentTaskState,
   type ExternalEditingTaskRef,
   type CommentaryInitOptions,
 } from './state';
 import { createEditorSummariesService } from './summaries';
 import { createTextSessionService } from './text-session';
 import { pushMobileModeOverride } from '../../utils/mobile-detect';
+import { installGlobalCommentaryReviewCommentProtocol } from '../../review/comment-protocol';
 
 export type {
   CommentaryAgentBridgeOptions,
@@ -73,13 +81,14 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
   const cleanupMobileModeOverride = pushMobileModeOverride(resolvedOptions.mobileMode);
   const state = createEditorRuntimeState();
   const statusListeners = new Set<CommentaryStatusListener>();
-  const hostResourceProjectPath = (() => {
+  const initialHostResource = (() => {
     try {
-      return String(resolvedOptions.host.getResourceContext?.()?.meta?.projectPath ?? '').trim();
+      return resolvedOptions.host.getResourceContext?.() ?? null;
     } catch {
-      return '';
+      return null;
     }
   })();
+  const hostResourceProjectPath = String(initialHostResource?.meta?.projectPath ?? '').trim();
   const resolvedProjectPath = String(
     resolvedOptions.agentBridge.projectPath || hostResourceProjectPath,
   ).trim();
@@ -144,6 +153,10 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
 
   function getTextChanges(): CommentaryTextChange[] {
     return summaries.collectTextChanges();
+  }
+
+  function getTargetedTextChanges(): CommentaryTargetedTextChange[] {
+    return summaries.collectTargetedTextChanges();
   }
 
   function getClearableCount(): number {
@@ -278,12 +291,19 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       copyPromptDisabled: true,
       clearEditsTitle: '清空全部编辑',
       clearEditsDisabled: true,
+      propertyPanelVisible: false,
       propertyPanelOpen: false,
       propertyPanelTitle: '打开设计决策',
       modifiedCount: 0,
       terminalTaskCount: 0,
       selectedAgent: null,
       agentOptions: [{ value: null, label: '默认' }],
+      aiExecutionConfigSummary: '',
+      aiExecutionConfigConfigured: false,
+      aiExecutionProvider: '',
+      aiExecutionWorkspacePath: '',
+      aiExecutionRunConcurrency: 5,
+      aiExecutionProviderOptions: [],
       darkMode: false,
       disablePageAnimations: false,
       pageZoomEnabled: false,
@@ -405,6 +425,144 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     } catch {
       return null;
     }
+  }
+
+  function resolveExternalEditingTargetByKey(
+    elementKey: string,
+    targetRef?: CommentaryExternalEditingTargetRef | null,
+  ): ExternalEditingElementTarget | null {
+    const normalizedElementKey = String(elementKey ?? '').trim();
+    if (!normalizedElementKey) return null;
+
+    const meta = state.editMetaByKey.get(normalizedElementKey) ?? null;
+    const task =
+      agentBridge?.getTaskStateByElementKey?.(normalizedElementKey) ??
+      state.externalEditingTaskByElementKey.get(normalizedElementKey) ??
+      state.agentTaskByElementKey.get(normalizedElementKey) ??
+      null;
+    const locator = meta?.locator ?? task?.locator ?? targetRef?.locator ?? null;
+    if (!locator) return null;
+    const label = meta?.label ?? task?.label ?? (String(targetRef?.label ?? '').trim() || normalizedElementKey);
+    const annotationTarget = resolveAnnotationTargetIdentity({
+      elementKey: normalizedElementKey,
+      locator,
+      label,
+    });
+    if (annotationTarget) {
+      return {
+        elementKey: annotationTarget.elementKey,
+        locator: annotationTarget.locator,
+        label: annotationTarget.label,
+      };
+    }
+
+    return {
+      elementKey: normalizedElementKey,
+      locator,
+      label,
+    };
+  }
+
+  function resolveLiveExternalEditingTarget(
+    target: ExternalEditingElementTarget,
+  ): ExternalEditingElementTarget | null {
+    if (!target.locator) return null;
+    let element: Element | null = null;
+    try {
+      element = locateElement(target.locator);
+    } catch {
+      element = null;
+    }
+    if (!element?.isConnected) return null;
+
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) {
+      return {
+        elementKey: annotationIdentity.elementKey,
+        locator: annotationIdentity.locator,
+        label: annotationIdentity.label,
+      };
+    }
+
+    const locator = createElementLocator(element);
+    return {
+      elementKey: generateStableElementKey(element, locator.shadowHostChain),
+      locator,
+      label: generateFullElementLabel(element, locator.shadowHostChain),
+    };
+  }
+
+  function locateElementForTarget(target: ExternalEditingElementTarget): Element | null {
+    if (!target.locator) return null;
+    try {
+      const element = locateElement(target.locator);
+      return element?.isConnected ? element : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function collectTerminalCleanupTargets(
+    target: ExternalEditingElementTarget,
+  ): ExternalEditingElementTarget[] {
+    const targets = new Map<string, ExternalEditingElementTarget>();
+    const addTarget = (item: ExternalEditingElementTarget | null): void => {
+      const elementKey = String(item?.elementKey ?? '').trim();
+      if (!item || !elementKey || !item.locator || targets.has(elementKey)) return;
+      targets.set(elementKey, {
+        elementKey,
+        locator: item.locator,
+        label: String(item.label || '').trim() || elementKey,
+      });
+    };
+
+    addTarget(target);
+    const annotationTarget = resolveAnnotationTargetIdentity(target);
+    addTarget(annotationTarget);
+    const liveTarget = resolveLiveExternalEditingTarget(target);
+    addTarget(liveTarget);
+
+    const liveElement = liveTarget ? locateElementForTarget(liveTarget) : locateElementForTarget(target);
+    const annotationNodeId =
+      annotationTarget?.nodeId
+      || (liveElement ? resolveAnnotationElementIdentity(liveElement)?.nodeId : '')
+      || resolveAnnotationNodeIdFromLocator(target.locator);
+    if (liveElement?.isConnected) {
+      for (const meta of state.editMetaByKey.values()) {
+        if (!meta.locator) continue;
+        const metaElement = locateElementForTarget({
+          elementKey: meta.elementKey,
+          locator: meta.locator,
+          label: meta.label,
+        });
+        if (metaElement === liveElement) {
+          addTarget({
+            elementKey: meta.elementKey,
+            locator: meta.locator,
+            label: meta.label,
+          });
+        }
+      }
+    }
+    if (annotationNodeId) {
+      for (const meta of state.editMetaByKey.values()) {
+        if (!meta.locator) continue;
+        const metaNodeId = resolveAnnotationNodeIdFromLocator(meta.locator);
+        const metaKeyNodeId = String(meta.elementKey ?? '').startsWith('annotation-panel:')
+          ? String(meta.elementKey).replace(/^annotation-panel:/, '')
+          : '';
+        if (metaNodeId !== annotationNodeId && metaKeyNodeId !== annotationNodeId) {
+          continue;
+        }
+        addTarget({
+          elementKey: meta.elementKey,
+          locator: meta.locator,
+          label: meta.label,
+        });
+      }
+    }
+
+    return Array.from(targets.values());
   }
 
   function listEditorNodes(): EditorNodeItem[] {
@@ -544,15 +702,115 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     taskRef: Partial<ExternalEditingTaskRef> | null,
     targetRef?: CommentaryExternalEditingTargetRef | null,
   ): Promise<CommentaryExternalEditingStateResult> {
+    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
+    const recordNodeTaskState = (targetElementKey: WebEditorElementKey): void => {
+      if (nextState === 'completed') return;
+      persistence?.recordCommentTaskState?.(targetElementKey, nextState, normalizedTaskRef);
+    };
+    const canForceCompleteWithoutTask = (targetElementKey: WebEditorElementKey): boolean => {
+      if (nextState !== 'completed') return false;
+      const existingTask = agentBridge?.getTaskStateByElementKey?.(targetElementKey) ?? null;
+      if (!existingTask) return true;
+      return Boolean(
+        normalizedTaskRef?.requestId
+        && existingTask.requestId === normalizedTaskRef.requestId,
+      );
+    };
+    const forceCompleteEditsByTarget = (target: ExternalEditingElementTarget): boolean => {
+      let applied = false;
+      for (const cleanupTarget of collectTerminalCleanupTargets(target)) {
+        if (!canForceCompleteWithoutTask(cleanupTarget.elementKey)) continue;
+        changes.markElementEditsHandledByKey(cleanupTarget);
+        persistence?.clearCommentRecord?.(cleanupTarget.elementKey);
+        applied = true;
+      }
+      if (applied) {
+        persistence?.flushPendingWrite();
+      }
+      return applied;
+    };
     const targetElement = resolveElementByKey(elementKey, targetRef);
     if (!targetElement) {
+      const target = resolveExternalEditingTargetByKey(elementKey, targetRef);
+      if (nextState === 'editing' && target && agentBridge?.setExternalEditingStateByElementKey) {
+        const task = agentBridge.setExternalEditingStateByElementKey(target, taskRef);
+        recordNodeTaskState(target.elementKey);
+        notifyStatusChange();
+        return {
+          elementKey: target.elementKey,
+          state: nextState,
+          applied: Boolean(task),
+          ...(normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}),
+        };
+      }
+      if (
+        (nextState === 'completed' || nextState === 'error')
+        && target
+        && agentBridge?.setExternalEditingTerminalStateByElementKey
+      ) {
+        const task = agentBridge.setExternalEditingTerminalStateByElementKey(
+          target,
+          nextState,
+          taskRef,
+        );
+        if (task && nextState === 'completed') {
+          forceCompleteEditsByTarget(target);
+        }
+        if (!task) {
+          if (forceCompleteEditsByTarget(target)) {
+            notifyStatusChange();
+            return {
+              elementKey: target.elementKey,
+              state: nextState,
+              applied: true,
+              ...(normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}),
+            };
+          }
+          notifyStatusChange();
+          return {
+            elementKey: target.elementKey,
+            state: nextState,
+            applied: false,
+            ...(normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}),
+          };
+        }
+        recordNodeTaskState(target.elementKey);
+        notifyStatusChange();
+        return {
+          elementKey: target.elementKey,
+          state: nextState,
+          applied: Boolean(task),
+          ...(normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}),
+        };
+      }
+      if (nextState !== 'editing' && agentBridge?.clearExternalEditingStateByElementKey) {
+        const applied = agentBridge.clearExternalEditingStateByElementKey(elementKey, taskRef);
+        recordNodeTaskState(elementKey);
+        notifyStatusChange();
+        return {
+          elementKey,
+          state: nextState,
+          applied,
+          ...(normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}),
+        };
+      }
       throw new Error(`NOT_FOUND: Element not found for key: ${elementKey}`);
     }
     if (targetRef?.locator) {
-      changes.getOrCreateEditMeta(
+      const annotationTarget = resolveAnnotationTargetIdentity({
         elementKey,
-        targetRef.locator,
-        String(targetRef.label || '').trim() || elementKey,
+        locator: targetRef.locator,
+        label: targetRef.label ?? null,
+      });
+      const metaTarget = annotationTarget ?? {
+        elementKey: elementKey as WebEditorElementKey,
+        locator: targetRef.locator,
+        label: String(targetRef.label || '').trim() || elementKey,
+      };
+      changes.getOrCreateEditMeta(
+        metaTarget.elementKey,
+        metaTarget.locator,
+        metaTarget.label,
       );
     }
 
@@ -565,17 +823,59 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     } else if (nextState === 'idle') {
       agentBridge.clearExternalEditingState(targetElement, taskRef);
     } else if (nextState === 'completed' || nextState === 'error') {
-      if (!agentBridge.setExternalEditingTerminalState) {
-        // Fallback: treat completed as idle (clear), treat error as idle (clear)
-        agentBridge.clearExternalEditingState(targetElement, taskRef);
+      const target = resolveExternalEditingTargetByKey(elementKey, targetRef);
+      let task: ElementAgentTaskState | null = null;
+      if (target && agentBridge.setExternalEditingTerminalStateByElementKey) {
+        task = agentBridge.setExternalEditingTerminalStateByElementKey(target, nextState, taskRef);
+        if (task && nextState === 'completed') {
+          forceCompleteEditsByTarget(target);
+        }
+        if (!task) {
+          if (forceCompleteEditsByTarget(target)) {
+            notifyStatusChange();
+            return {
+              elementKey,
+              state: nextState,
+              applied: true,
+              ...(normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}),
+            };
+          }
+          notifyStatusChange();
+          return {
+            elementKey,
+            state: nextState,
+            applied: false,
+            ...(normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}),
+          };
+        }
+      } else if (agentBridge.setExternalEditingTerminalState) {
+        task = agentBridge.setExternalEditingTerminalState(targetElement, nextState, taskRef);
+        if (!task) {
+          notifyStatusChange();
+          return {
+            elementKey,
+            state: nextState,
+            applied: false,
+            ...(normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}),
+          };
+        }
       } else {
-        agentBridge.setExternalEditingTerminalState(targetElement, nextState, taskRef);
+        // Fallback: treat completed as idle (clear), treat error as idle (clear)
+        const applied = agentBridge.clearExternalEditingState(targetElement, taskRef);
+        if (!applied) {
+          notifyStatusChange();
+          return {
+            elementKey,
+            state: nextState,
+            applied: false,
+            ...(normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}),
+          };
+        }
       }
     }
     notifyStatusChange();
 
-    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
-    persistence?.recordCommentTaskState?.(elementKey, nextState, normalizedTaskRef);
+    recordNodeTaskState(elementKey);
     return {
       elementKey,
       state: nextState,
@@ -608,6 +908,11 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       });
     },
     onStatusChange: notifyStatusChange,
+  });
+  const reviewCommentInstallation = installGlobalCommentaryReviewCommentProtocol({
+    isActive: () => !destroyed && state.active,
+    setComment: (element, comment) => changes.setNoteForElement(element, comment),
+    clearComment: (element) => changes.setNoteForElement(element, ''),
   });
 
   const textSession = createTextSessionService({
@@ -836,6 +1141,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
   function destroy(): void {
     if (destroyed) return;
     destroyed = true;
+    reviewCommentInstallation.dispose();
     lifecycle.stop();
     statusListeners.clear();
     cleanupMobileModeOverride();
@@ -855,6 +1161,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     getSelectedElement: buildSelectedElementSummary,
     getModifiedElements,
     getTextChanges,
+    getTargetedTextChanges,
     getStyleChanges,
     getEditedSnapshot,
     getDebugState,
@@ -870,6 +1177,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     runHostToolbarAction,
     setNodeEditingState,
     getCopyPromptText: () => summaries.buildCopyPrompt(),
+    getElementPromptText: (elementKey) => summaries.buildSaveRunPromptForElementKey(elementKey),
   };
 }
 

@@ -1,14 +1,18 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { CaptureUpdateAction } from '@axhub/excalidraw';
-import { StickyNote, Trash2, X } from 'lucide-react';
+import { CircleStop, Loader2, Play, Sparkles, Trash2, X } from 'lucide-react';
 
 import { createMergedTextSceneUpdate } from './canvasTextMerge';
-import { applyContextSubmenuFlyoutLayout, resolveContextMenuViewportFit } from './contextMenuViewport';
+import { resolveContextMenuViewportFit } from './contextMenuViewport';
 import { getLinkEmbedSize } from './linkEmbedSizing';
 import { fitEmbedSizeToViewport, type EmbedViewportRect } from './embedViewportSizing';
 import { reorganizeContextMenu } from './contextMenuReorganizer';
 import { CANVAS_ELEMENT_OVERLAY_Z_INDEX } from './canvasOverlayLayers';
 import { resolveCanvasImageContextMenuState } from './canvasImageContextMenu';
+import {
+    getCanvasDirectRunAnnotationTaskRef,
+    type CanvasDirectRunAnnotationTaskRef,
+} from '../../../domains/ai-generation/CanvasDirectRunOverlay';
 
 /* ── Types ───────────────────────────────────────────────────────── */
 
@@ -48,6 +52,9 @@ interface AnnotationOverlayProps {
     onMakeImageBackgroundTransparent?: (elements: CanvasElementContextInfo[]) => void | Promise<void>;
     /** Callback when the set of annotated elements changes. */
     onAnnotationsChange?: (annotations: CanvasElementContextInfo[]) => void;
+    /** Callback when the annotation prompt card should execute its prompt through canvas AI. */
+    onExecuteAnnotationPrompt?: (element: CanvasElementContextInfo, promptText: string) => Promise<string | { statusTaskId?: string | null } | boolean | void> | string | { statusTaskId?: string | null } | boolean | void;
+    onStopAnnotationTask?: (statusTaskId: string) => void;
 }
 
 function getResourceTypeFromElement(element: any): 'prototype' | 'doc' | 'theme' {
@@ -80,12 +87,13 @@ function resolveElementResourceType(element: any): 'prototype' | 'doc' | 'theme'
 }
 
 function buildCanvasElementContextInfo(element: any): CanvasElementContextInfo {
+    const annotationTaskRef = getCanvasDirectRunAnnotationTaskRef(element);
     return {
         elementId: element.id,
         type: element.type || 'unknown',
         annotation: resolveString(element?.customData?.annotation) || undefined,
         title: resolveString(element?.customData?.title),
-        link: resolveString(element?.link),
+        link: annotationTaskRef ? undefined : resolveString(element?.link),
         width: element.width || 0,
         height: element.height || 0,
         resourceType: resolveElementResourceType(element),
@@ -158,6 +166,7 @@ export function resolveEmbedViewModeToggleUpdate(
 interface AnnotatedBadgeInfo {
     elementId: string;
     annotation: string;
+    annotationTaskRef?: CanvasDirectRunAnnotationTaskRef | null;
     /** Screen-space X of the element's top-right corner */
     screenRight: number;
     /** Screen-space Y of the element's top-left corner */
@@ -168,6 +177,7 @@ interface AnnotatedBadgeInfo {
 interface SelectedElementAnnotationInfo {
     elementId: string;
     annotation: string;
+    annotationTaskRef?: CanvasDirectRunAnnotationTaskRef | null;
     /** Screen-space coords for toolbar placement */
     screenX: number;
     screenY: number;
@@ -176,17 +186,22 @@ interface SelectedElementAnnotationInfo {
 
 /* ── Styles ──────────────────────────────────────────────────────── */
 
-const BADGE_SIZE = 20;
+const BADGE_SIZE = 22;
 const BADGE_OFFSET_X = -4;
 const BADGE_OFFSET_Y = -8;
+const TASK_BADGE_OFFSET_X = 12;
+const TASK_BADGE_OFFSET_Y = -14;
+const TASK_POPOVER_OFFSET_X = 36;
+const TASK_POPOVER_OFFSET_Y = 10;
+const ANNOTATION_TEXTAREA_MAX_HEIGHT = 260;
 
 const badgeStyle: React.CSSProperties = {
     position: 'absolute',
     width: BADGE_SIZE,
     height: BADGE_SIZE,
-    borderRadius: '50%',
-    background: '#008f5d',
-    color: '#fff',
+    borderRadius: 8,
+    background: 'transparent',
+    color: '#111827',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -195,55 +210,63 @@ const badgeStyle: React.CSSProperties = {
     cursor: 'pointer',
     zIndex: CANVAS_ELEMENT_OVERLAY_Z_INDEX,
     pointerEvents: 'auto',
-    boxShadow: '0 1px 4px rgba(0,0,0,0.18)',
     transition: 'transform 0.12s ease',
     userSelect: 'none' as const,
 };
 
-const badgeIconStyle = { width: 11, height: 11 };
+const badgeIconStyle = { width: 13, height: 13 };
+const actionIconStyle = { width: 16, height: 16 };
+const spinnerIconStyle: React.CSSProperties = {
+    width: 13,
+    height: 13,
+    animation: 'axhubAnnotationSpin 0.8s linear infinite',
+};
 
-const tooltipStyle: React.CSSProperties = {
+const actionTooltipStyle: React.CSSProperties = {
     position: 'absolute',
-    bottom: '100%',
-    right: 0,
-    marginBottom: 6,
-    padding: '6px 10px',
+    top: 'calc(100% + 6px)',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '4px 8px',
     borderRadius: 6,
     background: 'rgba(15, 23, 42, 0.92)',
     color: '#f8fafc',
     fontSize: 11,
-    lineHeight: '1.45',
-    width: 'max-content',
-    minWidth: 80,
-    maxWidth: 240,
-    wordBreak: 'break-word' as const,
-    whiteSpace: 'pre-wrap' as const,
+    lineHeight: '1.35',
+    whiteSpace: 'nowrap' as const,
     pointerEvents: 'none',
-    zIndex: CANVAS_ELEMENT_OVERLAY_Z_INDEX,
-    boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+    zIndex: CANVAS_ELEMENT_OVERLAY_Z_INDEX + 1,
+    boxShadow: '0 4px 12px rgba(15,23,42,0.18)',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
 };
 
 const popoverStyle: React.CSSProperties = {
     position: 'absolute',
     zIndex: CANVAS_ELEMENT_OVERLAY_Z_INDEX,
-    width: 280,
+    width: 360,
+    maxWidth: 'calc(100vw - 24px)',
     background: '#fff',
-    borderRadius: 10,
-    boxShadow: '0 4px 24px rgba(0,0,0,0.14), 0 0 0 1px rgba(0,0,0,0.04)',
-    padding: '12px',
+    border: '1px solid #e5e7eb',
+    borderRadius: 14,
+    boxShadow: '0 14px 36px rgba(15,23,42,0.12)',
+    padding: 10,
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
 };
 
 const textareaStyle: React.CSSProperties = {
     width: '100%',
-    minHeight: 80,
-    maxHeight: 200,
-    resize: 'vertical' as const,
-    border: '1px solid #e2e8f0',
-    borderRadius: 6,
-    padding: '8px 10px',
-    fontSize: 12,
+    minHeight: 58,
+    maxHeight: ANNOTATION_TEXTAREA_MAX_HEIGHT,
+    resize: 'none' as const,
+    overflowY: 'auto' as const,
+    scrollbarWidth: 'none',
+    border: '1px solid #d1d5db',
+    borderRadius: 14,
+    padding: '12px 14px',
+    fontSize: 15,
     lineHeight: '1.5',
     fontFamily: 'inherit',
     outline: 'none',
@@ -252,23 +275,93 @@ const textareaStyle: React.CSSProperties = {
     color: '#1e293b',
 };
 
-const btnBase: React.CSSProperties = {
+const executeButtonStyle: React.CSSProperties = {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 6,
     height: 28,
-    padding: '0 10px',
-    borderRadius: 6,
-    fontSize: 11,
-    fontWeight: 500,
-    fontFamily: 'inherit',
-    cursor: 'pointer',
+    minWidth: 28,
+    padding: 0,
+    borderRadius: 999,
     border: 'none',
-    transition: 'all 0.12s',
+    background: 'transparent',
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: 600,
+    lineHeight: 1,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
 };
 
+const iconButtonStyle: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 28,
+    height: 28,
+    border: 'none',
+    borderRadius: 999,
+    background: 'transparent',
+    color: '#475569',
+    cursor: 'pointer',
+    padding: 0,
+};
+
+const disabledIconButtonStyle: React.CSSProperties = {
+    ...iconButtonStyle,
+    color: '#cbd5e1',
+    cursor: 'not-allowed',
+};
+
+const PENDING_ANNOTATION_TASK_ID = '__pending_annotation_task__';
+
 const CONTEXT_MENU_VIEWPORT_INSET = 8;
+
+function resizeAnnotationTextareaToContent(textarea: HTMLTextAreaElement | null) {
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, ANNOTATION_TEXTAREA_MAX_HEIGHT)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > ANNOTATION_TEXTAREA_MAX_HEIGHT ? 'auto' : 'hidden';
+}
+
+function AnnotationTooltipButton({
+    tooltip,
+    children,
+    disabled,
+    onClick,
+    style,
+}: {
+    tooltip: string;
+    children: React.ReactNode;
+    disabled?: boolean;
+    onClick?: React.MouseEventHandler<HTMLButtonElement>;
+    style: React.CSSProperties;
+}) {
+    const [hovered, setHovered] = useState(false);
+    return (
+        <span
+            style={{ position: 'relative', display: 'inline-flex' }}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+        >
+            <button
+                type="button"
+                aria-label={tooltip}
+                onClick={onClick}
+                disabled={disabled}
+                style={style}
+            >
+                {children}
+            </button>
+            {hovered ? (
+                <span role="tooltip" style={actionTooltipStyle}>
+                    {tooltip}
+                </span>
+            ) : null}
+        </span>
+    );
+}
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -299,18 +392,32 @@ export default function AnnotationOverlay({
     onCopyImageToClipboard,
     onMakeImageBackgroundTransparent,
     onAnnotationsChange,
+    onExecuteAnnotationPrompt,
+    onStopAnnotationTask,
 }: AnnotationOverlayProps) {
     const [badges, setBadges] = useState<AnnotatedBadgeInfo[]>([]);
     const [selectedInfo, setSelectedInfo] = useState<SelectedElementAnnotationInfo | null>(null);
-    const [hoveredBadgeId, setHoveredBadgeId] = useState<string | null>(null);
     const [popoverElementId, setPopoverElementId] = useState<string | null>(null);
     const [popoverText, setPopoverText] = useState('');
+    const [popoverTaskRef, setPopoverTaskRef] = useState<CanvasDirectRunAnnotationTaskRef | null>(null);
+    const [popoverExecutionTaskId, setPopoverExecutionTaskId] = useState<string | null>(null);
     const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
     const rafRef = useRef<number>(0);
     const popoverRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const popoverExecutionTaskIdRef = useRef<string | null>(null);
+    const popoverExecutionTaskSnapshotRef = useRef('');
 
     const prevAnnotationsHashRef = useRef('');
+
+    useEffect(() => {
+        popoverExecutionTaskIdRef.current = popoverExecutionTaskId;
+    }, [popoverExecutionTaskId]);
+
+    useLayoutEffect(() => {
+        if (!popoverElementId) return;
+        resizeAnnotationTextareaToContent(textareaRef.current);
+    }, [popoverElementId, popoverText]);
 
     /* ── RAF polling: detect annotated elements + selected element ── */
     useEffect(() => {
@@ -327,11 +434,22 @@ export default function AnnotationOverlay({
             const nextBadges: AnnotatedBadgeInfo[] = [];
             let nextSelected: SelectedElementAnnotationInfo | null = null;
             const annotatedElements: CanvasElementContextInfo[] = [];
+            let executionTaskRef: CanvasDirectRunAnnotationTaskRef | null = null;
+            const trackedExecutionTaskId = popoverExecutionTaskIdRef.current;
 
             for (const el of elements) {
                 if (el.isDeleted) continue;
 
                 const annotation = el.customData?.annotation;
+                const annotationText = typeof annotation === 'string' ? annotation.trim() : '';
+                const annotationTaskRef = getCanvasDirectRunAnnotationTaskRef(el);
+                if (
+                    trackedExecutionTaskId
+                    && trackedExecutionTaskId !== PENDING_ANNOTATION_TASK_ID
+                    && annotationTaskRef?.statusTaskId === trackedExecutionTaskId
+                ) {
+                    executionTaskRef = annotationTaskRef;
+                }
                 const isSelected = selectedIdSet.has(el.id);
 
                 // Compute screen coords
@@ -342,11 +460,11 @@ export default function AnnotationOverlay({
                 );
                 const screenW = (el.width || 0) * zoom;
 
-                // Badge for annotated elements
-                if (annotation && typeof annotation === 'string' && annotation.trim()) {
+                if (annotationText) {
                     nextBadges.push({
                         elementId: el.id,
-                        annotation,
+                        annotation: annotationText,
+                        annotationTaskRef,
                         screenRight: topLeft.x + screenW,
                         screenTop: topLeft.y,
                     });
@@ -358,6 +476,7 @@ export default function AnnotationOverlay({
                     nextSelected = {
                         elementId: el.id,
                         annotation: annotation || '',
+                        annotationTaskRef,
                         screenX: topLeft.x,
                         screenY: topLeft.y,
                         screenWidth: screenW,
@@ -367,6 +486,30 @@ export default function AnnotationOverlay({
 
             setBadges(nextBadges);
             setSelectedInfo(nextSelected);
+
+            if (trackedExecutionTaskId && trackedExecutionTaskId !== PENDING_ANNOTATION_TASK_ID) {
+                const nextSnapshot = executionTaskRef
+                    ? [
+                        executionTaskRef.statusTaskId,
+                        executionTaskRef.status,
+                        executionTaskRef.updatedAt,
+                        executionTaskRef.runId,
+                        executionTaskRef.threadId,
+                        executionTaskRef.conversationId,
+                    ].join(':')
+                    : '';
+                if (nextSnapshot !== popoverExecutionTaskSnapshotRef.current) {
+                    popoverExecutionTaskSnapshotRef.current = nextSnapshot;
+                    if (executionTaskRef) {
+                        setPopoverTaskRef(executionTaskRef);
+                    } else {
+                        setPopoverExecutionTaskId(null);
+                        setPopoverTaskRef((current) => (
+                            current?.statusTaskId === trackedExecutionTaskId ? null : current
+                        ));
+                    }
+                }
+            }
 
             // Notify parent about annotation changes (debounced via hash)
             if (onAnnotationsChange) {
@@ -390,6 +533,7 @@ export default function AnnotationOverlay({
         const elements = excalidrawAPI.getSceneElements();
         const updated = elements.map((el: any) => {
             if (el.id !== elementId) return el;
+            if (getCanvasDirectRunAnnotationTaskRef(el)) return el;
             const newCustomData = { ...el.customData };
             if (text.trim()) {
                 newCustomData.annotation = text.trim();
@@ -409,48 +553,117 @@ export default function AnnotationOverlay({
         excalidrawAPI.updateScene({ elements: updated as any });
     }, [excalidrawAPI]);
 
+    const getElementInfoWithAnnotation = useCallback((elementId: string, annotationText: string) => {
+        if (!excalidrawAPI) return null;
+        const element = excalidrawAPI.getSceneElements()
+            .find((el: any) => el.id === elementId && !el.isDeleted);
+        if (!element || getCanvasDirectRunAnnotationTaskRef(element)) return null;
+        return buildCanvasElementContextInfo({
+            ...element,
+            customData: {
+                ...element.customData,
+                annotation: annotationText.trim(),
+            },
+        });
+    }, [excalidrawAPI]);
+
+    const resolveExecutionTaskId = useCallback((result: string | { statusTaskId?: string | null } | boolean | void) => {
+        if (typeof result === 'string') return result.trim();
+        if (result && typeof result === 'object' && !Array.isArray(result)) {
+            return typeof result.statusTaskId === 'string' ? result.statusTaskId.trim() : '';
+        }
+        return '';
+    }, []);
+
     /* ── Open annotation popover ─────────────────────────────────── */
-    const openPopover = useCallback((elementId: string, annotation: string, screenX: number, screenY: number) => {
+    const openPopover = useCallback((
+        elementId: string,
+        annotation: string,
+        screenX: number,
+        screenY: number,
+        annotationTaskRef: CanvasDirectRunAnnotationTaskRef | null = null,
+    ) => {
         const containerRect = containerRef.current?.getBoundingClientRect();
         if (!containerRect) return;
 
         setPopoverElementId(elementId);
         setPopoverText(annotation);
+        setPopoverTaskRef(annotationTaskRef);
+        setPopoverExecutionTaskId(annotationTaskRef?.statusTaskId || null);
+        popoverExecutionTaskSnapshotRef.current = '';
+        const popoverOffsetX = annotationTaskRef ? TASK_POPOVER_OFFSET_X : 0;
+        const popoverOffsetY = annotationTaskRef ? TASK_POPOVER_OFFSET_Y : 4;
         setPopoverPosition({
-            left: screenX - containerRect.left,
-            top: screenY - containerRect.top + 4,
+            left: screenX - containerRect.left + popoverOffsetX,
+            top: screenY - containerRect.top + popoverOffsetY,
         });
 
         // Focus textarea after render – double RAF ensures React has committed the DOM
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
-                textareaRef.current?.focus();
+                if (!annotationTaskRef) textareaRef.current?.focus();
             });
         });
     }, [containerRef]);
 
     /* ── Save and close popover ───────────────────────────────────── */
     const saveAndClosePopover = useCallback(() => {
-        if (popoverElementId) {
+        if (popoverElementId && !popoverTaskRef) {
             setAnnotation(popoverElementId, popoverText);
         }
         setPopoverElementId(null);
         setPopoverText('');
-    }, [popoverElementId, popoverText, setAnnotation]);
+        setPopoverTaskRef(null);
+        setPopoverExecutionTaskId(null);
+        popoverExecutionTaskSnapshotRef.current = '';
+    }, [popoverElementId, popoverTaskRef, popoverText, setAnnotation]);
 
     const deleteAnnotationAndClose = useCallback(() => {
-        if (popoverElementId) {
+        if (popoverElementId && !popoverTaskRef) {
             setAnnotation(popoverElementId, '');
         }
         setPopoverElementId(null);
         setPopoverText('');
-    }, [popoverElementId, setAnnotation]);
+        setPopoverTaskRef(null);
+        setPopoverExecutionTaskId(null);
+        popoverExecutionTaskSnapshotRef.current = '';
+    }, [popoverElementId, popoverTaskRef, setAnnotation]);
+
+    const handleExecuteAnnotationPrompt = useCallback(async () => {
+        if (!popoverElementId || popoverTaskRef || !onExecuteAnnotationPrompt) return;
+        const trimmedPrompt = popoverText.trim();
+        if (!trimmedPrompt) return;
+        setAnnotation(popoverElementId, trimmedPrompt);
+        const info = getElementInfoWithAnnotation(popoverElementId, trimmedPrompt);
+        if (!info) return;
+        setPopoverExecutionTaskId(PENDING_ANNOTATION_TASK_ID);
+        popoverExecutionTaskSnapshotRef.current = '';
+        try {
+            const executionResult = await onExecuteAnnotationPrompt(info, trimmedPrompt);
+            const statusTaskId = resolveExecutionTaskId(executionResult);
+            setPopoverExecutionTaskId(statusTaskId || null);
+            if (!statusTaskId) {
+                setPopoverTaskRef(null);
+            }
+        } catch {
+            setPopoverExecutionTaskId(null);
+            setPopoverTaskRef(null);
+        }
+    }, [
+        getElementInfoWithAnnotation,
+        onExecuteAnnotationPrompt,
+        popoverElementId,
+        popoverTaskRef,
+        popoverText,
+        resolveExecutionTaskId,
+        setAnnotation,
+    ]);
 
     /* ── Handle badge click → open popover ────────────────────────── */
     const handleBadgeClick = useCallback((e: React.MouseEvent, badge: AnnotatedBadgeInfo) => {
         e.stopPropagation();
         e.preventDefault();
-        openPopover(badge.elementId, badge.annotation, badge.screenRight, badge.screenTop);
+        openPopover(badge.elementId, badge.annotation, badge.screenRight, badge.screenTop, badge.annotationTaskRef || null);
     }, [openPopover]);
 
 
@@ -544,6 +757,7 @@ export default function AnnotationOverlay({
 
                 if (element) {
                     const annotation = element.customData?.annotation || '';
+                    const annotationTaskRef = getCanvasDirectRunAnnotationTaskRef(element);
 
                     // Create "添加标注" / "编辑标注" item
                     const addLi = document.createElement('li');
@@ -553,7 +767,7 @@ export default function AnnotationOverlay({
                     addBtn.type = 'button';
                     const addLabel = document.createElement('span');
                     addLabel.className = 'context-menu-item__label';
-                    addLabel.textContent = annotation ? '编辑批注' : '添加批注';
+                    addLabel.textContent = annotationTaskRef ? '查看批注' : annotation ? '编辑批注' : '添加批注';
                     const addShortcut = document.createElement('kbd');
                     addShortcut.className = 'context-menu-item__shortcut';
                     addShortcut.textContent = '⌘⇧M';
@@ -569,14 +783,14 @@ export default function AnnotationOverlay({
                         const screenX = containerRect.left + (element.x + (element.width || 0) + appState2.scrollX) * zoom;
                         const screenY = containerRect.top + (element.y + appState2.scrollY) * zoom;
                         requestAnimationFrame(() => {
-                            openPopover(elementId, annotation, screenX, screenY);
+                            openPopover(elementId, annotation, screenX, screenY, annotationTaskRef);
                         });
                     });
 
                     topItems.push(addLi);
 
                     // Add "删除批注" item after the add item if annotation exists
-                    if (annotation) {
+                    if (annotation && !annotationTaskRef) {
                         const delLi = document.createElement('li');
                         delLi.setAttribute('data-axhub-annotation-item', 'delete');
                         const delBtn = document.createElement('button');
@@ -708,78 +922,6 @@ export default function AnnotationOverlay({
                         }
                     });
                     topItems.push(imageLi);
-                }
-                if (onAddImageToAI && imageContextMenuState.showImageQuickActions && imageContextMenuState.quickPrompts.length > 0) {
-                    const wrapperLi = document.createElement('li');
-                    wrapperLi.setAttribute('data-axhub-annotation-item', 'image-quick-actions');
-                    wrapperLi.className = 'axhub-ctx-submenu-wrapper';
-
-                    const triggerBtn = document.createElement('button');
-                    triggerBtn.type = 'button';
-                    triggerBtn.className = 'axhub-ctx-submenu-trigger';
-                    const triggerLabel = document.createElement('span');
-                    triggerLabel.className = 'context-menu-item__label';
-                    triggerLabel.textContent = 'AI快捷操作';
-                    const triggerChevron = document.createElement('span');
-                    triggerChevron.className = 'axhub-ctx-submenu-chevron';
-                    triggerChevron.textContent = '›';
-                    triggerBtn.appendChild(triggerLabel);
-                    triggerBtn.appendChild(triggerChevron);
-
-                    const flyout = document.createElement('div');
-                    flyout.className = 'axhub-ctx-submenu-flyout';
-                    for (const quickPrompt of imageContextMenuState.quickPrompts) {
-                        const quickLi = document.createElement('li');
-                        quickLi.setAttribute('data-axhub-annotation-item', `image-quick-action-${quickPrompt.id}`);
-                        const quickBtn = document.createElement('button');
-                        quickBtn.className = 'context-menu-item';
-                        quickBtn.type = 'button';
-                        const quickLabel = document.createElement('span');
-                        quickLabel.className = 'context-menu-item__label';
-                        quickLabel.textContent = quickPrompt.label;
-                        quickBtn.appendChild(quickLabel);
-                        quickLi.appendChild(quickBtn);
-                        quickBtn.addEventListener('click', (event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-                            const infos = collectSelectedElementInfos();
-                            if (infos.length > 0) {
-                                void onAddImageToAI(infos, quickPrompt.prompt);
-                            }
-                        });
-                        flyout.appendChild(quickLi);
-                    }
-
-                    const openSubmenu = () => {
-                        flyout.classList.add('axhub-ctx-submenu-expanded');
-                        requestAnimationFrame(() => {
-                            applyContextSubmenuFlyoutLayout({
-                                triggerEl: triggerBtn,
-                                flyoutEl: flyout,
-                            });
-                        });
-                    };
-                    const closeSubmenu = () => {
-                        flyout.classList.remove('axhub-ctx-submenu-expanded');
-                    };
-                    const toggleSubmenu = () => {
-                        if (flyout.classList.contains('axhub-ctx-submenu-expanded')) {
-                            closeSubmenu();
-                            return;
-                        }
-                        openSubmenu();
-                    };
-                    wrapperLi.addEventListener('mouseenter', openSubmenu);
-                    wrapperLi.addEventListener('mouseleave', closeSubmenu);
-                    triggerBtn.addEventListener('click', (event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggleSubmenu();
-                    });
-                    wrapperLi.appendChild(triggerBtn);
-                    wrapperLi.appendChild(flyout);
-                    topItems.push(wrapperLi);
                 }
             }
 
@@ -982,13 +1124,14 @@ export default function AnnotationOverlay({
                 e.preventDefault();
                 e.stopPropagation();
                 if (!selectedInfo) return;
-                openPopover(
-                    selectedInfo.elementId,
-                    selectedInfo.annotation,
-                    selectedInfo.screenX + selectedInfo.screenWidth,
-                    selectedInfo.screenY,
-                );
-                return;
+                 openPopover(
+                     selectedInfo.elementId,
+                     selectedInfo.annotation,
+                     selectedInfo.screenX + selectedInfo.screenWidth,
+                     selectedInfo.screenY,
+                     selectedInfo.annotationTaskRef || null,
+                 );
+                 return;
             }
 
             // ⌘+Shift+Enter → add selected nodes to AI context
@@ -1023,6 +1166,7 @@ export default function AnnotationOverlay({
                 selectedInfo.annotation,
                 selectedInfo.screenX + selectedInfo.screenWidth,
                 selectedInfo.screenY,
+                selectedInfo.annotationTaskRef || null,
             );
         };
         document.addEventListener('axhub:openAnnotationPopover', handler);
@@ -1031,13 +1175,44 @@ export default function AnnotationOverlay({
 
     /* ── Render ──────────────────────────────────────────────────── */
     const containerRect = containerRef.current?.getBoundingClientRect();
+    const taskPopoverRunning = popoverTaskRef?.status === 'running' || Boolean(popoverExecutionTaskId && !popoverTaskRef);
+    const taskPopoverFailed = popoverTaskRef?.status === 'failed';
+    const taskPopoverAborted = popoverTaskRef?.status === 'aborted';
+    const activePopoverTaskId = popoverTaskRef?.statusTaskId
+        || (popoverExecutionTaskId && popoverExecutionTaskId !== PENDING_ANNOTATION_TASK_ID ? popoverExecutionTaskId : '');
+    const executeButtonLabel = taskPopoverRunning ? '执行中' : taskPopoverFailed ? '执行失败' : taskPopoverAborted ? '已终止' : '执行';
+    const showExecuteButtonText = taskPopoverRunning || taskPopoverFailed || taskPopoverAborted;
+    const executeButtonDisabled = taskPopoverRunning
+        || Boolean(popoverTaskRef)
+        || !popoverText.trim()
+        || !onExecuteAnnotationPrompt;
+    const handleStopPopoverTask = useCallback(() => {
+        if (!activePopoverTaskId) return;
+        if (popoverTaskRef) {
+            onStopAnnotationTask?.(popoverTaskRef.statusTaskId);
+            return;
+        }
+        onStopAnnotationTask?.(activePopoverTaskId);
+    }, [activePopoverTaskId, onStopAnnotationTask, popoverTaskRef]);
 
     return (
         <>
+            <style>
+                {`
+                    @keyframes axhubAnnotationSpin {
+                        to { transform: rotate(360deg); }
+                    }
+                    .axhub-annotation-popover-textarea::-webkit-scrollbar {
+                        display: none;
+                    }
+                `}
+            </style>
             {/* ── Annotation badges on annotated elements ── */}
             {containerRect && badges.map((badge) => {
-                const left = badge.screenRight - containerRect.left + BADGE_OFFSET_X;
-                const top = badge.screenTop - containerRect.top + BADGE_OFFSET_Y;
+                const badgeOffsetX = badge.annotationTaskRef ? TASK_BADGE_OFFSET_X : BADGE_OFFSET_X;
+                const badgeOffsetY = badge.annotationTaskRef ? TASK_BADGE_OFFSET_Y : BADGE_OFFSET_Y;
+                const left = badge.screenRight - containerRect.left + badgeOffsetX;
+                const top = badge.screenTop - containerRect.top + badgeOffsetY;
 
                 return (
                     <div
@@ -1046,25 +1221,14 @@ export default function AnnotationOverlay({
                             ...badgeStyle,
                             left,
                             top: Math.max(0, top),
-                            transform: hoveredBadgeId === badge.elementId ? 'scale(1.15)' : 'scale(1)',
                         }}
                         onClick={(e) => handleBadgeClick(e, badge)}
-                        onMouseEnter={() => setHoveredBadgeId(badge.elementId)}
-                        onMouseLeave={() => setHoveredBadgeId(null)}
                         onMouseDown={(e) => e.stopPropagation()}
                         onPointerDown={(e) => e.stopPropagation()}
-                        title="点击编辑批注"
+                        role="button"
+                        aria-label="编辑批注"
                     >
-                        <StickyNote style={badgeIconStyle} />
-
-                        {/* Tooltip on hover */}
-                        {hoveredBadgeId === badge.elementId && (
-                            <div style={tooltipStyle}>
-                                {badge.annotation.length > 120
-                                    ? badge.annotation.slice(0, 120) + '…'
-                                    : badge.annotation}
-                            </div>
-                        )}
+                        <Sparkles style={badgeIconStyle} />
                     </div>
                 );
             })}
@@ -1088,45 +1252,77 @@ export default function AnnotationOverlay({
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        marginBottom: 8,
                     }}>
-                        <span style={{
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: '#1e293b',
+                        <AnnotationTooltipButton
+                            tooltip={executeButtonLabel}
+                            onClick={() => void handleExecuteAnnotationPrompt()}
+                            disabled={executeButtonDisabled}
+                            style={{
+                                ...executeButtonStyle,
+                                ...(showExecuteButtonText ? { width: 'auto', padding: 0 } : {}),
+                                ...(executeButtonDisabled ? {
+                                    opacity: taskPopoverRunning || popoverTaskRef ? 0.72 : 0.4,
+                                    cursor: 'default',
+                                } : {}),
+                                ...(taskPopoverFailed ? { color: '#dc2626' } : {}),
+                                ...(taskPopoverAborted ? { color: '#64748b' } : {}),
+                            }}
+                        >
+                            {taskPopoverRunning ? (
+                                <Loader2 style={spinnerIconStyle} />
+                            ) : taskPopoverFailed || taskPopoverAborted ? (
+                                <Sparkles style={actionIconStyle} />
+                            ) : (
+                                <Play style={actionIconStyle} />
+                            )}
+                            {showExecuteButtonText ? executeButtonLabel : null}
+                        </AnnotationTooltipButton>
+                        <div style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: 4,
+                            gap: 2,
                         }}>
-                            <StickyNote style={{ width: 13, height: 13, color: '#008f5d' }} />
-                            批注
-                        </span>
-                        <button
-                            type="button"
-                            onClick={saveAndClosePopover}
-                            style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                width: 20,
-                                height: 20,
-                                border: 'none',
-                                borderRadius: 4,
-                                background: 'transparent',
-                                color: '#94a3b8',
-                                cursor: 'pointer',
-                                padding: 0,
-                            }}
-                            title="关闭"
-                        >
-                            <X style={{ width: 13, height: 13 }} />
-                        </button>
+                            {taskPopoverRunning && activePopoverTaskId ? (
+                                <AnnotationTooltipButton
+                                    tooltip="终止执行"
+                                    onClick={handleStopPopoverTask}
+                                    style={{
+                                        ...iconButtonStyle,
+                                        color: '#dc2626',
+                                    }}
+                                >
+                                    <CircleStop style={{ width: 16, height: 16 }} />
+                                </AnnotationTooltipButton>
+                            ) : null}
+                            {popoverText.trim() ? (
+                                <AnnotationTooltipButton
+                                    tooltip="清空批注"
+                                    onClick={deleteAnnotationAndClose}
+                                    disabled={taskPopoverRunning || Boolean(popoverTaskRef)}
+                                    style={taskPopoverRunning || Boolean(popoverTaskRef)
+                                        ? disabledIconButtonStyle
+                                        : iconButtonStyle}
+                                >
+                                    <Trash2 style={{ width: 16, height: 16 }} />
+                                </AnnotationTooltipButton>
+                            ) : null}
+                            <AnnotationTooltipButton
+                                tooltip="关闭并保存"
+                                onClick={saveAndClosePopover}
+                                style={iconButtonStyle}
+                            >
+                                <X style={{ width: 16, height: 16 }} />
+                            </AnnotationTooltipButton>
+                        </div>
                     </div>
 
                     {/* Textarea */}
                     <textarea
+                        className="axhub-annotation-popover-textarea"
                         ref={textareaRef}
                         value={popoverText}
+                        readOnly={Boolean(popoverTaskRef)}
+                        disabled={taskPopoverRunning && !popoverTaskRef}
                         onChange={(e) => setPopoverText(e.target.value)}
                         onKeyDown={(e) => {
                             if (e.key === 'Escape') {
@@ -1136,55 +1332,23 @@ export default function AnnotationOverlay({
                             // Prevent Excalidraw from handling keyboard events
                             e.stopPropagation();
                         }}
-                        placeholder="输入批注内容..."
-                        style={textareaStyle}
+                        placeholder="输入给 AI 的需求"
+                        style={{
+                            ...textareaStyle,
+                            ...(popoverTaskRef || taskPopoverRunning ? {
+                                background: '#f8fafc',
+                                color: '#334155',
+                                cursor: 'default',
+                            } : {}),
+                        }}
                         onFocus={(e) => {
-                            (e.target as HTMLTextAreaElement).style.borderColor = '#008f5d';
+                            if (popoverTaskRef || taskPopoverRunning) return;
+                            (e.target as HTMLTextAreaElement).style.borderColor = '#94a3b8';
                         }}
                         onBlur={(e) => {
-                            (e.target as HTMLTextAreaElement).style.borderColor = '#e2e8f0';
+                            (e.target as HTMLTextAreaElement).style.borderColor = '#d1d5db';
                         }}
                     />
-
-                    {/* Actions */}
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        marginTop: 8,
-                    }}>
-                        {/* Delete button (only if annotation exists) */}
-                        {popoverText.trim() ? (
-                            <button
-                                type="button"
-                                onClick={deleteAnnotationAndClose}
-                                style={{
-                                    ...btnBase,
-                                    background: 'transparent',
-                                    color: '#ef4444',
-                                }}
-                                title="删除批注"
-                            >
-                                <Trash2 style={{ width: 12, height: 12 }} />
-                                删除
-                            </button>
-                        ) : (
-                            <div />
-                        )}
-
-                        {/* Save button */}
-                        <button
-                            type="button"
-                            onClick={saveAndClosePopover}
-                            style={{
-                                ...btnBase,
-                                background: '#008f5d',
-                                color: '#fff',
-                            }}
-                        >
-                            保存
-                        </button>
-                    </div>
                 </div>
             )}
         </>
@@ -1203,6 +1367,7 @@ export function useClearAllAnnotations(excalidrawAPI: any) {
             const newCustomData = { ...el.customData };
             delete newCustomData.annotation;
             delete newCustomData.annotationUpdatedAt;
+            delete newCustomData.annotationTaskRef;
             return {
                 ...el,
                 customData: newCustomData,

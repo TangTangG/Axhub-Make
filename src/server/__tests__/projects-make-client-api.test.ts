@@ -82,8 +82,13 @@ import { runLocalCommand } from '../localCommand.ts';
 const runLocalCommandMock = vi.mocked(runLocalCommand);
 
 const DEFAULT_TEMPLATE_VERSION = DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION;
+const ONLINE_TEMPLATE_VERSION = '0.9.0';
+const TEMPLATE_MANIFEST_URL = 'https://github.com/lintendo/Axhub-Make/releases/latest/download/axhub-make-client-template.latest.json';
+const TEMPLATE_MANIFEST_MIRROR_URL = 'https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-latest/axhub-make-client-template.latest.json';
 const TEMPLATE_ZIP_URL = `https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v${DEFAULT_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
 const TEMPLATE_MIRROR_ZIP_URL = `https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v${DEFAULT_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
+const ONLINE_TEMPLATE_ZIP_URL = `https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v${ONLINE_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
+const ONLINE_TEMPLATE_MIRROR_ZIP_URL = `https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v${ONLINE_TEMPLATE_VERSION}/axhub-make-client-template.zip`;
 const TEMPLATE_MIRROR_SOURCE_URL = 'https://gitee.com/axhub/Axhub-Make/tree/main/client';
 const TEMPLATE_CACHE_ROOT = path.join(os.tmpdir(), 'axhub-make', 'make-client-template-cache');
 
@@ -108,6 +113,14 @@ function localCommandResult(command: string, args: string[]) {
 beforeEach(() => {
   vi.unstubAllEnvs();
   fs.rmSync(TEMPLATE_CACHE_ROOT, { recursive: true, force: true });
+  const originalFetch = globalThis.fetch;
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === TEMPLATE_MANIFEST_URL || url === TEMPLATE_MANIFEST_MIRROR_URL) {
+      return new Response('Template manifest unavailable in default tests', { status: 503 });
+    }
+    return originalFetch(input, init);
+  });
   runLocalCommandMock.mockReset();
   runLocalCommandMock.mockImplementation(async (command: string, args: string[], commandOptions: any) => {
     if ((command === 'pnpm' || command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
@@ -287,9 +300,9 @@ function writeStaleMakeClientRuntimePlugins(projectRoot: string) {
     '',
   ].join('\n'), 'utf8');
   fs.writeFileSync(path.join(projectRoot, 'vite-plugins', 'canvasHotUpdateFilter.ts'), [
-    'const CANVAS_ASSETS_SEGMENT = "/canvas-assets/";',
+    'const STALE_FILTER_SEGMENT = "/stale/";',
     'export function isCanvasHotUpdateFile(filePath: string): boolean {',
-    '  return filePath.endsWith(".excalidraw") || filePath.includes(CANVAS_ASSETS_SEGMENT);',
+    '  return filePath.includes(STALE_FILTER_SEGMENT);',
     '}',
     '',
   ].join('\n'), 'utf8');
@@ -312,9 +325,34 @@ function createMakeClientTemplateZip(options: { unsafeEntry?: string } = {}) {
   return fs.readFileSync(zipPath);
 }
 
+function createOnlineTemplateManifest(version = ONLINE_TEMPLATE_VERSION) {
+  return {
+    schemaVersion: 1,
+    version,
+    releaseNotes: `# Axhub Make Client ${version}\n\n- 来自线上 manifest 的更新说明。`,
+    publishedAt: '2026-07-09T00:00:00.000Z',
+    sources: [
+      {
+        id: 'github',
+        url: `https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v${version}/axhub-make-client-template.zip`,
+        markerRepository: TEMPLATE_SOURCE_URL,
+        templateVersion: version,
+      },
+      {
+        id: 'gitee',
+        url: `https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v${version}/axhub-make-client-template.zip`,
+        markerRepository: TEMPLATE_MIRROR_SOURCE_URL,
+        templateVersion: version,
+      },
+    ],
+  };
+}
+
 function installRemoteTemplateFetchMock(options: {
   failPrimary?: boolean;
   failMirror?: boolean;
+  manifest?: Record<string, unknown>;
+  failManifest?: boolean;
   unsafePrimaryZipEntry?: string;
   customTemplateUrl?: string;
 } = {}) {
@@ -325,16 +363,24 @@ function installRemoteTemplateFetchMock(options: {
   const originalFetch = globalThis.fetch;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url === TEMPLATE_MANIFEST_URL || url === TEMPLATE_MANIFEST_MIRROR_URL) {
+      if (options.failManifest || !options.manifest) {
+        return new Response('Template manifest unavailable', { status: 503 });
+      }
+      return new Response(JSON.stringify(options.manifest), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (options.customTemplateUrl && url === options.customTemplateUrl) {
       return new Response(primaryZip, { headers: { 'Content-Type': 'application/zip' } });
     }
-    if (url === TEMPLATE_ZIP_URL) {
+    if (url === TEMPLATE_ZIP_URL || url === ONLINE_TEMPLATE_ZIP_URL) {
       if (options.failPrimary) {
         return new Response('Primary template zip unavailable', { status: 503 });
       }
       return new Response(primaryZip, { headers: { 'Content-Type': 'application/zip' } });
     }
-    if (url === TEMPLATE_MIRROR_ZIP_URL) {
+    if (url === TEMPLATE_MIRROR_ZIP_URL || url === ONLINE_TEMPLATE_MIRROR_ZIP_URL) {
       if (options.failMirror) {
         return new Response('Mirror template zip unavailable', { status: 503 });
       }
@@ -2717,9 +2763,11 @@ describe('make-server make client project APIs', () => {
     const parentRoot = createTempRoot('axhub-make-clone-parent-');
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
     const gitUrl = 'https://github.com/example/full-client.git';
+    let cloneCommandOptions: any = null;
     runLocalCommandMock.mockImplementation(async (command: string, args: string[], commandOptions: any) => {
       if (command === 'git' && args[0] === 'clone') {
         const targetRoot = String(args[2] || '');
+        cloneCommandOptions = commandOptions;
         expect(args).toEqual(['clone', gitUrl, path.join(parentRoot, 'cloned-client')]);
         expect(commandOptions?.cwd).toBe(parentRoot);
         fs.mkdirSync(targetRoot, { recursive: true });
@@ -2804,8 +2852,18 @@ describe('make-server make client project APIs', () => {
         ['clone', gitUrl, targetRoot],
         expect.objectContaining({
           cwd: parentRoot,
+          timeoutMs: 60_000,
+          env: expect.objectContaining({
+            GIT_TERMINAL_PROMPT: '0',
+            GCM_INTERACTIVE: 'never',
+          }),
         }),
       );
+      expect(cloneCommandOptions?.timeoutMs).toBe(60_000);
+      expect(cloneCommandOptions?.env).toMatchObject({
+        GIT_TERMINAL_PROMPT: '0',
+        GCM_INTERACTIVE: 'never',
+      });
       expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         'git',
         expect.arrayContaining(['--depth']),
@@ -3946,7 +4004,96 @@ describe('make-server make client project APIs', () => {
     }
   });
 
-  it('reports make client update status with version and zip backup policy only', async () => {
+  it('reports online make client update metadata from the latest manifest', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-online-update-status-');
+    writeMakeClientMarker(projectRoot, 'online-update-status-client', 'Online Update Status Client');
+    writeMakeClientPackage(projectRoot, '0.1.0');
+    writeMakeClientMetadata(projectRoot, 'online-update-status-client', 'Online Update Status Client');
+    installRemoteTemplateFetchMock({ manifest: createOnlineTemplateManifest() });
+    installMakeClientUpdateCommandMock();
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const statusResponse = await fetch(`${server.origin}/api/projects/online-update-status-client/make-client/update/status`);
+      const statusBody = await statusResponse.json();
+
+      expect(statusResponse.status).toBe(200);
+      expect(statusBody).toMatchObject({
+        projectId: 'online-update-status-client',
+        currentVersion: '0.1.0',
+        targetVersion: ONLINE_TEMPLATE_VERSION,
+        releaseNotes: expect.stringContaining('来自线上 manifest 的更新说明'),
+        metadataSource: 'online',
+        updateAvailable: true,
+        canApply: true,
+        template: {
+          version: ONLINE_TEMPLATE_VERSION,
+          sources: [
+            expect.objectContaining({ url: ONLINE_TEMPLATE_ZIP_URL, templateVersion: ONLINE_TEMPLATE_VERSION }),
+            expect.objectContaining({ url: ONLINE_TEMPLATE_MIRROR_ZIP_URL, templateVersion: ONLINE_TEMPLATE_VERSION }),
+          ],
+        },
+      });
+      expect(statusBody).not.toHaveProperty('metadataError');
+      expect(statusBody.blockedReasons).toEqual([]);
+      expect(globalThis.fetch).toHaveBeenCalledWith(TEMPLATE_MANIFEST_URL, expect.any(Object));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not offer an update when the project already matches the online manifest version', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-online-current-status-');
+    writeMakeClientMarker(projectRoot, 'online-current-status-client', 'Online Current Status Client', ONLINE_TEMPLATE_VERSION);
+    writeMakeClientPackage(projectRoot, ONLINE_TEMPLATE_VERSION);
+    writeMakeClientMetadata(projectRoot, 'online-current-status-client', 'Online Current Status Client');
+    installRemoteTemplateFetchMock({ manifest: createOnlineTemplateManifest() });
+    installMakeClientUpdateCommandMock();
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const statusResponse = await fetch(`${server.origin}/api/projects/online-current-status-client/make-client/update/status`);
+      const statusBody = await statusResponse.json();
+
+      expect(statusResponse.status).toBe(200);
+      expect(statusBody).toMatchObject({
+        currentVersion: ONLINE_TEMPLATE_VERSION,
+        targetVersion: ONLINE_TEMPLATE_VERSION,
+        metadataSource: 'online',
+        updateAvailable: false,
+        canApply: false,
+      });
+      expect(statusBody.blockedReasons).toEqual([
+        { code: 'NO_UPDATE_AVAILABLE', message: '当前客户端模板已是最新版本' },
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reports bundled make client update status when the latest manifest is unavailable', async () => {
     const defaultRoot = createTempRoot();
     writeProjectMetadata(defaultRoot, {
       project: { id: 'default-client', name: 'Default Client' },
@@ -3976,6 +4123,8 @@ describe('make-server make client project APIs', () => {
         currentVersion: '0.1.0',
         targetVersion: DEFAULT_TEMPLATE_VERSION,
         releaseNotes: expect.stringContaining(DEFAULT_TEMPLATE_VERSION),
+        metadataSource: 'bundled',
+        metadataError: expect.stringContaining('HTTP 503'),
         updateAvailable: true,
         canApply: true,
         backupPolicy: 'zip-before-overwrite',
@@ -4137,6 +4286,68 @@ describe('make-server make client project APIs', () => {
         targetVersion: DEFAULT_TEMPLATE_VERSION,
         restoreAvailable: true,
         zipAvailable: true,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('applies make client updates from the online latest manifest source', async () => {
+    const defaultRoot = createTempRoot();
+    writeProjectMetadata(defaultRoot, {
+      project: { id: 'default-client', name: 'Default Client' },
+    });
+    const projectRoot = createTempRoot('axhub-make-client-online-apply-');
+    writeMakeClientMarker(projectRoot, 'update-online-apply-client', 'Update Online Apply Client', '0.1.0');
+    writeMakeClientPackage(projectRoot, '0.1.0');
+    writeMakeClientMetadata(projectRoot, 'update-online-apply-client', 'Update Online Apply Client');
+    fs.mkdirSync(path.join(projectRoot, 'src', 'prototypes', 'beginner-guide'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src', 'prototypes', 'beginner-guide', 'index.tsx'), 'old official\n', 'utf8');
+    installRemoteTemplateFetchMock({ manifest: createOnlineTemplateManifest() });
+    runLocalCommandMock.mockImplementation(async (command: string, args: string[], commandOptions: any) => {
+      const cwd = String(commandOptions?.cwd || '');
+      if (command === 'git') {
+        const error = new Error('git command not found') as Error & { stderr?: string };
+        error.stderr = 'git command not found';
+        throw error;
+      }
+      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'install') {
+        writeInstalledMakeClientDependencies(cwd);
+      }
+      if ((command === 'npm' || command === 'npm.cmd') && args[0] === 'run' && args[1] === 'metadata:sync') {
+        writeMakeClientMetadata(cwd, 'update-online-apply-client', 'Update Online Apply Client');
+      }
+      return localCommandResult(command, args);
+    });
+    const server = await startTestServer(defaultRoot);
+
+    try {
+      const registerResponse = await fetch(`${server.origin}/api/projects/make/register-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: projectRoot }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      const applyResponse = await fetch(`${server.origin}/api/projects/update-online-apply-client/make-client/update/apply`, {
+        method: 'POST',
+      });
+      const applyBody = await applyResponse.json();
+
+      expect(applyResponse.status).toBe(200);
+      expect(applyBody).toMatchObject({
+        success: true,
+        currentVersion: '0.1.0',
+        targetVersion: ONLINE_TEMPLATE_VERSION,
+        templateUrl: ONLINE_TEMPLATE_ZIP_URL,
+        backupRecord: expect.objectContaining({
+          currentVersion: '0.1.0',
+          targetVersion: ONLINE_TEMPLATE_VERSION,
+        }),
+      });
+      expect(JSON.parse(fs.readFileSync(getMakeClientMarkerPath(projectRoot), 'utf8'))).toMatchObject({
+        templateUrl: ONLINE_TEMPLATE_ZIP_URL,
+        templateVersion: ONLINE_TEMPLATE_VERSION,
       });
     } finally {
       await server.close();

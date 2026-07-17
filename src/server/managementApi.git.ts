@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execa } from 'execa';
 
 import { isPathInside, resolveProjectPath } from './projectCore/index.ts';
 import { getConfigPath } from './projectCore/paths.ts';
 
 import { readJsonBody, sendFile, sendJson } from './http.ts';
-import { runLocalCommand } from './localCommand.ts';
+import { buildLocalCommandEnv, runLocalCommand } from './localCommand.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 
 interface GitProjectContext {
@@ -83,6 +84,7 @@ interface WorkspaceVersionCommit {
   hash: string;
   shortHash: string;
   message: string;
+  fullMessage?: string;
   author: string;
   email: string;
   timestamp: number;
@@ -99,6 +101,7 @@ const WORKSPACE_CHANGE_GROUP_ORDER: Array<{ key: WorkspaceChangeGroupKey; label:
 ];
 
 const DEFAULT_REMOTE_NAME = 'origin';
+const GIT_COMMIT_LIST_FORMAT = '%H%x1f%an%x1f%ae%x1f%at%x1f%B%x1e';
 
 function resourceSourcePathForGit(resource: any): string {
   const candidate = String(resource?.absoluteFilePath || resource?.filePath || resource?.path || '').trim();
@@ -198,6 +201,16 @@ function resolveGitVersionFilePath(projectRoot: string, versionId: string, reque
   return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0] || null;
 }
 
+function decodeGitVersionUrlPathParts(value: string): string[] {
+  return value.split('/').filter(Boolean).map((part) => {
+    try {
+      return decodeURIComponent(part);
+    } catch {
+      return part;
+    }
+  });
+}
+
 function parseGitPorcelainStatus(stdout: string) {
   return stdout.split('\n').filter(Boolean).map((line) => {
     const match = line.match(/^(.{1,2})\s+(.+)$/u);
@@ -244,6 +257,29 @@ function parseWorkspaceVersionCommit(stdout: string): WorkspaceVersionCommit | n
     date: Number.isFinite(ms) ? new Date(ms).toISOString() : '',
     message: messageParts.join('|').trim(),
   };
+}
+
+function parseWorkspaceVersionCommitList(stdout: string): WorkspaceVersionCommit[] {
+  return stdout.split('\x1e').map((record) => {
+    const trimmedRecord = record.trim();
+    if (!trimmedRecord) return null;
+    const [hash = '', author = '', email = '', timestamp = '', fullMessage = ''] = trimmedRecord.split('\x1f');
+    const normalizedHash = hash.trim();
+    if (!normalizedHash) return null;
+    const ms = Number(timestamp) * 1000;
+    const normalizedFullMessage = fullMessage.trim();
+    const message = normalizedFullMessage.split('\n').find((line) => line.trim())?.trim() || normalizedHash.slice(0, 7);
+    return {
+      hash: normalizedHash,
+      shortHash: normalizedHash.slice(0, 7),
+      author: author.trim(),
+      email: email.trim(),
+      timestamp: Number.isFinite(ms) ? ms : 0,
+      date: Number.isFinite(ms) ? new Date(ms).toISOString() : '',
+      message,
+      fullMessage: normalizedFullMessage || message,
+    };
+  }).filter(Boolean) as WorkspaceVersionCommit[];
 }
 
 function normalizeGitVersionRef(value: unknown): string {
@@ -377,11 +413,11 @@ function classifyWorkspaceChangedFile(metadata: GitProjectContext['metadata'], c
     };
   }
 
-  const resourceMarker = getWorkspaceMarkerForFile(filePath, ['src/resources', 'resources', 'src/database']);
+  const resourceMarker = getWorkspaceMarkerForFile(filePath, ['src/resources', 'resources']);
   if (resourceMarker) {
     const fallback = getPathSegmentName(
       filePath,
-      resourceMarker ? `${resourceMarker}/` : 'src/database/',
+      `${resourceMarker}/`,
     );
     return {
       key: 'resources',
@@ -458,6 +494,20 @@ function createWorkspaceChangeSummary(
   };
 }
 
+function filterWorkspaceChangedFilesByScope(
+  changedFiles: WorkspaceChangedFile[],
+  scopePath?: string,
+): WorkspaceChangedFile[] {
+  const normalizedScopePath = normalizeSlashPath(scopePath);
+  if (!normalizedScopePath) {
+    return changedFiles;
+  }
+  return changedFiles.filter((changedFile) => {
+    const filePath = normalizeSlashPath(changedFile.file);
+    return filePath === normalizedScopePath || filePath.startsWith(`${normalizedScopePath}/`);
+  });
+}
+
 function readWorkspaceGitProjectConfig(projectRoot: string): WorkspaceGitProjectConfig {
   const configPath = getConfigPath(projectRoot);
   if (!fs.existsSync(configPath)) {
@@ -503,6 +553,46 @@ function getConfiguredWorkspaceRemote(projectRoot: string): WorkspaceGitRemoteCo
   };
 }
 
+async function resolveWorkspaceRemote(
+  projectRoot: string,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<WorkspaceGitRemoteConfig> {
+  const configuredRemote = getConfiguredWorkspaceRemote(projectRoot);
+  try {
+    const detectedRemote = await execGit(['remote', 'get-url', DEFAULT_REMOTE_NAME], projectRoot, executor);
+    const detectedUrl = detectedRemote.stdout.trim();
+    if (detectedUrl) {
+      return {
+        ...configuredRemote,
+        url: detectedUrl,
+      };
+    }
+  } catch {
+    // Keep supporting projects whose remote is only recorded in Make metadata.
+  }
+  return configuredRemote;
+}
+
+async function configureWorkspaceRemote(
+  projectRoot: string,
+  remote: WorkspaceGitRemoteConfig,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<WorkspaceGitRemoteConfig> {
+  const remoteUrl = String(remote.url || '').trim();
+  const defaultBranch = String(remote.defaultBranch || '').trim();
+  const existingRemotes = await execGit(['remote'], projectRoot, executor).catch(() => ({ stdout: '', stderr: '' }));
+  if (existingRemotes.stdout.split('\n').map((line) => line.trim()).includes(DEFAULT_REMOTE_NAME)) {
+    await execGit(['remote', 'set-url', DEFAULT_REMOTE_NAME, remoteUrl], projectRoot, executor);
+  } else {
+    await execGit(['remote', 'add', DEFAULT_REMOTE_NAME, remoteUrl], projectRoot, executor);
+  }
+  writeWorkspaceRemoteConfig(projectRoot, { url: remoteUrl, defaultBranch });
+  return {
+    url: remoteUrl,
+    ...(defaultBranch ? { defaultBranch } : {}),
+  };
+}
+
 function encodePreviewPathSegments(value: string): string {
   return value
     .split('/')
@@ -529,6 +619,53 @@ function normalizePreviewResourcePath(value: string): string {
     .replace(/\/+$/u, '');
 }
 
+function buildGitVersionPrototypeUrl(options: {
+  versionId: string;
+  previewResourceName: string;
+  targetPath: string;
+  previewGitPath: string;
+  projectId: string;
+}): string | null {
+  const previewName = options.previewResourceName || options.targetPath;
+  if (!previewName) return null;
+  return appendSearchParams(`/prototypes/${encodePreviewPathSegments(previewName)}`, {
+    projectId: options.projectId,
+    gitVersion: options.versionId,
+    gitPath: normalizePreviewResourcePath(options.previewGitPath),
+  });
+}
+
+function getPrototypeIndexGitPathCandidates(...paths: string[]): string[] {
+  const candidates = new Set<string>();
+  for (const rawPath of paths) {
+    const normalizedPath = normalizePreviewResourcePath(rawPath);
+    if (!normalizedPath) continue;
+    const folderPath = normalizedPath.replace(/\/index\.(t|j)sx?$/iu, '');
+    candidates.add(`${folderPath}/index.tsx`);
+    if (!folderPath.startsWith('src/')) {
+      candidates.add(`src/${folderPath}/index.tsx`);
+    }
+  }
+  return Array.from(candidates);
+}
+
+async function hasPrototypeAtCommit(
+  projectRoot: string,
+  commitHash: string,
+  candidatePaths: string[],
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<boolean> {
+  for (const candidatePath of candidatePaths) {
+    try {
+      await execGit(['cat-file', '-e', `${commitHash}:${candidatePath}`], projectRoot, executor);
+      return true;
+    } catch {
+      // Try the next likely prototype entry path.
+    }
+  }
+  return false;
+}
+
 async function execGit(
   args: string[],
   cwd: string,
@@ -540,7 +677,77 @@ async function execGit(
     }
     return await runLocalCommand('git', args, { cwd, maxBuffer: 1024 * 1024 * 10 });
   } catch (error: any) {
-    throw new Error(String(error?.stderr || error?.message || 'Git command failed').trim());
+    throw new Error(
+      decodeCommandOutput(error?.stderr || error?.message || 'Git command failed').trim(),
+    );
+  }
+}
+
+function decodeCommandOutput(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Buffer.isBuffer(value)) return value.toString('utf8');
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('utf8');
+  return value == null ? '' : String(value);
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return decodeCommandOutput(error).trim() || fallback;
+}
+
+function parseGitNullSeparatedOutput(output: Buffer): string[] {
+  return output.toString('utf8').split('\0').filter(Boolean);
+}
+
+async function execGitBlob(
+  args: string[],
+  cwd: string,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<Buffer> {
+  try {
+    if (executor) {
+      const result = await executor('git', args, { cwd });
+      return Buffer.from(String(result.stdout || ''), 'utf8');
+    }
+    const result = await execa('git', args, {
+      cwd,
+      env: buildLocalCommandEnv(),
+      encoding: 'buffer',
+      maxBuffer: 1024 * 1024 * 10,
+      reject: true,
+    });
+    return Buffer.from(result.stdout as Uint8Array);
+  } catch (error: any) {
+    throw new Error(
+      decodeCommandOutput(error?.stderr || error?.message || 'Git command failed').trim(),
+    );
+  }
+}
+
+async function execGitBinary(
+  args: string[],
+  cwd: string,
+  executor?: GitWorkspaceCommandExecutor,
+): Promise<Buffer> {
+  try {
+    if (executor) {
+      const result = await executor('git', args, { cwd });
+      return Buffer.from(decodeCommandOutput(result.stdout), 'utf8');
+    }
+    const result = await execa('git', args, {
+      cwd,
+      env: buildLocalCommandEnv(),
+      encoding: 'buffer',
+      maxBuffer: 1024 * 1024 * 10,
+      reject: true,
+    });
+    return Buffer.from(result.stdout as Uint8Array);
+  } catch (error: any) {
+    throw new Error(
+      decodeCommandOutput(error?.stderr || error?.message || 'Git command failed').trim(),
+    );
   }
 }
 
@@ -556,7 +763,9 @@ async function execWorkspaceCommand(
     }
     return await runLocalCommand(command, args, { cwd, maxBuffer: 1024 * 1024 * 10 });
   } catch (error: any) {
-    throw new Error(String(error?.stderr || error?.message || `${command} command failed`).trim());
+    throw new Error(
+      decodeCommandOutput(error?.stderr || error?.message || `${command} command failed`).trim(),
+    );
   }
 }
 
@@ -659,12 +868,35 @@ async function getWorkspaceVersionChangedFiles(
   return parseGitNameStatus(changedFiles.stdout);
 }
 
+async function getWorkspaceVersionCommitList(
+  projectRoot: string,
+  range: string,
+  executor?: GitWorkspaceCommandExecutor,
+  scopePath?: string,
+  maxCount?: number,
+): Promise<WorkspaceVersionCommit[]> {
+  try {
+    const args = ['log', `--pretty=format:${GIT_COMMIT_LIST_FORMAT}`, range];
+    if (maxCount && maxCount > 0) {
+      args.splice(1, 0, `--max-count=${maxCount}`);
+    }
+    if (scopePath) {
+      args.push('--', scopePath);
+    }
+    const log = await execGit(args, projectRoot, executor);
+    return parseWorkspaceVersionCommitList(log.stdout);
+  } catch {
+    return [];
+  }
+}
+
 async function getWorkspaceRemoteComparison(
   projectRoot: string,
   metadata: GitProjectContext['metadata'],
   remote: WorkspaceGitRemoteConfig,
   currentBranch: string,
   executor?: GitWorkspaceCommandExecutor,
+  scopePath?: string,
 ) {
   if (!remote.url) {
     return {
@@ -680,12 +912,20 @@ async function getWorkspaceRemoteComparison(
   try {
     await execGit(['rev-parse', '--verify', targetRef], projectRoot, executor);
   } catch {
-    const outgoing = await getWorkspaceHeadFiles(projectRoot, executor);
+    const outgoing = filterWorkspaceChangedFilesByScope(await getWorkspaceHeadFiles(projectRoot, executor), scopePath);
+    const localHead = await getWorkspaceVersionCommit(projectRoot, 'HEAD', executor);
+    const outgoingCommits = await getWorkspaceVersionCommitList(projectRoot, 'HEAD', executor, scopePath);
     return {
       available: true,
       branch,
       targetRef,
       reason: 'remote-branch-missing',
+      localHead,
+      remoteHead: null,
+      aheadCount: outgoingCommits.length,
+      behindCount: 0,
+      incomingCommits: [],
+      outgoingCommits,
       incoming: { totalFiles: 0, groups: [] },
       outgoing: createWorkspaceChangeSummary(metadata, outgoing),
     };
@@ -694,12 +934,26 @@ async function getWorkspaceRemoteComparison(
   try {
     const incoming = await execGit(['diff', '--name-status', 'HEAD..' + targetRef], projectRoot, executor);
     const outgoing = await execGit(['diff', '--name-status', targetRef + '..HEAD'], projectRoot, executor);
+    const incomingFiles = filterWorkspaceChangedFilesByScope(parseGitNameStatus(incoming.stdout), scopePath);
+    const outgoingFiles = filterWorkspaceChangedFilesByScope(parseGitNameStatus(outgoing.stdout), scopePath);
+    const [localHead, remoteHead, incomingCommits, outgoingCommits] = await Promise.all([
+      getWorkspaceVersionCommit(projectRoot, 'HEAD', executor),
+      getWorkspaceVersionCommit(projectRoot, targetRef, executor),
+      getWorkspaceVersionCommitList(projectRoot, 'HEAD..' + targetRef, executor, scopePath),
+      getWorkspaceVersionCommitList(projectRoot, targetRef + '..HEAD', executor, scopePath),
+    ]);
     return {
       available: true,
       branch,
       targetRef,
-      incoming: createWorkspaceChangeSummary(metadata, parseGitNameStatus(incoming.stdout)),
-      outgoing: createWorkspaceChangeSummary(metadata, parseGitNameStatus(outgoing.stdout)),
+      localHead,
+      remoteHead,
+      aheadCount: outgoingCommits.length,
+      behindCount: incomingCommits.length,
+      incomingCommits,
+      outgoingCommits,
+      incoming: createWorkspaceChangeSummary(metadata, incomingFiles),
+      outgoing: createWorkspaceChangeSummary(metadata, outgoingFiles),
     };
   } catch (error: any) {
     return {
@@ -844,7 +1098,7 @@ async function tryCreateRemoteRepository(params: {
     const visibilityFlag = params.visibility === 'public' ? '--public' : '--private';
     await execWorkspaceCommand(
       'gh',
-      ['repo', 'create', `${parsed.owner}/${parsed.repo}`, visibilityFlag, '--confirm'],
+      ['repo', 'create', `${parsed.owner}/${parsed.repo}`, visibilityFlag, '--source=.', '--remote=origin', '--confirm'],
       params.projectRoot,
       params.executor,
     );
@@ -855,7 +1109,7 @@ async function tryCreateRemoteRepository(params: {
     const visibilityFlag = params.visibility === 'public' ? '--public' : '--private';
     await execWorkspaceCommand(
       'glab',
-      ['repo', 'create', `${parsed.owner}/${parsed.repo}`, visibilityFlag, '--yes'],
+      ['repo', 'create', `${parsed.owner}/${parsed.repo}`, visibilityFlag, '--remoteName', DEFAULT_REMOTE_NAME, '--yes'],
       params.projectRoot,
       params.executor,
     );
@@ -867,7 +1121,7 @@ async function tryCreateRemoteRepository(params: {
     try {
       await execWorkspaceCommand(
         'gh',
-        ['repo', 'create', repositoryName, visibilityFlag, '--confirm'],
+        ['repo', 'create', repositoryName, visibilityFlag, '--source=.', '--remote=origin', '--confirm'],
         params.projectRoot,
         params.executor,
       );
@@ -876,7 +1130,7 @@ async function tryCreateRemoteRepository(params: {
       try {
         await execWorkspaceCommand(
           'glab',
-          ['repo', 'create', repositoryName, visibilityFlag, '--yes'],
+          ['repo', 'create', repositoryName, visibilityFlag, '--remoteName', DEFAULT_REMOTE_NAME, '--yes'],
           params.projectRoot,
           params.executor,
         );
@@ -913,6 +1167,21 @@ export function handleGitApi(
 
   const executor = handlers.commandExecutor || (options as any).gitWorkspaceCommandExecutor;
 
+  const sendPathError = (rawPath: string) => {
+    sendJson(res, {
+      error: 'Resolved path is outside project root',
+      code: 'PATH_OUTSIDE_PROJECT',
+      projectId: context.project.id,
+      path: rawPath,
+    }, { status: 403 });
+  };
+
+  const getScopedGitTargetPath = (rawPath: unknown): string => {
+    const requestedPath = String(rawPath || '').trim();
+    if (!requestedPath) return '';
+    return normalizeGitTargetPath(context, requestedPath, handlers).gitScopePath;
+  };
+
   if (pathname.startsWith('/api/git/workspace/')) {
     (async () => {
       const projectRoot = context.project.root;
@@ -921,6 +1190,13 @@ export function handleGitApi(
 
       if (pathname === '/api/git/workspace/status' && method === 'GET') {
         const requestedVersionRef = normalizeGitVersionRef(url.searchParams.get('gitVersion'));
+        let scopedGitPath = '';
+        try {
+          scopedGitPath = getScopedGitTargetPath(url.searchParams.get('path'));
+        } catch {
+          sendPathError(String(url.searchParams.get('path') || ''));
+          return;
+        }
         const availability = await probeGitAvailability(projectRoot, executor);
         if (!availability.available) {
           sendJson(res, {
@@ -941,22 +1217,27 @@ export function handleGitApi(
           sendJson(res, { error: 'Version not found', code: 'VERSION_NOT_FOUND', projectId: context.project.id }, { status: 404 });
           return;
         }
+        const recentCommits = requestedVersionRef || scopedGitPath
+          ? []
+          : await getWorkspaceVersionCommitList(projectRoot, 'HEAD', executor, undefined, 20);
         const changedFiles = requestedVersionRef
           ? await getWorkspaceVersionChangedFiles(projectRoot, requestedVersionRef, executor)
           : await getWorkspaceChangedFiles(projectRoot, executor);
+        const scopedChangedFiles = filterWorkspaceChangedFilesByScope(changedFiles, scopedGitPath);
         const branchOverview = await getWorkspaceBranchOverview(projectRoot, executor);
-        const remote = getConfiguredWorkspaceRemote(projectRoot);
-        const remoteComparison = await getWorkspaceRemoteComparison(projectRoot, context.metadata, remote, currentBranch, executor);
+        const remote = await resolveWorkspaceRemote(projectRoot, executor);
+        const remoteComparison = await getWorkspaceRemoteComparison(projectRoot, context.metadata, remote, currentBranch, executor, scopedGitPath);
         sendJson(res, {
           ...availability,
           projectId: context.project.id,
           projectRoot,
           currentBranch,
           currentCommit,
+          recentCommits,
           isHistoricalVersion: Boolean(requestedVersionRef),
-          hasChanges: changedFiles.length > 0,
-          changedFilesCount: changedFiles.length,
-          changeSummary: createWorkspaceChangeSummary(context.metadata, changedFiles),
+          hasChanges: scopedChangedFiles.length > 0,
+          changedFilesCount: scopedChangedFiles.length,
+          changeSummary: createWorkspaceChangeSummary(context.metadata, scopedChangedFiles),
           remote,
           branchOverview,
           remoteComparison,
@@ -1023,7 +1304,7 @@ export function handleGitApi(
       }
 
       const currentBranch = await getWorkspaceCurrentBranch(projectRoot, executor);
-      const remote = getConfiguredWorkspaceRemote(projectRoot);
+      const remote = await resolveWorkspaceRemote(projectRoot, executor);
       const branchOverview = await getWorkspaceBranchOverview(projectRoot, executor);
 
       if (pathname === '/api/git/workspace/branch' && method === 'POST') {
@@ -1076,16 +1357,24 @@ export function handleGitApi(
 
       if (pathname === '/api/git/workspace/commit' && method === 'POST') {
         const message = String((body as any)?.message || '').trim();
+        let scopedGitPath = '';
+        try {
+          scopedGitPath = getScopedGitTargetPath((body as any)?.path);
+        } catch {
+          sendPathError(String((body as any)?.path || ''));
+          return;
+        }
         if (!message) {
           sendJson(res, { error: 'Missing message parameter' }, { status: 400 });
           return;
         }
-        const changedFiles = await getWorkspaceChangedFiles(projectRoot, executor);
+        const changedFiles = filterWorkspaceChangedFilesByScope(await getWorkspaceChangedFiles(projectRoot, executor), scopedGitPath);
         if (changedFiles.length === 0) {
           sendJson(res, { error: 'No changes to commit' }, { status: 400 });
           return;
         }
-        await execGit(['add', '.'], projectRoot, executor);
+        const addArgs = scopedGitPath ? ['add', '-A', '--', scopedGitPath] : ['add', '.'];
+        await execGit(addArgs, projectRoot, executor);
         const commit = await execGit(['commit', '-m', message], projectRoot, executor);
         sendJson(res, { success: true, message: 'Changes committed successfully', output: commit.stdout, projectId: context.project.id });
         return;
@@ -1098,20 +1387,15 @@ export function handleGitApi(
           sendJson(res, { error: 'Missing url parameter' }, { status: 400 });
           return;
         }
-        const existingRemotes = await execGit(['remote'], projectRoot, executor).catch(() => ({ stdout: '', stderr: '' }));
-        if (existingRemotes.stdout.split('\n').map((line) => line.trim()).includes(DEFAULT_REMOTE_NAME)) {
-          await execGit(['remote', 'set-url', DEFAULT_REMOTE_NAME, remoteUrl], projectRoot, executor);
-        } else {
-          await execGit(['remote', 'add', DEFAULT_REMOTE_NAME, remoteUrl], projectRoot, executor);
-        }
-        writeWorkspaceRemoteConfig(projectRoot, { url: remoteUrl, defaultBranch });
+        const configuredRemote = await configureWorkspaceRemote(
+          projectRoot,
+          { url: remoteUrl, defaultBranch },
+          executor,
+        );
         sendJson(res, {
           success: true,
           projectId: context.project.id,
-          remote: {
-            url: remoteUrl,
-            ...(defaultBranch ? { defaultBranch } : {}),
-          },
+          remote: configuredRemote,
         });
         return;
       }
@@ -1251,10 +1535,16 @@ export function handleGitApi(
             visibility,
             executor,
           });
+          let createdRemote = await resolveWorkspaceRemote(projectRoot, executor);
+          if (!createdRemote.url && remoteUrl) {
+            createdRemote = await configureWorkspaceRemote(projectRoot, { url: remoteUrl }, executor);
+          } else if (createdRemote.url) {
+            writeWorkspaceRemoteConfig(projectRoot, createdRemote);
+          }
           sendJson(res, {
             success: true,
             projectId: context.project.id,
-            ...(remoteUrl ? { remote: { url: remoteUrl } } : {}),
+            ...(createdRemote.url ? { remote: createdRemote } : {}),
             ...created,
           });
         } catch (error: any) {
@@ -1313,7 +1603,7 @@ export function handleGitApi(
   }
 
   if (pathname.startsWith('/api/git/version-file/') && req.method === 'GET') {
-    const parts = pathname.slice('/api/git/version-file/'.length).split('/').filter(Boolean);
+    const parts = decodeGitVersionUrlPathParts(pathname.slice('/api/git/version-file/'.length));
     if (parts.length < 3) {
       sendJson(res, { error: 'Invalid URL format' }, { status: 400 });
       return true;
@@ -1334,15 +1624,6 @@ export function handleGitApi(
     }
     return true;
   }
-
-  const sendPathError = (rawPath: string) => {
-    sendJson(res, {
-      error: 'Resolved path is outside project root',
-      code: 'PATH_OUTSIDE_PROJECT',
-      projectId: context.project.id,
-      path: rawPath,
-    }, { status: 403 });
-  };
 
   (async () => {
     if (pathname === '/api/git/status' && req.method === 'GET') {
@@ -1403,12 +1684,31 @@ export function handleGitApi(
     if (pathname === '/api/git/history' && req.method === 'GET') {
       const status = await execGit(['status', '--porcelain', '--', gitScopePath], context.project.root);
       const log = await execGit(['log', '-20', '--pretty=format:%H|%an|%ae|%at|%s', '--', gitScopePath], context.project.root);
+      const prototypeEntryCandidates = getPrototypeIndexGitPathCandidates(gitScopePath, versionFileBasePath);
       const commits = log.stdout
-        ? log.stdout.split('\n').filter(Boolean).map((line) => {
-          const [hash, author, email, timestamp, message] = line.split('|');
+        ? await Promise.all(log.stdout.split('\n').filter(Boolean).map(async (line) => {
+          const [hash = '', author = '', email = '', timestamp = '', ...messageParts] = line.split('|');
           const ms = Number(timestamp) * 1000;
-          return { hash, author, email, timestamp: ms, message, date: new Date(ms).toISOString() };
-        })
+          const hasPrototype = await hasPrototypeAtCommit(context.project.root, hash, prototypeEntryCandidates, executor);
+          return {
+            hash,
+            author,
+            email,
+            timestamp: ms,
+            message: messageParts.join('|'),
+            date: new Date(ms).toISOString(),
+            hasPrototype,
+            prototypeUrl: hasPrototype
+              ? buildGitVersionPrototypeUrl({
+                versionId: hash.slice(0, 8),
+                previewResourceName,
+                targetPath,
+                previewGitPath: gitScopePath || versionFileBasePath,
+                projectId: context.project.id,
+              })
+              : null,
+          };
+        })).then((items) => items.filter((commit) => commit.hasPrototype))
         : [];
       sendJson(res, {
         commits,
@@ -1465,14 +1765,25 @@ export function handleGitApi(
       }
       const versionId = commitHash.slice(0, 8);
       const tempDir = path.join(context.project.root, '.git-versions', versionId);
+      fs.rmSync(tempDir, { recursive: true, force: true });
       fs.mkdirSync(tempDir, { recursive: true });
-      const fileList = await execGit(['ls-tree', '-r', '--name-only', commitHash, gitScopePath], context.project.root);
-      for (const file of fileList.stdout.split('\n').filter(Boolean)) {
-        const targetFile = path.join(tempDir, file);
-        if (!isPathInside(tempDir, targetFile)) continue;
-        fs.mkdirSync(path.dirname(targetFile), { recursive: true });
-        const content = await execGit(['show', `${commitHash}:${file}`], context.project.root);
-        fs.writeFileSync(targetFile, content.stdout, 'utf8');
+      try {
+        const fileList = await execGitBinary(['ls-tree', '-rz', '--name-only', commitHash], context.project.root, executor);
+        for (const file of parseGitNullSeparatedOutput(fileList)) {
+          const targetFile = path.join(tempDir, file);
+          if (!isPathInside(tempDir, targetFile)) continue;
+          fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+          const content = await execGitBlob(['show', `${commitHash}:${file}`], context.project.root, executor);
+          fs.writeFileSync(targetFile, content);
+        }
+      } catch (error) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        sendJson(res, {
+          error: '这个历史版本文件不完整，无法预览当前原型。',
+          detail: getErrorMessage(error, 'Git version snapshot failed'),
+          projectId: context.project.id,
+        }, { status: 500 });
+        return;
       }
       const versionResourceDirs = Array.from(new Set([
         path.join(tempDir, versionFileBasePath),
@@ -1480,18 +1791,18 @@ export function handleGitApi(
         path.join(tempDir, gitScopePath),
       ]));
       const hasPrototype = versionResourceDirs.some((resourceDir) => fs.existsSync(path.join(resourceDir, 'index.tsx')));
-      const previewName = previewResourceName || targetPath;
-      const previewPath = previewName ? `/prototypes/${encodePreviewPathSegments(previewName)}` : '';
-      const defaultPreviewGitPath = normalizePreviewResourcePath(`prototypes/${previewName}`);
-      const previewGitPath = normalizePreviewResourcePath(versionFileBasePath) === defaultPreviewGitPath
-        ? ''
-        : versionFileBasePath;
       sendJson(res, {
         success: true,
         versionId,
         hasPrototype,
-        prototypeUrl: hasPrototype && previewPath
-          ? appendSearchParams(previewPath, { gitVersion: versionId, gitPath: previewGitPath })
+        prototypeUrl: hasPrototype
+          ? buildGitVersionPrototypeUrl({
+            versionId,
+            previewResourceName,
+            targetPath,
+            previewGitPath: gitScopePath || versionFileBasePath,
+            projectId: context.project.id,
+          })
           : null,
         projectId: context.project.id,
       });
@@ -1499,7 +1810,7 @@ export function handleGitApi(
     }
 
     if (pathname.startsWith('/api/git/version-file/') && req.method === 'GET') {
-      const parts = pathname.slice('/api/git/version-file/'.length).split('/').filter(Boolean);
+      const parts = decodeGitVersionUrlPathParts(pathname.slice('/api/git/version-file/'.length));
       if (parts.length < 3) {
         sendJson(res, { error: 'Invalid URL format' }, { status: 400 });
         return;

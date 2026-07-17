@@ -39,6 +39,15 @@ describe('useIndexPagePreviewActions source', () => {
     vi.unstubAllGlobals();
   });
 
+  it('opens a selected Draw.io review draft once from the openDrawio deep link', () => {
+    const source = readPreviewRootSource();
+
+    expect(source).toContain("searchParams.get('openDrawio')");
+    expect(source).toContain("searchParams.delete('openDrawio')");
+    expect(source).toContain('window.history.replaceState');
+    expect(source).toContain('void openDrawioResourceEditor({');
+  });
+
   it('returns minified export config json for copy-config flow', () => {
     const source = readPreviewActionsSource();
 
@@ -106,8 +115,10 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewRootSource();
 
     expect(source).toContain("import { resolveIndexContentMode } from './contentMode';");
-    expect(source).toContain('const contentMode = resolveIndexContentMode({');
+    expect(source).toContain('const resolvedContentMode = resolveIndexContentMode({');
+    expect(source).toContain('const contentMode = contentModeOverride || resolvedContentMode;');
     expect(source).toContain('viewMode,');
+    expect(source).toContain('selectedDocOpenMode: selectedDoc?.openMode');
   });
 
   it('keeps preview iframe refs and pane-aware posting in a dedicated hook module', () => {
@@ -167,56 +178,197 @@ describe('useIndexPagePreviewActions source', () => {
 
     expect(source).toContain("data.type !== 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_REQUEST'");
     expect(source).toContain("type: 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_RESULT'");
-    expect(source).toContain('const handled = await runHostToolbarAction(data.action);');
+    expect(source).toContain('const sourcePane = resolvePreviewPaneForIframe(targetIframe);');
+    expect(source).toContain('const action = sourcePane');
+    expect(source).toContain('? { ...data.action, pane: sourcePane } as CommentaryHostToolbarAction');
+    expect(source).toContain('const handled = await runHostToolbarAction(action);');
     expect(source).toContain('event.source !== targetIframe.contentWindow');
     expect(source).toContain('targetIframe.contentWindow?.postMessage(');
   });
 
-  it('wires prototype review tabs, markdown state, prompt copy, and dedicated page zoom actions', () => {
+  it('wires prototype review report list state, report APIs, and removes prompt copy/page zoom actions', () => {
     const source = readUiReviewSupportSource();
     const previewRootSource = readPreviewRootSource();
 
     expect(source).toContain("const [reviewPanelOpen, setReviewPanelOpen] = useState(false);");
-    expect(source).toContain("const [activeReviewKind, setActiveReviewKind] = useState<ReviewKind>('design');");
-    expect(source).toContain("const [reviewMarkdown, setReviewMarkdown] = useState('');");
-    expect(source).toContain("const [reviewUpdatedAt, setReviewUpdatedAt] = useState<string | null>(null);");
+    expect(source).toContain("const [activeReviewReportId, setActiveReviewReportId] = useState<string | null>(null);");
+    expect(source).toContain("const [reviewReports, setReviewReports] = useState<ReviewReportSummary[]>([]);");
+    expect(source).toContain("const [selectedReviewReport, setSelectedReviewReport] = useState<ReviewReportDetail | null>(null);");
     expect(source).toContain("const [reviewLoading, setReviewLoading] = useState(false);");
+    expect(source).toContain("const [reviewDetailLoading, setReviewDetailLoading] = useState(false);");
+    expect(source).toContain("const [reviewUploadLoading, setReviewUploadLoading] = useState(false);");
+    expect(source).toContain("const [reviewLanSubmitConfig, setReviewLanSubmitConfig] = useState<ReviewLanSubmitConfig | null>(null);");
+    expect(source).not.toContain('ReviewFeishuConfig');
+    expect(source).not.toContain('reviewFeishu');
     expect(source).toContain("const [reviewError, setReviewError] = useState('');");
-    expect(source).toContain("const [reviewPageZoomEnabled, setReviewPageZoomEnabled] = useState(false);");
-    expect(source).toContain('const reviewDocumentPath = useMemo');
-    expect(source).toContain('resolveReviewDocumentPath(selectedItem, activeReviewKind)');
+    expect(source).toContain('const reviewDocumentPaths = useMemo');
+    expect(source).toContain("design: resolveReviewDocumentPath(selectedItem, 'design')");
+    expect(source).toContain("requirements: resolveReviewDocumentPath(selectedItem, 'requirements')");
+    expect(source).toContain('const reviewPrompts = useMemo');
+    expect(source).toContain("resolveReviewDocumentPath(selectedItem, 'design')");
     expect(source).toContain('buildReviewPrompt({');
-    expect(source).toContain('kind: activeReviewKind');
+    expect(source).toContain("kind: 'design'");
+    expect(source).toContain("kind: 'requirements'");
     expect(source).toContain('rules/ui-review-guide.md');
     expect(source).toContain('rules/prototype-review-guide.md');
-    expect(source).toContain('ui-review.md');
-    expect(source).toContain('prototype-review.md');
-    expect(source).toContain('/api/markdown-file-meta?path=');
-    expect(source).toContain('handleReviewKindChange');
-    expect(source).toContain('handleToggleReviewPageZoom');
+    expect(source).toContain('apiService.listReviewReports');
+    expect(source).toContain('apiService.getReviewReport');
+    expect(source).toContain('apiService.uploadReviewReport');
+    expect(source).toContain('apiService.deleteReviewReport');
+    expect(source).toContain('apiService.getReviewLanSubmitConfig');
+    expect(source).toContain('apiService.getReviewLanSubmitConfig(projectId, selectedPrototypeIdentity)');
+    expect(source).toContain('apiService.updateReviewLanSubmitConfig');
+    expect(source).not.toContain('getReviewFeishuConfig');
+    expect(source).not.toContain('updateReviewFeishuConfig');
+    expect(source).not.toContain('syncReviewFeishuReports');
+    expect(source).not.toContain('handleReviewFeishu');
+    expect(source).not.toContain('handleSyncReviewFeishu');
+    expect(source).not.toContain('handleOpenReviewFeishu');
+    expect(source).toContain('prototypeId: selectedPrototypeIdentity');
     expect(source).toContain('handleReviewPanelToggle');
-    expect(source).toContain('handleCopyReviewPrompt');
+    expect(source).toContain('handleSelectReviewReport');
+    expect(source).toContain('handleBackToReviewList');
+    expect(source).toContain('handleCopyReviewReportPath');
+    expect(source).toContain('const copyText = `[${report.title}](${report.path})`;');
+    expect(source).toContain('await navigator.clipboard.writeText(copyText);');
+    expect(source).toContain("messageApi.success('路径已复制');");
+    expect(source).toContain("messageApi.error('复制路径失败');");
+    expect(source).toContain('handleDeleteReviewReport');
+    expect(source).toContain('handleStartReview');
+    expect(source).toContain('handleRunReviewDirect');
+    expect(source).toContain('handleUploadReviewReport');
+    expect(source).toContain('handleReviewLanSubmitEnabledChange');
     expect(source).toContain('reviewPrompt,');
     expect(source).toContain('reviewDocumentPath,');
-    expect(source).toContain('activeReviewKind,');
+    expect(source).toContain('reviewPrompts,');
+    expect(source).toContain('reviewDocumentPaths,');
     expect(source).toContain('reviewPanelOpen,');
-    expect(source).toContain('reviewMarkdown,');
-    expect(source).toContain('reviewUpdatedAt,');
+    expect(source).toContain('activeReviewReportId,');
+    expect(source).toContain('reviewReports,');
+    expect(source).toContain('selectedReviewReport,');
     expect(source).toContain('reviewLoading,');
+    expect(source).toContain('reviewDetailLoading,');
+    expect(source).toContain('reviewUploadLoading,');
     expect(source).toContain('reviewError,');
-    expect(source).toContain('reviewPageZoomEnabled,');
-    expect(source).toContain('handleReviewKindChange,');
+    expect(source).toContain('reviewLanSubmitConfig,');
     expect(source).toContain('handleReviewPanelToggle,');
-    expect(source).toContain('handleCopyReviewPrompt,');
-    expect(source).toContain('handleToggleReviewPageZoom,');
+    expect(source).toContain('handleSelectReviewReport,');
+    expect(source).toContain('handleBackToReviewList,');
+    expect(source).toContain('handleCopyReviewReportPath,');
+    expect(source).toContain('handleDeleteReviewReport,');
+    expect(source).toContain('handleStartReview,');
+    expect(source).toContain('handleRunReviewDirect,');
+    expect(source).toContain('handleUploadReviewReport,');
+    expect(source).toContain('handleReviewLanSubmitEnabledChange,');
+    expect(source).not.toContain('handleCopyReviewPrompt');
+    expect(source).not.toContain('handleToggleReviewPageZoom');
+    expect(source).not.toContain('reviewPageZoomEnabled');
+    expect(previewRootSource).not.toContain('/api/markdown-file-meta?path=');
+  });
 
-    const zoomHandlerSource = getSourceSegment(
-      previewRootSource,
-      'const handleToggleReviewPageZoom = useCallback',
-      'const handleOpenWebEditor = useCallback',
+  it('does not sync Axhub reports until the review panel is open', () => {
+    const source = readUiReviewSupportSource();
+    const previewRootSource = readPreviewRootSource();
+
+    expect(previewRootSource).toContain('type ReviewAxhubConfig,');
+    expect(previewRootSource).toContain('const [reviewAxhubSubmitConfig, setReviewAxhubSubmitConfig] = useState<ReviewAxhubConfig | null>(null);');
+    expect(previewRootSource).toContain('const reviewAxhubSyncInFlightRef = useRef<Map<string, Promise<void>>>(new Map());');
+    expect(previewRootSource).toContain('const activeReviewScopeKeyRef = useRef');
+    expect(previewRootSource).toContain('if (activeReviewScopeKeyRef.current !== requestScopeKey)');
+    expect(previewRootSource).toContain('const isCurrentReviewScope = () => activeReviewScopeKeyRef.current === syncKey;');
+    expect(previewRootSource).toContain('if (!isCurrentReviewScope()) return;');
+    expect(previewRootSource).toContain('apiService.getReviewAxhubConfig(projectId, selectedPrototypeIdentity)');
+    expect(previewRootSource).toContain('apiService.updateReviewAxhubConfig({');
+    expect(previewRootSource).toContain('apiService.syncReviewAxhubReports({');
+    expect(previewRootSource).toContain('if (config.submitEnabled !== true) return;');
+    expect(previewRootSource).toContain('const prototypeChanged = previousPrototypeIdentity !== selectedPrototypeIdentity;');
+    expect(previewRootSource).toContain("if (reviewPanelOpen) {\n            void loadReviewReports();\n            void loadReviewLanSubmitConfig();\n            void syncReviewAxhubReports();\n        }");
+    expect(previewRootSource).not.toContain('if (reviewPanelOpen || prototypeChanged) {');
+    expect(previewRootSource).toContain('if (enabled) {');
+    expect(previewRootSource).toContain('await syncReviewAxhubReports(config);');
+    expect(previewRootSource).toContain('result.created + result.updated');
+    expect(previewRootSource).toContain('await loadReviewReports();');
+    expect(previewRootSource).toContain("messageApi.success(`已同步 Axhub 评审报告：新增 ${result.created}，更新 ${result.updated}`);");
+    expect(previewRootSource).toContain("error?.code === 'AXHUB_AUTH_REQUIRED' || error?.code === 'AXHUB_AUTH_EXPIRED'");
+    expect(previewRootSource).toContain("messageApi.error('Axhub 账号已失效，请重新连接');");
+    expect(previewRootSource).toContain("error?.code === 'AXHUB_REVIEW_SERVICE_UNAVAILABLE'");
+    expect(previewRootSource).toContain("messageApi.error('Axhub 在线评审服务暂不可用');");
+    expect(previewRootSource).toContain("error?.code === 'AXHUB_REVIEW_BINDING_INVALID'");
+    expect(previewRootSource).toContain("messageApi.error('Axhub 发布绑定已失效，请重新发布');");
+    expect(previewRootSource).not.toContain('setInterval(syncReviewAxhubReports');
+    expect(previewRootSource).not.toContain('handleGetAxhub');
+    expect(source).toContain('reviewAxhubSubmitConfig,');
+    expect(source).toContain('handleReviewAxhubSubmitEnabledChange,');
+  });
+
+  it('does not request Axhub review config without a current-resource publish binding', () => {
+    const source = readPreviewRootSource();
+    const syncSource = getSourceSegment(
+      source,
+      'const syncReviewAxhubReports = useCallback',
+      'const handleReviewPanelToggle = useCallback',
     );
-    expect(zoomHandlerSource).not.toContain('handleChangePreviewScaleMode');
-    expect(source).not.toContain('reviewPageZoomEnabled: preview.previewConfig.scaleMode ===');
+
+    expect(source).toContain("const [latestCloudPublishResourcePath, setLatestCloudPublishResourcePath] = useState('');");
+    expect(source).toContain('const latestCloudPublishRequestRef = useRef(0);');
+    expect(source).toContain('const requestId = ++latestCloudPublishRequestRef.current;');
+    expect(source).toContain('if (requestId !== latestCloudPublishRequestRef.current) return;');
+    expect(syncSource).toContain('latestCloudPublishResourcePath !== currentPublishResourcePath');
+    expect(syncSource).toContain('!latestCloudPublishItems.axhub?.axhubProjectId');
+    expect(syncSource).toContain('bound: false');
+    expect(syncSource.indexOf('latestCloudPublishResourcePath !== currentPublishResourcePath'))
+      .toBeLessThan(syncSource.indexOf('apiService.getReviewAxhubConfig'));
+  });
+
+  it('drops stale async review results after switching prototype scope', () => {
+    const source = readPreviewRootSource();
+    const scopedSegments = [
+      getSourceSegment(source, 'const refreshReviewReportsAfterDirectRun = useCallback', 'const loadReviewLanSubmitConfig = useCallback'),
+      getSourceSegment(source, 'const loadReviewLanSubmitConfig = useCallback', 'const syncReviewAxhubReports = useCallback'),
+      getSourceSegment(source, 'const openReviewReportDetail = useCallback', 'const handleSelectReviewReport = useCallback'),
+      getSourceSegment(source, 'const handleDeleteReviewReport = useCallback', 'const handleStartReview = useCallback'),
+      getSourceSegment(source, 'const handleRunReviewDirect = useCallback', 'const handleUploadReviewReport = useCallback'),
+      getSourceSegment(source, 'const handleUploadReviewReport = useCallback', 'const handleReviewLanSubmitEnabledChange = useCallback'),
+      getSourceSegment(source, 'const handleReviewLanSubmitEnabledChange = useCallback', 'const handleReviewAxhubSubmitEnabledChange = useCallback'),
+    ];
+
+    for (const segment of scopedSegments) {
+      expect(segment).toContain("const requestScopeKey = `${projectId || ''}:${selectedPrototypeIdentity}`;");
+      expect(segment).toContain('activeReviewScopeKeyRef.current');
+    }
+    expect(source).toContain('setReviewLanSubmitConfig(null);');
+    expect(source).toContain('setReviewLoading(false);');
+    expect(source).toContain('setReviewDetailLoading(false);');
+    expect(source).toContain('setReviewUploadLoading(false);');
+  });
+
+  it('runs review AI directly through the API and opens the generated report after refresh', () => {
+    const source = readUiReviewSupportSource();
+    const previewRootSource = readPreviewRootSource();
+    const directRunSource = getSourceSegment(
+      previewRootSource,
+      'const handleRunReviewDirect = useCallback(async (kind: ReviewKind) => {',
+      'const handleUploadReviewReport = useCallback',
+    );
+
+    expect(source).toContain('onRunReviewAssistantPromptViaApi');
+    expect(source).toContain('handleRunReviewDirect');
+    expect(directRunSource).toContain('const prompt = reviewPrompts[kind] || reviewPrompt;');
+    expect(directRunSource).toContain('const targetPath = reviewDocumentPaths[kind] || reviewDocumentPath || null;');
+    expect(directRunSource).toContain('await onRunReviewAssistantPromptViaApi({');
+    expect(directRunSource).toContain('context: buildReviewDirectRunAssistantContext(targetPath),');
+    expect(directRunSource).toContain('prompt,');
+    expect(directRunSource).toContain('targetPath,');
+    expect(directRunSource).not.toContain("messageApi.loading('AI 正在执行评审，请稍候...', 0);");
+    expect(directRunSource).toContain("messageApi.success('AI 评审已完成');");
+    expect(directRunSource).toContain('const reports = await refreshReviewReportsAfterDirectRun();');
+    expect(directRunSource).toContain('const reportToOpen = findReviewReportForDirectRun(reports, targetPath) || reports[0] || null;');
+    expect(directRunSource).toContain('await openReviewReportDetail(reportToOpen);');
+    expect(directRunSource).not.toContain('onExecutePrompt');
+    expect(directRunSource).not.toContain('openAssistantWithContextAndSubmitPrompt');
+    expect(source).toContain('refreshReviewReportsAfterDirectRun');
+    expect(source).toContain('findReviewReportForDirectRun');
+    expect(source).toContain('buildReviewDirectRunAssistantContext');
   });
 
   it('keeps quick-edit runtime handshake state and timeout lifecycle in the runtime hook', () => {
@@ -275,6 +427,11 @@ describe('useIndexPagePreviewActions source', () => {
 
   it('accepts runtime prototype route info from the active preview iframe', () => {
     const source = readPreviewRootSource();
+    const routePageNormalizer = getSourceSegment(
+      source,
+      'function normalizePrototypeRoutePages(',
+      'function normalizePrototypeRouteInfo(',
+    );
 
     expect(source).toContain("onPrototypeRouteInfo");
     expect(source).toContain("event.data?.type === 'AXHUB_PROTOTYPE_ROUTE_INFO'");
@@ -282,6 +439,8 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('defaultPageId');
     expect(source).toContain('activePageId');
     expect(source).toContain('pages');
+    expect(routePageNormalizer).toContain("const group = typeof page?.group === 'string' ? page.group.trim() : '';");
+    expect(routePageNormalizer).toContain('...(group ? { group } : {})');
   });
 
   it('declares iframe URLs before callbacks that depend on them', () => {
@@ -303,7 +462,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(refreshDeclarationIndex).toBeLessThan(reenterDeclarationIndex);
   });
 
-  it('requests screenshot preview whenever export modal opens without a captured screenshot', () => {
+  it('refreshes screenshot preview whenever the export modal opens in screenshot mode', () => {
     const source = readPreviewActionsSource();
     const requestScreenshotSegment = getSourceSegment(
       source,
@@ -311,11 +470,14 @@ describe('useIndexPagePreviewActions source', () => {
       'const handleDimensionChange = useCallback',
     );
 
-    expect(source).toContain("if (isExportModalOpen && imageConfig.contentType === 'screenshot' && !imageConfig.rawScreenshotUrl) {");
+    expect(source).toContain("if (!isExportModalOpen || imageConfig.contentType !== 'screenshot') return;");
+    expect(source).toContain("rawScreenshotUrl: ''");
     expect(source).toContain('handleRequestScreenshot();');
     expect(requestScreenshotSegment).toContain('const screenshotSize = resolveCurrentPreviewScreenshotSize(previewConfig, screenshotDefaultSize);');
     expect(requestScreenshotSegment).toContain('payload.targetWidth = screenshotSize.width;');
     expect(requestScreenshotSegment).toContain('payload.targetHeight = screenshotSize.height;');
+    expect(source).not.toContain('width: imageConfig.screenshotWidth');
+    expect(source).not.toContain('height: imageConfig.screenshotHeight');
     expect(source).not.toContain('if (imageConfig.width === screenshotDefaultSize.width && imageConfig.height === screenshotDefaultSize.height)');
   });
 
@@ -323,7 +485,7 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewRootSource();
     const resetEffect = getSourceSegment(
       source,
-      'useEffect(() => {\n        if (isExportModalOpen && imageConfig.contentType === \'screenshot\'',
+      'useEffect(() => {\n        if (!isExportModalOpen || imageConfig.contentType !== \'screenshot\') return;',
       '    return {',
     );
 
@@ -347,6 +509,18 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).not.toContain('resolveServerBackedAxurePayload');
     expect(source).not.toContain('apiService.fetchAxureExportCode');
     expect(source).not.toContain('serverBackedPayload');
+  });
+
+  it('routes lightweight runtime exports and HTML export through the active theme resource', () => {
+    const source = readPreviewRootSource();
+
+    expect(source).toContain("const currentRuntimeExportResource = contentMode === 'theme' ? selectedTheme : selectedItem;");
+    expect(source).toContain("const currentRuntimeExportResourceType: 'prototype' | 'theme' = contentMode === 'theme' ? 'theme' : 'prototype';");
+    expect(source).toContain('selectedItem: currentRuntimeExportResource,\n                resourceType: currentRuntimeExportResourceType,');
+    expect(source).toContain("postProjectCommunicationRecord(currentRuntimeExportResource, 'exports'");
+    expect(source).toContain('}, currentRuntimeExportResourceType).catch');
+    expect(source).toContain('const targetPath = currentPublishResourcePath;');
+    expect(source).toContain('const itemLabel = currentRuntimeExportResource.displayName || currentRuntimeExportResource.name;');
   });
 
   it('opens quick edit without probing or starting the AI runtime', () => {
@@ -491,19 +665,19 @@ describe('useIndexPagePreviewActions source', () => {
     expect(url.hash).toBe('#page=orders-list');
   });
 
-  it('exposes a top-toolbar HTML export action using the selected prototype local path', () => {
+  it('exposes a top-toolbar HTML export action using the active publish resource path', () => {
     const source = readPreviewRootSource();
 
     expect(source).toContain("import { downloadExportHtmlArchive } from '../../domains/export/export.api';");
     expect(source).toContain('const handleExportHtml = useCallback(async (options: { includeSource?: boolean } = {}) => {');
     expect(source).toContain('if (exportAvailability.htmlExportDisabledReason) {');
-    expect(source).toContain('const targetPath = getSelectedSourceBasePath(selectedItem);');
+    expect(source).toContain('const targetPath = currentPublishResourcePath;');
     expect(source).toContain('await downloadExportHtmlArchive(targetPath, { includeSource: options.includeSource === true });');
     expect(source).toContain('HTML 导出完成，已开始下载');
     expect(source).toContain('handleExportHtml,');
   });
 
-  it('builds prototype Canvas iframe URLs from the selected prototype instead of the standalone canvas sidebar', () => {
+  it('does not build prototype Canvas iframe URLs after canvas moved to resources', () => {
     const source = readPreviewActionsSource();
     const buildPaneIframeUrlSource = getSourceSegment(
       readPreviewRootSource(),
@@ -511,9 +685,10 @@ describe('useIndexPagePreviewActions source', () => {
       'const primaryIframeUrl = useMemo',
     );
 
-    expect(source).toContain('buildPrototypeCanvasIframeUrl');
+    expect(source).not.toContain('buildPrototypeCanvasIframeUrl');
     expect(buildPaneIframeUrlSource).toContain("viewMode === 'canvas'");
-    expect(source).toContain("`/canvas/prototypes/${encodeURIComponent(selectedItem.name)}/canvas.excalidraw`");
+    expect(source).not.toContain('/canvas/prototypes');
+    expect(source).not.toContain('canvas.excalidraw`');
     expect(buildPaneIframeUrlSource).toContain("viewMode !== 'demo'");
     expect(buildPaneIframeUrlSource).not.toContain("sidebarTab === 'canvas'");
   });
@@ -546,7 +721,7 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewRootSource();
     const resetEffectSource = getSourceSegment(
       source,
-      'useEffect(() => {\n        const shouldRestoreQuickEdit = quickEditRuntimeActiveRef.current;',
+      'useEffect(() => {\n        const prototypeIdentityChanged = selectedPrototypeIdentityRef.current !== selectedPrototypeIdentity;',
       'const quickEditAvailable = Boolean(selectedEditablePreviewResource)',
     );
     const reenterSource = getSourceSegment(
@@ -624,7 +799,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('isDocumentCommentableResource(currentMarkdownItem)');
     expect(source).toContain("messageApi.warning(`仅支持 Markdown 或 HTML ${currentMarkdownLabel}批注`);");
     expect(source).toContain('isHtmlCommentableResource(currentMarkdownItem)');
-    expect(source).toContain('void enterHtmlDocumentEditor();');
+    expect(source).toContain('void enterHtmlDocumentEditor(options);');
     expect(source).not.toContain("currentMarkdownItem.name || currentMarkdownItem.filePath || currentMarkdownItem.absoluteFilePath");
     expect(source).toContain('handleSwitchDocQuickEditMode');
     expect(source).not.toContain('handleEnableSpecEdit');
@@ -662,7 +837,9 @@ describe('useIndexPagePreviewActions source', () => {
     expect(rootSource).toContain("contentMode === 'theme'");
     expect(rootSource).toContain('buildMainPreviewIframeUrl');
     expect(buildPaneIframeUrlSource).toContain("if (contentMode === 'theme')");
-    expect(buildPaneIframeUrlSource).toContain('return buildMainPreviewIframeUrl(selectedTheme);');
+    expect(buildPaneIframeUrlSource).toContain(
+      'return buildMainPreviewIframeUrl(selectedTheme, iframePrototypeEditorLaunchOptions);',
+    );
     expect(quickEditAvailableSource).toContain('selectedEditablePreviewResource');
     expect(quickEditAvailableSource).toContain("resourceType === 'theme'");
     expect(combinedSource).toContain("const resourceType: 'prototype' | 'theme' = contentMode === 'theme' ? 'theme' : 'prototype';");
@@ -777,7 +954,7 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewRootSource();
     const enterDocumentEditorSource = getSourceSegment(
       source,
-      'const enterDocumentEditor = useCallback(async (mode: SpecQuickEditMode = \'comment\') => {',
+      'const enterDocumentEditor = useCallback(async (mode: SpecQuickEditMode = \'comment\', options?: { preserveSidebar?: boolean }) => {',
       'const handleEnableDocEdit = useCallback',
     );
     const handleOpenWebEditorSource = getSourceSegment(
@@ -824,24 +1001,39 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('getAnnotationActionEditingTargets');
     expect(source).toContain("locator: action.locator ?? null");
     expect(source).toContain("label: String(action.label || '').trim() || elementKey");
-    expect(source).toContain('await onRunAnnotationAssistantPromptViaApi({');
+    expect(source).toContain('annotationDirectRunRegistryRef.current.startRun({');
     expect(source).toContain('context: assistantContextV1,');
-    expect(source).toContain('editingTargets: request.editingTargets');
-    expect(source).toMatch(
-      /await applyAnnotationEditingTaskState\(request\.editingTargets, 'editing', latestTaskRef\);\s*const submitted = await onRunAnnotationAssistantPromptViaApi/,
-    );
-    expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, 'editing', latestTaskRef);");
-    expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, 'completed', latestTaskRef);");
-    expect(source).toContain("await applyAnnotationEditingTaskState(request.editingTargets, aborted ? 'idle' : 'error', terminalTaskRef);");
+    expect(source).toContain('editingTargets: request.editingTargets,');
+    expect(source).toContain('submit: (submitRequest) => onRunAnnotationAssistantPromptViaApi({');
+    expect(source).toContain('context: submitRequest.context,');
+    expect(source).toContain('signal: submitRequest.signal,');
+    expect(source).toContain('onPrepared: submitRequest.onPrepared,');
+    expect(source).toContain('onAccepted: submitRequest.onAccepted,');
+    expect(source).toContain("case 'started':");
+    expect(source).toContain("case 'prepared':");
+    expect(source).toContain("case 'accepted':");
+    expect(source).toContain("case 'completed':");
+    expect(source).toContain("case 'aborted':");
+    expect(source).toContain("case 'error':");
+    expect(source).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'editing', event.taskRef);");
+    expect(source).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'completed', event.taskRef);");
+    expect(source).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'idle', event.taskRef);");
     expect(source).toContain('editors.setNodeEditingState(target.elementKey, nextState, taskRef, target.targetRef ?? null)');
     expect(source).toContain('target.targetRef ?? null');
-    expect(source).toContain('const activeAnnotationDirectRunRef = useRef');
-    expect(source).toContain('new AbortController()');
-    expect(source).toContain('activeAnnotationDirectRunRef.current = {');
-    expect(source).toContain('signal: controller.signal');
+    expect(source).toContain('getAnnotationActionPromptText(nextAction, editors)');
+    expect(source).toContain('editors?.getElementPromptText?.(elementKey)');
+    expect(source).toContain("if (action?.type !== 'send-to-agent')");
+    expect(source).not.toContain('const activeAnnotationDirectRunMapRef = useRef');
+    expect(source).not.toContain('const annotationDirectRunSeqRef = useRef(0);');
+    expect(source).not.toContain('annotationDirectRunSeqRef.current += 1');
+    expect(source).not.toContain('activeAnnotationDirectRunMapRef.current.set(runKey, {');
+    expect(source).toContain('signal: submitRequest.signal,');
     expect(source).toContain('interruptDisabled: false');
     expect(source).toContain('abortAnnotationDirectRun');
-    expect(source).toContain("messageApi.info('已有 AI 执行正在进行，请先终止当前任务');");
+    expect(source).toContain('activeRunCount >= maxAnnotationDirectRunCount');
+    expect(source).toContain("messageApi.info(<span>已有 {startResult.activeRunCount} 个 AI 执行正在进行，请稍后再试，或");
+    expect(source).toContain("onClick={(event) => { event.preventDefault(); openSettingsDialog?.('ai'); }}");
+    expect(source).toContain('去设置');
     expect(source).not.toContain('activeAnnotationDirectRunRef.current?.controller.abort();');
     expect(source).not.toContain('await onSubmitAnnotationAssistantPrompt(assistantContextV1, prompt)');
     expect(source).not.toContain('openAssistantWithContextAndSubmitPrompt');
@@ -875,7 +1067,7 @@ describe('useIndexPagePreviewActions source', () => {
     );
     const abortSource = getSourceSegment(
       source,
-      'const abortAnnotationDirectRun = useCallback(() => {',
+      'const abortAnnotationDirectRun = useCallback',
       'const copyHostToolbarPromptText = useCallback',
     );
 
@@ -883,8 +1075,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(fallbackActionSource).toContain('return abortAnnotationDirectRun();');
     expect(runHostToolbarActionSource).toContain("if (nextAction.type === 'interrupt-agent') {");
     expect(runHostToolbarActionSource).toContain('return abortAnnotationDirectRun();');
-    expect(abortSource).toContain('activeAnnotationDirectRunRef.current');
-    expect(abortSource).toContain('controller.abort();');
+    expect(abortSource).toContain('await annotationDirectRunRegistryRef.current.abortAll();');
     expect(abortSource).toContain('interruptLoading: true');
     expect(abortSource).toContain("messageApi.info('已终止 AI 执行');");
   });
@@ -893,25 +1084,103 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewRootSource();
     const stateTrackingSource = getSourceSegment(
       source,
-      'const resolveAnnotationDirectRunToolbarState = useCallback((state: CommentaryHostToolbarState | null) => (',
+      'const resolveAnnotationDirectRunToolbarState = useCallback((state: CommentaryHostToolbarState | null) => {',
       'const previewDeviceActions = usePreviewDeviceActions();',
     );
     const directRunSource = getSourceSegment(
       source,
       'const runAnnotationAcpChatPrompt = useCallback(async (input: string | null | undefined | AnnotationPromptRunRequest) => {',
-      'const abortAnnotationDirectRun = useCallback(() => {',
+      'const abortAnnotationDirectRun = useCallback',
+    );
+    const refreshSource = getSourceSegment(
+      source,
+      'const refreshAnnotationDirectRunToolbarState = useCallback(() => {',
+      'const previewDeviceActions = usePreviewDeviceActions();',
     );
 
     expect(source).toContain('resolveActiveAnnotationDirectRunToolbarState');
-    expect(stateTrackingSource).toContain('activeAnnotationDirectRunRef.current && !activeAnnotationDirectRunRef.current.controller.signal.aborted');
+    expect(stateTrackingSource).toContain('annotationDirectRunRegistryRef.current.getActiveRunCount()');
+    expect(stateTrackingSource).toContain('maxRunCount: maxAnnotationDirectRunCount');
+    expect(refreshSource).toContain('activeRunCount <= 0');
+    expect(refreshSource).toContain("robotState: 'awake' as const");
+    expect(refreshSource).toContain('sendDisabled: false');
+    expect(refreshSource).toContain('interruptDisabled: true');
     expect(stateTrackingSource).toContain('const resolvedState = resolveAnnotationDirectRunToolbarState(state);');
     expect(stateTrackingSource).toContain('const resolvedState = resolveAnnotationDirectRunToolbarState(nextResolvedState);');
-    expect(directRunSource).toMatch(
-      /await applyAnnotationEditingTaskState\(request\.editingTargets, 'completed', latestTaskRef\);\s*if \(activeAnnotationDirectRunRef\.current\?\.controller === controller\) \{\s*activeAnnotationDirectRunRef\.current = null;\s*\}\s*setAnnotationAssistantToolbarState/,
+    expect(directRunSource).toContain("case 'settled':");
+    expect(directRunSource).toContain('refreshAnnotationDirectRunToolbarState();');
+  });
+
+  it('uses a direct annotation run registry instead of inline active run bookkeeping', () => {
+    const source = readPreviewRootSource();
+    const directRunSource = getSourceSegment(
+      source,
+      'const runAnnotationAcpChatPrompt = useCallback(async (input: string | null | undefined | AnnotationPromptRunRequest) => {',
+      'const abortAnnotationDirectRun = useCallback',
     );
-    expect(directRunSource).toMatch(
-      /await applyAnnotationEditingTaskState\(request\.editingTargets, aborted \? 'idle' : 'error', terminalTaskRef\);\s*if \(activeAnnotationDirectRunRef\.current\?\.controller === controller\) \{\s*activeAnnotationDirectRunRef\.current = null;\s*\}\s*setAnnotationAssistantToolbarState/,
+    const abortSource = getSourceSegment(
+      source,
+      'const abortAnnotationDirectRun = useCallback',
+      'const copyHostToolbarPromptText = useCallback',
     );
+
+    expect(source).toContain('createAnnotationDirectRunRegistry');
+    expect(source).toContain('annotationDirectRunRegistryRef');
+    expect(source).not.toContain('activeAnnotationDirectRunMapRef');
+    expect(source).not.toContain('annotationDirectRunSeqRef');
+    expect(directRunSource).not.toContain('new AbortController()');
+    expect(directRunSource).not.toContain('activeAnnotationDirectRunMapRef.current.set');
+    expect(directRunSource).toContain('annotationDirectRunRegistryRef.current.startRun({');
+    expect(directRunSource).toContain("case 'started':");
+    expect(directRunSource).toContain("case 'prepared':");
+    expect(directRunSource).toContain("case 'accepted':");
+    expect(directRunSource).toContain("case 'completed':");
+    expect(directRunSource).toContain("case 'aborted':");
+    expect(directRunSource).toContain("case 'error':");
+    expect(abortSource).toContain('await annotationDirectRunRegistryRef.current.abortAll();');
+  });
+
+  it('aborts active direct annotation runs when globally exiting the editor', () => {
+    const source = readPreviewRootSource();
+    const fallbackActionSource = getSourceSegment(
+      source,
+      'const runQuickEditHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+    );
+
+    expect(source).not.toContain('onInvalidateAnnotationAssistantConversation');
+    expect(source).toContain('await annotationDirectRunRegistryRef.current.abortAll();');
+    expect(fallbackActionSource).toContain("nextAction.type === 'full-exit'");
+    expect(fallbackActionSource).toContain("await abortAnnotationDirectRun({ showFeedback: false });");
+  });
+
+  it('keeps host-delegated card sends pane-scoped before split prompt collection', () => {
+    const source = readPreviewRootSource();
+    const webEditorTypesSource = readFileSync(
+      resolve(__dirname, '../../../../vendor/axhub-commentary/src/web-editor-types.ts'),
+      'utf8',
+    );
+    const messageListenerSource = getSourceSegment(
+      source,
+      "data.type !== 'AXHUB_PROTOTYPE_EDITOR_HOST_TOOLBAR_ACTION_REQUEST'",
+      "window.addEventListener('message', handleMessage);",
+    );
+    const runHostToolbarActionSource = getSourceSegment(
+      source,
+      'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
+      'const runQuickEditSaveAction = useCallback',
+    );
+
+    expect(messageListenerSource).toContain('resolvePreviewPaneForIframe(targetIframe)');
+    expect(messageListenerSource).toContain('const sourcePane = resolvePreviewPaneForIframe(targetIframe);');
+    expect(messageListenerSource).toContain('const action = sourcePane');
+    expect(messageListenerSource).toContain('? { ...data.action, pane: sourcePane } as CommentaryHostToolbarAction');
+    expect(messageListenerSource).toContain(': data.action;');
+    expect(runHostToolbarActionSource).toContain("if (nextAction.type === 'send-to-agent' && nextAction.elementKey && nextAction.pane) {");
+    expect(webEditorTypesSource).toContain('promptText?: string;');
+    expect(source).toContain("if (action?.type === 'send-to-agent' && typeof action.promptText === 'string')");
+    expect(runHostToolbarActionSource).toContain('const panePrompt = await collectPrototypePrompt(nextAction.pane, nextAction);');
+    expect(runHostToolbarActionSource).toContain('return runAnnotationAcpChatPrompt(panePrompt);');
   });
 
   it('does not show a persistent sending toast for direct annotation API runs', () => {
@@ -924,8 +1193,8 @@ describe('useIndexPagePreviewActions source', () => {
 
     expect(directRunSource).not.toContain("messageApi.loading('正在发送给 AI...', 0)");
     expect(directRunSource).toContain("messageApi.success('AI 已执行');");
-    expect(directRunSource).toContain('formatThrownError(error)');
-    expect(directRunSource).toContain('messageApi.error(`AI 执行失败：${formatThrownError(error)}`);');
+    expect(directRunSource).toContain('formatThrownError(event.error)');
+    expect(directRunSource).toContain('messageApi.error(`AI 执行失败：${formatThrownError(event.error)}`);');
     expect(directRunSource).not.toContain("messageApi.error(error?.message || 'AI 执行失败');");
   });
 
@@ -941,9 +1210,8 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('(error as { data?: Record<string, unknown> }).data');
     expect(source).toContain('details: data');
     expect(source).toContain('chunk }');
-    expect(directRunSource).toContain('const terminalTaskRef = aborted');
-    expect(directRunSource).toContain('buildAnnotationEditingErrorTaskRef(latestTaskRef, error)');
-    expect(directRunSource).toContain("applyAnnotationEditingTaskState(request.editingTargets, aborted ? 'idle' : 'error', terminalTaskRef)");
+    expect(directRunSource).toContain('const terminalTaskRef = buildAnnotationEditingErrorTaskRef(event.taskRef, event.error);');
+    expect(directRunSource).toContain("applyAnnotationEditingTaskState(event.editingTargets, 'error', terminalTaskRef)");
   });
 
   it('keeps explicit selection mode actions reflected in host toolbar state', () => {
@@ -1009,7 +1277,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(runHostToolbarActionSource).toContain('return copyHostToolbarPromptText(combinedPrompt);');
     expect(runHostToolbarActionSource).toContain('return runAnnotationAcpChatPrompt({');
     expect(runHostToolbarActionSource).toContain('editingTargets: splitPrompts.flatMap((item) => item.editingTargets || []),');
-    expect(runHostToolbarActionSource).toContain('editingTargets: buildAnnotationEditingTargets(');
+    expect(runHostToolbarActionSource).toContain('editingTargets: buildAnnotationDirectRunEditingTargets(');
     expect(runHostToolbarActionSource).toMatch(
       /if \(previewConfig\.previewMode === 'split'\) \{[\s\S]*?return runAnnotationAcpChatPrompt\(\{[\s\S]*?editingTargets: splitPrompts\.flatMap[\s\S]*?\}\);[\s\S]*?\}\s*const promptText = editors\?\.getCopyPromptText\?\.\(\);/,
     );
@@ -1088,16 +1356,17 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("messageApi.warning('当前客户端页面尚未接入 /runtime/quick-edit.js，请通过 script、Vite 插件或 Webpack 插件加载后再使用快速编辑')");
   });
 
-  it('resets the standalone design decision panel when the preview iframe target changes outside quick edit', () => {
+  it('resets preview-scoped side panels when the preview iframe target changes outside quick edit', () => {
     const source = readPreviewRootSource();
     const resetSegment = getSourceSegment(
       source,
-      'useEffect(() => {\n        const shouldRestoreQuickEdit = quickEditRuntimeActiveRef.current;',
+      'useEffect(() => {\n        const prototypeIdentityChanged = selectedPrototypeIdentityRef.current !== selectedPrototypeIdentity;',
       'const quickEditAvailable = Boolean(selectedEditablePreviewResource)',
     );
 
     expect(resetSegment).toMatch(/if \(shouldRestoreQuickEdit\) \{[\s\S]*return;/);
     expect(resetSegment).toContain('setStandalonePanelOpen(false);');
+    expect(resetSegment).toContain('setReviewPanelOpen(false);');
     expect(resetSegment).toContain('decisionPanelAutoOpenSeqRef.current += 1;');
     expect(resetSegment).toContain('resourceType');
     expect(resetSegment).toContain('selectedEditablePreviewResource');
@@ -1134,7 +1403,7 @@ describe('useIndexPagePreviewActions source', () => {
     );
     const resetEffectSource = getSourceSegment(
       source,
-      'useEffect(() => {\n        const shouldRestoreQuickEdit = quickEditRuntimeActiveRef.current;',
+      'useEffect(() => {\n        const prototypeIdentityChanged = selectedPrototypeIdentityRef.current !== selectedPrototypeIdentity;',
       'const quickEditAvailable = Boolean(selectedEditablePreviewResource)',
     );
     const returnSegment = source.slice(source.indexOf('return {'));
@@ -1187,6 +1456,33 @@ describe('useIndexPagePreviewActions source', () => {
     expect(iframeLoadSegment).toContain('const restoreOptions = pendingPrototypeEditorRestoreRef.current;');
     expect(iframeLoadSegment).toContain('activePrototypeEditorLaunchOptionsRef.current = restoreOptions;');
     expect(iframeLoadSegment).toContain('void reenterPrototypeEditorAfterIframeLoad(restoreOptions);');
+  });
+
+  it('exits prototype annotation mode instead of restoring quick edit when the selected prototype changes', () => {
+    const source = readPreviewRootSource();
+    const identityHelperSource = getSourceSegment(
+      source,
+      'function resolveSelectedPrototypeIdentity(selectedItem: any): string {',
+      'export function useIndexPagePreviewActions(params: any) {',
+    );
+    const switchEffectSource = getSourceSegment(
+      source,
+      'useEffect(() => {\n        const previousPrototypeIdentity = selectedPrototypeIdentityRef.current;',
+      'const handleCopyQuickEditPrompt = useCallback',
+    );
+
+    expect(identityHelperSource).toContain('selectedItem?.resourceId');
+    expect(identityHelperSource).toContain('selectedItem?.name');
+    expect(source).toContain('const selectedPrototypeIdentity = useMemo(() => resolveSelectedPrototypeIdentity(selectedItem), [selectedItem]);');
+    expect(source).toContain('const selectedPrototypeIdentityRef = useRef(selectedPrototypeIdentity);');
+    expect(source).toContain('const prototypeIdentityChanged = selectedPrototypeIdentityRef.current !== selectedPrototypeIdentity;');
+    expect(source).toContain('const shouldRestoreQuickEdit = quickEditRuntimeActiveRef.current && !prototypeIdentityChanged;');
+    expect(source).toContain('if (prototypeIdentityChanged && quickEditRuntimeActiveRef.current)');
+    expect(switchEffectSource).toContain('previousPrototypeIdentity === selectedPrototypeIdentity');
+    expect(switchEffectSource).toContain('quickEditRuntimeActiveRef.current');
+    expect(switchEffectSource).toContain('pendingPrototypeEditorRestoreRef.current = null;');
+    expect(switchEffectSource).toContain('setReviewPanelOpen(false);');
+    expect(switchEffectSource).toContain('void handleExitWebEditor({ restoreDevice: false, restorePanelOnly: false });');
   });
 
   it('resets the standalone design decision panel before refreshing the preview iframe', () => {
@@ -1261,9 +1557,10 @@ describe('useIndexPagePreviewActions source', () => {
   it('keeps generic Figma and Axure availability independent from client runtime state', () => {
     const source = readPreviewActionsSource();
 
-    expect(source).toContain('const canOpenGenericFigmaExport = Boolean(selectedItem) && figmaEnabled;');
-    expect(source).toContain('const canOpenGenericAxureExport = Boolean(selectedItem) && axureEnabled;');
-    expect(source).toContain('const canUseRuntimeFeatures = viewMode === \'demo\' && Boolean(selectedItem?.clientUrl) && quickEditRuntimeStatus === \'ready\';');
+    expect(source).toContain('const canOpenGenericFigmaExport = Boolean(currentRuntimeExportResource) && figmaEnabled;');
+    expect(source).toContain('const canOpenGenericAxureExport = Boolean(currentRuntimeExportResource) && axureEnabled;');
+    expect(source).toContain("const canUseRuntimeFeatures = contentMode === 'theme'");
+    expect(source).toContain("? hasClientUrl\n            : viewMode === 'demo' && hasClientUrl && quickEditRuntimeStatus === 'ready';");
     expect(source).toContain('const canUseSourceFeatures = viewMode === \'demo\' && hasSourceContext && axureEnabled;');
     expect(source).toContain('figmaDomDisabledReason: figmaDisabledReason || runtimeMissingReason');
     expect(source).toContain('axureRuntimeDisabledReason: axureDisabledReason || runtimeMissingReason');
@@ -1311,7 +1608,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('assistantPanelOpen: assistantContextAppendAvailable');
     expect(source).toContain('documentHostToolbarUnsubscribeRef.current = editorApi.subscribeHostToolbarState?.((nextState) => {');
     expect(source).toContain('setResolvedHostToolbarState(resolveHostToolbarStateForDisplay(null, editorApi.getHostToolbarState?.() ?? createDefaultHostToolbarState(), isDarkMode));');
-    expect(source).toContain('void enterDocumentEditor(mode);');
+    expect(source).toContain('void enterDocumentEditor(mode, options);');
     expect(source).toContain('return readPreviewFrameEditorApi<DocumentEditorApi>(iframe, \'SpecTemplateBootstrap\');');
     expect(source).not.toContain("return api ?? readPreviewFrameEditorApi<DocumentEditorApi>(iframe, 'HtmlTemplateBootstrap');");
     expect(source).toContain("setEditorStatus({ mode: 'quickEdit' });");
@@ -1320,12 +1617,24 @@ describe('useIndexPagePreviewActions source', () => {
 
   it('routes HTML document annotation through the HTML page editor bridge', () => {
     const source = readPreviewActionsSource();
+    const enterHtmlDocumentEditorSource = getSourceSegment(
+      source,
+      'const enterHtmlDocumentEditor = useCallback',
+      'const handleEnableDocEdit = useCallback',
+    );
 
     expect(source).toContain('const currentDocumentIsHtml = Boolean(');
     expect(source).toContain('isHtmlCommentableResource(currentMarkdownItem)');
-    expect(source).toContain('const enterHtmlDocumentEditor = useCallback(async () => {');
+    expect(source).toContain('const enterHtmlDocumentEditor = useCallback(async (options?: { disableSelectionMode?: boolean; preserveSidebar?: boolean }) => {');
+    expect(source).toContain('if (!options?.preserveSidebar) {');
     expect(source).toContain('if (isHtmlCommentableResource(currentMarkdownItem)) {');
-    expect(source).toContain('void enterHtmlDocumentEditor();');
+    expect(source).toContain('void enterHtmlDocumentEditor(options);');
+    expect(source).toContain("type: 'toggle-selection-mode'");
+    expect(source).toContain('active: false');
+    expect(enterHtmlDocumentEditorSource).toContain('const selectionModeResult = await postPrototypeEditorHostToolbarAction(primaryIframe, {');
+    expect(enterHtmlDocumentEditorSource).toContain('...(selectionModeResult?.hostToolbarState ?? hostToolbarStateRef.current ?? createDefaultHostToolbarState()),');
+    expect(enterHtmlDocumentEditorSource).toContain('selectionModeActive: false,');
+    expect(enterHtmlDocumentEditorSource).toContain('setResolvedHostToolbarState(resolveHostToolbarStateForDisplay(');
     expect(source).toContain('if (currentDocumentIsHtml) {');
     expect(source).toContain('await enterHtmlDocumentEditor();');
     expect(source).toContain("const selectedEditablePreviewResource = currentDocumentIsHtml");
@@ -1358,10 +1667,10 @@ describe('useIndexPagePreviewActions source', () => {
 
     expect(source).toContain('createRuntimeExportMessage');
     expect(source).toContain('requestId');
-    expect(source).toContain("resourceType: 'prototypes'");
+    expect(source).toContain("resourceType: `${normalizedResourceType}s`");
     expect(source).toContain('projectId: selectedItem.projectId');
     expect(source).toContain('resourceId: selectedItem.resourceId || selectedItem.name');
-    expect(source).toContain('clientUrl: selectedItem.clientUrl');
+    expect(source).toContain('clientUrl: selectedItem.clientUrl || selectedItem.previewUrl');
     expect(source).toContain("type: 'axhub.quickEdit.export.captureScreenshot'");
     expect(source).toContain("type: 'axhub.quickEdit.export.axureJson'");
     expect(source).toContain("event.data.type !== 'axhub.quickEdit.export.captureScreenshotResult'");
@@ -1377,13 +1686,13 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toMatch(/event\.data\?\.type === 'axhub\.quickEdit\.save'[\s\S]*postProjectCommunicationRecord\(selectedItem, 'edit-history', \{\s*operationType: 'quickEdit\.save',\s*status: 'success'/s);
   });
 
-  it('records source-backed Make export outcomes through project communication APIs', () => {
+  it('records runtime-backed and source-backed export outcomes through project communication APIs', () => {
     const source = readPreviewActionsSource();
 
-    expect(source).toMatch(/postProjectCommunicationRecord\(selectedItem, 'exports', \{\s*operationType: 'axure\.copy',\s*status: 'success'/s);
-    expect(source).toMatch(/postProjectCommunicationRecord\(selectedItem, 'exports', \{\s*operationType: 'axure\.copy',\s*status: 'failed'/s);
-    expect(source).toMatch(/postProjectCommunicationRecord\(selectedItem, 'exports', \{\s*operationType: 'figma\.copy',\s*status: 'success'/s);
-    expect(source).toMatch(/postProjectCommunicationRecord\(selectedItem, 'exports', \{\s*operationType: 'figma\.copy',\s*status: 'failed'/s);
+    expect(source).toMatch(/postProjectCommunicationRecord\(currentRuntimeExportResource, 'exports', \{\s*operationType: 'axure\.copy',\s*status: 'success'/s);
+    expect(source).toMatch(/postProjectCommunicationRecord\(currentRuntimeExportResource, 'exports', \{\s*operationType: 'axure\.copy',\s*status: 'failed'/s);
+    expect(source).toMatch(/postProjectCommunicationRecord\(currentRuntimeExportResource, 'exports', \{\s*operationType: 'figma\.copy',\s*status: 'success'/s);
+    expect(source).toMatch(/postProjectCommunicationRecord\(currentRuntimeExportResource, 'exports', \{\s*operationType: 'figma\.copy',\s*status: 'failed'/s);
     expect(source).toMatch(/postProjectCommunicationRecord\(selectedItem, 'exports', \{\s*operationType: 'make\.export',\s*status: 'success'/s);
     expect(source).toMatch(/metadata: \{\s*fileName,\s*\}/s);
     expect(source).toMatch(/postProjectCommunicationRecord\(selectedItem, 'exports', \{\s*operationType: 'make\.export',\s*status: 'failed'/s);
@@ -1449,7 +1758,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain('contentMode,');
     expect(source).toContain('selectedItem,');
     expect(source).toContain('selectedTheme,');
-    expect(source).toContain('apiService.getCloudPublishingLatest(currentPublishResourcePath)');
+    expect(source).toContain('apiService.getCloudPublishingLatest(requestedResourcePath)');
     expect(source).toContain("...(latest.targets.githubPages ? { 'github-pages': latest.targets.githubPages } : {})");
     expect(source).toContain("...(latest.targets.axhub ? { axhub: latest.targets.axhub } : {})");
     expect(source).toContain("const handleOpenCloudPublishSettings = useCallback((target: CloudPublishSettingsInitialTarget = 's3')");
@@ -1532,18 +1841,20 @@ describe('useIndexPagePreviewActions source', () => {
     const source = readPreviewRootSource();
     const handleEnableDocEditSource = getSourceSegment(
       source,
-      'const handleEnableDocEdit = useCallback((mode: SpecQuickEditMode = \'comment\') => {',
+      'const handleEnableDocEdit = useCallback((',
       'const handleSaveDocEdit = useCallback',
     );
     const enterDocumentEditorSource = getSourceSegment(
       source,
-      'const enterDocumentEditor = useCallback(async (mode: SpecQuickEditMode = \'comment\') => {',
+      'const enterDocumentEditor = useCallback(async (mode: SpecQuickEditMode = \'comment\', options?: { preserveSidebar?: boolean }) => {',
       'const enterHtmlDocumentEditor = useCallback',
     );
 
     expect(handleEnableDocEditSource).toContain("postToPreview({ type: 'SPEC_EDIT_ENABLE', mode })");
     expect(handleEnableDocEditSource).toContain('quickEditMode: mode');
-    expect(handleEnableDocEditSource).toContain('enterDocumentEditor(mode)');
+    expect(handleEnableDocEditSource).toContain('enterDocumentEditor(mode, options)');
+    expect(handleEnableDocEditSource).toContain('options?: { disableSelectionMode?: boolean; preserveSidebar?: boolean }');
     expect(enterDocumentEditorSource).toContain('quickEditMode: mode');
+    expect(enterDocumentEditorSource).toContain('if (!options?.preserveSidebar) {');
   });
 });

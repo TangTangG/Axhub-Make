@@ -1,8 +1,0 @@
-.placeholder-empty-page {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: #ffffff;
-  color: #475569;
-  font-size: 14px;
-}

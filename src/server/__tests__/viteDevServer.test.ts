@@ -9,6 +9,9 @@ import { normalizePath } from 'vite';
 type ViteConfig = {
   cacheDir?: string;
   plugins?: Array<{ name: string; handleHotUpdate?: unknown }>;
+  resolve?: {
+    alias?: Array<{ find: string | RegExp; replacement: string }>;
+  };
   server?: {
     headers?: Record<string, string>;
     watch?: {
@@ -139,7 +142,7 @@ describe('make-server Vite dev middleware', () => {
         '**/dist/**',
         '**/src/server/**',
         '**/*.excalidraw',
-        '**/canvas-assets/**',
+        '**/*.assets/**',
       ]));
       expect(firstConfig.plugins?.some((plugin) => (
         plugin.name === 'axhub-canvas-hot-update-filter'
@@ -160,6 +163,35 @@ describe('make-server Vite dev middleware', () => {
     } finally {
       await firstMiddleware.close();
       await secondMiddleware.close();
+    }
+  });
+
+  it('aliases the embedded commentary runtime to the vendored dist entry', async () => {
+    const makeServerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-vite-dev-commentary-'));
+    fs.mkdirSync(path.join(makeServerRoot, 'vendor/axhub-commentary/dist'), { recursive: true });
+    fs.writeFileSync(
+      path.join(makeServerRoot, 'vendor/axhub-commentary/dist/index.mjs'),
+      'export const commentaryRuntime = true;\n',
+      'utf8',
+    );
+    const createServer = vi.fn(async (_config: ViteConfig) => ({
+      middlewares: vi.fn(),
+      transformIndexHtml: vi.fn(async (_url: string, html: string) => html),
+      close: vi.fn(),
+    }));
+    vi.doMock('vite', () => ({ createServer, normalizePath }));
+
+    try {
+      const { createViteDevMiddleware } = await import('../viteDevServer.ts');
+      const middleware = await createViteDevMiddleware(http.createServer(), makeServerRoot);
+      const config = createServer.mock.calls[0]?.[0] as ViteConfig;
+      const commentaryAlias = config.resolve?.alias?.find((alias) => String(alias.find) === '/^@axhub\\/commentary$/');
+
+      expect(commentaryAlias?.replacement).toBe(path.join(makeServerRoot, 'vendor/axhub-commentary/dist/index.mjs'));
+
+      await middleware.close();
+    } finally {
+      fs.rmSync(makeServerRoot, { recursive: true, force: true });
     }
   });
 
@@ -217,6 +249,7 @@ describe('make-server Vite dev middleware', () => {
     ['/assets/html-template-bootstrap.js', '/src/html-template/index.tsx'],
     ['/assets/runtime-export-core.js', '/src/runtime-export-core.ts'],
     ['/assets/runtime-export-core.js?v=0.3.0', '/src/runtime-export-core.ts'],
+    ['/assets/axure-export-runtime.js', '/src/axure-export-runtime.ts'],
   ])('serves production entry asset %s from source in dev mode', async (assetUrl, sourceUrl) => {
     let handledUrl = '';
     const close = vi.fn();

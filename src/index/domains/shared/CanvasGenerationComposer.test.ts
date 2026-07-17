@@ -31,6 +31,10 @@ vi.mock('@/components/ui/button', () => ({
   Button: ({ children }: { children: unknown }) => children,
 }));
 
+vi.mock('@/components/ui/input', () => ({
+  Input: () => null,
+}));
+
 vi.mock('@/components/ui/popover', () => ({
   Popover: ({ children }: { children: unknown }) => children,
   PopoverContent: ({ children }: { children: unknown }) => children,
@@ -74,10 +78,6 @@ vi.mock('./canvasReferenceClipboard', () => ({
   shouldUseCanvasReferencePaste: vi.fn(() => false),
 }));
 
-vi.mock('../ai-generation/canvasAiSceneRegistry', () => ({
-  appendCanvasAiQuickPrompt: (current: string, prompt: string) => `${current}${prompt}`,
-}));
-
 async function loadMessageExtraction() {
   const mod = await import('./CanvasGenerationComposer');
   return {
@@ -87,6 +87,11 @@ async function loadMessageExtraction() {
     extractCanvasGenerationPromptFromMessage: mod.extractCanvasGenerationPromptFromMessage,
     extractCanvasGenerationReferenceImagesFromMessage: mod.extractCanvasGenerationReferenceImagesFromMessage,
     buildCanvasProjectResourceContextItems: mod.buildCanvasProjectResourceContextItems,
+    buildCanvasProjectResourceItemSelections: mod.buildCanvasProjectResourceItemSelections,
+    filterCanvasProjectResourceTreeByQuery: mod.filterCanvasProjectResourceTreeByQuery,
+    localContextRefsToAcpContextItems: mod.localContextRefsToAcpContextItems,
+    normalizeCanvasReferencePasteResult: mod.normalizeCanvasReferencePasteResult,
+    removeCanvasLocalContextRefItem: mod.removeCanvasLocalContextRefItem,
     resolveCanvasAcpRuntimeProviderOptions: mod.resolveCanvasAcpRuntimeProviderOptions,
     resolveCanvasAcpSelectorDefaults: mod.resolveCanvasAcpSelectorDefaults,
   };
@@ -184,6 +189,66 @@ describe('CanvasGenerationComposer message extraction', () => {
     ]);
   });
 
+  it('normalizes canvas reference paste results with local context refs', async () => {
+    const { normalizeCanvasReferencePasteResult } = await loadMessageExtraction();
+
+    expect(normalizeCanvasReferencePasteResult(['data:image/png;base64,one'])).toEqual({
+      referenceImages: ['data:image/png;base64,one'],
+      localContextRefs: [],
+    });
+    expect(normalizeCanvasReferencePasteResult({
+      referenceImages: ['data:image/png;base64,two'],
+      localContextRefs: [
+        {
+          resourceType: 'doc',
+          resourceId: 'requirements/product-brief.md',
+          title: 'Product Brief',
+          paths: ['src/resources/requirements/product-brief.md'],
+        },
+      ],
+    })).toEqual({
+      referenceImages: ['data:image/png;base64,two'],
+      localContextRefs: [
+        {
+          resourceType: 'doc',
+          resourceId: 'requirements/product-brief.md',
+          title: 'Product Brief',
+          paths: ['src/resources/requirements/product-brief.md'],
+        },
+      ],
+    });
+  });
+
+  it('removes a pasted local context file item from its backing refs', async () => {
+    const {
+      localContextRefsToAcpContextItems,
+      removeCanvasLocalContextRefItem,
+    } = await loadMessageExtraction();
+    const refs = [
+      {
+        resourceType: 'theme',
+        resourceId: 'quiet-saas',
+        title: 'Quiet SaaS',
+        paths: [
+          'src/themes/quiet-saas/DESIGN.md',
+          'src/themes/quiet-saas/index.tsx',
+        ],
+      },
+    ];
+    const itemToRemove = localContextRefsToAcpContextItems(refs)[0];
+
+    expect(removeCanvasLocalContextRefItem(refs, itemToRemove.id)).toEqual([
+      {
+        resourceType: 'theme',
+        resourceId: 'quiet-saas',
+        title: 'Quiet SaaS',
+        paths: [
+          'src/themes/quiet-saas/index.tsx',
+        ],
+      },
+    ]);
+  });
+
   it('extracts all attachment file parts while still using only images as references', async () => {
     const {
       extractCanvasGenerationAttachmentPartsFromMessage,
@@ -237,9 +302,14 @@ describe('CanvasGenerationComposer message extraction', () => {
       providerOptions: ['claude', 'codex', 'opencode'],
     });
     expect(resolveCanvasAcpSelectorDefaults('acp:gemini')).toEqual({
-      defaultProvider: 'gemini',
-      defaultModel: 'gemini-3-pro-preview',
-      providerOptions: ['claude', 'codex', 'opencode', 'gemini'],
+      defaultProvider: 'codex',
+      defaultModel: 'gpt-5.5',
+      providerOptions: ['claude', 'codex', 'opencode'],
+    });
+    expect(resolveCanvasAcpSelectorDefaults('acp:grok-build')).toEqual({
+      defaultProvider: 'grok-build',
+      defaultModel: 'grok-build',
+      providerOptions: ['claude', 'codex', 'opencode', 'grok-build'],
     });
   });
 
@@ -247,7 +317,8 @@ describe('CanvasGenerationComposer message extraction', () => {
     const { resolveCanvasAcpRuntimeProviderOptions } = await loadMessageExtraction();
 
     expect(resolveCanvasAcpRuntimeProviderOptions(undefined, 'codex')).toEqual(['claude', 'codex', 'opencode']);
-    expect(resolveCanvasAcpRuntimeProviderOptions(undefined, 'gemini')).toEqual(['claude', 'codex', 'opencode', 'gemini']);
+    expect(resolveCanvasAcpRuntimeProviderOptions(undefined, 'gemini' as any)).toEqual(['claude', 'codex', 'opencode']);
+    expect(resolveCanvasAcpRuntimeProviderOptions(undefined, 'grok-build')).toEqual(['claude', 'codex', 'opencode', 'grok-build']);
   });
 
   it('builds project resource context from selected files and folders without expanding folders', async () => {
@@ -445,6 +516,171 @@ describe('CanvasGenerationComposer message extraction', () => {
       expect.objectContaining({ path: 'src/themes/brand-dark/index.tsx' }),
       expect.objectContaining({ path: 'src/themes/claude/index.tsx' }),
       expect.objectContaining({ path: 'src/themes/folder-themes-zhineng' }),
+    ]));
+  });
+
+  it('filters project resource trees by title and path while preserving matched ancestry', async () => {
+    const { filterCanvasProjectResourceTreeByQuery } = await loadMessageExtraction();
+    const tree = [
+      {
+        id: 'folder:prototypes:admin',
+        kind: 'folder',
+        title: '后台原型',
+        folderPath: 'admin',
+        children: [
+          {
+            id: 'item:prototypes:settings',
+            kind: 'item',
+            title: '设置页',
+            itemKey: 'prototypes/settings',
+          },
+          {
+            id: 'item:prototypes:profile',
+            kind: 'item',
+            title: '个人中心',
+            itemKey: 'prototypes/profile',
+          },
+        ],
+      },
+      {
+        id: 'item:prototypes:delivery-home',
+        kind: 'item',
+        title: '快递官网首页',
+        itemKey: 'prototypes/delivery-home',
+      },
+    ];
+
+    expect(filterCanvasProjectResourceTreeByQuery(tree, 'settings')).toEqual([
+      {
+        id: 'folder:prototypes:admin',
+        kind: 'folder',
+        title: '后台原型',
+        folderPath: 'admin',
+        children: [
+          {
+            id: 'item:prototypes:settings',
+            kind: 'item',
+            title: '设置页',
+            itemKey: 'prototypes/settings',
+          },
+        ],
+      },
+    ]);
+    expect(filterCanvasProjectResourceTreeByQuery(tree, '快递')).toEqual([
+      {
+        id: 'item:prototypes:delivery-home',
+        kind: 'item',
+        title: '快递官网首页',
+        itemKey: 'prototypes/delivery-home',
+      },
+    ]);
+    expect(filterCanvasProjectResourceTreeByQuery(tree, '后台')).toEqual([
+      {
+        id: 'folder:prototypes:admin',
+        kind: 'folder',
+        title: '后台原型',
+        folderPath: 'admin',
+        children: [
+          {
+            id: 'item:prototypes:settings',
+            kind: 'item',
+            title: '设置页',
+            itemKey: 'prototypes/settings',
+          },
+          {
+            id: 'item:prototypes:profile',
+            kind: 'item',
+            title: '个人中心',
+            itemKey: 'prototypes/profile',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('builds canvas picker item selections without returning folders', async () => {
+    const { buildCanvasProjectResourceItemSelections } = await loadMessageExtraction();
+
+    const selections = buildCanvasProjectResourceItemSelections({
+      trees: {
+        prototypes: [
+          {
+            id: 'folder:prototypes:admin',
+            kind: 'folder',
+            title: '后台原型',
+            folderPath: 'admin',
+            children: [
+              {
+                id: 'item:prototypes:settings',
+                kind: 'item',
+                title: '设置页',
+                itemKey: 'prototypes/settings',
+              },
+            ],
+          },
+        ],
+        docs: [
+          {
+            id: 'folder:docs:assets',
+            kind: 'folder',
+            title: '素材',
+            folderPath: 'assets',
+            children: [
+              {
+                id: 'item:docs:assets/logo.png',
+                kind: 'item',
+                title: 'Logo',
+                itemKey: 'docs/assets/logo.png',
+                path: 'assets/logo.png',
+              },
+            ],
+          },
+        ],
+      },
+      items: {
+        prototypes: [
+          {
+            name: 'settings',
+            displayName: '设置页',
+            jsUrl: '',
+            specUrl: '',
+          },
+        ],
+        docs: [
+          {
+            name: 'assets/logo.png',
+            displayName: 'Logo',
+            jsUrl: '',
+            specUrl: '/api/docs/assets%2Flogo.png',
+            previewUrl: '/api/docs/assets%2Flogo.png',
+            filePath: 'assets/logo.png',
+          },
+        ],
+      },
+      selectedKeys: new Set([
+        'prototypes:folder:prototypes:admin',
+        'prototypes:item:prototypes:settings',
+        'docs:folder:docs:assets',
+        'docs:item:docs:assets/logo.png',
+      ]),
+    });
+
+    expect(selections).toEqual([
+      expect.objectContaining({
+        key: 'prototypes:item:prototypes:settings',
+        tab: 'prototypes',
+        node: expect.objectContaining({ kind: 'item', title: '设置页' }),
+        item: expect.objectContaining({ name: 'settings', displayName: '设置页' }),
+      }),
+      expect.objectContaining({
+        key: 'docs:item:docs:assets/logo.png',
+        tab: 'docs',
+        node: expect.objectContaining({ kind: 'item', title: 'Logo' }),
+        item: expect.objectContaining({ name: 'assets/logo.png', displayName: 'Logo' }),
+      }),
+    ]);
+    expect(selections).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ node: expect.objectContaining({ kind: 'folder' }) }),
     ]));
   });
 });

@@ -29,4 +29,4 @@ export const AGENT_SESSION_NOT_FOUND_CODES = new Set([
   'AGENT_SESSION_NOT_FOUND',
   'ACTIVE_SESSION_NOT_FOUND',
 ]);
-export const AGENT_SUPPORTED_UI_PROVIDERS = ['claude', 'codex', 'gemini', 'opencode'] as const;
+export const AGENT_SUPPORTED_UI_PROVIDERS = ['claude', 'codex', 'opencode'] as const;

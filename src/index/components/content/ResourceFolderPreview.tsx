@@ -4,9 +4,7 @@ import { FileIcon, FileText, Folder, ImageIcon } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import type { ItemData, SidebarTreeNode } from '../../types';
 import type { SelectedResourceFolder } from '../../types/index-page.types';
-import { buildResourceDeepLinkUrl } from '../../app/index-page/resourceDeepLink';
 import { createSidebarTreeItemLookup, resolveSidebarTreeItem } from '../../utils/sidebarTree';
-import { CANVAS_DROP_MIME } from './canvasDropTypes';
 import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';
 import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';
 
@@ -53,35 +51,6 @@ export function resolveResourceFolderPreviewKind(fields: unknown[]): ResourceFol
         return 'doc';
     }
     return 'none';
-}
-
-export function buildResourceFolderCanvasPayload(item: ItemData) {
-    const resourceId = item.resourceId || item.name;
-    const previewKind = resolveResourceFolderPreviewKind([
-        item.name,
-        item.displayName,
-        item.filePath,
-        item.absoluteFilePath,
-        item.specUrl,
-        item.previewUrl,
-    ]);
-
-    return {
-        type: 'preview',
-        resourceType: 'preview',
-        sourceResourceType: 'doc',
-        resourceId,
-        name: item.name,
-        displayName: item.displayName || item.name,
-        previewKind,
-        embedViewMode: previewKind === 'image' ? 'link' : 'preview',
-        previewUrl: item.previewUrl || item.specUrl || '',
-        openUrl: buildResourceDeepLinkUrl({
-            resourceType: 'doc',
-            resourceId,
-            collapseSidebar: true,
-        }),
-    };
 }
 
 function getNodeResourcePath(node: SidebarTreeNode): string {
@@ -206,13 +175,11 @@ export default function ResourceFolderPreview({
                                     }}
                                     onDragStart={(event) => {
                                         if (!item) return;
-                                        const payload = buildResourceFolderCanvasPayload(item);
                                         const resourceId = item.resourceId || item.name;
-                                        const assistantResourceType = payload.previewKind === 'image' ? 'image' : 'doc';
+                                        const assistantResourceType = previewKind === 'image' ? 'image' : 'doc';
                                         event.dataTransfer.effectAllowed = 'copy';
                                         event.dataTransfer.setData('text/plain', item.name);
                                         try {
-                                            event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));
                                             event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({
                                                 source: 'resource-folder',
                                                 resourceType: assistantResourceType,

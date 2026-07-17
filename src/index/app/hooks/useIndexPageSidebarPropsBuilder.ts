@@ -47,6 +47,8 @@ interface UseIndexPageSidebarPropsBuilderParams {
         selectedCanvas: any;
         selectedTheme: any;
         prototypeStartDraftActive?: boolean;
+        resourceStartDraftActive?: boolean;
+        themeStartDraftActive?: boolean;
         prototypeStartPageActive?: boolean;
     };
     deps: {
@@ -90,6 +92,8 @@ interface UseIndexPageSidebarPropsBuilderParams {
         handleMenuClick: (params: { key: string; pageId?: string | null }) => void | Promise<void>;
         setSelectedPrototypePageId?: Dispatch<SetStateAction<string | null>>;
         handleCreatePrototypeStartDraft?: () => void;
+        handleCreateResourceStartDraft?: () => void;
+        handleCreateThemeStartDraft?: () => void;
         handleOpenProjectInIDE: (ideOverride?: MainIDEPreference, targetPath?: string, projectId?: string) => boolean | Promise<boolean>;
         handleOpenAcpWebAgent?: (targetPath?: string, provider?: AcpProvider) => void | Promise<void>;
         handleOpenImageAiPanel?: () => void | Promise<void>;
@@ -150,6 +154,8 @@ export function useIndexPageSidebarPropsBuilder({
             webAgentPanelOpen: prototypeStartPageActive ? false : state.webAgentPanelOpen,
             aiPanelMode: prototypeStartPageActive ? null : state.aiPanelMode,
             prototypeStartPageActive: state.prototypeStartPageActive,
+            resourceStartDraftActive: state.resourceStartDraftActive,
+            themeStartDraftActive: state.themeStartDraftActive,
         },
         actions: {
             handleTabChange: deps.handleTabChange,
@@ -172,6 +178,7 @@ export function useIndexPageSidebarPropsBuilder({
             onSetDefaultTheme: (themeName) => { void deps.resources.handleSetDefaultTheme(themeName); },
             onResourceSectionChange: deps.setResourceSection,
             onSelectDoc: (item) => {
+                deps.resources.setSelectedResourceFolder?.(null);
                 deps.previewHandleSelectDoc(item);
                 deps.setViewMode('demo');
             },
@@ -202,7 +209,6 @@ export function useIndexPageSidebarPropsBuilder({
                 deps.setInitialCreateDialogTab(initialTab);
                 deps.setCreateDialogVisible(true);
             },
-            onImportTheme: deps.resources.handleImportThemeResource,
             onCreatePlaceholderPrototype: () => {
                 if (deps.handleCreatePrototypeStartDraft) {
                     deps.handleCreatePrototypeStartDraft();
@@ -210,12 +216,19 @@ export function useIndexPageSidebarPropsBuilder({
                 }
                 void deps.resources.handleCreatePlaceholderPrototype();
             },
+            onCreateResourceStart: () => {
+                deps.handleCreateResourceStartDraft?.();
+            },
+            onCreateThemeStart: () => {
+                deps.handleCreateThemeStartDraft?.();
+            },
+            onCreateResourceCanvasFile: (targetFolder) => {
+                void deps.resources.handleCreateResourceCanvasFile?.(targetFolder);
+            },
+            onCreateDrawioResourceFile: (targetFolder) => {
+                void deps.resources.handleCreateDrawioResourceFile?.(targetFolder);
+            },
             onUploadedResourceFiles: (files) => { void deps.resources.handleUploadedResourceFiles(files); },
-            onCreateCanvasFile: () => { void deps.resources.handleCreateCanvasFile(); },
-            handleRenameCanvasItem: deps.resources.handleRenameCanvasItem,
-            handleDuplicateCanvasItem: deps.resources.handleDuplicateCanvasItem,
-            handleDeleteCanvasItem: deps.resources.handleDeleteCanvasItem,
-            handleCopyCanvasPath: deps.resources.handleCopyCanvasPath,
             onCreateFolder: deps.resources.handleCreateFolder,
             onSettingsClick: (tab = 'project') => deps.openSettingsDialog(tab),
             onVersionCollaborationClick: () => deps.setVersionCollaborationDrawerOpen(true),

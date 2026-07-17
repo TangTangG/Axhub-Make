@@ -1,5 +1,6 @@
 import type {
   ElementLocator,
+  CommentaryClearEditsScope,
   CommentaryHostResource,
   PrototypeEditCommentEntry,
   PrototypeEditCommentImageEntry,
@@ -38,6 +39,10 @@ import { filterUnprocessedTransactions as filterTransactionsAfterProcessed } fro
 import { normalizeMarkerAnchor } from './marker-anchor';
 import type { CommentaryTweakValues } from '../../tweak/protocol';
 import { normalizePromptCardSkillIds } from '../../ui/runtime/prompt-card-skills';
+import {
+  collectAnnotationSourceNodeIdsFromWindow,
+  resolveAnnotationTargetIdentity,
+} from './annotation-target';
 
 type CachedTweakEntry = {
   summaryLines?: string[];
@@ -82,7 +87,6 @@ const UI_SETTINGS_KEY = 'web-editor-v2-ui-settings';
 const AGENT_CONVERSATION_KEY_PREFIX = 'web-editor-v2-agent-conversation:';
 const AGENT_TASKS_KEY_PREFIX = 'web-editor-v2-agent-tasks:';
 const SCOPED_COMMENT_TASK_KEY_PREFIX = 'page-scope:';
-const ANNOTATION_PANEL_NODE_ID_ATTR = 'data-axhub-annotation-panel-node-id';
 
 function stripLocatorDebugSource(locator: ElementLocator): ElementLocator {
   if (!locator.debugSource) return locator;
@@ -90,56 +94,18 @@ function stripLocatorDebugSource(locator: ElementLocator): ElementLocator {
   return rest;
 }
 
-function extractAnnotationPanelNodeId(locator: ElementLocator | null | undefined): string {
-  for (const selector of locator?.selectors ?? []) {
-    const normalized = String(selector ?? '').trim();
-    if (!normalized) continue;
-    const match = normalized.match(/\[data-axhub-annotation-panel-node-id=(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/);
-    const rawValue = match?.[1] ?? match?.[2] ?? match?.[3] ?? '';
-    const nodeId = String(rawValue).trim();
-    if (nodeId) return nodeId;
-  }
-  return '';
-}
-
 function normalizeAnnotationPanelCacheIdentity(
   locator: ElementLocator,
 ): { elementKey: WebEditorElementKey; locator: ElementLocator } | null {
-  const nodeId = extractAnnotationPanelNodeId(locator);
-  if (!nodeId) return null;
-  const nextElementKey = `annotation-panel:${nodeId}` as WebEditorElementKey;
+  const identity = resolveAnnotationTargetIdentity({
+    locator,
+    label: 'Annotation Panel',
+  });
+  if (!identity) return null;
   return {
-    elementKey: nextElementKey,
-    locator: {
-      ...locator,
-      fingerprint: nextElementKey,
-    },
+    elementKey: identity.elementKey,
+    locator: identity.locator,
   };
-}
-
-function collectAnnotationSourceNodeIdsFromWindow(): Set<string> | null {
-  if (typeof window === 'undefined') return null;
-  const runtimeWindow = window as Window & {
-    __AXHUB_ANNOTATION_SOURCE_DOCUMENT__?: {
-      data?: { nodes?: Array<{ id?: unknown }> };
-    };
-    __AXHUB_ANNOTATION_SOURCE__?: {
-      nodes?: Array<{ id?: unknown }>;
-    };
-  };
-  const documentNodes = runtimeWindow.__AXHUB_ANNOTATION_SOURCE_DOCUMENT__?.data?.nodes;
-  const snapshotNodes = runtimeWindow.__AXHUB_ANNOTATION_SOURCE__?.nodes;
-  const nodes = Array.isArray(documentNodes)
-    ? documentNodes
-    : Array.isArray(snapshotNodes)
-      ? snapshotNodes
-      : null;
-  if (!nodes) return null;
-  return new Set(
-    nodes
-      .map((node) => String(node?.id ?? '').trim())
-      .filter(Boolean),
-  );
 }
 
 function cloneTweakValue(value: CommentaryTweakValues[string] | undefined) {
@@ -171,6 +137,7 @@ export function createPersistenceService(options: {
   let lastAdapterDocument: PrototypeEditCommentsDocument | null = null;
   let preserveMissingCurrentScopeRecordsOnNextWrite = false;
   const commentTaskStateByElementKey = new Map<WebEditorElementKey, PrototypeEditCommentTaskEntry>();
+  const clearedCurrentPageRecordKeys = new Set<WebEditorElementKey>();
 
   function readResourceMetaString(key: string): string {
     try {
@@ -542,6 +509,23 @@ export function createPersistenceService(options: {
     }
   }
 
+  function normalizeElementRecordKey(value: unknown): WebEditorElementKey | null {
+    const normalized = String(value ?? '').trim();
+    return normalized ? normalized as WebEditorElementKey : null;
+  }
+
+  function isExplicitlyClearedCurrentPageRecord(
+    elementKey: unknown,
+    pageScope: unknown,
+  ): boolean {
+    const normalizedElementKey = normalizeElementRecordKey(elementKey);
+    if (!normalizedElementKey || !clearedCurrentPageRecordKeys.has(normalizedElementKey)) {
+      return false;
+    }
+    const normalizedPageScope = normalizePageScope(pageScope);
+    return !normalizedPageScope || normalizedPageScope === resolveCurrentPageScope();
+  }
+
   function stableJson(value: unknown): string {
     if (Array.isArray(value)) {
       return `[${value.map((item) => stableJson(item)).join(',')}]`;
@@ -634,6 +618,8 @@ export function createPersistenceService(options: {
     const tasks: Record<WebEditorElementKey, PrototypeEditCommentTaskEntry> = {};
     for (const [elementKey, task] of commentTaskStateByElementKey.entries()) {
       const scopedTask = withCurrentPageScope({ ...task });
+      if (isExplicitlyClearedCurrentPageRecord(elementKey, scopedTask.pageScope)) continue;
+      if (scopedTask.state === 'completed') continue;
       tasks[buildCommentTaskDocumentKey(elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
     }
     const allTasks = [
@@ -642,6 +628,7 @@ export function createPersistenceService(options: {
     ];
     for (const task of allTasks) {
       if (!task?.elementKey) continue;
+      if (task.origin === 'external-editing' && task.status === 'completed') continue;
       const scopedTask: PrototypeEditCommentTaskEntry = withCurrentPageScope({
         state: normalizeDocumentTaskState(task.status),
         provider: task.provider,
@@ -650,6 +637,7 @@ export function createPersistenceService(options: {
         updatedAt: task.updatedAt,
         message: task.message,
       });
+      if (isExplicitlyClearedCurrentPageRecord(task.elementKey, scopedTask.pageScope)) continue;
       tasks[buildCommentTaskDocumentKey(task.elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
     }
     return tasks;
@@ -691,9 +679,24 @@ export function createPersistenceService(options: {
   function buildAdapterDocument(
     entries: CachedChangeEntry[],
     reason: PrototypeEditCommentsWriteReason = 'changes',
+    clearScope: CommentaryClearEditsScope = 'page',
   ): PrototypeEditCommentsDocument | null {
     const scope = resolvePersistenceScope();
     if (!scope) return null;
+    if (reason === 'clear' && clearScope === 'prototype') {
+      return {
+        schemaVersion: 1,
+        kind: 'prototype-edit-comments',
+        resource: {
+          id: scope.prototypeId,
+          targetPath: scope.targetPath,
+          filePath: `src/${scope.targetPath}/.spec/prototype-comments.json`,
+        },
+        comments: [],
+        tasks: {},
+        images: [],
+      };
+    }
     const currentPageScope = resolveCurrentPageScope();
     const currentComments = entries.map((entry) =>
       withCurrentPageScope(cacheEntryToCommentEntry(entry)),
@@ -701,9 +704,15 @@ export function createPersistenceService(options: {
     const currentImages = buildDocumentImages();
     const currentTasks = buildDocumentTasks();
     const currentTaskElementKeys = new Set([
-      ...commentTaskStateByElementKey.keys(),
-      ...Array.from(state.agentTaskByElementKey.values()).map((task) => task.elementKey),
-      ...Array.from(state.externalEditingTaskByElementKey.values()).map((task) => task.elementKey),
+      ...Array.from(commentTaskStateByElementKey.entries())
+        .filter(([, task]) => task.state !== 'completed')
+        .map(([elementKey]) => elementKey),
+      ...Array.from(state.agentTaskByElementKey.values())
+        .filter((task) => !(task.origin === 'external-editing' && task.status === 'completed'))
+        .map((task) => task.elementKey),
+      ...Array.from(state.externalEditingTaskByElementKey.values())
+        .filter((task) => !(task.origin === 'external-editing' && task.status === 'completed'))
+        .map((task) => task.elementKey),
     ].map((elementKey) => String(elementKey ?? '').trim()).filter(Boolean));
     const currentImageKeys = new Set(
       currentImages
@@ -726,6 +735,7 @@ export function createPersistenceService(options: {
     const preservedComments = (lastAdapterDocument?.comments ?? []).filter((entry) => {
       const entryScope = normalizePageScope(entry.pageScope);
       const entryKey = resolveCommentRecordKey(entry);
+      if (isExplicitlyClearedCurrentPageRecord(entryKey, entryScope)) return false;
       const hasCurrentRecord = Boolean(entryKey && currentCommentRecordKeys.has(entryKey));
       const entryContentSignature = resolveCommentContentSignature(entry);
       const hasCurrentContent = Boolean(
@@ -747,14 +757,29 @@ export function createPersistenceService(options: {
     });
     const preservedImages = (lastAdapterDocument?.images ?? []).filter((image) => {
       const imageScope = normalizePageScope(image.pageScope);
-      if (imageScope) return imageScope !== currentPageScope;
       const imageElementKey = String(image.elementKey ?? '').trim();
+      if (isExplicitlyClearedCurrentPageRecord(imageElementKey, imageScope)) return false;
+      if (imageScope) {
+        if (imageScope !== currentPageScope) return true;
+        if (shouldDropMissingCurrentScopeRecords) return false;
+        if (shouldPreserveMissingCurrentScopeRecords) {
+          return !imageElementKey || !currentImageKeys.has(imageElementKey);
+        }
+        return false;
+      }
+      if (shouldDropMissingCurrentScopeRecords) return false;
+      if (shouldPreserveMissingCurrentScopeRecords) {
+        return !imageElementKey || !currentImageKeys.has(imageElementKey);
+      }
       return !imageElementKey || !currentImageKeys.has(imageElementKey);
     });
     const preservedTasks = Object.fromEntries(
       Object.entries(lastAdapterDocument?.tasks ?? {}).filter(([elementKey, task]) => {
         const taskScope = normalizePageScope(task.pageScope);
+        const taskElementKey = resolveCommentTaskElementKey(elementKey, task);
+        if (isExplicitlyClearedCurrentPageRecord(taskElementKey, taskScope)) return false;
         if (taskScope) return taskScope !== currentPageScope;
+        if (shouldDropMissingCurrentScopeRecords) return false;
         return !currentTaskElementKeys.has(elementKey);
       }),
     ) as Record<WebEditorElementKey, PrototypeEditCommentTaskEntry>;
@@ -806,11 +831,12 @@ export function createPersistenceService(options: {
   function writeAdapterDocument(
     entries: CachedChangeEntry[],
     reason: PrototypeEditCommentsWriteReason,
+    clearScope: CommentaryClearEditsScope = 'page',
   ): void {
     if (!persistenceAdapter?.write) return;
     const scope = resolvePersistenceScope();
     if (!scope) return;
-    const document = buildAdapterDocument(entries, reason);
+    const document = buildAdapterDocument(entries, reason, clearScope);
     if (!document) return;
     lastAdapterDocument = document;
     preserveMissingCurrentScopeRecordsOnNextWrite = false;
@@ -1097,8 +1123,14 @@ export function createPersistenceService(options: {
     stateValue: PrototypeEditCommentTaskStatus,
     taskRef: Partial<ExternalEditingTaskRef> | null = null,
   ): void {
-    const normalizedElementKey = String(elementKey ?? '').trim();
+    const normalizedElementKey = normalizeElementRecordKey(elementKey);
     if (!normalizedElementKey) return;
+    if (stateValue === 'completed') {
+      clearCommentRecord(normalizedElementKey);
+      persistTaskDocument();
+      return;
+    }
+    clearedCurrentPageRecordKeys.delete(normalizedElementKey);
     commentTaskStateByElementKey.set(normalizedElementKey, {
       ...(resolveCurrentPageScope() ? { pageScope: resolveCurrentPageScope() } : {}),
       state: stateValue,
@@ -1112,15 +1144,20 @@ export function createPersistenceService(options: {
         ? taskRef.sessionId.trim()
         : null,
       updatedAt: Date.now(),
-      message: stateValue === 'completed'
-        ? '修改完成'
-        : stateValue === 'error'
-          ? 'AI 修改失败'
-          : stateValue === 'editing'
-            ? 'AI 编辑中'
-            : '',
+      message: stateValue === 'error'
+        ? 'AI 修改失败'
+        : stateValue === 'editing'
+          ? 'AI 编辑中'
+          : '',
     });
     persistTaskDocument();
+  }
+
+  function clearCommentRecord(elementKey: WebEditorElementKey): void {
+    const normalizedElementKey = normalizeElementRecordKey(elementKey);
+    if (!normalizedElementKey) return;
+    clearedCurrentPageRecordKeys.add(normalizedElementKey);
+    commentTaskStateByElementKey.delete(normalizedElementKey);
   }
 
   function pruneExpiredAgentTaskStates(scopeKey: string): void {
@@ -1129,9 +1166,13 @@ export function createPersistenceService(options: {
     writeAgentTaskStates(normalizedScopeKey, readAgentTaskStates(normalizedScopeKey));
   }
 
-  function writeCache(entries: CachedChangeEntry[], reason: PrototypeEditCommentsWriteReason = 'changes'): void {
+  function writeCache(
+    entries: CachedChangeEntry[],
+    reason: PrototypeEditCommentsWriteReason = 'changes',
+    clearScope: CommentaryClearEditsScope = 'page',
+  ): void {
     writeLocalCache(entries);
-    writeAdapterDocument(entries, reason);
+    writeAdapterDocument(entries, reason, clearScope);
   }
 
   function buildCacheEntriesFromTransactions(): CachedChangeEntry[] {
@@ -1587,8 +1628,8 @@ export function createPersistenceService(options: {
     writeCache(nextEntries);
   }
 
-  function clearStorage(): void {
-    writeCache([], 'clear');
+  function clearStorage(scope: CommentaryClearEditsScope = 'page'): void {
+    writeCache([], 'clear', scope);
   }
 
   return {
@@ -1608,6 +1649,7 @@ export function createPersistenceService(options: {
     },
     pruneExpiredAgentTaskStates,
     recordCommentTaskState,
+    clearCommentRecord,
     scheduleWrite,
     persistFromTransactions,
     flushPendingWrite,

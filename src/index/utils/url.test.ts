@@ -120,4 +120,26 @@ describe('url helpers', () => {
     expect(buildEditorUrl(item, 'demo')).toBe('http://make.local:51720/prototypes/home?mode=demo&axhubDisplayName=Home#screen');
     expect(buildLANItemUrl(item, 'demo')).toBe('http://10.0.8.42:51720/prototypes/home?mode=demo#screen');
   });
+
+  it('does not invent prototype canvas share URLs', () => {
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://localhost:5174',
+        protocol: 'http:',
+        hostname: 'localhost',
+        port: '5174',
+      },
+    });
+
+    const item = {
+      name: 'home',
+      displayName: 'Home',
+      jsUrl: '',
+      specUrl: '',
+      clientUrl: 'http://localhost:51720/prototypes/home?mode=demo',
+    };
+
+    expect(buildLANItemUrl(item, 'canvas')).toBe('');
+    expect(buildEditorUrl(item, 'canvas')).toBe('');
+  });
 });

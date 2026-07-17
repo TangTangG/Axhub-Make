@@ -1,6 +1,6 @@
 export const AXHUB_WEB_EDITOR_AGENT_REQUEST = 'AXHUB_WEB_EDITOR_AGENT_REQUEST' as const;
 
-export type WebEditorAgentProvider = 'claude' | 'cursor' | 'codex' | 'gemini' | 'opencode';
+export type WebEditorAgentProvider = 'claude' | 'cursor' | 'codex' | 'opencode';
 export type WebEditorAgentRequestMode = 'selection_context' | 'save';
 
 export interface WebEditorAgentContextElementV1 {

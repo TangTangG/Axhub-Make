@@ -1,10 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { buildExportHtmlStaticFiles } from './exportHtmlArchive.ts';
 import { getRequestUrl, readJsonBody, sendJson, sendText } from './http.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { normalizeProjectResourcePath } from './managementApi.resourceLookup.ts';
+import {
+  resolvePrototypeIdForReviewSubmit,
+} from './reviewLanSubmitConfig.ts';
 import {
   AxhubApiError,
   createAxhubAuthClient,
@@ -13,7 +17,7 @@ import {
   type AxhubPublishFile,
   type AxhubPublishResponse,
 } from './axhubAuthClient.ts';
-import type { ProjectMetadata } from './projectCore/index.ts';
+import { createProjectCommunicationStore, type ProjectMetadata } from './projectCore/index.ts';
 
 interface AxhubPublishContext {
   project: {
@@ -66,11 +70,52 @@ function sendError(res: ServerResponse, error: any, fallback: string) {
   sendJson(res, {
     error: error?.message || fallback,
     ...(error?.code ? { code: error.code } : {}),
+    ...(error?.details !== undefined ? { details: error.details } : {}),
   }, { status });
 }
 
+function createAxhubContentHash(body: Buffer): string {
+  return crypto.createHash('sha256').update(body).digest('hex').slice(0, 8);
+}
+
+const AXHUB_CORE_PUBLISH_FILE_PATHS = new Set([
+  'index.html',
+  'index.js',
+]);
+
+function isEmptyAxhubPublishFile(file: { body: Buffer }): boolean {
+  return file.body.length <= 0;
+}
+
+function isAxhubCorePublishFilePath(filePath: string): boolean {
+  return AXHUB_CORE_PUBLISH_FILE_PATHS.has(filePath.split(path.sep).join('/'));
+}
+
+function assertNonEmptyAxhubCoreFiles(files: Array<{ path: string; body: Buffer }>) {
+  for (const file of files) {
+    if (!isAxhubCorePublishFilePath(file.path) || !isEmptyAxhubPublishFile(file)) {
+      continue;
+    }
+    throw new AxhubApiError(`Axhub 发布核心文件为空：${file.path}`, {
+      status: 500,
+      code: 'AXHUB_CORE_FILE_EMPTY',
+      details: { path: file.path },
+    });
+  }
+}
+
 export function normalizeFilesForAxhub(files: Array<{ path: string; contentType: string; body: Buffer }>): AxhubPublishFile[] {
+  assertNonEmptyAxhubCoreFiles(files);
+  const indexJs = files.find((file) => file.path === 'index.js');
+  const hashedIndexJsPath = indexJs ? `index.${createAxhubContentHash(indexJs.body)}.js` : '';
+
   return files.map((file) => ({
+    ...file,
+    path: file.path === 'index.js' && hashedIndexJsPath ? hashedIndexJsPath : file.path,
+    body: file.path === 'index.html' && hashedIndexJsPath
+      ? Buffer.from(file.body.toString('utf8').replace(/(['"])\.\/index\.js\1/gu, `$1./${hashedIndexJsPath}$1`), 'utf8')
+      : file.body,
+  })).filter((file) => !isEmptyAxhubPublishFile(file)).map((file) => ({
     path: file.path,
     contentType: file.contentType,
     body: file.body,
@@ -116,9 +161,10 @@ export async function publishAxhubHtmlTarget(params: {
   options: ManagementApiOptions;
   pid: number;
   files: Array<{ path: string; contentType: string; body: Buffer }>;
+  reviewContext?: { projectId: string; prototypeId: string };
 }) {
   const client = createClient(params.options);
-  const result = await client.publishHtmlProject(params.pid, normalizeFilesForAxhub(params.files));
+  const result = await client.publishHtmlProject(params.pid, normalizeFilesForAxhub(params.files), params.reviewContext);
   return normalizeAxhubPublishResultUrl(result, client.getActiveBaseUrl());
 }
 
@@ -150,6 +196,11 @@ async function buildPublishFiles(params: {
   }
   const projectConfig = params.handlers.readProjectConfig(context.project.root);
   const resource = params.handlers.findProjectResourceByPath(metadata, normalizedTargetPath);
+  const reviewSubmitPrototypeId = resolvePrototypeIdForReviewSubmit({
+    resource,
+    targetPath: normalizedTargetPath,
+    sourceFile,
+  });
   const files = await buildExportHtmlStaticFiles({
     projectRoot: context.project.root,
     sourceFile,
@@ -162,6 +213,10 @@ async function buildPublishFiles(params: {
   return {
     files,
     normalizedTargetPath,
+    context,
+    reviewContext: reviewSubmitPrototypeId
+      ? { projectId: context.project.id, prototypeId: reviewSubmitPrototypeId }
+      : undefined,
   };
 }
 
@@ -290,6 +345,19 @@ export function handleAxhubApi(
     return true;
   }
 
+  const reviewReportsMatch = pathname.match(/^\/api\/axhub\/html-projects\/(\d+)\/review-reports$/u);
+  if (reviewReportsMatch) {
+    if (req.method !== 'DELETE') {
+      sendJson(res, { error: 'Method not allowed' }, { status: 405 });
+      return true;
+    }
+    const pid = Number(reviewReportsMatch[1]);
+    client.clearHtmlProjectReviewReports(pid)
+      .then((result) => sendJson(res, result))
+      .catch((error) => sendError(res, error, '清空 Axhub 评审报告失败'));
+    return true;
+  }
+
   if (pathname === '/api/axhub/publish') {
     if (req.method !== 'POST') {
       sendJson(res, { error: 'Method not allowed' }, { status: 405 });
@@ -306,8 +374,26 @@ export function handleAxhubApi(
         }
         const built = await buildPublishFiles({ req, res, options, handlers, body });
         if (!built) return;
-        const rawResult = await client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files));
+        const rawResult = await client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files), built.reviewContext);
         const result = normalizeAxhubPublishResultUrl(rawResult, client.getActiveBaseUrl());
+        const communicationStore = createProjectCommunicationStore(built.context.project.root);
+        communicationStore.ensureDirectories();
+        communicationStore.appendExportRecord({
+          projectId: built.context.project.id,
+          resourceId: built.reviewContext?.prototypeId || built.normalizedTargetPath,
+          resourceType: built.reviewContext ? 'prototype' : 'resource',
+          operationType: 'cloud.publish.axhub',
+          status: 'success',
+          timestamp: result.generateTime,
+          metadata: {
+            path: built.normalizedTargetPath,
+            url: result.url,
+            axhubProjectId: result.pid,
+            axhubProjectPath: result.path,
+            htmlUsedSpace: result.htmlUsedSpace,
+            prototypeId: built.reviewContext?.prototypeId,
+          },
+        });
         sendJson(res, {
           url: result.url,
           project: result,

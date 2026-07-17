@@ -49,8 +49,11 @@ import { handleGitApi, type GitWorkspaceCommandExecutor } from './managementApi.
 import { handleLegacyDocsApi } from './managementApi.legacyDocs.ts';
 import { handleLegacyWebSocketApi } from './managementApi.legacyWebSocket.ts';
 import { handleProjectRegistryApi } from './managementApi.projectRegistry.ts';
+import { handleAxhubReviewReportsApi } from './managementApi.axhubReviewReports.ts';
+import { handleReviewReportsApi } from './managementApi.reviewReports.ts';
 import { handlePrototypeAnnotationApi } from './managementApi.prototypeAnnotation.ts';
 import { handlePrototypeCommentsApi } from './managementApi.prototypeComments.ts';
+import { handlePrototypeSpecApi } from './managementApi.prototypeSpec.ts';
 import {
   handleCreatePlaceholderPrototype,
   handlePrototypeUploadApi,
@@ -63,6 +66,8 @@ import { handleTemplateLibraryApi } from './managementApi.templateLibrary.ts';
 import { handleThemeLibraryApi } from './managementApi.themeLibrary.ts';
 import { handleWorkspaceApi, SIDEBAR_TREE_VERSION } from './managementApi.workspace.ts';
 import { handleMediaApi } from './mediaApi.ts';
+import { handleHtmlReviewArtifactsApi } from './htmlReviewArtifacts.ts';
+import { handleHtmlResourceEditingApi } from './htmlResourceEditing.ts';
 import { handleQuickEditRuntimeApi } from './quickEditRuntimeApi.ts';
 import { hasFigmaMakeArtifactCapability } from './exportMakeArtifacts.ts';
 import { getCanvasBridgeHub } from './canvasBridge.ts';
@@ -131,7 +136,7 @@ function createEffectiveProjectCapabilities(context: ProjectRequestContext): Eff
 
   return {
     ...capabilities,
-    lanAccessAllowed: readProjectLANAccessAllowed(context.project.root),
+    lanAccessAllowed: true,
     localExports: {
       html: hasTarget('prototypes'),
       make: hasFigmaMakeArtifactCapability(context.project.root, context.metadata),
@@ -149,10 +154,6 @@ function createEffectiveProjectCapabilities(context: ProjectRequestContext): Eff
       templateDuplicate: hasTemplatesWriteTarget,
     },
   };
-}
-
-function readProjectLANAccessAllowed(projectRoot: string): boolean {
-  return readProjectConfig(projectRoot)?.server?.allowLAN !== false;
 }
 
 function encodeUrlPathSegments(value: string): string {
@@ -649,12 +650,12 @@ function getExistingMetadataStore(res: ServerResponse, project: RegisteredProjec
 function readProjectConfig(projectRoot: string): any {
   const configPath = getConfigPath(projectRoot);
   if (!fs.existsSync(configPath)) {
-    return { server: { host: 'localhost', allowLAN: true } };
+    return { server: { host: 'localhost' } };
   }
   try {
     return JSON.parse(fs.readFileSync(configPath, 'utf8'));
   } catch {
-    return { server: { host: 'localhost', allowLAN: true } };
+    return { server: { host: 'localhost' } };
   }
 }
 
@@ -696,7 +697,7 @@ function getTemplatesDir(projectRoot: string): string {
 }
 
 function getDataDir(projectRoot: string): string {
-  return path.join(projectRoot, 'src/database');
+  return path.join(projectRoot, 'src/resources/data');
 }
 
 function getStandardMakeClientPrototypeDir(context: ProjectRequestContext): string | null {
@@ -993,18 +994,13 @@ function createAdminContextPayload(options: ManagementApiOptions) {
 function createEmptyProjectResources(): ProjectMetadata['resources'] {
   return {
     prototypes: [],
-    docs: [],
     themes: [],
-    data: [],
-    templates: [],
   };
 }
 
 function createEmptyResourceOrders(): ProjectMetadata['orders'] {
   return {
     themes: [],
-    data: [],
-    templates: [],
   };
 }
 
@@ -1014,7 +1010,7 @@ function createUnavailableProjectCapabilities(project: RegisteredProject): Effec
     quickEditMode: 'clientRuntime',
     figmaExport: false,
     axureExport: false,
-    lanAccessAllowed: readProjectLANAccessAllowed(project.root),
+    lanAccessAllowed: true,
     localExports: {
       html: false,
       make: false,
@@ -1048,7 +1044,6 @@ function createUnavailableProjectResourcesPayload(
     resources: createEmptyProjectResources(),
     navigation: {
       prototypes: [],
-      docs: [],
     },
     orders: createEmptyResourceOrders(),
     capabilities: createUnavailableProjectCapabilities(project),
@@ -1170,7 +1165,7 @@ function handleUnavailableProjectStartupApi(
       resolveProjectContext: () => ({ project }),
       resolveSourceFileFromMetadata,
       findProjectResourceByPath,
-      readProjectConfig,
+      getServerConfigStoreForRequest,
       commandExecutor: options.cloudPublishingCommandExecutor,
       sendDisabledCapability,
     });
@@ -1232,6 +1227,9 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
       origin: options.origin,
       runtimeOrigin: options.runtimeOrigin || null,
       devMode: options.devMode === true,
+      capabilities: {
+        reviewReports: true,
+      },
       server: options.serverInfo || readServerInfo(projectRoot, 'admin', { homeDir: options.serverInfoHomeDir }),
       makeState: options.makeStateHealth,
     });
@@ -1254,6 +1252,12 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
   }
 
   if (handleUnavailableProjectStartupApi(req, res, options, pathname, url)) {
+    return true;
+  }
+
+  if (handlePrototypeSpecApi(req, res, options, pathname, {
+    resolveProjectContext,
+  })) {
     return true;
   }
 
@@ -1335,6 +1339,23 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     return true;
   }
 
+  if (handleAxhubReviewReportsApi(req, res, options, pathname, url, {
+    resolveProjectContext,
+    createProjectContextFromBody,
+  })) {
+    return true;
+  }
+
+  if (handleReviewReportsApi(req, res, options, pathname, url, {
+    resolveProjectContext,
+    createProjectContextFromBody,
+    createProjectContextFromMultipartParts,
+    readMultipartParts,
+    readProjectConfig,
+  })) {
+    return true;
+  }
+
   if (pathname === '/api/admin/context') {
     try {
       ensureDefaultRegisteredProject(options);
@@ -1380,6 +1401,9 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     getCanvasBridgeHub().configureProjectRoot(activeProjectContextForBridge.project.root);
   }
 
+  if (await handleHtmlResourceEditingApi(req, res, activeProjectRoot, pathname)) return true;
+  if (await handleHtmlReviewArtifactsApi(req, res, activeProjectRoot, pathname)) return true;
+
   if (handleLegacyDocsApi(req, res, options, activeProjectRoot, pathname, url, {
     getActiveProjectContext,
   })) return true;
@@ -1414,7 +1438,7 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     resolveSourceFileFromMetadata,
     findProjectResourceByPath,
     getDeclaredResourceWriteDir: getDeclaredResourceWriteDir as any,
-    readProjectConfig,
+    getServerConfigStoreForRequest,
     commandExecutor: options.cloudPublishingCommandExecutor,
     sendDisabledCapability,
   })) return true;

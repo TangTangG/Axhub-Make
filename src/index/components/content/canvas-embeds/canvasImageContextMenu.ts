@@ -1,6 +1,3 @@
-import type { CanvasAiQuickPrompt } from '../../../domains/ai-generation/canvasAiSceneRegistry';
-import { getCanvasAiSceneQuickPrompts } from '../../../domains/ai-generation/canvasAiSceneRegistry';
-
 type CanvasImageContextMenuElement = {
   id?: string;
   type?: string;
@@ -30,7 +27,6 @@ export interface CanvasImageContextMenuState {
   showImageQuickActions: boolean;
   showCopyOriginalImage: boolean;
   showBackgroundToTransparent: boolean;
-  quickPrompts: readonly CanvasAiQuickPrompt[];
 }
 
 function resolveImageDataUrl(value: CanvasImageFileData | undefined): string {
@@ -69,9 +65,8 @@ export function resolveCanvasImageContextMenuState({
     showScreenshotToAI: Boolean(bridgeConnected && canAddScreenshotToAI && selected.length > 0 && !isSingleImageSelection),
     showNodeContextToAI: Boolean(bridgeConnected && canAddNodesToAI && selected.length > 0 && !isSingleImageSelection),
     showOriginalImageToAI,
-    showImageQuickActions: showOriginalImageToAI,
+    showImageQuickActions: false,
     showCopyOriginalImage: Boolean(isSingleImageSelection && singleImageHasOriginalData),
     showBackgroundToTransparent: Boolean(isSingleImageSelection && singleImageHasOriginalData),
-    quickPrompts: showOriginalImageToAI ? getCanvasAiSceneQuickPrompts('design') : [],
   };
 }

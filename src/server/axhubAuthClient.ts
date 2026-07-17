@@ -44,6 +44,52 @@ export interface AxhubHtmlProject {
   generateTime?: string;
   generateStatus?: number;
   htmlUsedSpace?: number;
+  reviewReportCount?: number;
+  reviewSubmitEnabled?: boolean;
+}
+
+export interface AxhubReviewContext {
+  projectId: string;
+  prototypeId: string;
+}
+
+export interface AxhubHostedReviewConfig {
+  pid: number;
+  path: string;
+  submitEnabled: boolean;
+  projectId: string;
+  prototypeId: string;
+  reviewReportCount: number;
+  reviewReportBytes: number;
+  maxReportCount: number;
+  maxReportBytes: number;
+  maxTotalReportBytes: number;
+}
+
+export interface AxhubHostedReviewReport {
+  id: string;
+  title: string;
+  reviewer: string;
+  createdAt: string;
+  score?: number;
+  source?: string;
+  path: string;
+  content: string;
+  contentBytes: number;
+  payloadHash: string;
+  projectId: string;
+  prototypeId: string;
+}
+
+export interface AxhubHostedReviewReportList extends AxhubHostedReviewConfig {
+  reports: AxhubHostedReviewReport[];
+}
+
+export interface AxhubHostedReviewClearResult {
+  pid: number;
+  path: string;
+  deleted: number;
+  reviewReportCount: number;
 }
 
 export interface AxhubPublishFile {
@@ -89,11 +135,13 @@ export interface AxhubEnterpriseAuth {
 export class AxhubApiError extends Error {
   status?: number;
   code?: string;
+  details?: unknown;
 
-  constructor(message: string, options: { status?: number; code?: string } = {}) {
+  constructor(message: string, options: { status?: number; code?: string; details?: unknown } = {}) {
     super(message);
     this.status = options.status;
     this.code = options.code;
+    this.details = options.details;
   }
 }
 
@@ -225,13 +273,89 @@ async function readJsonResponse(response: Response) {
   }
 }
 
+const GENERIC_AXHUB_ERROR_MESSAGES = new Set([
+  '服务器错误',
+  '服务端错误',
+  'server error',
+  'internal server error',
+]);
+
+const ERROR_MESSAGE_KEYS = [
+  'message',
+  'msg',
+  'errorMessage',
+  'error_message',
+  'errMsg',
+  'errmsg',
+  'detail',
+  'details',
+  'reason',
+  'description',
+  'error_description',
+  'error',
+];
+
+function appendErrorCandidate(candidates: string[], value: unknown) {
+  if (typeof value === 'string') {
+    const message = value.trim();
+    if (message) {
+      candidates.push(message);
+    }
+    return;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    candidates.push(String(value));
+  }
+}
+
+function collectErrorCandidates(candidates: string[], value: unknown, depth = 0) {
+  if (depth > 5 || value === null || value === undefined) {
+    return;
+  }
+  appendErrorCandidate(candidates, value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectErrorCandidates(candidates, item, depth + 1);
+    }
+    return;
+  }
+  if (typeof value !== 'object') {
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of ERROR_MESSAGE_KEYS) {
+    collectErrorCandidates(candidates, record[key], depth + 1);
+  }
+  collectErrorCandidates(candidates, record.data, depth + 1);
+  collectErrorCandidates(candidates, record.errors, depth + 1);
+}
+
+function isGenericAxhubErrorMessage(message: string): boolean {
+  return GENERIC_AXHUB_ERROR_MESSAGES.has(message.trim().toLowerCase());
+}
+
+function extractAxhubErrorMessage(payload: unknown, fallback: string): string {
+  const candidates: string[] = [];
+  collectErrorCandidates(candidates, payload);
+  const uniqueCandidates = candidates.filter((message, index) => candidates.indexOf(message) === index);
+  return uniqueCandidates.find((message) => !isGenericAxhubErrorMessage(message))
+    || uniqueCandidates[0]
+    || fallback;
+}
+
 function parseApiPayload(payload: any, fallback: string) {
   if (payload?.code === 0) {
     return payload.data;
   }
-  throw new AxhubApiError(payload?.message || payload?.error || fallback, {
-    status: typeof payload?.code === 'number' ? payload.code : undefined,
-    code: typeof payload?.code === 'string' ? payload.code : undefined,
+  const numericStatus = typeof payload?.code === 'number' ? payload.code : undefined;
+  throw new AxhubApiError(extractAxhubErrorMessage(payload, fallback), {
+    status: numericStatus,
+    code: numericStatus === 401
+      ? 'AXHUB_AUTH_EXPIRED'
+      : typeof payload?.code === 'string'
+        ? payload.code
+        : undefined,
+    details: payload,
   });
 }
 
@@ -289,9 +413,10 @@ async function exchangeToken(params: {
   }
   const payload = await readJsonResponse(response);
   if (!response.ok) {
-    throw new AxhubApiError(payload?.message || payload?.error || `Axhub 授权失败（${response.status}）`, {
+    throw new AxhubApiError(extractAxhubErrorMessage(payload, `Axhub 授权失败（${response.status}）`), {
       status: response.status,
       code: payload?.code,
+      details: payload,
     });
   }
   const data = parseApiPayload(payload, 'Axhub 授权失败');
@@ -375,9 +500,10 @@ export function createAxhubAuthClient(options: {
     });
     const payload = await readJsonResponse(response);
     if (!response.ok) {
-      throw new AxhubApiError(payload?.message || payload?.error || `Axhub 请求失败（${response.status}）`, {
+      throw new AxhubApiError(extractAxhubErrorMessage(payload, `Axhub 请求失败（${response.status}）`), {
         status: response.status,
-        code: payload?.code,
+        code: response.status === 401 ? 'AXHUB_AUTH_EXPIRED' : payload?.code,
+        details: payload,
       });
     }
     return parseApiPayload(payload, 'Axhub 请求失败') as T;
@@ -462,9 +588,10 @@ export function createAxhubAuthClient(options: {
       });
       const payload = await readJsonResponse(response);
       if (!response.ok) {
-        throw new AxhubApiError(payload?.message || payload?.error || `企业版授权校验失败（${response.status}）`, {
+        throw new AxhubApiError(extractAxhubErrorMessage(payload, `企业版授权校验失败（${response.status}）`), {
           status: response.status,
           code: payload?.code,
+          details: payload,
         });
       }
       const me = parseApiPayload(payload, '企业版授权校验失败') as AxhubUserInfo;
@@ -542,7 +669,7 @@ export function createAxhubAuthClient(options: {
         body: JSON.stringify({ name }),
       });
     },
-    publishHtmlProject(pid: number, files: AxhubPublishFile[]) {
+    publishHtmlProject(pid: number, files: AxhubPublishFile[], reviewContext?: AxhubReviewContext) {
       return request<AxhubPublishResponse>(`/html-projects/${encodeURIComponent(String(pid))}/publish`, {
         method: 'POST',
         headers: {
@@ -554,7 +681,26 @@ export function createAxhubAuthClient(options: {
             contentType: file.contentType,
             bodyBase64: file.body.toString('base64'),
           })),
+          ...(reviewContext ? { reviewContext } : {}),
         }),
+      });
+    },
+    getHtmlProjectReviewConfig(pid: number) {
+      return request<AxhubHostedReviewConfig>(`/html-projects/${encodeURIComponent(String(pid))}/review-submit-config`);
+    },
+    updateHtmlProjectReviewConfig(pid: number, enabled: boolean) {
+      return request<AxhubHostedReviewConfig>(`/html-projects/${encodeURIComponent(String(pid))}/review-submit-config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+    },
+    listHtmlProjectReviewReports(pid: number) {
+      return request<AxhubHostedReviewReportList>(`/html-projects/${encodeURIComponent(String(pid))}/review-reports`);
+    },
+    clearHtmlProjectReviewReports(pid: number) {
+      return request<AxhubHostedReviewClearResult>(`/html-projects/${encodeURIComponent(String(pid))}/review-reports`, {
+        method: 'DELETE',
       });
     },
   };

@@ -183,7 +183,6 @@ const BLOCKED_MOUSE_EVENTS = [
   'mouseup',
   'click',
   'dblclick',
-  'contextmenu',
   'auxclick',
   'mouseover',
   'mouseout',
@@ -196,6 +195,15 @@ const BLOCKED_KEYBOARD_EVENTS = ['keyup', 'keypress'] as const;
 import { isMobileDevice } from '../utils/mobile-detect';
 
 const BLOCKED_TOUCH_EVENTS = ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const;
+const NON_PRIMARY_BUTTON_BYPASS_EVENTS = new Set([
+  'pointerdown',
+  'pointerup',
+  'mousedown',
+  'mouseup',
+  'click',
+  'dblclick',
+  'auxclick',
+]);
 
 // =============================================================================
 // Implementation
@@ -332,6 +340,18 @@ export function createEventController(options: EventControllerOptions): EventCon
   }
 
   function shouldEventBypassPageBlock(event: Event): boolean {
+    if (event.type === 'contextmenu') {
+      return true;
+    }
+
+    if (
+      event instanceof MouseEvent &&
+      NON_PRIMARY_BUTTON_BYPASS_EVENTS.has(event.type) &&
+      event.button !== 0
+    ) {
+      return true;
+    }
+
     if (isAxhubAnnotationDirectActionEvent(event)) {
       return true;
     }

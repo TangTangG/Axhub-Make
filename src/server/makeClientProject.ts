@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { unzipSync, zipSync, type Zippable } from 'fflate';
+import { zipSync, type Zippable } from 'fflate';
 
 import {
   DEFAULT_MAKE_CLIENT_REPOSITORY,
@@ -27,11 +27,14 @@ import {
 
 import { buildLocalCommandEnv, runLocalCommand } from './localCommand.ts';
 import type { DiagnosticLog } from './diagnosticLog.ts';
+import { extractZipBufferToDirectory } from './zipArchive.ts';
 import {
   DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES,
   DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION,
   makeClientTemplateMirrorDownloadUrl,
+  makeClientTemplateMirrorManifestUrl,
   makeClientTemplatePrimaryDownloadUrl,
+  makeClientTemplatePrimaryManifestUrl,
 } from '../common/makeClientTemplate.ts';
 
 export type MakeClientPhase =
@@ -148,6 +151,8 @@ export interface MakeClientUpdateStatus {
   currentVersion: string;
   targetVersion: string;
   releaseNotes?: string;
+  metadataSource: MakeClientUpdateMetadataSource;
+  metadataError?: string;
   updateAvailable: boolean;
   canApply: boolean;
   backupPolicy: MakeClientUpdateBackupPolicy;
@@ -224,6 +229,8 @@ const MAKE_CLIENT_PROGRESS_LOG_ENV = 'AXHUB_MAKE_PROGRESS_LOG';
 const SKIP_AUTO_START_SERVER_ENV = 'AXHUB_MAKE_SKIP_AUTO_START_SERVER';
 const MAKE_CLIENT_RUNTIME_HEARTBEAT_MAX_AGE_MS = 15_000;
 const DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS = 3 * 60_000;
+const DEFAULT_MAKE_CLIENT_TEMPLATE_MANIFEST_TIMEOUT_MS = 15_000;
+const DEFAULT_MAKE_CLIENT_GIT_CLONE_TIMEOUT_MS = 60_000;
 const DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAKE_CLIENT_DEV_TIMEOUT_MS = 60_000;
 const DEFAULT_MAKE_CLIENT_DEV_POLL_INTERVAL_MS = 250;
@@ -290,6 +297,24 @@ export interface MakeClientTemplateSource {
   templateVersion?: string;
 }
 
+type MakeClientUpdateMetadataSource = 'online' | 'bundled';
+
+interface MakeClientTemplateLatestManifest {
+  schemaVersion: 1;
+  version: string;
+  releaseNotes: string;
+  publishedAt?: string;
+  sources: MakeClientTemplateSource[];
+}
+
+interface MakeClientUpdateMetadata {
+  source: MakeClientUpdateMetadataSource;
+  version: string;
+  releaseNotes?: string;
+  sources: MakeClientTemplateSource[];
+  error?: string;
+}
+
 type MakeClientTemplateCacheStatus = 'hit' | 'miss' | 'version-mismatch';
 
 interface MakeClientTemplateCacheManifest {
@@ -325,6 +350,13 @@ export function makeClientTemplateSources(options: { env?: NodeJS.ProcessEnv; ve
       markerRepository: 'https://gitee.com/axhub/Axhub-Make/tree/main/client',
       templateVersion: version,
     },
+  ];
+}
+
+function makeClientTemplateManifestSources(): string[] {
+  return [
+    makeClientTemplatePrimaryManifestUrl(),
+    makeClientTemplateMirrorManifestUrl(),
   ];
 }
 
@@ -686,60 +718,12 @@ function templateErrorMessage(error: unknown): string {
   return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Remote template download failed').trim();
 }
 
-function assertSafeZipEntryName(entryName: string): string {
-  const raw = String(entryName || '');
-  const parts = raw.split('/').filter(Boolean);
-  if (
-    !raw
-    || raw.includes('\\')
-    || path.isAbsolute(raw)
-    || raw.startsWith('/')
-    || /^[a-z]:/iu.test(raw)
-    || parts.some((part) => part === '..')
-  ) {
-    throw new Error(`unsafe template zip path: ${entryName}`);
-  }
-  return raw;
-}
-
-function commonZipRoot(entries: string[]): string {
-  const firstParts = entries[0]?.split('/').filter(Boolean) || [];
-  if (firstParts.length === 0) {
-    return '';
-  }
-  const candidate = firstParts[0];
-  return entries.every((entry) => entry === candidate || entry.startsWith(`${candidate}/`)) ? candidate : '';
-}
-
 function extractTemplateZip(zipBuffer: Uint8Array, destinationRoot: string): void {
-  let entries: Record<string, Uint8Array>;
-  try {
-    entries = unzipSync(zipBuffer);
-  } catch (error: any) {
-    throw new Error(error?.message || 'Failed to unzip Make client template');
-  }
-  const safeEntries = Object.keys(entries).map(assertSafeZipEntryName).filter((entry) => !entry.endsWith('/'));
-  if (safeEntries.length === 0) {
-    throw new Error('Make client template zip is empty');
-  }
-  const rootPrefix = commonZipRoot(safeEntries);
-  fs.mkdirSync(destinationRoot, { recursive: true });
-  for (const safeEntry of safeEntries) {
-    const relativePath = rootPrefix
-      ? safeEntry === rootPrefix
-        ? ''
-        : safeEntry.slice(rootPrefix.length + 1)
-      : safeEntry;
-    if (!relativePath) {
-      continue;
-    }
-    const targetPath = path.resolve(destinationRoot, ...relativePath.split('/'));
-    if (!targetPath.startsWith(`${path.resolve(destinationRoot)}${path.sep}`)) {
-      throw new Error(`unsafe template zip path: ${safeEntry}`);
-    }
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    fs.writeFileSync(targetPath, entries[safeEntry]);
-  }
+  extractZipBufferToDirectory(zipBuffer, destinationRoot, {
+    stripSingleRoot: true,
+    emptyArchiveMessage: 'Make client template zip is empty',
+    unsafePathMessage: (entryName) => `unsafe template zip path: ${entryName}`,
+  });
 }
 
 async function downloadTemplateZip(url: string): Promise<Uint8Array> {
@@ -764,6 +748,114 @@ async function downloadTemplateZip(url: string): Promise<Uint8Array> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function normalizeManifestTemplateSource(source: unknown, fallbackVersion: string): MakeClientTemplateSource | null {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return null;
+  }
+  const record = source as Record<string, unknown>;
+  const id = stringValue(record.id);
+  if (id !== 'github' && id !== 'gitee') {
+    return null;
+  }
+  const url = stringValue(record.url);
+  const markerRepository = stringValue(record.markerRepository);
+  if (!url || !markerRepository) {
+    return null;
+  }
+  const templateVersion = stringValue(record.templateVersion) || fallbackVersion;
+  return {
+    id,
+    url,
+    markerRepository,
+    ...(templateVersion ? { templateVersion } : {}),
+  };
+}
+
+function normalizeMakeClientTemplateLatestManifest(raw: unknown): MakeClientTemplateLatestManifest {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Make client template manifest must be a JSON object');
+  }
+  const record = raw as Record<string, unknown>;
+  if (record.schemaVersion !== 1) {
+    throw new Error('Make client template manifest schemaVersion must be 1');
+  }
+  const version = stringValue(record.version);
+  const releaseNotes = stringValue(record.releaseNotes);
+  if (!version) {
+    throw new Error('Make client template manifest version is required');
+  }
+  if (!releaseNotes) {
+    throw new Error('Make client template manifest releaseNotes is required');
+  }
+  const sources = (Array.isArray(record.sources) ? record.sources : [])
+    .map((source) => normalizeManifestTemplateSource(source, version))
+    .filter((source): source is MakeClientTemplateSource => Boolean(source));
+  if (sources.length === 0) {
+    throw new Error('Make client template manifest sources are required');
+  }
+  const publishedAt = stringValue(record.publishedAt);
+  return {
+    schemaVersion: 1,
+    version,
+    releaseNotes,
+    ...(publishedAt ? { publishedAt } : {}),
+    sources,
+  };
+}
+
+async function downloadMakeClientTemplateLatestManifest(url: string): Promise<MakeClientTemplateLatestManifest> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEFAULT_MAKE_CLIENT_TEMPLATE_MANIFEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`HTTP ${response.status}${body ? `: ${body.slice(0, 240)}` : ''}`);
+    }
+    return normalizeMakeClientTemplateLatestManifest(await response.json());
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Template manifest download timed out after ${DEFAULT_MAKE_CLIENT_TEMPLATE_MANIFEST_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function bundledMakeClientUpdateMetadata(error?: string): MakeClientUpdateMetadata {
+  const version = DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION;
+  return {
+    source: 'bundled',
+    version,
+    ...(DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES ? { releaseNotes: DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES } : {}),
+    sources: makeClientTemplateSources({ version }),
+    ...(error ? { error } : {}),
+  };
+}
+
+async function resolveMakeClientUpdateMetadata(): Promise<MakeClientUpdateMetadata> {
+  if (process.env[MAKE_CLIENT_TEMPLATE_URL_ENV]?.trim()) {
+    return bundledMakeClientUpdateMetadata();
+  }
+
+  const failures: string[] = [];
+  for (const manifestUrl of makeClientTemplateManifestSources()) {
+    try {
+      const manifest = await downloadMakeClientTemplateLatestManifest(manifestUrl);
+      return {
+        source: 'online',
+        version: manifest.version,
+        releaseNotes: manifest.releaseNotes,
+        sources: manifest.sources,
+      };
+    } catch (error) {
+      failures.push(`${manifestUrl}: ${templateErrorMessage(error)}`);
+    }
+  }
+  return bundledMakeClientUpdateMetadata(failures.join('\n'));
 }
 
 function makeClientTemplateCacheRoot(): string {
@@ -872,6 +964,14 @@ async function readTemplateZipWithCache(
 function commandErrorMessage(error: unknown): string {
   const looseError = error as { stderr?: unknown; stdout?: unknown; message?: unknown } | null;
   return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Command failed').trim();
+}
+
+function nonInteractiveGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'never',
+  };
 }
 
 function shouldLogMakeClientProgress(): boolean {
@@ -1321,8 +1421,11 @@ function buildMakeClientUpdateBlockedReasons(params: {
   return reasons;
 }
 
-async function collectRemoteMakeClientUpdateTemplateFiles(targetVersion: string): Promise<string[]> {
-  const extractedTemplate = await extractMakeClientUpdateTemplate(targetVersion);
+async function collectRemoteMakeClientUpdateTemplateFiles(
+  targetVersion: string,
+  sources?: MakeClientTemplateSource[],
+): Promise<string[]> {
+  const extractedTemplate = await extractMakeClientUpdateTemplate(targetVersion, sources);
   try {
     return collectMakeClientUpdateTemplateFiles(extractedTemplate.templateRoot);
   } finally {
@@ -1338,8 +1441,9 @@ export async function getMakeClientUpdateStatus(
   const root = path.resolve(projectRoot);
   const marker = validateExistingMakeClientProject(root);
   const currentVersion = readMakeClientCurrentTemplateVersion(root, marker);
-  const targetVersion = DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION;
-  const templateSources = makeClientTemplateSources({ version: targetVersion });
+  const metadata = await resolveMakeClientUpdateMetadata();
+  const targetVersion = metadata.version;
+  const templateSources = metadata.sources;
   const updateAvailable = isTemplateUpdateAvailable(currentVersion, targetVersion);
   const blockedReasons = buildMakeClientUpdateBlockedReasons({
     updateAvailable,
@@ -1350,7 +1454,9 @@ export async function getMakeClientUpdateStatus(
     projectRoot: root,
     currentVersion,
     targetVersion,
-    ...(DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES ? { releaseNotes: DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES } : {}),
+    ...(metadata.releaseNotes ? { releaseNotes: metadata.releaseNotes } : {}),
+    metadataSource: metadata.source,
+    ...(metadata.error ? { metadataError: metadata.error } : {}),
     updateAvailable,
     canApply: blockedReasons.length === 0,
     backupPolicy: 'zip-before-overwrite',
@@ -1372,6 +1478,7 @@ function assertMakeClientUpdateCanApply(status: MakeClientUpdateStatus): void {
 
 async function extractMakeClientUpdateTemplate(
   targetVersion: string,
+  sources?: MakeClientTemplateSource[],
 ): Promise<{
   tempParent: string;
   templateRoot: string;
@@ -1380,7 +1487,7 @@ async function extractMakeClientUpdateTemplate(
   const tempParent = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-make-client-update-template-'));
   const failures: Array<{ url: string; cache: { status: MakeClientTemplateCacheStatus; path: string } | null; error: string }> = [];
 
-  for (const source of makeClientTemplateSources({ version: targetVersion })) {
+  for (const source of (sources?.length ? sources : makeClientTemplateSources({ version: targetVersion }))) {
     const checkoutRoot = path.join(tempParent, failures.length === 0 ? 'primary' : `fallback-${failures.length}`);
     let cache: { status: MakeClientTemplateCacheStatus; path: string } | null = null;
     try {
@@ -1860,7 +1967,7 @@ export async function applyMakeClientUpdate(
   });
 
   try {
-    extractedTemplate = await extractMakeClientUpdateTemplate(status.targetVersion);
+    extractedTemplate = await extractMakeClientUpdateTemplate(status.targetVersion, status.template.sources);
     templateUrl = extractedTemplate.source.url;
     plannedFiles = collectMakeClientUpdateTemplateFiles(extractedTemplate.templateRoot);
     const packageRelativePath = 'package.json';
@@ -2522,7 +2629,8 @@ export async function cloneMakeClientProject(
         await runCommand('git', ['clone', gitUrl, projectRoot], {
           cwd: parentRoot,
           maxBuffer: 1024 * 1024 * 20,
-          timeoutMs: DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS,
+          timeoutMs: DEFAULT_MAKE_CLIENT_GIT_CLONE_TIMEOUT_MS,
+          env: nonInteractiveGitEnv(),
         });
         clonedProject = true;
       } catch (error) {

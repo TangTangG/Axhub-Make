@@ -29,7 +29,7 @@ export const resourceWriteTargets = {
 };
 
 export const localExportCapabilities = {
-  html: false,
+  html: true,
   make: false,
 };
 
@@ -254,23 +254,9 @@ function hasGeneratedPlaceholderSource(indexFilePath) {
   );
 }
 
-function hasEmptyCanvasFile(prototypeDir) {
-  const canvasPath = path.join(prototypeDir, 'canvas.excalidraw');
-  if (!fs.existsSync(canvasPath)) return true;
-  try {
-    const canvas = JSON.parse(fs.readFileSync(canvasPath, 'utf8'));
-    const elements = Array.isArray(canvas?.elements) ? canvas.elements : [];
-    const files = canvas?.files && typeof canvas.files === 'object' && !Array.isArray(canvas.files)
-      ? canvas.files
-      : {};
-    return elements.length === 0 && Object.keys(files).length === 0;
-  } catch {
-    return false;
-  }
-}
-
 function isGeneratedEmptyPrototypePlaceholder(prototypeDir, indexFilePath) {
-  return hasGeneratedPlaceholderSource(indexFilePath) && hasEmptyCanvasFile(prototypeDir);
+  void prototypeDir;
+  return hasGeneratedPlaceholderSource(indexFilePath);
 }
 
 function getLiteralPropertyValue(objectLiteral, propertyName) {
@@ -308,8 +294,9 @@ function extractHashRouteFromCall(callExpression) {
     }
     const id = normalizePageId(getLiteralPropertyValue(element, 'id'));
     const title = stringValue(getLiteralPropertyValue(element, 'title'));
+    const group = stringValue(getLiteralPropertyValue(element, 'group'));
     if (id && title) {
-      pages.push({ id, title });
+      pages.push({ id, title, ...(group ? { group } : {}) });
     }
   }
   if (!pages.length) {

@@ -20,6 +20,7 @@ import { handleProjectFolderBrowserApi } from './managementApi.folderBrowser.ts'
 import { handleMakeClientProjectApi } from './managementApi.makeClient.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { PROTOTYPE_PLACEHOLDER_GUIDE } from './prototypePlaceholderGuide.ts';
+import { scanResourceFiles, type ResourceFileOpenMode } from './resourceFiles.ts';
 
 type ProjectMetadataStore = ReturnType<typeof createProjectMetadataStore>;
 type EffectiveProjectCapabilities = ProjectMetadata['capabilities'] & { lanAccessAllowed: boolean };
@@ -30,6 +31,12 @@ interface FilesystemDocResource {
   path: string;
   description: string;
   updatedAt: string;
+  filePath?: string;
+  ext?: string;
+  size?: number;
+  fileSize?: number;
+  absoluteFilePath?: string;
+  openMode?: ResourceFileOpenMode;
 }
 
 /**
@@ -270,32 +277,19 @@ function hasWaitingGenerationSource(indexFilePath: string): boolean {
   }
 }
 
-function hasEmptyCanvasFile(prototypeDir: string): boolean {
-  const canvasPath = path.join(prototypeDir, 'canvas.excalidraw');
-  if (!fs.existsSync(canvasPath)) {
-    return true;
-  }
-  try {
-    const canvas = JSON.parse(fs.readFileSync(canvasPath, 'utf8'));
-    const elements = Array.isArray(canvas?.elements) ? canvas.elements : [];
-    const files = canvas?.files && typeof canvas.files === 'object' && !Array.isArray(canvas.files)
-      ? canvas.files
-      : {};
-    return elements.length === 0 && Object.keys(files).length === 0;
-  } catch {
-    return false;
-  }
-}
-
-function isGeneratedEmptyPrototypePlaceholder(prototypeDir: string, indexFilePath: string): boolean {
-  return hasGeneratedPlaceholderSource(indexFilePath) && hasEmptyCanvasFile(prototypeDir);
-}
-
 function readFileUpdatedAt(filePath: string): string {
   try {
     return fs.statSync(filePath).mtime.toISOString();
   } catch {
     return new Date().toISOString();
+  }
+}
+
+function readMarkdownTitle(filePath: string): string {
+  try {
+    return fs.readFileSync(filePath, 'utf8').match(/^#\s+(.+)$/m)?.[1]?.trim() || '';
+  } catch {
+    return '';
   }
 }
 
@@ -320,10 +314,9 @@ function scanFilesystemPrototypeResources(
     if (!fs.existsSync(indexFilePath)) {
       continue;
     }
-    const prototypeDir = path.join(prototypesDir, entry.name);
     const hasGeneratedPlaceholder = hasGeneratedPlaceholderSource(indexFilePath);
-    const placeholder = hasGeneratedPlaceholder && hasEmptyCanvasFile(prototypeDir);
-    const generationStatus = !placeholder && (hasWaitingGenerationSource(indexFilePath) || hasGeneratedPlaceholder)
+    const placeholder = hasGeneratedPlaceholder;
+    const generationStatus = !placeholder && hasWaitingGenerationSource(indexFilePath)
       ? 'waiting' as const
       : undefined;
     prototypes.push({
@@ -343,62 +336,27 @@ function scanFilesystemPrototypeResources(
   return prototypes.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function readMarkdownTitle(filePath: string): string {
-  try {
-    return fs.readFileSync(filePath, 'utf8').match(/^#\s+(.+)$/m)?.[1]?.trim() || '';
-  } catch {
-    return '';
-  }
-}
-
 function scanFilesystemDocResources(projectRoot: string): FilesystemDocResource[] {
-  const docsDir = getDocsResourceRoot(projectRoot);
-  if (!fs.existsSync(docsDir)) {
-    return [];
-  }
-
-  const docs: FilesystemDocResource[] = [];
-  const walk = (dir: string) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith('.')) continue;
-      const fullPath = path.join(dir, entry.name);
-      const relativeName = normalizeRelativePath(docsDir, fullPath);
-      if (isIgnoredResourceRelativePath(relativeName)) continue;
-      if (entry.isDirectory()) {
-        walk(fullPath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-
-      const ext = path.extname(entry.name).toLowerCase();
-      const id = ext === '.md' ? relativeName.replace(/\.[^.]+$/u, '') : relativeName;
-      const title = ext === '.md'
-        ? readMarkdownTitle(fullPath) || relativeName.replace(/\.[^.]+$/u, '')
-        : relativeName.replace(/\.[^.]+$/u, '');
-      let updatedAt = new Date().toISOString();
-      try {
-        updatedAt = fs.statSync(fullPath).mtime.toISOString();
-      } catch {
-        // keep fallback timestamp
-      }
-      docs.push({
-        id,
-        name: id,
-        title,
-        path: fullPath,
-        description: '',
-        updatedAt,
-      });
-    }
-  };
-  walk(docsDir);
-  return docs.sort((a, b) => a.name.localeCompare(b.name));
+  return scanResourceFiles(projectRoot);
 }
 
 function createProjectResourcesPayload(metadata: ProjectMetadata, projectRoot: string) {
   return {
-    ...metadata.resources,
+    prototypes: metadata.resources.prototypes,
     docs: scanFilesystemDocResources(projectRoot),
+    themes: metadata.resources.themes,
+  };
+}
+
+function createProjectNavigationPayload(metadata: ProjectMetadata) {
+  return {
+    prototypes: metadata.navigation.prototypes,
+  };
+}
+
+function createProjectOrdersPayload(metadata: ProjectMetadata) {
+  return {
+    themes: metadata.orders.themes,
   };
 }
 
@@ -923,8 +881,8 @@ export function handleProjectRegistryApi(
       sendJson(res, {
         project: handlers.toProjectIdentity(project),
         resources: createProjectResourcesPayload(metadata, project.root),
-        navigation: metadata.navigation,
-        orders: metadata.orders,
+        navigation: createProjectNavigationPayload(metadata),
+        orders: createProjectOrdersPayload(metadata),
         capabilities: handlers.createEffectiveProjectCapabilities({ project, metadata, metadataStore }),
       });
       return true;
@@ -942,8 +900,8 @@ export function handleProjectRegistryApi(
         sendJson(res, {
           project: handlers.toProjectIdentity(project),
           resources: updated.resources,
-          navigation: updated.navigation,
-          orders: updated.orders,
+          navigation: createProjectNavigationPayload(updated),
+          orders: createProjectOrdersPayload(updated),
           capabilities: handlers.createEffectiveProjectCapabilities({ project, metadata: updated, metadataStore }),
         });
       }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));

@@ -8,7 +8,7 @@ import type { AssistantContextV1, CanvasItem, ItemData, TabType, ViewMode } from
 import type { CanvasElementContextInfo } from '../components/content/canvas-embeds/AnnotationOverlay';
 import type { DataTableResourceItem, ThemeResourceItem } from '../domains/resources/resource.types';
 
-export type AssistantContentMode = 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
+export type AssistantContentMode = 'preview' | 'prototype-spec' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
 
 export interface AssistantMarkdownResourceSelection {
   kind: 'doc' | 'template';
@@ -80,10 +80,21 @@ function resolveMarkdownResourcePath(item: ItemData | null): string {
 
 function resolveCanvasResourcePath(item: CanvasItem | null | undefined): string {
   if (!item) return '';
-  const explicitPath = normalizePathValue((item as any).filePath) || normalizePathValue((item as any).absoluteFilePath);
-  if (explicitPath) return explicitPath;
+  const explicitPath = normalizePathValue((item as any).canvasFilePath)
+    || normalizePathValue((item as any).absoluteCanvasFilePath)
+    || normalizePathValue((item as any).filePath)
+    || normalizePathValue((item as any).absoluteFilePath);
+  if (explicitPath) {
+    const projectRelativePath = toProjectRelativePath(explicitPath);
+    return projectRelativePath.startsWith('src/resources/') && projectRelativePath.endsWith('.excalidraw')
+      ? projectRelativePath
+      : '';
+  }
   const name = normalizePathValue(item.name);
-  return name ? `canvas/${name}.excalidraw` : '';
+  if (!name) return '';
+  if (name.startsWith('src/resources/') && name.endsWith('.excalidraw')) return name;
+  if (name.startsWith('src/') || name.startsWith('canvas/') || name.startsWith('prototypes/')) return '';
+  return `src/resources/${name.endsWith('.excalidraw') ? name : `${name}.excalidraw`}`;
 }
 
 function resolveThemeResourcePath(item: ThemeResourceItem | null | undefined): string {
@@ -109,7 +120,7 @@ export function resolveAssistantCurrentFile(params: ResolveAssistantCurrentFileP
     currentDataTable,
   } = params;
 
-  if (contentMode === 'doc' || contentMode === 'template') {
+  if (contentMode === 'doc' || contentMode === 'template' || contentMode === 'prototype-spec') {
     const markdownPath = resolveMarkdownResourcePath(currentMarkdownResource.item);
     return normalizeAssistantCurrentFileV1(markdownPath, {
       displayName: currentMarkdownResource.item?.displayName || currentMarkdownResource.item?.name || '',
@@ -138,9 +149,7 @@ export function resolveAssistantCurrentFile(params: ResolveAssistantCurrentFileP
   }
 
   const prototypeBasePath = resolvePrototypeBasePath(selectedItem);
-  const currentFilePath = viewMode === 'canvas'
-    ? prototypeBasePath ? `${prototypeBasePath}/canvas.excalidraw` : ''
-    : ensureIndexFilePath(prototypeBasePath);
+  const currentFilePath = ensureIndexFilePath(prototypeBasePath);
 
   return normalizeAssistantCurrentFileV1(currentFilePath, {
     displayName: selectedItem?.displayName || selectedItem?.name || '',

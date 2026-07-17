@@ -183,6 +183,31 @@ describe('ContentPanel make client project setup source', () => {
     expect(prototypeToolbarSource).not.toContain('onImportPrototype');
   });
 
+  it('adds start-page create entries to resource and design toolbars with scoped actions', () => {
+    const source = readContentPanelSource();
+    const documentToolbarSource = source.slice(
+      source.indexOf("{!isSearchExpanded && activeTab === 'document' ? ("),
+      source.indexOf("{!isSearchExpanded && activeTab === 'assets' ? ("),
+    );
+    const assetsToolbarSource = source.slice(
+      source.indexOf("{!isSearchExpanded && activeTab === 'assets' ? ("),
+      source.indexOf('</div>', source.indexOf("{!isSearchExpanded && activeTab === 'assets' ? (")),
+    );
+
+    expect(source).toContain('onCreateResourceStart: () => void;');
+    expect(source).toContain('onCreateThemeStart: () => void;');
+    expect(documentToolbarSource).toContain('onCreateResourceStart');
+    expect(documentToolbarSource).toContain('新建资源');
+    expect(documentToolbarSource).not.toContain('上传资源');
+    expect(documentToolbarSource).not.toContain('docFileInputRef');
+    expect(documentToolbarSource).toContain('新建文件夹');
+    expect(assetsToolbarSource).toContain('onCreateThemeStart');
+    expect(assetsToolbarSource).toContain('新建设计');
+    expect(assetsToolbarSource).not.toContain('导入设计');
+    expect(assetsToolbarSource).not.toContain('onImportTheme');
+    expect(assetsToolbarSource).toContain('新建文件夹');
+  });
+
   it('allows successful required project setup to close the setup dialog', () => {
     const source = readContentPanelSource();
     const dialogSource = source.slice(
@@ -472,12 +497,14 @@ describe('ContentPanel prototype canvas entry source', () => {
 });
 
 describe('ContentPanel draft wording source', () => {
-  it('uses draft wording for external canvas actions in the sidebar', () => {
+  it('does not expose external add-to-canvas actions in the sidebar', () => {
     const source = readContentPanelSource();
 
-    expect(source).toContain('添加到画布');
-    expect(source).toContain('<TooltipContent>新建画布</TooltipContent>');
-    expect(source).toContain('toast.success(`已添加「${payload.displayName}」到画布`)');
+    expect(source).not.toContain('添加到画布');
+    expect(source).not.toContain("window.dispatchEvent(new CustomEvent('axhub:addToCanvas'");
+    expect(source).not.toContain('toast.success(`已添加「${payload.displayName}」到画布`)');
+    expect(source).not.toContain('<TooltipContent>新建画布</TooltipContent>');
+    expect(source).not.toContain('<TooltipContent>新建资源文件</TooltipContent>');
     expect(source).not.toContain('添加到草稿');
     expect(source).not.toContain('<TooltipContent>新建草稿</TooltipContent>');
     expect(source).not.toContain('toast.success(`已添加「${payload.displayName}」到草稿`)');
@@ -494,6 +521,18 @@ describe('ContentPanel sidebar rename source', () => {
 
     expect(renderItemActionsSource).toContain('startItemRename(itemNodeId, node?.title || item.displayName || item.name)');
     expect(renderItemActionsSource).not.toContain('startItemRename(itemNodeId, item.displayName || item.name)');
+  });
+
+  it('labels per-item version actions as version and collaboration', () => {
+    const source = readContentPanelSource();
+    const renderItemActionsSource = source.slice(
+      source.indexOf('const renderItemActions ='),
+      source.indexOf('const renderFolderActions ='),
+    );
+
+    expect(renderItemActionsSource).toContain('handleVersionManagement(item)');
+    expect(renderItemActionsSource).toContain('版本和协作');
+    expect(renderItemActionsSource).not.toContain('版本管理');
   });
 });
 
@@ -581,7 +620,7 @@ describe('ContentPanel resource folder selection source', () => {
     expect(folderClickSource).toContain('onFolderClick?.(node);');
   });
 
-  it('lets canvas resource folders become active while keeping document paste targeting document-only', () => {
+  it('keeps resource folder paste targeting document-only', () => {
     const source = readContentPanelSource();
     const folderClickSource = source.slice(
       source.indexOf('if (canSelectFolders) {'),
@@ -597,7 +636,7 @@ describe('ContentPanel resource folder selection source', () => {
       .toBeLessThan(folderClickSource.indexOf('onFolderClick?.(node);'));
   });
 
-  it('passes folder selection callbacks for document, canvas, and design resource trees', () => {
+  it('passes folder selection callbacks for document and design resource trees', () => {
     const source = readFileSync(resolve(__dirname, './NewSidebar.tsx'), 'utf8');
     const contentPanelPropsSource = source.slice(
       source.indexOf('<ContentPanel'),
@@ -605,8 +644,10 @@ describe('ContentPanel resource folder selection source', () => {
     );
 
     expect(source).toContain('const currentSelectedFolder = selectedResourceFolder && selectedResourceFolderTreeTab === currentTreeTab');
-    expect(contentPanelPropsSource).toContain("currentTreeTab === 'docs' || currentTreeTab === 'canvas' || currentTreeTab === 'themes'");
+    expect(contentPanelPropsSource).toContain("currentTreeTab === 'docs' || currentTreeTab === 'themes'");
     expect(contentPanelPropsSource).toContain("onSelectResourceFolder?.(folder, currentTreeTab, { preserveViewMode: viewMode === 'canvas' })");
+    expect(contentPanelPropsSource).not.toContain("currentTreeTab === 'canvas'");
+    expect(contentPanelPropsSource).not.toContain("sidebarTab === 'canvas'");
     expect(contentPanelPropsSource).not.toContain("sidebarTab === 'document' ? onSelectResourceFolder : undefined");
   });
 
@@ -744,6 +785,22 @@ describe('ContentPanel document paste upload source', () => {
     expect(syncEffectSource).toContain('[activeTab, selectedDocumentFolderPath, armDocumentPasteUpload]');
   });
 
+  it('does not expose new resource file creation from the document toolbar', () => {
+    const source = readContentPanelSource();
+    const documentToolbarSource = source.slice(
+      source.indexOf("{!isSearchExpanded && activeTab === 'document' ? ("),
+      source.indexOf("{!isSearchExpanded && activeTab === 'assets' ? ("),
+    );
+
+    expect(source).not.toContain("type ResourceFileCreateKind = 'markdown' | 'excalidraw' | 'drawio' | 'json' | 'csv';");
+    expect(source).not.toContain('onCreateResourceFile?: (kind: ResourceFileCreateKind, targetFolder?: string | null) => void | Promise<void>;');
+    expect(documentToolbarSource).not.toContain('新建资源文件');
+    expect(documentToolbarSource).not.toContain("onCreateResourceFile?.('excalidraw', documentPasteTargetFolder)");
+    expect(documentToolbarSource).not.toContain("onCreateResourceFile?.('markdown', documentPasteTargetFolder)");
+    expect(documentToolbarSource).not.toContain('<FilePlus className="h-4 w-4" />');
+    expect(documentToolbarSource).not.toContain('onCreateCanvasFile');
+  });
+
   it('tracks the document paste target from root and folder focus without switching to file paths', () => {
     const source = readContentPanelSource();
     const folderClickSource = source.slice(
@@ -787,10 +844,10 @@ describe('ContentPanel resource drag and drop source', () => {
     expect(fileDropZoneSource).toContain('if (isSidebarTreeDragEvent(event)) return;');
   });
 
-  it('adds assistant-context drag payloads without changing existing tree and canvas drag payloads', () => {
+  it('adds assistant-context drag payloads without writing canvas drag payloads', () => {
     const source = readContentPanelSource();
     const pageRowsSource = source.slice(
-      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderPrototypePageRow ='),
       source.indexOf('const renderTreeNodes ='),
     );
     const treeDragSource = source.slice(
@@ -800,11 +857,13 @@ describe('ContentPanel resource drag and drop source', () => {
 
     expect(source).toContain("import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';");
     expect(source).toContain("import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';");
-    expect(pageRowsSource).toContain('event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
+    expect(source).not.toContain("import { CANVAS_DROP_MIME } from '../content/canvasDropTypes';");
+    expect(source).not.toContain('CANVAS_DROP_MIME');
+    expect(pageRowsSource).not.toContain('event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
     expect(pageRowsSource).toContain('event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
     expect(pageRowsSource).toContain("resourceType: 'prototype-page'");
     expect(treeDragSource).toContain('e.dataTransfer.setData(SIDEBAR_TREE_DRAG_MIME, node.id);');
-    expect(treeDragSource).toContain('e.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
+    expect(treeDragSource).not.toContain('e.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));');
     expect(treeDragSource).toContain('e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
     expect(treeDragSource).toContain('items: buildAssistantContextItemsFromResource({');
   });
@@ -814,7 +873,7 @@ describe('ContentPanel prototype page children source', () => {
   it('uses a layout icon for prototype items while keeping file icons for prototype pages', () => {
     const source = readContentPanelSource();
     const pageRowsSource = source.slice(
-      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderPrototypePageRow ='),
       source.indexOf('const renderTreeNodes ='),
     );
     const treeNodeRenderSource = source.slice(
@@ -839,64 +898,76 @@ describe('ContentPanel prototype page children source', () => {
     expect(source).toContain('page.title');
     expect(source).toContain('page.id');
     expect(source).toContain('renderPrototypePageRows(item, depth + 1)');
-    expect(source).toContain('buildPrototypePageCanvasPayload(item, page)');
+    expect(source).not.toContain('buildPrototypePageCanvasPayload(item, page)');
+    expect(source).not.toContain('function buildPrototypePageCanvasPayload');
     expect(source).toContain("draggable={true}");
     expect(source).toContain('actions={null}');
     expect(source).toContain('onPrototypePageSelect(item, page.id)');
     expect(source).not.toContain('onTreePersist(page');
   });
 
-  it('drags prototype page rows as generic preview embeds with only page-specific URLs', () => {
+  it('renders data-driven page groups with transient independent expansion state', () => {
+    const source = readContentPanelSource();
+    const pageRowsSource = source.slice(
+      source.indexOf('const renderPrototypePageRow ='),
+      source.indexOf('const renderTreeNodes ='),
+    );
+
+    expect(source).toContain("import { buildPrototypePageSegments, findPrototypePageGroupKey } from './prototypePageGroups';");
+    expect(source).toContain('expandedPrototypePageGroups');
+    expect(source).toContain('setExpandedPrototypePageGroups');
+    expect(source).toContain('activePrototypePageGroupKey');
+    expect(source).toContain('validPrototypePageGroupKeys');
+    expect(source).toContain('ChevronRight,');
+    expect(source).toContain('aria-expanded={ariaExpanded}');
+    expect(pageRowsSource).toContain('segment.kind === \'page\'');
+    expect(pageRowsSource).toContain('togglePrototypePageGroup(item.name, segment.key)');
+    expect(pageRowsSource).toContain('ariaExpanded={expanded}');
+    expect(pageRowsSource).toContain("event.key === 'Enter' || event.key === ' '");
+    expect(pageRowsSource).toContain('renderPrototypePageRow(item, page, depth + 1)');
+    expect(pageRowsSource).not.toContain('onTreePersist');
+    expect(pageRowsSource).not.toContain('localStorage');
+  });
+
+  it('drags prototype page rows only as assistant context resources', () => {
     const source = readContentPanelSource();
     const helperSource = source.slice(
       source.indexOf('function resolvePrototypePageEmbedDisplayName'),
-      source.indexOf('const renderItemActions ='),
-    );
-    const payloadSource = source.slice(
-      source.indexOf('function buildPrototypePageCanvasPayload'),
       source.indexOf('interface ProjectSetupDialogProps'),
     );
+    const pageRowsSource = source.slice(
+      source.indexOf('const renderPrototypePageRow ='),
+      source.indexOf('const renderTreeNodes ='),
+    );
 
-    expect(helperSource).toContain("type: 'preview'");
-    expect(helperSource).toContain("resourceType: 'preview'");
-    expect(helperSource).toContain("sourceResourceType: 'prototype'");
-    expect(helperSource).toContain('resourceId');
-    expect(helperSource).toContain("previewKind: 'web'");
-    expect(helperSource).toContain("embedViewMode: 'preview'");
-    expect(helperSource).toContain('displayName: resolvePrototypePageEmbedDisplayName(item, page.title)');
     expect(helperSource).toContain('return `${trimmedPageTitle} - ${prototypeTitle}`;');
-    expect(helperSource).toContain('buildPrototypePagePreviewUrl(item, page.id)');
-    expect(helperSource).toContain('buildResourceDeepLinkUrl({');
-    expect(helperSource).toContain('pageId: page.id');
-    expect(payloadSource).not.toContain('pageId,');
-    expect(payloadSource).not.toContain('pageTitle:');
+    expect(pageRowsSource).toContain('const displayName = resolvePrototypePageEmbedDisplayName(item, page.title);');
+    expect(pageRowsSource).toContain('event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
+    expect(pageRowsSource).toContain("resourceType: 'prototype-page'");
+    expect(pageRowsSource).not.toContain('CANVAS_DROP_MIME');
+    expect(source).not.toContain("type: 'preview'");
+    expect(source).not.toContain("embedViewMode: 'preview'");
   });
 
-  it('drags prototype and document items as preview embeds by default', () => {
+  it('drags prototype and document items only as assistant context resources', () => {
     const source = readContentPanelSource();
-    const payloadSource = source.slice(
-      source.indexOf('const payload = {'),
-      source.indexOf('try {', source.indexOf('const payload = {')),
-    );
     const treeDragSource = source.slice(
-      source.indexOf('// Attach canvas-drop payload so the item can be'),
-      source.indexOf('e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME', source.indexOf('// Attach canvas-drop payload so the item can be')),
+      source.indexOf('onDragStart={(e) => {', source.indexOf('const renderTreeNodes =')),
+      source.indexOf('setDraggingNodeId(node.id);', source.indexOf('const renderTreeNodes =')),
     );
 
-    expect(payloadSource).toContain("type: 'preview'");
-    expect(payloadSource).toContain("resourceType: 'preview'");
-    expect(payloadSource).toContain('sourceResourceType');
-    expect(payloadSource).toContain('embedViewMode: \'preview\'');
-    expect(payloadSource).not.toContain('embedViewMode: \'link\'');
-    expect(treeDragSource).toContain("type: 'preview'");
-    expect(treeDragSource).toContain("resourceType: 'preview'");
-    expect(treeDragSource).toContain('sourceResourceType');
+    expect(source).not.toContain('// Attach canvas-drop payload so the item can be');
+    expect(treeDragSource).not.toContain("type: 'preview'");
+    expect(treeDragSource).not.toContain("resourceType: 'preview'");
+    expect(treeDragSource).not.toContain('sourceResourceType');
+    expect(treeDragSource).toContain('e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({');
+    expect(treeDragSource).toContain('items: buildAssistantContextItemsFromResource({');
   });
 
   it('uses a text-only selected state for prototype pages so parent and first page backgrounds do not stack', () => {
     const source = readContentPanelSource();
     const pageRowsSource = source.slice(
-      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderPrototypePageRow ='),
       source.indexOf('const renderTreeNodes ='),
     );
 
@@ -920,20 +991,24 @@ describe('ContentPanel prototype page children source', () => {
 });
 
 describe('ContentPanel LAN share source', () => {
-  it('hides the whole LAN share group when the active project disallows LAN access', () => {
+  it('generates short-lived LAN share URLs on demand instead of exposing raw LAN URLs', () => {
     const source = readContentPanelSource();
     const itemActionsSource = source.slice(
       source.indexOf('const renderItemActions ='),
       source.indexOf('const renderFolderActions ='),
     );
-    const guardIndex = itemActionsSource.indexOf('const showLANShareGroup = lanAccessAllowed && Boolean(lanShareUrl);');
+    const guardIndex = itemActionsSource.indexOf('const showLANShareGroup = Boolean(lanShareUrl);');
+    const resolverIndex = itemActionsSource.indexOf('resolveLanShareUrl');
     const lanGroupIndex = itemActionsSource.indexOf('{showLANShareGroup ? (');
-    const lanLabelIndex = itemActionsSource.indexOf('局域网链接');
-    const qrIndex = itemActionsSource.indexOf('<QRCode value={lanShareUrl}');
+    const lanLabelIndex = itemActionsSource.indexOf('局域网链接', lanGroupIndex);
+    const qrIndex = itemActionsSource.indexOf('<QRCode value={lanTokenUrl}');
 
-    expect(source).toContain('lanAccessAllowed?: boolean;');
-    expect(source).toContain('lanAccessAllowed = true,');
+    expect(source).toContain('apiService.createLanAccessShareUrl');
+    expect(source).toContain('请先在设置中设置局域网访问密码');
+    expect(source).not.toContain('lanAccessAllowed?: boolean;');
+    expect(source).not.toContain('lanAccessAllowed = true,');
     expect(guardIndex).toBeGreaterThan(-1);
+    expect(resolverIndex).toBeGreaterThan(guardIndex);
     expect(lanGroupIndex).toBeGreaterThan(guardIndex);
     expect(lanLabelIndex).toBeGreaterThan(lanGroupIndex);
     expect(qrIndex).toBeGreaterThan(lanGroupIndex);

@@ -23,6 +23,7 @@ Options:
   --target <commitish>       Gitee release target branch or commit. Defaults to main.
   --replace                  Delete and re-upload an existing template attachment.
   --dry-run                  Print planned Gitee mirror actions without requiring a token.
+  --confirm-publish          Confirm external Gitee publishing after reviewing prepared artifacts.
   -h, --help                 Show this help message.
 
 Token:
@@ -37,6 +38,7 @@ function parseArgs(argv = []) {
     targetCommitish: 'main',
     replace: false,
     dryRun: false,
+    confirmPublish: false,
     help: false,
   };
 
@@ -62,6 +64,8 @@ function parseArgs(argv = []) {
       options.replace = true;
     } else if (arg === '--dry-run') {
       options.dryRun = true;
+    } else if (arg === '--confirm-publish') {
+      options.confirmPublish = true;
     } else if (arg === '--help' || arg === '-h') {
       options.help = true;
     } else {
@@ -110,6 +114,9 @@ function assertManifestHasTemplateZip(manifest, manifestPath) {
   }
   if (!fs.existsSync(manifest.templateZip.path)) {
     throw new Error(`Template zip asset does not exist. Run release:make-client-template:prepare first: ${manifest.templateZip.path}`);
+  }
+  if (manifest.latestManifest?.path && !fs.existsSync(manifest.latestManifest.path)) {
+    throw new Error(`Template latest manifest asset does not exist. Run release:make-client-template:prepare first: ${manifest.latestManifest.path}`);
   }
 }
 
@@ -190,7 +197,8 @@ async function uploadAttachment({ fetchImpl, token, owner, repo, releaseId, asse
   const body = new FormData();
   body.set('access_token', token);
   const bytes = fs.readFileSync(assetPath);
-  const blob = new Blob([bytes], { type: 'application/zip' });
+  const contentType = assetName.endsWith('.json') ? 'application/json' : 'application/zip';
+  const blob = new Blob([bytes], { type: contentType });
   body.set('file', blob, assetName);
   const response = await fetchImpl(`${giteeApiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/${releaseId}/attach_files`, {
     method: 'POST',
@@ -214,43 +222,19 @@ async function verifyMirrorUrl({ fetchImpl, mirrorUrl }) {
   };
 }
 
-export async function runGiteeMirrorRelease({
-  argv = process.argv.slice(2),
-  env = process.env,
-  fetchImpl = fetch,
-  logger = console,
-} = {}) {
-  const options = parseArgs(argv);
-  if (options.help) {
-    printUsage();
-    return { help: true };
-  }
-
-  const manifest = readJson(options.manifestPath);
-  assertManifestHasTemplateZip(manifest, options.manifestPath);
-  const parsedMirror = parseGiteeReleaseDownloadUrl(manifest.templateZip.mirrorUrl);
-  const assetPath = manifest.templateZip.path;
-  const assetName = parsedMirror.assetName || path.basename(assetPath);
-  const plan = {
-    repo: `${parsedMirror.owner}/${parsedMirror.repo}`,
-    tagName: parsedMirror.tagName,
-    assetName,
-    assetPath,
-    mirrorUrl: manifest.templateZip.mirrorUrl,
-    targetCommitish: options.targetCommitish,
-  };
-
-  if (options.dryRun) {
-    logger.log(`Gitee mirror dry run: ${plan.repo} ${plan.tagName}`);
-    logger.log(`  asset: ${plan.assetName}`);
-    logger.log(`  local: ${plan.assetPath}`);
-    logger.log(`  url: ${plan.mirrorUrl}`);
-    return { dryRun: true, ...plan };
-  }
-
-  const token = resolveGiteeToken({ env, tokenFile: options.tokenFile });
-  logger.log(`Publishing Gitee mirror: ${plan.repo} ${plan.tagName}`);
-  logger.log(`  asset: ${plan.assetName}`);
+async function mirrorGiteeAsset({
+  fetchImpl,
+  token,
+  logger,
+  options,
+  manifest,
+  parsedMirror,
+  assetPath,
+  assetName,
+  mirrorUrl,
+}) {
+  logger.log(`Publishing Gitee mirror: ${parsedMirror.owner}/${parsedMirror.repo} ${parsedMirror.tagName}`);
+  logger.log(`  asset: ${assetName}`);
 
   let release = await getReleaseByTag({
     fetchImpl,
@@ -290,37 +274,124 @@ export async function runGiteeMirrorRelease({
     releaseId,
   });
   const existingAttachment = attachments.find((attachment) => attachmentName(attachment) === assetName);
+  let uploaded = true;
   if (existingAttachment && !options.replace) {
     logger.log(`  upload: skipped existing ${assetName}`);
-    const verified = await verifyMirrorUrl({ fetchImpl, mirrorUrl: plan.mirrorUrl });
-    logger.log(`  verified: ${plan.mirrorUrl}`);
-    return { ...plan, releaseId, created, uploaded: false, verified: verified.ok };
-  }
-  if (existingAttachment && options.replace) {
-    await deleteAttachment({
+    uploaded = false;
+  } else {
+    if (existingAttachment && options.replace) {
+      await deleteAttachment({
+        fetchImpl,
+        token,
+        owner: parsedMirror.owner,
+        repo: parsedMirror.repo,
+        releaseId,
+        attachmentId: existingAttachment.id,
+      });
+      logger.log(`  upload: replacing existing ${assetName}`);
+    }
+    await uploadAttachment({
       fetchImpl,
       token,
       owner: parsedMirror.owner,
       repo: parsedMirror.repo,
       releaseId,
-      attachmentId: existingAttachment.id,
+      assetPath,
+      assetName,
     });
-    logger.log(`  upload: replacing existing ${assetName}`);
+    logger.log(`  upload: completed ${assetName}`);
   }
 
-  await uploadAttachment({
+  const verified = await verifyMirrorUrl({ fetchImpl, mirrorUrl });
+  logger.log(`  verified: ${mirrorUrl}`);
+  return {
+    repo: `${parsedMirror.owner}/${parsedMirror.repo}`,
+    tagName: parsedMirror.tagName,
+    assetName,
+    assetPath,
+    mirrorUrl,
+    releaseId,
+    created,
+    uploaded,
+    verified: verified.ok,
+  };
+}
+
+export async function runGiteeMirrorRelease({
+  argv = process.argv.slice(2),
+  env = process.env,
+  fetchImpl = fetch,
+  logger = console,
+} = {}) {
+  const options = parseArgs(argv);
+  if (options.help) {
+    printUsage();
+    return { help: true };
+  }
+
+  const manifest = readJson(options.manifestPath);
+  assertManifestHasTemplateZip(manifest, options.manifestPath);
+  const parsedMirror = parseGiteeReleaseDownloadUrl(manifest.templateZip.mirrorUrl);
+  const assetPath = manifest.templateZip.path;
+  const assetName = parsedMirror.assetName || path.basename(assetPath);
+  const plan = {
+    repo: `${parsedMirror.owner}/${parsedMirror.repo}`,
+    tagName: parsedMirror.tagName,
+    assetName,
+    assetPath,
+    mirrorUrl: manifest.templateZip.mirrorUrl,
+    targetCommitish: options.targetCommitish,
+  };
+
+  if (options.dryRun) {
+    logger.log(`Gitee mirror dry run: ${plan.repo} ${plan.tagName}`);
+    logger.log(`  asset: ${plan.assetName}`);
+    logger.log(`  local: ${plan.assetPath}`);
+    logger.log(`  url: ${plan.mirrorUrl}`);
+    return { dryRun: true, ...plan };
+  }
+
+  if (!options.confirmPublish) {
+    throw new Error('Gitee publishing requires human confirmation. Re-run with --confirm-publish after reviewing the prepared artifacts.');
+  }
+
+  const token = resolveGiteeToken({ env, tokenFile: options.tokenFile });
+  const mirroredTemplateZip = await mirrorGiteeAsset({
     fetchImpl,
     token,
-    owner: parsedMirror.owner,
-    repo: parsedMirror.repo,
-    releaseId,
+    logger,
+    options,
+    manifest,
+    parsedMirror,
     assetPath,
     assetName,
+    mirrorUrl: plan.mirrorUrl,
   });
-  logger.log(`  upload: completed ${assetName}`);
-  const verified = await verifyMirrorUrl({ fetchImpl, mirrorUrl: plan.mirrorUrl });
-  logger.log(`  verified: ${plan.mirrorUrl}`);
-  return { ...plan, releaseId, created, uploaded: true, verified: verified.ok };
+
+  let latestManifest = null;
+  if (manifest.latestManifest?.path && manifest.latestManifest?.mirrorUrl) {
+    const parsedLatestMirror = parseGiteeReleaseDownloadUrl(manifest.latestManifest.mirrorUrl);
+    latestManifest = await mirrorGiteeAsset({
+      fetchImpl,
+      token,
+      logger,
+      options,
+      manifest,
+      parsedMirror: parsedLatestMirror,
+      assetPath: manifest.latestManifest.path,
+      assetName: parsedLatestMirror.assetName || manifest.latestManifest.name || path.basename(manifest.latestManifest.path),
+      mirrorUrl: manifest.latestManifest.mirrorUrl,
+    });
+  }
+
+  return {
+    ...plan,
+    releaseId: mirroredTemplateZip.releaseId,
+    created: mirroredTemplateZip.created,
+    uploaded: mirroredTemplateZip.uploaded,
+    verified: mirroredTemplateZip.verified,
+    ...(latestManifest ? { latestManifest } : {}),
+  };
 }
 
 async function main() {

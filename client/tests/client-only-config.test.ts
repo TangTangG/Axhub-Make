@@ -72,9 +72,10 @@ describe('make-project client-only defaults', () => {
   it('watches annotation sources while ignoring canvas data artifacts globally', () => {
     const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
 
-    expect(viteConfig).toContain("'**/canvas-assets/**'");
+    expect(viteConfig).toContain("'**/*.assets/**'");
     expect(viteConfig).toContain("'**/*.excalidraw'");
     expect(viteConfig).not.toContain("'**/annotation-source.json'");
+    expect(viteConfig).not.toContain("'**/canvas-assets/**'");
     expect(viteConfig).not.toContain("'**/prototypes/**/canvas-assets/**'");
     expect(viteConfig).not.toContain("'**/prototypes/**/canvas.excalidraw'");
     expect(viteConfig).not.toContain("'**/prototypes/**/spec.md'");

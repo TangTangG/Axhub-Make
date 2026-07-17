@@ -475,6 +475,20 @@ export const PROPERTY_PANEL_LOCAL_STYLES = `
     box-shadow: none !important;
   }
 
+  .we-runtime-directory-picker-modal .ant-modal-content {
+    overflow: hidden;
+  }
+
+  .we-runtime-directory-picker-modal .ant-modal-body {
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+
+  .we-runtime-directory-picker__row:hover:not(:disabled),
+  .we-runtime-directory-picker__row:focus-visible:not(:disabled) {
+    background: ${EDITOR_CHROME.hoverSubtle} !important;
+  }
+
   .we-runtime-prop-panel__body .ant-input-filled,
   .we-runtime-prop-panel__body .ant-input-number-filled,
   .we-runtime-prop-panel__body .ant-select-filled:not(.ant-select-customize-input) .ant-select-selector {

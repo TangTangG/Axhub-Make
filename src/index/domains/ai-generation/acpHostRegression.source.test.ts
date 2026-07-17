@@ -163,7 +163,7 @@ describe('ACP host frontend regression script source', () => {
     expect(source).toContain('textarea[aria-label="画布 AI 输入"]');
     expect(source).toContain('button[aria-label="发送"]');
     expect(source).not.toContain("element.customData?.type === 'axhub-ai-generation'");
-    expect(source).toContain("new URL('/api/canvas/' + encodeCanvasApiPath(canvasName), window.location.origin)");
+    expect(source).toContain("new URL('/api/canvas/resources/' + encodeCanvasApiPath(canvasName), window.location.origin)");
     expect(source).toContain("await fetch(canvasUrl, { method: 'PUT'");
     expect(source).toContain('const api = window.__AXHUB_EXCALIDRAW_API__;');
     expect(source).toContain('api.updateScene({');
@@ -392,7 +392,9 @@ describe('ACP host frontend regression script source', () => {
     expect(runner).toContain('real ACP canvas artifact elements');
     expect(runner).toContain('waitForPersistedCanvasArtifactElements');
     expect(runner).toContain('real ACP persisted canvas artifact elements');
-    expect(runner).toContain("new URL(`/api/canvas/${encodeCanvasApiPath(`prototypes/${prototypeName}/canvas.excalidraw`)}`, baseUrl)");
+    expect(runner).toContain('function getCanvasResourcePathForPrototype(prototypeName)');
+    expect(runner).toContain('function buildResourceCanvasApiUrl(baseUrl, resourcePath)');
+    expect(runner).toContain('buildResourceCanvasApiUrl(baseUrl, canvasResourcePath)');
     expect(runner).toContain('function appendProjectIdSearchParam(url, projectId)');
     expect(runner).toContain('appendProjectIdSearchParam(url, projectId);');
     expect(runner).toContain('projectId,');
@@ -470,7 +472,7 @@ describe('ACP host frontend regression script source', () => {
     expect(runner).not.toContain('await capture(page, frames, frameDir, \'6. 真实 ACP UI 已从 provider diff 派发 acp.messages.changed\');');
     expect(runner).not.toContain('查询桥');
     expect(runner).toContain('await capture(page, frames, frameDir, \'7. canvas.excalidraw 已持久化四类真实产物元素，重开画布仍可显示\');');
-    expect(runner).toContain('await capture(page, frames, frameDir, \'8. 生成记录已写入当前画布原型，四类 artifact 可被历史接口读取\');');
+    expect(runner).toContain('await capture(page, frames, frameDir, \'8. 生成记录已写入当前资源画布，四类 artifact 可被历史接口读取\');');
     expect(runner).toContain('await capture(page, frames, frameDir, `${label}：刷新前现场`);');
     expect(runner).toContain('await capture(page, frames, frameDir, `${label}：刷新后画布和真实 ACP iframe 已恢复`);');
     expect(runner).toContain('promptPreview: String(prompt || \'\').slice(0, 1200),');

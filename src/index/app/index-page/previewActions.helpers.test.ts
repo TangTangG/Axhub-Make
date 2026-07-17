@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as helpers from './previewActions.helpers';
 import {
   buildCombinedPrototypePrompt,
+  buildMainPreviewIframeUrl,
   buildProjectPrototypeIframeUrl,
   buildProjectPrototypeScreenshotIframeUrl,
   createDefaultHostToolbarState,
@@ -55,11 +56,30 @@ describe('previewActions.helpers', () => {
       __RUNTIME_ORIGIN__: 'http://localhost:51723',
     });
 
-    expect(buildProjectPrototypeIframeUrl({
+    expect(buildMainPreviewIframeUrl({
       name: 'brand',
       clientUrl: '/themes/brand',
       previewUrl: '/themes/brand',
     })).toBe('http://localhost:51723/themes/brand');
+  });
+
+  it('adds the host toolbar marker to embedded theme preview URLs', () => {
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://localhost:53817',
+      },
+      __RUNTIME_ORIGIN__: 'http://localhost:51720',
+    });
+
+    const url = new URL(buildMainPreviewIframeUrl({
+      name: 'brand',
+      clientUrl: 'http://localhost:51720/themes/brand?variant=dark#tokens',
+    }, { hostToolbar: true }));
+
+    expect(url.pathname).toBe('/themes/brand');
+    expect(url.searchParams.get('variant')).toBe('dark');
+    expect(url.searchParams.get('agentToolbar')).toBe('host');
+    expect(url.hash).toBe('#tokens');
   });
 
   it('keeps relative prototype iframe URLs usable from the current origin when runtime origin is unavailable', () => {
@@ -195,6 +215,81 @@ describe('previewActions.helpers', () => {
     });
   });
 
+  it('sends the standalone admin module URL only with Axure export requests', () => {
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://localhost:53817',
+      },
+      __RUNTIME_ORIGIN__: 'http://localhost:51720',
+    });
+    const selectedItem = {
+      projectId: 'project-1',
+      resourceId: 'home',
+      name: 'home',
+      clientUrl: 'http://localhost:51720/prototypes/home',
+    };
+
+    expect(helpers.createRuntimeExportMessage({
+      type: 'axhub.quickEdit.export.axureJson',
+      selectedItem,
+      requestId: 'axure-1',
+    })).toMatchObject({
+      runtimeOrigin: 'http://localhost:53817',
+      axureExportModuleUrl: 'http://localhost:53817/assets/axure-export-runtime.js',
+    });
+    expect(helpers.createRuntimeExportMessage({
+      type: 'axhub.quickEdit.export.copyToFigma',
+      selectedItem,
+      requestId: 'figma-1',
+    })).not.toHaveProperty('axureExportModuleUrl');
+  });
+
+  it('identifies theme runtime export requests and communication records as theme resources', async () => {
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://localhost:53817',
+      },
+      __RUNTIME_ORIGIN__: 'http://localhost:51720',
+    });
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const selectedTheme = {
+      projectId: 'project-1',
+      name: 'brand',
+      clientUrl: 'http://localhost:51720/themes/brand',
+    };
+
+    expect(helpers.createRuntimeExportMessage({
+      type: 'axhub.quickEdit.export.axureJson',
+      selectedItem: selectedTheme,
+      resourceType: 'theme',
+      requestId: 'theme-axure-1',
+    })).toMatchObject({
+      projectId: 'project-1',
+      resourceId: 'brand',
+      resourceType: 'themes',
+      clientUrl: 'http://localhost:51720/themes/brand',
+    });
+
+    await helpers.postProjectCommunicationRecord(selectedTheme, 'exports', {
+      operationType: 'axure.copy',
+      status: 'success',
+    }, 'theme');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/project-1/communication/exports',
+      expect.objectContaining({
+        body: JSON.stringify({
+          projectId: 'project-1',
+          resourceId: 'brand',
+          resourceType: 'theme',
+          operationType: 'axure.copy',
+          status: 'success',
+        }),
+      }),
+    );
+  });
+
   it('keeps unrelated relative preview URLs on the current origin', () => {
     vi.stubGlobal('window', {
       location: {
@@ -320,7 +415,7 @@ describe('previewActions.helpers', () => {
     expect(resolvedState?.sendDisabled).toBe(false);
   });
 
-  it('keeps direct annotation runs interruptible when editor toolbar sync reports idle', () => {
+  it('keeps direct annotation runs interruptible and sendable until concurrency is full', () => {
     const syncedIdleState = {
       ...createDefaultHostToolbarState(),
       robotState: 'awake' as const,
@@ -331,20 +426,37 @@ describe('previewActions.helpers', () => {
       propertyPanelOpen: true,
     };
 
-    const activeRunState = resolveActiveAnnotationDirectRunToolbarState(syncedIdleState, true);
+    const activeRunState = resolveActiveAnnotationDirectRunToolbarState(syncedIdleState, {
+      activeRunCount: 1,
+      maxRunCount: 3,
+    });
 
     expect(activeRunState).toMatchObject({
       robotState: 'working',
       robotLoading: false,
-      sendDisabled: true,
-      sendLoading: true,
+      sendDisabled: false,
+      sendLoading: false,
       interruptVisible: true,
       interruptDisabled: false,
       interruptLoading: false,
       propertyPanelOpen: true,
     });
-    expect(resolveActiveAnnotationDirectRunToolbarState(syncedIdleState, false)).toBe(syncedIdleState);
-    expect(resolveActiveAnnotationDirectRunToolbarState(null, true)).toBeNull();
+    expect(resolveActiveAnnotationDirectRunToolbarState(syncedIdleState, {
+      activeRunCount: 3,
+      maxRunCount: 3,
+    })).toMatchObject({
+      sendDisabled: true,
+      sendLoading: true,
+      interruptDisabled: false,
+    });
+    expect(resolveActiveAnnotationDirectRunToolbarState(syncedIdleState, {
+      activeRunCount: 0,
+      maxRunCount: 3,
+    })).toBe(syncedIdleState);
+    expect(resolveActiveAnnotationDirectRunToolbarState(null, {
+      activeRunCount: 1,
+      maxRunCount: 3,
+    })).toBeNull();
   });
 
   it('preserves the selection mode flag when showing a hidden host toolbar state', () => {
@@ -358,6 +470,15 @@ describe('previewActions.helpers', () => {
 
     expect(resolvedState?.visible).toBe(true);
     expect(resolvedState?.selectionModeActive).toBe(false);
+  });
+
+  it('keeps copy prompt disabled in the fallback toolbar state until an editor reports promptable edits', () => {
+    const fallbackState = createDefaultHostToolbarState();
+
+    expect(fallbackState.copyPromptVisible).toBe(true);
+    expect(fallbackState.copyPromptDisabled).toBe(true);
+    expect(fallbackState.clearEditsDisabled).toBe(true);
+    expect(fallbackState.modifiedCount).toBe(0);
   });
 
   it('waits for the next host toolbar state when wake starts from a stale sleeping snapshot', async () => {
@@ -435,6 +556,44 @@ describe('previewActions.helpers', () => {
       '## 手机端',
       '手机 only',
     ].join('\n'));
+  });
+
+  it('closes prototype specs only after Markdown editing has fully exited', () => {
+    const createGate = (helpers as Record<string, unknown>).createPrototypeSpecMarkdownStatusGate;
+
+    expect(typeof createGate).toBe('function');
+    const gate = (createGate as () => {
+      handle: (params: {
+        contentMode: string;
+        enabled: boolean;
+        saving: boolean;
+      }) => 'enable' | 'close' | null;
+      reset: (options?: { autoEnable?: boolean }) => void;
+    })();
+    const initialDisabledStatus = {
+      contentMode: 'prototype-spec',
+      enabled: false,
+      saving: false,
+    };
+
+    gate.reset({ autoEnable: true });
+    expect(gate.handle(initialDisabledStatus)).toBe('enable');
+    expect(gate.handle(initialDisabledStatus)).toBeNull();
+    expect(gate.handle({ ...initialDisabledStatus, enabled: true })).toBeNull();
+    expect(gate.handle({ ...initialDisabledStatus, saving: true })).toBeNull();
+    expect(gate.handle(initialDisabledStatus)).toBe('close');
+    expect(gate.handle(initialDisabledStatus)).toBeNull();
+
+    gate.reset({ autoEnable: true });
+    expect(gate.handle({ ...initialDisabledStatus, enabled: true })).toBeNull();
+    expect(gate.handle(initialDisabledStatus)).toBe('close');
+    gate.reset();
+    expect(gate.handle(initialDisabledStatus)).toBeNull();
+    expect(gate.handle({
+      contentMode: 'doc',
+      enabled: false,
+      saving: false,
+    })).toBeNull();
   });
 
   it('does not expose host Space temporary interaction forwarding helpers', () => {

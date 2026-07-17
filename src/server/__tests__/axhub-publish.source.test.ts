@@ -53,8 +53,16 @@ describe('Axhub publish source contracts', () => {
     expect(source).toContain("pathname === '/api/axhub/publish'");
     expect(source).toContain('onlineBaseUrl: options.axhubOnlineBaseUrl');
     expect(source).toContain('buildExportHtmlStaticFiles');
+    expect(source).toContain('createProjectCommunicationStore');
+    expect(source).toContain("operationType: 'cloud.publish.axhub'");
+    expect(source).toContain('axhubProjectId: result.pid');
+    expect(source).toContain('prototypeId: built.reviewContext?.prototypeId');
+    expect(source).not.toContain('writePrototypeReviewAxhubBinding');
+    expect(source).toContain('reviewContext: reviewSubmitPrototypeId');
+    expect(source).toContain('client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files), built.reviewContext)');
+    expect(source).not.toContain('createReviewSubmitInjectionOptions');
     expect(source).not.toContain('assertAxhubHostedHtmlCompatibility');
-    expect(source).toContain('publishHtmlProject(pid, normalizeFilesForAxhub(built.files))');
+    expect(source).toContain('publishHtmlProject(pid, normalizeFilesForAxhub(built.files), built.reviewContext)');
   });
 
   it('does not require local annotation runtime compatibility before uploading HTML to Axhub', () => {
@@ -68,9 +76,12 @@ describe('Axhub publish source contracts', () => {
     expect(combinedSource).not.toContain('AXHUB_HTML_MIN_ANNOTATION_VERSION');
     expect(combinedSource).not.toContain('AXHUB_HTML_ANNOTATION_RUNTIME_REQUIRED');
     expect(combinedSource).not.toContain('__AXHUB_ANNOTATION_RUNTIME__');
-    expect(axhubSource).toContain('const rawResult = await client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files));');
+    expect(axhubSource).toContain('const rawResult = await client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files), built.reviewContext);');
     expect(axhubSource).toContain('const result = normalizeAxhubPublishResultUrl(rawResult, client.getActiveBaseUrl());');
     expect(cloudPublishingSource).toContain('const result = await publishAxhubHtmlTarget({');
+    expect(cloudPublishingSource).toContain("target !== 'axhub'");
+    expect(cloudPublishingSource).toContain('prototypeId: reviewSubmitPrototypeId');
+    expect(cloudPublishingSource).not.toContain('writePrototypeReviewAxhubBinding');
   });
 
   it('adds Axhub as a cloud publishing target without requiring generic cloud credentials', () => {
@@ -106,6 +117,22 @@ describe('Axhub publish source contracts', () => {
     expect(source).toContain('function buildEnterpriseProjectPreviewUrl');
     expect(source).toContain("return `${normalizedBase}/pro/${encodeURIComponent(String(project.path || ''))}/`;");
     expect(source).toContain('apiService.disconnectAxhub()');
+  });
+
+  it('keeps the disconnected Axhub auth UI compact and de-emphasizes enterprise auth', () => {
+    const source = readIndexSource('components/dialogs/AxhubPublishDialog.tsx');
+
+    expect(source).toContain('选择 Axhub 授权，或使用企业版地址和 Enterprise Token 连接。');
+    expect(source).toContain('whitespace-nowrap');
+    expect(source).toContain("{authorizing ? '等待授权完成' : '连接 Axhub'}");
+    expect(source).not.toContain('连接 Axhub Online');
+    expect(source).toContain('variant="link"');
+    expect(source).toContain('连接企业版');
+    expect(source).toContain('enterpriseFormOpen ? (');
+    expect(source).toContain('className="flex items-center justify-between gap-2"');
+    expect(source).not.toContain('className="flex justify-end"');
+    expect(source).toContain('返回');
+    expect(source).toContain('setEnterpriseFormOpen(false)');
   });
 
   it('exposes frontend API methods only through localhost runtime routes', () => {

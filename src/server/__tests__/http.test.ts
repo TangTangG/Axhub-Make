@@ -661,7 +661,7 @@ describe('make-server HTTP server', () => {
     }
   });
 
-  it('serves context with an unavailable active project when metadata is invalid', async () => {
+  it('ignores removed prototype spec metadata fields without legacy validation', async () => {
     const projectRoot = createProjectRoot();
     fs.rmSync(getMakeClientMarkerPath(projectRoot), { force: true });
     fs.rmSync(path.join(projectRoot, 'package.json'), { force: true });
@@ -715,19 +715,13 @@ describe('make-server HTTP server', () => {
       expect(context.status).toBe(200);
       expect(body.activeProject).toMatchObject({
         id: 'invalid-metadata',
-        unavailable: true,
-        error: {
-          code: 'PROJECT_METADATA_INVALID',
-          metadataPath: getProjectMetadataPath(projectRoot),
-        },
       });
+      expect(body.activeProject).not.toHaveProperty('unavailable');
 
       const resources = await fetch(`${server.origin}/api/projects/invalid-metadata/resources`);
-      expect(resources.status).toBe(400);
-      await expect(resources.json()).resolves.toMatchObject({
-        code: 'PROJECT_METADATA_INVALID',
-        projectId: 'invalid-metadata',
-      });
+      expect(resources.status).toBe(200);
+      const resourceBody = await resources.json();
+      expect(resourceBody.resources.prototypes[0]).not.toHaveProperty('spec');
     } finally {
       await server.close();
     }
@@ -945,7 +939,7 @@ describe('make-server HTTP server', () => {
       }).then((response) => response.json());
       expect(configUpdate).toMatchObject({ success: true });
       expect(JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub/make/axhub.config.json'), 'utf8'))).toMatchObject({
-        server: { host: 'localhost', allowLAN: false },
+        server: { host: 'localhost' },
       });
 
       const entries = await fetch(`${first.origin}/api/entries.json`).then((response) => response.json());
@@ -1102,6 +1096,9 @@ describe('make-server HTTP server', () => {
         projectRoot: getGlobalMakeStateDir(registryHome),
         origin: server.origin,
         devMode: true,
+        capabilities: {
+          reviewReports: true,
+        },
       });
     } finally {
       await server.close();

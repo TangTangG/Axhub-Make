@@ -11,6 +11,7 @@ import {
     Search,
     Check,
     ChevronDown,
+    ChevronRight,
     File,
     Folder,
     FolderOpen,
@@ -34,7 +35,6 @@ import {
     Trash2,
     Upload,
     Loader2,
-    LayoutGrid,
     PanelsTopLeft,
     Square,
     RefreshCw,
@@ -74,17 +74,18 @@ import type { ThemeResourceItem } from '../../domains/resources/resource.types';
 import OpenInDropdown from './OpenInDropdown';
 import type { ProjectListItem, ResourceWriteCapabilities } from '../../services/projectResources';
 import { hasExplicitLocalPath } from '../../utils/localPath';
-import { buildResourceDeepLinkUrl } from '../../app/index-page/resourceDeepLink';
-import { CANVAS_DROP_MIME } from '../content/canvasDropTypes';
 import { ASSISTANT_CONTEXT_DRAG_MIME, buildAssistantContextDragPayload } from '../../domains/assistant/assistantContextDrag';
 import { buildAssistantContextItemsFromResource } from '../../domains/assistant/assistantContextPayload';
 import { getClipboardImageFiles } from '../../domains/shared/clipboardImages';
 import { createSidebarTreeItemLookup, resolveSidebarTreeItem } from '../../utils/sidebarTree';
 import { sidebarApi } from '../../services/sidebar.api';
+import { apiService } from '../../services/api';
 import { buildItemUrl, buildLANItemUrl } from '../../utils/url';
 import { makeClientTemplateMirrorDownloadUrl, makeClientTemplatePrimaryDownloadUrl } from '../../../common/makeClientTemplate';
 import { formatProjectRootDisplayPath } from './projectSwitcherPathDisplay';
 import { copyToClipboard } from '../../utils/clipboard';
+import { buildPrototypePageSegments, findPrototypePageGroupKey } from './prototypePageGroups';
+import type { PrototypePageItem } from './prototypePageGroups';
 
 interface ContentPanelProps {
     activeTab: SidebarTab;
@@ -98,7 +99,6 @@ interface ContentPanelProps {
     makeClientUpdateReminderVisible?: boolean;
     projects: ProjectListItem[];
     resourceWriteCapabilities: ResourceWriteCapabilities;
-    lanAccessAllowed?: boolean;
     onTitleChange: (title: string) => void | Promise<void>;
     onProjectSwitch: (projectId: string) => void | Promise<void>;
     onProjectDelete: (projectId: string) => void | Promise<void>;
@@ -134,9 +134,9 @@ interface ContentPanelProps {
     onSearch: (text: string) => void;
     searchText: string;
     onCreateFile: () => void;
-    onImportTheme: () => void;
+    onCreateResourceStart: () => void;
+    onCreateThemeStart: () => void;
     onUploadedResourceFiles?: (files: UploadedResourceFile[]) => void | Promise<void>;
-    onCreateCanvasFile: () => void;
     handleDownloadItemSource: (item: ItemData) => void | Promise<void>;
     handleDownloadThemeZip: (item: ThemeResourceItem) => void | Promise<void>;
     onCreateFolder: (tab: SidebarTreeTab) => Promise<{ createdFolderId: string } | null>;
@@ -171,7 +171,6 @@ interface ContentPanelProps {
 
 type DropPlacement = 'before' | 'inside' | 'after';
 type ProjectSetupMode = 'menu' | 'blank' | 'clone' | 'copy';
-type CanvasDropPreviewKind = 'web' | 'doc' | 'image' | 'none';
 const SIDEBAR_TREE_DRAG_MIME = 'application/x-axhub-sidebar-tree-node';
 const SIDEBAR_TITLE_MAX_LENGTH = 40;
 const UNTITLED_PROJECT_LABEL = '未命名项目';
@@ -407,7 +406,7 @@ function getProjectSetupPhaseLabel(phaseKey: string): string {
     return MAKE_CLIENT_SETUP_PHASES.find((phase) => phase.key === phaseKey)?.label || MAKE_CLIENT_SETUP_FAILED_LABEL;
 }
 
-function matchesFilePattern(value: unknown, pattern: RegExp): boolean {
+function matchesAssistantImageResourcePattern(value: unknown): boolean {
     const raw = String(value || '').trim();
     if (!raw) return false;
 
@@ -423,17 +422,7 @@ function matchesFilePattern(value: unknown, pattern: RegExp): boolean {
         }
     }
 
-    return candidates.some((candidate) => pattern.test(candidate));
-}
-
-function resolveCanvasDropPreviewKind(fields: unknown[], fallback: CanvasDropPreviewKind): CanvasDropPreviewKind {
-    if (fields.some((field) => matchesFilePattern(field, /\.(png|jpe?g|gif|webp)([?#/]|$)/i))) {
-        return 'image';
-    }
-    if (fields.some((field) => matchesFilePattern(field, /\.md([?#/]|$)/i))) {
-        return 'doc';
-    }
-    return fallback;
+    return candidates.some((candidate) => /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)([?#/]|$)/i.test(candidate));
 }
 
 function isSidebarTreeDragEvent(event: React.DragEvent<HTMLElement>): boolean {
@@ -491,6 +480,7 @@ interface SidebarRowProps {
     draggable?: boolean;
     beforeIndicator?: boolean;
     afterIndicator?: boolean;
+    ariaExpanded?: boolean;
     onEditingValueChange?: (value: string) => void;
     onClick?: () => void;
     onDoubleClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
@@ -521,6 +511,7 @@ function SidebarRow({
     draggable,
     beforeIndicator = false,
     afterIndicator = false,
+    ariaExpanded,
     onEditingValueChange,
     onClick,
     onDoubleClick,
@@ -538,6 +529,7 @@ function SidebarRow({
         <div className="relative">
             <div
                 role="button"
+                aria-expanded={ariaExpanded}
                 data-document-paste-surface
                 tabIndex={0}
                 className={cn(
@@ -838,35 +830,11 @@ function filterTree(
     return walk(nodes);
 }
 
-const getPrototypePageMatches = (item: ItemData): { id: string; title: string }[] => {
+const getPrototypePageMatches = (item: ItemData): PrototypePageItem[] => {
     return Array.isArray(item.pages)
         ? item.pages.filter((page) => page?.id && page?.title)
         : [];
 };
-
-function buildPrototypePagePreviewUrl(item: ItemData, pageId: string): string {
-    const rawUrl = String(item.previewUrl || item.clientUrl || '').trim();
-    if (!rawUrl) {
-        return '';
-    }
-    const trimmedPageId = String(pageId || '').trim();
-    if (!trimmedPageId) {
-        return rawUrl;
-    }
-    try {
-        const url = new URL(rawUrl, 'http://axhub.local');
-        const params = new URLSearchParams(url.hash.replace(/^#/, ''));
-        params.set('page', trimmedPageId);
-        url.hash = params.toString();
-        if (/^[a-z][a-z\d+.-]*:\/\//iu.test(rawUrl)) {
-            return url.toString();
-        }
-        return `${url.pathname}${url.search}${url.hash}`;
-    } catch {
-        const [baseWithQuery] = rawUrl.split('#');
-        return `${baseWithQuery}#page=${encodeURIComponent(trimmedPageId)}`;
-    }
-}
 
 function resolvePrototypePageEmbedDisplayName(item: ItemData, pageTitle: string): string {
     const trimmedPageTitle = String(pageTitle || '').trim();
@@ -878,28 +846,6 @@ function resolvePrototypePageEmbedDisplayName(item: ItemData, pageTitle: string)
         return trimmedPageTitle;
     }
     return `${trimmedPageTitle} - ${prototypeTitle}`;
-}
-
-function buildPrototypePageCanvasPayload(item: ItemData, page: { id: string; title: string }) {
-    const resourceId = item.resourceId || item.name;
-    return {
-        type: 'preview',
-        resourceType: 'preview',
-        sourceResourceType: 'prototype',
-        resourceId,
-        name: item.name,
-        displayName: resolvePrototypePageEmbedDisplayName(item, page.title),
-        previewKind: 'web',
-        embedViewMode: 'preview',
-        previewUrl: buildPrototypePagePreviewUrl(item, page.id),
-        openUrl: buildResourceDeepLinkUrl({
-            resourceType: 'prototype',
-            resourceId,
-            view: 'demo',
-            pageId: page.id,
-            collapseSidebar: true,
-        }),
-    };
 }
 
 interface FolderBrowserFolder {
@@ -1751,7 +1697,6 @@ export default function ContentPanel({
     makeClientUpdateReminderVisible,
     projects,
     resourceWriteCapabilities,
-    lanAccessAllowed = true,
     onTitleChange,
     onProjectSwitch,
     onProjectDelete,
@@ -1774,9 +1719,9 @@ export default function ContentPanel({
     onSearch,
     searchText,
     onCreateFile,
-    onImportTheme,
+    onCreateResourceStart,
+    onCreateThemeStart,
     onUploadedResourceFiles,
-    onCreateCanvasFile,
     handleDownloadItemSource,
     handleDownloadThemeZip,
     onCreateFolder,
@@ -1832,6 +1777,10 @@ export default function ContentPanel({
     const [isSearchExpanded, setIsSearchExpanded] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
+    const [expandedPrototypePageGroups, setExpandedPrototypePageGroups] = useState<{
+        prototypeId: string;
+        keys: Set<string>;
+    }>({ prototypeId: '', keys: new Set() });
     const knownFolderIdsRef = useRef<Set<string>>(new Set());
     const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
     const [dropTarget, setDropTarget] = useState<{ id: string; placement: DropPlacement } | null>(null);
@@ -1846,9 +1795,10 @@ export default function ContentPanel({
     const [makeVersion, setMakeVersion] = useState<string | null>(null);
     const [isFileDropActive, setIsFileDropActive] = useState(false);
     const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+    const [lanTokenUrls, setLanTokenUrls] = useState<Record<string, string>>({});
+    const [lanTokenLoadingKey, setLanTokenLoadingKey] = useState<string | null>(null);
     const [documentPasteTargetFolder, setDocumentPasteTargetFolder] = useState<string | null>(null);
     const fileDropCounterRef = useRef(0);
-    const docFileInputRef = useRef<HTMLInputElement>(null);
     const documentPanelRootRef = useRef<HTMLDivElement>(null);
     const documentPasteArmedRef = useRef(false);
 
@@ -1948,7 +1898,58 @@ export default function ContentPanel({
             : activeTab === 'assets'
                 ? 'themes'
                 : 'canvas';
+    const selectedPrototypeId = dataTab === 'prototypes' ? selectedItem?.name || '' : '';
+    const selectedPrototypePageSegments = useMemo(
+        () => buildPrototypePageSegments(
+            selectedPrototypeId,
+            selectedItem ? getPrototypePageMatches(selectedItem) : [],
+        ),
+        [selectedItem?.pages, selectedPrototypeId],
+    );
+    const validPrototypePageGroupKeys = useMemo(() => new Set(
+        selectedPrototypePageSegments
+            .filter((segment) => segment.kind === 'group')
+            .map((segment) => segment.key),
+    ), [selectedPrototypePageSegments]);
+    const activePrototypePageGroupKey = useMemo(
+        () => findPrototypePageGroupKey(selectedPrototypePageSegments, selectedPrototypePageId),
+        [selectedPrototypePageId, selectedPrototypePageSegments],
+    );
     const promptCreateEnabled = true;
+
+    useEffect(() => {
+        setExpandedPrototypePageGroups((previous) => {
+            const keys = previous.prototypeId === selectedPrototypeId
+                ? new Set([...previous.keys].filter((key) => validPrototypePageGroupKeys.has(key)))
+                : new Set<string>();
+            if (activePrototypePageGroupKey) {
+                keys.add(activePrototypePageGroupKey);
+            }
+            if (
+                previous.prototypeId === selectedPrototypeId
+                && previous.keys.size === keys.size
+                && [...keys].every((key) => previous.keys.has(key))
+            ) {
+                return previous;
+            }
+            return { prototypeId: selectedPrototypeId, keys };
+        });
+    }, [activePrototypePageGroupKey, selectedPrototypeId, selectedPrototypePageId, validPrototypePageGroupKeys]);
+
+    const togglePrototypePageGroup = useCallback((prototypeId: string, groupKey: string) => {
+        setExpandedPrototypePageGroups((previous) => {
+            const keys = previous.prototypeId === prototypeId
+                ? new Set(previous.keys)
+                : new Set<string>();
+            if (keys.has(groupKey)) {
+                keys.delete(groupKey);
+            } else {
+                keys.add(groupKey);
+            }
+            return { prototypeId, keys };
+        });
+    }, []);
+
     useEffect(() => {
         setTempTitle(projectTitle);
     }, [projectTitle]);
@@ -2462,8 +2463,10 @@ export default function ContentPanel({
         const showLocalPathActions = hasExplicitLocalPath(item);
         const localShareUrl = buildItemUrl(item, 'demo')?.toString() || '';
         const lanShareUrl = buildLANItemUrl(item, 'demo');
+        const lanTokenKey = `${activeProjectId || ''}:${item.name}:demo`;
+        const lanTokenUrl = lanTokenUrls[lanTokenKey] || '';
         const hasShareUrl = Boolean(localShareUrl);
-        const showLANShareGroup = lanAccessAllowed && Boolean(lanShareUrl);
+        const showLANShareGroup = Boolean(lanShareUrl);
         const canDownloadPrototypeZip = isPrototypeItem && showLocalPathActions && Boolean(handleDownloadItemSource);
         const canDownloadDesignZip = isThemeItem && showLocalPathActions && Boolean(handleDownloadThemeZip);
         const canUseLocalFileOperation = !isPrototypeItem || showLocalPathActions;
@@ -2496,6 +2499,47 @@ export default function ContentPanel({
                 toast.error('复制失败');
             });
         };
+        const resolveLanShareUrl = async () => {
+            if (lanTokenUrl) {
+                return lanTokenUrl;
+            }
+            if (!lanShareUrl) {
+                toast.warning('当前没有可访问的局域网链接');
+                return '';
+            }
+            setLanTokenLoadingKey(lanTokenKey);
+            try {
+                const result = await apiService.createLanAccessShareUrl(lanShareUrl);
+                setLanTokenUrls((previous) => ({ ...previous, [lanTokenKey]: result.url }));
+                return result.url;
+            } catch (error: any) {
+                if (error?.code === 'LAN_PASSWORD_NOT_SET') {
+                    toast.warning('请先在设置中设置局域网访问密码');
+                    onSettingsClick('project');
+                } else {
+                    toast.error(error?.message || '生成局域网链接失败');
+                }
+                return '';
+            } finally {
+                setLanTokenLoadingKey((current) => (current === lanTokenKey ? null : current));
+            }
+        };
+        const copyLanShareUrl = async () => {
+            const url = await resolveLanShareUrl();
+            if (!url) return;
+            try {
+                await navigator.clipboard.writeText(url);
+                toast.success('局域网链接已复制');
+            } catch {
+                toast.error('复制失败');
+            }
+        };
+        const openLanShareUrl = async () => {
+            const url = await resolveLanShareUrl();
+            if (url) {
+                window.open(url, '_blank', 'noopener,noreferrer');
+            }
+        };
         return (
             <>
                 <DropdownMenu>
@@ -2521,44 +2565,6 @@ export default function ContentPanel({
                         onKeyDown={stopRowActivation}
                         onCloseAutoFocus={(e) => e.preventDefault()}
                     >
-	                {viewMode === 'canvas' ? (
-	                    <DropdownMenuItem onSelect={(e) => {
-	                        e.preventDefault();
-	                        e.stopPropagation();
-	                        const sourceResourceType = isDocItem ? 'doc' : 'prototype';
-	                        const resourceId = item.resourceId || item.name;
-	                        const payload = {
-	                            type: 'preview',
-	                            resourceType: 'preview',
-                                sourceResourceType,
-	                            resourceId: resourceId,
-	                            name: item.name,
-	                            displayName: item.displayName || item.name,
-                                previewKind: isDocItem ? 'doc' : 'web',
-                                embedViewMode: 'preview',
-	                            previewUrl: isDocItem
-	                                ? (item.previewUrl || item.specUrl || '')
-	                                : (item.previewUrl || item.clientUrl || ''),
-	                            openUrl: buildResourceDeepLinkUrl({
-	                                resourceType: sourceResourceType,
-	                                resourceId: resourceId,
-	                                view: isPrototypeItem ? 'demo' : undefined,
-	                                collapseSidebar: true,
-	                            }),
-	                        };
-                        if (!payload.previewUrl) {
-                            toast.warning('该项目没有可预览的地址');
-                            return;
-                        }
-                        window.dispatchEvent(new CustomEvent('axhub:addToCanvas', {
-                            detail: payload,
-                        }));
-                        toast.success(`已添加「${payload.displayName}」到画布`);
-                    }}>
-                        <LayoutGrid className="mr-2 h-4 w-4" />
-                        添加到画布
-                    </DropdownMenuItem>
-                ) : null}
                 {canRenameItem ? (
                     <DropdownMenuItem onClick={() => startItemRename(itemNodeId, node?.title || item.displayName || item.name)}>
                         <Pencil className="mr-2 h-4 w-4" />
@@ -2606,7 +2612,7 @@ export default function ContentPanel({
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => handleVersionManagement(item)}>
                             <History className="mr-2 h-4 w-4" />
-                            版本管理
+                            版本和协作
                         </DropdownMenuItem>
                     </>
                 ) : null}
@@ -2634,11 +2640,11 @@ export default function ContentPanel({
                                     <DropdownMenuLabel className="px-2 py-1 text-[11px] font-normal text-muted-foreground">
                                         局域网链接
                                     </DropdownMenuLabel>
-                                    <DropdownMenuItem onClick={() => copyShareUrl(lanShareUrl, '局域网链接')}>
+                                    <DropdownMenuItem disabled={lanTokenLoadingKey === lanTokenKey} onClick={() => void copyLanShareUrl()}>
                                         <Copy className="mr-2 h-4 w-4" />
                                         复制局域网链接
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => openShareUrl(lanShareUrl)}>
+                                    <DropdownMenuItem disabled={lanTokenLoadingKey === lanTokenKey} onClick={() => void openLanShareUrl()}>
                                         <ExternalLink className="mr-2 h-4 w-4" />
                                         新窗口打开局域网链接
                                     </DropdownMenuItem>
@@ -2649,9 +2655,23 @@ export default function ContentPanel({
                                         onClick={(event) => event.stopPropagation()}
                                     >
                                         <span className="text-[11px] text-muted-foreground">二维码</span>
-                                        <div className="rounded-md border bg-background p-2">
-                                            <QRCode value={lanShareUrl} size={132} bordered={false} />
-                                        </div>
+                                        {lanTokenUrl ? (
+                                            <div className="rounded-md border bg-background p-2">
+                                                <QRCode value={lanTokenUrl} size={132} bordered={false} />
+                                            </div>
+                                        ) : (
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 gap-1.5"
+                                                disabled={lanTokenLoadingKey === lanTokenKey}
+                                                onClick={() => void resolveLanShareUrl()}
+                                            >
+                                                {lanTokenLoadingKey === lanTokenKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                                生成二维码
+                                            </Button>
+                                        )}
                                     </div>
                                 </>
                             ) : null}
@@ -2709,52 +2729,90 @@ export default function ContentPanel({
         </DropdownMenu>
     );
 
+    const renderPrototypePageRow = (item: ItemData, page: PrototypePageItem, depth: number) => (
+        <SidebarRow
+            key={`prototype-page:${item.name}:${page.id}`}
+            title={page.title}
+            icon={<File className="h-3.5 w-3.5" />}
+            actions={null}
+            selected={selectedItem?.name === item.name && selectedPrototypePageId === page.id}
+            selectedVariant="subtle"
+            paddingLeft={`${8 + depth * 8}px`}
+            className="cursor-pointer text-muted-foreground"
+            draggable={true}
+            onClick={() => {
+                void Promise.resolve(onPrototypePageSelect(item, page.id));
+            }}
+            onDragStart={(event) => {
+                const resourceId = item.resourceId || item.name;
+                const displayName = resolvePrototypePageEmbedDisplayName(item, page.title);
+                event.dataTransfer.effectAllowed = 'copy';
+                event.dataTransfer.setData('text/plain', `${item.name}:${page.id}`);
+                try {
+                    event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({
+                        source: 'sidebar',
+                        resourceType: 'prototype-page',
+                        resourceId,
+                        items: buildAssistantContextItemsFromResource({
+                            resourceType: 'prototype-page',
+                            resourceId,
+                            pageId: page.id,
+                            name: item.name,
+                            displayName,
+                            filePath: item.filePath,
+                            absoluteFilePath: item.absoluteFilePath,
+                        }),
+                    })));
+                } catch {
+                    // Older browsers may reject custom MIME types.
+                }
+            }}
+        />
+    );
+
     const renderPrototypePageRows = (item: ItemData, depth: number) => {
         const pages = getPrototypePageMatches(item);
         if (dataTab !== 'prototypes' || pages.length === 0) {
             return null;
         }
-        return pages.map((page) => (
-            <SidebarRow
-                key={`prototype-page:${item.name}:${page.id}`}
-                title={page.title}
-                icon={<File className="h-3.5 w-3.5" />}
-                actions={null}
-                selected={selectedItem?.name === item.name && selectedPrototypePageId === page.id}
-                selectedVariant="subtle"
-                paddingLeft={`${8 + depth * 8}px`}
-                className="cursor-pointer text-muted-foreground"
-                draggable={true}
-                onClick={() => {
-                    void Promise.resolve(onPrototypePageSelect(item, page.id));
-                }}
-                onDragStart={(event) => {
-                    const payload = buildPrototypePageCanvasPayload(item, page);
-                    const resourceId = item.resourceId || item.name;
-                    event.dataTransfer.effectAllowed = 'copy';
-                    event.dataTransfer.setData('text/plain', `${item.name}:${page.id}`);
-                    try {
-                        event.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));
-                        event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({
-                            source: 'sidebar',
-                            resourceType: 'prototype-page',
-                            resourceId,
-                            items: buildAssistantContextItemsFromResource({
-                                resourceType: 'prototype-page',
-                                resourceId,
-                                pageId: page.id,
-                                name: item.name,
-                                displayName: payload.displayName,
-                                filePath: item.filePath,
-                                absoluteFilePath: item.absoluteFilePath,
-                            }),
-                        })));
-                    } catch {
-                        // Older browsers may reject custom MIME types.
-                    }
-                }}
-            />
-        ));
+        const segments = item.name === selectedPrototypeId
+            ? selectedPrototypePageSegments
+            : buildPrototypePageSegments(item.name, pages);
+        const expandedKeys = expandedPrototypePageGroups.prototypeId === item.name
+            ? expandedPrototypePageGroups.keys
+            : new Set<string>();
+
+        return segments.map((segment) => {
+            if (segment.kind === 'page') {
+                return renderPrototypePageRow(item, segment.page, depth);
+            }
+            const expanded = expandedKeys.has(segment.key);
+            return (
+                <React.Fragment key={segment.key}>
+                    <SidebarRow
+                        title={segment.title}
+                        icon={expanded
+                            ? <ChevronDown className="h-3.5 w-3.5" />
+                            : <ChevronRight className="h-3.5 w-3.5" />}
+                        actions={null}
+                        ariaExpanded={expanded}
+                        paddingLeft={`${8 + depth * 8}px`}
+                        className="cursor-pointer text-muted-foreground"
+                        titleClassName="font-medium"
+                        onClick={() => togglePrototypePageGroup(item.name, segment.key)}
+                        onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                togglePrototypePageGroup(item.name, segment.key);
+                            }
+                        }}
+                    />
+                    {expanded
+                        ? segment.pages.map((page) => renderPrototypePageRow(item, page, depth + 1))
+                        : null}
+                </React.Fragment>
+            );
+        });
     };
 
     const renderTreeNodes = (nodes: SidebarTreeNode[], depth = 0): React.ReactNode => {
@@ -2879,58 +2937,22 @@ export default function ContentPanel({
                             e.dataTransfer.effectAllowed = 'copyMove';
                             e.dataTransfer.setData(SIDEBAR_TREE_DRAG_MIME, node.id);
                             e.dataTransfer.setData('text/plain', node.id);
-                            // Attach canvas-drop payload so the item can be
-                            // dropped onto an Excalidraw canvas as an embed.
                             if (!isFolder && item) {
                                 const isDocItem = dataTab === 'docs';
-                                const isPrototypeItem = dataTab === 'prototypes';
-                                const sourceResourceType = isDocItem
-                                    ? 'doc'
+                                const resourceId = (item as any).resourceId || item.name;
+                                const assistantResourceType = isDocItem
+                                    ? ([item.name, item.displayName, item.filePath, item.absoluteFilePath, item.specUrl, item.previewUrl]
+                                        .some(matchesAssistantImageResourcePattern) ? 'image' : 'doc')
                                     : dataTab === 'themes'
                                         ? 'theme'
                                         : 'prototype';
-                                const resourceId = (item as any).resourceId || item.name;
-                                const previewKind = isDocItem
-                                    ? resolveCanvasDropPreviewKind([
-                                        item.name,
-                                        item.displayName,
-                                        item.filePath,
-                                        item.absoluteFilePath,
-                                        item.specUrl,
-                                        item.previewUrl,
-                                    ], 'none')
-                                    : 'web';
-                                const payload = {
-                                    type: 'preview',
-                                    resourceType: 'preview',
-                                    sourceResourceType,
-                                    resourceId,
-                                    name: item.name,
-                                    displayName: item.displayName || item.name,
-                                    previewKind,
-                                    embedViewMode: 'preview',
-                                    previewUrl: isDocItem
-                                        ? (item.previewUrl || item.specUrl || '')
-                                        : (item.previewUrl || item.clientUrl || ''),
-                                    openUrl: buildResourceDeepLinkUrl({
-                                        resourceType: sourceResourceType,
-                                        resourceId,
-                                        view: isPrototypeItem ? 'demo' : undefined,
-                                        collapseSidebar: true,
-                                    }),
-                                };
                                 try {
-                                    e.dataTransfer.setData(CANVAS_DROP_MIME, JSON.stringify(payload));
                                     e.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({
                                         source: 'sidebar',
-                                        resourceType: isDocItem
-                                            ? (previewKind === 'image' ? 'image' : 'doc')
-                                            : 'prototype',
+                                        resourceType: assistantResourceType,
                                         resourceId,
                                         items: buildAssistantContextItemsFromResource({
-                                            resourceType: isDocItem
-                                                ? (previewKind === 'image' ? 'image' : 'doc')
-                                                : 'prototype',
+                                            resourceType: assistantResourceType,
                                             resourceId,
                                             name: item.name,
                                             displayName: item.displayName || item.name,
@@ -3393,26 +3415,15 @@ export default function ContentPanel({
                                             variant="ghost"
                                             size="icon"
                                             className="h-7 w-7"
-                                            onClick={() => docFileInputRef.current?.click()}
+                                            onClick={onCreateResourceStart}
+                                            aria-label="新建资源"
                                         >
-                                            <Upload className="h-4 w-4" />
+                                            <Plus className="h-4 w-4" />
                                         </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent>上传资源</TooltipContent>
+                                    <TooltipContent>新建资源</TooltipContent>
                                 </Tooltip>
                             </TooltipProvider>
-                            <input
-                                ref={docFileInputRef}
-                                type="file"
-                                multiple
-                                className="hidden"
-                                onChange={(event) => {
-                                    if (event.target.files && event.target.files.length > 0) {
-                                        void uploadResourceFiles(event.target.files, { targetFolder: documentPasteTargetFolder });
-                                    }
-                                    event.currentTarget.value = '';
-                                }}
-                            />
                             <TooltipProvider>
                                 <Tooltip>
                                     <TooltipTrigger asChild>
@@ -3442,13 +3453,13 @@ export default function ContentPanel({
                                             variant="ghost"
                                             size="icon"
                                             className="h-7 w-7"
-                                            onClick={onImportTheme}
-                                            aria-label="导入设计"
+                                            onClick={onCreateThemeStart}
+                                            aria-label="新建设计"
                                         >
-                                            <Upload className="h-4 w-4" />
+                                            <Plus className="h-4 w-4" />
                                         </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent>导入设计</TooltipContent>
+                                    <TooltipContent>新建设计</TooltipContent>
                                 </Tooltip>
                             </TooltipProvider>
                             <TooltipProvider>
@@ -3470,26 +3481,6 @@ export default function ContentPanel({
                         </>
                     ) : null}
 
-                    {!isSearchExpanded && activeTab === 'canvas' ? (
-                        <>
-                            <div className="flex-1" />
-                            <TooltipProvider>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-7 w-7"
-                                            onClick={onCreateCanvasFile}
-                                        >
-                                            <Plus className="h-4 w-4" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>新建画布</TooltipContent>
-                                </Tooltip>
-                            </TooltipProvider>
-                        </>
-                    ) : null}
                 </div>
             </div>
 

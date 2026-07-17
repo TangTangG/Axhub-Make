@@ -12,14 +12,6 @@ function toProjectRelativePath(value: string): string {
     return srcIndex >= 0 ? normalized.slice(srcIndex) : normalized;
 }
 
-function stripFileName(value: string): string {
-    return normalizePath(value).replace(/\/[^/]+\.(t|j)sx?$/i, '');
-}
-
-function stripIndexFile(value: string): string {
-    return normalizePath(value).replace(/\/index\.(t|j)sx?$/i, '');
-}
-
 function ensureCanvasExtension(value: string): string {
     const normalized = normalizePath(value);
     if (!normalized) return '';
@@ -29,10 +21,11 @@ function ensureCanvasExtension(value: string): string {
 function resolveCanvasNamePath(canvasName?: string): string {
     const normalized = ensureCanvasExtension(canvasName || '');
     if (!normalized) return '';
-    if (normalized.startsWith('src/')) return normalized;
-    if (normalized.startsWith('prototypes/')) return `src/${normalized}`;
-    if (normalized.startsWith('canvas/')) return `src/${normalized}`;
-    return `src/canvas/${normalized.replace(/^\/+/g, '')}`;
+    if (normalized.startsWith('src/resources/')) return normalized;
+    if (normalized.startsWith('src/')) return '';
+    if (normalized.startsWith('prototypes/')) return '';
+    if (normalized.startsWith('canvas/')) return '';
+    return `src/resources/${normalized.replace(/^\/+/g, '')}`;
 }
 
 function getExplicitCanvasItemPath(item: unknown): string {
@@ -55,20 +48,21 @@ export function resolvePrototypeCanvasFilePath(item: ItemData | null | undefined
     const explicitPath = getExplicitCanvasItemPath(item);
     if (explicitPath) {
         const relativePath = toProjectRelativePath(explicitPath);
-        const basePath = /\/index\.(t|j)sx?$/i.test(relativePath)
-            ? stripIndexFile(relativePath)
-            : stripFileName(relativePath) || relativePath.replace(/\/+$/g, '');
-        if (basePath.endsWith(CANVAS_EXTENSION)) return basePath;
-        return `${basePath}/canvas${CANVAS_EXTENSION}`;
+        if (!relativePath.startsWith('src/resources/')) return '';
+        if (relativePath.endsWith(CANVAS_EXTENSION)) return relativePath;
+        return '';
     }
 
-    return resolveCanvasNamePath(canvasName || (item?.name ? `prototypes/${item.name}/canvas${CANVAS_EXTENSION}` : ''));
+    return resolveCanvasNamePath(canvasName || '');
 }
 
 export function resolveCanvasFilePath(canvas: CanvasItem | null | undefined, canvasName?: string): string {
     const explicitPath = getExplicitCanvasItemPath(canvas);
     if (explicitPath) {
-        return toProjectRelativePath(explicitPath);
+        const relativePath = toProjectRelativePath(explicitPath);
+        return relativePath.startsWith('src/resources/') && relativePath.endsWith(CANVAS_EXTENSION)
+            ? relativePath
+            : '';
     }
 
     return resolveCanvasNamePath(canvasName || canvas?.name || '');

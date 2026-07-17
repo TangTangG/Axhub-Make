@@ -114,6 +114,102 @@ function findNode(nodes: any[], predicate: (node: any) => boolean): any | null {
 }
 
 describe('make-server resource sidebar filesystem tree API', () => {
+  it('exposes src/resources files with extension-derived open modes', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'resource-open-mode-client', 'Resource Open Mode Client');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'resource-open-mode-client', name: 'Resource Open Mode Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      resourceWriteTargets: {},
+    });
+    const resourcesDir = path.join(projectRoot, 'src/resources');
+    fs.mkdirSync(path.join(resourcesDir, 'flows'), { recursive: true });
+    fs.mkdirSync(path.join(resourcesDir, 'assets'), { recursive: true });
+    fs.mkdirSync(path.join(resourcesDir, 'new-folder'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, 'brief.md'), '# Brief\n', 'utf8');
+    fs.writeFileSync(path.join(resourcesDir, 'new-folder/fabu.md'), 'Nested markdown body.\n', 'utf8');
+    fs.writeFileSync(path.join(resourcesDir, 'flows/app.excalidraw'), '{"type":"excalidraw"}\n', 'utf8');
+    fs.writeFileSync(path.join(resourcesDir, 'flows/chart.drawio'), '<mxfile />\n', 'utf8');
+    fs.writeFileSync(path.join(resourcesDir, 'assets/logo.png'), 'png', 'utf8');
+    fs.writeFileSync(path.join(resourcesDir, 'data.csv'), 'id,name\n1,Ada\n', 'utf8');
+    fs.writeFileSync(path.join(resourcesDir, 'schema.json'), '{"ok":true}\n', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const response = await fetch(`${server.origin}/api/projects/resource-open-mode-client/resources`);
+      const body = await response.json();
+      const docs = body.resources.docs as Array<Record<string, unknown>>;
+
+      expect(response.status).toBe(200);
+      expect(body.resources).not.toHaveProperty('canvas');
+      expect(body.resources).not.toHaveProperty('data');
+      expect(body.resources).not.toHaveProperty('templates');
+      expect(docs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          path: 'brief.md',
+          name: 'brief',
+          title: 'Brief',
+          ext: '.md',
+          openMode: 'document',
+          absoluteFilePath: path.join(resourcesDir, 'brief.md'),
+        }),
+        expect.objectContaining({
+          path: 'new-folder/fabu.md',
+          name: 'new-folder/fabu',
+          title: 'fabu',
+          ext: '.md',
+          openMode: 'document',
+          absoluteFilePath: path.join(resourcesDir, 'new-folder/fabu.md'),
+        }),
+        expect.objectContaining({
+          path: 'flows/app.excalidraw',
+          name: 'flows/app.excalidraw',
+          ext: '.excalidraw',
+          openMode: 'canvas',
+          absoluteFilePath: path.join(resourcesDir, 'flows/app.excalidraw'),
+        }),
+        expect.objectContaining({
+          path: 'flows/chart.drawio',
+          name: 'flows/chart.drawio',
+          ext: '.drawio',
+          openMode: 'drawio',
+        }),
+        expect.objectContaining({
+          path: 'assets/logo.png',
+          name: 'assets/logo.png',
+          ext: '.png',
+          openMode: 'image',
+        }),
+        expect.objectContaining({
+          path: 'data.csv',
+          name: 'data.csv',
+          ext: '.csv',
+          openMode: 'file',
+        }),
+        expect.objectContaining({
+          path: 'schema.json',
+          name: 'schema.json',
+          ext: '.json',
+          openMode: 'file',
+        }),
+      ]));
+      expect(docs.find((item) => item.path === 'flows/app.excalidraw')).toEqual(expect.objectContaining({
+        size: expect.any(Number),
+        updatedAt: expect.any(String),
+      }));
+    } finally {
+      await server.close();
+    }
+  });
+
   it('scans the default src/resources tree when no docs resource root is declared', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'default-resource-tree-client', 'Default Resource Tree Client');
@@ -316,6 +412,64 @@ describe('make-server resource sidebar filesystem tree API', () => {
       expect(fs.existsSync(path.join(projectRoot, 'src/resources/templates/prd-template.md'))).toBe(false);
       expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/prd-template.md'), 'utf8')).toBe('# PRD\n');
       expect(findNode(body.tree, (node) => node.itemKey === 'docs/archive/prd-template.md')).toBeTruthy();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reports a name conflict when moving a resource file into a folder with the same file name', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'default-resource-conflict-client', 'Default Resource Conflict Client');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'default-resource-conflict-client', name: 'Default Resource Conflict Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      resourceWriteTargets: {},
+    });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/archive'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/notes.md'), '# Root notes\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/archive/notes.md'), '# Archived notes\n', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const current = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`).then((response) => response.json());
+      const archive = findNode(current.tree, (node) => node.folderPath === 'archive');
+      const rootNotes = findNode(current.tree, (node) => node.itemKey === 'docs/notes.md');
+      expect(archive).toBeTruthy();
+      expect(rootNotes).toBeTruthy();
+
+      const update = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tree: [
+            {
+              ...archive,
+              children: [
+                ...(archive.children || []),
+                rootNotes,
+              ],
+            },
+          ],
+        }),
+      });
+      const body = await update.json();
+
+      expect(update.status).toBe(409);
+      expect(body).toEqual({
+        error: '目标文件夹中已存在同名资源：archive/notes.md',
+        code: 'RESOURCE_NAME_CONFLICT',
+        path: 'archive/notes.md',
+      });
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/notes.md'), 'utf8')).toBe('# Root notes\n');
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/notes.md'), 'utf8')).toBe('# Archived notes\n');
     } finally {
       await server.close();
     }
@@ -1071,14 +1225,16 @@ describe('make-server resource sidebar filesystem tree API', () => {
     }
   });
 
-  it('maintains non-resource sidebar folders and validates non-resource navigation payloads', async () => {
+  it('uses resource excalidraw files for canvas navigation payload validation', async () => {
     const projectRoot = createTempRoot();
     writeMakeClientMarkerForProject(projectRoot, 'workspace-canvas-tree-client', 'Workspace Canvas Tree Client');
     writeProjectMetadata(projectRoot, {
       project: { id: 'workspace-canvas-tree-client', name: 'Workspace Canvas Tree Client' },
     });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/flows'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/flows/board.excalidraw'), '{}\n', 'utf8');
     fs.mkdirSync(path.join(projectRoot, 'src/canvas'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'src/canvas/board.excalidraw'), '{}\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/canvas/legacy.excalidraw'), '{}\n', 'utf8');
 
     const server = await startTestServer(projectRoot);
     try {
@@ -1113,10 +1269,14 @@ describe('make-server resource sidebar filesystem tree API', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tree: [{ id: 'bad', kind: 'item', title: 'Bad', itemKey: 'docs/bad.md' }] }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
-      expect(invalidTree).toEqual({
-        status: 400,
-        body: { error: 'Invalid tree payload' },
-      });
+      expect(invalidTree).toEqual({ status: 400, body: { error: 'Invalid tree payload' } });
+
+      const legacyTree = await fetch(`${server.origin}/api/workspace/navigation?tab=canvas`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tree: [{ id: 'legacy', kind: 'item', title: 'Legacy', itemKey: 'canvas/legacy.excalidraw' }] }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+      expect(legacyTree).toEqual({ status: 400, body: { error: 'Invalid tree payload' } });
 
       const validTree = await fetch(`${server.origin}/api/workspace/navigation?tab=canvas`, {
         method: 'PUT',
@@ -1128,15 +1288,15 @@ describe('make-server resource sidebar filesystem tree API', () => {
               kind: 'folder',
               title: 'Review',
               children: [
-                { id: 'item-board', kind: 'item', title: 'Board', itemKey: 'canvas/board.excalidraw' },
-                { id: 'duplicate-board', kind: 'item', title: 'Duplicate Board', itemKey: 'canvas/board.excalidraw' },
+                { id: 'item-board', kind: 'item', title: 'Board', itemKey: 'canvas/flows/board.excalidraw' },
+                { id: 'duplicate-board', kind: 'item', title: 'Duplicate Board', itemKey: 'canvas/flows/board.excalidraw' },
               ],
             },
           ],
         }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(validTree.status).toBe(200);
-      expect(findNode(validTree.body.tree, (node) => node.itemKey === 'canvas/board.excalidraw')?.title).toBe('Board');
+      expect(findNode(validTree.body.tree, (node) => node.itemKey === 'canvas/flows/board.excalidraw')?.title).toBe('Board');
       expect(JSON.stringify(validTree.body.tree)).not.toContain('Duplicate Board');
     } finally {
       await server.close();
@@ -1395,9 +1555,9 @@ describe('make-server resource sidebar filesystem tree API', () => {
       navigation: { prototypes: [], docs: [] },
       orders: { themes: ['brand'], data: [], templates: [] },
     });
-    fs.mkdirSync(path.join(projectRoot, 'src/database'), { recursive: true });
-    fs.writeFileSync(path.join(projectRoot, 'src/database/orders.json'), '{"records":[]}\n', 'utf8');
-    fs.writeFileSync(path.join(projectRoot, 'src/database/customers.json'), '{"records":[]}\n', 'utf8');
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/data'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/data/orders.json'), '{"records":[]}\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/data/customers.json'), '{"records":[]}\n', 'utf8');
     fs.mkdirSync(path.join(projectRoot, 'src/resources/templates/nested'), { recursive: true });
     fs.writeFileSync(path.join(projectRoot, 'src/resources/templates/base.md'), '# Base\n', 'utf8');
     fs.writeFileSync(path.join(projectRoot, 'src/resources/templates/nested/prd.md'), '# PRD\n', 'utf8');

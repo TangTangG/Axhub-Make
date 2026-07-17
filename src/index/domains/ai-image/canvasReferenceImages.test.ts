@@ -41,12 +41,12 @@ describe('canvas reference image helpers', () => {
       customData: {
         resourceType: 'prototype',
         screenshotDataUrl: '',
-        screenshotUrl: '/prototypes/home/canvas-assets/screenshot.png',
+        screenshotUrl: '/api/canvas/resources/flows/home.excalidraw/home.assets/screenshot.png',
       },
     }, fetchImpl as any);
 
     expect(source).toBe('data:image/png;base64,cover');
-    expect(fetchImpl).toHaveBeenCalledWith('/prototypes/home/canvas-assets/screenshot.png', { cache: 'no-store' });
+    expect(fetchImpl).toHaveBeenCalledWith('/api/canvas/resources/flows/home.excalidraw/home.assets/screenshot.png', { cache: 'no-store' });
   });
 
   it('renders each selected canvas element separately and includes bound text with its host element', async () => {
@@ -142,7 +142,7 @@ describe('canvas reference image helpers', () => {
     expect(context.localContextRefs).toEqual([]);
   });
 
-  it('turns prototype and theme nodes into local context refs instead of screenshot reference images', async () => {
+  it('turns prototype, document, resource image, and theme nodes into local context refs instead of screenshot reference images', async () => {
     const snapshot = createCanvasReferenceSnapshot({
       elements: [
         {
@@ -154,7 +154,32 @@ describe('canvas reference image helpers', () => {
             sourceResourceType: 'prototype',
             resourceId: 'checkout-flow',
             title: 'Checkout Flow',
-            screenshotUrl: '/prototypes/checkout-flow/canvas-assets/screenshot.png',
+            screenshotUrl: '/api/canvas/resources/flows/checkout-flow.excalidraw/checkout-flow.assets/screenshot.png',
+          },
+        },
+        {
+          id: 'doc-node',
+          type: 'embeddable',
+          isDeleted: false,
+          customData: {
+            type: 'axhub-doc',
+            resourceType: 'doc',
+            sourceResourceType: 'doc',
+            resourceId: 'requirements/product-brief.md',
+            title: 'Product Brief',
+          },
+        },
+        {
+          id: 'resource-image-node',
+          type: 'image',
+          isDeleted: false,
+          fileId: 'resource-preview',
+          customData: {
+            resourceType: 'doc',
+            sourceResourceType: 'doc',
+            resourceId: 'assets/logo.png',
+            title: 'Logo',
+            mimeType: 'image/png',
           },
         },
         {
@@ -179,6 +204,8 @@ describe('canvas reference image helpers', () => {
       appState: {
         selectedElementIds: {
           'prototype-node': true,
+          'doc-node': true,
+          'resource-image-node': true,
           'theme-node': true,
           shape: true,
         },
@@ -195,6 +222,22 @@ describe('canvas reference image helpers', () => {
         paths: [
           'src/prototypes/checkout-flow/index.tsx',
           'src/prototypes/checkout-flow/index.ts',
+        ],
+      },
+      {
+        resourceType: 'doc',
+        resourceId: 'requirements/product-brief.md',
+        title: 'Product Brief',
+        paths: [
+          'src/resources/requirements/product-brief.md',
+        ],
+      },
+      {
+        resourceType: 'doc',
+        resourceId: 'assets/logo.png',
+        title: 'Logo',
+        paths: [
+          'src/resources/assets/logo.png',
         ],
       },
       {

@@ -80,7 +80,6 @@ function resolveProvider(preferredPromptClient?: PromptClientPreference, selecte
   if (
     normalizedProvider === 'claude'
     || normalizedProvider === 'codex'
-    || normalizedProvider === 'gemini'
     || normalizedProvider === 'opencode'
   ) {
     return normalizedProvider;
@@ -90,22 +89,19 @@ function resolveProvider(preferredPromptClient?: PromptClientPreference, selecte
 
 function normalizeTargetPath(value: string | null | undefined): string | undefined {
   const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/^\/+/u, '');
-  const match = normalized.match(/^prototypes\/([^/]+)$/u);
-  if (!match?.[1] || match[1].startsWith('.') || match[1].includes('..')) {
+  if (normalized.startsWith('src/resources/') && normalized.endsWith('.excalidraw')) {
+    const relativePath = normalized.slice('src/resources/'.length);
+    const segments = relativePath.split('/');
+    if (segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.startsWith('.'))) {
+      return undefined;
+    }
+    return normalized;
+  }
+  const prototypeMatch = normalized.match(/^prototypes\/([^/]+)$/u);
+  if (!prototypeMatch?.[1] || prototypeMatch[1].startsWith('.') || prototypeMatch[1].includes('..')) {
     return undefined;
   }
-  return `prototypes/${match[1]}`;
-}
-
-function derivePrototypeIdFromCanvasPath(canvasFilePath: string | undefined): string | null {
-  const normalized = String(canvasFilePath || '').trim().replace(/\\/g, '/').replace(/^src\//u, '');
-  const match = normalized.match(/(?:^|\/)prototypes\/([^/]+)\/canvas(?:\.excalidraw)?$/u);
-  return match?.[1] || null;
-}
-
-function deriveTargetPathFromCanvasPath(canvasFilePath: string | undefined): string | undefined {
-  const prototypeId = derivePrototypeIdFromCanvasPath(canvasFilePath);
-  return prototypeId ? `prototypes/${prototypeId}` : undefined;
+  return `prototypes/${prototypeMatch[1]}`;
 }
 
 function trimPrototypeTasks(input: PrototypeGenerationTaskRecord[]): PrototypeGenerationTaskRecord[] {
@@ -207,7 +203,7 @@ export function createPrototypeGenerationTaskStore(
           provider: task.provider,
           prompt: request.prompt,
           canvasFilePath: request.canvasFilePath,
-          targetPath: targetPath || deriveTargetPathFromCanvasPath(request.canvasFilePath),
+          targetPath,
           canvasName: request.canvasName,
           generatorElementId: request.generatorElementId,
           currentPrototype: request.currentPrototype,

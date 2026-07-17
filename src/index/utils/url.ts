@@ -126,7 +126,7 @@ function buildRawItemUrl(
 ): URL | null {
     if (!selectedItem) return null;
     const baseUrl = viewMode === 'canvas'
-        ? `/canvas/prototypes/${encodeURIComponent(selectedItem.name)}/canvas.excalidraw`
+        ? ''
         : viewMode === 'demo'
             ? (selectedItem.clientUrl || selectedItem.previewUrl)
             : selectedItem.specUrl;

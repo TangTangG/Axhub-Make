@@ -49,6 +49,19 @@ export function isValidSkillPath(input: string): boolean {
     return normalizeSkillPath(input) !== null;
 }
 
+export function normalizeSkillSource(input: string): string | null {
+    if (typeof input !== 'string') return null;
+
+    const normalizedPaths = input
+        .split(/\r?\n/u)
+        .map((entry) => normalizeSkillPath(entry))
+        .filter((entry): entry is string => Boolean(entry));
+
+    if (normalizedPaths.length === 0) return null;
+
+    return Array.from(new Set(normalizedPaths)).join('\n');
+}
+
 export function selfCheckSkillPathNormalization(): boolean {
     const validCases: Array<[string, string]> = [
         ['skills/local-axure-workflow/SKILL.md', '/skills/local-axure-workflow/SKILL.md'],
@@ -84,6 +97,18 @@ export function selfCheckSkillPathNormalization(): boolean {
         if (normalizeSkillPath(input) !== null) {
             return false;
         }
+    }
+
+    if (
+        normalizeSkillSource([
+            '.agents/skills/explore-options/SKILL.md',
+            '.claude\\skills\\prototype-comments\\SKILL.md',
+        ].join('\n')) !== [
+            '.agents/skills/explore-options/SKILL.md',
+            '.claude/skills/prototype-comments/SKILL.md',
+        ].join('\n')
+    ) {
+        return false;
     }
 
     return true;

@@ -36,6 +36,11 @@ type CaptureLayoutStyleSnapshot = {
     justifyContent: string;
     placeItems: string;
 };
+type CaptureScrollSnapshot = {
+    element: HTMLElement;
+    scrollLeft: number;
+    scrollTop: number;
+};
 
 const PARENT_SCREENSHOT_SETTLE_DELAY_MS = 80;
 const BLANK_SCREENSHOT_SAMPLE_SIZE = 24;
@@ -201,6 +206,113 @@ function flattenCapturePageStyle(element: HTMLElement): void {
     element.style.paddingLeft = '0';
 }
 
+function isCaptureHTMLElement(value: unknown): value is HTMLElement {
+    return Boolean(value && typeof (value as HTMLElement).style === 'object');
+}
+
+function setElementScrollPosition(element: HTMLElement, left: number, top: number): void {
+    try {
+        element.scrollLeft = left;
+    } catch { /* ignore readonly scroll containers */ }
+    try {
+        element.scrollTop = top;
+    } catch { /* ignore readonly scroll containers */ }
+}
+
+function installIframeScrollOrigin(iframe: HTMLIFrameElement, doc: Document, rootElement: HTMLElement | null): () => void {
+    const frameWindow = iframe.contentWindow || doc.defaultView;
+    const windowScrollLeft = Number(frameWindow?.scrollX ?? frameWindow?.pageXOffset ?? 0) || 0;
+    const windowScrollTop = Number(frameWindow?.scrollY ?? frameWindow?.pageYOffset ?? 0) || 0;
+    const candidates = [
+        isCaptureHTMLElement(doc.documentElement) ? doc.documentElement : null,
+        isCaptureHTMLElement(doc.body) ? doc.body : null,
+        isCaptureHTMLElement(rootElement) ? rootElement : null,
+    ];
+    const elementSnapshots: CaptureScrollSnapshot[] = candidates
+        .filter((element, index): element is HTMLElement => (
+            isCaptureHTMLElement(element) && candidates.indexOf(element) === index
+        ))
+        .map(element => ({
+            element,
+            scrollLeft: Number(element.scrollLeft || 0),
+            scrollTop: Number(element.scrollTop || 0),
+        }));
+
+    try {
+        frameWindow?.scrollTo?.(0, 0);
+    } catch { /* ignore unsupported iframe scroll APIs */ }
+    elementSnapshots.forEach(({ element }) => setElementScrollPosition(element, 0, 0));
+
+    return () => {
+        try {
+            frameWindow?.scrollTo?.(windowScrollLeft, windowScrollTop);
+        } catch { /* ignore unsupported iframe scroll APIs */ }
+        elementSnapshots.forEach(({ element, scrollLeft, scrollTop }) => {
+            setElementScrollPosition(element, scrollLeft, scrollTop);
+        });
+    };
+}
+
+function readCaptureElementSize(element: HTMLElement | null | undefined): { width: number; height: number } {
+    if (!element) {
+        return { width: 0, height: 0 };
+    }
+    const rect = typeof element.getBoundingClientRect === 'function'
+        ? element.getBoundingClientRect()
+        : { width: 0, height: 0 };
+    return {
+        width: Math.max(
+            0,
+            Math.round(Number(rect.width || 0)),
+            Math.round(Number(element.scrollWidth || 0)),
+            Math.round(Number(element.clientWidth || 0)),
+            Math.round(Number(element.offsetWidth || 0)),
+        ),
+        height: Math.max(
+            0,
+            Math.round(Number(rect.height || 0)),
+            Math.round(Number(element.scrollHeight || 0)),
+            Math.round(Number(element.clientHeight || 0)),
+            Math.round(Number(element.offsetHeight || 0)),
+        ),
+    };
+}
+
+function collectIframeCaptureSize(doc: Document, rootElement: HTMLElement | null, fallbackWidth: number, fallbackHeight: number): { width: number; height: number } {
+    const sizes = [
+        readCaptureElementSize(rootElement),
+        readCaptureElementSize(isCaptureHTMLElement(doc.documentElement) ? doc.documentElement : null),
+        readCaptureElementSize(isCaptureHTMLElement(doc.body) ? doc.body : null),
+    ];
+    return {
+        width: Math.max(1, fallbackWidth, ...sizes.map(size => size.width)),
+        height: Math.max(1, fallbackHeight, ...sizes.map(size => size.height)),
+    };
+}
+
+function applyCaptureBoxSize(doc: Document, rootElement: HTMLElement | null, width: number, height: number): void {
+    const widthValue = `${width}px`;
+    const heightValue = `${height}px`;
+    if (isCaptureHTMLElement(doc.documentElement)) {
+        doc.documentElement.style.width = widthValue;
+        doc.documentElement.style.height = heightValue;
+        doc.documentElement.style.minHeight = heightValue;
+        doc.documentElement.style.overflow = 'hidden';
+    }
+    if (isCaptureHTMLElement(doc.body)) {
+        doc.body.style.width = widthValue;
+        doc.body.style.height = heightValue;
+        doc.body.style.minHeight = heightValue;
+        doc.body.style.overflow = 'hidden';
+    }
+    if (isCaptureHTMLElement(rootElement)) {
+        rootElement.style.width = widthValue;
+        rootElement.style.height = heightValue;
+        rootElement.style.minHeight = heightValue;
+        rootElement.style.overflow = 'hidden';
+    }
+}
+
 function setCaptureSize(iframe: HTMLIFrameElement, doc: Document, width: number, height: number): () => void {
     const rootElement = typeof doc.getElementById === 'function'
         ? doc.getElementById('root') as HTMLElement | null
@@ -239,6 +351,7 @@ function setCaptureSize(iframe: HTMLIFrameElement, doc: Document, width: number,
         rootElement.style.minHeight = `${height}px`;
         rootElement.style.overflow = 'hidden';
     }
+    const restoreScrollOrigin = installIframeScrollOrigin(iframe, doc, rootElement);
     dispatchIframeResize(iframe, doc);
 
     return () => {
@@ -253,6 +366,7 @@ function setCaptureSize(iframe: HTMLIFrameElement, doc: Document, width: number,
         if (rootElement && rootSnapshot) {
             restoreCaptureLayoutStyle(rootElement, rootSnapshot);
         }
+        restoreScrollOrigin();
         dispatchIframeResize(iframe, doc);
     };
 }
@@ -345,7 +459,7 @@ async function captureIframeWithSnapdom(doc: Document, iframe: HTMLIFrameElement
         dpr: 1,
         fast: true,
         embedFonts: true,
-        cache: 'auto',
+        cache: 'soft',
         placeholders: false,
         outerTransforms: false,
         outerShadows: false,
@@ -375,11 +489,17 @@ export async function captureSameOriginIframeScreenshot({
     const restoreSize = setCaptureSize(iframe, doc, captureWidth, captureHeight);
     try {
         await settleIframeLayout(doc);
-        const dataUrl = await captureIframeWithSnapdom(doc, iframe, captureWidth, captureHeight);
+        const rootElement = typeof doc.getElementById === 'function'
+            ? doc.getElementById('root') as HTMLElement | null
+            : null;
+        const outputSize = collectIframeCaptureSize(doc, rootElement, captureWidth, captureHeight);
+        applyCaptureBoxSize(doc, rootElement, outputSize.width, outputSize.height);
+        await settleIframeLayout(doc);
+        const dataUrl = await captureIframeWithSnapdom(doc, iframe, outputSize.width, outputSize.height);
         return {
             dataUrl,
-            width: captureWidth,
-            height: captureHeight,
+            width: outputSize.width,
+            height: outputSize.height,
         };
     } finally {
         restoreSize();

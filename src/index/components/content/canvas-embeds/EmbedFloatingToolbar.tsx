@@ -48,6 +48,7 @@ import CanvasNodeTitleLabel, {
     CANVAS_NODE_TITLE_LABEL_OFFSET,
     CANVAS_NODE_TITLE_LABEL_Z_INDEX,
 } from './CanvasNodeTitleLabel';
+import { getCanvasDirectRunAnnotationTaskRef } from '../../../domains/ai-generation/CanvasDirectRunOverlay';
 
 /* ── Types ───────────────────────────────────────────────────────── */
 interface SelectedEmbedInfo {
@@ -87,6 +88,7 @@ interface EmbedLabelInfo {
     title: string;
     kind: 'web' | 'doc' | 'theme';
     viewMode: 'link' | 'preview';
+    hasActions: boolean;
     screenX: number;
     screenY: number;
     screenWidth: number;
@@ -276,7 +278,7 @@ function getActionGroupWidth(kind: 'web' | 'doc' | 'theme', viewMode: 'link' | '
 }
 
 function getLabelMaxWidth(label: EmbedLabelInfo): number {
-    if (!label.isSelected) return LABEL_MAX_W;
+    if (!label.isSelected || !label.hasActions) return LABEL_MAX_W;
     const availableWidth = label.screenWidth - getActionGroupWidth(label.kind, label.viewMode) - 6;
     return Math.max(LABEL_MIN_W, Math.min(LABEL_MAX_W, availableWidth));
 }
@@ -303,6 +305,7 @@ function labelsEqual(a: EmbedLabelInfo[], b: EmbedLabelInfo[]): boolean {
             || left.title !== right.title
             || left.kind !== right.kind
             || left.viewMode !== right.viewMode
+            || left.hasActions !== right.hasActions
             || left.screenX !== right.screenX
             || left.screenY !== right.screenY
             || left.screenWidth !== right.screenWidth
@@ -712,7 +715,7 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
         }
     }, []);
 
-    /* ── Track all embeddable elements + selected embeddable via RAF polling ── */
+    /* ── Track embed labels plus annotation-backed AI task title labels via RAF polling ── */
     useEffect(() => {
         if (!excalidrawAPI || !containerRef.current) return;
 
@@ -735,16 +738,19 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
                 const zoom = appState.zoom?.value ?? 1;
                 const containerRect = container.getBoundingClientRect();
 
-                // Collect ALL embeddable labels
+                // Collect regular embed labels plus annotation-backed AI task labels.
                 const nextLabels: EmbedLabelInfo[] = [];
                 let selectedEmbed: SelectedEmbedInfo | null = null;
 
                 for (const el of elements) {
-                    if (el.type !== 'embeddable' || el.isDeleted || !el.link) continue;
+                    const annotationTaskRef = getCanvasDirectRunAnnotationTaskRef(el);
+                    const isAnnotationTaskNode = Boolean(annotationTaskRef);
+                    const isRegularEmbedNode = el.type === 'embeddable' && Boolean(el.link);
+                    if (el.isDeleted || (!isRegularEmbedNode && !isAnnotationTaskNode)) continue;
 
                     const kind = resolveEmbedKind(el);
                     const title = resolveEmbedTitle(el);
-                    const viewMode = el.customData?.embedViewMode === 'preview' ? 'preview' : 'link';
+                    const viewMode = isAnnotationTaskNode ? 'preview' : el.customData?.embedViewMode === 'preview' ? 'preview' : 'link';
 
                     const { x, y } = canvasToScreen(
                         el.x, el.y,
@@ -754,16 +760,18 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
 
                     const isSelected = selectedIdSet.has(el.id);
                     const strokeColor = resolveEmbedStrokeColor(el.strokeColor);
-                    const previousSize = lastEmbedSizeByIdRef.current.get(el.id);
-                    if (
-                        previousSize
-                        && (previousSize.width !== el.width || previousSize.height !== el.height)
-                    ) {
-                        window.dispatchEvent(new CustomEvent('axhub:embedResized', {
-                            detail: { elementId: el.id, width: el.width, height: el.height },
-                        }));
+                    if (isRegularEmbedNode) {
+                        const previousSize = lastEmbedSizeByIdRef.current.get(el.id);
+                        if (
+                            previousSize
+                            && (previousSize.width !== el.width || previousSize.height !== el.height)
+                        ) {
+                            window.dispatchEvent(new CustomEvent('axhub:embedResized', {
+                                detail: { elementId: el.id, width: el.width, height: el.height },
+                            }));
+                        }
+                        lastEmbedSizeByIdRef.current.set(el.id, { width: el.width, height: el.height });
                     }
-                    lastEmbedSizeByIdRef.current.set(el.id, { width: el.width, height: el.height });
 
                     const screenW = el.width * zoom;
                     const screenH = el.height * zoom;
@@ -773,6 +781,7 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
                         title,
                         kind,
                         viewMode,
+                        hasActions: !isAnnotationTaskNode,
                         screenX: x,
                         screenY: y,
                         screenWidth: screenW,
@@ -782,7 +791,7 @@ export default function EmbedFloatingToolbar({ excalidrawAPI, containerRef }: Em
                     });
 
                     // Also track selected embed for action buttons
-                    if (isSelected && selectedIdSet.size === 1) {
+                    if (!annotationTaskRef && isSelected && selectedIdSet.size === 1) {
                         const previewUrl = resolveEmbedPreviewUrl(el);
                         const openUrl = resolveEmbedOpenUrl(el);
                         const previewable = isEmbedPreviewable(el);

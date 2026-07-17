@@ -41,4 +41,28 @@ describe('prompt card current element action', () => {
     sendDeferred.resolve();
     await expect(resultPromise).resolves.toBe(true);
   });
+
+  it('exposes a dispatch hook so bubble loading clears before a long-running AI send completes', async () => {
+    const target = {} as Element;
+    const sendDeferred = createDeferred<void>();
+    const onDispatched = vi.fn();
+
+    const resultPromise = executePromptCardCurrentElementAction({
+      currentTarget: target,
+      onConfirmText: vi.fn().mockResolvedValue(undefined),
+      onConfirmNote: vi.fn().mockResolvedValue(undefined),
+      onDismissSelection: vi.fn(),
+      onSendCurrentElementPromptToAgent: vi.fn(() => sendDeferred.promise),
+      onDispatched,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onDispatched).toHaveBeenCalledTimes(1);
+
+    sendDeferred.resolve();
+    await expect(resultPromise).resolves.toBe(true);
+  });
 });

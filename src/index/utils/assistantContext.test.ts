@@ -142,7 +142,7 @@ describe('assistantContext helpers', () => {
     });
   });
 
-  it('derives preview and canvas current files from explicit prototype paths', () => {
+  it('keeps prototype current files on the source entry even when the old canvas view is selected', () => {
     const item = {
 	      name: 'home',
 	      displayName: 'Home',
@@ -166,10 +166,10 @@ describe('assistantContext helpers', () => {
       viewMode: 'canvas',
       contentMode: 'preview',
       currentMarkdownResource: { kind: 'doc', item: null },
-    }).path).toBe('src/prototypes/home/canvas.excalidraw');
+    }).path).toBe('src/prototypes/home/index.tsx');
   });
 
-  it('keeps placeholder prototype demo context on index.tsx until canvas is explicitly opened', () => {
+  it('keeps placeholder prototype context on index.tsx until a resource canvas is explicitly opened', () => {
     const item = {
       name: 'untitled',
       displayName: '未命名',
@@ -193,7 +193,7 @@ describe('assistantContext helpers', () => {
       viewMode: 'canvas',
       contentMode: 'preview',
       currentMarkdownResource: { kind: 'doc', item: null },
-    }).path).toBe('src/prototypes/untitled/canvas.excalidraw');
+    }).path).toBe('src/prototypes/untitled/index.tsx');
   });
 
   it('derives independent docs and templates only from real markdown paths', () => {
@@ -249,6 +249,31 @@ describe('assistantContext helpers', () => {
     }).path).toBe('');
   });
 
+  it('uses the opened prototype spec as the assistant current file', () => {
+    expect(resolveAssistantCurrentFile({
+      selectedItem: {
+        name: 'home',
+        displayName: 'Home',
+        jsUrl: '',
+        specUrl: '',
+        filePath: 'src/prototypes/home/index.tsx',
+      },
+      activeTab: 'prototypes',
+      viewMode: 'demo',
+      contentMode: 'prototype-spec',
+      currentMarkdownResource: {
+        kind: 'doc',
+        item: {
+          name: 'spec.html',
+          displayName: '规格文档',
+          jsUrl: '',
+          specUrl: '/api/projects/make/prototypes/home/spec/content?path=spec.html',
+          filePath: 'src/prototypes/home/.spec/spec.html',
+        },
+      },
+    }).path).toBe('src/prototypes/home/.spec/spec.html');
+  });
+
   it('derives canvas, theme, and data current files from the active resource instead of stale prototype selection', () => {
     const stalePrototype = {
       name: 'home',
@@ -267,11 +292,26 @@ describe('assistantContext helpers', () => {
       currentCanvas: {
         name: 'flow',
         displayName: 'Flow',
-        filePath: 'canvas/flow.excalidraw',
+        filePath: 'src/resources/flows/flow.excalidraw',
       },
       currentTheme: null,
       currentDataTable: null,
-    }).path).toBe('canvas/flow.excalidraw');
+    }).path).toBe('src/resources/flows/flow.excalidraw');
+
+    expect(resolveAssistantCurrentFile({
+      selectedItem: stalePrototype,
+      activeTab: 'prototypes',
+      viewMode: 'demo',
+      contentMode: 'canvas',
+      currentMarkdownResource: { kind: 'doc', item: null },
+      currentCanvas: {
+        name: 'flow',
+        displayName: 'Flow',
+        canvasFilePath: 'src/resources/flows/flow.excalidraw',
+      } as any,
+      currentTheme: null,
+      currentDataTable: null,
+    }).path).toBe('src/resources/flows/flow.excalidraw');
 
     expect(resolveAssistantCurrentFile({
       selectedItem: stalePrototype,
@@ -299,9 +339,9 @@ describe('assistantContext helpers', () => {
       currentDataTable: {
         fileName: 'customers.json',
         tableName: 'Customers',
-        path: 'src/data/customers.json',
+        path: 'src/resources/data/customers.json',
       },
-    }).path).toBe('src/data/customers.json');
+    }).path).toBe('src/resources/data/customers.json');
   });
 
   it('drops stale external context when the active current file changes', () => {
@@ -420,7 +460,7 @@ describe('assistantContext helpers', () => {
         annotation: '',
         title: '空标注',
       },
-    ], 'src/prototypes/home/canvas.excalidraw');
+    ], 'src/resources/flows/home.excalidraw');
 
     expect(comments).toEqual([
       {
@@ -428,7 +468,7 @@ describe('assistantContext helpers', () => {
         body: '调整按钮文案',
         origin: 'canvas',
         target: {
-          filePath: 'src/prototypes/home/canvas.excalidraw',
+          filePath: 'src/resources/flows/home.excalidraw',
           elementId: 'el-1',
           elementType: 'rectangle',
           link: 'https://example.com/spec',
@@ -444,7 +484,7 @@ describe('assistantContext helpers', () => {
       version: '1',
       systemContext: '',
       currentFile: {
-        path: 'src/prototypes/home/canvas.excalidraw',
+        path: 'src/resources/flows/home.excalidraw',
         displayName: 'Home Canvas',
       },
       selectedElements: [
@@ -467,13 +507,13 @@ describe('assistantContext helpers', () => {
         width: 120,
         height: 48,
       },
-    ], 'src/prototypes/home/canvas.excalidraw');
+    ], 'src/resources/flows/home.excalidraw');
 
     expect(context).toEqual({
       version: '1',
       systemContext: '',
       currentFile: {
-        path: 'src/prototypes/home/canvas.excalidraw',
+        path: 'src/resources/flows/home.excalidraw',
         displayName: 'Home Canvas',
       },
       selectedElements: [],
@@ -485,7 +525,7 @@ describe('assistantContext helpers', () => {
             body: '主按钮',
             origin: 'canvas',
             target: {
-              filePath: 'src/prototypes/home/canvas.excalidraw',
+              filePath: 'src/resources/flows/home.excalidraw',
               elementId: 'rect-1',
               elementType: 'rectangle',
               link: 'https://example.com/spec',
@@ -503,7 +543,7 @@ describe('assistantContext helpers', () => {
       version: '1' as const,
       systemContext: '',
       currentFile: {
-        path: 'src/prototypes/home/canvas.excalidraw',
+        path: 'src/resources/flows/home.excalidraw',
         displayName: 'Home Canvas',
       },
       selectedElements: [],
@@ -514,7 +554,7 @@ describe('assistantContext helpers', () => {
             body: '调整按钮文案',
             origin: 'canvas',
             target: {
-              filePath: 'src/prototypes/home/canvas.excalidraw',
+              filePath: 'src/resources/flows/home.excalidraw',
               elementId: 'el-1',
               elementType: 'rectangle',
             },

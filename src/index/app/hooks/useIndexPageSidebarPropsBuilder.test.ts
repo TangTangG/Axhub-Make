@@ -120,6 +120,8 @@ function createBuilderParams(overrides: Partial<Parameters<typeof useIndexPageSi
         handleDocVersionManagement: vi.fn(),
         handleImportThemeResource: vi.fn(),
         handleCreatePlaceholderPrototype: vi.fn(),
+        handleCreateResourceCanvasFile: vi.fn(),
+        handleCreateDrawioResourceFile: vi.fn(),
         handleCreateResource: vi.fn(),
         handleCreateDocFile: vi.fn(),
         handleUploadedResourceFiles: vi.fn(),
@@ -151,9 +153,17 @@ describe('useIndexPageSidebarPropsBuilder', () => {
   it('keeps canvas visible when only switching resource tabs but opens the document when a document is selected', () => {
     const setViewMode = vi.fn();
     const previewHandleSelectDoc = vi.fn();
+    const setSelectedResourceFolder = vi.fn();
     const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
       state: { sidebarTab: 'document' },
-      deps: { setViewMode, previewHandleSelectDoc },
+      deps: {
+        setViewMode,
+        previewHandleSelectDoc,
+        resources: {
+          ...createBuilderParams().deps.resources,
+          setSelectedResourceFolder,
+        },
+      },
     }));
 
     props.actions.onSidebarTabChange('document');
@@ -162,6 +172,7 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     props.actions.onSelectDoc(createItem('doc-b'));
 
     expect(previewHandleSelectDoc).toHaveBeenCalledWith(expect.objectContaining({ name: 'doc-b' }));
+    expect(setSelectedResourceFolder).toHaveBeenCalledWith(null);
     expect(setViewMode).toHaveBeenCalledWith('demo');
   });
 
@@ -407,6 +418,43 @@ describe('useIndexPageSidebarPropsBuilder', () => {
 
     expect(handleCreatePrototypeStartDraft).toHaveBeenCalledTimes(1);
     expect(handleCreatePlaceholderPrototype).not.toHaveBeenCalled();
+  });
+
+  it('starts resource and design draft pages from the sidebar plus actions', () => {
+    const handleCreateResourceStartDraft = vi.fn();
+    const handleCreateThemeStartDraft = vi.fn();
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      deps: {
+        handleCreateResourceStartDraft,
+        handleCreateThemeStartDraft,
+      } as any,
+    }));
+
+    props.actions.onCreateResourceStart();
+    props.actions.onCreateThemeStart();
+
+    expect(handleCreateResourceStartDraft).toHaveBeenCalledTimes(1);
+    expect(handleCreateThemeStartDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards resource start file actions into the sidebar', () => {
+    const handleCreateResourceCanvasFile = vi.fn();
+    const handleCreateDrawioResourceFile = vi.fn();
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      deps: {
+        resources: {
+          ...createBuilderParams().deps.resources,
+          handleCreateResourceCanvasFile,
+          handleCreateDrawioResourceFile,
+        },
+      },
+    }));
+
+    props.actions.onCreateResourceCanvasFile?.('flows');
+    props.actions.onCreateDrawioResourceFile?.('flows');
+
+    expect(handleCreateResourceCanvasFile).toHaveBeenCalledWith('flows');
+    expect(handleCreateDrawioResourceFile).toHaveBeenCalledWith('flows');
   });
 
   it('opens project settings with the requested tab', () => {

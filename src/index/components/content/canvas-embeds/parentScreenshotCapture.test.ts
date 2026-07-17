@@ -27,6 +27,8 @@ class FakeHTMLElement {
     transform: '',
     transformOrigin: '',
   };
+  scrollLeft = 0;
+  scrollTop = 0;
   private attributes = new Map<string, string>();
 
   constructor(public readonly tagName = 'DIV') {}
@@ -57,13 +59,13 @@ class FakeCanvas {
   }
 }
 
-function createFakeImage(src = 'data:image/png;base64,cm9vdA==') {
+function createFakeImage(src = 'data:image/png;base64,cm9vdA==', width = 390, height = 846) {
   return {
     src,
-    naturalWidth: 390,
-    naturalHeight: 846,
-    width: 390,
-    height: 846,
+    naturalWidth: width,
+    naturalHeight: height,
+    width,
+    height,
     getAttribute: vi.fn(),
   };
 }
@@ -115,6 +117,17 @@ function createSameOriginIframe() {
     )),
     getElementById: vi.fn((id: string) => (id === 'root' ? rootElement : null)),
   };
+  iframe.contentWindow = {
+    scrollX: 0,
+    scrollY: 0,
+    scrollTo: vi.fn((left: number, top: number) => {
+      iframe.contentWindow.scrollX = left;
+      iframe.contentWindow.scrollY = top;
+    }),
+    dispatchEvent: vi.fn(),
+    Event,
+    location: { href: 'http://admin.local/prototypes/home' },
+  };
   return iframe;
 }
 
@@ -157,7 +170,7 @@ describe('captureSameOriginIframeScreenshot', () => {
       dpr: 1,
       fast: true,
       embedFonts: true,
-      cache: 'auto',
+      cache: 'soft',
       placeholders: false,
       outerTransforms: false,
       outerShadows: false,
@@ -202,6 +215,41 @@ describe('captureSameOriginIframeScreenshot', () => {
     expect(rootElement.style.height).toBe('old-root-height');
     expect(rootElement.style.minHeight).toBe('');
     expect(rootElement.style.overflow).toBe('');
+  });
+
+  it('uses requested dimensions as the iframe viewport and returns the full scroll size', async () => {
+    const iframe = createSameOriginIframe();
+    const rootElement = iframe.contentDocument.getElementById('root');
+    rootElement.clientWidth = 1440;
+    rootElement.clientHeight = 900;
+    rootElement.offsetWidth = 1440;
+    rootElement.offsetHeight = 900;
+    rootElement.scrollWidth = 1440;
+    rootElement.scrollHeight = 1995;
+    snapdomToPng.mockImplementation(async () => {
+      expect(rootElement.style.width).toBe('1440px');
+      expect(rootElement.style.height).toBe('1995px');
+      expect(rootElement.style.minHeight).toBe('1995px');
+      return createFakeImage('data:image/png;base64,ZnVsbA==', 1440, 1995);
+    });
+
+    const resultPromise = captureSameOriginIframeScreenshot({
+      iframe: iframe as unknown as HTMLIFrameElement,
+      width: 1440,
+      height: 900,
+    });
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    expect(snapdomToPng).toHaveBeenCalledWith(rootElement, expect.objectContaining({
+      width: 1440,
+      height: 1995,
+    }));
+    expect(result).toEqual({
+      dataUrl: 'data:image/png;base64,ZnVsbA==',
+      width: 1440,
+      height: 1995,
+    });
   });
 
   it('flattens centering layout styles while capturing so screenshots start at the viewport origin', async () => {
@@ -288,6 +336,50 @@ describe('captureSameOriginIframeScreenshot', () => {
     expect(rootElement.style.padding).toBe('28px');
     expect(rootElement.style.paddingTop).toBe('30px');
     expect(rootElement.style.paddingLeft).toBe('32px');
+  });
+
+  it('captures the iframe from the scroll origin and restores previous scroll offsets', async () => {
+    const iframe = createSameOriginIframe();
+    const doc = iframe.contentDocument;
+    const rootElement = doc.getElementById('root');
+    iframe.contentWindow.scrollX = 19;
+    iframe.contentWindow.scrollY = 23;
+    doc.documentElement.scrollLeft = 29;
+    doc.documentElement.scrollTop = 31;
+    doc.body.scrollLeft = 37;
+    doc.body.scrollTop = 41;
+    rootElement.scrollLeft = 43;
+    rootElement.scrollTop = 47;
+    snapdomToPng.mockImplementation(async () => {
+      expect(iframe.contentWindow.scrollTo).toHaveBeenCalledWith(0, 0);
+      expect(iframe.contentWindow.scrollX).toBe(0);
+      expect(iframe.contentWindow.scrollY).toBe(0);
+      expect(doc.documentElement.scrollLeft).toBe(0);
+      expect(doc.documentElement.scrollTop).toBe(0);
+      expect(doc.body.scrollLeft).toBe(0);
+      expect(doc.body.scrollTop).toBe(0);
+      expect(rootElement.scrollLeft).toBe(0);
+      expect(rootElement.scrollTop).toBe(0);
+      return createFakeImage();
+    });
+
+    const resultPromise = captureSameOriginIframeScreenshot({
+      iframe: iframe as unknown as HTMLIFrameElement,
+      width: 390,
+      height: 846,
+    });
+    await vi.runAllTimersAsync();
+    await resultPromise;
+
+    expect(iframe.contentWindow.scrollTo).toHaveBeenLastCalledWith(19, 23);
+    expect(iframe.contentWindow.scrollX).toBe(19);
+    expect(iframe.contentWindow.scrollY).toBe(23);
+    expect(doc.documentElement.scrollLeft).toBe(29);
+    expect(doc.documentElement.scrollTop).toBe(31);
+    expect(doc.body.scrollLeft).toBe(37);
+    expect(doc.body.scrollTop).toBe(41);
+    expect(rootElement.scrollLeft).toBe(43);
+    expect(rootElement.scrollTop).toBe(47);
   });
 
   it('captures the iframe app root instead of the iframe shell', async () => {

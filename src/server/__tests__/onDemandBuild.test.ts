@@ -119,6 +119,24 @@ describe('buildOnDemand', () => {
     expect(result.metadata.usesAnnotationRuntime).toBe(false);
   });
 
+  it('includes same-directory style.css even when the entry does not import it', async () => {
+    const root = createTempProject();
+    writeFile(
+      path.join(root, 'src', 'style.css'),
+      [
+        '.entry {',
+        '  color: rgb(12 34 56);',
+        '}',
+        '',
+      ].join('\n'),
+    );
+
+    const result = await buildOnDemand(root, path.join(root, 'src', 'entry.tsx'));
+
+    expect(result.cssText).toContain('.entry');
+    expect(result.cssText).toContain('rgb(12 34 56)');
+  });
+
   it('reports when an entry bundles the annotation runtime', async () => {
     const root = createTempProject();
     writeFakeAnnotationRuntimePackage(root);

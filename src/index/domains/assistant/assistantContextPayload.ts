@@ -70,7 +70,7 @@ function ensureCanvasFilePath(value: string): string {
     const normalized = normalizePathValue(value);
     if (!normalized) return '';
     if (/\.excalidraw$/i.test(normalized)) return normalized;
-    return `canvas/${normalized.replace(/\/+$/g, '')}.excalidraw`;
+    return `src/resources/${normalized.replace(/^\/+|\/+$/g, '')}.excalidraw`;
 }
 
 function normalizeResourcePath(input: AssistantResourceContextInput): string {
@@ -81,6 +81,11 @@ function normalizeResourcePath(input: AssistantResourceContextInput): string {
     );
     if (explicitPath) {
         if (input.resourceType === 'theme') return ensureIndexFilePath(explicitPath);
+        if (input.resourceType === 'canvas') {
+            return explicitPath.startsWith('src/resources/') && /\.excalidraw$/i.test(explicitPath)
+                ? explicitPath
+                : '';
+        }
         return explicitPath;
     }
 
@@ -93,6 +98,12 @@ function normalizeResourcePath(input: AssistantResourceContextInput): string {
         return ensureIndexFilePath(`src/themes/${resourceId}`);
     }
     if (input.resourceType === 'canvas') {
+        if (resourceId.startsWith('src/resources/') && /\.excalidraw$/i.test(resourceId)) {
+            return resourceId;
+        }
+        if (resourceId.startsWith('src/') || resourceId.startsWith('canvas/') || resourceId.startsWith('prototypes/')) {
+            return '';
+        }
         return ensureCanvasFilePath(resourceId);
     }
     if (input.resourceType === 'drawio') {

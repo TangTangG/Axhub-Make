@@ -17,9 +17,11 @@ async function runConfigureServer(plugin: any, server: any) {
 
 describe('canvasHotUpdateFilterPlugin', () => {
   it('matches canvas data files outside the normal Vite refresh path', () => {
-    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas.excalidraw')).toBe(true);
-    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas-assets/screenshot.png')).toBe(true);
-    expect(isCanvasHotUpdateFile('src/prototypes/home/canvas-assets/embed.png')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/resources/flows/home.excalidraw')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/resources/flows/home.assets/screenshot.png')).toBe(true);
+    expect(isCanvasHotUpdateFile('src/resources/flows/home.assets/embed.png')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas.excalidraw')).toBe(false);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas-assets/screenshot.png')).toBe(false);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/generation-artifacts.json')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/review.md')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/annotation-source.json')).toBe(true);
@@ -32,11 +34,11 @@ describe('canvasHotUpdateFilterPlugin', () => {
     const handleHotUpdate = plugin.handleHotUpdate as any;
 
     expect(await handleHotUpdate({
-      file: '/project/src/prototypes/home/canvas.excalidraw',
+      file: '/project/src/resources/flows/home.excalidraw',
       modules: [{ id: 'canvas' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
-      file: '/project/src/prototypes/home/canvas-assets/screenshot.png',
+      file: '/project/src/resources/flows/home.assets/screenshot.png',
       modules: [{ id: 'screenshot' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
@@ -86,11 +88,11 @@ describe('canvasHotUpdateFilterPlugin', () => {
 
     server.hot.send({
       type: 'full-reload',
-      triggeredBy: '/project/src/prototypes/home/canvas.excalidraw',
+      triggeredBy: '/project/src/resources/flows/home.excalidraw',
     });
     server.ws.send({
       type: 'full-reload',
-      triggeredBy: '/project/src/prototypes/home/canvas-assets/screenshot.png',
+      triggeredBy: '/project/src/resources/flows/home.assets/screenshot.png',
     });
     server.hot.send({
       type: 'full-reload',
@@ -180,11 +182,11 @@ describe('canvasHotUpdateFilterPlugin', () => {
   it('identifies only canvas-triggered full reload payloads as droppable', () => {
     expect(shouldDropCanvasFullReloadPayload({
       type: 'full-reload',
-      triggeredBy: '/project/src/prototypes/home/canvas.excalidraw',
+      triggeredBy: '/project/src/resources/flows/home.excalidraw',
     })).toBe(true);
     expect(shouldDropCanvasFullReloadPayload({
       type: 'full-reload',
-      path: '/project/src/prototypes/home/canvas-assets/screenshot.png',
+      path: '/project/src/resources/flows/home.assets/screenshot.png',
     })).toBe(true);
     expect(shouldDropCanvasFullReloadPayload({
       type: 'full-reload',
@@ -200,7 +202,7 @@ describe('canvasHotUpdateFilterPlugin', () => {
     })).toBe(false);
     expect(shouldDropCanvasFullReloadPayload({
       type: 'update',
-      triggeredBy: '/project/src/prototypes/home/canvas.excalidraw',
+      triggeredBy: '/project/src/resources/flows/home.excalidraw',
     } as any)).toBe(false);
   });
 });

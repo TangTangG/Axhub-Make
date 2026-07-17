@@ -46,7 +46,8 @@ describe('project resource frontend adapter', () => {
             clientUrl: 'http://localhost:3000/home',
             pages: [
               { id: 'dashboard', title: '工作台' },
-              { id: 'orders-list', title: '订单列表' },
+              { id: 'orders-list', title: '订单列表', group: '订单管理' },
+              { id: 'customers', title: '客户列表', group: '   ' },
             ],
             defaultPageId: 'dashboard',
             filePath: 'src/prototypes/home-page/index.tsx',
@@ -108,7 +109,8 @@ describe('project resource frontend adapter', () => {
 	        previewUrl: 'http://localhost:3000/home',
 	        pages: [
 	          { id: 'dashboard', title: '工作台' },
-	          { id: 'orders-list', title: '订单列表' },
+	          { id: 'orders-list', title: '订单列表', group: '订单管理' },
+	          { id: 'customers', title: '客户列表' },
 	        ],
 	        defaultPageId: 'dashboard',
 	        specUrl: '',
@@ -484,6 +486,97 @@ describe('project resource frontend adapter', () => {
         specUrl: '/api/docs/assets%2Flogo.png?projectId=client-project',
         previewUrl: '/api/docs/assets%2Flogo.png?projectId=client-project',
         fileSize: 22937,
+      }),
+    ]);
+  });
+
+  it('normalizes Excalidraw and Drawio files as ordinary resource files with open modes', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        docs: [
+          {
+            id: 'flows/app.excalidraw',
+            name: 'flows/app.excalidraw',
+            title: 'flows/app',
+            path: 'flows/app.excalidraw',
+            filePath: 'src/resources/flows/app.excalidraw',
+            absoluteFilePath: '/workspace/client/src/resources/flows/app.excalidraw',
+            ext: '.excalidraw',
+            openMode: 'canvas',
+          },
+          {
+            id: 'flows/map.drawio',
+            name: 'flows/map.drawio',
+            title: 'flows/map',
+            path: 'flows/map.drawio',
+            filePath: 'src/resources/flows/map.drawio',
+            absoluteFilePath: '/workspace/client/src/resources/flows/map.drawio',
+            ext: '.drawio',
+            openMode: 'drawio',
+          },
+        ],
+      },
+    }, null);
+
+    expect(bundle.docs).toEqual([
+      expect.objectContaining({
+        name: 'flows/app.excalidraw',
+        displayName: 'flows/app',
+        openMode: 'canvas',
+        filePath: 'src/resources/flows/app.excalidraw',
+        canvasFilePath: 'src/resources/flows/app.excalidraw',
+        absoluteFilePath: '/workspace/client/src/resources/flows/app.excalidraw',
+      }),
+      expect.objectContaining({
+        name: 'flows/map.drawio',
+        displayName: 'flows/map',
+        openMode: 'drawio',
+        filePath: 'src/resources/flows/map.drawio',
+        absoluteFilePath: '/workspace/client/src/resources/flows/map.drawio',
+      }),
+    ]);
+  });
+
+  it('infers resource open modes for Excalidraw and Drawio files without metadata openMode', () => {
+    const bundle = normalizeProjectResourcesPayload({
+      project: { id: 'make-project', name: 'Make Project' },
+      resources: {
+        docs: [
+          {
+            id: 'untitled-2.excalidraw',
+            name: 'untitled-2.excalidraw',
+            title: 'untitled-2',
+            path: 'untitled-2.excalidraw',
+            absoluteFilePath: '/workspace/client/src/resources/untitled-2.excalidraw',
+            size: 171,
+          },
+          {
+            id: 'flows/map.drawio',
+            name: 'flows/map.drawio',
+            title: 'flows/map',
+            path: 'flows/map.drawio',
+            absoluteFilePath: '/workspace/client/src/resources/flows/map.drawio',
+            ext: '.drawio',
+          },
+        ],
+      },
+    }, null);
+
+    expect(bundle.docs).toEqual([
+      expect.objectContaining({
+        name: 'untitled-2.excalidraw',
+        displayName: 'untitled-2',
+        openMode: 'canvas',
+        filePath: 'src/resources/untitled-2.excalidraw',
+        canvasFilePath: 'src/resources/untitled-2.excalidraw',
+        fileSize: 171,
+      }),
+      expect.objectContaining({
+        name: 'flows/map.drawio',
+        displayName: 'flows/map',
+        openMode: 'drawio',
+        filePath: 'src/resources/flows/map.drawio',
       }),
     ]);
   });

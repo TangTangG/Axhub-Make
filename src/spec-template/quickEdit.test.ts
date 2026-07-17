@@ -7,6 +7,24 @@ import {
 } from './quickEdit';
 
 describe('spec-template quickEdit helpers', () => {
+    it('builds a PUT save request for project-scoped prototype Markdown specs', async () => {
+        const quickEditModule = await import('./quickEdit');
+        const buildRequest = (quickEditModule as Record<string, unknown>).buildPrototypeSpecMarkdownSaveRequest;
+
+        expect(typeof buildRequest).toBe('function');
+        expect((buildRequest as (url: string, content: string) => unknown)(
+            '/api/projects/make-project/prototypes/home/spec/content?path=spec.md',
+            '# Updated\n',
+        )).toEqual({
+            url: '/api/projects/make-project/prototypes/home/spec/content?path=spec.md',
+            init: {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: '# Updated\n' }),
+            },
+        });
+    });
+
     it('does not treat prototype spec or PRD files as first-class editable documents', () => {
         expect(resolveMarkdownQuickEditMeta('/prototypes/home-page/spec.md')).toMatchObject({
             resourceKind: 'unknown',

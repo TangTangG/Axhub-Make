@@ -120,6 +120,36 @@ describe('generation artifact history store', () => {
     expect(store.getState().artifacts).toEqual([]);
   });
 
+  it('uses resource canvas file paths for artifact history scope', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (!init) {
+        return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const store = createGenerationArtifactHistoryStore();
+    await store.configure({ targetPath: 'src/resources/flows/home.excalidraw' });
+    await store.upsertArtifactAndPersist({
+      id: 'resource-canvas-artifact',
+      kind: 'document',
+      operation: 'created',
+      title: 'Resource Canvas Artifact',
+      source: {},
+      target: { path: 'src/resources/spec.md' },
+      createdAt: 1,
+      updatedAt: 1,
+      status: 'done',
+      metadata: {},
+    }, { status: 'done' });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/ai/artifact-history?targetPath=src%2Fresources%2Fflows%2Fhome.excalidraw');
+    expect(fetchMock).toHaveBeenCalledWith('/api/ai/artifact-history?targetPath=src%2Fresources%2Fflows%2Fhome.excalidraw', expect.objectContaining({
+      method: 'POST',
+    }));
+  });
+
   it('keeps all four canvas artifact kinds visible for the generation history popover', async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       if (!init) {

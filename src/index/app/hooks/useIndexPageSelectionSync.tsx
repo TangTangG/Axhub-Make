@@ -4,8 +4,8 @@ import { STORAGE_KEY_ACTIVE_TAB } from '../../constants';
 import type { DataType, ItemData, SidebarTreeNode, TabType, ViewMode } from '../../types';
 import type { TemplateResourceItem } from '../../domains/resources/resource.types';
 import type { ResourceSection, SelectedResourceFolder, SidebarTab, ThemeResourceItem } from '../../types/index-page.types';
-import { isBrowsingResourceSidebarInPrototypeCanvas } from '../index-page/contentMode';
 import {
+    doesResourceDeepLinkRequireSidebarAssets,
     resolveIndexDeepLinkSelection,
     resolveResourceDeepLinkSelection,
     type ResourceDeepLinkTarget,
@@ -104,9 +104,6 @@ export function resolvePrototypeAutoSelectionDecision({
 
     const itemMap = new Map(items.map((item) => [`prototypes/${item.name}`, item]));
     const currentItem = selectedItem ? itemMap.get(`prototypes/${selectedItem.name}`) ?? null : null;
-    const currentCanvasItem = currentItem
-        ?? (lastCanvasItem ? itemMap.get(`prototypes/${lastCanvasItem.name}`) ?? null : null);
-
     if (
         !currentItem
         && pendingReturnTarget?.sidebarTab === 'prototype'
@@ -118,32 +115,6 @@ export function resolvePrototypeAutoSelectionDecision({
             markExplicitSelection: hasExplicitSelection,
             nextCanvasItem: viewMode === 'canvas' ? selectedItem : lastCanvasItem,
         };
-    }
-
-    if (isBrowsingResourceSidebarInPrototypeCanvas({ sidebarTab, viewMode }) && currentCanvasItem) {
-        const nextCanvasItem = currentCanvasItem;
-        if (currentItem && selectedItem && currentItem !== selectedItem) {
-            return {
-                kind: 'select',
-                item: currentItem,
-                markExplicitSelection: true,
-                resetPageSelection: false,
-                nextCanvasItem,
-            };
-        }
-        return currentItem
-            ? {
-                kind: 'keep',
-                markExplicitSelection: true,
-                nextCanvasItem,
-            }
-            : {
-                kind: 'select',
-                item: nextCanvasItem,
-                markExplicitSelection: true,
-                resetPageSelection: false,
-                nextCanvasItem,
-            };
     }
 
     const nextCanvasItem = viewMode === 'canvas' && currentItem ? currentItem : lastCanvasItem;
@@ -444,12 +415,7 @@ export function useIndexPageSelectionSync({
             return;
         }
         if (
-            (
-                initialResourceDeepLink?.resourceType === 'doc'
-                || initialResourceDeepLink?.resourceType === 'project-doc'
-                || initialResourceDeepLink?.resourceType === 'template'
-                || initialResourceDeepLink?.resourceType === 'theme'
-            )
+            doesResourceDeepLinkRequireSidebarAssets(initialResourceDeepLink)
             && !sidebarAssetsLoaded
         ) {
             return;
@@ -469,7 +435,7 @@ export function useIndexPageSelectionSync({
             if (resolvedDeepLink?.kind === 'doc') {
                 markInitialResourceDeepLinkHandled();
                 setSidebarTab(resolvedDeepLink.sidebarTab);
-                setViewMode('demo');
+                setViewMode(resolvedDeepLink.viewMode);
                 setSelectedResourceFolder?.(null);
                 setSelectedDoc(resolvedDeepLink.item);
                 if (resolvedDeepLink.collapseSidebar) {

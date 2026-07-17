@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ClaudeCode, CodeBuddy, Codex, Cursor, DeepSeek, GeminiCLI, OpenCode, Qoder } from '@lobehub/icons';
+import { ClaudeCode, CodeBuddy, Codex, Cursor, DeepSeek, Grok, OpenCode, Qoder } from '@lobehub/icons';
+import { QRCode } from 'antd';
 import { AlertTriangle, CheckCircle2, CircleHelp, Copy, Loader2, Play, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Field, FieldDescription, FieldLabelWithHint } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -23,11 +23,12 @@ import {
     SheetTitle,
 } from '@/components/ui/sheet';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { apiService, type AssistantRuntimeResponse, type MakeClientUpdateApplyResult, type MakeClientUpdateBackupRecord, type MakeClientUpdateStatus } from '../services/api';
+import { apiService, type AgentVersionsResponse, type AssistantRuntimeResponse, type LanAccessStatusResponse, type MakeClientUpdateApplyResult, type MakeClientUpdateBackupRecord, type MakeClientUpdateStatus } from '../services/api';
 import { normalizePromptClientPreference } from '../../common/promptExecution';
 import { ACP_PROVIDER_OPTIONS, type AcpProviderKey } from '../../common/acpModelConfig';
 import { runAiText, type AiRunClientError } from '../domains/ai-generation/aiRunClient';
@@ -49,7 +50,7 @@ import type { ThemeResourceItem } from '../domains/resources/resource.types';
 import { PrototypeThemeSearchSelect } from '../domains/prototype-generation/PrototypeThemeSearchSelect';
 import { NO_PROTOTYPE_THEME_VALUE } from '../domains/prototype-generation/prototypeGenerationThemeSelection';
 
-export type SettingsDialogInitialTab = 'project' | 'update' | 'ai';
+export type SettingsDialogInitialTab = 'project' | 'update' | 'ai' | 'network';
 
 export interface SettingsDialogAIContext {
     runtime?: AssistantRuntimeResponse | null;
@@ -78,8 +79,8 @@ interface SettingsDialogProps {
 interface ServerConfig {
     host: string;
     port: number;
-    allowLAN: boolean;
     lanHost?: string;
+    skipLanPreviewAuth?: boolean;
     enableCommandAPI?: boolean;
 }
 
@@ -102,6 +103,7 @@ interface Config {
         defaultIDE?: MainIDEPreference;
         annotationPromptClient?: PromptClientPreference;
         annotationModel?: string | null;
+        agentRunConcurrency?: number;
     };
     assistant?: {
         webBaseUrl?: string | null;
@@ -120,13 +122,14 @@ interface Config {
 interface SettingsFormState {
     host: string;
     lanHost: string;
-    allowLAN: boolean;
+    skipLanPreviewAuth: boolean;
     projectName: string;
     projectDescription: string;
     defaultTheme: string;
     defaultPromptClient: PromptClientPreference;
     annotationPromptClient: PromptClientPreference;
     annotationModel: string;
+    agentRunConcurrency: number;
     aiBaseUrl: string;
     aiApiKey: string;
     aiModel: string;
@@ -161,53 +164,86 @@ const AI_IMAGE_CONFIG_TEST_PROMPT = '生成一张用于验证图片生成配置�
 const DEFAULT_FORM_STATE: SettingsFormState = {
     host: 'localhost',
     lanHost: '',
-    allowLAN: true,
+    skipLanPreviewAuth: false,
     projectName: '',
     projectDescription: '',
     defaultTheme: '',
-    defaultPromptClient: 'acp:codex',
+    defaultPromptClient: null,
     annotationPromptClient: null,
     annotationModel: '',
+    agentRunConcurrency: 5,
     aiBaseUrl: 'https://api.openai.com/v1',
     aiApiKey: '',
     aiModel: 'gpt-image-2',
 };
+
+function formatShareExpiry(expiresAt: string): string {
+    if (!expiresAt) return '';
+    const timestamp = Date.parse(expiresAt);
+    if (!Number.isFinite(timestamp)) return '';
+    return new Intl.DateTimeFormat('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+    }).format(new Date(timestamp));
+}
+
+function buildCurrentAdminLanTargetUrl(lanHost: string): string {
+    const url = new URL(window.location.href);
+    const normalizedLanHost = lanHost.trim();
+    if (normalizedLanHost) {
+        url.hostname = normalizedLanHost;
+    }
+    url.searchParams.delete('axhubAccessToken');
+    return url.toString();
+}
 
 const LOCAL_AI_AGENT_OPTIONS: Array<{
     value: NonNullable<PromptClientPreference>;
     provider: AcpProviderKey;
     label: string;
     versionKey: AcpProviderKey;
+    supportsNpxFallback: boolean;
 }> = ACP_PROVIDER_OPTIONS.map((option) => ({
     value: option.client,
     provider: option.provider,
     label: option.label,
     versionKey: option.provider,
+    supportsNpxFallback: option.supportsNpxFallback === true,
 }));
 
 function getAgentProviderIcon(provider: AcpProviderKey): React.ReactNode {
     if (provider === 'codex') return <Codex.Color size={16} />;
-    if (provider === 'gemini') return <GeminiCLI.Color size={16} />;
     if (provider === 'claude') return <ClaudeCode.Color size={16} />;
     if (provider === 'opencode') return <OpenCode size={16} />;
     if (provider === 'cursor') return <Cursor size={16} />;
     if (provider === 'qoder') return <Qoder.Color size={16} />;
     if (provider === 'codebuddy') return <CodeBuddy.Color size={16} />;
     if (provider === 'reasonix') return <DeepSeek.Color size={16} />;
+    if (provider === 'grok-build') return <Grok size={16} />;
     return null;
+}
+
+function sanitizeAgentRunConcurrency(value: unknown): number {
+    const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value);
+    if (!Number.isFinite(numeric)) {
+        return DEFAULT_FORM_STATE.agentRunConcurrency;
+    }
+    return Math.min(10, Math.max(1, Math.trunc(numeric)));
 }
 
 function normalizeFormState(config: Config): SettingsFormState {
     return {
         host: config.server.host || 'localhost',
         lanHost: config.server.lanHost || config.availableLANHosts?.[0] || '',
-        allowLAN: config.server.allowLAN !== false,
+        skipLanPreviewAuth: config.server.skipLanPreviewAuth === true,
         projectName: config.projectInfo?.name || '',
         projectDescription: config.projectInfo?.description || '',
         defaultTheme: config.projectDefaults?.defaultTheme || '',
-        defaultPromptClient: normalizePromptClientPreference(config.automation?.defaultPromptClient) || 'acp:codex',
+        defaultPromptClient: normalizePromptClientPreference(config.automation?.defaultPromptClient),
         annotationPromptClient: normalizePromptClientPreference(config.automation?.annotationPromptClient),
         annotationModel: config.automation?.annotationModel || '',
+        agentRunConcurrency: sanitizeAgentRunConcurrency(config.automation?.agentRunConcurrency),
         aiBaseUrl: config.ai?.imageGeneration?.baseUrl || 'https://api.openai.com/v1',
         aiApiKey: config.ai?.imageGeneration?.apiKey || '',
         aiModel: config.ai?.imageGeneration?.model || 'gpt-image-2',
@@ -403,15 +439,21 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     const [agentVersions, setAgentVersions] = useState<AgentVersionMap>({});
     const [latestAgentVersions, setLatestAgentVersions] = useState<AgentVersionMap>({});
     const [agentVersionsLoading, setAgentVersionsLoading] = useState(false);
+    const [agentVersionRefreshingProvider, setAgentVersionRefreshingProvider] = useState<AcpProviderKey | null>(null);
     const [agentProviderTests, setAgentProviderTests] = useState<Record<string, AgentProviderTestState>>({});
     const [aiImageConfigTest, setAiImageConfigTest] = useState<AiImageConfigTestState>({ status: 'idle' });
     const [aiImageConfigLastTest, setAiImageConfigLastTest] = useState<AiImageConfigLastTest | undefined>(undefined);
     const [availableThemes, setAvailableThemes] = useState<ThemeResourceItem[]>([]);
     const [availableLANHosts, setAvailableLANHosts] = useState<string[]>([]);
+    const [lanAccessStatus, setLanAccessStatus] = useState<LanAccessStatusResponse | null>(null);
+    const [lanAccessPassword, setLanAccessPassword] = useState('');
+    const [lanAccessPasswordSaving, setLanAccessPasswordSaving] = useState(false);
+    const [lanAccessShareUrl, setLanAccessShareUrl] = useState('');
+    const [lanAccessShareExpiresAt, setLanAccessShareExpiresAt] = useState('');
+    const [lanAccessShareGenerating, setLanAccessShareGenerating] = useState(false);
     const [activeProjectId, setActiveProjectId] = useState('');
     const [localAcpRuntime, setLocalAcpRuntime] = useState<AssistantRuntimeResponse | null>(null);
     const [localAcpFailureContext, setLocalAcpFailureContext] = useState<{ source: string; message: string } | null>(null);
-    const [localAcpChecking, setLocalAcpChecking] = useState(false);
     const [localAcpConnecting, setLocalAcpConnecting] = useState(false);
     const [localAcpRestarting, setLocalAcpRestarting] = useState(false);
     const [makeClientUpdateStatus, setMakeClientUpdateStatus] = useState<MakeClientUpdateStatus | null>(null);
@@ -431,6 +473,29 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     const visibleMakeClientUpdateBlocker = makeClientUpdateAvailable ? getVisibleMakeClientUpdateBlocker(makeClientUpdateStatus) : '';
     const makeClientUpdateCanApply = Boolean(makeClientUpdateAvailable && makeClientUpdateStatus?.canApply);
     const latestMakeClientUpdateBackup = makeClientUpdateResult?.backupRecord || makeClientUpdateStatus?.lastBackup || null;
+    const providerSupportsNpxFallback = (provider: AcpProviderKey): boolean => (
+        LOCAL_AI_AGENT_OPTIONS.some((option) => option.provider === provider && option.supportsNpxFallback)
+    );
+    const isAgentProviderMissingFromVersions = (versions: AgentVersionMap, provider: AcpProviderKey): boolean => (
+        versions[provider]?.status === 'missing' && !providerSupportsNpxFallback(provider)
+    );
+    const isAgentProviderMissing = (provider: AcpProviderKey): boolean => (
+        isAgentProviderMissingFromVersions(agentVersions, provider)
+    );
+    const allLocalAiAgentOptionsDisabled = LOCAL_AI_AGENT_OPTIONS.every((option) => isAgentProviderMissing(option.provider));
+
+    const clearMissingDefaultPromptClientAfterVersionCheck = (versions: AgentVersionMap) => {
+        setFormState((previous) => {
+            const selected = LOCAL_AI_AGENT_OPTIONS.find((option) => option.value === previous.defaultPromptClient);
+            if (!selected || !isAgentProviderMissingFromVersions(versions, selected.provider)) {
+                return previous;
+            }
+            return {
+                ...previous,
+                defaultPromptClient: null,
+            };
+        });
+    };
 
     useEffect(() => {
         if (!open) {
@@ -442,14 +507,18 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
             setMakeClientUpdateError(null);
             setLocalAcpRuntime(null);
             setLocalAcpFailureContext(null);
-            setLocalAcpChecking(false);
             setLocalAcpConnecting(false);
             setLocalAcpRestarting(false);
+            setAgentVersionRefreshingProvider(null);
             aiTabVersionLoadedRef.current = false;
             initialAcpFailureAppliedRef.current = false;
             localAcpAutoCloseBlockedRef.current = false;
             setAvailableThemes([]);
             setAvailableLANHosts([]);
+            setLanAccessStatus(null);
+            setLanAccessPassword('');
+            setLanAccessShareUrl('');
+            setLanAccessShareExpiresAt('');
             return;
         }
 
@@ -467,8 +536,12 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
         } else if (initialTab === 'ai' && !initialAcpFailureAppliedRef.current) {
             void handleLocalAcpRuntimeCheck({ silent: true });
         }
-        void loadConfig();
+        const configPromise = loadConfig();
+        if (initialTab === 'ai') {
+            void configPromise.then(() => loadAgentVersions().then(clearMissingDefaultPromptClientAfterVersionCheck));
+        }
         void loadThemeOptions();
+        void loadLanAccessStatus();
     }, [open, initialAcpRuntime, initialAcpFailureMessage, initialAcpFailureSource, initialTab, onMakeClientUpdateReminderSeen]);
 
     const updateField = <K extends keyof SettingsFormState>(key: K, value: SettingsFormState[K]) => {
@@ -516,29 +589,86 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
         }
     };
 
-    const loadAgentVersions = async (force = false) => {
+    const loadLanAccessStatus = async () => {
+        try {
+            const status = await apiService.getLanAccessStatus();
+            setLanAccessStatus(status);
+            if (!status.passwordSet) {
+                setLanAccessShareUrl('');
+                setLanAccessShareExpiresAt('');
+            }
+            return status;
+        } catch (error: any) {
+            console.error('Error loading LAN access status:', error);
+            setLanAccessStatus(null);
+            return null;
+        }
+    };
+
+    const applyAgentVersionsResponse = (result: AgentVersionsResponse, mode: 'replace' | 'merge' = 'replace'): AgentVersionMap => {
+        const versionsPatch = result.agents || {};
+        const latestVersionsPatch = result.latestAgents || {};
+        if (mode === 'merge') {
+            const currentCache = agentVersionCacheRef.current;
+            const versions = {
+                ...(currentCache?.versions || agentVersions),
+                ...versionsPatch,
+            };
+            const latestVersions = {
+                ...(currentCache?.latestVersions || latestAgentVersions),
+                ...latestVersionsPatch,
+            };
+            if (currentCache) {
+                agentVersionCacheRef.current = {
+                    ...currentCache,
+                    versions,
+                    latestVersions,
+                };
+            }
+            setAgentVersions(versions);
+            setLatestAgentVersions(latestVersions);
+            return versions;
+        }
+
+        agentVersionCacheRef.current = {
+            fetchedAt: Date.now(),
+            versions: versionsPatch,
+            latestVersions: latestVersionsPatch,
+        };
+        setAgentVersions(versionsPatch);
+        setLatestAgentVersions(latestVersionsPatch);
+        return versionsPatch;
+    };
+
+    const loadAgentVersions = async (force = false): Promise<AgentVersionMap> => {
         if (!force && isAgentVersionCacheFresh(agentVersionCacheRef.current)) {
             setAgentVersions(agentVersionCacheRef.current.versions);
             setLatestAgentVersions(agentVersionCacheRef.current.latestVersions);
-            return;
+            return agentVersionCacheRef.current.versions;
         }
 
         setAgentVersionsLoading(true);
         try {
             const result = await apiService.getAgentVersions();
-            const versions = result.agents || {};
-            const latestVersions = result.latestAgents || {};
-            agentVersionCacheRef.current = {
-                fetchedAt: Date.now(),
-                versions,
-                latestVersions,
-            };
-            setAgentVersions(versions);
-            setLatestAgentVersions(latestVersions);
+            return applyAgentVersionsResponse(result);
         } catch (error) {
             console.error('Error loading agent versions:', error);
+            return {};
         } finally {
             setAgentVersionsLoading(false);
+        }
+    };
+
+    const refreshAgentVersion = async (provider: AcpProviderKey): Promise<AgentVersionMap> => {
+        setAgentVersionRefreshingProvider(provider);
+        try {
+            const result = await apiService.getAgentVersions({ agent: provider });
+            return applyAgentVersionsResponse(result, 'merge');
+        } catch (error) {
+            console.error('Error refreshing agent version:', error);
+            return agentVersionCacheRef.current?.versions || agentVersions;
+        } finally {
+            setAgentVersionRefreshingProvider(null);
         }
     };
 
@@ -547,7 +677,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
             return;
         }
         aiTabVersionLoadedRef.current = true;
-        void loadAgentVersions();
+        void loadAgentVersions().then(clearMissingDefaultPromptClientAfterVersionCheck);
     };
 
     const preserveSettingsDialogDuringLocalAcpAction = async <T,>(action: () => Promise<T>): Promise<T> => {
@@ -570,7 +700,6 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     };
 
     async function handleLocalAcpRuntimeCheck(options: { silent?: boolean } = {}) {
-        setLocalAcpChecking(true);
         try {
             const runtime = await apiService.getAssistantRuntime({ autoStart: false, projectId: activeProjectId || undefined });
             setLocalAcpRuntime(runtime);
@@ -590,8 +719,6 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                 toast.error(error?.message || '检测本地 ACP 服务失败');
             }
             return null;
-        } finally {
-            setLocalAcpChecking(false);
         }
     }
 
@@ -665,9 +792,10 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     };
 
     const handleTabValueChange = (value: string) => {
-        setActiveTab(value === 'ai' ? 'ai' : value === 'update' ? 'update' : 'project');
+        setActiveTab(value === 'ai' ? 'ai' : value === 'update' ? 'update' : value === 'network' ? 'network' : 'project');
         if (value === 'ai') {
             void handleLocalAcpRuntimeCheck({ silent: true });
+            void loadAgentVersions().then(clearMissingDefaultPromptClientAfterVersionCheck);
         }
         if (value === 'update') {
             onMakeClientUpdateReminderSeen?.();
@@ -913,6 +1041,75 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
         }
     };
 
+    const handleLanAccessPasswordSave = async () => {
+        const password = lanAccessPassword.trim();
+        if (!password) {
+            toast.error('请输入局域网访问密码');
+            return;
+        }
+        setLanAccessPasswordSaving(true);
+        try {
+            const status = await apiService.setLanAccessPassword(password);
+            setLanAccessStatus(status);
+            setLanAccessPassword('');
+            setLanAccessShareUrl('');
+            setLanAccessShareExpiresAt('');
+            toast.success('局域网访问密码已保存');
+        } catch (error: any) {
+            toast.error(error?.message || '设置局域网访问密码失败');
+        } finally {
+            setLanAccessPasswordSaving(false);
+        }
+    };
+
+    const handleLanAccessPasswordClear = async () => {
+        setLanAccessPasswordSaving(true);
+        try {
+            const status = await apiService.clearLanAccessPassword();
+            setLanAccessStatus(status);
+            setLanAccessPassword('');
+            setLanAccessShareUrl('');
+            setLanAccessShareExpiresAt('');
+            toast.success('局域网访问密码已清除');
+        } catch (error: any) {
+            toast.error(error?.message || '清除局域网访问密码失败');
+        } finally {
+            setLanAccessPasswordSaving(false);
+        }
+    };
+
+    const handleGenerateGlobalLanQRCode = async () => {
+        if (!lanAccessStatus?.passwordSet) {
+            toast.warning('请先设置局域网访问密码');
+            return;
+        }
+        const targetUrl = buildCurrentAdminLanTargetUrl(formState.lanHost.trim() || availableLANHosts[0] || window.location.hostname);
+        setLanAccessShareGenerating(true);
+        try {
+            const result = await apiService.createLanAccessShareUrl(targetUrl);
+            setLanAccessShareUrl(result.url);
+            setLanAccessShareExpiresAt(result.expiresAt);
+            toast.success('全局二维码已生成，10 分钟内有效');
+        } catch (error: any) {
+            toast.error(error?.message || '生成全局二维码失败');
+        } finally {
+            setLanAccessShareGenerating(false);
+        }
+    };
+
+    const handleCopyGlobalLanShareUrl = async () => {
+        if (!lanAccessShareUrl) {
+            toast.warning('请先生成全局二维码');
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(lanAccessShareUrl);
+            toast.success('全局局域网链接已复制');
+        } catch {
+            toast.error('复制失败');
+        }
+    };
+
     const handleSave = async () => {
         const host = formState.host.trim();
         if (!host) {
@@ -926,15 +1123,15 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
             const currentConfigResponse = await fetch('/api/config');
             const currentConfig: Config = currentConfigResponse.ok
                 ? await currentConfigResponse.json()
-                : { server: { host: 'localhost', port: 51720, allowLAN: true } };
+                : { server: { host: 'localhost', port: 51720 } };
 
             const config: Config = {
                 ...currentConfig,
                 server: {
                     host,
                     port: currentConfig.server.port || 51720,
-                    allowLAN: formState.allowLAN,
                     lanHost: formState.lanHost.trim(),
+                    skipLanPreviewAuth: formState.skipLanPreviewAuth,
                     enableCommandAPI: currentConfig.server.enableCommandAPI || false,
                 },
                 projectInfo: {
@@ -950,6 +1147,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                     defaultPromptClient: formState.defaultPromptClient,
                     annotationPromptClient: formState.annotationPromptClient || null,
                     annotationModel: formState.annotationModel.trim() || null,
+                    agentRunConcurrency: sanitizeAgentRunConcurrency(formState.agentRunConcurrency),
                 },
                 ai: {
                     ...(currentConfig.ai || {}),
@@ -995,6 +1193,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
             onClose();
         } catch (error: any) {
             console.error('Error saving config:', error);
+            await loadConfig();
             toast.error(error?.message || '保存配置失败');
         } finally {
             setLoading(false);
@@ -1009,9 +1208,9 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
             >
                 <Tabs value={activeTab} onValueChange={handleTabValueChange} className="flex h-full flex-col">
                     <SheetHeader className="border-b px-5 py-3.5">
-                        <SheetTitle className="sr-only">项目设置 / 项目更新 / AI 设置</SheetTitle>
+                        <SheetTitle className="sr-only">项目设置 / 项目更新 / AI 设置 / 网络配置</SheetTitle>
                         <div className="flex items-center justify-between gap-3">
-                            <TabsList className="grid h-8 w-full max-w-[360px] grid-cols-3 rounded-lg border border-border/70 bg-muted/50 p-0.5">
+                            <TabsList className="grid h-8 w-full max-w-[460px] grid-cols-4 rounded-lg border border-border/70 bg-muted/50 p-0.5">
                                 <TabsTrigger value="project" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
                                     项目设置
                                 </TabsTrigger>
@@ -1023,6 +1222,9 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                 </TabsTrigger>
                                 <TabsTrigger value="ai" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
                                     AI 设置
+                                </TabsTrigger>
+                                <TabsTrigger value="network" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
+                                    网络配置
                                 </TabsTrigger>
                             </TabsList>
                             <Button
@@ -1084,58 +1286,6 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                         </Field>
 
                         </section>
-
-                        <Separator className="my-5" />
-
-                        <section className="space-y-4">
-                        <div className="space-y-1">
-                            <h3 className="text-base font-semibold text-foreground">服务配置</h3>
-                            <p className="text-xs text-muted-foreground">配置服务监听地址与网络访问范围。</p>
-                        </div>
-
-                        <Field>
-                            <FieldLabelWithHint hint="复制本地访问链接时使用的地址。通常保持 localhost 即可。">本地地址</FieldLabelWithHint>
-                            <Input
-                                value={formState.host}
-                                onChange={(event) => updateField('host', event.target.value)}
-                                placeholder="localhost"
-                            />
-                        </Field>
-
-                        <label className="inline-flex items-center gap-2 text-sm">
-                            <Checkbox
-                                checked={formState.allowLAN}
-                                onCheckedChange={(checked) => updateField('allowLAN', checked === true)}
-                                className="data-[state=checked]:text-white"
-                            />
-                            <span className="font-medium text-foreground">允许局域网访问</span>
-                        </label>
-
-                        {formState.allowLAN ? (
-                            <Field>
-                                <FieldLabelWithHint hint="复制局域网链接和二维码时使用的固定地址，可手动填写或从检测到的地址中选择。">局域网地址</FieldLabelWithHint>
-                                <Input
-                                    value={formState.lanHost}
-                                    onChange={(event) => updateField('lanHost', event.target.value)}
-                                    placeholder={availableLANHosts[0] || '192.168.1.10'}
-                                />
-                                {availableLANHosts.length ? (
-                                    <div className="flex flex-wrap gap-1.5">
-                                        {availableLANHosts.slice(0, 4).map((host) => (
-                                            <button
-                                                key={host}
-                                                type="button"
-                                                className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] leading-5 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-                                                onClick={() => updateField('lanHost', host)}
-                                            >
-                                                {host}
-                                            </button>
-                                        ))}
-                                    </div>
-                                ) : null}
-                            </Field>
-                        ) : null}
-                        </section>
                     </TabsContent>
 
                     <TabsContent value="update" className="m-0 min-h-0 flex-1 overflow-y-auto px-5 py-4.5">
@@ -1164,7 +1314,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                     <span className="truncate font-medium text-foreground">{makeClientUpdateStatus?.currentVersion || '未检测'}</span>
                                 </div>
                                 <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
-                                    <span className="text-muted-foreground">服务端最新版本</span>
+                                    <span className="text-muted-foreground">最新模板版本</span>
                                     <span className="truncate font-medium text-foreground">{makeClientUpdateStatus?.targetVersion || '未检测'}</span>
                                 </div>
                                 <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
@@ -1172,6 +1322,16 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                     <span className="truncate font-medium text-foreground" title={makeClientUpdateStatus?.projectRoot || ''}>{makeClientUpdateStatus?.projectRoot || '未检测'}</span>
                                 </div>
                             </div>
+
+                            {makeClientUpdateStatus?.metadataSource === 'bundled' ? (
+                                <div
+                                    className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-300"
+                                    title={makeClientUpdateStatus.metadataError || undefined}
+                                >
+                                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                    <span>未能连接线上更新源，当前显示本机可用版本。</span>
+                                </div>
+                            ) : null}
 
                             {makeClientUpdateStatus?.releaseNotes ? (
                                 <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3 text-xs">
@@ -1428,13 +1588,17 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                 <section className="space-y-4">
                                     <div className="space-y-1">
                                         <h3 className="text-base font-semibold text-foreground">AI Agent</h3>
-                                        <p className="text-xs text-muted-foreground">配置本地可用的 AI Agent。</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {allLocalAiAgentOptionsDisabled
+                                                ? '未检测到可用的本地 AI Agent，暂时无法设置。请先安装后刷新版本检测。'
+                                                : '配置本地可用的 AI Agent。'}
+                                        </p>
                                     </div>
 
                                     <Field>
                                         <RadioGroup
-                                            value={formState.defaultPromptClient || 'acp:codex'}
-                                            onValueChange={(value) => updateField('defaultPromptClient', normalizePromptClientPreference(value) || 'acp:codex')}
+                                            value={formState.defaultPromptClient || undefined}
+                                            onValueChange={(value) => updateField('defaultPromptClient', normalizePromptClientPreference(value))}
                                             className="gap-0 rounded-md border border-border"
                                         >
                                             <Table>
@@ -1462,29 +1626,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                                             </span>
                                                         </TableHead>
                                                         <TableHead className="h-8 w-[170px] px-2 text-xs">供应商</TableHead>
-                                                        <TableHead className="h-8 w-[180px] px-3 text-xs">
-                                                            <span className="inline-flex items-center gap-1.5">
-                                                                版本
-                                                                <TooltipProvider>
-                                                                    <Tooltip>
-                                                                        <TooltipTrigger asChild>
-                                                                            <Button
-                                                                                type="button"
-                                                                                variant="ghost"
-                                                                                size="icon-xs"
-                                                                                className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                                                                                onClick={() => loadAgentVersions(true)}
-                                                                                disabled={agentVersionsLoading}
-                                                                                aria-label="刷新版本"
-                                                                            >
-                                                                                {agentVersionsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                                                                            </Button>
-                                                                        </TooltipTrigger>
-                                                                        <TooltipContent arrow>刷新版本</TooltipContent>
-                                                                    </Tooltip>
-                                                                </TooltipProvider>
-                                                            </span>
-                                                        </TableHead>
+                                                        <TableHead className="h-8 w-[180px] px-3 text-xs">版本</TableHead>
                                                         <TableHead className="h-8 w-[230px] px-3 text-center text-xs">上次测试</TableHead>
                                                     </TableRow>
                                                 </TableHeader>
@@ -1496,23 +1638,44 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                                     const testLabel = getAgentProviderTestLabel(testState);
                                                     const isTesting = testState?.status === 'testing';
                                                     const testTime = testState?.status === 'passed' ? formatAgentProviderTestTime(testState.testedAt) : '';
+                                                    const optionDisabled = isAgentProviderMissing(option.provider);
+                                                    const versionRefreshing = agentVersionRefreshingProvider === option.provider;
+                                                    const versionLoading = agentVersionsLoading || versionRefreshing;
                                                     return (
-                                                        <TableRow key={option.value} data-state={formState.defaultPromptClient === option.value ? 'selected' : undefined}>
+                                                        <TableRow key={option.value} data-state={!optionDisabled && formState.defaultPromptClient === option.value ? 'selected' : undefined}>
                                                             <TableCell className="px-2 py-2">
-                                                                <RadioGroupItem value={option.value} aria-label={`默认使用 ${option.label}`} />
+                                                                <RadioGroupItem value={option.value} disabled={optionDisabled} aria-label={`默认使用 ${option.label}`} />
                                                             </TableCell>
                                                             <TableCell className="w-[170px] max-w-[170px] px-2 py-2">
-                                                                <span className="inline-flex min-w-0 items-center gap-2 font-medium text-foreground">
+                                                                <span className="inline-flex min-w-0 max-w-full items-center gap-2 font-medium text-foreground">
                                                                     <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
                                                                         {getAgentProviderIcon(option.provider)}
                                                                     </span>
-                                                                    <span className="truncate">{option.label}</span>
+                                                                    <span className="min-w-0 flex-1 truncate">{option.label}</span>
                                                                 </span>
                                                             </TableCell>
                                                             <TableCell className="w-[180px] max-w-[180px] px-3 py-2 text-xs text-muted-foreground">
-                                                                <span className="inline-flex min-w-0 max-w-full items-center gap-1">
-                                                                    {agentVersionsLoading && !meta ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                                                                    <span className="block max-w-[144px] truncate font-mono text-[11px] leading-4" title={metaTitle || undefined}>{meta || (agentVersionsLoading ? '检测中' : '未检测')}</span>
+                                                                <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+                                                                    {versionLoading && !meta ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                                                                    <span className="block max-w-[144px] truncate font-mono text-[11px] leading-4" title={metaTitle || undefined}>{meta || (versionLoading ? '检测中' : '未检测')}</span>
+                                                                    <TooltipProvider>
+                                                                        <Tooltip>
+                                                                            <TooltipTrigger asChild>
+                                                                                <Button
+                                                                                    type="button"
+                                                                                    variant="ghost"
+                                                                                    size="icon-xs"
+                                                                                    className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+                                                                                    onClick={() => refreshAgentVersion(option.provider)}
+                                                                                    disabled={versionRefreshing}
+                                                                                    aria-label={`刷新 ${option.label} 版本`}
+                                                                                >
+                                                                                    {versionRefreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                                                                </Button>
+                                                                            </TooltipTrigger>
+                                                                            <TooltipContent arrow>刷新版本</TooltipContent>
+                                                                        </Tooltip>
+                                                                    </TooltipProvider>
                                                                 </span>
                                                             </TableCell>
                                                             <TableCell className="w-[230px] max-w-[230px] px-3 py-2 text-center text-xs align-middle">
@@ -1546,7 +1709,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                                                                     size="icon-xs"
                                                                                     className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
                                                                                     onClick={() => handleAgentProviderTest(option)}
-                                                                                    disabled={isTesting}
+                                                                                    disabled={isTesting || optionDisabled}
                                                                                     aria-label={`测试 ${option.label}`}
                                                                                 >
                                                                                     {isTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
@@ -1604,6 +1767,17 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                                 value={formState.annotationModel}
                                                 onChange={(event) => updateField('annotationModel', event.target.value)}
                                                 placeholder="例如 gpt-5.5 / sonnet / auto"
+                                            />
+                                        </Field>
+
+                                        <Field>
+                                            <FieldLabelWithHint hint="批量批注执行时同时发送的 AI 任务数量，默认 5。">AI 并发数</FieldLabelWithHint>
+                                            <Input
+                                                type="number"
+                                                min={1}
+                                                max={10}
+                                                value={formState.agentRunConcurrency}
+                                                onChange={(event) => updateField('agentRunConcurrency', sanitizeAgentRunConcurrency(event.target.value))}
                                             />
                                         </Field>
                                     </div>
@@ -1696,6 +1870,150 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                 </section>
                             </>
                         ) : null}
+                    </TabsContent>
+
+                    <TabsContent value="network" className="m-0 min-h-0 flex-1 overflow-y-auto px-5 py-4.5">
+                        <section className="space-y-4">
+                        <div className="space-y-1">
+                            <h3 className="text-base font-semibold text-foreground">网络配置</h3>
+                            <p className="text-xs text-muted-foreground">配置服务监听地址与网络访问范围。</p>
+                        </div>
+
+                        <Field>
+                            <FieldLabelWithHint hint="复制本地访问链接时使用的地址。通常保持 localhost 即可。">本地地址</FieldLabelWithHint>
+                            <Input
+                                value={formState.host}
+                                onChange={(event) => updateField('host', event.target.value)}
+                                placeholder="localhost"
+                            />
+                        </Field>
+
+                        <Field>
+                            <FieldLabelWithHint hint="复制局域网链接和二维码时使用的固定地址，可手动填写或从检测到的地址中选择。">局域网地址</FieldLabelWithHint>
+                            <Input
+                                value={formState.lanHost}
+                                onChange={(event) => updateField('lanHost', event.target.value)}
+                                placeholder={availableLANHosts[0] || '192.168.1.10'}
+                            />
+                            {availableLANHosts.length ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {availableLANHosts.slice(0, 4).map((host) => (
+                                        <button
+                                            key={host}
+                                            type="button"
+                                            className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] leading-5 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                                            onClick={() => updateField('lanHost', host)}
+                                        >
+                                            {host}
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : null}
+                        </Field>
+
+                        <Field>
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium text-foreground">预览免验证</div>
+                                    <FieldDescription>
+                                        开启后，局域网可直接访问当前项目预览；管理端和 API 仍需验证。
+                                    </FieldDescription>
+                                </div>
+                                <Switch
+                                    checked={formState.skipLanPreviewAuth}
+                                    onCheckedChange={(checked) => updateField('skipLanPreviewAuth', checked === true)}
+                                    aria-label="预览免验证"
+                                />
+                            </div>
+                        </Field>
+
+                        <Field>
+                            <FieldLabelWithHint hint="设置后非本机访问管理端、API、客户端预览都需要验证。修改或清除密码会让旧链接和登录失效。">局域网访问密码</FieldLabelWithHint>
+                            <div className="flex gap-2">
+                                <Input
+                                    type="password"
+                                    value={lanAccessPassword}
+                                    onChange={(event) => setLanAccessPassword(event.target.value)}
+                                    placeholder={lanAccessStatus?.passwordSet ? '输入新密码以修改' : '设置局域网访问密码'}
+                                    autoComplete="new-password"
+                                />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="shrink-0 gap-1.5"
+                                    disabled={lanAccessPasswordSaving}
+                                    onClick={() => void handleLanAccessPasswordSave()}
+                                >
+                                    {lanAccessPasswordSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                                    {lanAccessStatus?.passwordSet ? '修改' : '设置'}
+                                </Button>
+                                {lanAccessStatus?.passwordSet ? (
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        className="shrink-0 text-destructive hover:text-destructive"
+                                        disabled={lanAccessPasswordSaving}
+                                        onClick={() => void handleLanAccessPasswordClear()}
+                                    >
+                                        清除
+                                    </Button>
+                                ) : null}
+                            </div>
+                            <FieldDescription>
+                                {lanAccessStatus?.passwordSet ? '已设置密码，非本机访问会要求验证。' : '未设置密码时，非本机局域网访问不可用。'}
+                            </FieldDescription>
+                        </Field>
+
+                        <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium text-foreground">全局二维码</div>
+                                    <p className="text-xs leading-5 text-muted-foreground">
+                                        生成当前 Make 管理端项目页的 10 分钟局域网链接。
+                                    </p>
+                                </div>
+                                <div className="flex shrink-0 gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 gap-1.5"
+                                        disabled={!lanAccessStatus?.passwordSet || lanAccessShareGenerating}
+                                        onClick={() => void handleGenerateGlobalLanQRCode()}
+                                    >
+                                        {lanAccessShareGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                        生成
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 gap-1.5"
+                                        disabled={!lanAccessShareUrl}
+                                        onClick={() => void handleCopyGlobalLanShareUrl()}
+                                    >
+                                        <Copy className="h-3.5 w-3.5" />
+                                        复制
+                                    </Button>
+                                </div>
+                            </div>
+                            {!lanAccessStatus?.passwordSet ? (
+                                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-300">
+                                    请先设置局域网访问密码后再生成二维码。
+                                </div>
+                            ) : lanAccessShareUrl ? (
+                                <div className="flex items-center gap-3">
+                                    <div className="rounded-md border bg-background p-2">
+                                        <QRCode value={lanAccessShareUrl} size={120} bordered={false} />
+                                    </div>
+                                    <div className="min-w-0 flex-1 space-y-1 text-xs text-muted-foreground">
+                                        <div className="truncate">{lanAccessShareUrl}</div>
+                                        <div>有效至 {formatShareExpiry(lanAccessShareExpiresAt) || '10 分钟后'}</div>
+                                    </div>
+                                </div>
+                            ) : null}
+                        </div>
+                        </section>
                     </TabsContent>
 
                     <SheetFooter className="flex flex-row justify-end gap-2 border-t px-5 py-3.5">

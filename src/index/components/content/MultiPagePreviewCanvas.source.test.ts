@@ -15,6 +15,23 @@ function getSourceSegment(source: string, startNeedle: string, endNeedle: string
 }
 
 describe('MultiPagePreviewCanvas source', () => {
+  it('allows live and hidden preview iframes to write clipboard text', () => {
+    const source = readMultiPagePreviewCanvasSource();
+    const liveIframeSource = getSourceSegment(
+      source,
+      '{active ? (',
+      ') : (',
+    );
+    const hiddenIframeSource = getSourceSegment(
+      source,
+      '{hiddenScreenshotPages.map((page) => (',
+      '<div className="multi-page-zoom-toolbar',
+    );
+
+    expect(liveIframeSource).toContain('allow="clipboard-write"');
+    expect(hiddenIframeSource).toContain('allow="clipboard-write"');
+  });
+
   it('caps live iframes, renders all pages in the card selector, and renders page screenshots', () => {
     const source = readMultiPagePreviewCanvasSource();
 

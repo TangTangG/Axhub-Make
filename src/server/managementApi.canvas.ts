@@ -3,20 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { isPathInside, resolveProjectPath, type ProjectMetadata } from './projectCore/index.ts';
+import { isPathInside } from './projectCore/index.ts';
 
 import { getCanvasBridgeHub } from './canvasBridge.ts';
 import { readJsonBody, sendFile, sendJson } from './http.ts';
+import { resolveResourceFilePath } from './resourceFiles.ts';
 
 const CANVAS_EXT = '.excalidraw';
 const DEFAULT_CANVAS_SOURCE = '@axhub/make';
-const PROTOTYPE_CANVAS_ASSETS_DIR = 'canvas-assets';
 const CANVAS_IMAGE_ASSETS_DIR = 'images';
-const PROTOTYPE_SCREENSHOT_FILE = 'screenshot.png';
+const CANVAS_SCREENSHOT_FILE = 'screenshot.png';
 const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
 const MAX_CANVAS_IMAGE_BYTES = 12 * 1024 * 1024;
 const SAFE_SCREENSHOT_FILE_PATTERN = /^[a-z0-9][a-z0-9._-]*\.png$/iu;
-const SAFE_PROTOTYPE_PAGE_ID_PATTERN = /^[a-z0-9-]+$/u;
+const SAFE_CANVAS_PAGE_ID_PATTERN = /^[a-z0-9-]+$/u;
 const CANVAS_IMAGE_MIME_EXTENSIONS: Record<string, string> = {
   'image/gif': '.gif',
   'image/jpeg': '.jpg',
@@ -25,34 +25,13 @@ const CANVAS_IMAGE_MIME_EXTENSIONS: Record<string, string> = {
 };
 
 interface CanvasApiContext {
-  metadata?: ProjectMetadata;
+  metadata?: unknown;
 }
 
 interface CanvasAssetStorageOptions {
   assetBaseDir: string;
   imageAssetDir: string;
   imagePathPrefix: string;
-}
-
-function toKebabBaseName(input: string, fallbackPrefix: string): string {
-  const normalized = String(input || '')
-    .trim()
-    .replace(/\.[^.]+$/u, '')
-    .replace(/[^a-z0-9]+/gi, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .toLowerCase();
-  return normalized || `${fallbackPrefix}-${Date.now()}`;
-}
-
-function createUniqueFilePath(dir: string, baseName: string, ext: string): string {
-  let candidate = path.join(dir, `${baseName}${ext}`);
-  let index = 2;
-  while (fs.existsSync(candidate)) {
-    candidate = path.join(dir, `${baseName}-${index}${ext}`);
-    index += 1;
-  }
-  return candidate;
 }
 
 export function createDefaultCanvasData() {
@@ -76,87 +55,13 @@ function parseEncodedSegment(value: string): string | null {
   }
 }
 
-function resolvePrototypeCanvasPath(projectRoot: string, encodedPrototypeId: string): {
-  prototypeId: string;
-  prototypeDir: string;
-  canvasPath: string;
-} | { error: string; status: number } {
-  const prototypeId = parseEncodedSegment(encodedPrototypeId);
-  if (!prototypeId) {
-    return { error: 'Invalid prototype id', status: 400 };
-  }
-  if (
-    prototypeId === '.'
-    || prototypeId === '..'
-    || prototypeId.includes('/')
-    || prototypeId.includes('\\')
-  ) {
-    return { error: 'Invalid prototype id', status: 403 };
-  }
-
-  const prototypesDir = path.resolve(projectRoot, 'src', 'prototypes');
-  const prototypeDir = path.resolve(prototypesDir, prototypeId);
-  if (!isPathInside(prototypesDir, prototypeDir)) {
-    return { error: 'Invalid prototype id', status: 403 };
-  }
-  if (!fs.existsSync(prototypeDir)) {
-    return { error: 'Prototype not found', status: 404 };
-  }
-
-  const canvasPath = path.resolve(prototypeDir, `canvas${CANVAS_EXT}`);
-  if (!isPathInside(projectRoot, canvasPath) || !isPathInside(prototypeDir, canvasPath)) {
-    return { error: 'Invalid canvas path', status: 403 };
-  }
-  return { prototypeId, prototypeDir, canvasPath };
-}
-
-function createPrototypeCanvasResponse(projectRoot: string, prototypeId: string, canvasPath: string, created = false) {
-  return {
-    success: true,
-    created,
-    name: `prototypes/${prototypeId}/canvas${CANVAS_EXT}`,
-    displayName: `${prototypeId} Canvas`,
-    path: path.relative(projectRoot, canvasPath).split(path.sep).join('/'),
-    absoluteFilePath: canvasPath,
-  };
-}
-
-function getDeclaredPrototypeWriteDir(projectRoot: string, metadata?: ProjectMetadata): string | null {
-  const target = metadata?.resourceWriteTargets?.prototypes;
-  if (!target || target.type !== 'project-relative-path' || !target.path) {
-    return null;
-  }
-  try {
-    return resolveProjectPath(projectRoot, target.path);
-  } catch {
-    return null;
-  }
-}
-
-function ensurePrototypeCanvasFile(projectRoot: string, prototypeId: string, canvasPath: string): boolean {
-  void projectRoot;
-  void prototypeId;
-  if (fs.existsSync(canvasPath)) {
-    return false;
-  }
-  fs.writeFileSync(canvasPath, JSON.stringify(createDefaultCanvasData(), null, 2), 'utf8');
-  return true;
-}
-
-function createPrototypeCanvasAssetStorageOptions(prototypeDir: string): CanvasAssetStorageOptions {
-  return {
-    assetBaseDir: prototypeDir,
-    imageAssetDir: path.resolve(prototypeDir, PROTOTYPE_CANVAS_ASSETS_DIR, CANVAS_IMAGE_ASSETS_DIR),
-    imagePathPrefix: `${PROTOTYPE_CANVAS_ASSETS_DIR}/${CANVAS_IMAGE_ASSETS_DIR}`,
-  };
-}
-
-function createStandaloneCanvasAssetStorageOptions(canvasDir: string, canvasPath: string): CanvasAssetStorageOptions {
+function createResourceCanvasAssetStorageOptions(canvasPath: string): CanvasAssetStorageOptions {
+  const canvasDir = path.dirname(canvasPath);
   const canvasAssetBase = toSafeCanvasAssetFileBase(path.basename(canvasPath, CANVAS_EXT));
   return {
     assetBaseDir: canvasDir,
-    imageAssetDir: path.resolve(canvasDir, PROTOTYPE_CANVAS_ASSETS_DIR, canvasAssetBase, CANVAS_IMAGE_ASSETS_DIR),
-    imagePathPrefix: `${PROTOTYPE_CANVAS_ASSETS_DIR}/${canvasAssetBase}/${CANVAS_IMAGE_ASSETS_DIR}`,
+    imageAssetDir: path.resolve(canvasDir, `${canvasAssetBase}.assets`, CANVAS_IMAGE_ASSETS_DIR),
+    imagePathPrefix: `${canvasAssetBase}.assets/${CANVAS_IMAGE_ASSETS_DIR}`,
   };
 }
 
@@ -290,12 +195,12 @@ function getRequestedScreenshotFileName(value: unknown): string | null {
   return trimmed;
 }
 
-function getPrototypePageScreenshotFileName(pageId: unknown): string | null {
+function getCanvasPageScreenshotFileName(pageId: unknown): string | null {
   if (typeof pageId !== 'string') {
     return null;
   }
   const trimmed = pageId.trim();
-  return SAFE_PROTOTYPE_PAGE_ID_PATTERN.test(trimmed) ? `page-${trimmed}.png` : null;
+  return SAFE_CANVAS_PAGE_ID_PATTERN.test(trimmed) ? `page-${trimmed}.png` : null;
 }
 
 function getScreenshotFileName(body: any): string {
@@ -304,13 +209,13 @@ function getScreenshotFileName(body: any): string {
     return requestedFileName;
   }
 
-  const pageScreenshotFileName = getPrototypePageScreenshotFileName(body?.pageId);
+  const pageScreenshotFileName = getCanvasPageScreenshotFileName(body?.pageId);
   if (pageScreenshotFileName) {
     return pageScreenshotFileName;
   }
 
   const safeElementId = toSafeScreenshotFileBase(body?.elementId);
-  return safeElementId ? `embed-${safeElementId}.png` : PROTOTYPE_SCREENSHOT_FILE;
+  return safeElementId ? `embed-${safeElementId}.png` : CANVAS_SCREENSHOT_FILE;
 }
 
 function hydrateStoredCanvasImageFiles(data: any, options?: Pick<CanvasAssetStorageOptions, 'assetBaseDir'>): any {
@@ -487,9 +392,14 @@ function writeScreenshotIfChanged(filePath: string, nextContent: Buffer): boolea
   return true;
 }
 
-function createPrototypeScreenshotResponse(
+function encodeCanvasApiPath(canvasPath: string): string {
+  return canvasPath.split('/').filter(Boolean).map((segment) => encodeURIComponent(segment)).join('/');
+}
+
+function createResourceScreenshotResponse(
   projectRoot: string,
-  prototypeId: string,
+  resourcePath: string,
+  canvasPath: string,
   screenshotPath: string,
   params: {
     changed: boolean;
@@ -500,122 +410,81 @@ function createPrototypeScreenshotResponse(
 ) {
   const updatedAt = Date.now();
   const fileName = path.basename(screenshotPath);
+  const relativeScreenshotPath = path.relative(projectRoot, screenshotPath).split(path.sep).join('/');
+  const latestPath = params.latestPath ? path.relative(projectRoot, params.latestPath).split(path.sep).join('/') : undefined;
+  const assetRelativePath = path.relative(path.dirname(canvasPath), screenshotPath).split(path.sep).join('/');
+  const apiScreenshotUrl = `/api/canvas/resources/${encodeCanvasApiPath(resourcePath)}/${encodeCanvasApiPath(assetRelativePath)}?v=${updatedAt}`;
   return {
     success: true,
     changed: params.changed,
-    prototypeId,
+    resourcePath,
     fileName,
-    name: `prototypes/${prototypeId}/${fileName}`,
-    path: path.relative(projectRoot, screenshotPath).split(path.sep).join('/'),
-    latestPath: params.latestPath ? path.relative(projectRoot, params.latestPath).split(path.sep).join('/') : undefined,
+    name: `${resourcePath}/${fileName}`,
+    path: relativeScreenshotPath,
+    latestPath,
     absoluteFilePath: screenshotPath,
-    screenshotUrl: `/prototypes/${encodeURIComponent(prototypeId)}/${PROTOTYPE_CANVAS_ASSETS_DIR}/${encodeURIComponent(fileName)}?v=${updatedAt}`,
-    apiScreenshotUrl: `/api/canvas/prototypes/${encodeURIComponent(prototypeId)}/${PROTOTYPE_CANVAS_ASSETS_DIR}/${encodeURIComponent(fileName)}?v=${updatedAt}`,
+    screenshotUrl: apiScreenshotUrl,
+    apiScreenshotUrl,
     width: params.width,
     height: params.height,
     updatedAt,
   };
 }
 
-function resolvePrototypeScreenshotPath(
-  projectRoot: string,
-  encodedPrototypeId: string,
-  context: CanvasApiContext = {},
-): {
-  prototypeId: string;
-  prototypeDir: string;
-  assetsDir: string;
-  screenshotPath: string;
-} | { error: string; status: number } {
-  const prototypeId = parseEncodedSegment(encodedPrototypeId);
-  if (!prototypeId) {
-    return { error: 'Invalid prototype id', status: 400 };
-  }
-  if (
-    prototypeId === '.'
-    || prototypeId === '..'
-    || prototypeId.includes('/')
-    || prototypeId.includes('\\')
-  ) {
-    return { error: 'Invalid prototype id', status: 403 };
-  }
-
-  const declaredPrototypesDir = getDeclaredPrototypeWriteDir(projectRoot, context.metadata);
-  if (!declaredPrototypesDir) {
-    return { error: 'Prototype screenshot persistence requires declared prototype write target', status: 424 };
-  }
-
-  const prototypeDir = path.resolve(declaredPrototypesDir, prototypeId);
-  if (!isPathInside(projectRoot, prototypeDir) || !isPathInside(declaredPrototypesDir, prototypeDir)) {
-    return { error: 'Invalid prototype id', status: 403 };
-  }
-  if (!fs.existsSync(prototypeDir) || !fs.statSync(prototypeDir).isDirectory()) {
-    return { error: 'Prototype not found', status: 404 };
-  }
-
-  const assetsDir = path.resolve(prototypeDir, PROTOTYPE_CANVAS_ASSETS_DIR);
-  const screenshotPath = path.resolve(assetsDir, PROTOTYPE_SCREENSHOT_FILE);
-  if (
-    !isPathInside(projectRoot, assetsDir)
-    || !isPathInside(prototypeDir, assetsDir)
-    || !isPathInside(projectRoot, screenshotPath)
-    || !isPathInside(assetsDir, screenshotPath)
-  ) {
-    return { error: 'Invalid screenshot path', status: 403 };
-  }
-  return { prototypeId, prototypeDir, assetsDir, screenshotPath };
-}
-
-function resolvePrototypeScreenshotReadPath(
-  prototypeDir: string,
-  assetsDir: string,
-  action: string,
-): string | null {
-  const normalizedAction = action.replace(/\\/gu, '/');
-  const prefix = `${PROTOTYPE_CANVAS_ASSETS_DIR}/`;
-  if (normalizedAction.startsWith(prefix)) {
-    const fileName = normalizedAction.slice(prefix.length);
-    if (!getRequestedScreenshotFileName(fileName)) {
-      return null;
-    }
-    const requestedPath = path.resolve(assetsDir, fileName);
-    return isPathInside(assetsDir, requestedPath) ? requestedPath : null;
-  }
-
-  const requestedFileName = getRequestedScreenshotFileName(normalizedAction);
-  if (!requestedFileName) {
+function resolveResourceScreenshotReadPath(canvasPath: string, requestedAssetPath: string): string | null {
+  const canvasDir = path.dirname(canvasPath);
+  const assetBase = `${toSafeCanvasAssetFileBase(path.basename(canvasPath, CANVAS_EXT))}.assets`;
+  const normalized = requestedAssetPath.replace(/\\/gu, '/');
+  if (!normalized.startsWith(`${assetBase}/`)) {
     return null;
   }
-
-  const legacyPath = path.resolve(prototypeDir, requestedFileName);
-  return isPathInside(prototypeDir, legacyPath) ? legacyPath : null;
+  const fileName = normalized.slice(assetBase.length + 1);
+  if (!getRequestedScreenshotFileName(fileName)) {
+    return null;
+  }
+  const assetsDir = path.resolve(canvasDir, assetBase);
+  const requestedPath = path.resolve(assetsDir, fileName);
+  return isPathInside(assetsDir, requestedPath) ? requestedPath : null;
 }
 
-function handlePrototypeScreenshotApi(
+function handleResourceCanvasScreenshotApi(
   req: IncomingMessage,
   res: ServerResponse,
   projectRoot: string,
   pathname: string,
-  context: CanvasApiContext = {},
 ): boolean {
-  const match = pathname.match(/^\/api\/canvas\/prototypes\/(.+?)\/(screenshot|canvas-assets\/[a-z0-9][a-z0-9._-]*\.png|[a-z0-9][a-z0-9._-]*\.png)$/iu);
+  const match = pathname.match(/^\/api\/canvas\/resources\/(.+?\.excalidraw)\/(screenshot|[^?]+\.png)$/iu);
   if (!match) {
     return false;
   }
 
-  const resolved = resolvePrototypeScreenshotPath(projectRoot, match[1], context);
-  if ('error' in resolved) {
-    sendJson(res, { error: resolved.error }, { status: resolved.status });
+  const decodedCanvasPath = parseEncodedSegment(match[1]);
+  const action = parseEncodedSegment(match[2]);
+  if (!decodedCanvasPath || !action) {
+    sendJson(res, { error: 'Invalid resource canvas path' }, { status: 400 });
+    return true;
+  }
+  const resolved = resolveResourceFilePath(projectRoot, decodedCanvasPath);
+  if (!resolved) {
+    sendJson(res, { error: 'Invalid resource canvas path' }, { status: 403 });
+    return true;
+  }
+  if (!fs.existsSync(resolved.absolutePath)) {
+    sendJson(res, { error: 'Canvas not found' }, { status: 404 });
     return true;
   }
 
-  const action = match[2];
+  const canvasDir = path.dirname(resolved.absolutePath);
+  const assetBase = `${toSafeCanvasAssetFileBase(path.basename(resolved.absolutePath, CANVAS_EXT))}.assets`;
+  const assetsDir = path.resolve(canvasDir, assetBase);
+  const latestScreenshotPath = path.resolve(assetsDir, CANVAS_SCREENSHOT_FILE);
+
   if (action.endsWith('.png')) {
     if (req.method !== 'GET') {
       sendJson(res, { error: 'Method not allowed' }, { status: 405 });
       return true;
     }
-    const requestedPath = resolvePrototypeScreenshotReadPath(resolved.prototypeDir, resolved.assetsDir, action);
+    const requestedPath = resolveResourceScreenshotReadPath(resolved.absolutePath, action);
     if (!requestedPath) {
       sendJson(res, { error: 'Invalid screenshot path' }, { status: 403 });
       return true;
@@ -637,25 +506,25 @@ function handlePrototypeScreenshotApi(
       sendJson(res, { error: 'Expected PNG data URL' }, { status: 400 });
       return;
     }
-    if (body?.pageId !== undefined && !getPrototypePageScreenshotFileName(body.pageId)) {
+    if (body?.pageId !== undefined && !getCanvasPageScreenshotFileName(body.pageId)) {
       sendJson(res, { error: 'Invalid screenshot path' }, { status: 403 });
       return;
     }
     const screenshotFileName = getScreenshotFileName(body);
-    const screenshotPath = path.resolve(resolved.assetsDir, screenshotFileName);
-    if (!isPathInside(resolved.assetsDir, screenshotPath) || !isPathInside(projectRoot, screenshotPath)) {
+    const screenshotPath = path.resolve(assetsDir, screenshotFileName);
+    if (!isPathInside(assetsDir, screenshotPath) || !isPathInside(projectRoot, screenshotPath)) {
       sendJson(res, { error: 'Invalid screenshot path' }, { status: 403 });
       return;
     }
     const changed = writeScreenshotIfChanged(screenshotPath, png);
-    const latestChanged = screenshotPath === resolved.screenshotPath
+    const latestChanged = screenshotPath === latestScreenshotPath
       ? changed
-      : writeScreenshotIfChanged(resolved.screenshotPath, png);
+      : writeScreenshotIfChanged(latestScreenshotPath, png);
     sendJson(
       res,
-      createPrototypeScreenshotResponse(projectRoot, resolved.prototypeId, screenshotPath, {
+      createResourceScreenshotResponse(projectRoot, resolved.relativePath, resolved.absolutePath, screenshotPath, {
         changed: changed || latestChanged,
-        latestPath: screenshotPath === resolved.screenshotPath ? undefined : resolved.screenshotPath,
+        latestPath: screenshotPath === latestScreenshotPath ? undefined : latestScreenshotPath,
         width: normalizeScreenshotDimension(body?.width),
         height: normalizeScreenshotDimension(body?.height),
       }),
@@ -665,42 +534,53 @@ function handlePrototypeScreenshotApi(
   return true;
 }
 
-function handlePrototypeCanvasApi(
+function createResourceCanvasResponse(
+  projectRoot: string,
+  relativePath: string,
+  canvasPath: string,
+  created = false,
+) {
+  return {
+    success: true,
+    created,
+    name: relativePath,
+    displayName: path.basename(relativePath, CANVAS_EXT),
+    path: path.relative(projectRoot, canvasPath).split(path.sep).join('/'),
+    absoluteFilePath: canvasPath,
+  };
+}
+
+function handleResourceCanvasApi(
   req: IncomingMessage,
   res: ServerResponse,
   projectRoot: string,
   pathname: string,
 ): boolean {
-  const match = pathname.match(/^\/api\/canvas\/prototypes\/(.+?)\/(ensure|canvas\.excalidraw)$/u);
+  const match = pathname.match(/^\/api\/canvas\/resources\/(.+)$/u);
   if (!match) {
     return false;
   }
 
-  const resolved = resolvePrototypeCanvasPath(projectRoot, match[1]);
-  if ('error' in resolved) {
-    sendJson(res, { error: resolved.error }, { status: resolved.status });
+  const decodedPath = parseEncodedSegment(match[1]);
+  if (!decodedPath) {
+    sendJson(res, { error: 'Invalid resource canvas path' }, { status: 400 });
+    return true;
+  }
+  if (path.extname(decodedPath).toLowerCase() !== CANVAS_EXT) {
+    sendJson(res, { error: 'Canvas not found' }, { status: 404 });
+    return true;
+  }
+  const resolved = resolveResourceFilePath(projectRoot, decodedPath);
+  if (!resolved) {
+    sendJson(res, { error: 'Invalid resource canvas path' }, { status: 403 });
     return true;
   }
 
-  const assetOptions = createPrototypeCanvasAssetStorageOptions(resolved.prototypeDir);
-  const action = match[2];
-  if (action === 'ensure') {
-    if (req.method !== 'POST') {
-      sendJson(res, { error: 'Method not allowed' }, { status: 405 });
-      return true;
-    }
-    const created = ensurePrototypeCanvasFile(projectRoot, resolved.prototypeId, resolved.canvasPath);
-    sendJson(
-      res,
-      createPrototypeCanvasResponse(projectRoot, resolved.prototypeId, resolved.canvasPath, created),
-      { status: created ? 201 : 200 },
-    );
-    return true;
-  }
-
+  const assetOptions = createResourceCanvasAssetStorageOptions(resolved.absolutePath);
   if (req.method === 'GET') {
-    ensurePrototypeCanvasFile(projectRoot, resolved.prototypeId, resolved.canvasPath);
-    sendCanvasJsonFile(res, resolved.canvasPath, assetOptions);
+    if (!sendCanvasJsonFile(res, resolved.absolutePath, assetOptions)) {
+      sendJson(res, { error: 'Canvas not found' }, { status: 404 });
+    }
     return true;
   }
 
@@ -714,11 +594,13 @@ function handlePrototypeCanvasApi(
         sendJson(res, { error: 'Expected canvas content' }, { status: 400 });
         return;
       }
-      const { changed } = saveCanvasContent(resolved.canvasPath, body, assetOptions);
+      fs.mkdirSync(path.dirname(resolved.absolutePath), { recursive: true });
+      const existedBefore = fs.existsSync(resolved.absolutePath);
+      const { changed } = saveCanvasContent(resolved.absolutePath, body, assetOptions);
       sendJson(res, {
-        ...createPrototypeCanvasResponse(projectRoot, resolved.prototypeId, resolved.canvasPath),
+        ...createResourceCanvasResponse(projectRoot, resolved.relativePath, resolved.absolutePath, !existedBefore),
         changed,
-      });
+      }, { status: !existedBefore ? 201 : 200 });
     }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
     return true;
   }
@@ -737,114 +619,13 @@ export function handleCanvasApi(
   if (!pathname.startsWith('/api/canvas')) {
     return false;
   }
-  if (handlePrototypeScreenshotApi(req, res, projectRoot, pathname, context)) {
+  if (handleResourceCanvasScreenshotApi(req, res, projectRoot, pathname)) {
     return true;
   }
-  if (handlePrototypeCanvasApi(req, res, projectRoot, pathname)) {
+  if (handleResourceCanvasApi(req, res, projectRoot, pathname)) {
     return true;
   }
-  const canvasDir = path.join(projectRoot, 'src/canvas');
-  if (pathname === '/api/canvas' || pathname === '/api/canvas/') {
-    if (req.method === 'GET') {
-      const items = fs.existsSync(canvasDir)
-        ? fs.readdirSync(canvasDir).filter((file) => file.endsWith(CANVAS_EXT)).map((name) => ({
-            name,
-            displayName: name.replace(new RegExp(`${CANVAS_EXT}$`, 'u'), ''),
-            absoluteFilePath: path.join(canvasDir, name),
-          }))
-        : [];
-      sendJson(res, items);
-      return true;
-    }
-  }
-  if (pathname === '/api/canvas/create' && req.method === 'POST') {
-    readJsonBody(req).then((body) => {
-      fs.mkdirSync(canvasDir, { recursive: true });
-      const displayName = String(body?.displayName || '').trim() || 'Untitled Canvas';
-      const baseName = toKebabBaseName(displayName, 'canvas');
-      const canvasPath = createUniqueFilePath(canvasDir, baseName, CANVAS_EXT);
-      const name = path.basename(canvasPath);
-      fs.writeFileSync(canvasPath, JSON.stringify(createDefaultCanvasData(), null, 2), 'utf8');
-      sendJson(res, {
-        success: true,
-        name,
-        displayName,
-        absoluteFilePath: canvasPath,
-      }, { status: 201 });
-    }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
-    return true;
-  }
-
-  const canvasMatch = pathname.match(/^\/api\/canvas\/(.+?)(\/copy)?$/u);
-  if (canvasMatch) {
-    const canvasName = decodeURIComponent(canvasMatch[1]);
-    if (!canvasName.endsWith(CANVAS_EXT)) {
-      sendJson(res, { error: 'Canvas not found' }, { status: 404 });
-      return true;
-    }
-    const sourcePath = path.resolve(canvasDir, canvasName);
-    if (!isPathInside(canvasDir, sourcePath)) {
-      sendJson(res, { error: 'Invalid canvas name' }, { status: 403 });
-      return true;
-    }
-    const assetOptions = createStandaloneCanvasAssetStorageOptions(canvasDir, sourcePath);
-    if (req.method === 'GET' && !canvasMatch[2]) {
-      if (!sendCanvasJsonFile(res, sourcePath, assetOptions)) {
-        sendJson(res, { error: 'Canvas not found' }, { status: 404 });
-      }
-      return true;
-    }
-    if (req.method === 'POST' && canvasMatch[2] === '/copy') {
-      if (!fs.existsSync(sourcePath)) {
-        sendJson(res, { error: 'Canvas not found' }, { status: 404 });
-        return true;
-      }
-      const ext = CANVAS_EXT;
-      const baseName = path.basename(sourcePath, ext);
-      const nextPath = createUniqueFilePath(canvasDir, `${baseName}-copy`, ext);
-      fs.copyFileSync(sourcePath, nextPath);
-      sendJson(res, {
-        success: true,
-        name: path.basename(nextPath),
-        displayName: path.basename(nextPath, ext),
-        absoluteFilePath: nextPath,
-      }, { status: 201 });
-      return true;
-    }
-    if (req.method === 'PUT' || req.method === 'POST') {
-      readJsonBody(req).then((body) => {
-        if (typeof body?.content === 'string' || typeof body?.content === 'object') {
-          const { changed } = saveCanvasContent(sourcePath, body, assetOptions);
-          sendJson(res, {
-            success: true,
-            changed,
-            name: path.basename(sourcePath),
-            displayName: path.basename(sourcePath, CANVAS_EXT),
-            absoluteFilePath: sourcePath,
-          });
-          return;
-        }
-        if (req.method === 'POST') {
-          sendJson(res, { error: 'Expected canvas content' }, { status: 400 });
-          return;
-        }
-        const nextBaseName = toKebabBaseName(String(body?.newBaseName || ''), path.basename(sourcePath, CANVAS_EXT));
-        const nextPath = createUniqueFilePath(canvasDir, nextBaseName, CANVAS_EXT);
-        fs.renameSync(sourcePath, nextPath);
-        sendJson(res, {
-          success: true,
-          name: path.basename(nextPath),
-          displayName: path.basename(nextPath, CANVAS_EXT),
-          absoluteFilePath: nextPath,
-        });
-      }).catch((error) => sendJson(res, { error: error.message }, { status: 400 }));
-      return true;
-    }
-    if (req.method === 'DELETE') {
-      fs.rmSync(sourcePath, { force: true });
-      sendJson(res, { success: true });
-      return true;
-    }
-  }
-  return false;
+  void context;
+  sendJson(res, { error: 'Canvas not found' }, { status: 404 });
+  return true;
 }

@@ -4,6 +4,7 @@ import type {
   CommentaryHostResource,
   CommentaryModifiedElementSummary,
   CommentaryStyleChangeSet,
+  CommentaryTargetedTextChange,
   CommentaryTextChange,
   PrototypeEditCommentEntry,
   PrototypeEditCommentImageEntry,
@@ -26,6 +27,14 @@ import {
   deserializePromptCardSkillSelection,
   mergePromptCardSkillsIntoPromptNote,
 } from '../../ui/runtime/prompt-card-skills';
+import {
+  ANNOTATION_PANEL_NODE_ID_ATTR,
+  ANNOTATION_PANEL_TARGET_ATTR,
+  readAnnotationSourceNodes,
+  resolveAnnotationElementIdentity,
+  resolveAnnotationNodeIdFromLocator,
+} from './annotation-target';
+import { resolveCommentaryDiagramTarget } from '../../review/diagram-target';
 
 type ResolvedPromptContext = {
   workspacePaths: string[];
@@ -90,9 +99,6 @@ type AnnotationProtoDevRuntime = {
   getState?: unknown;
 };
 
-const ANNOTATION_PANEL_TARGET_ATTR = 'data-axhub-annotation-panel-target';
-const ANNOTATION_PANEL_NODE_ID_ATTR = 'data-axhub-annotation-panel-node-id';
-const ANNOTATION_SOURCE_KEY = '__AXHUB_ANNOTATION_SOURCE__';
 const ANNOTATION_PROTO_DEV_KEY = '__AXHUB_PROTO_DEV__';
 const ANNOTATION_TEXT_MAX_LENGTH = 280;
 
@@ -197,10 +203,6 @@ function readElementAttr(element: Element | null, attr: string): string {
   }
 }
 
-function readAnnotationPanelNodeId(element: Element | null): string {
-  return readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR);
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -291,16 +293,10 @@ function resolveAnnotationAvailablePanels(node: AnnotationPromptNode | null): st
 }
 
 function readAnnotationSourceNode(nodeId: string): AnnotationPromptNode | null {
-  if (!nodeId || typeof window === 'undefined') return null;
+  if (!nodeId) return null;
 
-  const snapshot = (window as unknown as Record<string, unknown>)[ANNOTATION_SOURCE_KEY];
-  const nodes = isPlainObject(snapshot) && Array.isArray(snapshot.nodes)
-    ? snapshot.nodes
-    : [];
-  const matched = nodes.find((node) => (
-    isPlainObject(node) && normalizePathValue(node.id) === nodeId
-  ));
-  return isPlainObject(matched) ? matched : null;
+  const matched = readAnnotationSourceNodes().find((node) => node.id === nodeId);
+  return matched?.raw && isPlainObject(matched.raw) ? matched.raw as AnnotationPromptNode : null;
 }
 
 function readAnnotationProtoDevState(): Record<string, unknown> | null {
@@ -499,6 +495,38 @@ export function createEditorSummariesService(options: {
     }
   }
 
+  function resolvePageScopeFromLocation(): string {
+    if (typeof window === 'undefined') return '';
+    try {
+      const url = new URL(window.location.href);
+      const params = new URLSearchParams(url.search);
+      for (const key of ['editor', 'axhubPane', 'axhubQuickEditContext', 'agentToolbar']) {
+        params.delete(key);
+      }
+      const sortedParams = new URLSearchParams();
+      Array.from(params.entries())
+        .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+          leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue),
+        )
+        .forEach(([key, value]) => sortedParams.append(key, value));
+      const search = sortedParams.toString();
+      return `${url.pathname}${search ? `?${search}` : ''}${url.hash}`;
+    } catch {
+      return String(window.location.pathname ?? '').trim();
+    }
+  }
+
+  function resolveCurrentPageScope(): string {
+    const resource = resolveResourceContext();
+    return (
+      readResourceMetaString(resource, 'commentPageScope') ||
+      readResourceMetaString(resource, 'pageScope') ||
+      resolvePageScopeFromLocation() ||
+      resolveTargetPath() ||
+      ''
+    );
+  }
+
   function getUndoStack(): readonly Transaction[] {
     return state.transactionManager?.getUndoStack() ?? [];
   }
@@ -513,10 +541,8 @@ export function createEditorSummariesService(options: {
     if (textCommentMeta) {
       return textCommentMeta.elementKey;
     }
-    const annotationNodeId = readAnnotationPanelNodeId(element);
-    if (annotationNodeId) {
-      return `annotation-panel:${annotationNodeId}`;
-    }
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) return annotationIdentity.elementKey;
     const locator = createElementLocator(element);
     return generateStableElementKey(element, locator.shadowHostChain);
   }
@@ -672,6 +698,24 @@ export function createEditorSummariesService(options: {
     return out;
   }
 
+  function collectTargetedTextChanges(): CommentaryTargetedTextChange[] {
+    return aggregateTransactionsByElement(getActiveTransactions()).flatMap((summary) => {
+      const textChange = summary.netEffect.textChange;
+      if (!textChange) return [];
+
+      const before = normalizeInlineText(textChange.before);
+      const after = normalizeInlineText(textChange.after);
+      if (before === after) return [];
+
+      return [{
+        elementKey: summary.elementKey,
+        locator: summary.netEffect.locator,
+        before,
+        after,
+      }];
+    });
+  }
+
   function collectStyleCss(): string {
     const summaries = aggregateTransactionsByElement(getActiveTransactions());
     const rules: string[] = [];
@@ -747,6 +791,7 @@ export function createEditorSummariesService(options: {
     skillIds?: string[];
     actions: string[];
     imageCount: number;
+    imageAssetPaths: string[];
     dirtySince: number;
   }> {
     return Array.from(state.editMetaByKey.values())
@@ -777,7 +822,16 @@ export function createEditorSummariesService(options: {
     } = {},
   ): ElementSnapshot {
     const element = tryLocateElement(locator);
-    const currentText = readElementText(element) || formatTextFallback(options.fallbackText);
+    const isReferenceOnlyDiagram = (() => {
+      try {
+        return Boolean(resolveCommentaryDiagramTarget(element));
+      } catch {
+        return false;
+      }
+    })();
+    const currentText = isReferenceOnlyDiagram
+      ? ''
+      : readElementText(element) || formatTextFallback(options.fallbackText);
 
     return {
       tagName: inferTagName(locator, options.fallbackLabel ?? ''),
@@ -814,10 +868,11 @@ export function createEditorSummariesService(options: {
   }
 
   function resolveAnnotationPromptContext(locator: ElementLocator): AnnotationPromptContext | null {
-    const element = tryLocateElement(locator);
-    if (readElementAttr(element, ANNOTATION_PANEL_TARGET_ATTR) !== 'true') return null;
-
-    const nodeId = readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR);
+    const nodeId = resolveAnnotationNodeIdFromLocator(locator) || (() => {
+      const element = tryLocateElement(locator);
+      if (readElementAttr(element, ANNOTATION_PANEL_TARGET_ATTR) !== 'true') return '';
+      return readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR);
+    })();
     if (!nodeId) return null;
 
     return {
@@ -1072,6 +1127,16 @@ export function createEditorSummariesService(options: {
       );
   }
 
+  function isPersistedCurrentPageMeta(
+    meta: Pick<CopyPromptPersistedCommentMeta, 'pageScope'>,
+    currentPageScope: string,
+  ): boolean {
+    const normalizedPageScope = normalizePathValue(meta.pageScope);
+    const normalizedCurrentPageScope = normalizePathValue(currentPageScope);
+    if (!normalizedPageScope) return true;
+    return Boolean(normalizedCurrentPageScope && normalizedPageScope === normalizedCurrentPageScope);
+  }
+
   function buildDefaultCopyPrompt(): string {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
@@ -1080,8 +1145,16 @@ export function createEditorSummariesService(options: {
     const noteOnlyMetas = collectNoteOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey))),
     );
+    const currentPageScope = resolveCurrentPageScope();
+    const hasCurrentPageRuntimeItems =
+      summaries.length > 0
+      || noteOnlyMetas.length > 0
+      || moveSummaries.length > 0;
+    const effectivePersistedCommentMetas = hasCurrentPageRuntimeItems
+      ? persistedCommentMetas.filter((meta) => !isPersistedCurrentPageMeta(meta, currentPageScope))
+      : persistedCommentMetas;
     if (
-      persistedCommentMetas.length === 0 &&
+      effectivePersistedCommentMetas.length === 0 &&
       summaries.length === 0 &&
       noteOnlyMetas.length === 0 &&
       moveSummaries.length === 0
@@ -1123,67 +1196,67 @@ export function createEditorSummariesService(options: {
 
     let itemIndex = 1;
 
-    if (persistedCommentMetas.length > 0) {
-      for (const meta of persistedCommentMetas) {
+    for (const meta of effectivePersistedCommentMetas) {
+      appendChangeItem(lines, {
+        index: itemIndex,
+        locator: meta.locator,
+        fallbackLabel: meta.label,
+        actions: meta.actions,
+        pageScope: meta.pageScope,
+        imageAssetPaths: meta.imageAssetPaths,
+        note: meta.note,
+      });
+      itemIndex += 1;
+    }
+
+    for (const summary of summaries) {
+      const meta = state.editMetaByKey.get(summary.elementKey);
+      const note = buildPromptNoteWithSkills(meta?.note ?? '', meta);
+      const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
+      const imageAssetPaths = collectPromptImageAssetPaths(meta?.images);
+
+      appendChangeItem(lines, {
+        index: itemIndex,
+        locator: summary.netEffect.locator,
+        fallbackLabel: summary.fullLabel || summary.label,
+        fallbackText: summary.netEffect.textChange?.after ?? summary.netEffect.textChange?.before ?? '',
+        debugFileHint: includeDebugFileHint ? formatDebugSource(summary.debugSource) : '',
+        pageScope: currentPageScope,
+        imageAssetPaths,
+        actions,
+        note,
+      });
+      itemIndex += 1;
+    }
+
+    for (const meta of noteOnlyMetas) {
+      const comment = isTextCommentKey(meta.elementKey)
+        ? findTextComment(meta.elementKey)
+        : null;
+
+      if (comment) {
+        appendTextCommentItem(lines, {
+          index: itemIndex,
+          comment,
+          note: meta.note,
+        });
+      } else if (
+        meta.note
+        || (meta.skillIds?.length ?? 0) > 0
+        || meta.actions.length > 0
+        || meta.imageAssetPaths.length > 0
+      ) {
         appendChangeItem(lines, {
           index: itemIndex,
           locator: meta.locator,
           fallbackLabel: meta.label,
           actions: meta.actions,
-          pageScope: meta.pageScope,
+          pageScope: currentPageScope,
           imageAssetPaths: meta.imageAssetPaths,
           note: meta.note,
         });
-        itemIndex += 1;
       }
-    } else {
-      for (const summary of summaries) {
-        const meta = state.editMetaByKey.get(summary.elementKey);
-        const note = buildPromptNoteWithSkills(meta?.note ?? '', meta);
-        const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
-        const imageAssetPaths = collectPromptImageAssetPaths(meta?.images);
-
-        appendChangeItem(lines, {
-          index: itemIndex,
-          locator: summary.netEffect.locator,
-          fallbackLabel: summary.fullLabel || summary.label,
-          fallbackText: summary.netEffect.textChange?.after ?? summary.netEffect.textChange?.before ?? '',
-          debugFileHint: includeDebugFileHint ? formatDebugSource(summary.debugSource) : '',
-          imageAssetPaths,
-          actions,
-          note,
-        });
-        itemIndex += 1;
-      }
-
-      for (const meta of noteOnlyMetas) {
-        const comment = isTextCommentKey(meta.elementKey)
-          ? findTextComment(meta.elementKey)
-          : null;
-
-        if (comment) {
-          appendTextCommentItem(lines, {
-            index: itemIndex,
-            comment,
-            note: meta.note,
-          });
-        } else if (
-          meta.note
-          || (meta.skillIds?.length ?? 0) > 0
-          || meta.actions.length > 0
-          || meta.imageAssetPaths.length > 0
-        ) {
-          appendChangeItem(lines, {
-            index: itemIndex,
-            locator: meta.locator,
-            fallbackLabel: meta.label,
-            actions: meta.actions,
-            imageAssetPaths: meta.imageAssetPaths,
-            note: meta.note,
-          });
-        }
-        itemIndex += 1;
-      }
+      itemIndex += 1;
     }
 
     if (moveSummaries.length > 0) {
@@ -1279,7 +1352,11 @@ export function createEditorSummariesService(options: {
   }): string {
     const { summaries, commentOnlyMetas, moveSummaries } = params;
     const mode = params.mode ?? 'initial';
-    if (summaries.length === 0 && commentOnlyMetas.length === 0 && moveSummaries.length === 0) return '';
+    if (
+      summaries.length === 0
+      && commentOnlyMetas.length === 0
+      && moveSummaries.length === 0
+    ) return '';
 
     const currentFilePath = resolveCurrentFilePath();
     const includeDebugFileHint = !hasExplicitHostFilePath();
@@ -1402,18 +1479,22 @@ export function createEditorSummariesService(options: {
 
   function buildSaveRunPromptForElement(element: Element | null): string {
     const elementKey = resolveElementKey(element);
-    if (!elementKey) return '';
+    return buildSaveRunPromptForElementKey(elementKey);
+  }
+
+  function buildSaveRunPromptForElementKey(elementKey: string | null | undefined): string {
+    const normalizedElementKey = String(elementKey || '').trim();
+    if (!normalizedElementKey) return '';
 
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack)
-      .filter((summary) => String(summary.elementKey) === elementKey);
+      .filter((summary) => String(summary.elementKey) === normalizedElementKey);
     const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey))),
-    ).filter((meta) => meta.elementKey === elementKey);
+    ).filter((meta) => meta.elementKey === normalizedElementKey);
     const moveSummaries = collectMoveSummariesWithKeys(undoStack)
-      .filter((summary) => summary.elementKey === elementKey)
+      .filter((summary) => summary.elementKey === normalizedElementKey)
       .map(({ elementKey: _elementKey, ...summary }) => summary);
-
     return buildSaveRunPromptFromParts({
       mode: 'initial',
       summaries,
@@ -1435,7 +1516,6 @@ export function createEditorSummariesService(options: {
     const moveSummaries = collectMoveSummariesWithKeys(undoStack)
       .filter((summary) => summary.elementKey === elementKey)
       .map(({ elementKey: _elementKey, ...summary }) => summary);
-
     return buildSaveRunPromptFromParts({
       mode: 'append',
       summaries,
@@ -1514,12 +1594,14 @@ export function createEditorSummariesService(options: {
     formatSelectorPath,
     formatElementLabelFromLocator,
     collectTextChanges,
+    collectTargetedTextChanges,
     collectStyleCss,
     collectStyleChanges,
     collectMoveSummaries,
     buildSaveRunPrompt,
     buildAppendSaveRunPrompt,
     buildSaveRunPromptForElement,
+    buildSaveRunPromptForElementKey,
     buildAppendSaveRunPromptForElement,
     buildCopyPrompt,
     getCopyPromptContext,

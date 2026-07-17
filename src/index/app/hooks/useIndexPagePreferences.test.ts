@@ -81,16 +81,22 @@ describe('useIndexPagePreferences source', () => {
 
     expect(source).toContain('annotationPromptClient: PromptClientPreference;');
     expect(source).toContain('annotationModel: string | null;');
+    expect(source).toContain('agentRunConcurrency: number;');
     expect(source).toContain('const [annotationPromptClient, setAnnotationPromptClient] = useState<PromptClientPreference>(null);');
     expect(source).toContain('const [annotationModel, setAnnotationModel] = useState<string | null>(null);');
+    expect(source).toContain('const [agentRunConcurrency, setAgentRunConcurrency] = useState(5);');
     expect(initialEffectSource).toContain('setAnnotationPromptClient(normalizePromptClientPreference(config?.automation?.annotationPromptClient));');
     expect(initialEffectSource).toContain('setAnnotationModel(config?.automation?.annotationModel || null);');
+    expect(initialEffectSource).toContain('setAgentRunConcurrency(sanitizeAgentRunConcurrency(config?.automation?.agentRunConcurrency));');
     expect(handleSettingsSource).toContain('setAnnotationPromptClient(normalizePromptClientPreference(config?.automation?.annotationPromptClient));');
     expect(handleSettingsSource).toContain('setAnnotationModel(config?.automation?.annotationModel || null);');
+    expect(handleSettingsSource).toContain('setAgentRunConcurrency(sanitizeAgentRunConcurrency(config?.automation?.agentRunConcurrency));');
     expect(source).toContain('setAnnotationPromptClient(null);');
     expect(source).toContain('setAnnotationModel(null);');
+    expect(source).toContain('setAgentRunConcurrency(5);');
     expect(source).toContain('annotationPromptClient,');
     expect(source).toContain('annotationModel,');
+    expect(source).toContain('agentRunConcurrency,');
   });
 
   it('restores default design state from project defaults', () => {

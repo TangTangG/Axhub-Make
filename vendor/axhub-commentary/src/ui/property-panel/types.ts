@@ -16,18 +16,17 @@ import type {
   SessionActivityListener,
   SessionActivityTarget,
 } from '../../core/editor/contracts';
-import type {
-  CommentaryTweakEntry,
-  CommentaryTweakSchema,
-  CommentaryTweakValues,
-} from '../../tweak/protocol';
+import type { CommentaryTweakEntry, CommentaryTweakSchema, CommentaryTweakValues } from '../../tweak/protocol';
 import type {
   WebEditorInteractionProfile,
   WebEditorDesignAdjustmentTool,
   WebEditorUiSettings,
 } from '../../core/editor/ui-settings';
 import type {
+  CommentaryClearEditsOptions,
+  CommentarySkillOption,
   CommentaryHostToolbarAction,
+  CommentaryHostToolbarActionResult,
   CommentaryHostToolbarState,
   CommentaryHostToolbarStateListener,
   CommentaryToolbarMode,
@@ -58,10 +57,7 @@ export interface PropertyPanelOptions {
    * enabled=true: normal selection mode
    * enabled=false: interaction mode (selection disabled)
    */
-  onToggleSelectionMode?: (
-    enabled: boolean,
-    options?: { allowPageInteraction?: boolean },
-  ) => void;
+  onToggleSelectionMode?: (enabled: boolean, options?: { allowPageInteraction?: boolean }) => void;
 
   /** Undo action */
   onUndo?: () => void;
@@ -78,7 +74,9 @@ export interface PropertyPanelOptions {
   /** Wake Agent after the host confirms the backend is ready */
   onWakeAgent?: () => boolean | Promise<boolean>;
   /** Clear current edits + cache */
-  onClearEdits?: (options?: { skipConfirm?: boolean }) => void | Promise<void>;
+  onClearEdits?: (options?: CommentaryClearEditsOptions) => void | Promise<void>;
+  /** Whether the current prototype has persisted comments in any page scope. */
+  hasPrototypeComments?: () => boolean;
   /** Clear the current element's related edits, note, and local modifications */
   onClearCurrentElementEdits?: (element: Element) => boolean | Promise<boolean>;
   /** Delete the current annotation node and its runtime marker. */
@@ -92,6 +90,26 @@ export interface PropertyPanelOptions {
   toolbarMode?: CommentaryToolbarMode;
   /** Hide UI affordances that directly execute Agent/agent tasks. */
   hideExecutionControls?: boolean;
+  /** Single-line summary for the host-managed AI execution settings. */
+  aiExecutionConfigSummary?: string;
+  /** Whether the host-managed AI execution settings are complete enough to run. */
+  aiExecutionConfigConfigured?: boolean;
+  /** Selected ACP provider for page-inline AI execution. */
+  aiExecutionProvider?: string;
+  /** Project/workspace path for page-inline AI execution. */
+  aiExecutionWorkspacePath?: string;
+  /** Maximum concurrent page-inline AI execution runs. */
+  aiExecutionRunConcurrency?: number;
+  /** Provider options surfaced by the host runtime. */
+  aiExecutionProviderOptions?: Array<{
+    value: string;
+    label: string;
+    disabled?: boolean;
+  }>;
+  /** Execute a host toolbar action from the inline toolbar/settings surface. */
+  onHostToolbarAction?: (
+    action: CommentaryHostToolbarAction,
+  ) => CommentaryHostToolbarActionResult | Promise<CommentaryHostToolbarActionResult>;
   /** Notify host toolbar consumers whenever the runtime toolbar state changes */
   onHostToolbarStateChange?: (state: CommentaryHostToolbarState) => void;
   /** Enable local annotation injection through the host runtime. */
@@ -106,6 +124,16 @@ export interface PropertyPanelOptions {
   externalEditingStatusDescription?: string;
   /** Optional skill document source used when copying the Agent skill install prompt */
   skillInstallSource?: string;
+  /** Optional Chrome-provided skill list shown in the inline settings dialog. */
+  commentarySkillOptions?: CommentarySkillOption[];
+  /** Initial selected Chrome commentary skill IDs. */
+  commentarySelectedSkillIds?: string[];
+  /** Whether the host has persisted a skill selection, including an empty one. */
+  commentarySkillSettingsConfigured?: boolean;
+  /** Load selected Chrome commentary skill IDs from the host. */
+  onCommentarySkillSelectionLoad?: () => readonly string[] | Promise<readonly string[]>;
+  /** Persist selected Chrome commentary skill IDs through the host. */
+  onCommentarySkillSelectionChange?: (skillIds: string[]) => void | Promise<void>;
   /** Whether the Agent bridge is currently online */
   getAgentBridgeAvailable?: () => boolean;
   /** Whether the Agent bridge websocket is connected and ready */
@@ -127,10 +155,7 @@ export interface PropertyPanelOptions {
   /** Refresh Agent provider availability snapshots */
   refreshAgentProviderAvailabilities?: (providers?: readonly string[]) => Promise<void>;
   /** Subscribe to the current page Agent session activity stream */
-  subscribeSessionActivity?: (
-    target: SessionActivityTarget,
-    listener: SessionActivityListener,
-  ) => () => void;
+  subscribeSessionActivity?: (target: SessionActivityTarget, listener: SessionActivityListener) => () => void;
   /** Dismiss the current Agent task terminal state for an element */
   dismissElementAgentTaskState?: (element: Element) => void;
   /** Dismiss all currently visible Agent task terminal states */
@@ -140,10 +165,7 @@ export interface PropertyPanelOptions {
   /** Pre-flight check to block sending only the current element prompt into Agent */
   getSendCurrentElementPromptToAgentBlockReason?: (element: Element | null) => string | undefined;
   /** Optional design-tool export support for the selected element */
-  canExportSelectionToDesignTool?: (
-    tool: WebEditorDesignAdjustmentTool,
-    element?: Element | null,
-  ) => boolean;
+  canExportSelectionToDesignTool?: (tool: WebEditorDesignAdjustmentTool, element?: Element | null) => boolean;
   /** Export the current selection to the configured design tool */
   onExportSelectionToDesignTool?: (
     tool: WebEditorDesignAdjustmentTool,
@@ -189,10 +211,7 @@ export interface PropertyPanelOptions {
   getTweakValues?: (element: Element | null) => CommentaryTweakValues | null;
 
   /** Commit tweak changes for the selected element */
-  onUpdateTweakValues?: (
-    element: Element,
-    patch: CommentaryTweakValues,
-  ) => void | Promise<void>;
+  onUpdateTweakValues?: (element: Element, patch: CommentaryTweakValues) => void | Promise<void>;
 
   /** Subscribe to tweak changes emitted by the active runtime adapter */
   subscribeTweak?: (listener: () => void) => () => void;
@@ -208,6 +227,14 @@ export interface PropertyPanelOptions {
 
   /** Read the saved AI note images for the current element */
   getAiNoteImages?: (element: Element | null) => PromptImageAttachment[];
+  /** Whether prompt/note image attachments are enabled for this host. */
+  enableImageAttachments?: boolean;
+
+  /** Let the host validate or persist incoming images before they are attached. */
+  onPrepareAiNoteImages?: (
+    element: Element,
+    images: readonly PromptImageAttachment[],
+  ) => readonly PromptImageAttachment[] | Promise<readonly PromptImageAttachment[]>;
 
   /** Whether local annotation markdown editing is available for the selected element */
   canEditAnnotationMarkdown?: (element: Element | null) => boolean;
@@ -225,10 +252,7 @@ export interface PropertyPanelOptions {
   getHoveredElement?: () => Element | null;
 
   /** Persist a marker anchor for the target element using viewport coordinates */
-  onRememberSelectionAnchor?: (
-    element: Element,
-    selectionAnchor?: { clientX: number; clientY: number },
-  ) => void;
+  onRememberSelectionAnchor?: (element: Element, selectionAnchor?: { clientX: number; clientY: number }) => void;
 
   /** Update the saved AI note for the current element or current page */
   onAiNoteChange?: (
@@ -238,10 +262,7 @@ export interface PropertyPanelOptions {
   ) => void | Promise<void>;
 
   /** Update the saved AI note images for the current element */
-  onAiNoteImagesChange?: (
-    element: Element,
-    images: readonly PromptImageAttachment[],
-  ) => void | Promise<void>;
+  onAiNoteImagesChange?: (element: Element, images: readonly PromptImageAttachment[]) => void | Promise<void>;
 
   /** Collapse the whole comment/editor tool */
   onRequestClose?: () => void;
@@ -296,7 +317,6 @@ export interface PropertyPanelOptions {
   onSelectionChromeVisibleChange?: (visible: boolean) => void;
 
   onPromptCardVisibleChange?: (visible: boolean) => void;
-
 }
 
 // =============================================================================

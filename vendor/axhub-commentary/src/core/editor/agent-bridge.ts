@@ -6,6 +6,7 @@ import type {
   EditorAgentBridgeService,
   EditorPersistenceService,
   EditorSummariesService,
+  ExternalEditingElementTarget,
   AgentProviderAvailability,
   SessionActivityItem,
   SessionActivityListener,
@@ -24,6 +25,7 @@ import type {
 } from './state';
 import type { WebEditorElementKey } from '../../web-editor-types';
 import { resolveTextCommentElementMeta } from './text-comment-target';
+import { resolveAnnotationElementIdentity } from './annotation-target';
 import {
   AGENT_RUN_TIMEOUT_MS,
   AGENT_BRIDGE_CONFIG_ERROR,
@@ -948,6 +950,51 @@ export function createAgentBridgeService(options: {
     return isConversationReusable(getCurrentConversationState());
   }
 
+  function resolveElementReusableConversation(
+    element: Element | null,
+    scopeKey = resolveScopeKey(),
+  ): PageAgentConversationState | null {
+    if (element?.isConnected) {
+      const currentTask = getElementTaskState(element);
+      if (
+        currentTask
+        && !currentTask.dismissed
+        && isTaskRunning(currentTask)
+        && currentTask.scopeKey === scopeKey
+        && typeof currentTask.sessionId === 'string'
+        && currentTask.sessionId.trim()
+      ) {
+        return {
+          scopeKey,
+          sessionId: currentTask.sessionId.trim(),
+          provider: currentTask.provider,
+          projectPath,
+          createdAt: currentTask.startedAt,
+          lastUsedAt: currentTask.updatedAt,
+          sentCount: 0,
+          expiresAt: Date.now() + AGENT_CONVERSATION_TTL_MS,
+          invalidated: false,
+          sessionPath: currentTask.sessionPath,
+          sessionUrl: currentTask.sessionUrl,
+        };
+      }
+    }
+
+    const pageHasRunningTask = getVisibleTaskStates().some((task) =>
+      task.scopeKey === scopeKey && isTaskRunning(task),
+    );
+    if (pageHasRunningTask) {
+      return null;
+    }
+
+    const activeConversation = getConversationStateForCurrentPage();
+    return isConversationReusable(activeConversation) ? activeConversation : null;
+  }
+
+  function canReuseConversationForElement(element: Element | null): boolean {
+    return Boolean(resolveElementReusableConversation(element));
+  }
+
   function invalidateCurrentConversation(): void {
     invalidateConversationScope(resolveScopeKey());
   }
@@ -1136,18 +1183,14 @@ export function createAgentBridgeService(options: {
       return;
     }
 
-    const now = Date.now();
-    const timedOutTask: ElementAgentTaskState = {
-      ...currentTask,
-      status: 'error',
-      message: '状态未知，AI 修改超时',
-      updatedAt: now,
-      lastEventAt: now,
-      errorCode: 'EXTERNAL_EDITING_TIMEOUT',
-      recoveryPending: false,
-    };
-    state.externalEditingTaskByElementKey.set(elementKey, timedOutTask);
-    upsertTaskState(timedOutTask);
+    logInfo('Releasing stale external editing task after local watchdog elapsed', {
+      requestId: currentTask.requestId,
+      sessionId: currentTask.sessionId,
+      provider: currentTask.provider,
+      scopeKey: currentTask.scopeKey,
+      elementKey,
+    });
+    removeTaskStateByRequestId(currentTask.requestId);
   }
 
   function syncExternalEditingTimeout(task: ElementAgentTaskState): void {
@@ -1224,9 +1267,9 @@ export function createAgentBridgeService(options: {
           if (isTaskRunning(task) && task.origin === 'external-editing') {
             return true;
           }
-          // Persist recent terminal-state tasks so error/completed survives brief refreshes
+          // Persist recent errors so failures survive brief refreshes; completed tasks are cleanup-only.
           if (
-            (task.status === 'error' || task.status === 'completed')
+            task.status === 'error'
             && task.origin === 'external-editing'
             && (now - task.updatedAt) < TERMINAL_STATE_TTL_MS
           ) {
@@ -1293,7 +1336,7 @@ export function createAgentBridgeService(options: {
   }
 
   function isVisibleTask(task: ElementAgentTaskState | null | undefined): task is ElementAgentTaskState {
-    return Boolean(task && !task.dismissed && !task.recoveryPending);
+    return Boolean(task && !task.dismissed && (!task.recoveryPending || isTaskRunning(task)));
   }
 
   function getExternalEditingTaskStateByKey(
@@ -1315,6 +1358,10 @@ export function createAgentBridgeService(options: {
     const textCommentMeta = resolveTextCommentElementMeta(state, element);
     if (textCommentMeta) {
       return getDisplayTaskStateByKey(textCommentMeta.elementKey);
+    }
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) {
+      return getDisplayTaskStateByKey(annotationIdentity.elementKey);
     }
     const locator = createElementLocator(element);
     const elementKey = generateStableElementKey(element, locator.shadowHostChain);
@@ -1367,6 +1414,14 @@ export function createAgentBridgeService(options: {
         label: textCommentMeta.label,
       };
     }
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) {
+      return {
+        elementKey: annotationIdentity.elementKey,
+        locator: annotationIdentity.locator,
+        label: annotationIdentity.label,
+      };
+    }
     const existingMeta = options.changes.getMetaForElement?.(element);
     if (existingMeta) {
       return {
@@ -1383,6 +1438,86 @@ export function createAgentBridgeService(options: {
       locator,
       label,
     };
+  }
+
+  function normalizeExternalEditingElementTarget(
+    target: ExternalEditingElementTarget,
+  ): ExternalEditingElementTarget | null {
+    const elementKey = String(target?.elementKey ?? '').trim();
+    if (!elementKey || !target?.locator) {
+      return null;
+    }
+    const label = String(target.label ?? '').trim() || elementKey;
+    return {
+      elementKey,
+      locator: target.locator,
+      label,
+    };
+  }
+
+  function scheduleExternalEditingCompletedRemoval(
+    elementKey: WebEditorElementKey,
+    requestId: string,
+  ): void {
+    window.setTimeout(() => {
+      const currentTask = state.externalEditingTaskByElementKey.get(elementKey);
+      if (currentTask && currentTask.requestId === requestId && currentTask.status === 'completed') {
+        state.externalEditingTaskByElementKey.delete(elementKey);
+        removeTaskStateByRequestId(requestId);
+      }
+    }, AGENT_COMPLETED_TASK_AUTO_DISMISS_MS);
+  }
+
+  function upsertExternalEditingTaskState(
+    target: ExternalEditingElementTarget,
+    status: 'created' | 'completed' | 'error',
+    taskRef?: Partial<ExternalEditingTaskRef> | null,
+  ): ElementAgentTaskState | null {
+    const normalizedTarget = normalizeExternalEditingElementTarget(target);
+    if (!normalizedTarget) return null;
+
+    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
+    const existingTask = state.externalEditingTaskByElementKey.get(normalizedTarget.elementKey)
+      ?? state.agentTaskByElementKey.get(normalizedTarget.elementKey)
+      ?? null;
+    const now = Date.now();
+    const fallbackProvider = String(resolveConfiguredProvider() || '').trim() || null;
+    const scopeKey = existingTask?.origin === 'external-editing'
+      ? existingTask.scopeKey
+      : resolveExternalEditingScopeKey();
+    const isCompleted = status === 'completed';
+    const isError = status === 'error';
+    const nextTask: ElementAgentTaskState = {
+      scopeKey,
+      elementKey: normalizedTarget.elementKey,
+      locator: normalizedTarget.locator,
+      label: normalizedTarget.label,
+      requestId:
+        normalizedTaskRef?.requestId
+        ?? existingTask?.requestId
+        ?? `external_editing_${normalizedTarget.elementKey}`,
+      sessionId: normalizedTaskRef?.sessionId ?? existingTask?.sessionId ?? null,
+      sessionPath: null,
+      sessionUrl: null,
+      provider: normalizedTaskRef?.provider ?? existingTask?.provider ?? fallbackProvider,
+      status,
+      message: isCompleted ? '修改完成' : isError ? 'AI 修改失败' : 'AI 编辑中',
+      startedAt: existingTask?.startedAt ?? now,
+      updatedAt: now,
+      dismissed: false,
+      recovery: 'live',
+      recoveryPending: false,
+      lastEventAt: now,
+      errorCode: isError ? 'EXTERNAL_EDITING_ERROR' : null,
+      origin: 'external-editing',
+      taskRef: normalizedTaskRef,
+    };
+
+    upsertTaskState(nextTask);
+    if (isCompleted) {
+      scheduleExternalEditingCompletedRemoval(nextTask.elementKey, nextTask.requestId);
+    }
+    return nextTask;
   }
 
   function inferPromptImageExtension(mimeType: unknown, fileName: unknown): string {
@@ -1565,6 +1700,9 @@ export function createAgentBridgeService(options: {
     const previousByElementKey = state.agentTaskByElementKey.get(task.elementKey);
     state.agentTaskByElementKey.set(task.elementKey, task);
     state.agentTaskByRequestId.set(task.requestId, task);
+    if (task.origin === 'external-editing') {
+      state.externalEditingTaskByElementKey.set(task.elementKey, task);
+    }
     if (previousByElementKey && previousByElementKey.requestId !== task.requestId) {
       reindexTaskStateByRequestId(previousByElementKey.requestId);
     }
@@ -1585,6 +1723,9 @@ export function createAgentBridgeService(options: {
     for (const currentTask of currentTasks) {
       if (currentTask.origin === 'external-editing') {
         clearExternalEditingTimeoutTimer(currentTask.elementKey);
+        if (state.externalEditingTaskByElementKey.get(currentTask.elementKey)?.requestId === requestId) {
+          state.externalEditingTaskByElementKey.delete(currentTask.elementKey);
+        }
       }
       if (state.agentTaskByElementKey.get(currentTask.elementKey)?.requestId === requestId) {
         state.agentTaskByElementKey.delete(currentTask.elementKey);
@@ -1757,60 +1898,94 @@ export function createAgentBridgeService(options: {
   ): ElementAgentTaskState | null {
     if (!element?.isConnected) return null;
     const meta = resolveElementTaskMeta(element);
-    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
-    const existingTask = state.externalEditingTaskByElementKey.get(meta.elementKey)
-      ?? state.agentTaskByElementKey.get(meta.elementKey)
+    return upsertExternalEditingTaskState(meta, 'created', taskRef);
+  }
+
+  function setExternalEditingStateByElementKey(
+    target: ExternalEditingElementTarget,
+    taskRef?: Partial<ExternalEditingTaskRef> | null,
+  ): ElementAgentTaskState | null {
+    return upsertExternalEditingTaskState(target, 'created', taskRef);
+  }
+
+  function getExternalEditingTaskForElementKey(
+    elementKey: WebEditorElementKey,
+  ): ElementAgentTaskState | null {
+    const task =
+      state.externalEditingTaskByElementKey.get(elementKey)
+      ?? state.agentTaskByElementKey.get(elementKey)
       ?? null;
-    const now = Date.now();
-    const fallbackProvider = String(resolveConfiguredProvider() || '').trim() || null;
-    const scopeKey = existingTask?.origin === 'external-editing'
-      ? existingTask.scopeKey
-      : resolveExternalEditingScopeKey();
-    const nextTask: ElementAgentTaskState = {
-      scopeKey,
-      elementKey: meta.elementKey,
-      locator: meta.locator,
-      label: meta.label,
-      requestId: normalizedTaskRef?.requestId ?? existingTask?.requestId ?? `external_editing_${meta.elementKey}`,
-      sessionId: normalizedTaskRef?.sessionId ?? existingTask?.sessionId ?? null,
-      sessionPath: null,
-      sessionUrl: null,
-      provider: normalizedTaskRef?.provider ?? existingTask?.provider ?? fallbackProvider,
-      status: 'created',
-      message: 'AI 编辑中',
-      startedAt: existingTask?.startedAt ?? now,
-      updatedAt: now,
-      dismissed: false,
-      recovery: 'live',
-      recoveryPending: false,
-      lastEventAt: now,
-      errorCode: null,
-      origin: 'external-editing',
-      taskRef: normalizedTaskRef,
-    };
-    state.externalEditingTaskByElementKey.set(meta.elementKey, nextTask);
-    // Also persist via the main task store so the task survives page refresh
-    upsertTaskState(nextTask);
-    return nextTask;
+    return task?.origin === 'external-editing' ? task : null;
+  }
+
+  function matchesExternalTaskRef(
+    task: ElementAgentTaskState | null,
+    taskRef?: Partial<ExternalEditingTaskRef> | null,
+  ): boolean {
+    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
+    if (!normalizedTaskRef?.requestId) return true;
+    if (!task?.requestId) return false;
+    return task.requestId === normalizedTaskRef.requestId;
   }
 
   function clearExternalEditingState(
     element: Element,
-    _taskRef?: Partial<ExternalEditingTaskRef> | null,
+    taskRef?: Partial<ExternalEditingTaskRef> | null,
   ): boolean {
     if (!element?.isConnected) return false;
     const meta = resolveElementTaskMeta(element);
-    const deleted = state.externalEditingTaskByElementKey.delete(meta.elementKey);
-    // Also clean up from the persisted task store
-    const persistedTask = state.agentTaskByElementKey.get(meta.elementKey);
-    if (persistedTask?.origin === 'external-editing') {
-      removeTaskStateByRequestId(persistedTask.requestId);
+    const persistedTask = getExternalEditingTaskForElementKey(meta.elementKey);
+    if (!persistedTask || !matchesExternalTaskRef(persistedTask, taskRef)) {
+      return false;
     }
+    const deleted = state.externalEditingTaskByElementKey.delete(meta.elementKey);
+    removeTaskStateByRequestId(persistedTask.requestId);
     if (deleted) {
       options.changes.markElementEditsHandled(element);
       notifyTaskStateChange();
     }
     return deleted;
+  }
+
+  function clearExternalEditingStateByElementKey(
+    elementKey: WebEditorElementKey,
+    taskRef?: Partial<ExternalEditingTaskRef> | null,
+  ): boolean {
+    const normalizedElementKey = String(elementKey || '').trim();
+    if (!normalizedElementKey) return false;
+
+    const existingTask = getExternalEditingTaskForElementKey(normalizedElementKey as WebEditorElementKey);
+    if (!existingTask || !matchesExternalTaskRef(existingTask, taskRef)) {
+      return false;
+    }
+
+    return Boolean(removeTaskStateByRequestId(existingTask.requestId));
+  }
+
+  function finalizeExternalEditingCompletedTask(
+    task: ElementAgentTaskState,
+    element?: Element | null,
+  ): void {
+    if (task.origin !== 'external-editing') return;
+    if (element?.isConnected) {
+      options.changes.markElementEditsHandled(element);
+    } else {
+      try {
+        const locatedElement = locateElement(task.locator);
+        if (locatedElement?.isConnected) {
+          options.changes.markElementEditsHandled(locatedElement);
+        }
+      } catch {
+        // Fall back to key-based cleanup below.
+      }
+    }
+    options.changes.markElementEditsHandledByKey({
+      elementKey: task.elementKey,
+      locator: task.locator,
+      label: task.label,
+    });
+    options.persistence.clearCommentRecord?.(task.elementKey);
+    options.persistence.flushPendingWrite();
   }
 
   function setExternalEditingTerminalState(
@@ -1820,60 +1995,31 @@ export function createAgentBridgeService(options: {
   ): ElementAgentTaskState | null {
     if (!element?.isConnected) return null;
     const meta = resolveElementTaskMeta(element);
-    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
-    const existingTask = state.externalEditingTaskByElementKey.get(meta.elementKey)
-      ?? state.agentTaskByElementKey.get(meta.elementKey)
-      ?? null;
-    const now = Date.now();
-    const fallbackProvider = String(resolveConfiguredProvider() || '').trim() || null;
-    const scopeKey = existingTask?.origin === 'external-editing'
-      ? existingTask.scopeKey
-      : resolveExternalEditingScopeKey();
+    const existingTask = getExternalEditingTaskForElementKey(meta.elementKey);
+    if (!matchesExternalTaskRef(existingTask, taskRef)) return null;
+    const nextTask = upsertExternalEditingTaskState(meta, terminalState, taskRef);
+    if (!nextTask) return null;
 
-    const isCompleted = terminalState === 'completed';
-    const nextTask: ElementAgentTaskState = {
-      scopeKey,
-      elementKey: meta.elementKey,
-      locator: meta.locator,
-      label: meta.label,
-      requestId: normalizedTaskRef?.requestId ?? existingTask?.requestId ?? `external_editing_${meta.elementKey}`,
-      sessionId: normalizedTaskRef?.sessionId ?? existingTask?.sessionId ?? null,
-      sessionPath: null,
-      sessionUrl: null,
-      provider: normalizedTaskRef?.provider ?? existingTask?.provider ?? fallbackProvider,
-      status: isCompleted ? 'completed' : 'error',
-      message: isCompleted ? '修改完成' : 'AI 修改失败',
-      startedAt: existingTask?.startedAt ?? now,
-      updatedAt: now,
-      dismissed: false,
-      recovery: 'live',
-      recoveryPending: false,
-      lastEventAt: now,
-      errorCode: isCompleted ? null : 'EXTERNAL_EDITING_ERROR',
-      origin: 'external-editing',
-      taskRef: normalizedTaskRef,
-    };
-    state.externalEditingTaskByElementKey.set(meta.elementKey, nextTask);
-
-    if (isCompleted) {
-      options.changes.markElementEditsHandled(element);
+    if (terminalState === 'completed') {
+      finalizeExternalEditingCompletedTask(nextTask, element);
     }
 
-    // Persist via the main task store
-    upsertTaskState(nextTask);
+    return nextTask;
+  }
 
-    // Auto-dismiss completed tasks after a short delay
-    if (isCompleted) {
-      const dismissRequestId = nextTask.requestId;
-      window.setTimeout(() => {
-        const currentTask = state.externalEditingTaskByElementKey.get(meta.elementKey);
-        if (currentTask && currentTask.requestId === dismissRequestId && currentTask.status === 'completed') {
-          state.externalEditingTaskByElementKey.delete(meta.elementKey);
-          removeTaskStateByRequestId(dismissRequestId);
-        }
-      }, AGENT_COMPLETED_TASK_AUTO_DISMISS_MS);
+  function setExternalEditingTerminalStateByElementKey(
+    target: ExternalEditingElementTarget,
+    terminalState: 'completed' | 'error',
+    taskRef?: Partial<ExternalEditingTaskRef> | null,
+  ): ElementAgentTaskState | null {
+    const normalizedTarget = normalizeExternalEditingElementTarget(target);
+    if (!normalizedTarget) return null;
+    const existingTask = getExternalEditingTaskForElementKey(normalizedTarget.elementKey);
+    if (!matchesExternalTaskRef(existingTask, taskRef)) return null;
+    const nextTask = upsertExternalEditingTaskState(normalizedTarget, terminalState, taskRef);
+    if (nextTask && terminalState === 'completed') {
+      finalizeExternalEditingCompletedTask(nextTask);
     }
-
     return nextTask;
   }
 
@@ -2091,16 +2237,21 @@ export function createAgentBridgeService(options: {
     taskRequestIds?: string[],
   ): ElementAgentTaskState[] {
     const mapped = mapAgentStatePayloadToTask(payload);
+    const canUpdateFromStateSync = (task: ElementAgentTaskState): boolean => {
+      if (task.dismissed || task.sessionId !== payload.sessionId || task.provider !== payload.provider) {
+        return false;
+      }
+      if (isTaskRunning(task)) {
+        return true;
+      }
+      // Agent state is authoritative for a live session; a local timeout/error can arrive
+      // before the Agent finishes and reports completion.
+      return task.status === 'error' && mapped.taskStatus === 'completed';
+    };
     const requestIds = taskRequestIds?.length
       ? taskRequestIds
       : Array.from(state.agentTaskByRequestId.values())
-          .filter(
-            (task) =>
-              !task.dismissed
-              && isTaskRunning(task)
-              && task.sessionId === payload.sessionId
-              && task.provider === payload.provider,
-          )
+          .filter(canUpdateFromStateSync)
           .map((task) => task.requestId);
     const updatedTasks: ElementAgentTaskState[] = [];
 
@@ -2119,6 +2270,9 @@ export function createAgentBridgeService(options: {
       });
       if (!nextTask) continue;
       updatedTasks.push(nextTask);
+      if (nextTask.origin === 'external-editing' && mapped.taskStatus === 'completed') {
+        finalizeExternalEditingCompletedTask(nextTask);
+      }
       if (mapped.taskStatus === 'pending' || mapped.taskStatus === 'created') {
         restoreActivePromptRunFromTask(nextTask);
       } else {
@@ -2274,6 +2428,14 @@ export function createAgentBridgeService(options: {
       } catch {
         // Ignore stale locators and keep the persisted locator as a fallback.
       }
+      const shouldVerifyExternalEditingTask = Boolean(
+        isExternalEditing
+        && isTaskRunning(persistedTask)
+        && typeof persistedTask.sessionId === 'string'
+        && persistedTask.sessionId.trim().length > 0
+        && typeof persistedTask.provider === 'string'
+        && persistedTask.provider.trim().length > 0,
+      );
       const task: ElementAgentTaskState = {
         ...persistedTask,
         scopeKey: isExternalEditing ? resolveExternalEditingScopeKey() : scopeKey,
@@ -2281,8 +2443,9 @@ export function createAgentBridgeService(options: {
         locator,
         label,
         recovery: 'storage',
-        // External-editing terminal tasks don't need recovery verification
-        recoveryPending: isExternalEditing ? false : isTaskRunning(persistedTask),
+        recoveryPending: isExternalEditing
+          ? shouldVerifyExternalEditingTask
+          : isTaskRunning(persistedTask),
       };
       upsertTaskState(task);
 
@@ -2309,7 +2472,7 @@ export function createAgentBridgeService(options: {
     // If Agent Bridge socket is never connected, these would otherwise persist forever.
     const RECOVERY_PENDING_STALENESS_MS = 30_000;
     const recoveryPendingRequestIds = Array.from(state.agentTaskByElementKey.values())
-      .filter((task) => task.recoveryPending && task.origin !== 'external-editing')
+      .filter((task) => task.recoveryPending)
       .map((task) => task.requestId);
     if (recoveryPendingRequestIds.length > 0) {
       window.setTimeout(() => {
@@ -3603,7 +3766,153 @@ export function createAgentBridgeService(options: {
     }
   }
 
-  async function handleSendPromptToAgentForElements(elements: Element[], prompt: string): Promise<void> {
+  function resolveAgentRunConcurrency(): number {
+    const numeric = Number(state.uiSettings.agentRunConcurrency);
+    if (!Number.isFinite(numeric)) return 5;
+    return Math.min(10, Math.max(1, Math.trunc(numeric)));
+  }
+
+  async function runAgentPromptForElement(params: {
+    element: Element;
+    prompt: string;
+    scopeKey: string;
+    reusableConversation: PageAgentConversationState | null;
+    effectiveProvider: string;
+    requestId?: string;
+    startedAt?: number;
+  }): Promise<void> {
+    const { element, prompt, scopeKey, reusableConversation, effectiveProvider } = params;
+    const meta = resolveElementTaskMeta(element);
+    const promptImages = collectPromptImagesForElements([element]);
+    const promptImageAssetPaths = promptImages
+      .map((image) => normalizeString(image.assetPath))
+      .filter(Boolean);
+    const messageWithImageAssets = appendPromptImageAssetPathsToMessage(
+      prompt,
+      promptImageAssetPaths,
+    );
+    const sessionIdToReuse = reusableConversation?.sessionId ?? null;
+    const startedAt = params.startedAt ?? Date.now();
+    const requestId = params.requestId ?? createRequestId('agent_run');
+    const request = createPendingRequest(
+      requestId,
+      AGENT_RUN_TIMEOUT_MS,
+      'agent-run',
+      '等待 AI 执行完成超时，请稍后查看 AI 会话。',
+    );
+    const currentTask = getElementTaskStateByKey(meta.elementKey);
+
+    upsertTaskState({
+      scopeKey,
+      elementKey: meta.elementKey,
+      locator: meta.locator,
+      label: meta.label,
+      requestId,
+      sessionId: sessionIdToReuse,
+      sessionPath: reusableConversation?.sessionPath ?? null,
+      sessionUrl: reusableConversation?.sessionUrl ?? null,
+      provider: effectiveProvider,
+      status: 'pending',
+      message: 'AI 准备中',
+      startedAt,
+      updatedAt: startedAt,
+      dismissed: false,
+      recovery: 'live',
+      recoveryPending: false,
+      lastEventAt: startedAt,
+      errorCode: null,
+    }, {
+      clearPreviousRequestId: currentTask?.requestId ?? null,
+    });
+    setActivePromptRun({
+      requestId,
+      scopeKey,
+      provider: effectiveProvider,
+      sessionId: sessionIdToReuse,
+      sessionPath: reusableConversation?.sessionPath ?? null,
+      sessionUrl: reusableConversation?.sessionUrl ?? null,
+      abortRequestId: null,
+      interruptRequested: false,
+      elementKey: meta.elementKey,
+      locator: meta.locator,
+      label: meta.label,
+    });
+
+    try {
+      sendSocketMessage({
+        type: 'agent.run',
+        requestId,
+        payload: {
+          ...(projectPath ? { projectPath } : {}),
+          provider: effectiveProvider,
+          ...(sessionIdToReuse ? { sessionId: sessionIdToReuse } : {}),
+          message: messageWithImageAssets,
+          ...(promptImages.length > 0 ? { images: promptImages } : {}),
+          stream: false,
+        },
+      });
+      if (reusableConversation) {
+        upsertConversationState(scopeKey, {
+          sessionId: reusableConversation.sessionId,
+          provider: effectiveProvider,
+          projectPath,
+          createdAt: reusableConversation.createdAt,
+          lastUsedAt: startedAt,
+          sentCount: reusableConversation.sentCount + 1,
+          expiresAt: reusableConversation.expiresAt,
+          sessionPath: reusableConversation.sessionPath,
+          sessionUrl: reusableConversation.sessionUrl,
+          invalidated: false,
+        });
+      }
+    } catch (error) {
+      clearPendingRequest(requestId);
+      clearActivePromptRun(requestId);
+      updateTaskStateByRequestId(requestId, {
+        status: 'error',
+        message: error instanceof Error ? error.message : String(error),
+        recovery: 'live',
+        recoveryPending: false,
+        lastEventAt: Date.now(),
+      }, {
+        reviveDismissed: true,
+      });
+      throw error;
+    }
+
+    await request;
+  }
+
+  async function runWithConcurrency<T>(
+    items: readonly T[],
+    concurrency: number,
+    worker: (item: T) => Promise<void>,
+  ): Promise<void> {
+    let nextIndex = 0;
+    const errors: unknown[] = [];
+    const workerCount = Math.min(concurrency, items.length);
+    const runners = Array.from({ length: workerCount }, async () => {
+      for (;;) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        if (currentIndex >= items.length) return;
+        try {
+          await worker(items[currentIndex]!);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+    });
+    await Promise.all(runners);
+    if (errors.length > 0) {
+      throw errors[0];
+    }
+  }
+
+  async function handleSendPromptToAgentForElements(
+    elements: Element[],
+    prompt: string | ((element: Element) => string),
+  ): Promise<void> {
     if (!enabled) return;
 
     try {
@@ -3611,137 +3920,103 @@ export function createAgentBridgeService(options: {
       if (targetElements.length === 0) {
         throw createBridgeError('目标元素已失效，请重新选择后再试。');
       }
-      const normalizedPrompt = String(prompt ?? '');
-      const targetMetas = targetElements.map((element) => {
-        return resolveElementTaskMeta(element);
-      });
-      if (targetMetas.length === 0) {
+      const scopeKey = resolveScopeKey();
+      const targetRuns = targetElements.map((element) => {
+        const reusableConversation = resolveElementReusableConversation(element, scopeKey);
+        const effectiveProvider = String(
+          reusableConversation?.provider
+          ?? resolveConfiguredProvider(),
+        ).trim();
+        const normalizedPrompt = typeof prompt === 'function'
+          ? String(prompt(element) ?? '')
+          : String(prompt ?? '');
+        const startedAt = Date.now();
+        return {
+          element,
+          meta: resolveElementTaskMeta(element),
+          prompt: normalizedPrompt,
+          reusableConversation,
+          effectiveProvider,
+          requestId: createRequestId('agent_run'),
+          startedAt,
+        };
+      }).filter((item) => item.prompt.trim());
+      if (targetRuns.length === 0) {
         throw createBridgeError('当前没有可发送给 AI 的编辑元素。');
       }
-      const promptImages = collectPromptImagesForElements(targetElements);
-      const promptImageAssetPaths = promptImages
-        .map((image) => normalizeString(image.assetPath))
-        .filter(Boolean);
-      const messageWithImageAssets = appendPromptImageAssetPathsToMessage(
-        normalizedPrompt,
-        promptImageAssetPaths,
-      );
-      const scopeKey = resolveScopeKey();
-      const activeConversation = getConversationStateForCurrentPage();
-      const reusableConversation = isConversationReusable(activeConversation) ? activeConversation : null;
-      const effectiveProvider = String(
-        reusableConversation?.provider
-        ?? resolveConfiguredProvider(),
-      ).trim();
-      const sessionIdToReuse = reusableConversation?.sessionId ?? null;
-      const startedAt = Date.now();
+      const concurrency = resolveAgentRunConcurrency();
+
       logInfo('Sending prompt to Agent input', {
-        elementCount: targetMetas.length,
-        elementKeys: targetMetas.map((meta) => meta.elementKey),
+        elementCount: targetRuns.length,
+        elementKeys: targetRuns.map((item) => item.meta.elementKey),
         scopeKey,
         integrationChannel,
         targetClientId,
-        promptLength: messageWithImageAssets.length,
+        promptLength: targetRuns.reduce((total, item) => total + item.prompt.length, 0),
         connected,
-        provider: effectiveProvider,
-        sessionIdToReuse,
+        providers: Array.from(new Set(targetRuns.map((item) => item.effectiveProvider))),
+        sessionIdsToReuse: targetRuns
+          .map((item) => item.reusableConversation?.sessionId ?? null)
+          .filter(Boolean),
+        concurrency,
       });
 
       if (!hasAgentRunConfig()) {
         await ensureAgentRunConfig();
       }
       assertAgentRunReady();
-      assertProviderAvailable(effectiveProvider);
+      for (const provider of Array.from(new Set(targetRuns.map((item) => item.effectiveProvider)))) {
+        assertProviderAvailable(provider);
+      }
 
-      const requestId = createRequestId('agent_run');
-      const request = createPendingRequest(
-        requestId,
-        AGENT_RUN_TIMEOUT_MS,
-        'agent-run',
-        '等待 AI 执行完成超时，请稍后查看 AI 会话。',
-      );
-      for (const meta of targetMetas) {
-        const currentTask = getElementTaskStateByKey(meta.elementKey);
+      for (const item of targetRuns) {
+        const currentTask = getElementTaskStateByKey(item.meta.elementKey);
         upsertTaskState({
           scopeKey,
-          elementKey: meta.elementKey,
-          locator: meta.locator,
-          label: meta.label,
-          requestId,
-          sessionId: sessionIdToReuse,
-          sessionPath: reusableConversation?.sessionPath ?? null,
-          sessionUrl: reusableConversation?.sessionUrl ?? null,
-          provider: effectiveProvider,
+          elementKey: item.meta.elementKey,
+          locator: item.meta.locator,
+          label: item.meta.label,
+          requestId: item.requestId,
+          sessionId: item.reusableConversation?.sessionId ?? null,
+          sessionPath: item.reusableConversation?.sessionPath ?? null,
+          sessionUrl: item.reusableConversation?.sessionUrl ?? null,
+          provider: item.effectiveProvider,
           status: 'pending',
           message: 'AI 准备中',
-          startedAt,
-          updatedAt: startedAt,
+          startedAt: item.startedAt,
+          updatedAt: item.startedAt,
           dismissed: false,
           recovery: 'live',
           recoveryPending: false,
-          lastEventAt: startedAt,
+          lastEventAt: item.startedAt,
           errorCode: null,
         }, {
           clearPreviousRequestId: currentTask?.requestId ?? null,
         });
       }
-      setActivePromptRun({
-        requestId,
-        scopeKey,
-        provider: effectiveProvider,
-        sessionId: sessionIdToReuse,
-        sessionPath: reusableConversation?.sessionPath ?? null,
-        sessionUrl: reusableConversation?.sessionUrl ?? null,
-        abortRequestId: null,
-        interruptRequested: false,
-        elementKey: targetMetas[0]?.elementKey ?? '',
-        locator: targetMetas[0]?.locator ?? createElementLocator(targetElements[0]!),
-        label: targetMetas[0]?.label ?? '',
-      });
 
-      try {
-        sendSocketMessage({
-          type: 'agent.run',
+      await runWithConcurrency(
+        targetRuns,
+        concurrency,
+        async ({
+          element,
+          prompt: elementPrompt,
+          reusableConversation,
+          effectiveProvider,
           requestId,
-          payload: {
-            ...(projectPath ? { projectPath } : {}),
-            provider: effectiveProvider,
-            ...(sessionIdToReuse ? { sessionId: sessionIdToReuse } : {}),
-            message: messageWithImageAssets,
-            ...(promptImages.length > 0 ? { images: promptImages } : {}),
-            stream: false,
-          },
-        });
-        if (reusableConversation) {
-          upsertConversationState(scopeKey, {
-            sessionId: reusableConversation.sessionId,
-            provider: effectiveProvider,
-            projectPath,
-            createdAt: reusableConversation.createdAt,
-            lastUsedAt: startedAt,
-            sentCount: reusableConversation.sentCount + 1,
-            expiresAt: reusableConversation.expiresAt,
-            sessionPath: reusableConversation.sessionPath,
-            sessionUrl: reusableConversation.sessionUrl,
-            invalidated: false,
+          startedAt,
+        }) => {
+          await runAgentPromptForElement({
+            element,
+            prompt: elementPrompt,
+            scopeKey,
+            reusableConversation,
+            effectiveProvider,
+            requestId,
+            startedAt,
           });
-        }
-      } catch (error) {
-        clearPendingRequest(requestId);
-        clearActivePromptRun(requestId);
-        updateTaskStateByRequestId(requestId, {
-          status: 'error',
-          message: error instanceof Error ? error.message : String(error),
-          recovery: 'live',
-          recoveryPending: false,
-          lastEventAt: Date.now(),
-        }, {
-          reviveDismissed: true,
-        });
-        throw error;
-      }
-
-      await request;
+        },
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (isSilentBridgeError(error)) {
@@ -3768,19 +4043,50 @@ export function createAgentBridgeService(options: {
     await handleSendPromptToAgentForElements([element], prompt);
   }
 
-  async function interruptElementTask(element: Element): Promise<void> {
-    if (!enabled) return;
-
-    const currentTask = getElementTaskState(element);
-    if (!currentTask) {
-      throw createBridgeError('当前元素没有可中断的 AI 执行。');
+  function getInterruptibleVisibleRuns(): ActivePromptRun[] {
+    const seenRequestIds = new Set<string>();
+    const runs: ActivePromptRun[] = [];
+    for (const task of getVisibleTaskStates()) {
+      if (!isTaskRunning(task)) continue;
+      const currentRun = activePromptRuns.get(task.requestId) ?? null;
+      if (!currentRun || !currentRun.sessionId || currentRun.abortRequestId) continue;
+      if (seenRequestIds.has(currentRun.requestId)) continue;
+      seenRequestIds.add(currentRun.requestId);
+      runs.push(currentRun);
     }
+    return runs;
+  }
 
-    const currentRun = activePromptRuns.get(currentTask.requestId) ?? null;
-    if (!currentRun) {
-      throw createBridgeError('当前没有可中断的 AI 执行。');
+  function getInterruptibleVisibleExternalEditingTasks(): ElementAgentTaskState[] {
+    return getVisibleTaskStates().filter(
+      (task) => task.origin === 'external-editing' && isTaskRunning(task),
+    );
+  }
+
+  function interruptVisibleExternalEditingTasks(excludedRequestIds = new Set<string>()): number {
+    const now = Date.now();
+    let interruptedCount = 0;
+    for (const task of getInterruptibleVisibleExternalEditingTasks()) {
+      if (excludedRequestIds.has(task.requestId)) continue;
+      const nextTask = updateTaskStateByRequestId(task.requestId, {
+        status: 'error',
+        message: '已中断',
+        updatedAt: now,
+        recovery: 'live',
+        recoveryPending: false,
+        lastEventAt: now,
+        errorCode: 'GENIE_ABORTED',
+      }, {
+        reviveDismissed: true,
+      });
+      if (nextTask) {
+        interruptedCount += 1;
+      }
     }
+    return interruptedCount;
+  }
 
+  async function interruptActivePromptRun(currentRun: ActivePromptRun): Promise<void> {
     if (!currentRun.sessionId) {
       throw createBridgeError('AI 对话尚未创建，暂时无法中断，请稍后再试。');
     }
@@ -3835,6 +4141,32 @@ export function createAgentBridgeService(options: {
       options.feedback.toast('error', `中断 AI 执行失败：${message}`);
       throw error;
     }
+  }
+
+  async function interruptElementTask(element: Element): Promise<void> {
+    if (!enabled) return;
+
+    const currentTask = getElementTaskState(element);
+    if (!currentTask) {
+      throw createBridgeError('当前元素没有可中断的 AI 执行。');
+    }
+
+    const currentRun = activePromptRuns.get(currentTask.requestId) ?? null;
+    if (!currentRun) {
+      throw createBridgeError('当前没有可中断的 AI 执行。');
+    }
+
+    await interruptActivePromptRun(currentRun);
+  }
+
+  async function interruptVisibleTasks(): Promise<void> {
+    const visibleRuns = getInterruptibleVisibleRuns();
+    const runRequestIds = new Set(visibleRuns.map((run) => run.requestId));
+    const interruptedExternalEditingCount = interruptVisibleExternalEditingTasks(runRequestIds);
+    if (visibleRuns.length === 0 && interruptedExternalEditingCount === 0) {
+      throw createBridgeError('当前没有可中断的 AI 执行。');
+    }
+    await Promise.all(visibleRuns.map((run) => interruptActivePromptRun(run)));
   }
 
   return {
@@ -3897,6 +4229,7 @@ export function createAgentBridgeService(options: {
       };
     },
     hasReusableConversation,
+    canReuseConversationForElement,
     invalidateCurrentConversation,
     getElementTaskState,
     getVisibleTaskStates,
@@ -3908,15 +4241,25 @@ export function createAgentBridgeService(options: {
     isElementInteractionLocked,
     dismissElementTaskState,
     setExternalEditingState,
+    setExternalEditingStateByElementKey,
     clearExternalEditingState,
+    clearExternalEditingStateByElementKey,
     setExternalEditingTerminalState,
+    setExternalEditingTerminalStateByElementKey,
     canInterruptElementTask(element: Element | null) {
       const currentTask = getElementTaskState(element);
       if (!currentTask) return false;
       const currentRun = activePromptRuns.get(currentTask.requestId) ?? null;
       return Boolean(currentRun && currentRun.sessionId && !currentRun.abortRequestId);
     },
+    canInterruptVisibleTasks() {
+      return (
+        getInterruptibleVisibleRuns().length > 0
+        || getInterruptibleVisibleExternalEditingTasks().length > 0
+      );
+    },
     interruptElementTask,
+    interruptVisibleTasks,
     handleSendSelectionToAgent,
     handleSyncCommentContextToAgent,
     handleSendPromptToAgentForElements,

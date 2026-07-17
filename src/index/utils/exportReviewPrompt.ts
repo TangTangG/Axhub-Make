@@ -1,5 +1,15 @@
 import type { ReviewResult } from '../services/api';
 
+const AXURE_EXPORT_REVIEW_RULE_PATHS = [
+    'rules/axure-export-workflow.md',
+    'rules/axure-api-guide.md',
+] as const;
+
+const AXURE_EXPORT_REVIEW_GUIDANCE = [
+    { name: 'Axure 导出工作流', path: AXURE_EXPORT_REVIEW_RULE_PATHS[0] },
+    { name: 'Axure API 规范', path: AXURE_EXPORT_REVIEW_RULE_PATHS[1] },
+] as const;
+
 function getResourceName(filePath: string): string {
     const segments = String(filePath || '').split(/[\\/]+/).filter(Boolean);
     const fileName = segments.at(-1) || '';
@@ -28,8 +38,7 @@ export function buildExportReviewPrompt(reviewResult: ReviewResult): string {
     let prompt = '请修复这个 Axure 导出阻断问题，保持现有业务行为、交互和视觉不变。\n\n';
     prompt += `资源：${getResourceName(reviewResult.file)}\n`;
     prompt += '规则：\n';
-    prompt += '- Axure 导出工作流\n';
-    prompt += '- Axure API 规范\n\n';
+    prompt += `${AXURE_EXPORT_REVIEW_GUIDANCE.map((rule) => `- ${rule.name}：\`${rule.path}\``).join('\n')}\n\n`;
     prompt += formatIssueList('阻断问题：', blockingIssues);
     prompt += '要求：\n';
     prompt += '- 不要为了过检查强行新增非必需 Axure API\n';
@@ -68,3 +77,5 @@ export function createExportReviewFailureResult(params: {
         ],
     };
 }
+
+export { AXURE_EXPORT_REVIEW_RULE_PATHS };

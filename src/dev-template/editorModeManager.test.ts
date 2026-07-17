@@ -66,14 +66,19 @@ describe('createEditorModeManager', () => {
     expect(webEditorController.enable).toHaveBeenCalledWith({ toolbarMode: 'host' });
   });
 
-  it('passes the make-local prototype comment skill source through the host controller config', async () => {
+  it('passes the make-local commentary skill sources through the host controller config', async () => {
     const { createEditorModeManager } = await import('./editorModeManager');
 
     createEditorModeManager('none');
 
     expect(mocked.createWebEditorV2Controller).toHaveBeenCalledWith({
       ui: {
-        skillInstallSource: '.agents/skills/prototype-comments/SKILL.md',
+        skillInstallSource: [
+          '.agents/skills/explore-options/SKILL.md',
+          '.claude/skills/explore-options/SKILL.md',
+          '.agents/skills/prototype-comments/SKILL.md',
+          '.claude/skills/prototype-comments/SKILL.md',
+        ].join('\n'),
         hideExecutionControls: true,
       },
     });

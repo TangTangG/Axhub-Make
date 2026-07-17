@@ -38,7 +38,6 @@ const COMMAND_AVAILABILITY_TIMEOUT_MS = 2_000;
 
 const CLI_AGENT_COMMANDS: Record<CLIAgent, string[]> = {
   codex: ['codex'],
-  gemini: ['gemini'],
   claudecode: ['claude'],
   opencode: ['opencode'],
 };

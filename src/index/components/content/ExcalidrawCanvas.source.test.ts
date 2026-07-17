@@ -7,7 +7,7 @@ function readSource() {
 }
 
 describe('ExcalidrawCanvas source', () => {
-  it('preserves nested prototype canvas API paths by encoding each segment separately', () => {
+  it('preserves nested resource canvas API paths by encoding each segment separately', () => {
     const source = readSource();
     const encoderStart = source.indexOf('function encodeCanvasApiPath(canvasName: string): string {');
     const encoderEnd = source.indexOf('\n}\n\nfunction getCanvasBridgeCanvasName', encoderStart);
@@ -18,23 +18,37 @@ describe('ExcalidrawCanvas source', () => {
     expect(encoderSource).toContain('.filter(Boolean)');
     expect(encoderSource).toContain('.map((segment) => encodeURIComponent(segment))');
     expect(encoderSource).toContain(".join('/')");
-    expect(source).toContain('new URL(`/api/canvas/${encodeCanvasApiPath(canvasName)}`, window.location.origin)');
-    expect(source).toContain('fetch(buildCanvasApiUrl(canvasName, activeProjectId))');
-    expect(source).toContain('fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId))');
-    expect(source).toContain('const url = buildCanvasApiUrl(currentNameRef.current, activeProjectId);');
+    expect(source).toContain('new URL(`/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}`, window.location.origin)');
+    expect(source).toContain('fetch(buildCanvasApiUrl(canvasName, activeProjectId, canvasFilePath))');
+    expect(source).toContain('fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId, canvasFilePath))');
+    expect(source).toContain('const url = buildCanvasApiUrl(currentNameRef.current, activeProjectId, canvasFilePath);');
     expect(source).not.toContain('encodeURIComponent(canvasName)');
     expect(source).not.toContain('encodeURIComponent(currentNameRef.current)');
+    expect(source).not.toContain('new URL(`/api/canvas/${encodeCanvasApiPath(canvasName)}`, window.location.origin)');
   });
 
   it('scopes canvas API requests to the active project when one is provided', () => {
     const source = readSource();
 
     expect(source).toContain('activeProjectId?: string | null;');
-    expect(source).toContain('function buildCanvasApiUrl(canvasName: string, projectId?: string | null): string {');
+    expect(source).toContain('function buildCanvasApiUrl(canvasName: string, projectId?: string | null, canvasFilePath?: string): string {');
     expect(source).toContain('url.searchParams.set(\'projectId\', normalizedProjectId);');
-    expect(source).toContain('fetch(buildCanvasApiUrl(canvasName, activeProjectId))');
-    expect(source).toContain('fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId))');
-    expect(source).toContain('const url = buildCanvasApiUrl(currentNameRef.current, activeProjectId);');
+    expect(source).toContain('fetch(buildCanvasApiUrl(canvasName, activeProjectId, canvasFilePath))');
+    expect(source).toContain('fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId, canvasFilePath))');
+    expect(source).toContain('const url = buildCanvasApiUrl(currentNameRef.current, activeProjectId, canvasFilePath);');
+  });
+
+  it('uses the resource canvas API for Excalidraw files under src/resources', () => {
+    const source = readSource();
+
+    expect(source).toContain('function resolveResourceCanvasApiPath(canvasName: string, canvasFilePath?: string): string {');
+    expect(source).toContain("const resourcesMarker = 'src/resources/';");
+    expect(source).toContain("if (normalized.startsWith('resources/'))");
+    expect(source).toContain('new URL(`/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}`, window.location.origin)');
+    expect(source).toContain('fetch(buildCanvasApiUrl(canvasName, activeProjectId, canvasFilePath))');
+    expect(source).toContain('fetch(buildCanvasApiUrl(currentNameRef.current, activeProjectId, canvasFilePath))');
+    expect(source).toContain('const url = buildCanvasApiUrl(currentNameRef.current, activeProjectId, canvasFilePath);');
+    expect(source).toContain('const resourceCanvasPath = resolveResourceCanvasApiPath(canvasName, canvasFilePath);');
   });
 
   it('renders the canvas search menu item with a search icon', () => {
@@ -134,15 +148,107 @@ describe('ExcalidrawCanvas source', () => {
     const source = readSource();
 
     expect(source).toContain("import CanvasAiGenerationTool, { type CanvasAiGenerationRequest, type CanvasAiGenerationResult } from '../../domains/ai-generation/CanvasAiGenerationTool';");
+    expect(source).toContain("import {");
+    expect(source).toContain("} from '../../domains/ai-generation/CanvasDirectRunOverlay';");
+    expect(source).toContain("resolveCanvasDirectRunOverlayPosition");
+    expect(source).toContain("type CanvasDirectRunOverlayController");
+    expect(source).toContain('createCanvasDirectRunAnnotationTaskElement');
+    expect(source).toContain('updateCanvasDirectRunAnnotationTaskElement');
+    expect(source).not.toContain("buildCanvasDirectStatusElements");
+    expect(source).not.toContain("resolveCanvasDirectStatusElementPosition");
+    expect(source).not.toContain("markCanvasDirectStatusElementFailed");
+    expect(source).not.toContain("markStaleCanvasDirectStatusElements");
+    expect(source).not.toContain("removeCanvasDirectStatusElement");
     expect(source).toContain('<CanvasAiGenerationTool');
     expect(source).toContain('onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;');
     expect(source).toContain('assistantProjectPath={assistantProjectPath}');
     expect(source).toContain('preferredPromptClient={preferredPromptClient}');
     expect(source).toContain('onSubmitCanvasAssistantPrompt={handleSubmitCanvasAssistantPromptWithArtifacts}');
-    expect(source).toContain('handleCanvasDrop');
+    expect(source).toContain('canvasDirectRunOverlayController={canvasDirectRunOverlayController}');
+    expect(source).not.toContain('<CanvasDirectRunOverlay');
+    expect(source).not.toContain('handleCanvasDrop');
     expect(source).not.toContain('onImageArtifact={handleCanvasImageArtifactEvent}');
     expect(source).not.toContain("import CanvasAiImageTool from '../../domains/ai-image/CanvasAiImageTool';");
     expect(source).not.toContain("import CanvasPrototypeGenerationTool from '../../domains/prototype-generation/CanvasPrototypeGenerationTool';");
+  });
+
+  it('manages canvas direct run tasks as persistent annotation elements', () => {
+    const source = readSource();
+
+    const controllerSegment = source.slice(
+      source.indexOf('const canvasDirectRunOverlayController = useMemo(() => ({'),
+      source.indexOf('const handleApplyProjectResources = useCallback', source.indexOf('const canvasDirectRunOverlayController = useMemo(() => ({')),
+    );
+
+    expect(source).toContain('const canvasDirectRunOverlayStopHandlersRef = useRef(new Map<string, () => void>());');
+    expect(source).toContain('const canvasDirectRunControlledRemovalIdsRef = useRef(new Set<string>());');
+    expect(source).toContain("const canvasDirectRunRecoveryAppliedKeyRef = useRef('');");
+    expect(source).not.toContain('setCanvasDirectRunOverlayTasks');
+    expect(source).not.toContain('canvasDirectRunOverlayTasksRef');
+    expect(source).toContain('const canvasDirectRunOverlayController = useMemo(() => ({');
+    expect(controllerSegment).toContain('createStatusTask({ prompt, scene, details })');
+    expect(controllerSegment).toContain('createCanvasDirectRunAnnotationTaskElement({');
+    expect(controllerSegment).toContain('getCanvasDirectRunAnnotationTaskRef(element)');
+    expect(controllerSegment).toContain('excalidrawAPI.updateScene({');
+    expect(controllerSegment).toContain('scheduleExplicitCanvasSave({ elements: nextElements, appState });');
+    expect(controllerSegment).toContain('updateStatusTaskRef(statusTaskId, update)');
+    expect(controllerSegment).toContain('markStatusTaskFailed(statusTaskId, error)');
+    expect(controllerSegment).toContain('removeStatusTask(statusTaskId)');
+    expect(controllerSegment).toContain('hasStatusTask(statusTaskId)');
+    expect(controllerSegment).toContain('registerStatusTaskStopped(statusTaskId, handler)');
+    expect(controllerSegment).toContain('resolveCanvasDirectRunOverlayPosition({');
+    expect(controllerSegment).toContain('scrollToContent([taskElement]');
+    expect(controllerSegment).toContain('return { id: taskElement.id, x: taskElement.x, y: taskElement.y, width: taskElement.width, height: taskElement.height };');
+    expect(source).toContain('handleCanvasDirectRunAnnotationTaskDeletion');
+    expect(source).toContain('markUnownedCanvasDirectRunAnnotationTasksAborted');
+    expect(source).toContain("updateCanvasDirectRunAnnotationTask(taskId, { status: 'aborted' });");
+    expect(source).toContain('onStopAnnotationTask={handleStopCanvasDirectRunOverlayTask}');
+    expect(source).not.toContain('onDismissAnnotationTask={removeCanvasDirectRunOverlayTask}');
+  });
+
+  it('executes annotation prompt cards through the existing canvas direct-run task flow', () => {
+    const source = readSource();
+
+    expect(source).toContain("import { createCanvasDirectRunController, type CanvasDirectRunController } from '../../domains/ai-generation/canvasDirectRun';");
+    expect(source).toContain("import { appendCanvasGenerationPromptSettings } from '../../domains/ai-generation/canvasGenerationPromptSettings';");
+    expect(source).toContain('appendCanvasAiPrototypeStartSystemPrompt');
+    expect(source).toContain('getCanvasAiPrototypeStartSystemPrompt');
+    expect(source).toContain('const annotationDirectRunControllerRef = useRef<CanvasDirectRunController | null>(null);');
+    expect(source).toContain('const annotationActiveStatusTaskRunsRef = useRef(new Map<string, { abort: () => Promise<boolean> }>());');
+    expect(source).toContain('const handleExecuteAnnotationPrompt = useCallback(async (element: CanvasElementContextInfo, promptText: string) => {');
+    expect(source).toContain("const scene: CanvasAiScene = 'page';");
+    expect(source).toContain('const statusTask = canvasDirectRunOverlayController.createStatusTask({');
+    expect(source).toContain("source: 'annotation-prompt-card',");
+    expect(source).toContain('const startResult = controller.start(request);');
+    expect(source).toContain('annotationActiveStatusTaskRunsRef.current.set(statusTask.id, {');
+    expect(source).toContain('canvasDirectRunOverlayController.registerStatusTaskStopped(statusTask.id, () => {');
+    expect(source).toContain('onExecuteAnnotationPrompt={handleExecuteAnnotationPrompt}');
+  });
+
+  it('does not route canvas direct run task nodes through embeddable rendering', () => {
+    const source = readSource();
+
+    expect(source).toContain('createCanvasDirectRunAnnotationTaskElement');
+    expect(source).toContain('normalizeCanvasDirectRunAnnotationTaskElements');
+    expect(source).toContain('normalizeCanvasDirectRunAnnotationTaskElement(element)');
+    expect(source).toContain('const normalizeCanvasDirectRunAnnotationTaskScene = useCallback(() => {');
+    expect(source).toContain('normalizeCanvasDirectRunAnnotationTaskScene();');
+    expect(source).toContain('}, [canvasFilePath, canvasName, excalidrawAPI, normalizeCanvasDirectRunAnnotationTaskScene]);');
+    expect(source).not.toContain('data-axhub-canvas-direct-run-placeholder');
+  });
+
+  it('revives canvas direct run annotation task overlays after reload through scene customData', () => {
+    const source = readSource();
+
+    expect(source).toContain('getCanvasDirectRunAnnotationTaskRef(element)');
+    expect(source).toContain("taskRef.status !== 'running'");
+    expect(source).toContain('canvasDirectRunKnownRunningTaskIdsRef.current');
+    expect(source).toContain('canvasDirectRunControlledRemovalIdsRef.current.delete(statusTaskId)');
+    expect(source).toContain('canvasDirectRunOverlayStopHandlersRef.current.has(taskRef.statusTaskId)');
+    expect(source).toContain("status: 'aborted',");
+    expect(source).toContain('canvasDirectRunRecoveryAppliedKeyRef.current = recoveryKey;');
+    expect(source).toContain('handler?.()');
+    expect(source).not.toContain('customData?.type === \'axhub-canvas-ai-direct-status\'');
   });
 
   it('exports selected canvas elements as a PNG attachment for the AI composer', () => {
@@ -246,16 +352,16 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain('scheduleExplicitCanvasSave({ elements: update.elements, appState: nextAppState });');
   });
 
-  it('does not insert returned artifacts for the bottom canvas start assistant composer', () => {
+  it('inserts returned artifacts for the bottom canvas start assistant composer', () => {
     const source = readSource();
     const submitHandlerSource = source.slice(
       source.indexOf('const handleSubmitCanvasAssistantPromptWithArtifacts = useCallback(async (request: CanvasAiGenerationRequest) => {'),
       source.indexOf('const handleAddSelectedScreenshotToAI = useCallback', source.indexOf('const handleSubmitCanvasAssistantPromptWithArtifacts = useCallback')),
     );
 
-    expect(submitHandlerSource).toContain("const shouldApplyReturnedArtifacts = request.source !== 'canvas-start';");
-    expect(submitHandlerSource).toContain('if (shouldApplyReturnedArtifacts && artifacts.length > 0 && excalidrawAPI) {');
-    expect(submitHandlerSource.indexOf('const shouldApplyReturnedArtifacts = request.source !== \'canvas-start\';')).toBeLessThan(
+    expect(submitHandlerSource).not.toContain("const shouldApplyReturnedArtifacts = request.source !== 'canvas-start';");
+    expect(submitHandlerSource).toContain('if (artifacts.length > 0 && excalidrawAPI) {');
+    expect(submitHandlerSource.indexOf('if (artifacts.length > 0 && excalidrawAPI) {')).toBeLessThan(
       submitHandlerSource.indexOf('applyGenerationArtifactsToCanvasElements({'),
     );
   });
@@ -391,8 +497,10 @@ describe('ExcalidrawCanvas source', () => {
     const logoSource = welcomeScreenSource.slice(logoStart, logoEnd);
     const headingSource = welcomeScreenSource.slice(headingStart, headingEnd);
 
-    expect(welcomeScreenSource).toContain('原型草稿画布');
-    expect(welcomeScreenSource).toContain('好的原型从一份草稿开始。');
+    expect(welcomeScreenSource).toContain('产品画布');
+    expect(welcomeScreenSource).toContain('好的产品从一份草稿开始。');
+    expect(welcomeScreenSource).not.toContain('资源画布');
+    expect(welcomeScreenSource).not.toContain('好的方案从一份草稿开始。');
     expect(logoStart).toBeGreaterThan(-1);
     expect(headingStart).toBeGreaterThan(logoStart);
     expect(logoEnd).toBeGreaterThan(logoStart);
@@ -401,11 +509,11 @@ describe('ExcalidrawCanvas source', () => {
     expect(logoSource).toContain('className="axhub-canvas-welcome-title"');
     expect(logoSource).toContain('<PencilRuler');
     expect(logoSource).toContain('className="axhub-canvas-welcome-title__icon"');
-    expect(logoSource).toContain('<span>原型草稿画布</span>');
-    expect(logoSource).toContain('原型草稿画布');
-    expect(logoSource).not.toContain('好的原型从一份草稿开始。');
-    expect(headingSource).toContain('好的原型从一份草稿开始。');
-    expect(headingSource).not.toContain('原型草稿画布');
+    expect(logoSource).toContain('<span>产品画布</span>');
+    expect(logoSource).toContain('产品画布');
+    expect(logoSource).not.toContain('好的产品从一份草稿开始。');
+    expect(headingSource).toContain('好的产品从一份草稿开始。');
+    expect(headingSource).not.toContain('产品画布');
     expect(welcomeScreenSource).not.toContain('axhub-canvas-welcome-subtitle');
     expect(welcomeScreenSource).not.toContain('<WelcomeScreen.Center.Menu>');
     expect(welcomeScreenSource).not.toContain('<WelcomeScreen.Center.MenuItem');
@@ -414,25 +522,28 @@ describe('ExcalidrawCanvas source', () => {
     expect(welcomeScreenSource).not.toContain('在编辑器中打开');
     expect(welcomeScreenSource).not.toContain('整理灵感、构思方案、快速生成原型');
 
-    expect(source).toContain('与 AI 协作');
+    expect(source).not.toContain('与 AI 协作');
+    expect(source).not.toContain('AxhubCanvasWelcomeOverlay');
+    expect(source).not.toContain('axhub-canvas-welcome-hints');
     expect(source).not.toContain('预览生成的原型');
     expect(source).not.toContain('runCanvasOpenAction');
     expect(source).not.toContain('runCanvasProjectOpenAction');
     expect(source).not.toContain('AxhubWelcomeMenuIcon');
   });
 
-  it('configures legacy local task stores only for prototype canvas paths', () => {
+  it('configures local task stores by resource canvas file paths', () => {
     const source = readSource();
 
     expect(source).toContain('export function resolveCanvasGenerationTaskTargetPath(...values: Array<string | undefined>): string | undefined');
-    expect(source).toContain("replace(/^src\\//u, '')");
-    expect(source).toContain('const prototypePathMatch = normalized.match(/^prototypes\\/([^/]+)$/iu);');
-    expect(source).toContain('return `prototypes/${prototypePathMatch[1]}`;');
-    expect(source).toContain("return `prototypes/${match[1]}`;");
+    expect(source).toContain("const resourcesMarker = 'src/resources/';");
+    expect(source).toContain('return normalized.slice(markerIndex + resourcesMarker.length + 1);');
+    expect(source).toContain('return `src/resources/${normalized.slice(\'resources/\'.length)}`;');
     expect(source).toContain('const targetPath = resolveCanvasGenerationTaskTargetPath(canvasName, canvasFilePath);');
     expect(source).toContain('void getAiImageTaskStore().configure({ targetPath });');
     expect(source).toContain('void getPrototypeGenerationTaskStore().configure({ targetPath });');
     expect(source).toContain('}, [canvasName, canvasFilePath]);');
+    expect(source).not.toContain('return `prototypes/${prototypePathMatch[1]}`;');
+    expect(source).not.toContain("return `prototypes/${match[1]}`;");
     expect(source).not.toContain('resolveAiImageHistoryTargetPath');
   });
 
@@ -451,22 +562,43 @@ describe('ExcalidrawCanvas source', () => {
     expect(historyInsertIndex).toBe(-1);
   });
 
-  it('explicitly persists sidebar add-to-canvas and drag-drop scene mutations', () => {
+  it('opens a project resource picker from the compact toolbar and explicitly persists inserted resources', () => {
     const source = readSource();
 
-    const addToCanvasStart = source.indexOf("window.addEventListener('axhub:addToCanvas', handler);");
-    const addToCanvasEffect = source.slice(source.lastIndexOf('useEffect(() => {', addToCanvasStart), addToCanvasStart);
-    expect(addToCanvasEffect).toContain('createEmbeddableFromDrop(');
-    expect(addToCanvasEffect).toContain('scheduleExplicitCanvasSave();');
-    expect(source).toContain('}, [excalidrawAPI, scheduleExplicitCanvasSave]);');
+    expect(source).toContain("import {\n    CanvasProjectResourcePickerDialog,\n    buildCanvasProjectResourceItemSelections,");
+    expect(source).toContain('type CanvasProjectResourceItemSelection');
+    expect(source).toContain('type CanvasProjectResourceItems');
+    expect(source).toContain('type CanvasProjectResourceTrees');
+    expect(source).toContain('projectResourceTrees?: CanvasProjectResourceTrees;');
+    expect(source).toContain('projectResourceItems?: CanvasProjectResourceItems;');
+    expect(source).toContain('const [projectResourceDialogOpen, setProjectResourceDialogOpen] = useState(false);');
+    expect(source).toContain('const [projectResourceSelectedKeys, setProjectResourceSelectedKeys] = useState<Set<string>>(() => new Set());');
+    expect(source).toContain('const handleProjectResourceClick = useCallback(() => setProjectResourceDialogOpen(true), []);');
+    expect(source).toContain('onProjectResourceClick: handleProjectResourceClick');
+    expect(source).toContain('function buildCanvasResourcePayloadFromPickerSelection');
+    expect(source).toContain('async function insertCanvasResourceSelections');
+    expect(source).toContain('const column = index % 2;');
+    expect(source).toContain('const row = Math.floor(index / 2);');
+    expect(source).toContain('await createImageElementFromDrop(excalidrawAPI, payload, x, y);');
+    expect(source).toContain('createEmbeddableFromDrop(');
+    expect(source).toContain('scheduleExplicitCanvasSave();');
+    expect(source).toContain('<CanvasProjectResourcePickerDialog');
+    expect(source).toContain('selectionMode="canvas-items"');
+    expect(source).toContain('onApply={handleApplyProjectResources}');
+  });
 
-    const dropHandlerStart = source.indexOf('const handleCanvasDrop = useCallback');
-    const dropHandlerEnd = source.indexOf('if (loading) {', dropHandlerStart);
-    const dropHandler = source.slice(dropHandlerStart, dropHandlerEnd);
-    expect(dropHandler).toContain('void createImageElementFromDrop(excalidrawAPI, payload, x, y).then(() => {');
-    expect(dropHandler).toContain('scheduleExplicitCanvasSave();');
-    expect(dropHandler).toContain('createEmbeddableFromDrop(');
-    expect(dropHandler).toContain('}, [excalidrawAPI, scheduleExplicitCanvasSave]);');
+  it('does not keep sidebar canvas drag/drop or window add-to-canvas handlers', () => {
+    const source = readSource();
+
+    expect(source).not.toContain("import { CANVAS_DROP_MIME } from './canvasDropTypes';");
+    expect(source).not.toContain("export { CANVAS_DROP_MIME } from './canvasDropTypes';");
+    expect(source).not.toContain("window.addEventListener('axhub:addToCanvas', handler);");
+    expect(source).not.toContain("window.removeEventListener('axhub:addToCanvas', handler);");
+    expect(source).not.toContain('const handleCanvasDragOver = useCallback');
+    expect(source).not.toContain('const handleCanvasDrop = useCallback');
+    expect(source).not.toContain('onDragOverCapture={handleCanvasDragOver}');
+    expect(source).not.toContain('onDropCapture={handleCanvasDrop}');
+    expect(source).not.toContain('CANVAS_DROP_MIME');
   });
 
   it('defaults new embeddable resources to preview mode while falling back to link mode for non-previewable payloads', () => {
@@ -579,6 +711,19 @@ describe('ExcalidrawCanvas source', () => {
     expect(source).toContain('onSceneMutated={scheduleExplicitCanvasSave}');
     expect(source).not.toContain('function buildDrawioChartCanvasPayload()');
     expect(source).not.toContain("window.dispatchEvent(new CustomEvent('axhub:addToCanvas', {");
+  });
+
+  it('does not show custom welcome hint overlays on top of the default welcome screen', () => {
+    const source = readSource();
+
+    expect(source).not.toContain('function AxhubCanvasWelcomeOverlay');
+    expect(source).not.toContain('welcomeOverlayVisible');
+    expect(source).not.toContain('selectCanvasWelcomeOverlayVisible');
+    expect(source).not.toContain('isCanvasWelcomeOverlayVisible');
+    expect(source).not.toContain('axhub-canvas-welcome-hints');
+    expect(source).not.toContain('与 AI 协作');
+    expect(source).not.toContain('拖入原型和资源，可以作为创作的上下文');
+    expect(source).not.toContain('axhub-canvas-welcome-hint--sidebar');
   });
 
   it('applies bridge reloads as remote scene updates without scheduling autosave bounce-back', () => {

@@ -120,6 +120,48 @@ describe('canvas artifact insertion helper', () => {
     expect(insertedAgain.elements[1].id).not.toBe(first.elements[0].id);
   });
 
+  it('uses the first artifact to replace the canvas direct annotation task node', () => {
+    const taskElement = {
+      id: 'canvas-direct-run-task',
+      type: 'rectangle',
+      x: 220,
+      y: 180,
+      width: 420,
+      height: 156,
+      isDeleted: false,
+      customData: {
+        annotation: '状态：AI 正在生成页面',
+        annotationTaskRef: {
+          kind: 'canvas-ai-direct',
+          status: 'running',
+          statusTaskId: 'canvas-direct-run-task',
+        },
+      },
+    };
+    const result = applyGenerationArtifactsToCanvasElements({
+      elements: [taskElement],
+      appState: { scrollX: 0, scrollY: 0, width: 1000, height: 700, zoom: { value: 1 } },
+      artifacts: [artifact({ id: 'artifact-1', title: 'Generated Spec', target: { uri: '/?doc=generated.md' } })],
+      replaceElementId: 'canvas-direct-run-task',
+    });
+
+    expect(result.insertedElementIds).toHaveLength(1);
+    expect(result.elements.find((element) => element.id === 'canvas-direct-run-task')).toMatchObject({
+      isDeleted: true,
+    });
+    const inserted = result.elements.find((element) => element.id === result.insertedElementIds[0]);
+    expect(inserted).toMatchObject({
+      type: 'embeddable',
+      x: 220,
+      y: 180,
+      link: '/?doc=generated.md',
+      customData: {
+        title: 'Generated Spec',
+        sourceArtifactId: 'artifact-1',
+      },
+    });
+  });
+
   it('updates the same prototype page by resource identity instead of duplicating when artifact ids change', () => {
     const first = applyGenerationArtifactsToCanvasElements({
       elements: [],

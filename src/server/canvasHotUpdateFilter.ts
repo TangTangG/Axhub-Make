@@ -2,7 +2,6 @@ import type { HMRPayload, Plugin, ViteDevServer } from 'vite';
 
 type SendFunction = (...args: any[]) => void;
 
-const CANVAS_ASSETS_SEGMENT = '/canvas-assets/';
 const AI_GENERATION_SPEC_SEGMENT = '/.spec/';
 const AXHUB_RUNTIME_STATE_SEGMENT = '/.axhub/';
 const ANNOTATION_SOURCE_FILE_NAME = '/annotation-source.json';
@@ -20,14 +19,26 @@ function cleanHotUpdatePath(filePath: string): string {
   return normalizePath(filePath).split(/[?#]/u)[0] || '';
 }
 
+function isResourceCanvasDataFile(filePath: string): boolean {
+  return /(^|\/)src\/resources\/.+\.excalidraw$/u.test(filePath)
+    || /(^|\/)src\/resources\/.+\.assets\//u.test(filePath);
+}
+
+function isRemovedPrototypeCanvasDataFile(filePath: string): boolean {
+  return /(^|\/)src\/prototypes\/[^/]+\/canvas\.excalidraw$/u.test(filePath)
+    || /(^|\/)src\/prototypes\/[^/]+\/canvas-assets\//u.test(filePath);
+}
+
 export function isCanvasHotUpdateFile(filePath: string): boolean {
   const normalized = cleanHotUpdatePath(filePath);
+  if (isRemovedPrototypeCanvasDataFile(normalized)) {
+    return false;
+  }
   if (normalized.endsWith(ANNOTATION_SOURCE_FILE_NAME)) {
     return true;
   }
   const isCanvasDataFile =
-    normalized.endsWith('.excalidraw')
-    || normalized.includes(CANVAS_ASSETS_SEGMENT)
+    isResourceCanvasDataFile(normalized)
     || normalized.includes(AI_GENERATION_SPEC_SEGMENT)
     || normalized.includes(AXHUB_RUNTIME_STATE_SEGMENT);
   if (isCanvasDataFile) {

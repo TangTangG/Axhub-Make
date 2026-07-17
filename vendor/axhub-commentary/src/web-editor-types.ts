@@ -67,8 +67,10 @@ export const WEB_EDITOR_V1_ACTIONS = {
   APPLY: 'web_editor_apply',
 } as const;
 
-export type WebEditorV2Action = (typeof WEB_EDITOR_V2_ACTIONS)[keyof typeof WEB_EDITOR_V2_ACTIONS];
-export type WebEditorV1Action = (typeof WEB_EDITOR_V1_ACTIONS)[keyof typeof WEB_EDITOR_V1_ACTIONS];
+export type WebEditorV2Action =
+  (typeof WEB_EDITOR_V2_ACTIONS)[keyof typeof WEB_EDITOR_V2_ACTIONS];
+export type WebEditorV1Action =
+  (typeof WEB_EDITOR_V1_ACTIONS)[keyof typeof WEB_EDITOR_V1_ACTIONS];
 
 /** Editor version literal type */
 export type WebEditorVersion = 1 | 2;
@@ -367,7 +369,13 @@ export interface ElementChangeSummary {
 }
 
 /** Action types for TX change events */
-export type WebEditorTxChangeAction = 'push' | 'merge' | 'undo' | 'redo' | 'clear' | 'rollback';
+export type WebEditorTxChangeAction =
+  | 'push'
+  | 'merge'
+  | 'undo'
+  | 'redo'
+  | 'clear'
+  | 'rollback';
 
 /**
  * TX change broadcast payload sent to Sidepanel/AgentChat.
@@ -465,7 +473,11 @@ export interface CommentaryHostResource {
   meta?: Record<string, unknown>;
 }
 
-export type PrototypeEditCommentTaskStatus = 'idle' | 'editing' | 'completed' | 'error';
+export type PrototypeEditCommentTaskStatus =
+  | 'idle'
+  | 'editing'
+  | 'completed'
+  | 'error';
 export type CommentaryExternalEditingState = PrototypeEditCommentTaskStatus;
 
 export interface CommentaryExternalEditingTaskRef {
@@ -489,6 +501,13 @@ export interface CommentaryExternalEditingStateResult {
   state: CommentaryExternalEditingState;
   applied: boolean;
   taskRef?: CommentaryExternalEditingTaskRef | null;
+}
+
+export type CommentaryClearEditsScope = 'page' | 'prototype';
+
+export interface CommentaryClearEditsOptions {
+  skipConfirm?: boolean;
+  scope?: CommentaryClearEditsScope;
 }
 
 export interface PrototypeEditCommentTweakEntry {
@@ -516,7 +535,10 @@ export interface PrototypeEditCommentEntry {
   label?: string;
   locator: ElementLocator;
   textChange?: { before: string; after: string };
-  styleChanges?: { before: Record<string, string>; after: Record<string, string> };
+  styleChanges?: {
+    before: Record<string, string>;
+    after: Record<string, string>;
+  };
   tweak?: PrototypeEditCommentTweakEntry;
   comment?: string;
   skillIds?: string[];
@@ -575,7 +597,10 @@ export type PrototypeEditCommentsWriteReason =
 export interface PrototypeEditCommentsPersistenceAdapter {
   read(
     scope: PrototypeEditCommentsPersistenceScope,
-  ): PrototypeEditCommentsDocument | null | Promise<PrototypeEditCommentsDocument | null>;
+  ):
+    | PrototypeEditCommentsDocument
+    | null
+    | Promise<PrototypeEditCommentsDocument | null>;
   write(
     scope: PrototypeEditCommentsPersistenceScope,
     document: PrototypeEditCommentsDocument,
@@ -598,6 +623,11 @@ export interface CommentaryTextChange {
   after: string;
 }
 
+export interface CommentaryTargetedTextChange extends CommentaryTextChange {
+  elementKey: WebEditorElementKey;
+  locator: ElementLocator;
+}
+
 export interface CommentaryStyleChangeSet {
   cssText: string;
 }
@@ -616,6 +646,19 @@ export interface CommentaryHostToolbarAgentOption {
   value: WebEditorAgentProvider | null;
   label: string;
   disabled?: boolean;
+}
+
+export interface CommentaryAiExecutionProviderOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+export interface CommentarySkillOption {
+  id: string;
+  label: string;
+  description?: string;
+  sourceUrl?: string;
 }
 
 export interface CommentaryHostToolbarState {
@@ -638,12 +681,19 @@ export interface CommentaryHostToolbarState {
   copyPromptDisabled: boolean;
   clearEditsTitle: string;
   clearEditsDisabled: boolean;
+  propertyPanelVisible: boolean;
   propertyPanelOpen: boolean;
   propertyPanelTitle: string;
   modifiedCount: number;
   terminalTaskCount: number;
   selectedAgent: WebEditorAgentProvider | null;
   agentOptions: CommentaryHostToolbarAgentOption[];
+  aiExecutionConfigSummary: string;
+  aiExecutionConfigConfigured: boolean;
+  aiExecutionProvider: string;
+  aiExecutionWorkspacePath: string;
+  aiExecutionRunConcurrency: number;
+  aiExecutionProviderOptions: CommentaryAiExecutionProviderOption[];
   darkMode: boolean;
   disablePageAnimations: boolean;
   pageZoomEnabled: boolean;
@@ -662,12 +712,25 @@ export type CommentaryHostToolbarAction =
   | ({
       type: 'send-to-agent';
       elementKey?: WebEditorElementKey;
+      pane?: 'primary' | 'secondary';
+      promptText?: string;
     } & CommentaryExternalEditingTargetRef)
   | { type: 'interrupt-agent' }
   | { type: 'copy-prompt'; clipboard?: 'host' }
-  | { type: 'clear-edits'; skipConfirm?: boolean }
+  | ({ type: 'clear-edits' } & CommentaryClearEditsOptions)
   | { type: 'toggle-property-panel'; open?: boolean }
   | { type: 'set-active-agent'; agent: WebEditorAgentProvider | null }
+  | { type: 'open-ai-settings' }
+  | { type: 'get-ai-execution-config'; preferAcpDefaultWorkspace?: boolean }
+  | {
+      type: 'set-ai-execution-config';
+      provider?: string;
+      workspacePath?: string;
+      runConcurrency?: number;
+    }
+  | { type: 'browse-ai-execution-directories'; path?: string }
+  | { type: 'get-commentary-skill-settings' }
+  | { type: 'set-commentary-skill-settings'; selectedSkillIds?: string[] }
   | { type: 'disconnect-agent' }
   | { type: 'copy-skill-install-prompt' }
   | { type: 'copy-global-panel-prompt' }
@@ -678,6 +741,10 @@ export type CommentaryHostToolbarAction =
   | { type: 'enable-annotation' }
   | { type: 'open-keyboard-shortcuts' }
   | { type: 'full-exit' };
+
+export type CommentaryHostToolbarActionResult =
+  | boolean
+  | Record<string, unknown>;
 
 export type CommentaryHostToolbarStateListener = (
   state: CommentaryHostToolbarState,
@@ -715,6 +782,13 @@ export interface CommentaryCopyPromptContext {
   defaultPrompt: string;
 }
 
+export interface CommentaryElementTool {
+  id: string;
+  label: string;
+  icon?: 'diagram' | 'document' | 'external';
+  disabled?: boolean;
+}
+
 export interface CommentaryHostOptions {
   getResourceContext?: () => CommentaryHostResource | null;
   persistenceAdapter?: PrototypeEditCommentsPersistenceAdapter;
@@ -730,14 +804,26 @@ export interface CommentaryHostOptions {
    * If omitted, the editor falls back to its built-in prompt builder.
    */
   buildCopyPrompt?: (context: CommentaryCopyPromptContext) => string;
+  /** Return optional host-owned actions for the selected element card. */
+  getElementTools?: (element: Element | null) => CommentaryElementTool[];
+  /** Run a host-owned selected-element action. */
+  onElementToolAction?: (
+    tool: CommentaryElementTool,
+    element: Element,
+  ) => void | Promise<void>;
   /** Whether local annotation markdown editing is available for the selected element. */
   canEditAnnotationMarkdown?: (element: Element | null) => boolean;
   /** Return an edit URL for the selected annotation document, or an empty value to hide the document edit entry. */
-  getAnnotationDocumentEditUrl?: (element: Element | null) => string | null | undefined;
+  getAnnotationDocumentEditUrl?: (
+    element: Element | null,
+  ) => string | null | undefined;
   /** Read the local annotation markdown bound to the selected element. */
   getAnnotationMarkdown?: (element: Element | null) => string | Promise<string>;
   /** Persist local annotation markdown for the selected element. */
-  onAnnotationMarkdownChange?: (element: Element, markdown: string) => void | Promise<void>;
+  onAnnotationMarkdownChange?: (
+    element: Element,
+    markdown: string,
+  ) => void | Promise<void>;
   /** Delete the selected local annotation node, including its runtime marker. */
   onDeleteAnnotationNode?: (element: Element) => void | Promise<void>;
 }
@@ -896,6 +982,8 @@ export interface CommentaryApi {
   getModifiedElements: () => CommentaryModifiedElementSummary[];
   /** Read aggregated text changes */
   getTextChanges: () => CommentaryTextChange[];
+  /** Read per-element text changes for host-managed precise persistence */
+  getTargetedTextChanges: () => CommentaryTargetedTextChange[];
   /** Read aggregated style changes */
   getStyleChanges: () => CommentaryStyleChangeSet;
   /** Read the full edited snapshot for host consumption */
@@ -908,7 +996,9 @@ export interface CommentaryApi {
    * Revert a specific element to its original state (Phase 2 - Selective Undo).
    * Creates a compensating transaction that can be undone.
    */
-  revertElement: (elementKey: WebEditorElementKey) => Promise<WebEditorRevertElementResponse>;
+  revertElement: (
+    elementKey: WebEditorElementKey,
+  ) => Promise<WebEditorRevertElementResponse>;
   /**
    * Clear current selection (called from sidepanel after send).
    * Triggers deselect and broadcasts null selection.
@@ -925,9 +1015,13 @@ export interface CommentaryApi {
   /** Read the host toolbar state used when `ui.toolbarMode` is `host` */
   getHostToolbarState: () => CommentaryHostToolbarState;
   /** Subscribe to host toolbar state changes */
-  subscribeHostToolbarState: (listener: CommentaryHostToolbarStateListener) => () => void;
+  subscribeHostToolbarState: (
+    listener: CommentaryHostToolbarStateListener,
+  ) => () => void;
   /** Execute a host toolbar action through the same runtime logic as the inline toolbar */
-  runHostToolbarAction: (action: CommentaryHostToolbarAction) => Promise<boolean>;
+  runHostToolbarAction: (
+    action: CommentaryHostToolbarAction,
+  ) => Promise<boolean>;
   /** Update the external editing task state for an element controlled by a host/API run */
   setNodeEditingState: (
     elementKey: WebEditorElementKey,
@@ -941,6 +1035,8 @@ export interface CommentaryApi {
   stopPanelOnly?: () => void;
   /** Get the copy prompt text without performing clipboard operations */
   getCopyPromptText?: () => string;
+  /** Get the AI prompt for one edited element without including other nodes */
+  getElementPromptText?: (elementKey: WebEditorElementKey) => string;
 }
 
 export type WebEditorV2Api = CommentaryApi;

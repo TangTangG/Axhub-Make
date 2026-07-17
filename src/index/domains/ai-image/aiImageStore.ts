@@ -226,11 +226,19 @@ function normalizeLoadedState(value: unknown, options: { interruptRunning?: bool
 
 function normalizeTargetPath(value: string | null | undefined): string | undefined {
   const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/^\/+/u, '');
-  const match = normalized.match(/^prototypes\/([^/]+)$/u);
-  if (!match?.[1] || match[1].startsWith('.') || match[1].includes('..')) {
+  if (normalized.startsWith('src/resources/') && normalized.endsWith('.excalidraw')) {
+    const relativePath = normalized.slice('src/resources/'.length);
+    const segments = relativePath.split('/');
+    if (segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.startsWith('.'))) {
+      return undefined;
+    }
+    return normalized;
+  }
+  const prototypeMatch = normalized.match(/^prototypes\/([^/]+)$/u);
+  if (!prototypeMatch?.[1] || prototypeMatch[1].startsWith('.') || prototypeMatch[1].includes('..')) {
     return undefined;
   }
-  return `prototypes/${match[1]}`;
+  return `prototypes/${prototypeMatch[1]}`;
 }
 
 function generationTasksEndpoint(value: string): string {
@@ -246,7 +254,7 @@ function resolvePromptGenerationProvider(preferredPromptClient?: PromptClientPre
   if (!normalized) return 'codex';
   if (normalized === 'openai' || normalized === 'acp:codex') return 'codex';
   if (normalized === 'claudecode' || normalized === 'acp:claude') return 'claude';
-  if (normalized === 'acp:gemini') return 'gemini';
+  if (normalized === 'gemini' || normalized === 'acp:gemini') return 'codex';
   if (normalized === 'acp:opencode') return 'opencode';
   return normalized.startsWith('local:') ? 'codex' : normalized;
 }

@@ -275,11 +275,21 @@ function createFilesystemDocNode(node: SidebarTreeNode, itemKey: string, title: 
         return null;
     }
 
+    const resolveFilesystemTitle = (value: string): string => {
+        const normalized = normalizeTreeKey(value);
+        const fileName = normalized.split('/').filter(Boolean).pop() || normalized;
+        return stripFinalPathExtension(fileName) || fileName || normalized;
+    };
+    const trimmedTitle = String(title || '').trim();
+    const filesystemTitle = trimmedTitle.includes('/') || trimmedTitle.includes('\\')
+        ? resolveFilesystemTitle(trimmedTitle)
+        : trimmedTitle || resolveFilesystemTitle(nodePath) || toGeneratedTitle(nodePath);
+
     return {
         ...node,
         id: node.id || `item:docs:${nodePath}`,
         kind: 'item',
-        title: title || toGeneratedTitle(nodePath),
+        title: filesystemTitle,
         itemKey,
         path: nodePath,
     };
@@ -324,10 +334,6 @@ function resolveSidebarTreeItemEntry(
 
     return {
         ...extensionlessMatch,
-        item: {
-            ...extensionlessMatch.item,
-            name: getItemNameFromKey(tab, itemKey),
-        },
         itemKey,
     };
 }

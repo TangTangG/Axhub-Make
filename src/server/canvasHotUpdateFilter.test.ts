@@ -19,14 +19,16 @@ async function runConfigureServer(plugin: any, server: any) {
 
 describe('make-server canvas hot-update filter', () => {
   it('identifies canvas data files', () => {
-    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas.excalidraw')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/resources/flows/home.excalidraw')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/resources/flows/home.assets/screenshot.png')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas.excalidraw')).toBe(false);
+    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas-assets/screenshot.png')).toBe(false);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/annotation-source.json')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/annotation-source.json?import&t=123')).toBe(true);
-    expect(isCanvasHotUpdateFile('/project/src/prototypes/home/canvas-assets/screenshot.png')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/generation-artifacts.json')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/src/prototypes/home/.spec/generation-assets/images/image-1.png')).toBe(true);
-    expect(isCanvasHotUpdateFile('/project/apps/axhub-make/client/src/prototypes/home/canvas.excalidraw')).toBe(true);
-    expect(isCanvasHotUpdateFile('/project/apps/axhub-make/client/src/prototypes/home/canvas-assets/embed.png')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/apps/axhub-make/client/src/resources/flows/home.excalidraw')).toBe(true);
+    expect(isCanvasHotUpdateFile('/project/apps/axhub-make/client/src/resources/flows/home.assets/embed.png')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/apps/axhub-make/client/src/prototypes/home/.spec/generation-artifacts.json')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/.axhub/sessions/conversations.json')).toBe(true);
     expect(isCanvasHotUpdateFile('/project/.axhub/make/artifacts/axure/home/manifest.json')).toBe(true);
@@ -41,7 +43,7 @@ describe('make-server canvas hot-update filter', () => {
     const handleHotUpdate = plugin.handleHotUpdate as any;
 
     expect(await handleHotUpdate({
-      file: '/project/src/prototypes/home/canvas.excalidraw',
+      file: '/project/src/resources/flows/home.excalidraw',
       modules: [{ id: 'canvas' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
@@ -49,7 +51,7 @@ describe('make-server canvas hot-update filter', () => {
       modules: [{ id: 'annotation-source' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
-      file: '/project/src/prototypes/home/canvas-assets/screenshot.png',
+      file: '/project/src/resources/flows/home.assets/screenshot.png',
       modules: [{ id: 'screenshot' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
@@ -57,7 +59,7 @@ describe('make-server canvas hot-update filter', () => {
       modules: [{ id: 'history' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
-      file: '/project/apps/axhub-make/client/src/prototypes/home/canvas.excalidraw',
+      file: '/project/apps/axhub-make/client/src/resources/flows/home.excalidraw',
       modules: [{ id: 'client-canvas' }],
     })).toEqual([]);
     expect(await handleHotUpdate({
@@ -106,7 +108,7 @@ describe('make-server canvas hot-update filter', () => {
 
     server.hot.send({
       type: 'full-reload',
-      triggeredBy: '/project/src/prototypes/home/canvas.excalidraw',
+      triggeredBy: '/project/src/resources/flows/home.excalidraw',
     });
     expect(hotSend).not.toHaveBeenCalled();
 
@@ -130,7 +132,7 @@ describe('make-server canvas hot-update filter', () => {
 
     server.hot.send({
       type: 'full-reload',
-      triggeredBy: '/project/apps/axhub-make/client/src/prototypes/home/canvas.excalidraw',
+      triggeredBy: '/project/apps/axhub-make/client/src/resources/flows/home.excalidraw',
     });
     expect(hotSend).not.toHaveBeenCalled();
 
@@ -213,7 +215,7 @@ describe('make-server canvas hot-update filter', () => {
   it('does not drop non-reload payloads even when they mention canvas files', () => {
     expect(shouldDropCanvasFullReloadPayload({
       type: 'update',
-      triggeredBy: '/project/src/prototypes/home/canvas.excalidraw',
+      triggeredBy: '/project/src/resources/flows/home.excalidraw',
     } as any)).toBe(false);
   });
 
@@ -229,7 +231,8 @@ describe('make-server canvas hot-update filter', () => {
     expect(viteConfigSource).toContain("'**/.axhub/**'");
     expect(viteConfigSource).toContain("'**/.spec/**'");
     expect(viteConfigSource).toContain("'**/*.excalidraw'");
-    expect(viteConfigSource).toContain("'**/canvas-assets/**'");
+    expect(viteConfigSource).toContain("'**/*.assets/**'");
+    expect(viteConfigSource).not.toContain("'**/canvas-assets/**'");
     expect(viteConfigSource).toContain("'**/dist/**'");
     expect(viteConfigSource).toContain("'**/src/server/**'");
   });

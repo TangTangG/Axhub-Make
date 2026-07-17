@@ -247,4 +247,103 @@ describe('Axhub auth client', () => {
     })).rejects.toThrow('Token 格式不正确');
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('manages hosted review reports through the active Axhub bearer connection', async () => {
+    const homeDir = createTempRoot();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith('/me')) {
+        return new Response(JSON.stringify({ code: 0, data: { name: 'Token', isPlus: true } }), { status: 200 });
+      }
+      if (url.endsWith('/review-submit-config') && init?.method === 'PUT') {
+        return new Response(JSON.stringify({
+          code: 0,
+          data: { pid: 11, path: 'demo', submitEnabled: true, reviewReportCount: 2 },
+        }), { status: 200 });
+      }
+      if (url.endsWith('/review-reports') && init?.method === 'DELETE') {
+        return new Response(JSON.stringify({
+          code: 0,
+          data: { pid: 11, path: 'demo', deleted: 2, reviewReportCount: 0 },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        code: 0,
+        data: {
+          pid: 11,
+          path: 'demo',
+          reports: [{
+            id: 'review-one',
+            title: '需求评审',
+            reviewer: '产品团队',
+            createdAt: '2026-07-14T01:00:00.000Z',
+            source: 'ai-agent',
+            path: '.axhub-review/reports/review-one.json',
+            content: '# 需求评审\n',
+            payloadHash: 'hash-one',
+          }],
+        },
+      }), { status: 200 });
+    }));
+
+    const client = createAxhubAuthClient({ serverInfoHomeDir: homeDir });
+    await client.connectEnterprise({ serverUrl: 'https://enterprise.example.com', token: 'axent_secret_123' });
+    const config = await client.updateHtmlProjectReviewConfig(11, true);
+    const reports = await client.listHtmlProjectReviewReports(11);
+    const cleared = await client.clearHtmlProjectReviewReports(11);
+
+    expect(config).toMatchObject({ submitEnabled: true, reviewReportCount: 2 });
+    expect(reports.reports[0]).toMatchObject({ id: 'review-one', payloadHash: 'hash-one' });
+    expect(cleared).toMatchObject({ deleted: 2, reviewReportCount: 0 });
+    for (const call of calls.slice(1)) {
+      expect((call.init?.headers as Record<string, string>).Authorization).toBe('Bearer axent_secret_123');
+    }
+  });
+
+  it('publishes HTML with the local review context in the existing request body', async () => {
+    const homeDir = createTempRoot();
+    let publishBody: any = null;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/me')) {
+        return new Response(JSON.stringify({ code: 0, data: { name: 'Token', isPlus: true } }), { status: 200 });
+      }
+      publishBody = JSON.parse(String(init?.body || '{}'));
+      return new Response(JSON.stringify({
+        code: 0,
+        data: { pid: 11, name: 'Demo', path: 'demo', url: '/html/demo/', htmlUsedSpace: 10, generateTime: '2026-07-14T01:00:00.000Z' },
+      }), { status: 200 });
+    }));
+
+    const client = createAxhubAuthClient({ serverInfoHomeDir: homeDir });
+    await client.connectEnterprise({ serverUrl: 'https://enterprise.example.com', token: 'axent_secret_123' });
+    await client.publishHtmlProject(11, [{
+      path: 'index.html',
+      contentType: 'text/html',
+      body: Buffer.from('<h1>Demo</h1>'),
+    }], {
+      projectId: 'local-project',
+      prototypeId: 'home',
+    });
+
+    expect(publishBody.reviewContext).toEqual({ projectId: 'local-project', prototypeId: 'home' });
+  });
+
+  it('maps an upstream bearer rejection to an expired Axhub account error', async () => {
+    const homeDir = createTempRoot();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/me')) {
+        return new Response(JSON.stringify({ code: 0, data: { name: 'Token', isPlus: true } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ code: 401, message: '未授权' }), { status: 200 });
+    }));
+
+    const client = createAxhubAuthClient({ serverInfoHomeDir: homeDir });
+    await client.connectEnterprise({ serverUrl: 'https://enterprise.example.com', token: 'axent_secret_123' });
+
+    await expect(client.listHtmlProjectReviewReports(11)).rejects.toMatchObject({
+      status: 401,
+      code: 'AXHUB_AUTH_EXPIRED',
+    });
+  });
 });

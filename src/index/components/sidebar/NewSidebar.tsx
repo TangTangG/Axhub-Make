@@ -33,7 +33,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         onPrototypePageSelect,
         data,
         docsItems,
-        canvasItems,
         themes,
         defaultThemeName,
         searchText,
@@ -42,14 +41,12 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         selectedPrototypePageId,
         selectedDoc,
         selectedResourceFolder,
-        selectedCanvas,
         selectedTheme,
         onRenameTheme,
         onDeleteTheme,
         onSetDefaultTheme,
         onSelectDoc,
         onSelectResourceFolder,
-        onSelectCanvas,
         onSelectTheme,
         handleMenuClick,
         handleRenameItem,
@@ -62,15 +59,10 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         handleCopyDocPath,
         handleDocVersionManagement,
         onOpenCreateDialog,
-        onImportTheme,
         onUploadedResourceFiles,
-        onCreateCanvasFile,
-
         onCreatePlaceholderPrototype,
-        handleRenameCanvasItem,
-        handleDuplicateCanvasItem,
-        handleDeleteCanvasItem,
-        handleCopyCanvasPath,
+        onCreateResourceStart,
+        onCreateThemeStart,
         onCreateFolder,
         handleDownloadItemSource,
         handleDownloadThemeZip,
@@ -94,7 +86,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         makeClientUpdateReminderVisible,
         projects,
         resourceWriteCapabilities,
-        lanAccessAllowed,
         onTitleChange,
         onProjectSwitch,
         onProjectDelete,
@@ -126,27 +117,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         ? 'prototypes'
         : sidebarTab === 'document'
             ? 'docs'
-            : sidebarTab === 'assets'
-                ? 'themes'
-                : 'canvas';
-
-    const canvasAsItemData: ItemData[] = canvasItems.map((canvas) => ({
-        ...canvas,
-        name: canvas.name,
-        displayName: canvas.displayName,
-        jsUrl: (canvas as ItemData).jsUrl || '',
-        specUrl: (canvas as ItemData).specUrl || '',
-    }));
-    const selectedCanvasItem = selectedCanvas
-        ? canvasAsItemData.find((canvas) => canvas.name === selectedCanvas.name)
-        || {
-            ...selectedCanvas,
-            name: selectedCanvas.name,
-            displayName: selectedCanvas.displayName,
-            jsUrl: (selectedCanvas as ItemData).jsUrl || '',
-            specUrl: (selectedCanvas as ItemData).specUrl || '',
-        }
-        : null;
+            : 'themes';
 
     const themesAsItemData: ItemData[] = themes.map((theme) => ({
         name: theme.name,
@@ -180,9 +151,7 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
         ? data.prototypes
         : currentTreeTab === 'docs'
             ? docsItems
-            : currentTreeTab === 'themes'
-                ? themesAsItemData
-                : canvasAsItemData;
+            : themesAsItemData;
     const selectedResourceFolderTreeTab = selectedResourceFolder?.treeTab || 'docs';
     const currentSelectedFolder = selectedResourceFolder && selectedResourceFolderTreeTab === currentTreeTab
         ? selectedResourceFolder
@@ -190,36 +159,26 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
 
     const currentSelectedItem = sidebarTab === 'document'
         ? selectedDoc
-        : sidebarTab === 'canvas'
-            ? selectedCanvasItem
-            : sidebarTab === 'assets'
-                ? selectedThemeItem
-                : selectedItem;
+        : sidebarTab === 'assets'
+            ? selectedThemeItem
+            : selectedItem;
 
     const renameHandler = currentTreeTab === 'docs'
         ? handleRenameDocItem
-        : currentTreeTab === 'canvas'
-            ? handleRenameCanvasItem
-            : currentTreeTab === 'themes'
-                ? (item: ItemData, nextName: string) => { void onRenameTheme(themes.find((t) => t.name === item.name) || item as any, nextName); }
-                : handleRenameItem;
+        : currentTreeTab === 'themes'
+            ? (item: ItemData, nextName: string) => { void onRenameTheme(themes.find((t) => t.name === item.name) || item as any, nextName); }
+            : handleRenameItem;
     const duplicateHandler = currentTreeTab === 'docs'
         ? handleDuplicateDocItem
-        : currentTreeTab === 'canvas'
-            ? handleDuplicateCanvasItem
-            : handleDuplicateItem;
+        : handleDuplicateItem;
     const deleteHandler = currentTreeTab === 'docs'
         ? handleDeleteDocItem
-        : currentTreeTab === 'canvas'
-            ? handleDeleteCanvasItem
-            : currentTreeTab === 'themes'
-                ? (item: ItemData) => { void onDeleteTheme(themes.find((t) => t.name === item.name) || item as any); }
-                : handleDeleteItem;
+        : currentTreeTab === 'themes'
+            ? (item: ItemData) => { void onDeleteTheme(themes.find((t) => t.name === item.name) || item as any); }
+            : handleDeleteItem;
     const copyPathHandler = currentTreeTab === 'docs'
         ? handleCopyDocPath
-        : currentTreeTab === 'canvas'
-            ? handleCopyCanvasPath
-            : handleCopyItemPath;
+        : handleCopyItemPath;
     const versionHandler = currentTreeTab === 'docs' ? handleDocVersionManagement : handleVersionManagement;
 
     return (
@@ -242,7 +201,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                 makeClientUpdateReminderVisible={makeClientUpdateReminderVisible}
                 projects={projects}
                 resourceWriteCapabilities={resourceWriteCapabilities}
-                lanAccessAllowed={lanAccessAllowed}
                 onTitleChange={onTitleChange}
                 onProjectSwitch={onProjectSwitch}
                 onProjectDelete={onProjectDelete}
@@ -264,10 +222,6 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                         onSelectDoc(item);
                         return;
                     }
-                    if (sidebarTab === 'canvas') {
-                        onSelectCanvas({ name: item.name, displayName: item.displayName });
-                        return;
-                    }
                     if (sidebarTab === 'assets') {
                         const themeItem = themes.find((t) => t.name === item.name);
                         if (themeItem) {
@@ -277,15 +231,15 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
                     }
                     void onPrototypeViewSelect(item, 'demo');
                 }}
-                onFolderClick={currentTreeTab === 'docs' || currentTreeTab === 'canvas' || currentTreeTab === 'themes'
+                onFolderClick={currentTreeTab === 'docs' || currentTreeTab === 'themes'
                     ? (folder) => onSelectResourceFolder?.(folder, currentTreeTab, { preserveViewMode: viewMode === 'canvas' })
                     : undefined}
                 onSearch={setSearchText}
                 searchText={searchText}
                 onCreateFile={onCreatePlaceholderPrototype}
-                onImportTheme={onImportTheme}
+                onCreateResourceStart={onCreateResourceStart}
+                onCreateThemeStart={onCreateThemeStart}
                 onUploadedResourceFiles={onUploadedResourceFiles}
-                onCreateCanvasFile={onCreateCanvasFile}
                 onCreateFolder={onCreateFolder}
                 handleDownloadItemSource={handleDownloadItemSource}
                 handleDownloadThemeZip={(theme) => {

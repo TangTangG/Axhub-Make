@@ -1,18 +1,12 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-30T03:36:52.335Z",
+  "updatedAt": "2026-07-17T10:08:05.536Z",
   "prototypes": [
     {
-      "id": "item-prototypes-untitled",
+      "id": "item:prototypes:annotation-demo",
       "kind": "item",
-      "title": "untitled",
-      "itemKey": "prototypes/untitled"
-    },
-    {
-      "id": "item:prototypes:annotation-demo-copy",
-      "kind": "item",
-      "title": "标注演示 Axure",
-      "itemKey": "prototypes/annotation-demo-copy"
+      "title": "标注演示",
+      "itemKey": "prototypes/annotation-demo"
     },
     {
       "id": "item:prototypes:beginner-guide",
@@ -25,12 +19,6 @@
       "kind": "item",
       "title": "批注演示",
       "itemKey": "prototypes/touch-and-talk-annotation-demo"
-    },
-    {
-      "id": "item:prototypes:annotation-demo",
-      "kind": "item",
-      "title": "标注演示",
-      "itemKey": "prototypes/annotation-demo"
     }
   ],
   "docs": [],

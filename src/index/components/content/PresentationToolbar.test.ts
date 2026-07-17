@@ -13,7 +13,10 @@ describe('PresentationToolbar cloud publishing source', () => {
       source.indexOf('const deviceSwitcherButton = ('),
       source.indexOf('const shouldShowDeviceSwitcher'),
     );
-    const toolbarReturnSource = source.slice(source.indexOf('return ('), source.indexOf('{/* Center: Tools */}'));
+    const toolbarReturnSource = source.slice(
+      source.lastIndexOf('\n    return ('),
+      source.indexOf('{/* Center: Tools */}'),
+    );
 
     expect(deviceSwitcherButtonSource).toContain('aria-label="设备"');
     expect(deviceSwitcherButtonSource).toContain('edgeIconButtonClass');
@@ -33,21 +36,21 @@ describe('PresentationToolbar cloud publishing source', () => {
     expect(toolbarLeftSource).not.toContain('shouldShowLeftRefreshButton');
   });
 
-  it('uses the old device slot as the prototype draft entry', () => {
+  it('does not expose a prototype canvas entry in the preview toolbar', () => {
     const source = readToolbarSource();
     const centerToolsSource = source.slice(
       source.indexOf('{/* Center: Tools */}'),
       source.indexOf('{/* Right: Export */}'),
     );
 
-    expect(source).toContain('const canvasEntryButton = (');
-    expect(source).toContain("const shouldShowCanvasEntryButton = isPreviewContent && viewMode === 'demo' && Boolean(selectedItem) && !isQuickEditActive;");
-    expect(source).toContain('<LayoutDashboard /> 画布');
-    expect(source).toContain('<TooltipContent>进入画布</TooltipContent>');
+    expect(source).not.toContain('const canvasEntryButton = (');
+    expect(source).not.toContain('const shouldShowCanvasEntryButton =');
+    expect(source).not.toContain('<LayoutDashboard /> 画布');
+    expect(source).not.toContain('<TooltipContent>进入画布</TooltipContent>');
     expect(source).not.toContain('<LayoutDashboard /> 草稿');
     expect(source).not.toContain('<TooltipContent>进入草稿</TooltipContent>');
-    expect(source).toContain("onClick={() => setViewMode('canvas')}");
-    expect(centerToolsSource).toContain('{shouldShowCanvasEntryButton ? canvasEntryButton : null}');
+    expect(source).not.toContain("onClick={() => setViewMode('canvas')}");
+    expect(centerToolsSource).not.toContain('shouldShowCanvasEntryButton');
     expect(centerToolsSource).not.toContain('{deviceSwitcher}');
   });
 
@@ -72,6 +75,13 @@ describe('PresentationToolbar cloud publishing source', () => {
     expect(source).not.toContain('const leftRefreshButton = (');
     expect(source).not.toContain('const shouldShowLeftRefreshButton =');
     expect(normalPreviewActionsSource).not.toContain('<RotateCw /> 刷新');
+  });
+
+  it('keeps HTML prototype specs annotation-only without persistence actions', () => {
+    const source = readToolbarSource();
+
+    expect(source).toContain("const isReadOnlyHtmlPrototypeSpec = contentMode === 'prototype-spec'");
+    expect(source).toContain('isQuickEditActive && !isReadOnlyHtmlPrototypeSpec');
   });
 
   it('keeps only the default publish action, copy URL, and platform settings visible by default', () => {
@@ -146,6 +156,22 @@ describe('PresentationToolbar cloud publishing source', () => {
     expect(exportMenuSegment.indexOf('复制截图')).toBeGreaterThan(exportMenuSegment.indexOf('设置'));
   });
 
+  it('shows only lightweight Axure and export actions for theme previews', () => {
+    const source = readToolbarSource();
+    const exportMenuSegment = source.slice(
+      source.indexOf('const exportMenuButton = ('),
+      source.indexOf('</DropdownMenuContent>', source.indexOf('const exportMenuButton = (')),
+    );
+
+    expect(source).toContain("const showMakeExportEntry = isPreviewContent && viewMode === 'demo'");
+    expect(source).toContain("const showInteractiveAxureExportEntry = isPreviewContent && viewMode === 'demo'");
+    expect(source).toContain('const showEditableAxureCopyEntry = Boolean(currentRuntimeExportResource);');
+    expect(source).toContain('const showAxureUsageGuideEntry = showInteractiveAxureExportEntry;');
+    expect(exportMenuSegment).toContain('{showInteractiveAxureExportEntry ? (');
+    expect(exportMenuSegment).toContain('{showEditableAxureCopyEntry ? (');
+    expect(exportMenuSegment).toContain('{showAxureUsageGuideEntry ? (');
+  });
+
   it('keeps the publish menu available when the Agent host toolbar is visible', () => {
     const source = readToolbarSource();
     const segment = source.slice(
@@ -169,7 +195,7 @@ describe('PresentationToolbar cloud publishing source', () => {
     expect(rightToolbarSource).toContain('{showExportMenuButton ? exportMenuButton : null}');
     expect(rightToolbarSource).not.toContain('<OpenInDropdown');
     expect(source).not.toContain('variant="toolbar"');
-    expect(source).not.toContain('onOpenAISettings?: () => void;');
+    expect(rightToolbarSource).not.toContain('onOpenAISettings');
   });
 });
 
@@ -223,7 +249,7 @@ describe('PresentationToolbar Agent host controls source', () => {
     expect(source).toContain('prototypeDecisionDataAvailable = false,');
     expect(source).toContain('const canShowPrototypeDecisionActions = !isPreviewContent || prototypeDecisionDataAvailable;');
     expect(source).toContain('&& canShowPrototypeDecisionActions');
-    expect(source).toContain('const showHostPropertyPanelAction = contentMode !== \'theme\'\n        && canShowPrototypeDecisionActions;');
+    expect(source).toContain('const showHostPropertyPanelAction = contentMode !== \'theme\'\n        && canShowPrototypeDecisionActions\n        && !isDocumentCommentActive;');
     expect(hostControlsSource).toContain('showHostPropertyPanelAction ? renderHostToolbarActionButton');
   });
 
@@ -295,35 +321,71 @@ describe('PresentationToolbar Agent host controls source', () => {
     expect(source).not.toContain('hostGenieTriggerRef');
   });
 
-  it('moves the local agent switch into the more menu with a brand active state', () => {
+  it('opens AI settings from the host more menu instead of linking the local agent directly', () => {
     const source = readToolbarSource();
 
-    expect(source).toContain('hostLocalAgentConnected');
-    expect(source).toContain("hostLocalAgentConnected ? '已链接本地 Agent' : '链接本地 Agent'");
-    expect(source).toContain("hostLocalAgentConnected && 'text-brand hover:bg-brand/5 hover:text-brand'");
-    expect(source).toContain("hostLocalAgentConnected ? 'disconnect-agent' : 'wake-agent'");
+    expect(source).toContain('onOpenAISettings?: () => void;');
+    expect(source).toContain('onOpenAISettings,');
+    expect(source).toContain('const handleOpenAISettingsFromHostMenu = React.useCallback(() => {');
+    expect(source).toContain('onOpenAISettings?.();');
+    expect(source).toContain('[closeHostMenus, onOpenAISettings]');
+    expect(source).toContain('onClick={handleOpenAISettingsFromHostMenu}');
+    expect(source).toContain('<Settings2 className={hostMenuIconClass} /> AI 设置');
+    expect(source).not.toContain('hostLocalAgentConnected');
+    expect(source).not.toContain("hostLocalAgentConnected ? '已链接本地 Agent' : '链接本地 Agent'");
+    expect(source).not.toContain("hostLocalAgentConnected && 'text-brand hover:bg-brand/5 hover:text-brand'");
+    expect(source).not.toContain("hostLocalAgentConnected ? 'disconnect-agent' : 'wake-agent'");
+    expect(source).not.toContain('链接本地 Agent');
+    expect(source).not.toContain('已链接本地 Agent');
     expect(source).not.toContain("'host-local-agent'");
-    expect(source).not.toMatch(/renderHostToolbarActionButton\([\s\S]*hostLocalAgentConnected \? '已链接/);
+    expect(source).not.toContain("type: 'wake-agent'");
+    expect(source).not.toContain("type: 'disconnect-agent'");
   });
 
-  it('adds the local annotation enable action immediately after the local agent switch', () => {
+  it('groups host more menu actions by purpose', () => {
     const source = readToolbarSource();
     const hostMoreMenuSource = source.slice(
       source.indexOf('const hostMoreMenu = hostToolbarState?.visible ? ('),
       source.indexOf('const hostToolbarControls = hostToolbarState?.visible ? ('),
     );
 
+    expect(hostMoreMenuSource).toContain('<div className={hostMenuGroupLabelClass}>Agent</div>');
+    expect(hostMoreMenuSource).toContain('<div className={hostMenuGroupLabelClass}>标注</div>');
+    expect(hostMoreMenuSource).toContain('<div className={hostMenuGroupLabelClass}>页面</div>');
+    expect(hostMoreMenuSource).toContain('<div className={hostMenuGroupLabelClass}>帮助</div>');
+    expect(hostMoreMenuSource).toContain('<div className={hostMenuGroupLabelClass}>保存与清理</div>');
     expect(hostMoreMenuSource).toContain("type: 'enable-annotation'");
     expect(hostMoreMenuSource).toContain('开启需求标注');
     expect(hostMoreMenuSource).toContain('hostToolbarState.annotationEnabled');
     expect(hostMoreMenuSource).toContain('hostToolbarState.annotationEnableLoading');
     expect(hostMoreMenuSource).toContain('hostToolbarState.annotationEnableDisabled');
     expect(hostMoreMenuSource).toContain("hostToolbarState.annotationEnabled && 'text-brand hover:bg-brand/5 hover:text-brand'");
-    expect(hostMoreMenuSource.indexOf("hostLocalAgentConnected ? '已链接本地 Agent' : '链接本地 Agent'")).toBeLessThan(
+    expect(hostMoreMenuSource.indexOf('<div className={hostMenuGroupLabelClass}>Agent</div>')).toBeLessThan(
+      hostMoreMenuSource.indexOf('AI 设置'),
+    );
+    expect(hostMoreMenuSource.indexOf('AI 设置')).toBeLessThan(
+      hostMoreMenuSource.indexOf('中断执行'),
+    );
+    expect(hostMoreMenuSource.indexOf('中断执行')).toBeLessThan(
+      hostMoreMenuSource.indexOf('<div className={hostMenuGroupLabelClass}>标注</div>'),
+    );
+    expect(hostMoreMenuSource.indexOf('<div className={hostMenuGroupLabelClass}>标注</div>')).toBeLessThan(
       hostMoreMenuSource.indexOf('开启需求标注'),
     );
     expect(hostMoreMenuSource.indexOf('开启需求标注')).toBeLessThan(
+      hostMoreMenuSource.indexOf('<div className={hostMenuGroupLabelClass}>页面</div>'),
+    );
+    expect(hostMoreMenuSource.indexOf('<div className={hostMenuGroupLabelClass}>页面</div>')).toBeLessThan(
+      hostMoreMenuSource.indexOf("{ type: 'toggle-page-animations' }"),
+    );
+    expect(hostMoreMenuSource.indexOf("{ type: 'toggle-page-animations' }")).toBeLessThan(
+      hostMoreMenuSource.indexOf('<div className={hostMenuGroupLabelClass}>帮助</div>'),
+    );
+    expect(hostMoreMenuSource.indexOf('<div className={hostMenuGroupLabelClass}>帮助</div>')).toBeLessThan(
       hostMoreMenuSource.indexOf("{ type: 'open-keyboard-shortcuts' }"),
+    );
+    expect(hostMoreMenuSource.indexOf("{ type: 'open-keyboard-shortcuts' }")).toBeLessThan(
+      hostMoreMenuSource.indexOf('<div className={hostMenuGroupLabelClass}>保存与清理</div>'),
     );
   });
 
@@ -367,6 +429,8 @@ describe('PresentationToolbar Agent host controls source', () => {
 
     expect(hostControlsSource).toMatch(/'host-clear'[\s\S]*'清空'[\s\S]*<Trash2 \/>/);
     expect(hostControlsSource).not.toContain('清空编辑');
+    expect(hostControlsSource).toContain("{ type: 'clear-edits', scope: 'prototype' }");
+    expect(activeToolbarSource).toContain("runHostAction({ type: 'clear-edits', scope: 'prototype' })");
     expect(activeToolbarSource).toMatch(/\{hostToolbarControls\}[\s\S]*<RotateCw \/> 刷新[\s\S]*\{hostMoreMenu\}[\s\S]*<CircleX \/> 退出/);
   });
 
@@ -398,6 +462,19 @@ describe('PresentationToolbar Agent host controls source', () => {
     expect(hostControlsSource).toContain('选择元素');
     expect(hostControlsSource).toContain("{ type: 'toggle-selection-mode', active: !hostToolbarState.selectionModeActive }");
     expect(hostControlsSource).toContain('active: hostToolbarState.selectionModeActive');
+  });
+
+  it('hides element selection and design decision host controls during document annotation', () => {
+    const source = readToolbarSource();
+    const hostControlsSource = source.slice(
+      source.indexOf('const hostToolbarControls = hostToolbarState?.visible ? ('),
+      source.indexOf('const activeQuickEditToolbarButtons = ('),
+    );
+
+    expect(source).toContain('const showHostSelectionModeAction = !isDocumentCommentActive;');
+    expect(source).toContain('&& !isDocumentCommentActive');
+    expect(hostControlsSource).toContain('visible: showHostSelectionModeAction');
+    expect(hostControlsSource).toContain('showHostPropertyPanelAction ? renderHostToolbarActionButton');
   });
 
   it('shows the selection mode shortcut hint in the host toolbar without binding it in the parent page', () => {
@@ -434,7 +511,7 @@ describe('PresentationToolbar Agent host controls source', () => {
   it('adds a top online edit action for drawio document and template previews', () => {
     const source = readToolbarSource();
     const documentResourceActionsSource = source.slice(
-      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf('const resourceActionButtons = (() => {'),
       source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
     );
 
@@ -453,7 +530,7 @@ describe('PresentationToolbar Agent host controls source', () => {
   it('shows the document annotation action for commentable Markdown and HTML resources', () => {
     const source = readToolbarSource();
     const documentResourceActionsSource = source.slice(
-      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf('const resourceActionButtons = (() => {'),
       source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
     );
 
@@ -468,11 +545,11 @@ describe('PresentationToolbar Agent host controls source', () => {
   it('opens document annotation and editing buttons directly in their requested mode', () => {
     const source = readToolbarSource();
     const documentResourceActionsSource = source.slice(
-      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf('const resourceActionButtons = (() => {'),
       source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
     );
 
-    expect(source).toContain('handleEnableDocEdit: (mode?: SpecQuickEditMode) => void;');
+    expect(source).toContain('handleEnableDocEdit: (mode?: SpecQuickEditMode, options?: { disableSelectionMode?: boolean; preserveSidebar?: boolean }) => void;');
     expect(source).toContain('handleEnableDocEdit,');
     expect(documentResourceActionsSource).toContain("onClick={() => handleEnableDocEdit('comment')}");
     expect(documentResourceActionsSource).toContain("onClick={() => handleEnableDocEdit('edit')}");
@@ -482,7 +559,7 @@ describe('PresentationToolbar Agent host controls source', () => {
   it('reuses the page annotation host toolbar when HTML document annotation is active', () => {
     const source = readToolbarSource();
     const documentResourceActionsSource = source.slice(
-      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf('const resourceActionButtons = (() => {'),
       source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
     );
 

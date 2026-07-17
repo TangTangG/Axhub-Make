@@ -27,22 +27,13 @@ afterEach(() => {
 });
 
 describe('make-server listen host resolution', () => {
-  it('defaults to all interfaces when the project allows LAN access', () => {
-    const projectRoot = createTempRoot();
-    writeJson(getConfigPath(projectRoot), {
-      server: { allowLAN: true },
-    });
-
-    expect(resolveMakeServerListenHost({ projectRoot })).toBe('0.0.0.0');
-  });
-
-  it('defaults to localhost when the project disables LAN access', () => {
+  it('defaults to all interfaces regardless of legacy allowLAN project config', () => {
     const projectRoot = createTempRoot();
     writeJson(getConfigPath(projectRoot), {
       server: { allowLAN: false },
     });
 
-    expect(resolveMakeServerListenHost({ projectRoot })).toBe('localhost');
+    expect(resolveMakeServerListenHost({ projectRoot })).toBe('0.0.0.0');
   });
 
   it('lets explicit host override the project LAN setting', () => {

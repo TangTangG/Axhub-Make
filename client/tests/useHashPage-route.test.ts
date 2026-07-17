@@ -94,6 +94,21 @@ describe('useHashPage route definition', () => {
     });
   });
 
+  it('normalizes optional page groups without retaining blank labels', () => {
+    const route = defineHashPageRoute([
+      { id: 'orders-list', title: '订单列表', group: '  订单管理  ' },
+      { id: 'customers', title: '客户列表', group: '   ' },
+    ], { defaultPageId: 'orders-list' });
+
+    expect(route).toEqual({
+      pages: [
+        { id: 'orders-list', title: '订单列表', group: '订单管理' },
+        { id: 'customers', title: '客户列表' },
+      ],
+      defaultPageId: 'orders-list',
+    });
+  });
+
   it('parses page hashes without accepting invalid page ids', () => {
     expect(parseHashPage('#page=orders-list')).toBe('orders-list');
     expect(parseHashPage('#foo=bar&page=orders-list')).toBe('orders-list');
@@ -109,8 +124,8 @@ describe('useHashPage route definition', () => {
     const { windowStub, parent, dispatch } = createPreviewWindowStub('#page=state-annotation');
     vi.stubGlobal('window', windowStub);
     const route = defineHashPageRoute([
-      { id: 'content-annotation', title: '内容标注' },
-      { id: 'state-annotation', title: '状态标注' },
+      { id: 'content-annotation', title: '内容标注', group: '标注类型' },
+      { id: 'state-annotation', title: '状态标注', group: '标注类型' },
       { id: 'prototype-directory', title: '原型目录' },
     ], { defaultPageId: 'content-annotation' });
 
@@ -121,8 +136,8 @@ describe('useHashPage route definition', () => {
     expect(parent.postMessage).toHaveBeenNthCalledWith(1, {
       type: 'AXHUB_PROTOTYPE_ROUTE_INFO',
       pages: [
-        { id: 'content-annotation', title: '内容标注' },
-        { id: 'state-annotation', title: '状态标注' },
+        { id: 'content-annotation', title: '内容标注', group: '标注类型' },
+        { id: 'state-annotation', title: '状态标注', group: '标注类型' },
         { id: 'prototype-directory', title: '原型目录' },
       ],
       defaultPageId: 'content-annotation',

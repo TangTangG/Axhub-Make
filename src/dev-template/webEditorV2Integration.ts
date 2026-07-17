@@ -21,7 +21,7 @@ import {
 } from '@axhub/commentary';
 import { getImperativeAppDialog } from '../index/components/dialogs/AppDialogProvider';
 import { buildHostCopyPrompt } from '../common/hostPromptBuilder';
-import { normalizeSkillPath } from '../index/utils/skillPath';
+import { normalizeSkillSource } from '../index/utils/skillPath';
 
 const MARKDOWN_DOCS_BROADCAST_CHANNEL = 'axhub-markdown-docs';
 
@@ -54,6 +54,7 @@ export interface WebEditorV2Controller {
   disablePanelOnly: () => void;
   isPanelOnlyMode: () => boolean;
   getCopyPromptText?: () => string;
+  getElementPromptText?: (elementKey: string) => string;
   getDecisionDataCount: () => number;
 }
 
@@ -65,6 +66,7 @@ export interface WebEditorV2EnableOptions {
   commentPageScope?: string;
   annotationApiBaseUrl?: string;
   annotationProjectId?: string;
+  agentRunConcurrency?: number;
 }
 
 function normalizeString(value: unknown): string {
@@ -876,6 +878,19 @@ type TextChangeConflict = {
   afterValues: string[];
 };
 
+const TEMPORARY_STYLE_HACK_COMMENT = `/*
+ * AXHUB TEMPORARY STYLE HACK
+ * 这是预览编辑产生的临时覆盖样式，不是最终实现。
+ * 后续修改本原型时，应将规则合并到正式组件或样式文件，
+ * 验证效果后删除已合并规则；文件为空后删除 hack.css。
+ */`;
+
+export function withTemporaryStyleHackComment(cssText: string): string {
+  const content = String(cssText ?? '').trim();
+  if (content.startsWith(TEMPORARY_STYLE_HACK_COMMENT)) return `${content}\n`;
+  return `${TEMPORARY_STYLE_HACK_COMMENT}\n\n${content}\n`;
+}
+
 type AnnotationDirectoryNode = {
   type?: unknown;
   id?: unknown;
@@ -1578,7 +1593,7 @@ export const createWebEditorV2Controller = (
           : undefined;
       const { skillInstallSource, ...restUiOptions } = options.ui ?? {};
       const normalizedSkillInstallSource =
-        typeof skillInstallSource === 'string' ? normalizeSkillPath(skillInstallSource) : null;
+        typeof skillInstallSource === 'string' ? normalizeSkillSource(skillInstallSource) : null;
       const resolvedToolbarMode = runtimeToolbarMode ?? searchToolbarMode ?? restUiOptions.toolbarMode;
       const resolvedUi = {
         breadcrumbs: true,
@@ -1697,6 +1712,7 @@ export const createWebEditorV2Controller = (
     const hasExplicitCommentPageScope = typeof enableOptions?.commentPageScope === 'string';
     const nextAnnotationApiBaseUrl = normalizeString(enableOptions?.annotationApiBaseUrl);
     const nextAnnotationProjectId = normalizeString(enableOptions?.annotationProjectId);
+    const nextAgentRunConcurrency = Number(enableOptions?.agentRunConcurrency);
     let shouldRecreateInactiveEditor = false;
     let shouldRefreshActiveEditor = false;
     let shouldRefreshRouteState = false;
@@ -1725,6 +1741,17 @@ export const createWebEditorV2Controller = (
       options.ui = {
         ...(options.ui ?? {}),
         initialDarkMode: nextInitialDarkMode,
+      };
+      shouldRecreateInactiveEditor = true;
+    }
+
+    if (
+      Number.isFinite(nextAgentRunConcurrency)
+      && options.ui?.agentRunConcurrency !== nextAgentRunConcurrency
+    ) {
+      options.ui = {
+        ...(options.ui ?? {}),
+        agentRunConcurrency: nextAgentRunConcurrency,
       };
       shouldRecreateInactiveEditor = true;
     }
@@ -1976,7 +2003,7 @@ export const createWebEditorV2Controller = (
 
       const result = await postJson<{ success?: boolean; error?: string }>('/api/hack-css/save', {
         path: targetPath,
-        content: styleChanges.cssText,
+        content: withTemporaryStyleHackComment(styleChanges.cssText),
       });
       if (!result.ok || result.data?.success !== true) {
         throw new Error(readResponseErrorMessage(result.data, '保存强制样式失败'));
@@ -2018,6 +2045,7 @@ export const createWebEditorV2Controller = (
     },
     isPanelOnlyMode: () => editor?.getState().panelOnlyMode ?? false,
     getCopyPromptText: () => editor?.getCopyPromptText?.() ?? '',
+    getElementPromptText: (elementKey) => editor?.getElementPromptText?.(elementKey) ?? '',
     getDecisionDataCount: () => countPageDecisionData(),
   };
 };

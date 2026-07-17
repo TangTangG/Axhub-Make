@@ -46,9 +46,9 @@
  * @mode axure
  *
  * 参考资料：
- * - /rules/axure-export-workflow.md
- * - /rules/prototype-development-guide.md
- * - /rules/axure-api-guide.md
+ * - rules/axure-export-workflow.md
+ * - rules/prototype-development-guide.md
+ * - rules/axure-api-guide.md
  */
 ```
 

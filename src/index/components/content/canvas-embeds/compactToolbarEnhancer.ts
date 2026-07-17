@@ -14,10 +14,13 @@
 
 /* ── SVG icons ────────────────────────────────────────────────── */
 
-const ANNOTATION_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`;
+const ANNOTATION_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M19 3v4"/><path d="M21 5h-4"/><path d="M5 17v2"/><path d="M6 18H4"/></svg>`;
 const DRAWIO_TOOL_LABEL = 'Drawio 图表';
 const DRAWIO_TOOL_TOOLTIP = '插入 Drawio 图表';
 const DRAWIO_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="8" y="14" width="8" height="7" rx="1"/><path d="M10 6h4"/><path d="M17.5 10v4"/><path d="M12 10v4"/></svg>`;
+const PROJECT_RESOURCE_TOOL_LABEL = '添加资源';
+const PROJECT_RESOURCE_TOOL_TOOLTIP = '从本项目添加资源到画布';
+const PROJECT_RESOURCE_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>`;
 
 /* Layer action icons (matching Excalidraw style) */
 const ICON_SEND_TO_BACK = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/><line x1="12" y1="9" x2="12" y2="21"/><polyline points="4 4 20 4"/></svg>`;
@@ -80,6 +83,8 @@ export interface CompactToolbarEnhancerOptions {
     onAnnotationClick: () => void;
     /** Callback when the user clicks the Drawio menu item. */
     onDrawioToolClick: () => void;
+    /** Callback when the user clicks the project resource menu item. */
+    onProjectResourceClick: () => void;
     /** Returns true when the currently selected element has an annotation. */
     hasAnnotation: () => boolean;
     /** Returns the currently open Excalidraw compact popup. */
@@ -92,6 +97,7 @@ export class CompactToolbarEnhancer {
     private container: HTMLElement;
     private onAnnotationClick: () => void;
     private onDrawioToolClick: () => void;
+    private onProjectResourceClick: () => void;
     private hasAnnotation: () => boolean;
     private getOpenPopup: () => string | null | undefined;
     private observer: MutationObserver | null = null;
@@ -102,6 +108,7 @@ export class CompactToolbarEnhancer {
         this.container = opts.container;
         this.onAnnotationClick = opts.onAnnotationClick;
         this.onDrawioToolClick = opts.onDrawioToolClick;
+        this.onProjectResourceClick = opts.onProjectResourceClick;
         this.hasAnnotation = opts.hasAnnotation;
         this.getOpenPopup = opts.getOpenPopup;
     }
@@ -132,6 +139,7 @@ export class CompactToolbarEnhancer {
         cancelAnimationFrame(this.rafId);
         this.removeAiGenerationToolbarButtons();
         this.removeDrawioExtraToolsMenuItems();
+        this.removeProjectResourceToolbarButtons();
     }
 
     /** Call when the selection changes to refresh the annotation button highlight. */
@@ -155,6 +163,7 @@ export class CompactToolbarEnhancer {
         const toolbar = this.getTopToolbar();
         if (toolbar) {
             this.installToolbarTooltips(toolbar);
+            this.injectProjectResourceToolbarButton(toolbar);
         }
         this.injectDrawioExtraToolsMenuItem();
 
@@ -277,7 +286,49 @@ export class CompactToolbarEnhancer {
         return item;
     }
 
+    private injectProjectResourceToolbarButton(toolbar: Element) {
+        const extraToolsRoot = toolbar.querySelector<HTMLElement>('.App-toolbar__extra-tools-trigger');
+        if (!extraToolsRoot) return;
+
+        let wrapper = toolbar.querySelector<HTMLElement>('[data-axhub-project-resource-toolbar-wrapper]');
+        if (!wrapper) {
+            wrapper = document.createElement('div');
+            wrapper.className = 'axhub-ai-generation-toolbar-tool';
+            wrapper.setAttribute('data-axhub-project-resource-toolbar-wrapper', 'true');
+            wrapper.setAttribute('data-axhub-project-resource-toolbar-label', PROJECT_RESOURCE_TOOL_LABEL);
+            wrapper.appendChild(this.createProjectResourceToolbarButton());
+        }
+
+        const button = wrapper.querySelector<HTMLButtonElement>('[data-axhub-project-resource-toolbar-btn]');
+        if (!button) return;
+        this.wireToolbarButton(button, () => this.onProjectResourceClick());
+        this.applyToolbarAriaLabel(button, PROJECT_RESOURCE_TOOL_TOOLTIP);
+
+        if (wrapper.nextElementSibling !== extraToolsRoot) {
+            extraToolsRoot.before(wrapper);
+        }
+    }
+
+    private createProjectResourceToolbarButton(): HTMLButtonElement {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'axhub-ai-generation-toolbar-button ToolIcon_type_button';
+        button.setAttribute('data-axhub-project-resource-toolbar-btn', 'true');
+        button.setAttribute('data-testid', 'toolbar-project-resource');
+
+        const icon = document.createElement('div');
+        icon.className = 'ToolIcon__icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.innerHTML = PROJECT_RESOURCE_ICON_SVG;
+
+        button.appendChild(icon);
+        return button;
+    }
+
     private wireToolbarButton(button: HTMLButtonElement, onActivate: () => void) {
+        if (button.getAttribute('data-axhub-toolbar-handler-version') === TOOLBAR_BUTTON_HANDLER_VERSION) {
+            return;
+        }
         button.setAttribute('data-axhub-toolbar-handler-version', TOOLBAR_BUTTON_HANDLER_VERSION);
         let suppressNextClick = false;
         const handleActivation = (event: Event) => {
@@ -314,6 +365,10 @@ export class CompactToolbarEnhancer {
 
     private removeDrawioExtraToolsMenuItems() {
         document.querySelectorAll('[data-axhub-drawio-extra-tools-item]').forEach((node) => node.remove());
+    }
+
+    private removeProjectResourceToolbarButtons() {
+        this.container.querySelectorAll('[data-axhub-project-resource-toolbar-wrapper]').forEach((node) => node.remove());
     }
 
     private getTopToolbar(): Element | null {
@@ -564,6 +619,10 @@ export function injectEnhancerStyles() {
         .axhub-ai-generation-toolbar-button .ToolIcon__icon svg {
             width: var(--axhub-excalidraw-icon-size, 17px);
             height: var(--axhub-excalidraw-icon-size, 17px);
+        }
+        [data-axhub-project-resource-toolbar-btn] .ToolIcon__icon svg {
+            width: var(--axhub-project-resource-toolbar-icon-size, 20px);
+            height: var(--axhub-project-resource-toolbar-icon-size, 20px);
         }
         [data-axhub-toolbar-tooltip] {
             position: relative;

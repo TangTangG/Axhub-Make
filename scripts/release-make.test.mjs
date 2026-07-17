@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { unzipSync } from 'fflate';
 
 process.env.AXHUB_MAKE_RELEASE_SKIP_MAIN = '1';
 
@@ -21,6 +22,36 @@ function createTempRoot(prefix) {
 function writeFile(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function writeMinimalTemplateAssembly(clientRoot, runtimeFiles = ['package.json']) {
+  writeFile(path.join(clientRoot, 'template-manifest.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    runtime: { files: runtimeFiles, directories: [] },
+    makeMetadata: {
+      seedDirectory: 'template-seed/.axhub/make',
+      outputDirectory: '.axhub/make',
+      files: [
+        { path: 'README.md', strategy: 'copy', description: 'Copy seed README.' },
+        { path: 'axhub.config.json', strategy: 'sanitize', description: 'Sanitize seed config.' },
+        { path: 'client.json', strategy: 'copy', description: 'Copy seed marker.' },
+        { path: 'sidebar-tree.json', strategy: 'filter', description: 'Filter seed sidebar.' },
+      ],
+    },
+    prototypes: [{ id: 'example' }],
+    themes: { idRules: [] },
+    resources: { files: [] },
+  }, null, 2)}\n`);
+  writeFile(path.join(clientRoot, 'src/prototypes/example/index.tsx'), 'export {};\n');
+  writeFile(path.join(clientRoot, 'src/themes/example/index.tsx'), 'export {};\n');
+  writeFile(path.join(clientRoot, 'template-seed/.axhub/make/README.md'), '# Seed\n');
+  writeFile(path.join(clientRoot, 'template-seed/.axhub/make/axhub.config.json'), '{}\n');
+  writeFile(path.join(clientRoot, 'template-seed/.axhub/make/client.json'), '{}\n');
+  writeFile(path.join(clientRoot, 'template-seed/.axhub/make/sidebar-tree.json'), JSON.stringify({
+    prototypes: [{ kind: 'item', itemKey: 'prototypes/example' }],
+    themesTree: [{ kind: 'item', itemKey: 'themes/example' }],
+    themes: ['example'],
+  }));
 }
 
 function stripTypeImportQueries(source) {
@@ -61,9 +92,6 @@ function readTrackedFiles() {
 }
 
 function shouldScanTrackedFile(relativePath) {
-  if (relativePath === 'scripts/release-make.test.mjs') {
-    return false;
-  }
   if (/^(?:automation-reports|\.local|\.release|coverage|dist|node_modules)\//u.test(relativePath)) {
     return false;
   }
@@ -72,9 +100,9 @@ function shouldScanTrackedFile(relativePath) {
 }
 
 function containsLocalMachinePath(source) {
-  return /(?:file:\/(?:Users|Volumes)|\/Users\/jianzhoulin\/rd|\/Volumes\/WORK\/rd)\/[^'"`\s]*/u.test(source)
+  return /(?:file:\/(?:Users|Volumes)|\/(?:Users|Volumes)\/[^/'"`\s]+)\/[^'"`\s]*/u.test(source)
     || /[A-Za-z]:\\Users\\/u.test(source)
-    || new RegExp('%2F(?:Users%2Fjianzhoulin%2Frd|Volumes%2FWORK%2Frd)%2F', 'iu').test(source);
+    || /%2F(?:Users|Volumes)%2F[^%/\s]+%2F/iu.test(source);
 }
 
 afterEach(() => {
@@ -85,6 +113,10 @@ afterEach(() => {
 
 describe('release make artifact helpers', () => {
   it('keeps tracked source files free of local machine paths', () => {
+    assert.equal(containsLocalMachinePath(`/${'Users'}/example/project`), true);
+    assert.equal(containsLocalMachinePath(`/${'Volumes'}/ExampleDisk/project`), true);
+    assert.equal(containsLocalMachinePath(['%2F', 'Users', '%2F', 'example', '%2F', 'project'].join('')), true);
+
     const offenders = [];
     for (const relativePath of readTrackedFiles()) {
       if (!shouldScanTrackedFile(relativePath)) {
@@ -218,6 +250,37 @@ describe('release make artifact helpers', () => {
     );
   });
 
+  it('creates the online make client template latest manifest from release notes and zip metadata', () => {
+    const releaseNotes = '# Axhub Make Client 0.2.0\n\n- 更新官方模板文件。';
+    const manifest = releaseMake.createMakeClientTemplateLatestManifest({
+      templateVersion: '0.2.0',
+      releaseNotes,
+      zipMetadata: releaseMake.createTemplateZipMetadata({ templateVersion: '0.2.0' }),
+      publishedAt: '2026-07-09T00:00:00.000Z',
+    });
+
+    assert.deepEqual(manifest, {
+      schemaVersion: 1,
+      version: '0.2.0',
+      releaseNotes,
+      publishedAt: '2026-07-09T00:00:00.000Z',
+      sources: [
+        {
+          id: 'github',
+          url: 'https://github.com/lintendo/Axhub-Make/releases/download/make-client-template-v0.2.0/axhub-make-client-template.zip',
+          markerRepository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+          templateVersion: '0.2.0',
+        },
+        {
+          id: 'gitee',
+          url: 'https://gitee.com/axhub/Axhub-Make/releases/download/make-client-template-v0.2.0/axhub-make-client-template.zip',
+          markerRepository: 'https://gitee.com/axhub/Axhub-Make/tree/main/client',
+          templateVersion: '0.2.0',
+        },
+      ],
+    });
+  });
+
   it('keeps make client Vitest companion packages on exact matching versions', () => {
     const clientPackageJson = JSON.parse(fs.readFileSync(path.resolve('client/package.json'), 'utf8'));
     const devDependencies = clientPackageJson.devDependencies || {};
@@ -230,6 +293,128 @@ describe('release make artifact helpers', () => {
     );
     assert.equal(devDependencies['@vitest/ui'], vitestVersion);
     assert.equal(devDependencies['@vitest/coverage-v8'], vitestVersion);
+  });
+
+  it('declares the client template payload without mutable development defaults', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.resolve('client/template-manifest.json'), 'utf8'));
+
+    assert.equal(manifest.schemaVersion, 1);
+    assert.equal(manifest.prototypeDefaults, undefined);
+    assert.equal(manifest.themes.defaultAction, undefined);
+    assert.deepEqual(manifest.prototypes.map(({ id }) => id), [
+      'annotation-demo',
+      'beginner-guide',
+      'touch-and-talk-annotation-demo',
+    ]);
+    assert.equal(
+      manifest.prototypes.find(({ id }) => id === 'annotation-demo')?.fileRules,
+      undefined,
+    );
+    assert.equal(manifest.makeMetadata.seedDirectory, 'template-seed/.axhub/make');
+    assert.equal(manifest.makeMetadata.outputDirectory, '.axhub/make');
+    assert.deepEqual(
+      manifest.makeMetadata.files.map(({ path: filePath, strategy }) => ({ path: filePath, strategy })),
+      [
+        { path: 'README.md', strategy: 'copy' },
+        { path: 'axhub.config.json', strategy: 'sanitize' },
+        { path: 'client.json', strategy: 'copy' },
+        { path: 'sidebar-tree.json', strategy: 'filter' },
+      ],
+    );
+
+    const rules = [
+      ...(manifest.runtime.fileRules || []),
+      ...manifest.prototypes.flatMap(({ fileRules = [] }) => fileRules),
+      ...manifest.themes.idRules,
+      ...manifest.makeMetadata.files,
+    ];
+    assert(rules.every(({ description }) => typeof description === 'string' && description.trim()));
+  });
+
+  it('derives allowed Make metadata entries from the template manifest', () => {
+    assert.deepEqual(
+      releaseMake.listAllowedMakeClientTemplateMetadataEntries({
+        sourceClientDir: path.resolve('client'),
+      }),
+      [
+        '.axhub/make/README.md',
+        '.axhub/make/axhub.config.json',
+        '.axhub/make/client.json',
+        '.axhub/make/sidebar-tree.json',
+      ],
+    );
+  });
+
+  it('rejects a sidebar seed whose flat theme list omits a selected theme', () => {
+    const sourceRoot = createTempRoot('axhub-release-template-sidebar-source-');
+    const outputRoot = createTempRoot('axhub-release-template-sidebar-output-');
+    const clientRoot = path.join(sourceRoot, 'client');
+    writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
+    writeMinimalTemplateAssembly(clientRoot);
+    writeFile(path.join(clientRoot, 'template-seed/.axhub/make/sidebar-tree.json'), JSON.stringify({
+      prototypes: [{ kind: 'item', itemKey: 'prototypes/example' }],
+      themesTree: [{ kind: 'item', itemKey: 'themes/example' }],
+      themes: [],
+    }));
+
+    assert.throws(
+      () => releaseMake.createMakeClientTemplateZip({
+        sourceClientDir: clientRoot,
+        outputDir: outputRoot,
+      }),
+      /Template sidebar seed themes list is missing themes: example/u,
+    );
+  });
+
+  it('pins the Make client release dependencies and pnpm version', () => {
+    const clientPackageJson = JSON.parse(fs.readFileSync(path.resolve('client/package.json'), 'utf8'));
+
+    assert.equal(clientPackageJson.version, '0.1.13');
+    assert.equal(clientPackageJson.packageManager, 'pnpm@10.20.0');
+    assert.equal(clientPackageJson.dependencies['@axhub/annotation'], '1.0.16');
+    assert.equal(clientPackageJson.dependencies['lucide-react'], '0.562.0');
+  });
+
+  it('creates a lean pnpm-only package manifest for released client templates', () => {
+    const packageJson = releaseMake.createMakeClientTemplatePackageJson({
+      name: '@axhub/make-client',
+      version: '0.1.13',
+      scripts: {
+        dev: 'vite',
+        test: 'pnpm test:run',
+        'test:run': 'vitest --run',
+        'test:coverage': 'vitest --run --coverage',
+        'test:watch': 'vitest',
+        'test:ui': 'vitest --ui',
+        coverage: 'pnpm test:coverage',
+        'font:subset:beginner-guide': 'node scripts/subset-beginner-guide-fonts.mjs',
+      },
+      dependencies: {
+        '@axhub/annotation': '1.0.16',
+        'lucide-react': '0.562.0',
+      },
+      devDependencies: {
+        '@vitest/coverage-v8': '4.0.16',
+        '@vitest/ui': '4.0.16',
+        react: '^18.2.0',
+        'react-dom': '^18.2.0',
+        'subset-font': '^2.5.0',
+        vitest: '4.0.16',
+        vite: '5.4.21',
+      },
+    });
+
+    assert.equal(packageJson.packageManager, 'pnpm@10.20.0');
+    assert.deepEqual(packageJson.scripts, { dev: 'vite' });
+    assert.deepEqual(packageJson.dependencies, {
+      '@axhub/annotation': '1.0.16',
+      'lucide-react': '0.562.0',
+    });
+    assert.deepEqual(packageJson.devDependencies, {
+      react: '18.2.0',
+      'react-dom': '18.2.0',
+      vite: '5.4.21',
+    });
   });
 
   it('keeps ordinary make release commands free of the client template zip', () => {
@@ -250,12 +435,15 @@ describe('release make artifact helpers', () => {
     assert(!commands.releaseArgs.includes('/tmp/axhub-make-client-template.zip'));
   });
 
-  it('builds template-only release commands with only the client template zip', () => {
+  it('builds template-only release commands with the client template zip and latest manifest', () => {
     const commands = releaseMake.publishTemplateCommands({
       tagName: 'make-client-template-v0.2.0-beta.1',
       templateVersion: '0.2.0-beta.1',
       templateZip: {
         path: '/tmp/axhub-make-client-template.zip',
+      },
+      latestManifest: {
+        path: '/tmp/axhub-make-client-template.latest.json',
       },
     }, {
       githubRepo: 'lintendo/Axhub-Make',
@@ -266,6 +454,7 @@ describe('release make artifact helpers', () => {
       'create',
       'make-client-template-v0.2.0-beta.1',
       '/tmp/axhub-make-client-template.zip',
+      '/tmp/axhub-make-client-template.latest.json',
       '--repo',
       'lintendo/Axhub-Make',
       '--title',
@@ -274,39 +463,174 @@ describe('release make artifact helpers', () => {
     ]);
   });
 
+  it('requires explicit human confirmation before external publishing', () => {
+    assert.throws(
+      () => releaseMake.assertExternalPublishConfirmed({ confirmPublish: false }),
+      /--confirm-publish/u,
+    );
+    assert.doesNotThrow(
+      () => releaseMake.assertExternalPublishConfirmed({ confirmPublish: true }),
+    );
+  });
+
   it('packages the make client template zip without local runtime artifacts', async () => {
     const sourceRoot = createTempRoot('axhub-release-template-source-');
     const outputRoot = createTempRoot('axhub-release-template-output-');
     const clientRoot = path.join(sourceRoot, 'client');
-    writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/index.tsx'), 'export {};\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/acp/conversations.json'), `{"cwd":"/${'Users'}/builder/project"}\n`);
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/prototype-comments.json'), '{}\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/.spec/prototype-review.md'), '# Keep review\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.ttf'), 'source font\n');
-    writeFile(path.join(clientRoot, 'src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'), 'subset font\n');
+    writeFile(path.join(clientRoot, 'package.json'), `${JSON.stringify({
+      name: '@axhub/make-client',
+      private: true,
+      scripts: {
+        dev: 'vite',
+        test: 'pnpm test:run',
+        'test:run': 'vitest --run',
+        'font:subset:beginner-guide': 'node scripts/subset-beginner-guide-fonts.mjs',
+      },
+      devDependencies: {
+        react: '^18.2.0',
+        'react-dom': '^18.2.0',
+        'subset-font': '^2.5.0',
+        vitest: '4.0.16',
+      },
+    }, null, 2)}\n`);
+    writeFile(path.join(clientRoot, 'template-manifest.json'), `${JSON.stringify({
+      schemaVersion: 1,
+      runtime: {
+        files: ['package.json'],
+        directories: ['.agents/skills', '.claude/skills', 'scripts'],
+        fileRules: [{
+          action: 'exclude',
+          pattern: '^scripts/subset-beginner-guide-fonts\\.mjs$',
+          description: 'Do not publish the font development tool.',
+        }],
+      },
+      makeMetadata: {
+        seedDirectory: 'template-seed/.axhub/make',
+        outputDirectory: '.axhub/make',
+        files: [
+          { path: 'README.md', strategy: 'copy', description: 'Copy seed README.' },
+          { path: 'axhub.config.json', strategy: 'sanitize', description: 'Sanitize seed config.' },
+          { path: 'client.json', strategy: 'copy', description: 'Copy seed marker.' },
+          { path: 'sidebar-tree.json', strategy: 'filter', description: 'Filter seed sidebar.' },
+        ],
+      },
+      prototypes: [
+        { id: 'annotation-demo' },
+        {
+          id: 'beginner-guide',
+          fileRules: [{
+            action: 'exclude',
+            pattern: '^annotation-source\\.json$',
+            description: 'Do not publish beginner annotations.',
+          }, {
+            action: 'exclude',
+            pattern: '\\.(?:otf|ttf)$',
+            description: 'Do not publish source fonts.',
+          }],
+        },
+        {
+          id: 'touch-and-talk-annotation-demo',
+          fileRules: [{
+            action: 'exclude',
+            pattern: '^annotation-source\\.json$',
+            description: 'Do not publish commentary demo annotations.',
+          }],
+        },
+      ],
+      themes: {
+        idRules: [{
+          action: 'exclude',
+          pattern: '^(?:trae|whop)$',
+          description: 'Do not publish local themes.',
+        }],
+      },
+      resources: {
+        files: ['src/resources/README.md'],
+      },
+    }, null, 2)}\n`);
+    writeFile(path.join(clientRoot, 'src/prototypes/annotation-demo/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/annotation-demo/annotation-source.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/annotation-demo/.spec/spec.md'), '# Annotation spec\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/annotation-demo/.spec/implementation.md'), '# Local plan\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/annotation-source.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/spec.html'), '<h1>Beginner spec</h1>\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/spec.md'), '# Beginner spec\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/canvas.excalidraw'), '{"type":"excalidraw"}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/canvas-assets/screenshot.png'), 'screenshot\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/acp/conversations.json'), `{"cwd":"/${'Users'}/builder/project"}\n`);
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/prototype-comments.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/prototype-review.md'), '# Local review\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/TsangerJinKai02-W04.ttf'), 'source font\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/TsangerJinKai02-W04.subset.woff2'), 'subset font\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/touch-and-talk-annotation-demo/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/touch-and-talk-annotation-demo/annotation-source.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/touch-and-talk-annotation-demo/.spec/spec.md'), '# Commentary spec\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/dev-only/index.tsx'), 'export {};\n');
     writeFile(path.join(clientRoot, 'tests/template.test.mjs'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'scripts/capture-theme.test.mjs'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'scripts/subset-beginner-guide-fonts.mjs'), 'export {};\n');
     writeFile(path.join(clientRoot, '.git/config'), '[core]\n');
     writeFile(path.join(clientRoot, '.DS_Store'), 'finder\n');
     writeFile(path.join(clientRoot, 'src/resources/.DS_Store'), 'finder\n');
+    writeFile(path.join(clientRoot, 'src/resources/README.md'), '# Resources\n');
+    writeFile(path.join(clientRoot, 'src/resources/untitled.assets/scratch.png'), 'scratch\n');
+    writeFile(path.join(clientRoot, 'src/themes/trae/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/themes/whop/index.tsx'), 'export {};\n');
+    writeFile(path.join(clientRoot, 'src/themes/claude/index.tsx'), 'export {};\n');
     writeFile(path.join(clientRoot, '.drawio-tmp/order-flow/order-flow.spec.yaml'), 'id: order-flow\n');
     writeFile(path.join(clientRoot, 'node_modules/left-pad/index.js'), 'module.exports = null;\n');
     writeFile(path.join(clientRoot, 'dist/build.js'), 'console.log("built");\n');
     writeFile(path.join(clientRoot, '.agents/skills/local/SKILL.md'), 'npm run typecheck\n');
     writeFile(path.join(clientRoot, '.claude/skills/local/SKILL.md'), 'npm run typecheck\n');
     writeFile(path.join(clientRoot, '.trae/local.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.codex/session.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.workbuddy/state.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.logs/make-server.pid'), '12345\n');
+    writeFile(path.join(clientRoot, 'logs/make-server.log'), 'server log\n');
+    writeFile(path.join(clientRoot, 'tmp-midscene/cli-runtime/package.json'), '{"name":"tmp-midscene-runtime"}\n');
     writeFile(path.join(clientRoot, 'temp/scratch.txt'), 'scratch\n');
-    writeFile(path.join(clientRoot, '.axhub/make/client.json'), '{}\n');
-    writeFile(path.join(clientRoot, '.axhub/make/README.md'), '# Make client\n');
-    writeFile(path.join(clientRoot, '.axhub/make/sidebar-tree.json'), '{"version":1,"themesTree":[]}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/client.json'), '{"kind":"live-client"}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/README.md'), '# Live Make client\n');
+    writeFile(path.join(clientRoot, '.axhub/make/sidebar-tree.json'), JSON.stringify({
+      version: 1,
+      prototypes: [{ kind: 'item', itemKey: 'prototypes/dev-only' }],
+      themesTree: [{ kind: 'item', itemKey: 'themes/trae' }],
+    }));
     writeFile(path.join(clientRoot, '.axhub/make/project.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/entries.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/.dev-server-info.json'), '{}\n');
-    writeFile(path.join(clientRoot, '.axhub/make/axhub.config.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/axhub.config.json'), '{"server":{"host":"live-host"}}\n');
     writeFile(path.join(clientRoot, '.axhub/make/sessions/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/exports/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/edit-history/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/sessions/conversations.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/reviews/config.json'), '{"reviewer":"local"}\n');
+    writeFile(path.join(clientRoot, 'template-seed/.axhub/make/README.md'), '# Seed Make client\n');
+    writeFile(path.join(clientRoot, 'template-seed/.axhub/make/client.json'), '{"kind":"seed-client"}\n');
+    writeFile(path.join(clientRoot, 'template-seed/.axhub/make/axhub.config.json'), JSON.stringify({
+      server: { host: 'localhost', lanHost: '192.168.1.5', enableCommandAPI: false },
+      cloudPublishing: { s3: { secretAccessKey: 'remove-me' } },
+    }));
+    writeFile(path.join(clientRoot, 'template-seed/.axhub/make/sidebar-tree.json'), JSON.stringify({
+      version: 1,
+      prototypes: [
+        { kind: 'item', title: 'Annotation', itemKey: 'prototypes/annotation-demo' },
+        { kind: 'item', title: 'Beginner', itemKey: 'prototypes/beginner-guide' },
+        { kind: 'item', title: 'Commentary', itemKey: 'prototypes/touch-and-talk-annotation-demo' },
+        { kind: 'item', title: 'Seed extra', itemKey: 'prototypes/dev-only' },
+      ],
+      themesTree: [{
+        kind: 'folder',
+        title: 'Themes',
+        children: [
+          { kind: 'item', title: 'Claude', itemKey: 'themes/claude' },
+          { kind: 'item', title: 'Trae', itemKey: 'themes/trae' },
+          { kind: 'item', title: 'Whop', itemKey: 'themes/whop' },
+        ],
+      }],
+      themes: ['claude', 'trae', 'whop'],
+    }));
 
     const result = await releaseMake.createMakeClientTemplateZip({
       sourceClientDir: clientRoot,
@@ -316,28 +640,80 @@ describe('release make artifact helpers', () => {
     assert.equal(path.basename(result.path), 'axhub-make-client-template.zip');
     assert.match(result.sha256, /^[a-f0-9]{64}$/u);
     const entries = releaseMake.listZipEntries(result.path);
+    const zipEntries = unzipSync(new Uint8Array(fs.readFileSync(result.path)));
+    const packagedPackageJson = JSON.parse(Buffer.from(zipEntries['package.json']).toString('utf8'));
+    const packagedLockfile = Buffer.from(zipEntries['pnpm-lock.yaml']).toString('utf8');
     assert(entries.includes('package.json'));
-    assert(entries.includes('src/prototypes/template-home/index.tsx'));
-    assert(!entries.some((entry) => entry.startsWith('src/prototypes/template-home/.spec/acp/')));
-    assert(!entries.includes('src/prototypes/template-home/.spec/prototype-comments.json'));
-    assert(entries.includes('src/prototypes/template-home/.spec/prototype-review.md'));
-    assert(!entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.ttf'));
-    assert(entries.includes('src/prototypes/template-home/TsangerJinKai02-W04.subset.woff2'));
+    assert(entries.includes('pnpm-lock.yaml'));
+    assert.equal(packagedPackageJson.packageManager, 'pnpm@10.20.0');
+    assert.equal(packagedPackageJson.scripts.test, undefined);
+    assert.equal(packagedPackageJson.scripts['test:run'], undefined);
+    assert.equal(packagedPackageJson.scripts['font:subset:beginner-guide'], undefined);
+    assert.equal(packagedPackageJson.devDependencies.vitest, undefined);
+    assert.equal(packagedPackageJson.devDependencies['subset-font'], undefined);
+    assert.equal(packagedPackageJson.devDependencies.react, '18.2.0');
+    assert.match(packagedLockfile, /react:\n\s+specifier: 18\.2\.0/u);
+    assert.match(packagedLockfile, /react-dom:\n\s+specifier: 18\.2\.0/u);
+    assert(entries.includes('src/prototypes/annotation-demo/annotation-source.json'));
+    assert(entries.includes('src/prototypes/annotation-demo/.spec/spec.md'));
+    assert(!entries.includes('src/prototypes/annotation-demo/.spec/implementation.md'));
+    assert(entries.includes('src/prototypes/beginner-guide/index.tsx'));
+    assert(!entries.includes('src/prototypes/beginner-guide/annotation-source.json'));
+    assert(entries.includes('src/prototypes/beginner-guide/.spec/spec.html'));
+    assert(entries.includes('src/prototypes/beginner-guide/.spec/spec.md'));
+    assert(entries.includes('src/prototypes/beginner-guide/canvas.excalidraw'));
+    assert(entries.some((entry) => entry.startsWith('src/prototypes/beginner-guide/canvas-assets/')));
+    assert(!entries.some((entry) => entry.startsWith('src/prototypes/beginner-guide/.spec/acp/')));
+    assert(!entries.includes('src/prototypes/beginner-guide/.spec/prototype-comments.json'));
+    assert(!entries.includes('src/prototypes/beginner-guide/.spec/prototype-review.md'));
+    assert(!entries.includes('src/prototypes/touch-and-talk-annotation-demo/annotation-source.json'));
+    assert(entries.includes('src/prototypes/touch-and-talk-annotation-demo/.spec/spec.md'));
+    assert(!entries.some((entry) => entry.startsWith('src/prototypes/dev-only/')));
+    assert(!entries.includes('src/prototypes/beginner-guide/TsangerJinKai02-W04.ttf'));
+    assert(entries.includes('src/prototypes/beginner-guide/TsangerJinKai02-W04.subset.woff2'));
     assert(!entries.some((entry) => entry.startsWith('tests/')));
+    assert(!entries.some((entry) => /\.test\.[^/]+$/u.test(entry)));
+    assert(!entries.includes('scripts/subset-beginner-guide-fonts.mjs'));
     assert(!entries.some((entry) => entry.startsWith('.git/')));
     assert(!entries.includes('.DS_Store'));
     assert(!entries.includes('src/resources/.DS_Store'));
+    assert(!entries.some((entry) => entry.startsWith('src/resources/untitled.assets/')));
+    assert(!entries.some((entry) => entry.startsWith('src/themes/trae/')));
+    assert(!entries.some((entry) => entry.startsWith('src/themes/whop/')));
+    assert(entries.includes('src/themes/claude/index.tsx'));
     assert(!entries.some((entry) => entry.startsWith('.drawio-tmp/')));
     assert(!entries.some((entry) => entry.startsWith('node_modules/')));
     assert(!entries.some((entry) => entry.startsWith('dist/')));
     assert(entries.includes('.agents/skills/local/SKILL.md'));
     assert(entries.includes('.claude/skills/local/SKILL.md'));
     assert(!entries.some((entry) => entry.startsWith('.trae/')));
+    assert(!entries.some((entry) => entry.startsWith('.codex/')));
+    assert(!entries.some((entry) => entry.startsWith('.workbuddy/')));
+    assert(!entries.some((entry) => entry.startsWith('.logs/')));
+    assert(!entries.some((entry) => entry.startsWith('logs/')));
+    assert(!entries.some((entry) => entry.startsWith('tmp-midscene/')));
     assert(!entries.some((entry) => entry.startsWith('temp/')));
     assert(entries.includes('.axhub/make/client.json'));
     assert(entries.includes('.axhub/make/axhub.config.json'));
     assert(entries.includes('.axhub/make/README.md'));
     assert(entries.includes('.axhub/make/sidebar-tree.json'));
+    assert.equal(Buffer.from(zipEntries['.axhub/make/README.md']).toString('utf8'), '# Seed Make client\n');
+    assert.equal(JSON.parse(Buffer.from(zipEntries['.axhub/make/client.json']).toString('utf8')).kind, 'seed-client');
+    const packagedConfig = JSON.parse(Buffer.from(zipEntries['.axhub/make/axhub.config.json']).toString('utf8'));
+    assert.equal(packagedConfig.server.host, 'localhost');
+    assert.equal(packagedConfig.server.lanHost, undefined);
+    assert.equal(packagedConfig.cloudPublishing.s3, undefined);
+    const packagedSidebar = JSON.parse(Buffer.from(zipEntries['.axhub/make/sidebar-tree.json']).toString('utf8'));
+    assert.deepEqual(packagedSidebar.prototypes.map(({ itemKey }) => itemKey), [
+      'prototypes/annotation-demo',
+      'prototypes/beginner-guide',
+      'prototypes/touch-and-talk-annotation-demo',
+    ]);
+    assert.deepEqual(
+      packagedSidebar.themesTree.flatMap(({ children = [] }) => children.map(({ itemKey }) => itemKey)),
+      ['themes/claude'],
+    );
+    assert(!entries.some((entry) => entry.startsWith('template-seed/')));
     assert(!entries.includes('.axhub/make/project.json'));
     assert(!entries.includes('.axhub/make/entries.json'));
     assert(!entries.includes('.axhub/make/.dev-server-info.json'));
@@ -345,6 +721,7 @@ describe('release make artifact helpers', () => {
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/exports/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/edit-history/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/sessions/')));
+    assert(!entries.includes('src/prototypes/beginner-guide/.spec/reviews/config.json'));
   });
 
   it('rejects make client template zips with local machine paths', async () => {
@@ -352,8 +729,9 @@ describe('release make artifact helpers', () => {
     const outputRoot = createTempRoot('axhub-release-template-leak-output-');
     const clientRoot = path.join(sourceRoot, 'client');
     writeFile(path.join(clientRoot, 'package.json'), '{"name":"@axhub/make-client"}\n');
+    writeMinimalTemplateAssembly(clientRoot, ['package.json', 'leaked-path.js']);
     writeFile(
-      path.join(clientRoot, 'src/prototypes/template-home/index.js'),
+      path.join(clientRoot, 'leaked-path.js'),
       `export const leakedPath = "/${'Users'}/builder/project";\n`,
     );
 
@@ -520,6 +898,15 @@ describe('release make artifact helpers', () => {
     }
   });
 
+  it('packages the shared make client template defaults used by the server runtime', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
+
+    assert.ok(
+      packageJson.files.includes('src/common/makeClientTemplate.ts'),
+      'src/common/makeClientTemplate.ts',
+    );
+  });
+
   it('does not resolve source-only files at runtime from the bundled npm server', () => {
     const runtimeFiles = [
       path.resolve('bin/cli.mjs'),
@@ -543,9 +930,10 @@ describe('release make artifact helpers', () => {
     assert.equal(packageJson.name, '@axhub/make');
     assert.equal(packageJson.version, '1.2.3');
     assert.equal(packageJson.private, undefined);
+    assert.deepEqual(Object.keys(packageJson.bin), ['make', 'axhub-make', 'make-server']);
     assert.deepEqual(packageJson.bin, {
-      'axhub-make': './bin/cli.mjs',
       make: './bin/cli.mjs',
+      'axhub-make': './bin/cli.mjs',
       'make-server': './bin/cli.mjs',
     });
     assert.equal(packageJson.files.includes('assets'), false);
@@ -580,6 +968,7 @@ describe('release make artifact helpers', () => {
         { path: 'dist/server/converters/v0-converter.mjs', size: 100, mode: 0o644 },
         { path: 'dist/admin/index.html', size: 100, mode: 0o644 },
         { path: 'dist/admin/assets/favicon.ico', size: 100, mode: 0o644 },
+        { path: 'dist/admin/assets/axure-export-runtime.js', size: 100, mode: 0o644 },
         { path: 'dist/admin/auto-debug-client.js', size: 100, mode: 0o644 },
         { path: 'scripts/canvas-fig-sync.mjs', size: 100, mode: 0o755 },
       ],
@@ -592,6 +981,23 @@ describe('release make artifact helpers', () => {
       dryRunInfo: [validPackInfo],
       packageDir,
     }));
+
+    writeFile(path.join(packageDir, 'package.json'), `${JSON.stringify({
+      ...validPackageJson,
+      bin: {
+        'axhub-make': './bin/cli.mjs',
+        make: './bin/cli.mjs',
+        'make-server': './bin/cli.mjs',
+      },
+    }, null, 2)}\n`);
+    assert.throws(
+      () => releaseMake.assertNpmPackageShape({
+        dryRunInfo: [validPackInfo],
+        packageDir,
+      }),
+      /npm package bin aliases must be exactly make, axhub-make, make-server in that order/u,
+    );
+    writeFile(path.join(packageDir, 'package.json'), `${JSON.stringify(validPackageJson, null, 2)}\n`);
 
     writeFile(
       path.join(packageDir, 'scripts/canvas-fig-sync.mjs'),
@@ -626,6 +1032,16 @@ describe('release make artifact helpers', () => {
         packageDir,
       }),
       /missing required file: dist\/server\/converters\/figma-make-converter\.mjs/,
+    );
+    assert.throws(
+      () => releaseMake.assertNpmPackageShape({
+        dryRunInfo: [{
+          ...validPackInfo,
+          files: validPackInfo.files.filter((file) => file.path !== 'dist/admin/assets/axure-export-runtime.js'),
+        }],
+        packageDir,
+      }),
+      /missing required file: dist\/admin\/assets\/axure-export-runtime\.js/u,
     );
 
     for (const pathName of [
@@ -674,8 +1090,9 @@ describe('release make artifact helpers', () => {
   it('sanitizes bundled local machine paths without changing file size', () => {
     const root = createTempRoot('axhub-release-bundle-sanitize-');
     const bundlePath = path.join(root, 'cli.mjs');
-    const source = 'var __dirname = "/Users/builder/repo/node_modules/typescript/lib";\n'
-      + 'var __filename = "C:\\\\Users\\\\builder\\\\repo\\\\node_modules\\\\typescript\\\\lib\\\\typescript.js";\n';
+    const posixPath = `/${['Users', 'builder', 'repo', 'node_modules', 'typescript', 'lib'].join('/')}`;
+    const windowsPath = ['C:', 'Users', 'builder', 'repo', 'node_modules', 'typescript', 'lib', 'typescript.js'].join('\\\\');
+    const source = `var __dirname = "${posixPath}";\nvar __filename = "${windowsPath}";\n`;
     writeFile(bundlePath, source);
 
     const result = releaseMake.sanitizeLocalMachinePathsInFile(bundlePath);
@@ -758,10 +1175,10 @@ describe('release make artifact helpers', () => {
     assert.equal(result.codesigned, false);
   });
 
-  it('builds npm exec smoke args that exercise the npx default make bin', () => {
+  it('builds npm exec smoke args that exercise the default npx make bin', () => {
     assert.deepEqual(
       releaseMake.createNpmExecSmokeArgs('/tmp/axhub-make-1.2.3.tgz'),
-      ['exec', '--yes', '--package', '/tmp/axhub-make-1.2.3.tgz', '--', 'make', '--help'],
+      ['exec', '--yes', '/tmp/axhub-make-1.2.3.tgz', '--', '--help'],
     );
   });
 

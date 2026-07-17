@@ -293,11 +293,11 @@ function checkAxureExportStructure(content: string, filePath: string): ReviewIss
     });
   }
 
-  if (!hasHeaderMarker(content, '/rules/axure-export-workflow.md')) {
+  if (!hasHeaderMarker(content, 'rules/axure-export-workflow.md')) {
     issues.push({
       type: 'warning',
       rule: 'file-header-axure-rule',
-      message: '建议在 Axure 导出文件头部包含 /rules/axure-export-workflow.md 参考路径',
+      message: '建议在 Axure 导出文件头部包含 rules/axure-export-workflow.md 参考路径',
       suggestion: '请在文件头注释中补充 rules 路径',
       blocking: false,
       category: 'docs',

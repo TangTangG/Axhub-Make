@@ -1,71 +1,21 @@
 import type { CanvasAiScene } from '../shared/CanvasGenerationComposer';
 
+export type CanvasAiStartKind = 'prototype' | 'resource' | 'design';
 export type CanvasAiArtifactKind = 'prototype' | 'image' | 'document';
 export type CanvasAiSettingsRenderer = 'prototype' | 'image' | 'generic';
 export type CanvasAiSubmitMode = 'assistant-chat' | 'canvas-generation';
-
-export interface CanvasAiQuickPrompt {
-  id: string;
-  label: string;
-  description?: string;
-  prompt: string;
-}
 
 export interface CanvasAiSceneDefinition {
   id: CanvasAiScene;
   label: string;
   artifactKind: CanvasAiArtifactKind;
   placeholders: readonly string[];
-  quickPrompts: readonly CanvasAiQuickPrompt[];
   prototypeStartPlaceholders?: readonly string[];
-  prototypeStartQuickPrompts?: readonly CanvasAiQuickPrompt[];
   renderSettings: CanvasAiSettingsRenderer;
   submitMode: CanvasAiSubmitMode;
 }
 
 type LegacyCanvasAiSceneAlias = 'design' | 'image' | 'chart' | 'other';
-
-const DESIGN_QUICK_PROMPTS = [
-  {
-    id: 'extract-icons',
-    label: '提取图标',
-    description: '按矩阵整理设计稿里的图标',
-    prompt: '提取该 UI 设计稿中的图标，按矩阵格式使用工具生成一张新图片。',
-  },
-  {
-    id: 'generate-wireframe',
-    label: '生成草图',
-    description: '保留布局，把图标和图片转为灰色占位',
-    prompt: '把该 UI 设计稿中的图标和图片替换为同尺寸灰色占位图，保留文字、布局和其它视觉信息，不要整张图片变灰，使用工具生成一张新图片',
-  },
-  {
-    id: 'generate-prototype',
-    label: '生成原型',
-    description: '按图片还原成可运行原型页面',
-    prompt: '还原这张图片为原型页面，保留布局、文字、视觉层级和主要交互。',
-  },
-  {
-    id: 'generate-responsive',
-    label: '生成响应式',
-    description: '补齐另外两个端的 UI 图片',
-    prompt: '识别当前图片所属端，在 PC、平板、手机中补齐另外两个端的 UI 设计图，保持风格一致并生成新图片。',
-  },
-] as const satisfies readonly CanvasAiQuickPrompt[];
-
-const DOCUMENT_QUICK_PROMPTS = [
-  {
-    id: 'requirements-exploration',
-    label: '需求探索',
-    description: '主动进入需求探索，完善目标、范围和验收口径',
-    prompt: '使用 $requirements-exploration 对当前需求做探索和完善。我想要讨论的需求是：\n',
-  },
-  {
-    id: 'diagram',
-    label: '流程图和关系图',
-    description: '生成流程图或关系图并同步到当前画布',
-    prompt: '生成相关流程图和关系图，并根据图表类型选择合适的画布呈现方式，完成后更新到当前画布。',
-  },
-] as const satisfies readonly CanvasAiQuickPrompt[];
 
 export const CANVAS_AI_SCENES = [
   {
@@ -77,7 +27,6 @@ export const CANVAS_AI_SCENES = [
       '例如：做一个 CRM 工作台，包含数据概览和任务列表',
       '输入产品场景，AI 会帮你生成页面原型',
     ],
-    quickPrompts: [],
     renderSettings: 'prototype',
     submitMode: 'assistant-chat',
   },
@@ -90,8 +39,6 @@ export const CANVAS_AI_SCENES = [
       '例如：生成一个移动端登录页设计图，或一个 PC 端数据看板设计图',
       '也可以生成海报、封面、边框、背景、头像等设计素材',
     ],
-    quickPrompts: DESIGN_QUICK_PROMPTS,
-    prototypeStartQuickPrompts: [],
     renderSettings: 'generic',
     submitMode: 'canvas-generation',
   },
@@ -104,15 +51,55 @@ export const CANVAS_AI_SCENES = [
       '例如：整理一份产品需求文档，包含目标、流程和验收标准',
       '输入文档、流程图或关系图需求，AI 会生成并同步到画布',
     ],
-    quickPrompts: DOCUMENT_QUICK_PROMPTS,
     prototypeStartPlaceholders: [
       '可以先通过文档、流程图或关系图等梳理需求，再生成原型',
     ],
-    prototypeStartQuickPrompts: DOCUMENT_QUICK_PROMPTS,
     renderSettings: 'generic',
     submitMode: 'canvas-generation',
   },
 ] as const satisfies readonly CanvasAiSceneDefinition[];
+
+const CANVAS_AI_START_PLACEHOLDERS = {
+  prototype: {
+    page: [
+      '描述你要创建的原型页面',
+      '例如：做一个 CRM 工作台原型，包含数据概览和任务列表',
+      '输入产品场景，AI 会帮你创建可运行的原型页面',
+    ],
+  },
+  resource: {
+    design: [
+      '描述你想生成的设计图资源',
+      '例如：生成一个移动端登录页设计图资源',
+      '也可以生成海报、封面、背景、头像等设计素材资源',
+    ],
+    document: [
+      '描述你想生成的文档资源',
+      '例如：整理一份 PRD 文档资源，包含目标、流程和验收标准',
+      '也可以生成流程图、关系图、规格说明等资源文件',
+    ],
+  },
+  design: {
+    design: [
+      '描述你想生成的设计规范或设计系统',
+      '例如：生成一套后台管理系统设计规范，包含色彩、字体、组件和页面约束',
+      '输入产品场景、品牌风格和组件要求，AI 会帮你生成设计系统',
+    ],
+  },
+} as const satisfies Record<CanvasAiStartKind, Partial<Record<CanvasAiScene, readonly string[]>>>;
+
+const CANVAS_AI_START_SYSTEM_PROMPTS = {
+  prototype: {
+    page: '请生成原型页面，并更新到当前画布。',
+  },
+  resource: {
+    design: '请生成设计图资源，并更新到当前画布。',
+    document: '请生成文档资源，并更新到当前画布。',
+  },
+  design: {
+    design: '请生成设计规范或设计系统，并更新到当前画布。',
+  },
+} as const satisfies Record<CanvasAiStartKind, Partial<Record<CanvasAiScene, string>>>;
 
 const SCENE_DEFINITION_BY_ID = new Map<CanvasAiScene, CanvasAiSceneDefinition>(
   CANVAS_AI_SCENES.map((scene) => [scene.id, scene]),
@@ -147,34 +134,37 @@ export function getCanvasAiGeneratorNodeSceneOptions(): Array<{ value: CanvasAiS
   return CANVAS_AI_GENERATOR_NODE_SCENE_OPTIONS.map((option) => ({ ...option }));
 }
 
-export function getCanvasAiSceneQuickPrompts(scene: CanvasAiScene | LegacyCanvasAiSceneAlias): readonly CanvasAiQuickPrompt[] {
-  return getCanvasAiSceneDefinition(scene).quickPrompts;
-}
-
 export function getCanvasAiPrototypeStartPlaceholders(scene: CanvasAiScene | LegacyCanvasAiSceneAlias): readonly string[] {
   const definition = getCanvasAiSceneDefinition(scene);
   return definition.prototypeStartPlaceholders ?? definition.placeholders;
 }
 
-export function getCanvasAiPrototypeStartQuickPrompts(scene: CanvasAiScene | LegacyCanvasAiSceneAlias): readonly CanvasAiQuickPrompt[] {
-  const definition = getCanvasAiSceneDefinition(scene);
-  return definition.prototypeStartQuickPrompts ?? definition.quickPrompts;
+export function getCanvasAiStartPlaceholders(kind: CanvasAiStartKind, scene: CanvasAiScene | LegacyCanvasAiSceneAlias): readonly string[] {
+  const normalizedScene = getCanvasAiSceneDefinition(scene).id;
+  return CANVAS_AI_START_PLACEHOLDERS[kind]?.[normalizedScene] ?? getCanvasAiPrototypeStartPlaceholders(normalizedScene);
 }
 
 export function getCanvasAiPrototypeStartSystemPrompt(scene: CanvasAiScene | LegacyCanvasAiSceneAlias): string {
   const normalizedScene = getCanvasAiSceneDefinition(scene).id;
   if (normalizedScene === 'design') {
-    return '使用内置工具生成图片；若无相关工具，请停止并告知用户。生成后请将结果更新到当前画布。';
+    return '请使用内置工具生成图片；若无相关工具，请停止并告知用户。生成后请更新到当前画布。';
   }
   if (normalizedScene === 'document') {
-    return '请将结果更新到当前画布。';
+    return '请生成文档、流程图或关系图，并更新到当前画布。';
   }
-  return '请生成原型页面。';
+  return '请生成原型页面，并更新到当前画布。';
+}
+
+export function getCanvasAiStartSystemPrompt(kind: CanvasAiStartKind, scene: CanvasAiScene | LegacyCanvasAiSceneAlias): string {
+  const normalizedScene = getCanvasAiSceneDefinition(scene).id;
+  return CANVAS_AI_START_SYSTEM_PROMPTS[kind]?.[normalizedScene] ?? getCanvasAiPrototypeStartSystemPrompt(normalizedScene);
 }
 
 export function stripCanvasUpdateInstruction(prompt: string): string {
   return prompt
-    .replace(/生成后请将结果更新到当前画布。?/gu, '')
+    .replace(/生成后请(?:将结果)?更新到当前画布。?/gu, '')
+    .replace(/，并更新到当前画布。?/gu, '。')
+    .replace(/并更新到当前画布。?/gu, '')
     .replace(/请将结果更新到当前画布。?/gu, '')
     .trim();
 }
@@ -192,9 +182,8 @@ export function pickCanvasAiPrototypeStartPlaceholder(scene: CanvasAiScene | Leg
   return pickPlaceholder(getCanvasAiPrototypeStartPlaceholders(scene));
 }
 
-export function appendCanvasAiQuickPrompt(currentText: string, quickPrompt: string): string {
-  const textWithoutSlashTrigger = currentText.trimEnd().replace(/(?:^|\s)\/[^\s/]*$/u, '').trimEnd();
-  return textWithoutSlashTrigger ? `${textWithoutSlashTrigger}\n\n${quickPrompt}` : quickPrompt;
+export function pickCanvasAiStartPlaceholder(kind: CanvasAiStartKind, scene: CanvasAiScene | LegacyCanvasAiSceneAlias): string {
+  return pickPlaceholder(getCanvasAiStartPlaceholders(kind, scene));
 }
 
 export function appendCanvasAiPrototypeStartSystemPrompt(currentText: string, systemPrompt: string): string {

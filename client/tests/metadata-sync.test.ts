@@ -21,7 +21,6 @@ function createFixtureProject() {
   writeFile(path.join(root, 'src/prototypes/ref-antd/index.tsx'), '/**\n * @name Ant Design Reference\n */\nexport default function App() { return null; }\n');
   writeFile(path.join(root, 'src/prototypes/express-home/index.tsx'), 'export default function ExpressHome() { return null; }\n');
   writeFile(path.join(root, 'src/components/legacy-button/index.tsx'), 'export default function LegacyButton() { return null; }\n');
-  writeFile(path.join(root, 'src/canvas/legacy-canvas/index.tsx'), 'export default function Canvas() { return null; }\n');
   writeFile(path.join(root, 'src/resources/project-overview.md'), '# Project Overview\n');
   writeFile(path.join(root, 'src/themes/antd-new/index.tsx'), 'export default function Theme() { return null; }\n');
   writeFile(path.join(root, 'src/themes/antd-new/designToken.json'), '{"name":"antd-new"}\n');
@@ -163,15 +162,6 @@ export default function Placeholder() {
     );
 }
 `);
-    writeFile(path.join(projectRoot, 'src/prototypes/untitled-2/canvas.excalidraw'), JSON.stringify({
-      type: 'excalidraw',
-      version: 2,
-      source: 'axhub-make',
-      elements: [],
-      appState: { viewBackgroundColor: '#ffffff' },
-      files: {},
-    }, null, 2));
-
     const metadata = buildMakeProjectMetadata(projectRoot, {
       clientOrigin: 'http://localhost:51720',
     });
@@ -202,15 +192,6 @@ export default function EditedPrototype() {
     return <main><h1>真实页面</h1></main>;
 }
 `);
-    writeFile(path.join(projectRoot, 'src/prototypes/untitled-2/canvas.excalidraw'), JSON.stringify({
-      type: 'excalidraw',
-      version: 2,
-      source: 'axhub-make',
-      elements: [],
-      appState: { viewBackgroundColor: '#ffffff' },
-      files: {},
-    }, null, 2));
-
     const metadata = buildMakeProjectMetadata(projectRoot, {
       clientOrigin: 'http://localhost:51720',
     });
@@ -295,7 +276,7 @@ export default function EditedPrototype() {
 
       export const route = defineHashPageRoute([
         { id: 'dashboard', title: '工作台' },
-        { id: 'orders-list', title: '订单列表' },
+        { id: 'orders-list', title: '订单列表', group: '订单管理' },
       ], { defaultPageId: 'dashboard' });
     `);
 
@@ -307,7 +288,7 @@ export default function EditedPrototype() {
     expect(prototype).toMatchObject({
       pages: [
         { id: 'dashboard', title: '工作台' },
-        { id: 'orders-list', title: '订单列表' },
+        { id: 'orders-list', title: '订单列表', group: '订单管理' },
       ],
       defaultPageId: 'dashboard',
     });
@@ -464,7 +445,7 @@ export default function EditedPrototype() {
       figmaExport: true,
       axureExport: true,
       localExports: {
-        html: false,
+        html: true,
         make: false,
       },
     });

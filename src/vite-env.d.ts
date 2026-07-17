@@ -7,6 +7,7 @@ interface Window {
     localHost?: string;
     lanHost?: string;
   };
+  __AXHUB_MAKE_API_ORIGIN__?: string;
   __RUNTIME_ORIGIN__?: string;
   __ERROR_SYSTEM__?: {
     markReactReady: () => void;

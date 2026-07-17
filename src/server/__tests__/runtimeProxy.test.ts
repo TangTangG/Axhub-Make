@@ -72,11 +72,12 @@ describe('runtime proxy route ownership', () => {
     expect(isRuntimeOnlyRoute('/build/components/ref-button.js')).toBe(true);
     expect(isRuntimeOnlyRoute('/docs/project-overview')).toBe(true);
     expect(isRuntimeOnlyRoute('/docs/project-overview/spec.html')).toBe(true);
-    expect(isRuntimeOnlyRoute('/canvas/prototypes/ref-app-home/canvas.excalidraw')).toBe(true);
+    expect(isRuntimeOnlyRoute('/canvas/prototypes/ref-app-home/canvas.excalidraw')).toBe(false);
+    expect(isRuntimeOnlyRoute('/canvas/resources/flows/app.excalidraw')).toBe(false);
     expect(isRuntimeOnlyRoute('/prototypes/ref-app-home')).toBe(true);
     expect(isRuntimeOnlyRoute('/prototypes/ref-app-home/')).toBe(true);
     expect(isRuntimeOnlyRoute('/prototypes/ref-app-home?editor=1')).toBe(true);
-    expect(isRuntimeOnlyRoute('/prototypes/ref-app-home/canvas-assets/screenshot.png?v=123')).toBe(true);
+    expect(isRuntimeOnlyRoute('/prototypes/ref-app-home/canvas-assets/screenshot.png?v=123')).toBe(false);
     expect(isRuntimeOnlyRoute('/assets/index.css')).toBe(true);
   });
 
@@ -216,6 +217,31 @@ describe('runtime proxy route ownership', () => {
     expect(body).toContain('const lazy = () => import("/@fs/workspace/make14/src/prototypes/home/Lazy.tsx?projectId=make-project");');
   });
 
+  it('keeps git-version preview context on proxied runtime module imports', async () => {
+    const upstream = http.createServer((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.end([
+        'import Badge from "/src/shared/Badge.tsx";',
+        'import "/@fs/workspace/make14/src/prototypes/home/style.css";',
+      ].join('\n'));
+    });
+    const runtimeOrigin = await listen(upstream);
+    const proxy = http.createServer((req, res) => proxyToRuntime(req, res, runtimeOrigin));
+    const proxyOrigin = await listen(proxy);
+
+    const response = await fetch(`${proxyOrigin}/@fs/workspace/make14/.git-versions/abc12345/src/prototypes/home/index.tsx?projectId=make-project&gitVersion=abc12345&gitPath=src%2Fprototypes%2Fhome`, {
+      headers: {
+        referer: `${proxyOrigin}/prototypes/home?projectId=make-project&gitVersion=abc12345&gitPath=src%2Fprototypes%2Fhome`,
+      },
+    });
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('import Badge from "/src/shared/Badge.tsx?projectId=make-project&gitVersion=abc12345&gitPath=src%2Fprototypes%2Fhome";');
+    expect(body).toContain('import "/@fs/workspace/make14/src/prototypes/home/style.css?projectId=make-project&gitVersion=abc12345&gitPath=src%2Fprototypes%2Fhome";');
+  });
+
   it('does not append project context to the Vite client entry import', async () => {
     const upstream = http.createServer((_req, res) => {
       res.statusCode = 200;
@@ -291,6 +317,7 @@ describe('runtime proxy route ownership', () => {
     expect(isRuntimeDocumentRequest('/prototypes/home/index.tsx')).toBe(false);
     expect(isRuntimeDocumentRequest('/prototypes/home/style.css')).toBe(false);
     expect(isRuntimeDocumentRequest('/prototypes/home/canvas-assets/screenshot.png')).toBe(false);
+    expect(isRuntimeDocumentRequest('/prototypes/home/canvas.excalidraw')).toBe(false);
     expect(isRuntimeDocumentRequest('/@vite/client')).toBe(false);
   });
 

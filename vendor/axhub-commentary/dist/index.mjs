@@ -23,27 +23,27 @@ var WEB_EDITOR_V1_ACTIONS = {
   APPLY: "web_editor_apply"
 };
 
-// src/genie-bridge.ts
-var AXHUB_WEB_EDITOR_GENIE_REQUEST = "AXHUB_WEB_EDITOR_GENIE_REQUEST";
-function createWebEditorGenieRequestMessage(payload) {
+// src/agent-bridge.ts
+var AXHUB_WEB_EDITOR_AGENT_REQUEST = "AXHUB_WEB_EDITOR_AGENT_REQUEST";
+function createWebEditorAgentRequestMessage(payload) {
   return {
-    type: AXHUB_WEB_EDITOR_GENIE_REQUEST,
+    type: AXHUB_WEB_EDITOR_AGENT_REQUEST,
     payload
   };
 }
-function isWebEditorGenieRequestMessage(value) {
+function isWebEditorAgentRequestMessage(value) {
   if (!value || typeof value !== "object") return false;
   const data = value;
-  if (data.type !== AXHUB_WEB_EDITOR_GENIE_REQUEST) return false;
+  if (data.type !== AXHUB_WEB_EDITOR_AGENT_REQUEST) return false;
   if (!data.payload || typeof data.payload !== "object") return false;
   const payload = data.payload;
   return typeof payload.preferCurrentSession === "boolean" && typeof payload.mode === "string";
 }
-function postWebEditorGenieRequest(payload, options = {}) {
+function postWebEditorAgentRequest(payload, options = {}) {
   if (typeof window === "undefined") return false;
   if (!window.parent || window.parent === window) return false;
   window.parent.postMessage(
-    createWebEditorGenieRequestMessage(payload),
+    createWebEditorAgentRequestMessage(payload),
     options.targetOrigin ?? "*"
   );
   return true;
@@ -177,6 +177,218 @@ function notifyGlobalCommentaryTweakProtocol(target = typeof window !== "undefin
   if (!protocol) return false;
   protocol.notify();
   return true;
+}
+
+// src/review/comment-protocol.ts
+var REVIEW_COMMENT_MAX = 4e3;
+function resolveConnectedElement(value) {
+  return value?.isConnected ? value : null;
+}
+function normalizeComment(value) {
+  return String(value ?? "").trim().slice(0, REVIEW_COMMENT_MAX);
+}
+function installGlobalCommentaryReviewCommentProtocol(options) {
+  const windowRef = options.windowRef ?? (typeof window !== "undefined" ? window : void 0);
+  let disposed = false;
+  const canWrite = () => {
+    if (disposed) return false;
+    try {
+      return options.isActive();
+    } catch {
+      return false;
+    }
+  };
+  const protocol = {
+    setComment(input) {
+      if (!canWrite()) return false;
+      const element = resolveConnectedElement(input?.element);
+      const comment = normalizeComment(input?.comment);
+      if (!element || !comment) return false;
+      try {
+        options.setComment(element, comment);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    clearComment(input) {
+      if (!canWrite()) return false;
+      const element = resolveConnectedElement(input?.element);
+      if (!element) return false;
+      try {
+        options.clearComment(element);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  };
+  if (windowRef) {
+    windowRef.axhubReview = protocol;
+  }
+  return {
+    protocol,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      if (windowRef?.axhubReview === protocol) {
+        delete windowRef.axhubReview;
+      }
+    }
+  };
+}
+
+// src/review/diagram-target.ts
+function safeClosest(element, selector) {
+  try {
+    return element.closest(selector);
+  } catch {
+    return null;
+  }
+}
+function safeMatches(element, selector) {
+  try {
+    return element.matches(selector);
+  } catch {
+    return false;
+  }
+}
+function readAttribute(element, name) {
+  try {
+    return element?.getAttribute(name)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+function readSourceUrl(element) {
+  const tagName = String(element.tagName || "").toUpperCase();
+  if (tagName === "IMG") return readAttribute(element, "src");
+  if (tagName === "OBJECT") return readAttribute(element, "data");
+  if (tagName === "A") return readAttribute(element, "href");
+  return "";
+}
+function isDrawioSvgUrl(value) {
+  return /\.drawio\.svg(?:$|[?#])/iu.test(value.trim());
+}
+function isMermaidSvg(svg) {
+  const id = String(svg.id ?? "").trim();
+  return id.startsWith("mermaid-") || id.startsWith("mermaid_") || Boolean(readAttribute(svg, "aria-roledescription"));
+}
+function isInlineDrawioSvg(svg) {
+  if (readAttribute(svg, "data-drawio")) return true;
+  try {
+    return Boolean(svg.querySelector("metadata#drawio-source"));
+  } catch {
+    return false;
+  }
+}
+function documentIndex(owner, kind) {
+  const documentRef = owner.ownerDocument;
+  if (!documentRef?.querySelectorAll) return 0;
+  const candidates = Array.from(documentRef.querySelectorAll(".mermaid, svg, img, object, a"));
+  const matching = [];
+  for (const candidate of candidates) {
+    let canonicalOwner = null;
+    if (kind === "mermaid") {
+      if (safeMatches(candidate, ".mermaid")) {
+        canonicalOwner = candidate;
+      } else if (String(candidate.tagName).toUpperCase() === "SVG" && isMermaidSvg(candidate)) {
+        canonicalOwner = safeClosest(candidate, ".mermaid") ?? candidate;
+      }
+    } else if (String(candidate.tagName).toUpperCase() === "SVG") {
+      canonicalOwner = isInlineDrawioSvg(candidate) ? candidate : null;
+    } else if (isDrawioSvgUrl(readSourceUrl(candidate))) {
+      canonicalOwner = candidate;
+    }
+    if (canonicalOwner && !matching.includes(canonicalOwner)) {
+      matching.push(canonicalOwner);
+    }
+  }
+  const index = matching.indexOf(owner);
+  return index >= 0 ? index : 0;
+}
+function deriveDiagramId(owner, kind, sourceUrl, index) {
+  const existingId = String(owner.id ?? "").trim();
+  if (existingId) return existingId;
+  if (sourceUrl) {
+    const filename = sourceUrl.split(/[?#]/u, 1)[0]?.split("/").filter(Boolean).pop() ?? "";
+    const basename = filename.replace(/\.drawio\.svg$/iu, "").trim();
+    if (basename) return basename;
+  }
+  return `${kind}-${index + 1}`;
+}
+function resolveDirectCommentaryDiagramTarget(element) {
+  if (!element) return null;
+  const mermaidContainer = safeClosest(element, ".mermaid");
+  if (mermaidContainer) {
+    const index = documentIndex(mermaidContainer, "mermaid");
+    return {
+      kind: "mermaid",
+      owner: mermaidContainer,
+      diagramId: deriveDiagramId(mermaidContainer, "mermaid", "", index),
+      sourceUrl: "",
+      documentIndex: index,
+      editable: true
+    };
+  }
+  const svg = safeClosest(element, "svg");
+  if (svg && isMermaidSvg(svg)) {
+    const index = documentIndex(svg, "mermaid");
+    return {
+      kind: "mermaid",
+      owner: svg,
+      diagramId: deriveDiagramId(svg, "mermaid", "", index),
+      sourceUrl: "",
+      documentIndex: index,
+      editable: true
+    };
+  }
+  if (svg && isInlineDrawioSvg(svg)) {
+    const index = documentIndex(svg, "drawio");
+    return {
+      kind: "drawio",
+      owner: svg,
+      diagramId: deriveDiagramId(svg, "drawio", "", index),
+      sourceUrl: "",
+      documentIndex: index,
+      editable: true
+    };
+  }
+  const linkedResource = safeClosest(element, "img, object, a");
+  if (linkedResource) {
+    const sourceUrl = readSourceUrl(linkedResource);
+    if (isDrawioSvgUrl(sourceUrl)) {
+      const index = documentIndex(linkedResource, "drawio");
+      return {
+        kind: "drawio",
+        owner: linkedResource,
+        diagramId: deriveDiagramId(linkedResource, "drawio", sourceUrl, index),
+        sourceUrl,
+        documentIndex: index,
+        editable: true
+      };
+    }
+  }
+  return null;
+}
+function resolveCommentaryDiagramTarget(element) {
+  const directTarget = resolveDirectCommentaryDiagramTarget(element);
+  if (directTarget || !element) return directTarget;
+  let candidates = [];
+  try {
+    candidates = Array.from(element.querySelectorAll(".mermaid, svg, img, object, a")).slice(0, 64);
+  } catch {
+    return null;
+  }
+  const targets = [];
+  for (const candidate of candidates) {
+    const target = resolveDirectCommentaryDiagramTarget(candidate);
+    if (!target) continue;
+    if (targets.some((known) => known.kind === target.kind && known.owner === target.owner)) continue;
+    targets.push(target);
+    if (targets.length > 1) return null;
+  }
+  return targets[0] ?? null;
 }
 
 // src/constants.ts
@@ -1423,18 +1635,18 @@ function forceAndroidRecomposite() {
 
 // src/core/editor/ui-settings.ts
 var DEFAULT_WEB_EDITOR_UI_SETTINGS = {
-  genieAgent: null,
-  genieAwake: false,
+  agentProvider: null,
+  agentAwake: false,
   designAdjustmentTool: null,
   styleDesignEnabled: true,
   darkMode: false,
   disablePageAnimations: false,
-  pageZoomEnabled: false
+  pageZoomEnabled: false,
+  agentRunConcurrency: 5
 };
-var GENIE_AGENT_SET = /* @__PURE__ */ new Set([
+var AGENT_PROVIDER_SET = /* @__PURE__ */ new Set([
   "claude",
   "codex",
-  "gemini",
   "opencode"
 ]);
 var DESIGN_ADJUSTMENT_TOOL_SET = /* @__PURE__ */ new Set([
@@ -1445,16 +1657,24 @@ var DESIGN_ADJUSTMENT_TOOL_SET = /* @__PURE__ */ new Set([
 function normalizeString(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
+function sanitizeAgentRunConcurrency(value) {
+  const numeric = typeof value === "string" ? Number(value.trim()) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return DEFAULT_WEB_EDITOR_UI_SETTINGS.agentRunConcurrency;
+  }
+  return Math.min(10, Math.max(1, Math.trunc(numeric)));
+}
 function sanitizeWebEditorUiSettings(value) {
   if (!value || typeof value !== "object") {
     return { ...DEFAULT_WEB_EDITOR_UI_SETTINGS };
   }
   const record = value;
-  const genieAgent = normalizeString(record.genieAgent);
+  const agentProvider = normalizeString(record.agentProvider);
   const designAdjustmentTool = normalizeString(record.designAdjustmentTool);
   return {
-    genieAgent: GENIE_AGENT_SET.has(genieAgent) ? genieAgent : null,
-    genieAwake: Boolean(record.genieAwake),
+    agentProvider: AGENT_PROVIDER_SET.has(agentProvider) ? agentProvider : null,
+    agentAwake: Boolean(record.agentAwake),
+    agentRunConcurrency: record.agentRunConcurrency === void 0 ? DEFAULT_WEB_EDITOR_UI_SETTINGS.agentRunConcurrency : sanitizeAgentRunConcurrency(record.agentRunConcurrency),
     designAdjustmentTool: DESIGN_ADJUSTMENT_TOOL_SET.has(
       designAdjustmentTool
     ) ? designAdjustmentTool : null,
@@ -1490,7 +1710,7 @@ var DEFAULT_MODIFIERS = {
   ctrl: false,
   meta: false
 };
-var DEFAULT_GENIE_PROBE_TIMEOUT_MS = 5e3;
+var DEFAULT_AGENT_PROBE_TIMEOUT_MS = 5e3;
 function generateExternalClientId() {
   const prefix = "web-editor-v2";
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -1505,10 +1725,18 @@ function resolveWebEditorOptions(options = {}) {
       breadcrumbs: true,
       propertyPanel: true,
       toolbarMode: "inline",
+      enableImageAttachments: true,
+      onPrepareImageAttachments: async (_element, images) => images,
       initialSelectionModeActive: true,
       initialDarkMode: false,
       showCopyPromptAction: true,
       hideExecutionControls: false,
+      aiExecutionConfigSummary: "",
+      aiExecutionConfigConfigured: false,
+      aiExecutionProvider: "",
+      aiExecutionWorkspacePath: "",
+      aiExecutionRunConcurrency: 5,
+      aiExecutionProviderOptions: [],
       getAssistantPanelOpen: () => false,
       onHostToolbarAction: async () => false,
       onEnableAnnotation: async () => false,
@@ -1517,12 +1745,19 @@ function resolveWebEditorOptions(options = {}) {
       getAnnotationEnableLoading: () => false,
       externalEditingStatusDescription: "",
       skillInstallSource: "",
+      commentarySkillOptions: [],
+      commentarySelectedSkillIds: [],
+      commentarySkillSettingsConfigured: false,
+      onCommentarySkillSelectionLoad: async () => [],
+      onCommentarySkillSelectionChange: async () => void 0,
       onRequestFullExit: async () => void 0,
       ...options.ui ?? {}
     },
     host: {
       getResourceContext: options.host?.getResourceContext ?? (() => null),
       buildCopyPrompt: options.host?.buildCopyPrompt ?? void 0,
+      getElementTools: options.host?.getElementTools ?? void 0,
+      onElementToolAction: options.host?.onElementToolAction ?? void 0,
       shouldAllowPageEvent: options.host?.shouldAllowPageEvent ?? void 0,
       persistenceAdapter: options.host?.persistenceAdapter ?? void 0,
       canEditAnnotationMarkdown: options.host?.canEditAnnotationMarkdown ?? void 0,
@@ -1531,7 +1766,7 @@ function resolveWebEditorOptions(options = {}) {
       onAnnotationMarkdownChange: options.host?.onAnnotationMarkdownChange ?? void 0,
       onDeleteAnnotationNode: options.host?.onDeleteAnnotationNode ?? void 0
     },
-    genieBridge: {
+    agentBridge: {
       enabled: false,
       autoStartOnLaunch: true,
       allowWake: true,
@@ -1544,11 +1779,11 @@ function resolveWebEditorOptions(options = {}) {
       externalClientId: generateExternalClientId(),
       apiKey: "",
       probeOnStart: true,
-      probeTimeoutMs: DEFAULT_GENIE_PROBE_TIMEOUT_MS,
+      probeTimeoutMs: DEFAULT_AGENT_PROBE_TIMEOUT_MS,
       projectPath: "",
       provider: "codex",
       onRequestWake: async () => void 0,
-      ...options.genieBridge ?? {}
+      ...options.agentBridge ?? {}
     },
     promptContext: {
       workspacePaths: options.promptContext?.workspacePaths ?? [],
@@ -1589,6 +1824,7 @@ function createEditorRuntimeState() {
     perfMonitor: null,
     perfHotkeyCleanup: null,
     selectionModeHotkeyCleanup: null,
+    parentSelectHotkeyCleanup: null,
     commentShortcutCleanup: null,
     hoveredElement: null,
     pendingHoverTransition: false,
@@ -1608,9 +1844,9 @@ function createEditorRuntimeState() {
     inlineTextEditingActive: false,
     promptCardVisible: false,
     uiSettings: { ...DEFAULT_WEB_EDITOR_UI_SETTINGS },
-    genieConversationByScopeKey: /* @__PURE__ */ new Map(),
-    genieTaskByElementKey: /* @__PURE__ */ new Map(),
-    genieTaskByRequestId: /* @__PURE__ */ new Map(),
+    agentConversationByScopeKey: /* @__PURE__ */ new Map(),
+    agentTaskByElementKey: /* @__PURE__ */ new Map(),
+    agentTaskByRequestId: /* @__PURE__ */ new Map(),
     externalEditingTaskByElementKey: /* @__PURE__ */ new Map(),
     textCommentManager: null,
     textCommentTargetElement: null,
@@ -1637,9 +1873,9 @@ function resetEditorTransientState(state2) {
   state2.commentShortcutDialogOpen = false;
   state2.inlineTextEditingActive = false;
   state2.promptCardVisible = false;
-  state2.genieConversationByScopeKey.clear();
-  state2.genieTaskByElementKey.clear();
-  state2.genieTaskByRequestId.clear();
+  state2.agentConversationByScopeKey.clear();
+  state2.agentTaskByElementKey.clear();
+  state2.agentTaskByRequestId.clear();
   state2.externalEditingTaskByElementKey.clear();
   state2.textCommentTargetElement = null;
   state2.activeTextComment = null;
@@ -1661,6 +1897,7 @@ function clearEditorRuntimeRefs(state2) {
   state2.perfMonitor = null;
   state2.perfHotkeyCleanup = null;
   state2.selectionModeHotkeyCleanup = null;
+  state2.parentSelectHotkeyCleanup = null;
   state2.commentShortcutCleanup = null;
   state2.uiResizeCleanup = null;
   state2.markerLayer = null;
@@ -1670,9 +1907,9 @@ function clearEditorRuntimeRefs(state2) {
   state2.pendingHoverTransition = false;
   state2.commentShortcutDialogOpen = false;
   state2.promptCardVisible = false;
-  state2.genieConversationByScopeKey.clear();
-  state2.genieTaskByElementKey.clear();
-  state2.genieTaskByRequestId.clear();
+  state2.agentConversationByScopeKey.clear();
+  state2.agentTaskByElementKey.clear();
+  state2.agentTaskByRequestId.clear();
   state2.externalEditingTaskByElementKey.clear();
   state2.textCommentManager = null;
   state2.textCommentTargetElement = null;
@@ -1726,10 +1963,26 @@ var PROMPT_CARD_SKILLS = [
     description: "\u4F7F\u7528 ui-design-image \u751F\u6210 UI \u8BBE\u8BA1\u56FE\u7247",
     keywords: "\u751F\u56FE \u751F\u6210\u56FE\u7247 \u56FE\u7247\u751F\u6210 \u8BBE\u8BA1\u56FE UI\u56FE\u7247 UI\u7D20\u6750 \u56FE\u6807 \u5360\u4F4D\u56FE \u89C6\u89C9\u53C2\u8003\u56FE imagegen image generation",
     prompt: "\u4F7F\u7528\u672C\u5730 ui-design-image \u6280\u80FD\uFF0C\u7ED3\u5408\u5F53\u524D\u6279\u6CE8\u3001\u9875\u9762\u4E0A\u4E0B\u6587\u548C\u53C2\u8003\u56FE\u7247\uFF0C\u751F\u6210 UI \u8BBE\u8BA1\u56FE\u7247\u3001\u7D20\u6750\u3001\u56FE\u6807\u3001\u5360\u4F4D\u56FE\u6216\u89C6\u89C9\u53C2\u8003\u56FE\u3002\u9700\u8981\u628A\u7ED3\u679C\u66F4\u65B0\u5230\u5F53\u524D\u753B\u5E03\u6216\u76F8\u5173\u9879\u76EE\u7D20\u6750\u65F6\uFF0C\u6309\u5F53\u524D\u9879\u76EE\u89C4\u5219\u843D\u76D8\u5E76\u56DE\u5199\u3002"
+  },
+  {
+    id: "requirements-review",
+    label: "\u9700\u6C42\u8BC4\u5BA1",
+    description: "axhub-prototype-context\uFF1A\u9700\u6C42/PRD \u8BC4\u5BA1",
+    keywords: "\u9700\u6C42\u8BC4\u5BA1 PRD \u539F\u578B\u8BC4\u5BA1 axhub-prototype-context",
+    prompt: [
+      "\u4F7F\u7528 axhub-prototype-context \u6280\u80FD\u5904\u7406\u8FD9\u6761\u6279\u6CE8\u3002",
+      "\u6280\u80FD\u6587\u6863\uFF1Ahttps://github.com/lintendo/Axhub-Skills/blob/main/skills/axhub-prototype-context/SKILL.md",
+      "\u6253\u5F00\u5F53\u524D\u539F\u578B URL\uFF0C\u7B49\u5F85\u9875\u9762\u6E32\u67D3\u540E\u8BFB\u53D6 window.__AXHUB_ANNOTATION_SOURCE__\uFF0C\u5C06\u9875\u9762\u89C6\u4E3A\u53EA\u8BFB\u4E0A\u4E0B\u6587\u3002",
+      "\u8BC4\u5BA1 source.directory \u4E2D\u7684\u76EE\u5F55/PRD\u3001markdown \u8282\u70B9\u3001\u6279\u6CE8\u8282\u70B9\uFF0C\u4EE5\u53CA source.root/source.manifest \u4E2D\u7684\u6E90\u7801\u4EA4\u63A5\u7EBF\u7D22\u3002"
+    ].join("\n"),
+    chromeOnly: true
   }
 ];
 var SKILL_TRIGGER_QUERY_PATTERN = /^[\p{Script=Han}\p{Letter}\p{Number}_-]*$/u;
 var SKILL_BY_ID = new Map(PROMPT_CARD_SKILLS.map((skill) => [skill.id, skill]));
+var PROMPT_CARD_SKILL_OPTIONS = PROMPT_CARD_SKILLS.map(
+  ({ id, label, description }) => ({ id, label, description })
+);
 function normalizeSkillQuery(value) {
   return value.trim().toLocaleLowerCase();
 }
@@ -1762,10 +2015,14 @@ function clearPromptCardSkillTrigger(text) {
   if (!trigger) return value;
   return value.slice(0, trigger.start).trimEnd();
 }
-function filterPromptCardSkills(query) {
+function filterPromptCardSkills(query, enabledSkillIds) {
   const normalizedQuery = normalizeSkillQuery(query);
-  if (!normalizedQuery) return [...PROMPT_CARD_SKILLS];
-  return PROMPT_CARD_SKILLS.filter((skill) => {
+  const enabledIds = Array.isArray(enabledSkillIds) ? new Set(enabledSkillIds.map((item) => String(item ?? "").trim()).filter(Boolean)) : null;
+  const availableSkills = PROMPT_CARD_SKILLS.filter(
+    (skill) => enabledIds ? enabledIds.has(skill.id) : !skill.chromeOnly
+  );
+  if (!normalizedQuery) return [...availableSkills];
+  return availableSkills.filter((skill) => {
     const searchableText = `${skill.id} ${skill.label} ${skill.description} ${skill.keywords ?? ""}`.toLocaleLowerCase();
     return searchableText.includes(normalizedQuery);
   });
@@ -1798,8 +2055,9 @@ function buildPromptCardSkillSavePayload(note, selectedSkills) {
     skillIds: selectedSkills.map((skill) => skill.id)
   };
 }
-function deserializePromptCardSkillSelection(payload) {
-  return normalizePromptCardSkillIds(payload?.skillIds ?? []).map((skillId) => SKILL_BY_ID.get(skillId)).filter((skill) => Boolean(skill));
+function deserializePromptCardSkillSelection(payload, enabledSkillIds) {
+  const enabledIds = Array.isArray(enabledSkillIds) ? new Set(enabledSkillIds.map((item) => String(item ?? "").trim()).filter(Boolean)) : null;
+  return normalizePromptCardSkillIds(payload?.skillIds ?? []).map((skillId) => SKILL_BY_ID.get(skillId)).filter((skill) => Boolean(skill)).filter((skill) => enabledIds ? enabledIds.has(skill.id) : true);
 }
 function mergePromptCardSkillsIntoPromptNote(note, selectedSkills) {
   const prefix = buildPromptCardSkillPrefix(selectedSkills);
@@ -1810,10 +2068,190 @@ function mergePromptCardSkillsIntoPromptNote(note, selectedSkills) {
 ${prefix}`;
 }
 
-// src/core/editor/changes.ts
+// src/core/editor/annotation-target.ts
 var ANNOTATION_MARKER_NODE_ID_ATTR = "data-axhub-annotation-node-id";
 var ANNOTATION_HOST_ID = "__axhub_annotation_host__";
+var ANNOTATION_PANEL_TARGET_ATTR = "data-axhub-annotation-panel-target";
 var ANNOTATION_PANEL_NODE_ID_ATTR = "data-axhub-annotation-panel-node-id";
+var ANNOTATION_SOURCE_KEY = "__AXHUB_ANNOTATION_SOURCE__";
+var ANNOTATION_SOURCE_DOCUMENT_KEY = "__AXHUB_ANNOTATION_SOURCE_DOCUMENT__";
+function normalizeText3(value) {
+  return String(value ?? "").trim();
+}
+function isPlainObject(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+function isElementLocator(value) {
+  if (!isPlainObject(value)) return false;
+  return Array.isArray(value.selectors) && value.selectors.every((selector) => typeof selector === "string") && typeof value.fingerprint === "string" && Array.isArray(value.path);
+}
+function cssEscape2(value) {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+function readElementAttribute(element, attr) {
+  try {
+    return normalizeText3(element?.getAttribute?.(attr));
+  } catch {
+    return "";
+  }
+}
+function readClosestElementAttribute(element, attr) {
+  const direct = readElementAttribute(element, attr);
+  if (direct) return direct;
+  try {
+    const closest = element?.closest?.(`[${attr}]`) ?? null;
+    return readElementAttribute(closest, attr);
+  } catch {
+    return "";
+  }
+}
+function getWindowRecord() {
+  return typeof window === "undefined" ? null : window;
+}
+function readSourceNodesFromCandidate(candidate) {
+  if (!isPlainObject(candidate) || !Array.isArray(candidate.nodes)) return [];
+  return candidate.nodes.map((node) => {
+    if (!isPlainObject(node)) return null;
+    const id = normalizeText3(node.id);
+    if (!id) return null;
+    return {
+      id,
+      locator: isElementLocator(node.locator) ? node.locator : null,
+      raw: node
+    };
+  }).filter((node) => Boolean(node));
+}
+function readAnnotationSourceNodes() {
+  const record = getWindowRecord();
+  if (!record) return [];
+  const directNodes = readSourceNodesFromCandidate(record[ANNOTATION_SOURCE_KEY]);
+  const documentValue = record[ANNOTATION_SOURCE_DOCUMENT_KEY];
+  const documentNodes = isPlainObject(documentValue) ? readSourceNodesFromCandidate(documentValue.data) : [];
+  const byId = /* @__PURE__ */ new Map();
+  for (const node of [...directNodes, ...documentNodes]) {
+    if (!byId.has(node.id) || !byId.get(node.id)?.locator) {
+      byId.set(node.id, node);
+    }
+  }
+  return Array.from(byId.values());
+}
+function collectAnnotationSourceNodeIdsFromWindow() {
+  const nodes = readAnnotationSourceNodes();
+  if (nodes.length === 0) return null;
+  return new Set(nodes.map((node) => node.id));
+}
+function extractAnnotationPanelNodeId(locator) {
+  for (const selector of locator?.selectors ?? []) {
+    const normalized = normalizeText3(selector);
+    if (!normalized) continue;
+    const match = normalized.match(/\[data-axhub-annotation-panel-node-id=(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/);
+    const nodeId = normalizeText3(match?.[1] ?? match?.[2] ?? match?.[3]);
+    if (nodeId) return nodeId;
+  }
+  return "";
+}
+function locatorsMatch(left, right) {
+  if (left === right) return true;
+  try {
+    if (locatorKey(left) && locatorKey(left) === locatorKey(right)) return true;
+  } catch {
+  }
+  const leftSelectors = (left.selectors ?? []).map(normalizeText3).filter(Boolean);
+  const rightSelectors = (right.selectors ?? []).map(normalizeText3).filter(Boolean);
+  if (leftSelectors.length > 0 && rightSelectors.length > 0 && leftSelectors.length === rightSelectors.length && leftSelectors.every((selector, index) => selector === rightSelectors[index])) {
+    return true;
+  }
+  const leftFingerprint = normalizeText3(left.fingerprint);
+  const rightFingerprint = normalizeText3(right.fingerprint);
+  const leftPath = (left.path ?? []).map(normalizeText3).join(">");
+  const rightPath = (right.path ?? []).map(normalizeText3).join(">");
+  return Boolean(
+    leftFingerprint && leftFingerprint === rightFingerprint && leftPath && leftPath === rightPath
+  );
+}
+function resolveAnnotationNodeIdFromLocator(locator) {
+  if (!locator) return "";
+  const panelNodeId = extractAnnotationPanelNodeId(locator);
+  if (panelNodeId) return panelNodeId;
+  for (const node of readAnnotationSourceNodes()) {
+    if (node.locator && locatorsMatch(locator, node.locator)) {
+      return node.id;
+    }
+  }
+  return "";
+}
+function readAnnotationPanelNodeId(element) {
+  const panelNodeId = readClosestElementAttribute(element, ANNOTATION_PANEL_NODE_ID_ATTR);
+  if (panelNodeId) return panelNodeId;
+  return readClosestElementAttribute(element, ANNOTATION_MARKER_NODE_ID_ATTR);
+}
+function buildAnnotationPanelLocator(nodeId) {
+  const normalizedNodeId = normalizeText3(nodeId);
+  return {
+    selectors: [`[${ANNOTATION_PANEL_NODE_ID_ATTR}="${cssEscape2(normalizedNodeId)}"]`],
+    fingerprint: `annotation-panel:${normalizedNodeId}`,
+    path: [],
+    shadowHostChain: []
+  };
+}
+function buildAnnotationPanelElementKey(nodeId) {
+  return `annotation-panel:${normalizeText3(nodeId)}`;
+}
+function resolveAnnotationElementIdentity(element) {
+  if (!element) return null;
+  const directNodeId = readAnnotationPanelNodeId(element);
+  if (directNodeId) {
+    return {
+      elementKey: buildAnnotationPanelElementKey(directNodeId),
+      locator: buildAnnotationPanelLocator(directNodeId),
+      label: "Annotation Panel",
+      nodeId: directNodeId
+    };
+  }
+  const locator = createElementLocator(element);
+  const nodeId = resolveAnnotationNodeIdFromLocator(locator);
+  if (!nodeId) return null;
+  return {
+    elementKey: buildAnnotationPanelElementKey(nodeId),
+    locator: buildAnnotationPanelLocator(nodeId),
+    label: "Annotation Panel",
+    nodeId
+  };
+}
+function resolveAnnotationTargetIdentity(target) {
+  const locator = target?.locator ?? null;
+  const nodeIdFromLocator = resolveAnnotationNodeIdFromLocator(locator);
+  const nodeIdFromKey = normalizeText3(target?.elementKey).startsWith("annotation-panel:") ? normalizeText3(target?.elementKey).replace(/^annotation-panel:/, "") : "";
+  const nodeId = nodeIdFromLocator || nodeIdFromKey;
+  if (!nodeId) return null;
+  return {
+    elementKey: buildAnnotationPanelElementKey(nodeId),
+    locator: buildAnnotationPanelLocator(nodeId),
+    label: normalizeText3(target?.label) || "Annotation Panel",
+    nodeId
+  };
+}
+function findAnnotationMarkerByNodeId(nodeId) {
+  const normalizedNodeId = normalizeText3(nodeId);
+  if (!normalizedNodeId || typeof document === "undefined") {
+    return null;
+  }
+  const selector = `[${ANNOTATION_MARKER_NODE_ID_ATTR}="${cssEscape2(normalizedNodeId)}"]`;
+  try {
+    const host = typeof document.getElementById === "function" ? document.getElementById(ANNOTATION_HOST_ID) : null;
+    const shadowRoot = host?.shadowRoot ?? null;
+    const shadowMarker = shadowRoot?.querySelector(selector) ?? null;
+    if (shadowMarker) return shadowMarker;
+    return typeof document.querySelector === "function" ? document.querySelector(selector) : null;
+  } catch {
+    return null;
+  }
+}
+
+// src/core/editor/changes.ts
 function filterVisibleChangeMarkerMetas(metas, activeMarkerKey) {
   if (!activeMarkerKey) return metas.slice();
   return metas.filter((meta) => meta.elementKey !== activeMarkerKey);
@@ -1823,46 +2261,13 @@ function createChangesService(options) {
   function normalizeNote2(value) {
     return String(value ?? "").replace(/\r\n/g, "\n");
   }
-  function cssEscape2(value) {
-    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-      return CSS.escape(value);
-    }
-    return String(value).replace(/["\\]/g, "\\$&");
-  }
-  function extractAnnotationPanelNodeId2(locator) {
-    for (const selector of locator.selectors ?? []) {
-      const normalized = String(selector ?? "").trim();
-      if (!normalized) continue;
-      const match = normalized.match(/\[data-axhub-annotation-panel-node-id=(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/);
-      const rawValue = match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
-      const nodeId = String(rawValue).trim();
-      if (nodeId) return nodeId;
-    }
-    return "";
-  }
-  function readAnnotationPanelNodeId2(element) {
-    try {
-      return String(element?.getAttribute?.(ANNOTATION_PANEL_NODE_ID_ATTR) ?? "").trim();
-    } catch {
-      return "";
-    }
-  }
-  function buildAnnotationPanelLocator(nodeId) {
-    return {
-      selectors: [`[${ANNOTATION_PANEL_NODE_ID_ATTR}="${cssEscape2(nodeId)}"]`],
-      fingerprint: `annotation-panel:${nodeId}`,
-      path: [],
-      shadowHostChain: []
-    };
-  }
   function resolveEditableElementIdentity(element) {
-    const annotationNodeId = readAnnotationPanelNodeId2(element);
-    if (annotationNodeId) {
-      const locator2 = buildAnnotationPanelLocator(annotationNodeId);
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) {
       return {
-        elementKey: `annotation-panel:${annotationNodeId}`,
-        locator: locator2,
-        label: "Annotation Panel"
+        elementKey: annotationIdentity.elementKey,
+        locator: annotationIdentity.locator,
+        label: annotationIdentity.label
       };
     }
     const locator = createElementLocator(element);
@@ -1872,21 +2277,6 @@ function createChangesService(options) {
       label: generateFullElementLabel(element, locator.shadowHostChain)
     };
   }
-  function findAnnotationMarkerByNodeId(nodeId) {
-    if (!nodeId || typeof document === "undefined") {
-      return null;
-    }
-    const selector = `[${ANNOTATION_MARKER_NODE_ID_ATTR}="${cssEscape2(nodeId)}"]`;
-    try {
-      const host = typeof document.getElementById === "function" ? document.getElementById(ANNOTATION_HOST_ID) : null;
-      const shadowRoot = host?.shadowRoot ?? null;
-      const shadowMarker = shadowRoot?.querySelector(selector) ?? null;
-      if (shadowMarker) return shadowMarker;
-      return typeof document.querySelector === "function" ? document.querySelector(selector) : null;
-    } catch {
-      return null;
-    }
-  }
   function locateMarkerRenderableElement(locator) {
     let element = null;
     try {
@@ -1895,12 +2285,12 @@ function createChangesService(options) {
       element = null;
     }
     if (element?.isConnected) return element;
-    const annotationNodeId = extractAnnotationPanelNodeId2(locator);
+    const annotationNodeId = extractAnnotationPanelNodeId(locator);
     const annotationMarker = findAnnotationMarkerByNodeId(annotationNodeId);
     return annotationMarker?.isConnected ? annotationMarker : null;
   }
   function resolveAnnotationMarkerAnchor(locator) {
-    const annotationNodeId = extractAnnotationPanelNodeId2(locator);
+    const annotationNodeId = extractAnnotationPanelNodeId(locator);
     if (!annotationNodeId) return null;
     const annotationMarker = findAnnotationMarkerByNodeId(annotationNodeId);
     if (!annotationMarker?.isConnected) return null;
@@ -2146,8 +2536,7 @@ function createChangesService(options) {
     if (selectionAnchor) {
       return buildAnchorFromPoint(element, selectionAnchor.clientX, selectionAnchor.clientY);
     }
-    const locator = createElementLocator(element);
-    const elementKey = generateStableElementKey(element, locator.shadowHostChain);
+    const { elementKey } = resolveEditableElementIdentity(element);
     const meta = state2.editMetaByKey.get(elementKey);
     const pendingAnchor = state2.pendingMarkerAnchors.get(elementKey) ?? null;
     return pendingAnchor ?? meta?.anchor ?? buildFallbackAnchor(element);
@@ -2201,7 +2590,7 @@ function createChangesService(options) {
     return lines;
   }
   function resolveChangeMarkerTaskState(elementKey) {
-    const task = state2.externalEditingTaskByElementKey.get(elementKey) ?? state2.genieTaskByElementKey.get(elementKey) ?? null;
+    const task = state2.externalEditingTaskByElementKey.get(elementKey) ?? state2.agentTaskByElementKey.get(elementKey) ?? null;
     if (!task || task.dismissed) return null;
     if (task.status === "pending" || task.status === "created") return "editing";
     if (task.status === "error") return "error";
@@ -2237,8 +2626,7 @@ function createChangesService(options) {
       if (state2.commentEntryMode !== "bubble-card") return null;
       const selected = state2.selectedElement;
       if (!selected || !selected.isConnected) return null;
-      const locator = createElementLocator(selected);
-      return generateStableElementKey(selected, locator.shadowHostChain);
+      return resolveEditableElementIdentity(selected).elementKey;
     })();
     const visibleMetas = filterVisibleChangeMarkerMetas(dirtyMetas, activeMarkerKey);
     if (visibleMetas.length === 0) {
@@ -2250,7 +2638,7 @@ function createChangesService(options) {
       const anchor = resolveLiveAnchor(meta.locator, meta.anchor);
       if (!anchor) return null;
       const position = getViewportMarkerPosition(anchor);
-      const annotationNodeId = extractAnnotationPanelNodeId2(meta.locator);
+      const annotationNodeId = extractAnnotationPanelNodeId(meta.locator);
       const detailLines = buildMarkerDetailLines(meta);
       const markerText = String(index + 1);
       const taskState = resolveChangeMarkerTaskState(meta.elementKey);
@@ -2412,18 +2800,8 @@ function createChangesService(options) {
     }
     renderChangeMarkers();
   }
-  function markElementEditsHandled(element) {
-    if (!element || !element.isConnected) return;
-    const locator = createElementLocator(element);
-    const elementKey = generateStableElementKey(element, locator.shadowHostChain);
+  function markEditMetaHandled(meta, selectedElement) {
     const handledAt = Date.now();
-    const meta = getOrCreateEditMeta(
-      elementKey,
-      locator,
-      generateFullElementLabel(element, locator.shadowHostChain)
-    );
-    meta.locator = locator;
-    meta.label = generateFullElementLabel(element, locator.shadowHostChain);
     meta.note = "";
     delete meta.skillIds;
     meta.images = [];
@@ -2436,15 +2814,39 @@ function createChangesService(options) {
     meta.styleSummaryLines = [];
     meta.textSummary = null;
     meta.classSummaryLines = [];
-    state2.processedEditTimestampsByKey.set(elementKey, handledAt);
-    state2.pendingMarkerAnchors.delete(elementKey);
-    if (state2.selectedElement === element) {
+    state2.processedEditTimestampsByKey.set(meta.elementKey, handledAt);
+    state2.pendingMarkerAnchors.delete(meta.elementKey);
+    if (selectedElement && state2.selectedElement === selectedElement) {
       state2.selectionAnchor = null;
     }
-    pruneIdleMeta(elementKey);
+    pruneIdleMeta(meta.elementKey);
     options.scheduleCacheWrite();
     state2.propertyPanel?.refresh();
     renderChangeMarkers();
+  }
+  function markElementEditsHandled(element) {
+    if (!element || !element.isConnected) return;
+    const { elementKey, locator, label } = resolveEditableElementIdentity(element);
+    const meta = getOrCreateEditMeta(
+      elementKey,
+      locator,
+      label
+    );
+    meta.locator = locator;
+    meta.label = label;
+    markEditMetaHandled(meta, element);
+  }
+  function markElementEditsHandledByKey(target) {
+    const elementKey = String(target?.elementKey ?? "").trim();
+    if (!elementKey || !target?.locator) return;
+    const meta = getOrCreateEditMeta(
+      elementKey,
+      target.locator,
+      String(target.label || "").trim() || elementKey
+    );
+    meta.locator = target.locator;
+    meta.label = String(target.label || "").trim() || elementKey;
+    markEditMetaHandled(meta, null);
   }
   function clearElementEditMeta(element) {
     const meta = getMetaForElement(element);
@@ -2453,7 +2855,7 @@ function createChangesService(options) {
     state2.processedEditTimestampsByKey.delete(meta.elementKey);
     state2.pendingMarkerAnchors.delete(meta.elementKey);
     state2.externalEditingTaskByElementKey.delete(meta.elementKey);
-    state2.genieTaskByElementKey.delete(meta.elementKey);
+    state2.agentTaskByElementKey.delete(meta.elementKey);
     if (state2.selectedElement === element) {
       state2.selectionAnchor = null;
     }
@@ -2670,8 +3072,7 @@ function createChangesService(options) {
     }).filter((item) => Boolean(item));
   }
   function rememberSelectionAnchor(element, selectionAnchor) {
-    const locator = createElementLocator(element);
-    const elementKey = generateStableElementKey(element, locator.shadowHostChain);
+    const { elementKey } = resolveEditableElementIdentity(element);
     const resolvedAnchor = resolveSelectionAnchor(element, selectionAnchor);
     state2.selectionAnchor = resolvedAnchor;
     state2.pendingMarkerAnchors.clear();
@@ -2706,6 +3107,7 @@ function createChangesService(options) {
     revertRecordedTweakForElement,
     revertAllRecordedTweaks,
     markElementEditsHandled,
+    markElementEditsHandledByKey,
     clearElementEditMeta,
     clearAllEditMeta,
     getSelectedElementNote,
@@ -2997,41 +3399,41 @@ function createFeedbackService(options) {
   return { confirm, alert, prompt, toast };
 }
 
-// src/core/editor/genie-bridge-internals/constants.ts
-var GENIE_RECONNECT_DELAY_MS = 3e3;
-var GENIE_CONTEXT_REQUEST_TIMEOUT_MS = 5e3;
-var GENIE_AGENT_RUN_TIMEOUT_MS = 3e5;
-var GENIE_MAX_RECONNECT_ATTEMPTS = 5;
-var GENIE_PROBE_RETRY_DELAY_MS = 1500;
-var GENIE_MAX_PROBE_ATTEMPTS = 3;
-var GENIE_STATE_QUERY_TIMEOUT_MS = 8e3;
-var GENIE_DISCOVERY_TIMEOUT_MS = 6e3;
-var GENIE_WAKE_WAIT_TIMEOUT_MS = 6e3;
-var GENIE_HEALTH_PATH = "/health";
-var GENIE_LOCAL_HEALTH_URL = "http://localhost:32124/health";
-var GENIE_LOCAL_API_BASE_URL = "http://localhost:32124/api";
-var GENIE_SERVICE_ID = "@axhub/genie";
-var GENIE_DEFAULT_INTEGRATION_CHANNEL = "axhub";
-var GENIE_DEFAULT_TARGET_CLIENT_ID = "make";
-var GENIE_PAGE_OFFLINE_MESSAGE = "AI \u9875\u9762\u672A\u5728\u7EBF\uFF0C\u8BF7\u5148\u6253\u5F00\u5BF9\u5E94 AI \u9875\u9762\u3002";
-var GENIE_BRIDGE_CONFIG_ERROR = "AI \u8FDE\u63A5\u914D\u7F6E\u4E0D\u5B8C\u6574\u3002";
-var GENIE_BRIDGE_NOT_CONNECTED_ERROR = "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002";
-var GENIE_EXECUTION_CONFIG_ERROR = "AI \u6267\u884C\u914D\u7F6E\u4E0D\u5B8C\u6574\u3002";
-var GENIE_BRIDGE_LOG_PREFIX = "[WebEditorV2][GenieBridge]";
-var GENIE_CONVERSATION_MAX_SENDS = 15;
-var GENIE_CONVERSATION_TTL_MS = 24 * 60 * 60 * 1e3;
-var GENIE_COMPLETED_TASK_AUTO_DISMISS_MS = 1800;
-var GENIE_EXTERNAL_EDITING_TIMEOUT_MS = 10 * 60 * 1e3;
-var GENIE_PROVIDER_CHECK_TIMEOUT_MS = 3e3;
-var GENIE_SESSION_NOT_FOUND_CODES = /* @__PURE__ */ new Set([
+// src/core/editor/agent-bridge-internals/constants.ts
+var AGENT_RECONNECT_DELAY_MS = 3e3;
+var AGENT_CONTEXT_REQUEST_TIMEOUT_MS = 5e3;
+var AGENT_RUN_TIMEOUT_MS = 3e5;
+var AGENT_MAX_RECONNECT_ATTEMPTS = 5;
+var AGENT_PROBE_RETRY_DELAY_MS = 1500;
+var AGENT_MAX_PROBE_ATTEMPTS = 3;
+var AGENT_STATE_QUERY_TIMEOUT_MS = 8e3;
+var AGENT_DISCOVERY_TIMEOUT_MS = 6e3;
+var AGENT_WAKE_WAIT_TIMEOUT_MS = 6e3;
+var AGENT_HEALTH_PATH = "/health";
+var AGENT_LOCAL_HEALTH_URL = "http://localhost:32124/health";
+var AGENT_LOCAL_API_BASE_URL = "http://localhost:32124/api";
+var AGENT_SERVICE_ID = "@axhub/genie";
+var AGENT_DEFAULT_INTEGRATION_CHANNEL = "axhub";
+var AGENT_DEFAULT_TARGET_CLIENT_ID = "make";
+var AGENT_PAGE_OFFLINE_MESSAGE = "AI \u9875\u9762\u672A\u5728\u7EBF\uFF0C\u8BF7\u5148\u6253\u5F00\u5BF9\u5E94 AI \u9875\u9762\u3002";
+var AGENT_BRIDGE_CONFIG_ERROR = "AI \u8FDE\u63A5\u914D\u7F6E\u4E0D\u5B8C\u6574\u3002";
+var AGENT_BRIDGE_NOT_CONNECTED_ERROR = "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002";
+var AGENT_EXECUTION_CONFIG_ERROR = "AI \u6267\u884C\u914D\u7F6E\u4E0D\u5B8C\u6574\u3002";
+var AGENT_BRIDGE_LOG_PREFIX = "[WebEditorV2][AgentBridge]";
+var AGENT_CONVERSATION_MAX_SENDS = 15;
+var AGENT_CONVERSATION_TTL_MS = 24 * 60 * 60 * 1e3;
+var AGENT_COMPLETED_TASK_AUTO_DISMISS_MS = 1800;
+var AGENT_EXTERNAL_EDITING_TIMEOUT_MS = 10 * 60 * 1e3;
+var AGENT_PROVIDER_CHECK_TIMEOUT_MS = 3e3;
+var AGENT_SESSION_NOT_FOUND_CODES = /* @__PURE__ */ new Set([
   "SESSION_NOT_FOUND",
   "INVALID_SESSION",
   "AGENT_SESSION_NOT_FOUND",
   "ACTIVE_SESSION_NOT_FOUND"
 ]);
-var GENIE_SUPPORTED_UI_PROVIDERS = ["claude", "codex", "gemini", "opencode"];
+var AGENT_SUPPORTED_UI_PROVIDERS = ["claude", "codex", "opencode"];
 
-// src/core/editor/genie-bridge-internals/common.ts
+// src/core/editor/agent-bridge-internals/common.ts
 function createRequestId(prefix) {
   const randomPart = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now().toString(36)}_${randomPart}`;
@@ -3098,11 +3500,11 @@ function parseTimestamp(value, fallback = 0) {
   return fallback;
 }
 
-// src/core/editor/genie-bridge-internals/discovery.ts
-function hasGenieServiceIdentity(payload, headers) {
+// src/core/editor/agent-bridge-internals/discovery.ts
+function hasAgentServiceIdentity(payload, headers) {
   const serviceId = normalizeString2(payload?.service?.id);
   const appIdentifier = normalizeString2(headers?.get("X-App-Identifier") ?? headers?.get("x-app-identifier"));
-  return serviceId === GENIE_SERVICE_ID || appIdentifier === GENIE_SERVICE_ID;
+  return serviceId === AGENT_SERVICE_ID || appIdentifier === AGENT_SERVICE_ID;
 }
 function parseEditorClientDescriptors(value) {
   const items = Array.isArray(value?.items) ? value.items : [];
@@ -3134,7 +3536,7 @@ function pickPreferredEditorClient(items, targetCandidates) {
     const rightTimestamp = Math.max(right.lastSeenAt, right.connectedAt);
     return rightTimestamp - leftTimestamp;
   });
-  const defaultClient = sortedItems.find((item) => item.clientId === GENIE_DEFAULT_TARGET_CLIENT_ID);
+  const defaultClient = sortedItems.find((item) => item.clientId === AGENT_DEFAULT_TARGET_CLIENT_ID);
   if (defaultClient) {
     return defaultClient;
   }
@@ -3146,21 +3548,21 @@ function pickPreferredEditorClient(items, targetCandidates) {
 function buildDiscoveryChannelCandidates(currentChannel) {
   return collectUniqueStrings(
     currentChannel,
-    readWindowSearchParam("genieIntegrationChannel", "integrationChannel"),
-    GENIE_DEFAULT_INTEGRATION_CHANNEL
+    readWindowSearchParam("agentIntegrationChannel", "integrationChannel"),
+    AGENT_DEFAULT_INTEGRATION_CHANNEL
   );
 }
 function buildDiscoveryTargetCandidates(currentTargetClientId) {
   return collectUniqueStrings(
     currentTargetClientId,
-    readWindowSearchParam("genieTargetClientId", "integrationClientId"),
-    GENIE_DEFAULT_TARGET_CLIENT_ID
+    readWindowSearchParam("agentTargetClientId", "integrationClientId"),
+    AGENT_DEFAULT_TARGET_CLIENT_ID
   );
 }
-function buildGenieWsUrl(apiBaseUrl, apiKey) {
+function buildAgentWsUrl(apiBaseUrl, apiKey) {
   const trimmed = normalizeBaseUrl(apiBaseUrl);
   if (!trimmed) {
-    throw new Error(GENIE_BRIDGE_CONFIG_ERROR);
+    throw new Error(AGENT_BRIDGE_CONFIG_ERROR);
   }
   const url = new URL(trimmed);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -3174,10 +3576,10 @@ function buildGenieWsUrl(apiBaseUrl, apiKey) {
   return url.toString();
 }
 
-// src/core/editor/genie-bridge-internals/errors.ts
+// src/core/editor/agent-bridge-internals/errors.ts
 function mapIntegrationErrorMessage(code, message3) {
   if (code === "FRONTEND_NOT_ONLINE") {
-    return GENIE_PAGE_OFFLINE_MESSAGE;
+    return AGENT_PAGE_OFFLINE_MESSAGE;
   }
   const normalizedMessage = typeof message3 === "string" ? message3.trim() : "";
   if (normalizedMessage) {
@@ -3240,7 +3642,7 @@ function buildCurrentFileDisplayName(targetPath, filePath) {
   return fileName.replace(/\.[^/.]+$/u, "");
 }
 
-// src/core/editor/genie-bridge-internals/session-activity.ts
+// src/core/editor/agent-bridge-internals/session-activity.ts
 function parseAgentStateSyncPayload(value) {
   if (!isMessageRecord(value)) return null;
   const sessionId = typeof value.sessionId === "string" ? value.sessionId.trim() : "";
@@ -3397,7 +3799,7 @@ function matchesSessionActivityTarget(target, item) {
   return false;
 }
 
-// src/core/editor/genie-bridge.ts
+// src/core/editor/agent-bridge.ts
 function readContextCurrentFilePath(context) {
   if (!isMessageRecord(context)) return "";
   const currentFile = context.currentFile;
@@ -3515,7 +3917,7 @@ function readProjectPathFromAgentMessage(message3) {
     message3.projectPath ?? message3.result?.projectPath ?? message3.payload?.projectPath
   );
 }
-function createGenieBridgeService(options) {
+function createAgentBridgeService(options) {
   let active = false;
   let connected = false;
   let frontendAvailable = false;
@@ -3588,7 +3990,7 @@ function createGenieBridgeService(options) {
         return "";
       }
       const payload = await response.json().catch(() => null);
-      if (!payload || !hasGenieServiceIdentity(payload, response.headers) || payload.status !== "ok") {
+      if (!payload || !hasAgentServiceIdentity(payload, response.headers) || payload.status !== "ok") {
         return "";
       }
       return normalizeBaseUrl(apiBaseUrlCandidate);
@@ -3597,7 +3999,7 @@ function createGenieBridgeService(options) {
     }
   }
   async function discoverApiBaseUrl() {
-    const localApiBaseUrl = await probeApiBaseUrl(GENIE_LOCAL_HEALTH_URL, GENIE_LOCAL_API_BASE_URL);
+    const localApiBaseUrl = await probeApiBaseUrl(AGENT_LOCAL_HEALTH_URL, AGENT_LOCAL_API_BASE_URL);
     if (localApiBaseUrl) {
       return localApiBaseUrl;
     }
@@ -3605,7 +4007,7 @@ function createGenieBridgeService(options) {
       return "";
     }
     return await probeApiBaseUrl(
-      GENIE_HEALTH_PATH,
+      AGENT_HEALTH_PATH,
       new URL("/api", window.location.href).toString()
     );
   }
@@ -3615,7 +4017,7 @@ function createGenieBridgeService(options) {
     if (!normalizedApiBaseUrl || !normalizedChannel || typeof window === "undefined" || typeof WebSocket === "undefined") {
       return [];
     }
-    const requestTimeoutMs = getTimeoutMs(probeTimeoutMs, GENIE_DISCOVERY_TIMEOUT_MS);
+    const requestTimeoutMs = getTimeoutMs(probeTimeoutMs, AGENT_DISCOVERY_TIMEOUT_MS);
     return new Promise((resolve) => {
       let discoverySocket = null;
       let settled = false;
@@ -3640,14 +4042,14 @@ function createGenieBridgeService(options) {
         finalize([]);
       }, requestTimeoutMs);
       try {
-        discoverySocket = new WebSocket(buildGenieWsUrl(normalizedApiBaseUrl, apiKey));
+        discoverySocket = new WebSocket(buildAgentWsUrl(normalizedApiBaseUrl, apiKey));
       } catch {
         window.clearTimeout(timeoutId);
         finalize([]);
         return;
       }
       discoverySocket.onopen = () => {
-        connectMessageRequestId = createRequestId("genie_discover_connect");
+        connectMessageRequestId = createRequestId("agent_discover_connect");
         try {
           discoverySocket?.send(JSON.stringify({
             type: "integration.connect",
@@ -3673,7 +4075,7 @@ function createGenieBridgeService(options) {
         }
         if (!parsed?.type) return;
         if (parsed.type === "integration.connected" && parsed.requestId === connectMessageRequestId) {
-          listMessageRequestId = createRequestId("genie_discover_clients");
+          listMessageRequestId = createRequestId("agent_discover_clients");
           try {
             discoverySocket?.send(JSON.stringify({
               type: "integration.editor.clients.list",
@@ -3748,7 +4150,7 @@ function createGenieBridgeService(options) {
     if (!configChanged) {
       return false;
     }
-    logInfo("Rediscovered Genie frontend target", {
+    logInfo("Rediscovered Agent frontend target", {
       reason,
       previous: {
         integrationChannel,
@@ -3822,7 +4224,7 @@ function createGenieBridgeService(options) {
     }
   }
   function resolveConfiguredProvider() {
-    return String(state2.uiSettings.genieAgent ?? provider ?? "codex").trim();
+    return String(state2.uiSettings.agentProvider ?? provider ?? "codex").trim();
   }
   async function refreshProviderAvailability(effectiveProvider) {
     if (!effectiveProvider || !apiBaseUrl) {
@@ -3839,7 +4241,7 @@ function createGenieBridgeService(options) {
       providerAvailabilityInFlight.add(effectiveProvider);
       try {
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-        const timeoutId = controller ? typeof window !== "undefined" ? window.setTimeout(() => controller.abort(), GENIE_PROVIDER_CHECK_TIMEOUT_MS) : void 0 : void 0;
+        const timeoutId = controller ? typeof window !== "undefined" ? window.setTimeout(() => controller.abort(), AGENT_PROVIDER_CHECK_TIMEOUT_MS) : void 0 : void 0;
         const response = await fetch(checkUrl, {
           method: "GET",
           ...controller ? { signal: controller.signal } : {}
@@ -3894,7 +4296,7 @@ function createGenieBridgeService(options) {
     };
   }
   function getProviderAvailabilities() {
-    return GENIE_SUPPORTED_UI_PROVIDERS.map((providerName) => {
+    return AGENT_SUPPORTED_UI_PROVIDERS.map((providerName) => {
       const cached = providerAvailabilityCache.get(providerName);
       return {
         provider: providerName,
@@ -3906,7 +4308,7 @@ function createGenieBridgeService(options) {
     }).filter((item) => item.checkedAt !== null);
   }
   async function refreshProviderAvailabilities(providers) {
-    const targets = (providers?.length ? providers : GENIE_SUPPORTED_UI_PROVIDERS).map((providerName) => normalizeString2(providerName)).filter(Boolean);
+    const targets = (providers?.length ? providers : AGENT_SUPPORTED_UI_PROVIDERS).map((providerName) => normalizeString2(providerName)).filter(Boolean);
     await Promise.all(targets.map((providerName) => refreshProviderAvailability(providerName)));
   }
   function assertProviderAvailable(effectiveProvider) {
@@ -4000,7 +4402,7 @@ function createGenieBridgeService(options) {
     );
   }
   function getConversationState(scopeKey) {
-    return state2.genieConversationByScopeKey.get(scopeKey) ?? null;
+    return state2.agentConversationByScopeKey.get(scopeKey) ?? null;
   }
   function getConversationStateForCurrentPage(providerOverride) {
     const scopeKey = resolveScopeKey();
@@ -4022,25 +4424,56 @@ function createGenieBridgeService(options) {
   function hasReusableConversation() {
     return isConversationReusable(getCurrentConversationState());
   }
+  function resolveElementReusableConversation(element, scopeKey = resolveScopeKey()) {
+    if (element?.isConnected) {
+      const currentTask = getElementTaskState(element);
+      if (currentTask && !currentTask.dismissed && isTaskRunning(currentTask) && currentTask.scopeKey === scopeKey && typeof currentTask.sessionId === "string" && currentTask.sessionId.trim()) {
+        return {
+          scopeKey,
+          sessionId: currentTask.sessionId.trim(),
+          provider: currentTask.provider,
+          projectPath,
+          createdAt: currentTask.startedAt,
+          lastUsedAt: currentTask.updatedAt,
+          sentCount: 0,
+          expiresAt: Date.now() + AGENT_CONVERSATION_TTL_MS,
+          invalidated: false,
+          sessionPath: currentTask.sessionPath,
+          sessionUrl: currentTask.sessionUrl
+        };
+      }
+    }
+    const pageHasRunningTask = getVisibleTaskStates().some(
+      (task) => task.scopeKey === scopeKey && isTaskRunning(task)
+    );
+    if (pageHasRunningTask) {
+      return null;
+    }
+    const activeConversation = getConversationStateForCurrentPage();
+    return isConversationReusable(activeConversation) ? activeConversation : null;
+  }
+  function canReuseConversationForElement(element) {
+    return Boolean(resolveElementReusableConversation(element));
+  }
   function invalidateCurrentConversation() {
     invalidateConversationScope(resolveScopeKey());
   }
   function persistConversationState(scopeKey) {
     const conversation = getConversationState(scopeKey);
     if (!conversation) {
-      options.persistence.clearGenieConversationState(scopeKey);
+      options.persistence.clearAgentConversationState(scopeKey);
       return;
     }
-    options.persistence.writeGenieConversationState(scopeKey, conversation);
+    options.persistence.writeAgentConversationState(scopeKey, conversation);
   }
   function setConversationState(scopeKey, conversation) {
     if (!conversation) {
-      state2.genieConversationByScopeKey.delete(scopeKey);
-      options.persistence.clearGenieConversationState(scopeKey);
+      state2.agentConversationByScopeKey.delete(scopeKey);
+      options.persistence.clearAgentConversationState(scopeKey);
       notifyTaskStateChange();
       return null;
     }
-    state2.genieConversationByScopeKey.set(scopeKey, conversation);
+    state2.agentConversationByScopeKey.set(scopeKey, conversation);
     persistConversationState(scopeKey);
     notifyTaskStateChange();
     return conversation;
@@ -4049,7 +4482,7 @@ function createGenieBridgeService(options) {
     if (!conversation?.sessionId || conversation.invalidated) {
       return false;
     }
-    if (conversation.sentCount >= GENIE_CONVERSATION_MAX_SENDS) {
+    if (conversation.sentCount >= AGENT_CONVERSATION_MAX_SENDS) {
       return false;
     }
     return Number.isFinite(conversation.expiresAt) && conversation.expiresAt > Date.now();
@@ -4074,7 +4507,7 @@ function createGenieBridgeService(options) {
           )
         )
       ),
-      expiresAt: Number.isFinite(Number(patch.expiresAt)) ? Number(patch.expiresAt) : createdAt + GENIE_CONVERSATION_TTL_MS,
+      expiresAt: Number.isFinite(Number(patch.expiresAt)) ? Number(patch.expiresAt) : createdAt + AGENT_CONVERSATION_TTL_MS,
       invalidated: typeof patch.invalidated === "boolean" ? patch.invalidated : currentConversation?.invalidated ?? false,
       sessionPath: typeof patch.sessionPath === "string" && patch.sessionPath.trim() ? patch.sessionPath.trim() : patch.sessionPath === null ? null : currentConversation?.sessionPath ?? null,
       sessionUrl: typeof patch.sessionUrl === "string" && patch.sessionUrl.trim() ? patch.sessionUrl.trim() : patch.sessionUrl === null ? null : currentConversation?.sessionUrl ?? null
@@ -4091,10 +4524,10 @@ function createGenieBridgeService(options) {
   }
   function logWarn(message3, detail) {
     if (detail === void 0) {
-      console.warn(`${GENIE_BRIDGE_LOG_PREFIX} ${message3}`);
+      console.warn(`${AGENT_BRIDGE_LOG_PREFIX} ${message3}`);
       return;
     }
-    console.warn(`${GENIE_BRIDGE_LOG_PREFIX} ${message3}`, detail);
+    console.warn(`${AGENT_BRIDGE_LOG_PREFIX} ${message3}`, detail);
   }
   function notifyStatusChange() {
     options.onAvailabilityChange?.(available);
@@ -4153,22 +4586,18 @@ function createGenieBridgeService(options) {
   }
   function expireExternalEditingTask(elementKey) {
     clearExternalEditingTimeoutTimer(elementKey);
-    const currentTask = state2.externalEditingTaskByElementKey.get(elementKey) ?? state2.genieTaskByElementKey.get(elementKey) ?? null;
+    const currentTask = state2.externalEditingTaskByElementKey.get(elementKey) ?? state2.agentTaskByElementKey.get(elementKey) ?? null;
     if (!currentTask || currentTask.origin !== "external-editing" || !isTaskRunning(currentTask) || currentTask.dismissed) {
       return;
     }
-    const now = Date.now();
-    const timedOutTask = {
-      ...currentTask,
-      status: "error",
-      message: "\u72B6\u6001\u672A\u77E5\uFF0CAI \u4FEE\u6539\u8D85\u65F6",
-      updatedAt: now,
-      lastEventAt: now,
-      errorCode: "EXTERNAL_EDITING_TIMEOUT",
-      recoveryPending: false
-    };
-    state2.externalEditingTaskByElementKey.set(elementKey, timedOutTask);
-    upsertTaskState(timedOutTask);
+    logInfo("Releasing stale external editing task after local watchdog elapsed", {
+      requestId: currentTask.requestId,
+      sessionId: currentTask.sessionId,
+      provider: currentTask.provider,
+      scopeKey: currentTask.scopeKey,
+      elementKey
+    });
+    removeTaskStateByRequestId(currentTask.requestId);
   }
   function syncExternalEditingTimeout(task) {
     if (task.origin !== "external-editing") return;
@@ -4178,11 +4607,11 @@ function createGenieBridgeService(options) {
     }
     clearExternalEditingTimeoutTimer(task.elementKey);
     const elapsedMs = Math.max(0, Date.now() - task.updatedAt);
-    const remainingMs = Math.max(0, GENIE_EXTERNAL_EDITING_TIMEOUT_MS - elapsedMs);
+    const remainingMs = Math.max(0, AGENT_EXTERNAL_EDITING_TIMEOUT_MS - elapsedMs);
     const expectedRequestId = task.requestId;
     const expectedUpdatedAt = task.updatedAt;
     const timerId = window.setTimeout(() => {
-      const currentTask = state2.externalEditingTaskByElementKey.get(task.elementKey) ?? state2.genieTaskByElementKey.get(task.elementKey) ?? null;
+      const currentTask = state2.externalEditingTaskByElementKey.get(task.elementKey) ?? state2.agentTaskByElementKey.get(task.elementKey) ?? null;
       if (!currentTask || currentTask.origin !== "external-editing" || currentTask.requestId !== expectedRequestId || !isTaskRunning(currentTask) || currentTask.dismissed) {
         return;
       }
@@ -4207,13 +4636,13 @@ function createGenieBridgeService(options) {
     }
     const timerId = window.setTimeout(() => {
       dismissCompletedTaskStates(normalizedRequestId);
-    }, GENIE_COMPLETED_TASK_AUTO_DISMISS_MS);
+    }, AGENT_COMPLETED_TASK_AUTO_DISMISS_MS);
     completedTaskDismissTimerByRequestId.set(normalizedRequestId, timerId);
   }
   function persistTaskStates(scopeKey) {
     const now = Date.now();
     const TERMINAL_STATE_TTL_MS = 30 * 60 * 1e3;
-    const tasks = Array.from(state2.genieTaskByElementKey.values()).filter(
+    const tasks = Array.from(state2.agentTaskByElementKey.values()).filter(
       (task) => {
         if (task.scopeKey !== scopeKey || task.dismissed) return false;
         if (isTaskRunning(task) && typeof task.sessionId === "string" && task.sessionId.trim().length > 0 && typeof task.provider === "string" && task.provider.trim().length > 0) {
@@ -4222,7 +4651,7 @@ function createGenieBridgeService(options) {
         if (isTaskRunning(task) && task.origin === "external-editing") {
           return true;
         }
-        if ((task.status === "error" || task.status === "completed") && task.origin === "external-editing" && now - task.updatedAt < TERMINAL_STATE_TTL_MS) {
+        if (task.status === "error" && task.origin === "external-editing" && now - task.updatedAt < TERMINAL_STATE_TTL_MS) {
           return true;
         }
         return false;
@@ -4247,7 +4676,7 @@ function createGenieBridgeService(options) {
       errorCode: task.errorCode,
       origin: task.origin
     }));
-    options.persistence.writeGenieTaskStates(scopeKey, tasks);
+    options.persistence.writeAgentTaskStates(scopeKey, tasks);
   }
   function setActivePromptRun(nextRun) {
     if (!nextRun) {
@@ -4277,7 +4706,7 @@ function createGenieBridgeService(options) {
     return currentRun;
   }
   function isVisibleTask(task) {
-    return Boolean(task && !task.dismissed && !task.recoveryPending);
+    return Boolean(task && !task.dismissed && (!task.recoveryPending || isTaskRunning(task)));
   }
   function getExternalEditingTaskStateByKey(elementKey) {
     if (!elementKey) return null;
@@ -4293,31 +4722,35 @@ function createGenieBridgeService(options) {
     if (textCommentMeta) {
       return getDisplayTaskStateByKey(textCommentMeta.elementKey);
     }
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) {
+      return getDisplayTaskStateByKey(annotationIdentity.elementKey);
+    }
     const locator = createElementLocator(element);
     const elementKey = generateStableElementKey(element, locator.shadowHostChain);
     return getDisplayTaskStateByKey(elementKey);
   }
   function getElementTaskStateByKey(elementKey) {
     if (!elementKey) return null;
-    const task = state2.genieTaskByElementKey.get(elementKey) ?? null;
+    const task = state2.agentTaskByElementKey.get(elementKey) ?? null;
     return task?.dismissed ? null : task;
   }
   function getTaskStateByRequestId(requestId) {
     if (!requestId) return null;
-    return state2.genieTaskByRequestId.get(requestId) ?? Array.from(state2.genieTaskByElementKey.values()).find((task) => task.requestId === requestId) ?? null;
+    return state2.agentTaskByRequestId.get(requestId) ?? Array.from(state2.agentTaskByElementKey.values()).find((task) => task.requestId === requestId) ?? null;
   }
   function getTaskStatesByRequestId(requestId) {
     if (!requestId) return [];
-    return Array.from(state2.genieTaskByElementKey.values()).filter((task) => task.requestId === requestId).sort((a, b) => a.startedAt - b.startedAt);
+    return Array.from(state2.agentTaskByElementKey.values()).filter((task) => task.requestId === requestId).sort((a, b) => a.startedAt - b.startedAt);
   }
   function reindexTaskStateByRequestId(requestId) {
     if (!requestId) return;
-    const nextTask = Array.from(state2.genieTaskByElementKey.values()).find((task) => task.requestId === requestId);
+    const nextTask = Array.from(state2.agentTaskByElementKey.values()).find((task) => task.requestId === requestId);
     if (nextTask) {
-      state2.genieTaskByRequestId.set(requestId, nextTask);
+      state2.agentTaskByRequestId.set(requestId, nextTask);
       return;
     }
-    state2.genieTaskByRequestId.delete(requestId);
+    state2.agentTaskByRequestId.delete(requestId);
   }
   function resolveElementTaskMeta(element) {
     const textCommentMeta = resolveTextCommentElementMeta(state2, element);
@@ -4326,6 +4759,14 @@ function createGenieBridgeService(options) {
         elementKey: textCommentMeta.elementKey,
         locator: textCommentMeta.locator,
         label: textCommentMeta.label
+      };
+    }
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) {
+      return {
+        elementKey: annotationIdentity.elementKey,
+        locator: annotationIdentity.locator,
+        label: annotationIdentity.label
       };
     }
     const existingMeta = options.changes.getMetaForElement?.(element);
@@ -4344,6 +4785,65 @@ function createGenieBridgeService(options) {
       locator,
       label
     };
+  }
+  function normalizeExternalEditingElementTarget(target) {
+    const elementKey = String(target?.elementKey ?? "").trim();
+    if (!elementKey || !target?.locator) {
+      return null;
+    }
+    const label = String(target.label ?? "").trim() || elementKey;
+    return {
+      elementKey,
+      locator: target.locator,
+      label
+    };
+  }
+  function scheduleExternalEditingCompletedRemoval(elementKey, requestId) {
+    window.setTimeout(() => {
+      const currentTask = state2.externalEditingTaskByElementKey.get(elementKey);
+      if (currentTask && currentTask.requestId === requestId && currentTask.status === "completed") {
+        state2.externalEditingTaskByElementKey.delete(elementKey);
+        removeTaskStateByRequestId(requestId);
+      }
+    }, AGENT_COMPLETED_TASK_AUTO_DISMISS_MS);
+  }
+  function upsertExternalEditingTaskState(target, status, taskRef) {
+    const normalizedTarget = normalizeExternalEditingElementTarget(target);
+    if (!normalizedTarget) return null;
+    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
+    const existingTask = state2.externalEditingTaskByElementKey.get(normalizedTarget.elementKey) ?? state2.agentTaskByElementKey.get(normalizedTarget.elementKey) ?? null;
+    const now = Date.now();
+    const fallbackProvider = String(resolveConfiguredProvider() || "").trim() || null;
+    const scopeKey = existingTask?.origin === "external-editing" ? existingTask.scopeKey : resolveExternalEditingScopeKey();
+    const isCompleted = status === "completed";
+    const isError = status === "error";
+    const nextTask = {
+      scopeKey,
+      elementKey: normalizedTarget.elementKey,
+      locator: normalizedTarget.locator,
+      label: normalizedTarget.label,
+      requestId: normalizedTaskRef?.requestId ?? existingTask?.requestId ?? `external_editing_${normalizedTarget.elementKey}`,
+      sessionId: normalizedTaskRef?.sessionId ?? existingTask?.sessionId ?? null,
+      sessionPath: null,
+      sessionUrl: null,
+      provider: normalizedTaskRef?.provider ?? existingTask?.provider ?? fallbackProvider,
+      status,
+      message: isCompleted ? "\u4FEE\u6539\u5B8C\u6210" : isError ? "AI \u4FEE\u6539\u5931\u8D25" : "AI \u7F16\u8F91\u4E2D",
+      startedAt: existingTask?.startedAt ?? now,
+      updatedAt: now,
+      dismissed: false,
+      recovery: "live",
+      recoveryPending: false,
+      lastEventAt: now,
+      errorCode: isError ? "EXTERNAL_EDITING_ERROR" : null,
+      origin: "external-editing",
+      taskRef: normalizedTaskRef
+    };
+    upsertTaskState(nextTask);
+    if (isCompleted) {
+      scheduleExternalEditingCompletedRemoval(nextTask.elementKey, nextTask.requestId);
+    }
+    return nextTask;
   }
   function inferPromptImageExtension(mimeType, fileName) {
     const fileNameExt = normalizeString2(fileName).match(/\.([a-z0-9+.-]+)$/iu)?.[1];
@@ -4476,9 +4976,12 @@ function createGenieBridgeService(options) {
     return false;
   }
   function upsertTaskState(task, options2 = {}) {
-    const previousByElementKey = state2.genieTaskByElementKey.get(task.elementKey);
-    state2.genieTaskByElementKey.set(task.elementKey, task);
-    state2.genieTaskByRequestId.set(task.requestId, task);
+    const previousByElementKey = state2.agentTaskByElementKey.get(task.elementKey);
+    state2.agentTaskByElementKey.set(task.elementKey, task);
+    state2.agentTaskByRequestId.set(task.requestId, task);
+    if (task.origin === "external-editing") {
+      state2.externalEditingTaskByElementKey.set(task.elementKey, task);
+    }
     if (previousByElementKey && previousByElementKey.requestId !== task.requestId) {
       reindexTaskStateByRequestId(previousByElementKey.requestId);
     }
@@ -4498,9 +5001,12 @@ function createGenieBridgeService(options) {
     for (const currentTask of currentTasks) {
       if (currentTask.origin === "external-editing") {
         clearExternalEditingTimeoutTimer(currentTask.elementKey);
+        if (state2.externalEditingTaskByElementKey.get(currentTask.elementKey)?.requestId === requestId) {
+          state2.externalEditingTaskByElementKey.delete(currentTask.elementKey);
+        }
       }
-      if (state2.genieTaskByElementKey.get(currentTask.elementKey)?.requestId === requestId) {
-        state2.genieTaskByElementKey.delete(currentTask.elementKey);
+      if (state2.agentTaskByElementKey.get(currentTask.elementKey)?.requestId === requestId) {
+        state2.agentTaskByElementKey.delete(currentTask.elementKey);
       }
     }
     const scopeKeys = Array.from(new Set(currentTasks.map((task) => task.scopeKey)));
@@ -4552,7 +5058,7 @@ function createGenieBridgeService(options) {
   }
   function getVisibleTaskStates() {
     const tasksByElementKey = /* @__PURE__ */ new Map();
-    for (const task of Array.from(state2.genieTaskByElementKey.values()).filter(isVisibleTask)) {
+    for (const task of Array.from(state2.agentTaskByElementKey.values()).filter(isVisibleTask)) {
       tasksByElementKey.set(task.elementKey, task);
     }
     for (const task of Array.from(state2.externalEditingTaskByElementKey.values()).filter(isVisibleTask)) {
@@ -4594,96 +5100,86 @@ function createGenieBridgeService(options) {
   function setExternalEditingState(element, taskRef) {
     if (!element?.isConnected) return null;
     const meta = resolveElementTaskMeta(element);
-    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
-    const existingTask = state2.externalEditingTaskByElementKey.get(meta.elementKey) ?? state2.genieTaskByElementKey.get(meta.elementKey) ?? null;
-    const now = Date.now();
-    const fallbackProvider = String(resolveConfiguredProvider() || "").trim() || null;
-    const scopeKey = existingTask?.origin === "external-editing" ? existingTask.scopeKey : resolveExternalEditingScopeKey();
-    const nextTask = {
-      scopeKey,
-      elementKey: meta.elementKey,
-      locator: meta.locator,
-      label: meta.label,
-      requestId: normalizedTaskRef?.requestId ?? existingTask?.requestId ?? `external_editing_${meta.elementKey}`,
-      sessionId: normalizedTaskRef?.sessionId ?? existingTask?.sessionId ?? null,
-      sessionPath: null,
-      sessionUrl: null,
-      provider: normalizedTaskRef?.provider ?? existingTask?.provider ?? fallbackProvider,
-      status: "created",
-      message: "AI \u7F16\u8F91\u4E2D",
-      startedAt: existingTask?.startedAt ?? now,
-      updatedAt: now,
-      dismissed: false,
-      recovery: "live",
-      recoveryPending: false,
-      lastEventAt: now,
-      errorCode: null,
-      origin: "external-editing",
-      taskRef: normalizedTaskRef
-    };
-    state2.externalEditingTaskByElementKey.set(meta.elementKey, nextTask);
-    upsertTaskState(nextTask);
-    return nextTask;
+    return upsertExternalEditingTaskState(meta, "created", taskRef);
   }
-  function clearExternalEditingState(element, _taskRef) {
+  function setExternalEditingStateByElementKey(target, taskRef) {
+    return upsertExternalEditingTaskState(target, "created", taskRef);
+  }
+  function getExternalEditingTaskForElementKey(elementKey) {
+    const task = state2.externalEditingTaskByElementKey.get(elementKey) ?? state2.agentTaskByElementKey.get(elementKey) ?? null;
+    return task?.origin === "external-editing" ? task : null;
+  }
+  function matchesExternalTaskRef(task, taskRef) {
+    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
+    if (!normalizedTaskRef?.requestId) return true;
+    if (!task?.requestId) return false;
+    return task.requestId === normalizedTaskRef.requestId;
+  }
+  function clearExternalEditingState(element, taskRef) {
     if (!element?.isConnected) return false;
     const meta = resolveElementTaskMeta(element);
-    const deleted = state2.externalEditingTaskByElementKey.delete(meta.elementKey);
-    const persistedTask = state2.genieTaskByElementKey.get(meta.elementKey);
-    if (persistedTask?.origin === "external-editing") {
-      removeTaskStateByRequestId(persistedTask.requestId);
+    const persistedTask = getExternalEditingTaskForElementKey(meta.elementKey);
+    if (!persistedTask || !matchesExternalTaskRef(persistedTask, taskRef)) {
+      return false;
     }
+    const deleted = state2.externalEditingTaskByElementKey.delete(meta.elementKey);
+    removeTaskStateByRequestId(persistedTask.requestId);
     if (deleted) {
       options.changes.markElementEditsHandled(element);
       notifyTaskStateChange();
     }
     return deleted;
   }
+  function clearExternalEditingStateByElementKey(elementKey, taskRef) {
+    const normalizedElementKey = String(elementKey || "").trim();
+    if (!normalizedElementKey) return false;
+    const existingTask = getExternalEditingTaskForElementKey(normalizedElementKey);
+    if (!existingTask || !matchesExternalTaskRef(existingTask, taskRef)) {
+      return false;
+    }
+    return Boolean(removeTaskStateByRequestId(existingTask.requestId));
+  }
+  function finalizeExternalEditingCompletedTask(task, element) {
+    if (task.origin !== "external-editing") return;
+    if (element?.isConnected) {
+      options.changes.markElementEditsHandled(element);
+    } else {
+      try {
+        const locatedElement = locateElement(task.locator);
+        if (locatedElement?.isConnected) {
+          options.changes.markElementEditsHandled(locatedElement);
+        }
+      } catch {
+      }
+    }
+    options.changes.markElementEditsHandledByKey({
+      elementKey: task.elementKey,
+      locator: task.locator,
+      label: task.label
+    });
+    options.persistence.clearCommentRecord?.(task.elementKey);
+    options.persistence.flushPendingWrite();
+  }
   function setExternalEditingTerminalState(element, terminalState, taskRef) {
     if (!element?.isConnected) return null;
     const meta = resolveElementTaskMeta(element);
-    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
-    const existingTask = state2.externalEditingTaskByElementKey.get(meta.elementKey) ?? state2.genieTaskByElementKey.get(meta.elementKey) ?? null;
-    const now = Date.now();
-    const fallbackProvider = String(resolveConfiguredProvider() || "").trim() || null;
-    const scopeKey = existingTask?.origin === "external-editing" ? existingTask.scopeKey : resolveExternalEditingScopeKey();
-    const isCompleted = terminalState === "completed";
-    const nextTask = {
-      scopeKey,
-      elementKey: meta.elementKey,
-      locator: meta.locator,
-      label: meta.label,
-      requestId: normalizedTaskRef?.requestId ?? existingTask?.requestId ?? `external_editing_${meta.elementKey}`,
-      sessionId: normalizedTaskRef?.sessionId ?? existingTask?.sessionId ?? null,
-      sessionPath: null,
-      sessionUrl: null,
-      provider: normalizedTaskRef?.provider ?? existingTask?.provider ?? fallbackProvider,
-      status: isCompleted ? "completed" : "error",
-      message: isCompleted ? "\u4FEE\u6539\u5B8C\u6210" : "AI \u4FEE\u6539\u5931\u8D25",
-      startedAt: existingTask?.startedAt ?? now,
-      updatedAt: now,
-      dismissed: false,
-      recovery: "live",
-      recoveryPending: false,
-      lastEventAt: now,
-      errorCode: isCompleted ? null : "EXTERNAL_EDITING_ERROR",
-      origin: "external-editing",
-      taskRef: normalizedTaskRef
-    };
-    state2.externalEditingTaskByElementKey.set(meta.elementKey, nextTask);
-    if (isCompleted) {
-      options.changes.markElementEditsHandled(element);
+    const existingTask = getExternalEditingTaskForElementKey(meta.elementKey);
+    if (!matchesExternalTaskRef(existingTask, taskRef)) return null;
+    const nextTask = upsertExternalEditingTaskState(meta, terminalState, taskRef);
+    if (!nextTask) return null;
+    if (terminalState === "completed") {
+      finalizeExternalEditingCompletedTask(nextTask, element);
     }
-    upsertTaskState(nextTask);
-    if (isCompleted) {
-      const dismissRequestId = nextTask.requestId;
-      window.setTimeout(() => {
-        const currentTask = state2.externalEditingTaskByElementKey.get(meta.elementKey);
-        if (currentTask && currentTask.requestId === dismissRequestId && currentTask.status === "completed") {
-          state2.externalEditingTaskByElementKey.delete(meta.elementKey);
-          removeTaskStateByRequestId(dismissRequestId);
-        }
-      }, GENIE_COMPLETED_TASK_AUTO_DISMISS_MS);
+    return nextTask;
+  }
+  function setExternalEditingTerminalStateByElementKey(target, terminalState, taskRef) {
+    const normalizedTarget = normalizeExternalEditingElementTarget(target);
+    if (!normalizedTarget) return null;
+    const existingTask = getExternalEditingTaskForElementKey(normalizedTarget.elementKey);
+    if (!matchesExternalTaskRef(existingTask, taskRef)) return null;
+    const nextTask = upsertExternalEditingTaskState(normalizedTarget, terminalState, taskRef);
+    if (nextTask && terminalState === "completed") {
+      finalizeExternalEditingCompletedTask(nextTask);
     }
     return nextTask;
   }
@@ -4702,22 +5198,22 @@ function createGenieBridgeService(options) {
   }
   function assertBridgeConnected() {
     if (!hasRequiredConfig()) {
-      throw new Error(GENIE_BRIDGE_CONFIG_ERROR);
+      throw new Error(AGENT_BRIDGE_CONFIG_ERROR);
     }
     if (!connected || !socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error(GENIE_BRIDGE_NOT_CONNECTED_ERROR);
+      throw new Error(AGENT_BRIDGE_NOT_CONNECTED_ERROR);
     }
   }
   function assertFrontendAvailable() {
     assertBridgeConnected();
     if (!available) {
-      throw new Error(GENIE_PAGE_OFFLINE_MESSAGE);
+      throw new Error(AGENT_PAGE_OFFLINE_MESSAGE);
     }
   }
   function assertAgentRunReady() {
     assertBridgeConnected();
     if (!hasAgentRunConfig()) {
-      throw new Error(GENIE_EXECUTION_CONFIG_ERROR);
+      throw new Error(AGENT_EXECUTION_CONFIG_ERROR);
     }
   }
   function mapAgentStatePayloadToTask(payload) {
@@ -4766,7 +5262,7 @@ function createGenieBridgeService(options) {
   }
   function buildStateSyncTargets() {
     const grouped = /* @__PURE__ */ new Map();
-    for (const task of state2.genieTaskByRequestId.values()) {
+    for (const task of state2.agentTaskByRequestId.values()) {
       if (task.dismissed || !isTaskRunning(task) || !task.recoveryPending || typeof task.sessionId !== "string" || !task.sessionId.trim() || typeof task.provider !== "string" || !task.provider.trim()) {
         continue;
       }
@@ -4789,15 +5285,15 @@ function createGenieBridgeService(options) {
   function sendStateQueries() {
     const targets = buildStateSyncTargets();
     if (targets.length === 0 || !socket || socket.readyState !== WebSocket.OPEN) {
-      logInfo("Skipping Genie state sync query", {
+      logInfo("Skipping Agent state sync query", {
         reason: targets.length === 0 ? "no-running-tasks" : "socket-not-open",
         runningTaskCount: targets.length
       });
       return;
     }
     for (const target of targets) {
-      const requestId = createRequestId("genie_agent_state_query");
-      logInfo("Sending Genie state sync query", {
+      const requestId = createRequestId("agent_state_query");
+      logInfo("Sending Agent state sync query", {
         requestId,
         sessionId: target.sessionId,
         provider: target.provider,
@@ -4818,7 +5314,7 @@ function createGenieBridgeService(options) {
         for (const taskRequestId of pendingTarget.taskRequestIds) {
           const removedTask = removeTaskStateByRequestId(taskRequestId);
           if (removedTask) {
-            logWarn("Dropped restored Genie task after state sync timeout", {
+            logWarn("Dropped restored Agent task after state sync timeout", {
               requestId: taskRequestId,
               sessionId: removedTask.sessionId,
               scopeKey: removedTask.scopeKey
@@ -4826,7 +5322,7 @@ function createGenieBridgeService(options) {
             clearActivePromptRun(taskRequestId);
           }
         }
-      }, GENIE_STATE_QUERY_TIMEOUT_MS);
+      }, AGENT_STATE_QUERY_TIMEOUT_MS);
       stateQueryByRequestId.set(requestId, {
         ...target,
         timeoutId
@@ -4835,13 +5331,13 @@ function createGenieBridgeService(options) {
   }
   function sendStateSubscribe(sessionId, provider2) {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      logWarn("Skipping Genie state subscribe because socket is not open", {
+      logWarn("Skipping Agent state subscribe because socket is not open", {
         sessionId,
         provider: provider2
       });
       return;
     }
-    const requestId = createRequestId("genie_agent_state_subscribe");
+    const requestId = createRequestId("agent_state_subscribe");
     stateSubscribeByRequestId.set(requestId, {
       sessionId,
       provider: provider2
@@ -4854,7 +5350,7 @@ function createGenieBridgeService(options) {
         provider: provider2
       }
     });
-    logInfo("Sending Genie state subscribe", {
+    logInfo("Sending Agent state subscribe", {
       requestId,
       sessionId,
       provider: provider2
@@ -4862,9 +5358,16 @@ function createGenieBridgeService(options) {
   }
   function updateTasksFromStateSyncPayload(payload, taskRequestIds) {
     const mapped = mapAgentStatePayloadToTask(payload);
-    const requestIds = taskRequestIds?.length ? taskRequestIds : Array.from(state2.genieTaskByRequestId.values()).filter(
-      (task) => !task.dismissed && isTaskRunning(task) && task.sessionId === payload.sessionId && task.provider === payload.provider
-    ).map((task) => task.requestId);
+    const canUpdateFromStateSync = (task) => {
+      if (task.dismissed || task.sessionId !== payload.sessionId || task.provider !== payload.provider) {
+        return false;
+      }
+      if (isTaskRunning(task)) {
+        return true;
+      }
+      return task.status === "error" && mapped.taskStatus === "completed";
+    };
+    const requestIds = taskRequestIds?.length ? taskRequestIds : Array.from(state2.agentTaskByRequestId.values()).filter(canUpdateFromStateSync).map((task) => task.requestId);
     const updatedTasks = [];
     for (const requestId of requestIds) {
       const nextTask = updateTaskStateByRequestId(requestId, {
@@ -4881,13 +5384,16 @@ function createGenieBridgeService(options) {
       });
       if (!nextTask) continue;
       updatedTasks.push(nextTask);
+      if (nextTask.origin === "external-editing" && mapped.taskStatus === "completed") {
+        finalizeExternalEditingCompletedTask(nextTask);
+      }
       if (mapped.taskStatus === "pending" || mapped.taskStatus === "created") {
         restoreActivePromptRunFromTask(nextTask);
       } else {
         clearActivePromptRun(nextTask.requestId);
       }
     }
-    logInfo("Applied Genie state sync payload", {
+    logInfo("Applied Agent state sync payload", {
       sessionId: payload.sessionId,
       provider: payload.provider,
       phase: payload.phase,
@@ -4899,7 +5405,7 @@ function createGenieBridgeService(options) {
   }
   function invalidateConversationForTask(task, errorCode) {
     if (!task) return;
-    if (!errorCode || !GENIE_SESSION_NOT_FOUND_CODES.has(errorCode)) {
+    if (!errorCode || !AGENT_SESSION_NOT_FOUND_CODES.has(errorCode)) {
       return;
     }
     const conversation = getConversationState(task.scopeKey);
@@ -4934,15 +5440,15 @@ function createGenieBridgeService(options) {
       options.changes.markElementEditsHandled(taskElement);
     }
     options.persistence.flushPendingWrite();
-    logInfo("Marked element edits as handled after Genie handoff", { source, requestId });
+    logInfo("Marked element edits as handled after Agent handoff", { source, requestId });
   }
-  function rehydratePersistedGenieState() {
+  function rehydratePersistedAgentState() {
     const scopeKey = resolveScopeKey();
     const lookupKeys = resolveConversationLookupKeys();
     let persistedConversation = null;
     let restoredConversationScopeKey = null;
     for (const candidateScopeKey of lookupKeys) {
-      const candidateConversation = options.persistence.readGenieConversationState(candidateScopeKey);
+      const candidateConversation = options.persistence.readAgentConversationState(candidateScopeKey);
       if (!candidateConversation) continue;
       persistedConversation = candidateConversation;
       restoredConversationScopeKey = candidateScopeKey;
@@ -4955,10 +5461,10 @@ function createGenieBridgeService(options) {
       });
       for (const candidateScopeKey of lookupKeys) {
         if (candidateScopeKey !== scopeKey && candidateScopeKey === restoredConversationScopeKey) {
-          options.persistence.clearGenieConversationState(candidateScopeKey);
+          options.persistence.clearAgentConversationState(candidateScopeKey);
         }
       }
-      logInfo("Restored persisted Genie conversation", {
+      logInfo("Restored persisted Agent conversation", {
         scopeKey,
         sessionId: persistedConversation.sessionId,
         provider: persistedConversation.provider,
@@ -4967,19 +5473,19 @@ function createGenieBridgeService(options) {
         invalidated: persistedConversation.invalidated
       });
     } else {
-      logInfo("No persisted Genie conversation found", { scopeKey });
+      logInfo("No persisted Agent conversation found", { scopeKey });
     }
     for (const candidateScopeKey of lookupKeys) {
-      options.persistence.pruneExpiredGenieTaskStates(candidateScopeKey);
+      options.persistence.pruneExpiredAgentTaskStates(candidateScopeKey);
     }
     let persistedTasks = [];
     for (const candidateScopeKey of lookupKeys) {
-      const candidateTasks = options.persistence.readGenieTaskStates(candidateScopeKey);
+      const candidateTasks = options.persistence.readAgentTaskStates(candidateScopeKey);
       if (candidateTasks.length === 0) continue;
       persistedTasks = candidateTasks;
       break;
     }
-    logInfo("Read persisted Genie task states", {
+    logInfo("Read persisted Agent task states", {
       scopeKey,
       count: persistedTasks.length,
       items: persistedTasks.map((task) => ({
@@ -4993,7 +5499,7 @@ function createGenieBridgeService(options) {
       const isExternalEditing = persistedTask.origin === "external-editing";
       if (!isExternalEditing) {
         if (!isTaskRunning(persistedTask) || typeof persistedTask.sessionId !== "string" || persistedTask.sessionId.trim().length === 0 || typeof persistedTask.provider !== "string" || persistedTask.provider.trim().length === 0) {
-          logWarn("Skipping persisted Genie task restore", {
+          logWarn("Skipping persisted Agent task restore", {
             requestId: persistedTask.requestId,
             sessionId: persistedTask.sessionId,
             provider: persistedTask.provider,
@@ -5016,6 +5522,9 @@ function createGenieBridgeService(options) {
         }
       } catch {
       }
+      const shouldVerifyExternalEditingTask = Boolean(
+        isExternalEditing && isTaskRunning(persistedTask) && typeof persistedTask.sessionId === "string" && persistedTask.sessionId.trim().length > 0 && typeof persistedTask.provider === "string" && persistedTask.provider.trim().length > 0
+      );
       const task = {
         ...persistedTask,
         scopeKey: isExternalEditing ? resolveExternalEditingScopeKey() : scopeKey,
@@ -5023,8 +5532,7 @@ function createGenieBridgeService(options) {
         locator,
         label,
         recovery: "storage",
-        // External-editing terminal tasks don't need recovery verification
-        recoveryPending: isExternalEditing ? false : isTaskRunning(persistedTask)
+        recoveryPending: isExternalEditing ? shouldVerifyExternalEditingTask : isTaskRunning(persistedTask)
       };
       upsertTaskState(task);
       if (isExternalEditing) {
@@ -5033,7 +5541,7 @@ function createGenieBridgeService(options) {
       if (isTaskRunning(task) && !isExternalEditing) {
         restoreActivePromptRunFromTask(task);
       }
-      logInfo("Restored persisted Genie task", {
+      logInfo("Restored persisted Agent task", {
         requestId: task.requestId,
         sessionId: task.sessionId,
         provider: task.provider,
@@ -5044,7 +5552,7 @@ function createGenieBridgeService(options) {
       });
     }
     const RECOVERY_PENDING_STALENESS_MS = 3e4;
-    const recoveryPendingRequestIds = Array.from(state2.genieTaskByElementKey.values()).filter((task) => task.recoveryPending && task.origin !== "external-editing").map((task) => task.requestId);
+    const recoveryPendingRequestIds = Array.from(state2.agentTaskByElementKey.values()).filter((task) => task.recoveryPending).map((task) => task.requestId);
     if (recoveryPendingRequestIds.length > 0) {
       window.setTimeout(() => {
         for (const requestId of recoveryPendingRequestIds) {
@@ -5184,17 +5692,17 @@ function createGenieBridgeService(options) {
   }
   function sendSocketMessage(message3) {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error(GENIE_BRIDGE_NOT_CONNECTED_ERROR);
+      throw new Error(AGENT_BRIDGE_NOT_CONNECTED_ERROR);
     }
     logDebug("Sending WS message", message3);
     socket.send(JSON.stringify(message3));
   }
   function scheduleReconnect() {
     if (!active || !hasRequiredConfig() || reconnectTimerId !== null) return;
-    if (reconnectAttemptCount >= GENIE_MAX_RECONNECT_ATTEMPTS) {
+    if (reconnectAttemptCount >= AGENT_MAX_RECONNECT_ATTEMPTS) {
       logWarn("Reconnect aborted: retry limit reached", {
         attempts: reconnectAttemptCount,
-        maxAttempts: GENIE_MAX_RECONNECT_ATTEMPTS,
+        maxAttempts: AGENT_MAX_RECONNECT_ATTEMPTS,
         integrationChannel,
         targetClientId
       });
@@ -5203,15 +5711,15 @@ function createGenieBridgeService(options) {
     reconnectAttemptCount += 1;
     logInfo("Scheduling reconnect", {
       attempt: reconnectAttemptCount,
-      maxAttempts: GENIE_MAX_RECONNECT_ATTEMPTS,
-      delayMs: GENIE_RECONNECT_DELAY_MS,
+      maxAttempts: AGENT_MAX_RECONNECT_ATTEMPTS,
+      delayMs: AGENT_RECONNECT_DELAY_MS,
       integrationChannel,
       targetClientId
     });
     reconnectTimerId = window.setTimeout(() => {
       reconnectTimerId = null;
       connectSocket();
-    }, GENIE_RECONNECT_DELAY_MS);
+    }, AGENT_RECONNECT_DELAY_MS);
   }
   function resetProbeRetries() {
     probeAttemptCount = 0;
@@ -5220,11 +5728,11 @@ function createGenieBridgeService(options) {
   function scheduleProbeRetry(reason) {
     if (!active || !hasRequiredConfig() || probeRetryTimerId !== null) return;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    if (probeAttemptCount >= GENIE_MAX_PROBE_ATTEMPTS) {
+    if (probeAttemptCount >= AGENT_MAX_PROBE_ATTEMPTS) {
       logWarn("Probe retry aborted: retry limit reached", {
         reason,
         attempts: probeAttemptCount,
-        maxAttempts: GENIE_MAX_PROBE_ATTEMPTS,
+        maxAttempts: AGENT_MAX_PROBE_ATTEMPTS,
         integrationChannel,
         targetClientId
       });
@@ -5234,8 +5742,8 @@ function createGenieBridgeService(options) {
     logInfo("Scheduling availability probe retry", {
       reason,
       attempt: probeAttemptCount,
-      maxAttempts: GENIE_MAX_PROBE_ATTEMPTS,
-      delayMs: GENIE_PROBE_RETRY_DELAY_MS,
+      maxAttempts: AGENT_MAX_PROBE_ATTEMPTS,
+      delayMs: AGENT_PROBE_RETRY_DELAY_MS,
       integrationChannel,
       targetClientId
     });
@@ -5244,7 +5752,7 @@ function createGenieBridgeService(options) {
       void refreshOnlineFrontendTarget(reason).catch(() => false).then(() => {
         void probeFrontendPresence();
       });
-    }, GENIE_PROBE_RETRY_DELAY_MS);
+    }, AGENT_PROBE_RETRY_DELAY_MS);
   }
   function handleSocketClose(currentSocket) {
     if (socket !== currentSocket) return;
@@ -5377,7 +5885,7 @@ function createGenieBridgeService(options) {
       clearProbeTimeout();
       const frontendClients = readFrontendClients(parsed);
       if (!targetClientId) {
-        const matchedClient = pickFrontendClientForContext(frontendClients, buildGenieContext(null));
+        const matchedClient = pickFrontendClientForContext(frontendClients, buildAgentContext(null));
         if (matchedClient?.clientId) {
           applyResolvedBridgeConfig({ targetClientId: matchedClient.clientId });
         }
@@ -5461,7 +5969,7 @@ function createGenieBridgeService(options) {
       stateQueryByRequestId.delete(parsed.requestId);
       const snapshot = parseAgentStateSyncPayload(parsed.payload);
       if (!snapshot) return;
-      logInfo("Received Genie state snapshot", {
+      logInfo("Received Agent state snapshot", {
         requestId: parsed.requestId,
         querySessionId: queryTarget.sessionId,
         queryProvider: queryTarget.provider,
@@ -5476,7 +5984,7 @@ function createGenieBridgeService(options) {
     }
     if (parsed.type === "agent.state.subscribed" && parsed.requestId) {
       if (!stateSubscribeByRequestId.has(parsed.requestId)) return;
-      logInfo("Genie state subscribe acknowledged", {
+      logInfo("Agent state subscribe acknowledged", {
         requestId: parsed.requestId
       });
       stateSubscribeByRequestId.delete(parsed.requestId);
@@ -5485,7 +5993,7 @@ function createGenieBridgeService(options) {
     if (parsed.type === "agent.state.changed") {
       const snapshot = parseAgentStateSyncPayload(parsed.payload);
       if (!snapshot) return;
-      logInfo("Received Genie state change", snapshot);
+      logInfo("Received Agent state change", snapshot);
       updateTasksFromStateSyncPayload(snapshot);
       return;
     }
@@ -5502,7 +6010,7 @@ function createGenieBridgeService(options) {
       if (stateQueryTarget) {
         window.clearTimeout(stateQueryTarget.timeoutId);
         stateQueryByRequestId.delete(parsed.requestId);
-        logWarn("State sync query rejected by Genie", {
+        logWarn("State sync query rejected by Agent", {
           requestId: parsed.requestId,
           sessionId: stateQueryTarget.sessionId,
           provider: stateQueryTarget.provider,
@@ -5519,7 +6027,7 @@ function createGenieBridgeService(options) {
       const stateSubscribeTarget = stateSubscribeByRequestId.get(parsed.requestId);
       if (stateSubscribeTarget) {
         stateSubscribeByRequestId.delete(parsed.requestId);
-        logWarn("State sync subscribe rejected by Genie", {
+        logWarn("State sync subscribe rejected by Agent", {
           requestId: parsed.requestId,
           sessionId: stateSubscribeTarget.sessionId,
           provider: stateSubscribeTarget.provider,
@@ -5725,8 +6233,8 @@ function createGenieBridgeService(options) {
     if (!active || !hasRequiredConfig() || socket) return;
     let nextSocket;
     try {
-      const wsUrl = buildGenieWsUrl(apiBaseUrl, apiKey);
-      logInfo("Opening Genie bridge socket", {
+      const wsUrl = buildAgentWsUrl(apiBaseUrl, apiKey);
+      logInfo("Opening Agent bridge socket", {
         wsUrl,
         integrationChannel,
         targetClientId,
@@ -5736,7 +6244,7 @@ function createGenieBridgeService(options) {
     } catch (error) {
       notifyAvailability(false);
       scheduleReconnect();
-      logWarn("Failed to create Genie bridge socket", error);
+      logWarn("Failed to create Agent bridge socket", error);
       return;
     }
     socket = nextSocket;
@@ -5748,7 +6256,7 @@ function createGenieBridgeService(options) {
       });
       clearReconnectTimer();
       reconnectAttemptCount = 0;
-      connectRequestId = createRequestId("genie_connect");
+      connectRequestId = createRequestId("agent_connect");
       try {
         sendSocketMessage({
           type: "integration.connect",
@@ -5780,8 +6288,8 @@ function createGenieBridgeService(options) {
   }
   async function probeFrontendPresence() {
     if (!active || !hasRequiredConfig()) return;
-    const requestId = createRequestId("genie_probe");
-    const timeoutMs = getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS);
+    const requestId = createRequestId("agent_probe");
+    const timeoutMs = getTimeoutMs(probeTimeoutMs, AGENT_CONTEXT_REQUEST_TIMEOUT_MS);
     probeRequestId = requestId;
     clearProbeTimeout();
     try {
@@ -5817,7 +6325,7 @@ function createGenieBridgeService(options) {
     }, timeoutMs);
   }
   function stop() {
-    logInfo("Stopping Genie bridge service");
+    logInfo("Stopping Agent bridge service");
     active = false;
     bridgeDiscoveryPromise = null;
     removeVisibilityListener();
@@ -5881,7 +6389,7 @@ function createGenieBridgeService(options) {
     }
     installVisibilityListener();
     connectSocket();
-    const wakeSucceeded = await waitForBridgeConnection(GENIE_WAKE_WAIT_TIMEOUT_MS);
+    const wakeSucceeded = await waitForBridgeConnection(AGENT_WAKE_WAIT_TIMEOUT_MS);
     if (!wakeSucceeded) {
       stop();
       return false;
@@ -5895,7 +6403,7 @@ function createGenieBridgeService(options) {
     if (typeof window === "undefined") {
       return false;
     }
-    const deadline = Date.now() + getTimeoutMs(timeoutMs, GENIE_WAKE_WAIT_TIMEOUT_MS);
+    const deadline = Date.now() + getTimeoutMs(timeoutMs, AGENT_WAKE_WAIT_TIMEOUT_MS);
     return await new Promise((resolve) => {
       const check = () => {
         if (connected && socket && socket.readyState === WebSocket.OPEN) {
@@ -5912,7 +6420,7 @@ function createGenieBridgeService(options) {
     });
   }
   function start() {
-    logInfo("Starting Genie bridge service", {
+    logInfo("Starting Agent bridge service", {
       enabled,
       apiBaseUrl,
       integrationChannel,
@@ -5960,7 +6468,7 @@ function createGenieBridgeService(options) {
   function readPageUrl() {
     return typeof window !== "undefined" ? window.location.href : "";
   }
-  function buildGenieContextComments(element, mode = "append") {
+  function buildAgentContextComments(element, mode = "append") {
     const currentFilePath = options.summaries.resolveCurrentFilePath();
     const pageUrl = readPageUrl();
     const updatedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -5983,7 +6491,7 @@ function createGenieBridgeService(options) {
       };
     });
   }
-  function buildGenieCommentRecords(comments) {
+  function buildAgentCommentRecords(comments) {
     return comments.flatMap((comment) => {
       const filePath = typeof comment.target?.filePath === "string" ? comment.target.filePath.trim() : "";
       const body = String(comment.body || "").trim();
@@ -6000,8 +6508,8 @@ function createGenieBridgeService(options) {
     });
   }
   function buildCommentCommentsOnlyContext(element, mode) {
-    const comments = buildGenieContextComments(element, mode);
-    const commentRecords = buildGenieCommentRecords(comments);
+    const comments = buildAgentContextComments(element, mode);
+    const commentRecords = buildAgentCommentRecords(comments);
     const currentFilePath = comments.length > 0 ? options.summaries.resolveCurrentFilePath() : "";
     const targetPath = comments.length > 0 ? options.summaries.resolveTargetPath() : "";
     return {
@@ -6024,10 +6532,10 @@ function createGenieBridgeService(options) {
       }
     };
   }
-  function buildGenieContext(selectedElement) {
+  function buildAgentContext(selectedElement) {
     const currentFilePath = options.summaries.resolveCurrentFilePath();
     const targetPath = options.summaries.resolveTargetPath();
-    const comments = buildGenieContextComments(selectedElement);
+    const comments = buildAgentContextComments(selectedElement);
     const selectedElements = (() => {
       if (!selectedElement) return [];
       const textCommentMeta = resolveTextCommentElementMeta(state2, selectedElement);
@@ -6073,11 +6581,11 @@ function createGenieBridgeService(options) {
       }
     };
   }
-  async function handleSyncCommentContextToGenie(element, mode) {
+  async function handleSyncCommentContextToAgent(element, mode) {
     if (!enabled) return;
     try {
       const context = buildCommentCommentsOnlyContext(element, mode);
-      logInfo("Syncing comment comments to Genie context", {
+      logInfo("Syncing comment comments to Agent context", {
         integrationChannel,
         targetClientId,
         mode
@@ -6086,10 +6594,10 @@ function createGenieBridgeService(options) {
       if (!normalizeString2(targetClientId)) {
         await resolveOnlineFrontendTargetForContext(context, "comment_context");
       }
-      const requestId = createRequestId("genie_comment_context");
+      const requestId = createRequestId("agent_comment_context");
       const request = createPendingRequest(
         requestId,
-        getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS),
+        getTimeoutMs(probeTimeoutMs, AGENT_CONTEXT_REQUEST_TIMEOUT_MS),
         "integration"
       );
       try {
@@ -6107,7 +6615,7 @@ function createGenieBridgeService(options) {
         throw error;
       }
       await request;
-      logInfo("Comment comments synced to Genie context", {
+      logInfo("Comment comments synced to Agent context", {
         requestId,
         integrationChannel,
         targetClientId,
@@ -6115,7 +6623,7 @@ function createGenieBridgeService(options) {
       });
     } catch (error) {
       const message3 = error instanceof Error ? error.message : String(error);
-      logWarn("Failed to sync comment comments to Genie context", {
+      logWarn("Failed to sync comment comments to Agent context", {
         message: message3,
         integrationChannel,
         targetClientId,
@@ -6124,11 +6632,11 @@ function createGenieBridgeService(options) {
       throw error;
     }
   }
-  async function handleSendSelectionToGenie(element) {
+  async function handleSendSelectionToAgent(element) {
     if (!enabled) return;
     try {
-      const context = buildGenieContext(element);
-      logInfo("Sending selected element context to Genie", {
+      const context = buildAgentContext(element);
+      logInfo("Sending selected element context to Agent", {
         tagName: element.tagName,
         integrationChannel,
         targetClientId
@@ -6137,10 +6645,10 @@ function createGenieBridgeService(options) {
       if (!normalizeString2(targetClientId)) {
         await resolveOnlineFrontendTargetForContext(context, "selected_element_context");
       }
-      const requestId = createRequestId("genie_context");
+      const requestId = createRequestId("agent_context");
       const request = createPendingRequest(
         requestId,
-        getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS),
+        getTimeoutMs(probeTimeoutMs, AGENT_CONTEXT_REQUEST_TIMEOUT_MS),
         "integration"
       );
       try {
@@ -6174,137 +6682,224 @@ function createGenieBridgeService(options) {
       options.feedback.toast("error", `\u6DFB\u52A0\u5230 AI \u5BF9\u8BDD\u5931\u8D25\uFF1A${message3}`);
     }
   }
-  async function handleSendPromptToGenieForElements(elements, prompt) {
+  function resolveAgentRunConcurrency() {
+    const numeric = Number(state2.uiSettings.agentRunConcurrency);
+    if (!Number.isFinite(numeric)) return 5;
+    return Math.min(10, Math.max(1, Math.trunc(numeric)));
+  }
+  async function runAgentPromptForElement(params) {
+    const { element, prompt, scopeKey, reusableConversation, effectiveProvider } = params;
+    const meta = resolveElementTaskMeta(element);
+    const promptImages = collectPromptImagesForElements([element]);
+    const promptImageAssetPaths = promptImages.map((image) => normalizeString2(image.assetPath)).filter(Boolean);
+    const messageWithImageAssets = appendPromptImageAssetPathsToMessage(
+      prompt,
+      promptImageAssetPaths
+    );
+    const sessionIdToReuse = reusableConversation?.sessionId ?? null;
+    const startedAt = params.startedAt ?? Date.now();
+    const requestId = params.requestId ?? createRequestId("agent_run");
+    const request = createPendingRequest(
+      requestId,
+      AGENT_RUN_TIMEOUT_MS,
+      "agent-run",
+      "\u7B49\u5F85 AI \u6267\u884C\u5B8C\u6210\u8D85\u65F6\uFF0C\u8BF7\u7A0D\u540E\u67E5\u770B AI \u4F1A\u8BDD\u3002"
+    );
+    const currentTask = getElementTaskStateByKey(meta.elementKey);
+    upsertTaskState({
+      scopeKey,
+      elementKey: meta.elementKey,
+      locator: meta.locator,
+      label: meta.label,
+      requestId,
+      sessionId: sessionIdToReuse,
+      sessionPath: reusableConversation?.sessionPath ?? null,
+      sessionUrl: reusableConversation?.sessionUrl ?? null,
+      provider: effectiveProvider,
+      status: "pending",
+      message: "AI \u51C6\u5907\u4E2D",
+      startedAt,
+      updatedAt: startedAt,
+      dismissed: false,
+      recovery: "live",
+      recoveryPending: false,
+      lastEventAt: startedAt,
+      errorCode: null
+    }, {
+      clearPreviousRequestId: currentTask?.requestId ?? null
+    });
+    setActivePromptRun({
+      requestId,
+      scopeKey,
+      provider: effectiveProvider,
+      sessionId: sessionIdToReuse,
+      sessionPath: reusableConversation?.sessionPath ?? null,
+      sessionUrl: reusableConversation?.sessionUrl ?? null,
+      abortRequestId: null,
+      interruptRequested: false,
+      elementKey: meta.elementKey,
+      locator: meta.locator,
+      label: meta.label
+    });
+    try {
+      sendSocketMessage({
+        type: "agent.run",
+        requestId,
+        payload: {
+          ...projectPath ? { projectPath } : {},
+          provider: effectiveProvider,
+          ...sessionIdToReuse ? { sessionId: sessionIdToReuse } : {},
+          message: messageWithImageAssets,
+          ...promptImages.length > 0 ? { images: promptImages } : {},
+          stream: false
+        }
+      });
+      if (reusableConversation) {
+        upsertConversationState(scopeKey, {
+          sessionId: reusableConversation.sessionId,
+          provider: effectiveProvider,
+          projectPath,
+          createdAt: reusableConversation.createdAt,
+          lastUsedAt: startedAt,
+          sentCount: reusableConversation.sentCount + 1,
+          expiresAt: reusableConversation.expiresAt,
+          sessionPath: reusableConversation.sessionPath,
+          sessionUrl: reusableConversation.sessionUrl,
+          invalidated: false
+        });
+      }
+    } catch (error) {
+      clearPendingRequest(requestId);
+      clearActivePromptRun(requestId);
+      updateTaskStateByRequestId(requestId, {
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+        recovery: "live",
+        recoveryPending: false,
+        lastEventAt: Date.now()
+      }, {
+        reviveDismissed: true
+      });
+      throw error;
+    }
+    await request;
+  }
+  async function runWithConcurrency(items, concurrency, worker) {
+    let nextIndex = 0;
+    const errors = [];
+    const workerCount = Math.min(concurrency, items.length);
+    const runners = Array.from({ length: workerCount }, async () => {
+      for (; ; ) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        if (currentIndex >= items.length) return;
+        try {
+          await worker(items[currentIndex]);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+    });
+    await Promise.all(runners);
+    if (errors.length > 0) {
+      throw errors[0];
+    }
+  }
+  async function handleSendPromptToAgentForElements(elements, prompt) {
     if (!enabled) return;
     try {
       const targetElements = Array.from(new Set(elements.filter((element) => Boolean(element?.isConnected))));
       if (targetElements.length === 0) {
         throw createBridgeError("\u76EE\u6807\u5143\u7D20\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u540E\u518D\u8BD5\u3002");
       }
-      const normalizedPrompt = String(prompt ?? "");
-      const targetMetas = targetElements.map((element) => {
-        return resolveElementTaskMeta(element);
-      });
-      if (targetMetas.length === 0) {
+      const scopeKey = resolveScopeKey();
+      const targetRuns = targetElements.map((element) => {
+        const reusableConversation = resolveElementReusableConversation(element, scopeKey);
+        const effectiveProvider = String(
+          reusableConversation?.provider ?? resolveConfiguredProvider()
+        ).trim();
+        const normalizedPrompt = typeof prompt === "function" ? String(prompt(element) ?? "") : String(prompt ?? "");
+        const startedAt = Date.now();
+        return {
+          element,
+          meta: resolveElementTaskMeta(element),
+          prompt: normalizedPrompt,
+          reusableConversation,
+          effectiveProvider,
+          requestId: createRequestId("agent_run"),
+          startedAt
+        };
+      }).filter((item) => item.prompt.trim());
+      if (targetRuns.length === 0) {
         throw createBridgeError("\u5F53\u524D\u6CA1\u6709\u53EF\u53D1\u9001\u7ED9 AI \u7684\u7F16\u8F91\u5143\u7D20\u3002");
       }
-      const promptImages = collectPromptImagesForElements(targetElements);
-      const promptImageAssetPaths = promptImages.map((image) => normalizeString2(image.assetPath)).filter(Boolean);
-      const messageWithImageAssets = appendPromptImageAssetPathsToMessage(
-        normalizedPrompt,
-        promptImageAssetPaths
-      );
-      const scopeKey = resolveScopeKey();
-      const activeConversation = getConversationStateForCurrentPage();
-      const reusableConversation = isConversationReusable(activeConversation) ? activeConversation : null;
-      const effectiveProvider = String(
-        reusableConversation?.provider ?? resolveConfiguredProvider()
-      ).trim();
-      const sessionIdToReuse = reusableConversation?.sessionId ?? null;
-      const startedAt = Date.now();
-      logInfo("Sending prompt to Genie input", {
-        elementCount: targetMetas.length,
-        elementKeys: targetMetas.map((meta) => meta.elementKey),
+      const concurrency = resolveAgentRunConcurrency();
+      logInfo("Sending prompt to Agent input", {
+        elementCount: targetRuns.length,
+        elementKeys: targetRuns.map((item) => item.meta.elementKey),
         scopeKey,
         integrationChannel,
         targetClientId,
-        promptLength: messageWithImageAssets.length,
+        promptLength: targetRuns.reduce((total, item) => total + item.prompt.length, 0),
         connected,
-        provider: effectiveProvider,
-        sessionIdToReuse
+        providers: Array.from(new Set(targetRuns.map((item) => item.effectiveProvider))),
+        sessionIdsToReuse: targetRuns.map((item) => item.reusableConversation?.sessionId ?? null).filter(Boolean),
+        concurrency
       });
       if (!hasAgentRunConfig()) {
         await ensureAgentRunConfig();
       }
       assertAgentRunReady();
-      assertProviderAvailable(effectiveProvider);
-      const requestId = createRequestId("genie_agent_run");
-      const request = createPendingRequest(
-        requestId,
-        GENIE_AGENT_RUN_TIMEOUT_MS,
-        "agent-run",
-        "\u7B49\u5F85 AI \u6267\u884C\u5B8C\u6210\u8D85\u65F6\uFF0C\u8BF7\u7A0D\u540E\u67E5\u770B AI \u4F1A\u8BDD\u3002"
-      );
-      for (const meta of targetMetas) {
-        const currentTask = getElementTaskStateByKey(meta.elementKey);
+      for (const provider2 of Array.from(new Set(targetRuns.map((item) => item.effectiveProvider)))) {
+        assertProviderAvailable(provider2);
+      }
+      for (const item of targetRuns) {
+        const currentTask = getElementTaskStateByKey(item.meta.elementKey);
         upsertTaskState({
           scopeKey,
-          elementKey: meta.elementKey,
-          locator: meta.locator,
-          label: meta.label,
-          requestId,
-          sessionId: sessionIdToReuse,
-          sessionPath: reusableConversation?.sessionPath ?? null,
-          sessionUrl: reusableConversation?.sessionUrl ?? null,
-          provider: effectiveProvider,
+          elementKey: item.meta.elementKey,
+          locator: item.meta.locator,
+          label: item.meta.label,
+          requestId: item.requestId,
+          sessionId: item.reusableConversation?.sessionId ?? null,
+          sessionPath: item.reusableConversation?.sessionPath ?? null,
+          sessionUrl: item.reusableConversation?.sessionUrl ?? null,
+          provider: item.effectiveProvider,
           status: "pending",
           message: "AI \u51C6\u5907\u4E2D",
-          startedAt,
-          updatedAt: startedAt,
+          startedAt: item.startedAt,
+          updatedAt: item.startedAt,
           dismissed: false,
           recovery: "live",
           recoveryPending: false,
-          lastEventAt: startedAt,
+          lastEventAt: item.startedAt,
           errorCode: null
         }, {
           clearPreviousRequestId: currentTask?.requestId ?? null
         });
       }
-      setActivePromptRun({
-        requestId,
-        scopeKey,
-        provider: effectiveProvider,
-        sessionId: sessionIdToReuse,
-        sessionPath: reusableConversation?.sessionPath ?? null,
-        sessionUrl: reusableConversation?.sessionUrl ?? null,
-        abortRequestId: null,
-        interruptRequested: false,
-        elementKey: targetMetas[0]?.elementKey ?? "",
-        locator: targetMetas[0]?.locator ?? createElementLocator(targetElements[0]),
-        label: targetMetas[0]?.label ?? ""
-      });
-      try {
-        sendSocketMessage({
-          type: "agent.run",
+      await runWithConcurrency(
+        targetRuns,
+        concurrency,
+        async ({
+          element,
+          prompt: elementPrompt,
+          reusableConversation,
+          effectiveProvider,
           requestId,
-          payload: {
-            ...projectPath ? { projectPath } : {},
-            provider: effectiveProvider,
-            ...sessionIdToReuse ? { sessionId: sessionIdToReuse } : {},
-            message: messageWithImageAssets,
-            ...promptImages.length > 0 ? { images: promptImages } : {},
-            stream: false
-          }
-        });
-        if (reusableConversation) {
-          upsertConversationState(scopeKey, {
-            sessionId: reusableConversation.sessionId,
-            provider: effectiveProvider,
-            projectPath,
-            createdAt: reusableConversation.createdAt,
-            lastUsedAt: startedAt,
-            sentCount: reusableConversation.sentCount + 1,
-            expiresAt: reusableConversation.expiresAt,
-            sessionPath: reusableConversation.sessionPath,
-            sessionUrl: reusableConversation.sessionUrl,
-            invalidated: false
+          startedAt
+        }) => {
+          await runAgentPromptForElement({
+            element,
+            prompt: elementPrompt,
+            scopeKey,
+            reusableConversation,
+            effectiveProvider,
+            requestId,
+            startedAt
           });
         }
-      } catch (error) {
-        clearPendingRequest(requestId);
-        clearActivePromptRun(requestId);
-        updateTaskStateByRequestId(requestId, {
-          status: "error",
-          message: error instanceof Error ? error.message : String(error),
-          recovery: "live",
-          recoveryPending: false,
-          lastEventAt: Date.now()
-        }, {
-          reviveDismissed: true
-        });
-        throw error;
-      }
-      await request;
+      );
     } catch (error) {
       const message3 = error instanceof Error ? error.message : String(error);
       if (isSilentBridgeError(error)) {
@@ -6314,7 +6909,7 @@ function createGenieBridgeService(options) {
           targetClientId
         });
       } else {
-        logWarn("Failed to send prompt to Genie", {
+        logWarn("Failed to send prompt to Agent", {
           message: message3,
           integrationChannel,
           targetClientId
@@ -6326,19 +6921,50 @@ function createGenieBridgeService(options) {
       throw error;
     }
   }
-  async function handleSendPromptToGenieForElement(element, prompt) {
-    await handleSendPromptToGenieForElements([element], prompt);
+  async function handleSendPromptToAgentForElement(element, prompt) {
+    await handleSendPromptToAgentForElements([element], prompt);
   }
-  async function interruptElementTask(element) {
-    if (!enabled) return;
-    const currentTask = getElementTaskState(element);
-    if (!currentTask) {
-      throw createBridgeError("\u5F53\u524D\u5143\u7D20\u6CA1\u6709\u53EF\u4E2D\u65AD\u7684 AI \u6267\u884C\u3002");
+  function getInterruptibleVisibleRuns() {
+    const seenRequestIds = /* @__PURE__ */ new Set();
+    const runs = [];
+    for (const task of getVisibleTaskStates()) {
+      if (!isTaskRunning(task)) continue;
+      const currentRun = activePromptRuns.get(task.requestId) ?? null;
+      if (!currentRun || !currentRun.sessionId || currentRun.abortRequestId) continue;
+      if (seenRequestIds.has(currentRun.requestId)) continue;
+      seenRequestIds.add(currentRun.requestId);
+      runs.push(currentRun);
     }
-    const currentRun = activePromptRuns.get(currentTask.requestId) ?? null;
-    if (!currentRun) {
-      throw createBridgeError("\u5F53\u524D\u6CA1\u6709\u53EF\u4E2D\u65AD\u7684 AI \u6267\u884C\u3002");
+    return runs;
+  }
+  function getInterruptibleVisibleExternalEditingTasks() {
+    return getVisibleTaskStates().filter(
+      (task) => task.origin === "external-editing" && isTaskRunning(task)
+    );
+  }
+  function interruptVisibleExternalEditingTasks(excludedRequestIds = /* @__PURE__ */ new Set()) {
+    const now = Date.now();
+    let interruptedCount = 0;
+    for (const task of getInterruptibleVisibleExternalEditingTasks()) {
+      if (excludedRequestIds.has(task.requestId)) continue;
+      const nextTask = updateTaskStateByRequestId(task.requestId, {
+        status: "error",
+        message: "\u5DF2\u4E2D\u65AD",
+        updatedAt: now,
+        recovery: "live",
+        recoveryPending: false,
+        lastEventAt: now,
+        errorCode: "GENIE_ABORTED"
+      }, {
+        reviveDismissed: true
+      });
+      if (nextTask) {
+        interruptedCount += 1;
+      }
     }
+    return interruptedCount;
+  }
+  async function interruptActivePromptRun(currentRun) {
     if (!currentRun.sessionId) {
       throw createBridgeError("AI \u5BF9\u8BDD\u5C1A\u672A\u521B\u5EFA\uFF0C\u6682\u65F6\u65E0\u6CD5\u4E2D\u65AD\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\u3002");
     }
@@ -6346,10 +6972,10 @@ function createGenieBridgeService(options) {
       return;
     }
     assertBridgeConnected();
-    const abortRequestId = createRequestId("genie_agent_abort");
+    const abortRequestId = createRequestId("agent_abort");
     const request = createPendingRequest(
       abortRequestId,
-      getTimeoutMs(probeTimeoutMs, GENIE_CONTEXT_REQUEST_TIMEOUT_MS),
+      getTimeoutMs(probeTimeoutMs, AGENT_CONTEXT_REQUEST_TIMEOUT_MS),
       "agent-abort",
       "\u7B49\u5F85 AI \u4E2D\u65AD\u8D85\u65F6\uFF0C\u8BF7\u7A0D\u540E\u67E5\u770B AI \u4F1A\u8BDD\u3002",
       { linkedRunRequestId: currentRun.requestId }
@@ -6379,7 +7005,7 @@ function createGenieBridgeService(options) {
       await request;
     } catch (error) {
       const message3 = error instanceof Error ? error.message : String(error);
-      logWarn("Failed to interrupt Genie prompt run", {
+      logWarn("Failed to interrupt Agent prompt run", {
         message: message3,
         integrationChannel,
         targetClientId
@@ -6387,6 +7013,27 @@ function createGenieBridgeService(options) {
       options.feedback.toast("error", `\u4E2D\u65AD AI \u6267\u884C\u5931\u8D25\uFF1A${message3}`);
       throw error;
     }
+  }
+  async function interruptElementTask(element) {
+    if (!enabled) return;
+    const currentTask = getElementTaskState(element);
+    if (!currentTask) {
+      throw createBridgeError("\u5F53\u524D\u5143\u7D20\u6CA1\u6709\u53EF\u4E2D\u65AD\u7684 AI \u6267\u884C\u3002");
+    }
+    const currentRun = activePromptRuns.get(currentTask.requestId) ?? null;
+    if (!currentRun) {
+      throw createBridgeError("\u5F53\u524D\u6CA1\u6709\u53EF\u4E2D\u65AD\u7684 AI \u6267\u884C\u3002");
+    }
+    await interruptActivePromptRun(currentRun);
+  }
+  async function interruptVisibleTasks() {
+    const visibleRuns = getInterruptibleVisibleRuns();
+    const runRequestIds = new Set(visibleRuns.map((run) => run.requestId));
+    const interruptedExternalEditingCount = interruptVisibleExternalEditingTasks(runRequestIds);
+    if (visibleRuns.length === 0 && interruptedExternalEditingCount === 0) {
+      throw createBridgeError("\u5F53\u524D\u6CA1\u6709\u53EF\u4E2D\u65AD\u7684 AI \u6267\u884C\u3002");
+    }
+    await Promise.all(visibleRuns.map((run) => interruptActivePromptRun(run)));
   }
   return {
     start,
@@ -6444,6 +7091,7 @@ function createGenieBridgeService(options) {
       };
     },
     hasReusableConversation,
+    canReuseConversationForElement,
     invalidateCurrentConversation,
     getElementTaskState,
     getVisibleTaskStates,
@@ -6455,20 +7103,27 @@ function createGenieBridgeService(options) {
     isElementInteractionLocked,
     dismissElementTaskState,
     setExternalEditingState,
+    setExternalEditingStateByElementKey,
     clearExternalEditingState,
+    clearExternalEditingStateByElementKey,
     setExternalEditingTerminalState,
+    setExternalEditingTerminalStateByElementKey,
     canInterruptElementTask(element) {
       const currentTask = getElementTaskState(element);
       if (!currentTask) return false;
       const currentRun = activePromptRuns.get(currentTask.requestId) ?? null;
       return Boolean(currentRun && currentRun.sessionId && !currentRun.abortRequestId);
     },
+    canInterruptVisibleTasks() {
+      return getInterruptibleVisibleRuns().length > 0 || getInterruptibleVisibleExternalEditingTasks().length > 0;
+    },
     interruptElementTask,
-    handleSendSelectionToGenie,
-    handleSyncCommentContextToGenie,
-    handleSendPromptToGenieForElements,
-    handleSendPromptToGenieForElement,
-    rehydratePersistedGenieState
+    interruptVisibleTasks,
+    handleSendSelectionToAgent,
+    handleSyncCommentContextToAgent,
+    handleSendPromptToAgentForElements,
+    handleSendPromptToAgentForElement,
+    rehydratePersistedAgentState
   };
 }
 
@@ -6800,7 +7455,7 @@ function createEditorIntegrationWsService(options) {
   function connectSocket() {
     if (!active || socket || !hasRequiredConfig()) return;
     let nextSocket;
-    const nextUrl = buildGenieWsUrl(apiBaseUrl, apiKey);
+    const nextUrl = buildAgentWsUrl(apiBaseUrl, apiKey);
     lastSocketUrl = nextUrl;
     try {
       nextSocket = new WebSocket(nextUrl);
@@ -6965,7 +7620,7 @@ async function openAnnotationMarkerCommentTarget(element) {
 
 // src/core/editor/interaction.ts
 function createInteractionService(options) {
-  const { state: state2, genieBridge } = options;
+  const { state: state2, agentBridge } = options;
   function syncShadowHostMount(anchorElement) {
     state2.shadowHost?.setMountContainer?.(anchorElement);
   }
@@ -6987,7 +7642,7 @@ function createInteractionService(options) {
     return resolveSelectionAnchorViewportRect();
   }
   function handleHover(element) {
-    if (element && genieBridge.isElementInteractionLocked(element)) {
+    if (element && agentBridge.isElementInteractionLocked(element)) {
       element = null;
     }
     const prevElement = state2.hoveredElement;
@@ -7007,7 +7662,7 @@ function createInteractionService(options) {
     state2.annotationBridgeSelection = null;
   }
   function selectResolvedElement(element, modifiers, selectionAnchor) {
-    if (genieBridge.isElementInteractionLocked(element)) {
+    if (agentBridge.isElementInteractionLocked(element)) {
       return;
     }
     if (state2.activeTextComment) {
@@ -7035,7 +7690,7 @@ function createInteractionService(options) {
     console.log(`${options.logPrefix} Selected${modInfo}:`, element.tagName, element);
   }
   async function handleSelect(element, modifiers, selectionAnchor) {
-    if (genieBridge.isElementInteractionLocked(element)) {
+    if (agentBridge.isElementInteractionLocked(element)) {
       return;
     }
     if (isAnnotationMarkerElement(element)) {
@@ -7097,7 +7752,7 @@ function createInteractionService(options) {
     const hideChrome = !state2.selectionChromeVisible;
     const hoverRect = hideChrome ? null : suppressHover ? null : rects.hover;
     const selectionRect = hideChrome || textCommentActive ? null : rects.selection;
-    const selectionLocked = genieBridge.isElementInteractionLocked(state2.selectedElement);
+    const selectionLocked = agentBridge.isElementInteractionLocked(state2.selectedElement);
     const inlineTextEditing = Boolean(state2.inlineTextEditingActive);
     const selectionEffect = !hideChrome && !!selectionRect ? inlineTextEditing ? "inline-editing" : selectionLocked ? "ai-editing" : "default" : "default";
     const handlesRect = hideChrome || state2.commentEntryMode === "bubble-card" || selectionLocked || inlineTextEditing ? null : rects.selection;
@@ -7139,7 +7794,7 @@ function createInteractionService(options) {
         DEFAULT_MODIFIERS
       ) ?? null;
     }
-    target = genieBridge.resolveSelectableElement(target);
+    target = agentBridge.resolveSelectableElement(target);
     if (!target || !target.isConnected) return false;
     if (state2.selectedElement !== target) {
       void handleSelect(target, DEFAULT_MODIFIERS, selectionAnchor);
@@ -8165,13 +8820,13 @@ function mountShadowHost(_options = {}) {
 }
 
 // src/ui/runtime/create-web-editor-ui-runtime.tsx
-import React21 from "react";
+import React20 from "react";
 import { createRoot as createRoot2 } from "react-dom/client";
 import { App as App2, ConfigProvider } from "antd";
 import { StyleProvider, createCache } from "@ant-design/cssinjs";
 
 // src/ui/runtime/runtime-shell.tsx
-import React20 from "react";
+import React19 from "react";
 
 // src/ui/runtime/theme.ts
 var ANCHOR_GAP_PX = 12;
@@ -8197,7 +8852,6 @@ var HEADER_CONTROL_SIZE = 28;
 var COMPACT_TOOL_SIZE = 44;
 var COMPACT_TOOLBAR_WIDTH = 251;
 var COMPACT_TOOLBAR_HEIGHT = 44;
-var GENIE_BRAND_BUTTON_SIZE = 36;
 var WEB_EDITOR_POPUP_ROOT_ATTR = "data-we-popup-root";
 var ACTION_ICON_SIZE = 15;
 var ACTION_ICON_STROKE = 1.8;
@@ -8503,14 +9157,14 @@ var pageConfigPanelBodyStyle = {
   msOverflowStyle: "none"
 };
 var PROPERTY_PANEL_LOCAL_STYLES = `
-  @keyframes we-runtime-genie-spin {
+  @keyframes we-runtime-agent-spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
   }
 
-  @keyframes we-runtime-genie-task-scan {
+  @keyframes we-runtime-agent-task-scan {
     0% {
-      top: calc(-1 * var(--we-runtime-genie-task-scan-size, 88px));
+      top: calc(-1 * var(--we-runtime-agent-task-scan-size, 88px));
       opacity: 0;
     }
     12% {
@@ -8914,6 +9568,20 @@ var PROPERTY_PANEL_LOCAL_STYLES = `
     box-shadow: none !important;
   }
 
+  .we-runtime-directory-picker-modal .ant-modal-content {
+    overflow: hidden;
+  }
+
+  .we-runtime-directory-picker-modal .ant-modal-body {
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+
+  .we-runtime-directory-picker__row:hover:not(:disabled),
+  .we-runtime-directory-picker__row:focus-visible:not(:disabled) {
+    background: ${EDITOR_CHROME.hoverSubtle} !important;
+  }
+
   .we-runtime-prop-panel__body .ant-input-filled,
   .we-runtime-prop-panel__body .ant-input-number-filled,
   .we-runtime-prop-panel__body .ant-select-filled:not(.ant-select-customize-input) .ant-select-selector {
@@ -9126,43 +9794,43 @@ var PROPERTY_PANEL_LOCAL_STYLES = `
   .we-runtime-toolbar__spinner {
     position: absolute;
     inset: -150%;
-    animation: we-runtime-genie-spin linear infinite;
+    animation: we-runtime-agent-spin linear infinite;
   }
 
-  .we-runtime-genie-task__scanner {
+  .we-runtime-agent-task__scanner {
     position: absolute;
     left: 0;
     right: 0;
-    height: var(--we-runtime-genie-task-scan-size, 88px);
-    top: calc(-1 * var(--we-runtime-genie-task-scan-size, 88px));
+    height: var(--we-runtime-agent-task-scan-size, 88px);
+    top: calc(-1 * var(--we-runtime-agent-task-scan-size, 88px));
     display: flex;
     align-items: center;
     justify-content: center;
     background: linear-gradient(
       180deg,
       transparent 0%,
-      color-mix(in srgb, var(--we-runtime-genie-task-accent) 14%, transparent) 38%,
-      color-mix(in srgb, var(--we-runtime-genie-task-accent) 20%, transparent) 50%,
-      color-mix(in srgb, var(--we-runtime-genie-task-accent) 14%, transparent) 62%,
+      color-mix(in srgb, var(--we-runtime-agent-task-accent) 14%, transparent) 38%,
+      color-mix(in srgb, var(--we-runtime-agent-task-accent) 20%, transparent) 50%,
+      color-mix(in srgb, var(--we-runtime-agent-task-accent) 14%, transparent) 62%,
       transparent 100%
     );
-    animation: we-runtime-genie-task-scan 2.8s linear infinite;
+    animation: we-runtime-agent-task-scan 2.8s linear infinite;
   }
 
-  .we-runtime-genie-task__scanner::after {
+  .we-runtime-agent-task__scanner::after {
     content: "";
     width: 100%;
     height: 1px;
-    background: color-mix(in srgb, var(--we-runtime-genie-task-accent) 72%, white);
-    box-shadow: 0 0 14px color-mix(in srgb, var(--we-runtime-genie-task-accent) 64%, transparent);
+    background: color-mix(in srgb, var(--we-runtime-agent-task-accent) 72%, white);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--we-runtime-agent-task-accent) 64%, transparent);
   }
 `;
 
 // src/ui/runtime/styles/popup-root-styles.ts
 var WEB_EDITOR_POPUP_ROOT_STYLES = `
-  @keyframes we-runtime-genie-task-scan {
+  @keyframes we-runtime-agent-task-scan {
     0% {
-      top: calc(-1 * var(--we-runtime-genie-task-scan-size, 88px));
+      top: calc(-1 * var(--we-runtime-agent-task-scan-size, 88px));
       opacity: 0;
     }
     12% {
@@ -9357,32 +10025,32 @@ var WEB_EDITOR_POPUP_ROOT_STYLES = `
     background: color-mix(in srgb, ${EDITOR_CHROME.divider} 78%, transparent);
   }
 
-  .we-runtime-genie-task__scanner {
+  .we-runtime-agent-task__scanner {
     position: absolute;
     left: 0;
     right: 0;
-    height: var(--we-runtime-genie-task-scan-size, 88px);
-    top: calc(-1 * var(--we-runtime-genie-task-scan-size, 88px));
+    height: var(--we-runtime-agent-task-scan-size, 88px);
+    top: calc(-1 * var(--we-runtime-agent-task-scan-size, 88px));
     display: flex;
     align-items: center;
     justify-content: center;
     background: linear-gradient(
       180deg,
       transparent 0%,
-      color-mix(in srgb, var(--we-runtime-genie-task-accent) 14%, transparent) 38%,
-      color-mix(in srgb, var(--we-runtime-genie-task-accent) 20%, transparent) 50%,
-      color-mix(in srgb, var(--we-runtime-genie-task-accent) 14%, transparent) 62%,
+      color-mix(in srgb, var(--we-runtime-agent-task-accent) 14%, transparent) 38%,
+      color-mix(in srgb, var(--we-runtime-agent-task-accent) 20%, transparent) 50%,
+      color-mix(in srgb, var(--we-runtime-agent-task-accent) 14%, transparent) 62%,
       transparent 100%
     );
-    animation: we-runtime-genie-task-scan 2.8s linear infinite;
+    animation: we-runtime-agent-task-scan 2.8s linear infinite;
   }
 
-  .we-runtime-genie-task__scanner::after {
+  .we-runtime-agent-task__scanner::after {
     content: "";
     width: 100%;
     height: 1px;
-    background: color-mix(in srgb, var(--we-runtime-genie-task-accent) 72%, white);
-    box-shadow: 0 0 14px color-mix(in srgb, var(--we-runtime-genie-task-accent) 64%, transparent);
+    background: color-mix(in srgb, var(--we-runtime-agent-task-accent) 72%, white);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--we-runtime-agent-task-accent) 64%, transparent);
   }
 
   .we-runtime-overlay-scrollbars {
@@ -9419,9 +10087,34 @@ var WEB_EDITOR_POPUP_ROOT_STYLES = `
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-tooltip,
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-popover,
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-popconfirm,
-  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-select-dropdown,
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-color-picker-dropdown {
     z-index: ${POPUP_LAYER_Z_INDEX + 20};
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-select-dropdown,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-ai-execution-provider-dropdown {
+    z-index: ${POPUP_LAYER_Z_INDEX + 40} !important;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-dark-mode-button.ant-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-dark-mode-button .anticon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-dark-mode-button .anticon svg {
+    display: block;
   }
 
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-dropdown,
@@ -9452,18 +10145,18 @@ var WEB_EDITOR_POPUP_ROOT_STYLES = `
     color: ${EDITOR_CHROME.textMuted} !important;
   }
 
-  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-genie-menu-submenu-popup {
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-agent-menu-submenu-popup {
     padding: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
   }
 
-  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-genie-menu-submenu-popup::before,
-  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-genie-menu-submenu-popup::after {
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-agent-menu-submenu-popup::before,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-agent-menu-submenu-popup::after {
     display: none !important;
   }
 
-  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-genie-menu-submenu-popup .ant-dropdown-menu {
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-agent-menu-submenu-popup .ant-dropdown-menu {
     margin: 0 !important;
   }
 `;
@@ -9487,7 +10180,7 @@ var promptCardStyle = {
   gap: 8
 };
 
-// src/ui/runtime/element-genie-task-overlays.tsx
+// src/ui/runtime/element-agent-task-overlays.tsx
 import React2 from "react";
 
 // src/ui/runtime/session-activity-utils.ts
@@ -9515,7 +10208,7 @@ function resolveSessionActivityTarget(options) {
   return null;
 }
 
-// src/ui/runtime/element-genie-task-overlays.tsx
+// src/ui/runtime/element-agent-task-overlays.tsx
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 var INLINE_STATUS_MIN_WIDTH = 110;
 var INLINE_STATUS_MIN_HEIGHT = 40;
@@ -9626,7 +10319,7 @@ function buildOverlayActivityFeedKey(options) {
   }
   return null;
 }
-function ElementGenieTaskOverlays(props) {
+function ElementAgentTaskOverlays(props) {
   const { tasks } = props;
   void props.renderTick;
   void props.onDismissTask;
@@ -9864,10 +10557,10 @@ function ElementGenieTaskOverlays(props) {
               children: /* @__PURE__ */ jsx(
                 "div",
                 {
-                  className: "we-runtime-genie-task__scanner",
+                  className: "we-runtime-agent-task__scanner",
                   style: {
-                    ["--we-runtime-genie-task-accent"]: tone.accent,
-                    ["--we-runtime-genie-task-scan-size"]: `${scanSize}px`
+                    ["--we-runtime-agent-task-accent"]: tone.accent,
+                    ["--we-runtime-agent-task-scan-size"]: `${scanSize}px`
                   }
                 }
               )
@@ -10638,42 +11331,39 @@ function triggerDesignToolExportAction(options) {
   return true;
 }
 
-// src/ui/genie-prompt-action.ts
+// src/ui/agent-prompt-action.ts
 function resolveRunningConversationTitle(sessionReady) {
   return sessionReady ? "AI \u6B63\u5728\u4FEE\u6539" : "AI \u6B63\u5728\u542F\u52A8";
 }
-function isGeniePromptActionVisible(options) {
+function isAgentPromptActionVisible(options) {
   const assistantPanelOpen = options.getAssistantPanelOpen?.();
-  const contextAppendAvailable = typeof assistantPanelOpen === "boolean" ? assistantPanelOpen : Boolean(options.getGenieBridgeAvailable?.() ?? false);
-  return options.uiMode === "bubble-card" && !options.toolMinimized && Boolean(options.currentTarget) && Boolean(options.onSendToGenie) && contextAppendAvailable;
+  const contextAppendAvailable = typeof assistantPanelOpen === "boolean" ? assistantPanelOpen : Boolean(options.getAgentBridgeAvailable?.() ?? false);
+  return options.uiMode === "bubble-card" && !options.toolMinimized && Boolean(options.currentTarget) && Boolean(options.onAppendElementToAgentContext) && contextAppendAvailable;
 }
-function triggerGeniePromptAction(options) {
-  const { currentTarget, onSendToGenie } = options;
-  if (!currentTarget || !currentTarget.isConnected || !onSendToGenie) {
+function triggerAgentPromptAction(options) {
+  const { currentTarget, onAppendElementToAgentContext } = options;
+  if (!currentTarget || !currentTarget.isConnected || !onAppendElementToAgentContext) {
     return false;
   }
-  void onSendToGenie(currentTarget);
+  void onAppendElementToAgentContext(currentTarget);
   return true;
 }
-function getGeniePromptToolbarActionState(options) {
-  const connected = Boolean(options.getGenieBridgeConnected?.() ?? false);
+function getAgentPromptToolbarActionState(options) {
+  const connected = Boolean(options.getAgentBridgeConnected?.() ?? false);
   const pageTaskRunning = Boolean(options.pageTaskRunning);
-  const pageTaskSessionReady = Boolean(options.pageTaskSessionReady);
   const currentTaskRunning = Boolean(options.currentTaskRunning);
   const interruptTaskRunning = currentTaskRunning || pageTaskRunning;
   const currentTaskSessionReady = Boolean(options.currentTaskSessionReady);
-  const interruptTaskSessionReady = currentTaskRunning ? currentTaskSessionReady : pageTaskSessionReady;
-  const canAppendToRunningConversation = Boolean(options.hasReusableConversation);
-  const canAppendToSession = canAppendToRunningConversation || pageTaskRunning && pageTaskSessionReady;
-  const waitingForNewSession = pageTaskRunning && !canAppendToSession;
-  const canWakeGenie = Boolean(options.canWakeGenie);
+  const canAppendToCurrentSession = currentTaskRunning ? currentTaskSessionReady : !pageTaskRunning && Boolean(options.hasReusableConversation);
+  const waitingForCurrentSession = currentTaskRunning && !canAppendToCurrentSession;
+  const canWakeAgent = Boolean(options.canWakeAgent);
   const visualState = options.visualState === "awake" && (connected || pageTaskRunning) ? "awake" : "sleeping";
   const robotState = options.waking ? "waking" : pageTaskRunning ? "working" : visualState;
-  const blockReason = options.getSendPromptToGenieBlockReason?.();
-  const showSendAction = !options.toolMinimized && Boolean(options.onSendPromptToGenie);
-  const showInterruptAction = !options.toolMinimized && (robotState === "awake" || robotState === "working");
-  const sendTitle = blockReason ?? (!connected && !canWakeGenie ? "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" : canAppendToSession ? "\u7EE7\u7EED\u8FFD\u52A0\u5230\u5F53\u524D AI \u5BF9\u8BDD" : waitingForNewSession ? resolveRunningConversationTitle(false) : "\u53D1\u9001\u7ED9 AI");
-  const interruptTitle = interruptTaskRunning ? options.canInterrupt ? "\u505C\u6B62 AI \u4FEE\u6539" : resolveRunningConversationTitle(interruptTaskSessionReady) : "\u505C\u6B62 AI \u4FEE\u6539";
+  const blockReason = options.getSendPromptToAgentBlockReason?.();
+  const showSendAction = !options.toolMinimized && Boolean(options.onSendPromptToAgent);
+  const showInterruptAction = !options.toolMinimized && interruptTaskRunning;
+  const sendTitle = blockReason ?? (!connected && !canWakeAgent ? "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" : canAppendToCurrentSession ? "\u7EE7\u7EED\u8FFD\u52A0\u5230\u5F53\u524D AI \u5BF9\u8BDD" : waitingForCurrentSession ? resolveRunningConversationTitle(false) : "\u53D1\u9001\u7ED9 AI");
+  const interruptTitle = interruptTaskRunning ? "\u7EC8\u6B62\u5168\u90E8\u4FEE\u6539" : "\u505C\u6B62 AI \u4FEE\u6539";
   const robotTitle = robotState === "working" ? "\u6B63\u5728\u4E3A\u4F60\u4FEE\u6539" : robotState === "waking" ? "\u6B63\u5728\u6253\u5F00 AI" : robotState === "awake" ? "AI \u5DF2\u6253\u5F00" : "\u6253\u5F00 AI";
   return {
     robotState,
@@ -10681,31 +11371,30 @@ function getGeniePromptToolbarActionState(options) {
     robotLoading: robotState === "waking",
     robotTitle,
     sendVisible: showSendAction,
-    sendDisabled: !options.onSendPromptToGenie || !connected && !canWakeGenie || waitingForNewSession || Boolean(blockReason),
+    sendDisabled: !options.onSendPromptToAgent || !connected && !canWakeAgent || waitingForCurrentSession || Boolean(blockReason),
     sendLoading: Boolean(options.sending),
     sendTitle,
     sendRequiresConfirm: false,
     interruptVisible: showInterruptAction,
-    interruptDisabled: !interruptTaskRunning || !options.canInterrupt || Boolean(options.interrupting),
+    interruptDisabled: !interruptTaskRunning || Boolean(options.interrupting),
     interruptLoading: Boolean(options.interrupting),
     interruptTitle
   };
 }
-function getGeniePromptBubbleActionState(options) {
-  const connected = Boolean(options.getGenieBridgeConnected?.() ?? false);
+function getAgentPromptBubbleActionState(options) {
+  const connected = Boolean(options.getAgentBridgeConnected?.() ?? false);
   const pageTaskRunning = Boolean(options.pageTaskRunning);
-  const pageTaskSessionReady = Boolean(options.pageTaskSessionReady);
   const currentTaskRunning = Boolean(options.currentTaskRunning);
-  const canAppendToRunningConversation = Boolean(options.hasReusableConversation);
-  const canAppendToSession = canAppendToRunningConversation || pageTaskRunning && pageTaskSessionReady;
-  const waitingForNewSession = pageTaskRunning && !canAppendToSession;
-  const canWakeGenie = Boolean(options.canWakeGenie);
+  const currentTaskSessionReady = Boolean(options.currentTaskSessionReady);
+  const canAppendToCurrentSession = currentTaskRunning ? currentTaskSessionReady : !pageTaskRunning && Boolean(options.hasReusableConversation);
+  const waitingForCurrentSession = currentTaskRunning && !canAppendToCurrentSession;
+  const canWakeAgent = Boolean(options.canWakeAgent);
   const visualState = options.visualState === "awake" && (connected || pageTaskRunning) ? "awake" : "sleeping";
-  const blockReason = options.getSendCurrentElementPromptToGenieBlockReason?.();
-  const title = blockReason ?? (!connected && !canWakeGenie ? "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" : canAppendToSession ? "\u7EE7\u7EED\u8FFD\u52A0\u5230\u5F53\u524D AI \u5BF9\u8BDD" : waitingForNewSession ? resolveRunningConversationTitle(false) : "\u53D1\u9001\u7ED9 AI");
+  const blockReason = options.getSendCurrentElementPromptToAgentBlockReason?.();
+  const title = blockReason ?? (!connected && !canWakeAgent ? "AI \u8FDE\u63A5\u672A\u5EFA\u7ACB\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" : canAppendToCurrentSession ? "\u7EE7\u7EED\u8FFD\u52A0\u5230\u5F53\u524D AI \u5BF9\u8BDD" : waitingForCurrentSession ? resolveRunningConversationTitle(false) : "\u53D1\u9001\u7ED9 AI");
   return {
-    visible: Boolean(options.onSendCurrentElementPromptToGenie),
-    disabled: !options.onSendCurrentElementPromptToGenie || !connected && !canWakeGenie || waitingForNewSession || Boolean(blockReason),
+    visible: Boolean(options.onSendCurrentElementPromptToAgent),
+    disabled: !options.onSendCurrentElementPromptToAgent || !connected && !canWakeAgent || waitingForCurrentSession || Boolean(blockReason),
     loading: Boolean(options.sending),
     title,
     requiresConfirm: false
@@ -10719,15 +11408,17 @@ async function executePromptCardCurrentElementAction(options) {
     onConfirmText,
     onConfirmNote,
     onDismissSelection,
-    onSendCurrentElementPromptToGenie
+    onDispatched,
+    onSendCurrentElementPromptToAgent
   } = options;
-  if (!currentTarget || !onSendCurrentElementPromptToGenie) {
+  if (!currentTarget || !onSendCurrentElementPromptToAgent) {
     return false;
   }
   await onConfirmText();
   await onConfirmNote();
-  const sendPromise = Promise.resolve(onSendCurrentElementPromptToGenie(currentTarget));
+  const sendPromise = Promise.resolve(onSendCurrentElementPromptToAgent(currentTarget));
   onDismissSelection?.();
+  onDispatched?.();
   await sendPromise;
   return true;
 }
@@ -10802,7 +11493,7 @@ function SvgIcon(props) {
     }
   );
 }
-function GenieSparkleIcon() {
+function AgentSparkleIcon() {
   return /* @__PURE__ */ jsx3(SvgIcon, { children: /* @__PURE__ */ jsx3("path", { d: "M8 2.5l1.4 4.1L13.5 8l-4.1 1.4L8 13.5 6.6 9.4 2.5 8l4.1-1.4L8 2.5z" }) });
 }
 function CloseToolIcon() {
@@ -10854,7 +11545,7 @@ function IconActionButton(props) {
     }
   ) });
 }
-function GenieToolbarIconButton(props) {
+function AgentToolbarIconButton(props) {
   const { title, icon, awake, active = false, disabled = false, loading = false, onClick, ariaLabel } = props;
   const [hovered, setHovered] = React4.useState(false);
   const mobile = isMobileDevice();
@@ -10894,7 +11585,7 @@ function GenieToolbarIconButton(props) {
     }
   ) });
 }
-function GenieToolbarShell(props) {
+function AgentToolbarShell(props) {
   const { awake, children, dragHandleRef, fullWidth = false, style } = props;
   const shellBorderColor = EDITOR_CHROME.toolbarShellBorder;
   const shellSurfaceShadow = EDITOR_CHROME.toolbarShellInset;
@@ -11011,31 +11702,31 @@ function resolveExternalEditingStatusDescription(task, configuredDescription) {
   return override || fallback;
 }
 
-// src/ui/runtime/genie-ui-state.ts
-function isGenieTaskRunning(task) {
+// src/ui/runtime/agent-ui-state.ts
+function isAgentTaskRunning(task) {
   return task?.status === "pending" || task?.status === "created";
 }
-function isGenieTaskTerminal(task) {
+function isAgentTaskTerminal(task) {
   return task?.status === "completed" || task?.status === "error";
 }
-function deriveGenieUiState(options) {
-  const currentTask = options.getElementGenieTaskState?.(options.currentTarget) ?? null;
-  const visibleTasks = options.getVisibleElementGenieTaskStates?.() ?? [];
-  const pageTaskRunning = visibleTasks.some((task) => isGenieTaskRunning(task));
+function deriveAgentUiState(options) {
+  const currentTask = options.getElementAgentTaskState?.(options.currentTarget) ?? null;
+  const visibleTasks = options.getVisibleElementAgentTaskStates?.() ?? [];
+  const pageTaskRunning = visibleTasks.some((task) => isAgentTaskRunning(task));
   const currentTaskSessionReady = Boolean(
-    isGenieTaskRunning(currentTask) && (currentTask?.status === "created" || currentTask?.sessionId)
+    isAgentTaskRunning(currentTask) && (currentTask?.status === "created" || currentTask?.sessionId)
   );
   const pageTaskSessionReady = visibleTasks.some(
-    (task) => isGenieTaskRunning(task) && (task.status === "created" || Boolean(task.sessionId))
+    (task) => isAgentTaskRunning(task) && (task.status === "created" || Boolean(task.sessionId))
   );
-  const hasReusableConversation = Boolean(options.getHasReusableGenieConversation?.() ?? false);
-  const bridgeConnected = options.getGenieBridgeConnected ? Boolean(options.getGenieBridgeConnected()) : true;
+  const hasReusableConversation = Boolean(options.getHasReusableAgentConversation?.() ?? false);
+  const bridgeConnected = options.getAgentBridgeConnected ? Boolean(options.getAgentBridgeConnected()) : true;
   const effectiveVisualState = pageTaskRunning || options.visualState === "awake" && (bridgeConnected || hasReusableConversation) ? "awake" : "sleeping";
   return {
     currentTask,
-    currentTaskRunning: isGenieTaskRunning(currentTask),
+    currentTaskRunning: isAgentTaskRunning(currentTask),
     currentTaskSessionReady,
-    currentTaskTerminal: isGenieTaskTerminal(currentTask),
+    currentTaskTerminal: isAgentTaskTerminal(currentTask),
     pageTaskRunning,
     pageTaskSessionReady,
     hasReusableConversation,
@@ -13470,6 +14161,7 @@ var PROMPT_PRIMARY_FOCUS_EXEMPT_SELECTOR = [
   '[role="textbox"]',
   "[tabindex]"
 ].join(", ");
+var PARENT_SELECT_INPUT_TOUCHED_ATTR = "data-we-parent-select-input-touched";
 function shouldRestorePromptPrimaryFocusFromTarget(target) {
   if (!(target instanceof Element)) {
     return true;
@@ -13477,14 +14169,61 @@ function shouldRestorePromptPrimaryFocusFromTarget(target) {
   return !target.closest(PROMPT_PRIMARY_FOCUS_EXEMPT_SELECTOR);
 }
 function resolvePromptCardNotePlaceholder() {
-  return "\u8F93\u5165\u9700\u6C42\uFF0C\u8F93\u5165 / \u9009\u62E9\u6280\u80FD";
+  return "\u8F93\u5165\u7ED9 AI \u7684\u9700\u6C42\uFF0C/ \u9009\u62E9\u6280\u80FD";
 }
+var ANNOTATION_PANEL_NODE_ID_ATTR2 = "data-axhub-annotation-panel-node-id";
+var ANNOTATION_MARKER_NODE_ID_ATTR2 = "data-axhub-annotation-node-id";
+var ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE = "\u5F53\u524D\u5143\u7D20\u65E0\u6CD5\u53EF\u9760\u5B9A\u4F4D\uFF0C\u8BF7\u5728 AI \u8F93\u5165\u6846\u63CF\u8FF0\u6807\u6CE8\u9700\u6C42\uFF0C\u7531 AI \u521B\u5EFA\u6807\u6CE8\u3002";
+var ANNOTATION_MARKDOWN_PLACEHOLDER = "\u8F93\u5165\u9700\u6C42\u6807\u6CE8\uFF0C\u652F\u6301 Markdown \u683C\u5F0F\u3002\u8F93\u5165\u540E\u5373\u53EF\u521B\u5EFA\u6807\u6CE8\u8282\u70B9\u3002\u5EFA\u8BAE\u7531 AI \u521B\u5EFA\u6807\u6CE8\uFF0C\u5B9A\u4F4D\u4F1A\u66F4\u51C6\u786E\u3002";
 function isAnnotationPanelTarget(element) {
   if (!element) return false;
   if (element.getAttribute("data-axhub-annotation-panel-target") === "true") {
     return true;
   }
   return Boolean(element.closest?.('[data-axhub-annotation-panel-target="true"]'));
+}
+function readCurrentAnnotationNodeId(element) {
+  if (!element) return "";
+  for (const attr of [ANNOTATION_PANEL_NODE_ID_ATTR2, ANNOTATION_MARKER_NODE_ID_ATTR2]) {
+    const direct = element.getAttribute?.(attr)?.trim();
+    if (direct) return direct;
+    const closest = element.closest?.(`[${attr}]`);
+    const closestNodeId = closest?.getAttribute?.(attr)?.trim();
+    if (closestNodeId) return closestNodeId;
+  }
+  return "";
+}
+function getAnnotationManualEditLocatorState(element, resolveLocator = locateElement) {
+  if (!element) {
+    return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
+  }
+  const annotationNodeId = readCurrentAnnotationNodeId(element);
+  if (annotationNodeId) {
+    return { disabled: false, message: "" };
+  }
+  const isPanelTarget = isAnnotationPanelTarget(element);
+  if (isPanelTarget) {
+    return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
+  }
+  let locator;
+  try {
+    locator = createElementLocator(element);
+  } catch {
+    return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
+  }
+  let resolvedElement = null;
+  try {
+    resolvedElement = resolveLocator(locator);
+  } catch {
+    resolvedElement = null;
+  }
+  if (!resolvedElement) {
+    return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
+  }
+  if (resolvedElement !== element) {
+    return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
+  }
+  return { disabled: false, message: "" };
 }
 async function copyPromptCardTextToClipboard(text) {
   try {
@@ -13544,13 +14283,13 @@ function dismissPromptCardTerminalState(options) {
   const {
     currentTarget,
     currentTaskTerminal,
-    dismissElementGenieTaskState,
+    dismissElementAgentTaskState,
     onDismissSelection
   } = options;
   if (!currentTaskTerminal || !currentTarget) {
     return false;
   }
-  dismissElementGenieTaskState?.(currentTarget);
+  dismissElementAgentTaskState?.(currentTarget);
   onDismissSelection?.();
   return true;
 }
@@ -13569,19 +14308,20 @@ var PromptCardView = React9.forwardRef(
       propertyPanelEnabled,
       styleDesignEnabled,
       bubbleStyleEditorOpen,
-      genieVisualState,
+      agentVisualState,
       onBubbleStyleEditorOpenChange,
-      onSendCurrentElementPromptToGenie,
-      onWakeGenie,
-      onGenieVisualStateChange,
-      getGenieBridgeConnected,
-      getHasReusableGenieConversation,
-      getSendCurrentElementPromptToGenieBlockReason,
+      onSendCurrentElementPromptToAgent,
+      onWakeAgent,
+      onAgentVisualStateChange,
+      getAgentBridgeConnected,
+      getHasReusableAgentConversation,
+      getSendCurrentElementPromptToAgentBlockReason,
       canExportSelectionToDesignTool,
       onExportSelectionToDesignTool,
       getExportSelectionToDesignToolBlockReason,
       hideExecutionControls = false,
       hideContextAppendAction = false,
+      enabledSkillIds,
       onHoverSelectionSuppressedChange,
       onSelectionInteractionLockChange,
       onTargetChange,
@@ -13605,7 +14345,6 @@ var PromptCardView = React9.forwardRef(
       noteDirty,
       onDraftChange,
       onClearCurrentElementEdits,
-      onCancelNote,
       onConfirmNote,
       onDismissSelection,
       annotationEnabled,
@@ -13629,13 +14368,17 @@ var PromptCardView = React9.forwardRef(
     const [refreshKey, setRefreshKey] = React9.useState(0);
     const [selectedSkills, setSelectedSkills] = React9.useState([]);
     const [annotationEditorOpen, setAnnotationEditorOpen] = React9.useState(false);
+    const [runningElementToolId, setRunningElementToolId] = React9.useState(null);
+    const [elementToolError, setElementToolError] = React9.useState("");
+    const elementTools = options.getElementTools?.(currentTarget) ?? [];
+    const hasElementTools = elementTools.length > 0;
     const skillTrigger = React9.useMemo(
       () => findPromptCardSkillTrigger(draftNote),
       [draftNote]
     );
     const filteredSkills = React9.useMemo(
-      () => filterPromptCardSkills(skillTrigger?.query ?? ""),
-      [skillTrigger?.query]
+      () => filterPromptCardSkills(skillTrigger?.query ?? "", enabledSkillIds),
+      [enabledSkillIds, skillTrigger?.query]
     );
     const selectedSkillsDirty = React9.useMemo(() => {
       const savedSkillIds = savedNoteMeta?.skillIds ?? [];
@@ -13649,8 +14392,10 @@ var PromptCardView = React9.forwardRef(
       inlineTextEditingRef.current = inlineTextEditing;
     }, [inlineTextEditing]);
     React9.useEffect(() => {
-      setSelectedSkills(deserializePromptCardSkillSelection(savedNoteMeta));
-    }, [savedNoteMeta, currentTarget]);
+      setSelectedSkills(deserializePromptCardSkillSelection(savedNoteMeta, enabledSkillIds));
+      setRunningElementToolId(null);
+      setElementToolError("");
+    }, [enabledSkillIds, savedNoteMeta, currentTarget]);
     const onConfirmNoteWithSelectedSkills = React9.useCallback(async () => {
       const payload = buildPromptCardSkillSavePayload(draftNote, selectedSkills);
       await onConfirmNote({ skillIds: payload.skillIds });
@@ -13682,6 +14427,7 @@ var PromptCardView = React9.forwardRef(
       if (activeElement instanceof HTMLElement && activeElement !== input && !textComposerRef.current?.contains(activeElement)) {
         activeElement.blur();
       }
+      input.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR, "false");
       input.focus({ preventScroll: true });
       try {
         input.setSelectionRange(input.value.length, input.value.length);
@@ -13698,6 +14444,7 @@ var PromptCardView = React9.forwardRef(
       if (activeElement instanceof HTMLElement && activeElement !== textarea && !noteComposerRef.current?.contains(activeElement)) {
         activeElement.blur();
       }
+      textarea.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR, "false");
       textarea.focus({ preventScroll: true });
       const cursor = textarea.value.length;
       try {
@@ -13774,7 +14521,8 @@ var PromptCardView = React9.forwardRef(
       draftText,
       images.length,
       promptPositionBaseVisible,
-      propertyPanelEnabled
+      propertyPanelEnabled,
+      bubbleStyleEditorOpen
     ]);
     const [visualViewportKey, setVisualViewportKey] = React9.useState(0);
     React9.useEffect(() => {
@@ -13814,6 +14562,15 @@ var PromptCardView = React9.forwardRef(
         setAnnotationEditorOpen(false);
       }
     }, [canEditAnnotationMarkdown]);
+    React9.useEffect(() => {
+      if (bubbleStyleEditorOpen) {
+        setAnnotationEditorOpen(false);
+      }
+    }, [bubbleStyleEditorOpen]);
+    React9.useEffect(() => {
+      if (!hasElementTools || !bubbleStyleEditorOpen) return;
+      onBubbleStyleEditorOpenChange(false);
+    }, [bubbleStyleEditorOpen, hasElementTools, onBubbleStyleEditorOpenChange]);
     React9.useEffect(() => {
       onPromptCardVisibleChange?.(promptVisible);
     }, [onPromptCardVisibleChange, promptVisible]);
@@ -13870,34 +14627,30 @@ var PromptCardView = React9.forwardRef(
       }
       onDismissSelection?.();
     }, [onConfirmNoteWithSelectedSkills, onDismissSelection]);
-    const cancelAndDismissSelection = React9.useCallback(() => {
-      onCancelNote();
-      setSelectedSkills([]);
-      const textarea = noteComposerRef.current?.querySelector("textarea");
-      if (textarea instanceof HTMLTextAreaElement) {
-        textarea.blur();
-      }
-      onDismissSelection?.();
-    }, [onCancelNote, onDismissSelection]);
     const saveAndDismissPromptCard = React9.useCallback(async () => {
       await onConfirmText();
       await onConfirmNoteWithSelectedSkills();
-      await onConfirmAnnotationMarkdown();
+      if (!getAnnotationManualEditLocatorState(currentTarget).disabled) {
+        await onConfirmAnnotationMarkdown();
+      }
       setSelectedSkills([]);
       const activeElement = document.activeElement;
       if (activeElement instanceof HTMLElement && rootRef.current?.contains(activeElement)) {
         activeElement.blur();
       }
       onDismissSelection?.();
-    }, [onConfirmAnnotationMarkdown, onConfirmNoteWithSelectedSkills, onConfirmText, onDismissSelection]);
+    }, [currentTarget, onConfirmAnnotationMarkdown, onConfirmNoteWithSelectedSkills, onConfirmText, onDismissSelection]);
     const saveAndCloseAnnotationMarkdownComposer = React9.useCallback(async () => {
+      if (getAnnotationManualEditLocatorState(currentTarget).disabled) {
+        return;
+      }
       await onConfirmAnnotationMarkdown();
       const activeElement = document.activeElement;
       if (activeElement instanceof HTMLElement && rootRef.current?.contains(activeElement)) {
         activeElement.blur();
       }
       onDismissSelection?.();
-    }, [onConfirmAnnotationMarkdown, onDismissSelection]);
+    }, [currentTarget, onConfirmAnnotationMarkdown, onDismissSelection]);
     const clearSelectedSkills = React9.useCallback(() => {
       setSelectedSkills([]);
     }, []);
@@ -13932,12 +14685,12 @@ var PromptCardView = React9.forwardRef(
         onSelectionInteractionLockChange(false);
       };
     }, [onHoverSelectionSuppressedChange, onSelectionInteractionLockChange]);
-    const genieAvailable = isGeniePromptActionVisible({
+    const agentAvailable = isAgentPromptActionVisible({
       currentTarget,
       uiMode,
       toolMinimized,
-      onSendToGenie: hideContextAppendAction ? void 0 : options.onSendToGenie,
-      getGenieBridgeAvailable: options.getGenieBridgeAvailable,
+      onAppendElementToAgentContext: hideContextAppendAction ? void 0 : options.onAppendElementToAgentContext,
+      getAgentBridgeAvailable: options.getAgentBridgeAvailable,
       getAssistantPanelOpen: options.getAssistantPanelOpen
     });
     const designToolExportAction = getDesignToolExportActionState({
@@ -13951,69 +14704,71 @@ var PromptCardView = React9.forwardRef(
     });
     const textCommentMode = interactionProfile === "text-comment";
     const {
-      currentTask: currentGenieTask,
+      currentTask: currentAgentTask,
       currentTaskRunning,
+      currentTaskSessionReady,
       currentTaskTerminal,
       pageTaskRunning,
       pageTaskSessionReady,
       hasReusableConversation,
       effectiveVisualState
-    } = deriveGenieUiState({
+    } = deriveAgentUiState({
       currentTarget,
-      visualState: genieVisualState,
-      getElementGenieTaskState: options.getElementGenieTaskState,
-      getVisibleElementGenieTaskStates: options.getVisibleElementGenieTaskStates,
-      getHasReusableGenieConversation,
-      getGenieBridgeConnected
+      visualState: agentVisualState,
+      getElementAgentTaskState: options.getElementAgentTaskState,
+      getVisibleElementAgentTaskStates: options.getVisibleElementAgentTaskStates,
+      getHasReusableAgentConversation,
+      getAgentBridgeConnected
     });
     const dismissTerminalTaskAndSelection = React9.useCallback(
       () => dismissPromptCardTerminalState({
         currentTarget,
         currentTaskTerminal,
-        dismissElementGenieTaskState: options.dismissElementGenieTaskState,
+        dismissElementAgentTaskState: options.dismissElementAgentTaskState,
         onDismissSelection
       }),
-      [currentTarget, currentTaskTerminal, onDismissSelection, options.dismissElementGenieTaskState]
+      [currentTarget, currentTaskTerminal, onDismissSelection, options.dismissElementAgentTaskState]
     );
-    const currentTaskSessionHref = currentGenieTask?.sessionUrl ?? (currentGenieTask?.sessionId ? `/session/${currentGenieTask.sessionId}` : "");
+    const currentTaskSessionHref = currentAgentTask?.sessionUrl ?? (currentAgentTask?.sessionId ? `/session/${currentAgentTask.sessionId}` : "");
     const currentTaskDescription = resolveExternalEditingStatusDescription(
-      currentGenieTask,
+      currentAgentTask,
       options.externalEditingStatusDescription
     );
-    const currentTaskErrorMessage = currentGenieTask?.status === "error" ? buildPromptCardTaskErrorMessage({
+    const currentTaskErrorMessage = currentAgentTask?.status === "error" ? buildPromptCardTaskErrorMessage({
       currentTaskDescription,
-      sessionId: currentGenieTask.sessionId,
-      taskRef: currentGenieTask.taskRef
+      sessionId: currentAgentTask.sessionId,
+      taskRef: currentAgentTask.taskRef
     }) : "";
     const styleSummaryLines = compactPromptStyleSummaryLines(
       options.getElementStyleSummaryLines?.(currentTarget) ?? []
     );
     const currentElementHasDraftChanges = noteDirty || textDirty;
     const currentElementBlockReason = (() => {
-      const reason = getSendCurrentElementPromptToGenieBlockReason?.(currentTarget);
+      const reason = getSendCurrentElementPromptToAgentBlockReason?.(currentTarget);
       if (reason === "\u5F53\u524D\u5143\u7D20\u6CA1\u6709\u53EF\u53D1\u9001\u7ED9 AI \u7684\u7F16\u8F91" && currentElementHasDraftChanges) {
         return void 0;
       }
       return reason;
     })();
-    const currentElementPromptAction = getGeniePromptBubbleActionState({
+    const currentElementPromptAction = getAgentPromptBubbleActionState({
       visualState: effectiveVisualState,
       sending: sendingCurrentElementPrompt,
       pageTaskRunning,
       pageTaskSessionReady,
       currentTaskRunning,
-      onSendCurrentElementPromptToGenie,
-      canWakeGenie: Boolean(onWakeGenie),
-      getGenieBridgeConnected,
-      getSendCurrentElementPromptToGenieBlockReason: () => currentElementBlockReason,
+      currentTaskSessionReady,
+      onSendCurrentElementPromptToAgent,
+      canWakeAgent: Boolean(onWakeAgent),
+      getAgentBridgeConnected,
+      getSendCurrentElementPromptToAgentBlockReason: () => currentElementBlockReason,
       hasReusableConversation
     });
     React9.useEffect(() => {
       if (!sendingCurrentElementPrompt) return;
-      if (currentTaskRunning && hasReusableConversation) {
+      if (currentTaskRunning && currentTaskSessionReady) {
         setSendingCurrentElementPrompt(false);
       }
-    }, [currentTaskRunning, hasReusableConversation, sendingCurrentElementPrompt]);
+    }, [currentTaskRunning, currentTaskSessionReady, sendingCurrentElementPrompt]);
     React9.useEffect(() => {
       if (!promptVisible || uiMode !== "bubble-card" || !currentTaskTerminal) return;
       const handleWindowKeyDown = (event) => {
@@ -14027,35 +14782,35 @@ var PromptCardView = React9.forwardRef(
         window.removeEventListener("keydown", handleWindowKeyDown, true);
       };
     }, [currentTaskTerminal, dismissTerminalTaskAndSelection, promptVisible, uiMode]);
-    const wakeGenieForCurrentElementAction = React9.useCallback(async () => {
+    const wakeAgentForCurrentElementAction = React9.useCallback(async () => {
       if (hideExecutionControls) {
         return true;
       }
-      const connected = getGenieBridgeConnected?.();
-      if (connected !== false && genieVisualState === "awake") {
+      const connected = getAgentBridgeConnected?.();
+      if (connected !== false && agentVisualState === "awake") {
         return true;
       }
-      if (!onWakeGenie) {
+      if (!onWakeAgent) {
         return connected !== false;
       }
       try {
-        const wakeResult = await onWakeGenie();
+        const wakeResult = await onWakeAgent();
         if (wakeResult === true) {
-          onGenieVisualStateChange?.("awake");
+          onAgentVisualStateChange?.("awake");
           return true;
         }
       } catch {
       }
       return false;
     }, [
-      genieVisualState,
-      getGenieBridgeConnected,
+      agentVisualState,
+      getAgentBridgeConnected,
       hideExecutionControls,
-      onGenieVisualStateChange,
-      onWakeGenie
+      onAgentVisualStateChange,
+      onWakeAgent
     ]);
     const handleConfirmSendCurrentElementPrompt = React9.useCallback(async () => {
-      const ready = await wakeGenieForCurrentElementAction();
+      const ready = await wakeAgentForCurrentElementAction();
       if (!ready) return;
       setSendingCurrentElementPrompt(true);
       try {
@@ -14064,7 +14819,10 @@ var PromptCardView = React9.forwardRef(
           onConfirmText,
           onConfirmNote: onConfirmNoteWithSelectedSkills,
           onDismissSelection,
-          onSendCurrentElementPromptToGenie
+          onSendCurrentElementPromptToAgent,
+          onDispatched: () => {
+            setSendingCurrentElementPrompt(false);
+          }
         });
         if (sent) {
           clearSelectedSkills();
@@ -14079,9 +14837,9 @@ var PromptCardView = React9.forwardRef(
       onConfirmNoteWithSelectedSkills,
       onConfirmText,
       onDismissSelection,
-      onSendCurrentElementPromptToGenie,
+      onSendCurrentElementPromptToAgent,
       selectedSkills,
-      wakeGenieForCurrentElementAction
+      wakeAgentForCurrentElementAction
     ]);
     const handlePromptKeyDown = React9.useCallback(
       (event) => {
@@ -14096,10 +14854,9 @@ var PromptCardView = React9.forwardRef(
         event.preventDefault();
         event.stopPropagation();
         if (dismissTerminalTaskAndSelection()) return;
-        cancelAndDismissSelection();
+        void saveAndCloseNoteComposer();
       },
       [
-        cancelAndDismissSelection,
         dismissTerminalTaskAndSelection,
         saveAndCloseNoteComposer
       ]
@@ -14108,6 +14865,19 @@ var PromptCardView = React9.forwardRef(
       return /* @__PURE__ */ jsx8("div", { ref: rootRef, style: { ...promptCardStyle, visibility: "hidden" } });
     }
     const promptTarget = currentTarget;
+    const handleElementToolAction = async (tool) => {
+      if (tool.disabled || runningElementToolId) return;
+      setRunningElementToolId(tool.id);
+      setElementToolError("");
+      try {
+        await options.onElementToolAction?.(tool, promptTarget);
+      } catch (error) {
+        const message3 = error instanceof Error ? error.message : String(error ?? "\u64CD\u4F5C\u5931\u8D25");
+        setElementToolError(message3.trim() || "\u64CD\u4F5C\u5931\u8D25");
+      } finally {
+        setRunningElementToolId(null);
+      }
+    };
     const showPromptTextInput = false;
     const isCurrentAnnotationPanelTarget = isAnnotationPanelTarget(currentTarget);
     const showAnnotationMarkdownEditorButton = Boolean(
@@ -14116,15 +14886,22 @@ var PromptCardView = React9.forwardRef(
     const showAnnotationDocumentEditButton = Boolean(
       currentTarget && annotationDocumentEditUrl
     );
+    const showNoteComposer = !annotationEditorOpen && !bubbleStyleEditorOpen;
+    const showAnnotationMarkdownEditor = Boolean(
+      annotationEditorOpen && showAnnotationMarkdownEditorButton && !bubbleStyleEditorOpen
+    );
+    const annotationManualEditLocatorState = showAnnotationMarkdownEditor ? getAnnotationManualEditLocatorState(currentTarget) : { disabled: false, message: "" };
+    const annotationManualEditDisabled = annotationManualEditLocatorState.disabled;
+    const annotationManualEditMessage = annotationManualEditLocatorState.message;
     const showPromptDesignEditor = Boolean(
       currentTarget && transactionManager && bubbleStyleEditorOpen && styleDesignEnabled && !isCurrentAnnotationPanelTarget && !textCommentMode
     );
     const styleEditorToggleTitle = bubbleStyleEditorOpen ? "\u5173\u95ED\u6837\u5F0F\u7F16\u8F91" : "\u6253\u5F00\u6837\u5F0F\u7F16\u8F91";
     const promptCardSendActionTitle = currentElementPromptAction.title;
-    const genieSelectionShortcutSettings = options.getCommentShortcutSettings?.();
-    const genieSelectionShortcutLabels = genieSelectionShortcutSettings?.enabled ? genieSelectionShortcutSettings.shortcuts.filter((shortcut) => Boolean(shortcut)).map((shortcut) => formatModifierShortcutLabel(shortcut)) : [];
-    const genieSelectionShortcutHint = genieSelectionShortcutLabels.length > 0 ? `\uFF0C\u957F\u6309 ${genieSelectionShortcutLabels.join(" / ")} \u4E5F\u53EF\u5524\u8D77` : "";
-    const genieSelectionActionTitle = currentTaskRunning ? "\u6DFB\u52A0\u5230 AI \u5BF9\u8BDD" : `\u6DFB\u52A0\u5230 AI \u5BF9\u8BDD${genieSelectionShortcutHint}`;
+    const agentSelectionShortcutSettings = options.getCommentShortcutSettings?.();
+    const agentSelectionShortcutLabels = agentSelectionShortcutSettings?.enabled ? agentSelectionShortcutSettings.shortcuts.filter((shortcut) => Boolean(shortcut)).map((shortcut) => formatModifierShortcutLabel(shortcut)) : [];
+    const agentSelectionShortcutHint = agentSelectionShortcutLabels.length > 0 ? `\uFF0C\u957F\u6309 ${agentSelectionShortcutLabels.join(" / ")} \u4E5F\u53EF\u5524\u8D77` : "";
+    const agentSelectionActionTitle = currentTaskRunning ? "\u6DFB\u52A0\u5230 AI \u5BF9\u8BDD" : `\u6DFB\u52A0\u5230 AI \u5BF9\u8BDD${agentSelectionShortcutHint}`;
     const showContextAppendExecutionControls = !hideExecutionControls;
     const notePlaceholder = resolvePromptCardNotePlaceholder();
     const promptCardCloseActionTitle = "\u5173\u95ED\u5E76\u4FDD\u5B58 (Cmd/Ctrl + Enter / Esc)";
@@ -14178,17 +14955,17 @@ var PromptCardView = React9.forwardRef(
           ` }),
           /* @__PURE__ */ jsxs7("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [
             /* @__PURE__ */ jsxs7("div", { style: { display: "flex", alignItems: "center", gap: 2 }, children: [
-              showContextAppendExecutionControls && genieAvailable ? /* @__PURE__ */ jsx8(
+              showContextAppendExecutionControls && agentAvailable ? /* @__PURE__ */ jsx8(
                 IconActionButton,
                 {
-                  title: genieSelectionActionTitle,
-                  icon: /* @__PURE__ */ jsx8(GenieSparkleIcon, {}),
+                  title: agentSelectionActionTitle,
+                  icon: /* @__PURE__ */ jsx8(AgentSparkleIcon, {}),
                   tone: "dark",
-                  disabled: !currentTarget || currentTaskRunning,
+                  disabled: !currentTarget,
                   onClick: () => {
-                    triggerGeniePromptAction({
+                    triggerAgentPromptAction({
                       currentTarget: promptTarget,
-                      onSendToGenie: options.onSendToGenie
+                      onAppendElementToAgentContext: options.onAppendElementToAgentContext
                     });
                   }
                 }
@@ -14216,7 +14993,13 @@ var PromptCardView = React9.forwardRef(
                   icon: /* @__PURE__ */ jsx8(FileTextOutlined, {}),
                   tone: annotationEditorOpen ? "accent" : "dark",
                   disabled: annotationLoading,
-                  onClick: () => setAnnotationEditorOpen((open) => !open)
+                  onClick: () => {
+                    const nextAnnotationEditorOpen = !annotationEditorOpen;
+                    setAnnotationEditorOpen(nextAnnotationEditorOpen);
+                    if (nextAnnotationEditorOpen && bubbleStyleEditorOpen) {
+                      onBubbleStyleEditorOpenChange(false);
+                    }
+                  }
                 }
               ) : null,
               showAnnotationDocumentEditButton ? /* @__PURE__ */ jsx8(
@@ -14230,13 +15013,35 @@ var PromptCardView = React9.forwardRef(
                   }
                 }
               ) : null,
-              propertyPanelEnabled && styleDesignEnabled && !textCommentMode && !isCurrentAnnotationPanelTarget ? /* @__PURE__ */ jsx8(
+              elementTools.map((tool) => {
+                const running = runningElementToolId === tool.id;
+                return /* @__PURE__ */ jsx8("span", { "data-we-element-tool": tool.id, children: /* @__PURE__ */ jsx8(
+                  IconActionButton,
+                  {
+                    title: running ? `${tool.label}\uFF08\u6B63\u5728\u6253\u5F00\uFF09` : tool.label,
+                    icon: tool.icon === "document" ? /* @__PURE__ */ jsx8(FileTextOutlined, {}) : /* @__PURE__ */ jsx8(ExportOutlined, {}),
+                    tone: "dark",
+                    loading: running,
+                    disabled: Boolean(tool.disabled || runningElementToolId),
+                    onClick: () => {
+                      void handleElementToolAction(tool);
+                    }
+                  }
+                ) }, tool.id);
+              }),
+              propertyPanelEnabled && styleDesignEnabled && !hasElementTools && !textCommentMode && !isCurrentAnnotationPanelTarget ? /* @__PURE__ */ jsx8(
                 IconActionButton,
                 {
                   title: styleEditorToggleTitle,
                   icon: /* @__PURE__ */ jsx8(FormatPainterOutlined, {}),
                   tone: bubbleStyleEditorOpen ? "accent" : "dark",
-                  onClick: () => onBubbleStyleEditorOpenChange(!bubbleStyleEditorOpen)
+                  onClick: () => {
+                    const nextBubbleStyleEditorOpen = !bubbleStyleEditorOpen;
+                    onBubbleStyleEditorOpenChange(nextBubbleStyleEditorOpen);
+                    if (nextBubbleStyleEditorOpen) {
+                      setAnnotationEditorOpen(false);
+                    }
+                  }
                 }
               ) : null,
               designToolExportAction.visible && !textCommentMode ? /* @__PURE__ */ jsx8(
@@ -14296,6 +15101,22 @@ var PromptCardView = React9.forwardRef(
               }
             )
           ] }),
+          elementToolError ? /* @__PURE__ */ jsx8(
+            "div",
+            {
+              role: "alert",
+              style: {
+                padding: "6px 10px",
+                borderRadius: 8,
+                background: "rgba(255, 77, 79, 0.12)",
+                color: EDITOR_CHROME.danger,
+                fontSize: 11,
+                lineHeight: 1.45,
+                overflowWrap: "anywhere"
+              },
+              children: elementToolError.slice(0, 240)
+            }
+          ) : null,
           /* @__PURE__ */ jsxs7(
             "div",
             {
@@ -14361,170 +15182,172 @@ var PromptCardView = React9.forwardRef(
                     }
                   }
                 ) }) : null,
-                /* @__PURE__ */ jsxs7(
-                  "div",
-                  {
-                    style: {
-                      position: "relative",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: selectedSkills.length > 0 ? 6 : 0,
-                      minHeight: selectedSkills.length > 0 ? 64 : 44,
-                      justifyContent: "center",
-                      borderRadius: 12,
-                      background: EDITOR_CHROME.surfaceMuted,
-                      border: `1px solid ${EDITOR_CHROME.borderStrong}`
-                    },
-                    children: [
-                      selectedSkills.length > 0 ? /* @__PURE__ */ jsx8(
-                        "div",
-                        {
-                          style: {
-                            display: "flex",
-                            flexWrap: "wrap",
-                            gap: 6,
-                            padding: "8px 8px 0"
-                          },
-                          children: selectedSkills.map((skill) => /* @__PURE__ */ jsxs7(
-                            "button",
-                            {
-                              type: "button",
-                              "data-we-prompt-card-skill-tag": "true",
-                              title: `\u79FB\u9664\u6280\u80FD\uFF1A${skill.label}`,
-                              style: {
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 5,
-                                maxWidth: "100%",
-                                border: `1px solid ${EDITOR_CHROME.border}`,
-                                borderRadius: 999,
-                                background: EDITOR_CHROME.surfaceInteractive,
-                                color: EDITOR_CHROME.textSecondary,
-                                padding: "3px 7px",
-                                fontSize: 11,
-                                lineHeight: 1.2,
-                                cursor: "pointer"
-                              },
-                              onClick: () => handleSkillRemove(skill.id),
-                              children: [
-                                /* @__PURE__ */ jsx8("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: skill.label }),
-                                /* @__PURE__ */ jsx8(CloseOutlined2, { style: { fontSize: 9, color: EDITOR_CHROME.textMuted } })
-                              ]
+                showNoteComposer ? /* @__PURE__ */ jsxs7(Fragment4, { children: [
+                  /* @__PURE__ */ jsxs7(
+                    "div",
+                    {
+                      style: {
+                        position: "relative",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: selectedSkills.length > 0 ? 6 : 0,
+                        minHeight: selectedSkills.length > 0 ? 64 : 44,
+                        justifyContent: "center",
+                        borderRadius: 12,
+                        background: EDITOR_CHROME.surfaceMuted,
+                        border: `1px solid ${EDITOR_CHROME.borderStrong}`
+                      },
+                      children: [
+                        selectedSkills.length > 0 ? /* @__PURE__ */ jsx8(
+                          "div",
+                          {
+                            style: {
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 6,
+                              padding: "8px 8px 0"
                             },
-                            skill.id
-                          ))
-                        }
-                      ) : null,
-                      /* @__PURE__ */ jsx8(
-                        Input3.TextArea,
-                        {
-                          className: "we-runtime-prompt-card__textarea",
-                          value: draftNote,
-                          disabled: !canEditNote,
-                          readOnly: inlineTextEditing,
-                          tabIndex: inlineTextEditing ? -1 : 0,
-                          allowClear: true,
-                          autoSize: { minRows: 1, maxRows: 4 },
-                          placeholder: notePlaceholder,
-                          variant: "borderless",
-                          styles: {
-                            textarea: {
-                              color: EDITOR_CHROME.textPrimary,
-                              background: "transparent",
-                              minHeight: 32,
-                              padding: "6px 10px",
-                              fontSize: 12.5,
-                              lineHeight: 1.55,
-                              caretColor: EDITOR_CHROME.textPrimary
-                            }
-                          },
-                          style: {
-                            borderRadius: 12,
-                            background: "transparent",
-                            borderColor: "transparent",
-                            boxShadow: "none"
-                          },
-                          onChange: (event) => {
-                            onDraftChange(event.target.value);
-                          },
-                          onFocus: (event) => {
-                            if (!inlineTextEditing) return;
-                            event.currentTarget.blur();
-                          },
-                          onPasteCapture: onNotePasteCapture,
-                          onKeyDown: handlePromptKeyDown,
-                          onBlur: (event) => {
-                            const nextTarget = event.relatedTarget;
-                            if (nextTarget instanceof Node && noteComposerRef.current?.contains(nextTarget)) {
-                              return;
-                            }
-                            if (!noteDirty && !selectedSkillsDirty) return;
-                            void onConfirmNoteWithSelectedSkills();
-                          }
-                        }
-                      ),
-                      skillMenuOpen ? /* @__PURE__ */ jsx8(
-                        "div",
-                        {
-                          "data-we-prompt-card-skill-menu": "true",
-                          style: {
-                            position: "absolute",
-                            left: 0,
-                            right: 0,
-                            top: "calc(100% + 6px)",
-                            zIndex: 1,
-                            display: "flex",
-                            flexDirection: "column",
-                            overflow: "hidden",
-                            borderRadius: 10,
-                            background: EDITOR_CHROME.surfaceElevated,
-                            border: `1px solid ${EDITOR_CHROME.borderStrong}`,
-                            boxShadow: EDITOR_CHROME.shadowCompact
-                          },
-                          children: filteredSkills.map((skill) => {
-                            const selected = selectedSkills.some((selectedSkill) => selectedSkill.id === skill.id);
-                            return /* @__PURE__ */ jsxs7(
+                            children: selectedSkills.map((skill) => /* @__PURE__ */ jsxs7(
                               "button",
                               {
                                 type: "button",
-                                disabled: selected,
+                                "data-we-prompt-card-skill-tag": "true",
+                                title: `\u79FB\u9664\u6280\u80FD\uFF1A${skill.label}`,
                                 style: {
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "flex-start",
-                                  gap: 2,
-                                  border: 0,
-                                  background: selected ? EDITOR_CHROME.surfaceInteractive : "transparent",
-                                  color: selected ? EDITOR_CHROME.textMuted : EDITOR_CHROME.textPrimary,
-                                  padding: "8px 10px",
-                                  textAlign: "left",
-                                  cursor: selected ? "default" : "pointer"
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 5,
+                                  maxWidth: "100%",
+                                  border: `1px solid ${EDITOR_CHROME.border}`,
+                                  borderRadius: 999,
+                                  background: EDITOR_CHROME.surfaceInteractive,
+                                  color: EDITOR_CHROME.textSecondary,
+                                  padding: "3px 7px",
+                                  fontSize: 11,
+                                  lineHeight: 1.2,
+                                  cursor: "pointer"
                                 },
-                                onMouseDown: (event) => {
-                                  event.preventDefault();
-                                },
-                                onClick: () => {
-                                  if (!selected) {
-                                    handleSkillSelect(skill);
-                                  }
-                                },
+                                onClick: () => handleSkillRemove(skill.id),
                                 children: [
-                                  /* @__PURE__ */ jsx8("span", { style: { fontSize: 12, fontWeight: 600, lineHeight: 1.35 }, children: skill.label }),
-                                  /* @__PURE__ */ jsx8("span", { style: { fontSize: 11, lineHeight: 1.35, color: EDITOR_CHROME.textMuted }, children: skill.description })
+                                  /* @__PURE__ */ jsx8("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: skill.label }),
+                                  /* @__PURE__ */ jsx8(CloseOutlined2, { style: { fontSize: 9, color: EDITOR_CHROME.textMuted } })
                                 ]
                               },
                               skill.id
-                            );
-                          })
-                        }
-                      ) : null
-                    ]
-                  }
-                ),
-                /* @__PURE__ */ jsx8(PromptImageStrip, { images, onRemoveImage: (imageId) => {
-                  void onRemoveImage(imageId);
-                } }),
-                annotationEditorOpen && showAnnotationMarkdownEditorButton ? /* @__PURE__ */ jsxs7(
+                            ))
+                          }
+                        ) : null,
+                        /* @__PURE__ */ jsx8(
+                          Input3.TextArea,
+                          {
+                            className: "we-runtime-prompt-card__textarea",
+                            value: draftNote,
+                            disabled: !canEditNote,
+                            readOnly: inlineTextEditing,
+                            tabIndex: inlineTextEditing ? -1 : 0,
+                            allowClear: true,
+                            autoSize: { minRows: 1, maxRows: 4 },
+                            placeholder: notePlaceholder,
+                            variant: "borderless",
+                            styles: {
+                              textarea: {
+                                color: EDITOR_CHROME.textPrimary,
+                                background: "transparent",
+                                minHeight: 32,
+                                padding: "6px 10px",
+                                fontSize: 12.5,
+                                lineHeight: 1.55,
+                                caretColor: EDITOR_CHROME.textPrimary
+                              }
+                            },
+                            style: {
+                              borderRadius: 12,
+                              background: "transparent",
+                              borderColor: "transparent",
+                              boxShadow: "none"
+                            },
+                            onChange: (event) => {
+                              onDraftChange(event.target.value);
+                            },
+                            onFocus: (event) => {
+                              if (!inlineTextEditing) return;
+                              event.currentTarget.blur();
+                            },
+                            onPasteCapture: onNotePasteCapture,
+                            onKeyDown: handlePromptKeyDown,
+                            onBlur: (event) => {
+                              const nextTarget = event.relatedTarget;
+                              if (nextTarget instanceof Node && noteComposerRef.current?.contains(nextTarget)) {
+                                return;
+                              }
+                              if (!noteDirty && !selectedSkillsDirty) return;
+                              void onConfirmNoteWithSelectedSkills();
+                            }
+                          }
+                        ),
+                        skillMenuOpen ? /* @__PURE__ */ jsx8(
+                          "div",
+                          {
+                            "data-we-prompt-card-skill-menu": "true",
+                            style: {
+                              position: "absolute",
+                              left: 0,
+                              right: 0,
+                              top: "calc(100% + 6px)",
+                              zIndex: 1,
+                              display: "flex",
+                              flexDirection: "column",
+                              overflow: "hidden",
+                              borderRadius: 10,
+                              background: EDITOR_CHROME.surfaceElevated,
+                              border: `1px solid ${EDITOR_CHROME.borderStrong}`,
+                              boxShadow: EDITOR_CHROME.shadowCompact
+                            },
+                            children: filteredSkills.map((skill) => {
+                              const selected = selectedSkills.some((selectedSkill) => selectedSkill.id === skill.id);
+                              return /* @__PURE__ */ jsxs7(
+                                "button",
+                                {
+                                  type: "button",
+                                  disabled: selected,
+                                  style: {
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "flex-start",
+                                    gap: 2,
+                                    border: 0,
+                                    background: selected ? EDITOR_CHROME.surfaceInteractive : "transparent",
+                                    color: selected ? EDITOR_CHROME.textMuted : EDITOR_CHROME.textPrimary,
+                                    padding: "8px 10px",
+                                    textAlign: "left",
+                                    cursor: selected ? "default" : "pointer"
+                                  },
+                                  onMouseDown: (event) => {
+                                    event.preventDefault();
+                                  },
+                                  onClick: () => {
+                                    if (!selected) {
+                                      handleSkillSelect(skill);
+                                    }
+                                  },
+                                  children: [
+                                    /* @__PURE__ */ jsx8("span", { style: { fontSize: 12, fontWeight: 600, lineHeight: 1.35 }, children: skill.label }),
+                                    /* @__PURE__ */ jsx8("span", { style: { fontSize: 11, lineHeight: 1.35, color: EDITOR_CHROME.textMuted }, children: skill.description })
+                                  ]
+                                },
+                                skill.id
+                              );
+                            })
+                          }
+                        ) : null
+                      ]
+                    }
+                  ),
+                  /* @__PURE__ */ jsx8(PromptImageStrip, { images, onRemoveImage: (imageId) => {
+                    void onRemoveImage(imageId);
+                  } })
+                ] }) : null,
+                showAnnotationMarkdownEditor ? /* @__PURE__ */ jsxs7(
                   "div",
                   {
                     "data-we-prompt-primary-focus-exempt": "true",
@@ -14583,9 +15406,9 @@ var PromptCardView = React9.forwardRef(
                         {
                           className: "we-runtime-prompt-card__textarea",
                           value: annotationDraftMarkdown,
-                          disabled: annotationLoading,
+                          disabled: annotationLoading || annotationManualEditDisabled,
                           autoSize: { minRows: 4, maxRows: 10 },
-                          placeholder: "\u8F93\u5165\u9700\u6C42\u6807\u6CE8\uFF0C\u652F\u6301 Markdown \u683C\u5F0F",
+                          placeholder: ANNOTATION_MARKDOWN_PLACEHOLDER,
                           variant: "borderless",
                           styles: {
                             textarea: {
@@ -14620,7 +15443,18 @@ var PromptCardView = React9.forwardRef(
                             }
                           }
                         }
-                      )
+                      ),
+                      annotationManualEditMessage ? /* @__PURE__ */ jsx8(
+                        "div",
+                        {
+                          style: {
+                            fontSize: 11,
+                            lineHeight: 1.45,
+                            color: EDITOR_CHROME.textMuted
+                          },
+                          children: annotationManualEditMessage
+                        }
+                      ) : null
                     ]
                   }
                 ) : null,
@@ -14677,12 +15511,12 @@ var PromptCardView = React9.forwardRef(
                     ]
                   }
                 ) : null,
-                currentGenieTask ? /* @__PURE__ */ jsxs7("div", { style: { display: "flex", alignItems: "flex-start", gap: 6, padding: "2px 4px 0", marginTop: -2 }, children: [
-                  currentGenieTask.status === "completed" ? /* @__PURE__ */ jsx8(CheckCircleFilled, { style: { color: "#22c55e", fontSize: 13, marginTop: 3 } }) : currentGenieTask.status === "error" ? /* @__PURE__ */ jsx8(ExclamationCircleFilled, { style: { color: "#ef4444", fontSize: 13, marginTop: 3 } }) : /* @__PURE__ */ jsx8("div", { style: { marginTop: 2 }, children: /* @__PURE__ */ jsx8(GenieSparkleIcon, {}) }),
+                currentAgentTask ? /* @__PURE__ */ jsxs7("div", { style: { display: "flex", alignItems: "flex-start", gap: 6, padding: "2px 4px 0", marginTop: -2 }, children: [
+                  currentAgentTask.status === "completed" ? /* @__PURE__ */ jsx8(CheckCircleFilled, { style: { color: "#22c55e", fontSize: 13, marginTop: 3 } }) : currentAgentTask.status === "error" ? /* @__PURE__ */ jsx8(ExclamationCircleFilled, { style: { color: "#ef4444", fontSize: 13, marginTop: 3 } }) : /* @__PURE__ */ jsx8("div", { style: { marginTop: 2 }, children: /* @__PURE__ */ jsx8(AgentSparkleIcon, {}) }),
                   /* @__PURE__ */ jsxs7("div", { style: { display: "flex", flexDirection: "column", flex: 1, minWidth: 0, overflow: "hidden" }, children: [
                     /* @__PURE__ */ jsxs7("div", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0 }, children: [
-                      /* @__PURE__ */ jsx8("span", { style: { fontSize: 12, fontWeight: 500, color: currentGenieTask.status === "error" ? "#ef4444" : EDITOR_CHROME.textPrimary }, children: currentGenieTask.status === "pending" ? "AI \u51C6\u5907\u4E2D" : currentGenieTask.status === "created" ? "AI \u6B63\u5728\u4FEE\u6539" : currentGenieTask.status === "completed" ? "AI \u4FEE\u6539\u5B8C\u6210" : "AI \u4FEE\u6539\u5931\u8D25" }),
-                      currentGenieTask.status === "error" && currentTaskErrorMessage ? /* @__PURE__ */ jsx8(
+                      /* @__PURE__ */ jsx8("span", { style: { fontSize: 12, fontWeight: 500, color: currentAgentTask.status === "error" ? "#ef4444" : EDITOR_CHROME.textPrimary }, children: currentAgentTask.status === "pending" ? "AI \u51C6\u5907\u4E2D" : currentAgentTask.status === "created" ? "AI \u6B63\u5728\u4FEE\u6539" : currentAgentTask.status === "completed" ? "AI \u4FEE\u6539\u5B8C\u6210" : "AI \u4FEE\u6539\u5931\u8D25" }),
+                      currentAgentTask.status === "error" && currentTaskErrorMessage ? /* @__PURE__ */ jsx8(
                         IconActionButton,
                         {
                           title: "\u590D\u5236\u9519\u8BEF\u4FE1\u606F",
@@ -14715,7 +15549,7 @@ var PromptCardView = React9.forwardRef(
                         },
                         children: [
                           currentTaskDescription,
-                          currentGenieTask.sessionId ? ` \xB7 Session ${currentGenieTask.sessionId}` : ""
+                          currentAgentTask.sessionId ? ` \xB7 Session ${currentAgentTask.sessionId}` : ""
                         ]
                       }
                     ) : null
@@ -14755,28 +15589,30 @@ var PromptCardView = React9.forwardRef(
 );
 
 // src/ui/runtime/property-panel-view.tsx
-import React14 from "react";
+import React13 from "react";
 import {
   CheckCircleFilled as CheckCircleFilled2,
-  CloseOutlined as CloseOutlined3,
-  ColumnWidthOutlined,
   CopyOutlined as CopyOutlined2,
   DeleteOutlined as DeleteOutlined3,
   CaretRightFilled as CaretRightFilled2,
   ExclamationCircleFilled as ExclamationCircleFilled2,
+  FolderOpenOutlined,
+  HomeOutlined,
+  ArrowLeftOutlined,
   QuestionCircleOutlined,
   LinkOutlined as LinkOutlined3,
-  MoonFilled,
   MoonOutlined,
+  PoweroffOutlined,
   ReloadOutlined,
   RightOutlined,
+  SelectOutlined,
   SettingOutlined,
   SlidersOutlined,
   StopOutlined
 } from "@ant-design/icons";
 
 // src/utils/page-animation-toggle.ts
-var STYLE_TAG_ID = "__genie_no_animations__";
+var STYLE_TAG_ID = "__commentary_no_animations__";
 var DISABLE_ANIMATIONS_CSS = `
 /* Commentary: page animations disabled */
 *, *::before, *::after {
@@ -14875,10 +15711,14 @@ function setPageAnimationsDisabled(disabled) {
 // src/ui/runtime/property-panel-view.tsx
 import {
   Button as Button4,
+  Checkbox,
   Dropdown,
+  Input as Input5,
+  InputNumber as InputNumber3,
   Modal as Modal2,
   Popconfirm as Popconfirm2,
   Popover as Popover2,
+  Select as Select3,
   Space as Space2,
   Switch as Switch2,
   Timeline,
@@ -15043,505 +15883,6 @@ function setPageZoomEnabled(enabled, options = {}) {
   applyPageZoom();
   attachResizeHandler();
 }
-
-// src/ui/genie-brand.tsx
-import React10 from "react";
-import { AnimatePresence as AnimatePresence2, motion as motion2 } from "motion/react";
-import { LoadingOutlined as LoadingOutlined2 } from "@ant-design/icons";
-import { Fragment as Fragment5, jsx as jsx9, jsxs as jsxs8 } from "react/jsx-runtime";
-function getGenieBrandPalette(themeMode) {
-  return themeMode === "dark" ? {
-    activeColor: "#00d68f",
-    inactiveColor: "#71717a",
-    activeBackground: "rgba(0, 143, 93, 0.10)",
-    activeInsetShadow: "inset 0 0 8px rgba(0, 143, 93, 0.10)",
-    sleepingHoverBackground: "rgba(39, 39, 42, 0.50)",
-    sleepingHoverShadow: "inset 0 0 8px rgba(255, 255, 255, 0.03)"
-  } : {
-    activeColor: "#008f5d",
-    inactiveColor: "#a1a1aa",
-    activeBackground: "rgba(0, 143, 93, 0.05)",
-    activeInsetShadow: "inset 0 0 8px rgba(0, 143, 93, 0.05)",
-    sleepingHoverBackground: "#f4f4f5",
-    sleepingHoverShadow: "inset 0 0 8px rgba(15, 23, 42, 0.03)"
-  };
-}
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-function AIFace(props) {
-  const { state: state2, themeMode, hovered, mousePos, dragVelocity, size } = props;
-  const [isBlinking, setIsBlinking] = React10.useState(false);
-  const isDark = themeMode === "dark";
-  const isActive = state2 !== "sleeping";
-  const isWorking = state2 === "working";
-  const isDragging = state2 === "dragging";
-  const { activeColor, inactiveColor } = getGenieBrandPalette(themeMode);
-  React10.useEffect(() => {
-    if (!isActive) {
-      setIsBlinking(false);
-      return;
-    }
-    let disposed = false;
-    const blinkInterval = window.setInterval(() => {
-      if (disposed || Math.random() <= 0.3) return;
-      setIsBlinking(true);
-      window.setTimeout(() => {
-        if (!disposed) {
-          setIsBlinking(false);
-        }
-      }, 150);
-      if (Math.random() > 0.5) {
-        window.setTimeout(() => {
-          if (disposed) return;
-          setIsBlinking(true);
-          window.setTimeout(() => {
-            if (!disposed) {
-              setIsBlinking(false);
-            }
-          }, 150);
-        }, 250);
-      }
-    }, 3e3);
-    return () => {
-      disposed = true;
-      window.clearInterval(blinkInterval);
-    };
-  }, [isActive]);
-  const eyeHeight = !isActive ? 2 : isDragging ? 7 : isWorking ? 6 : isBlinking ? 0.5 : hovered ? 7.5 : 6;
-  const baseEyeY = !isActive ? 11 : isDragging ? 8 : isBlinking ? 12 : 9;
-  let offsetX = isActive && hovered && !isDragging ? mousePos.x * 2.5 : 0;
-  let offsetY = isActive && hovered && !isDragging ? mousePos.y * 2.5 : 0;
-  if (isDragging) {
-    offsetX = clamp(dragVelocity.x / 120, -6, 6);
-    offsetY = clamp(dragVelocity.y / 120, -4, 4);
-  }
-  const eyeY = baseEyeY + offsetY;
-  const windBend = isDragging ? clamp(-dragVelocity.x / 14, -60, 60) : 0;
-  const eyeColor = isActive ? activeColor : inactiveColor;
-  const iconSize = Math.max(20, Math.round(size * 0.56));
-  return /* @__PURE__ */ jsxs8(
-    motion2.svg,
-    {
-      width: iconSize,
-      height: iconSize,
-      viewBox: "0 0 24 24",
-      "aria-hidden": "true",
-      "data-genie-face-state": state2,
-      style: {
-        position: "relative",
-        zIndex: 1,
-        overflow: "visible",
-        display: "block",
-        pointerEvents: "none"
-      },
-      animate: isActive ? {
-        y: [0, -2.5, 0, 2.5, 0],
-        rotate: [0, -3, 0, 3, 0]
-      } : {
-        y: 0,
-        rotate: 0
-      },
-      transition: { duration: 3, repeat: Infinity, ease: "easeInOut" },
-      children: [
-        /* @__PURE__ */ jsx9(
-          motion2.rect,
-          {
-            initial: false,
-            animate: isDragging ? {
-              x: 4 + offsetX,
-              y: eyeY - 3,
-              width: 6,
-              height: 8,
-              rx: 3,
-              rotate: windBend * 0.2,
-              fill: activeColor
-            } : isWorking ? {
-              x: 4 + offsetX,
-              y: eyeY - 2,
-              width: 6,
-              height: 6,
-              rx: 3,
-              rotate: 0,
-              fill: activeColor
-            } : {
-              x: (isActive ? 5 : 4) + offsetX,
-              y: eyeY,
-              width: isActive ? hovered ? 4.5 : 4 : 5,
-              height: eyeHeight,
-              rx: isActive ? 2 : 1,
-              rotate: 0,
-              fill: eyeColor
-            },
-            transition: { type: "spring", stiffness: 400, damping: 25 },
-            style: { transformOrigin: "center" }
-          }
-        ),
-        /* @__PURE__ */ jsx9(
-          motion2.rect,
-          {
-            initial: false,
-            animate: isDragging ? {
-              x: 14 + offsetX,
-              y: eyeY - 3,
-              width: 6,
-              height: 8,
-              rx: 3,
-              rotate: windBend * 0.2,
-              fill: activeColor
-            } : isWorking ? {
-              x: 14 + offsetX,
-              y: eyeY - 2,
-              width: 6,
-              height: 6,
-              rx: 3,
-              rotate: 0,
-              fill: activeColor
-            } : {
-              x: 15 + offsetX,
-              y: eyeY,
-              width: isActive ? hovered ? 4.5 : 4 : 5,
-              height: eyeHeight,
-              rx: isActive ? 2 : 1,
-              rotate: 0,
-              fill: eyeColor
-            },
-            transition: { type: "spring", stiffness: 400, damping: 25 },
-            style: { transformOrigin: "center" }
-          }
-        ),
-        /* @__PURE__ */ jsx9(AnimatePresence2, { children: isActive ? /* @__PURE__ */ jsxs8(
-          motion2.g,
-          {
-            initial: { opacity: 0 },
-            animate: { opacity: 1, transition: { duration: 0.4 } },
-            exit: { opacity: 0, transition: { duration: 0.4, delay: 0.1 } },
-            children: [
-              /* @__PURE__ */ jsxs8(
-                motion2.g,
-                {
-                  animate: isDragging ? { rotate: windBend } : isWorking ? { rotate: [-2, 2, -2] } : { rotate: [-4, 6, -4] },
-                  transition: isDragging ? { type: "spring", stiffness: 200, damping: 10 } : isWorking ? { duration: 0.1, repeat: Infinity } : { duration: 3.5, repeat: Infinity, ease: "easeInOut" },
-                  style: { transformOrigin: "11px -6px" },
-                  children: [
-                    /* @__PURE__ */ jsx9(
-                      motion2.path,
-                      {
-                        initial: { d: "M 11 -6 C 15 -10 21 -8 24 -2" },
-                        animate: isDragging ? { d: "M 11 -6 Q 7 -16 4 -24" } : isWorking ? { d: "M 11 -6 Q 8 -16 5 -26" } : { d: "M 11 -6 C 11 -16 15 -24 22 -26" },
-                        exit: { d: "M 11 -6 C 15 -10 21 -8 24 -2" },
-                        transition: { duration: 0.3, ease: "easeInOut" },
-                        stroke: activeColor,
-                        strokeWidth: "2",
-                        fill: "none",
-                        strokeLinecap: "round"
-                      }
-                    ),
-                    /* @__PURE__ */ jsx9(
-                      motion2.circle,
-                      {
-                        initial: { cx: 24, cy: -2 },
-                        animate: isDragging ? { cx: 4, cy: -24 } : isWorking ? { cx: 5, cy: -26 } : { cx: 22, cy: -26 },
-                        exit: { cx: 24, cy: -2 },
-                        transition: { duration: 0.3, ease: "easeInOut" },
-                        r: "1.5",
-                        fill: activeColor
-                      }
-                    ),
-                    /* @__PURE__ */ jsx9(AnimatePresence2, { children: isWorking ? /* @__PURE__ */ jsx9(
-                      motion2.circle,
-                      {
-                        initial: { cx: 5, cy: -26, r: 1, opacity: 0.8 },
-                        animate: { r: 8, opacity: 0 },
-                        exit: { opacity: 0 },
-                        transition: { duration: 0.6, repeat: Infinity, ease: "easeOut" },
-                        fill: "none",
-                        stroke: activeColor,
-                        strokeWidth: "1.5"
-                      }
-                    ) : null })
-                  ]
-                }
-              ),
-              /* @__PURE__ */ jsxs8(
-                motion2.g,
-                {
-                  animate: isDragging ? { rotate: windBend } : isWorking ? { rotate: [-2, 2, -2] } : { rotate: [-3, 5, -3] },
-                  transition: isDragging ? { type: "spring", stiffness: 200, damping: 10 } : isWorking ? { duration: 0.1, repeat: Infinity, delay: 0.05 } : { duration: 3.5, repeat: Infinity, ease: "easeInOut", delay: 0.2 },
-                  style: { transformOrigin: "13px -5px" },
-                  children: [
-                    /* @__PURE__ */ jsx9(
-                      motion2.path,
-                      {
-                        initial: { d: "M 13 -5 C 17 -8 23 -5 26 2" },
-                        animate: isDragging ? { d: "M 13 -5 Q 17 -15 20 -23" } : isWorking ? { d: "M 13 -5 Q 16 -15 19 -25" } : { d: "M 13 -5 C 13 -12 18 -18 26 -19" },
-                        exit: { d: "M 13 -5 C 17 -8 23 -5 26 2" },
-                        transition: { duration: 0.3, ease: "easeInOut" },
-                        stroke: activeColor,
-                        strokeWidth: "2",
-                        fill: "none",
-                        strokeLinecap: "round"
-                      }
-                    ),
-                    /* @__PURE__ */ jsx9(
-                      motion2.circle,
-                      {
-                        initial: { cx: 26, cy: 2 },
-                        animate: isDragging ? { cx: 20, cy: -23 } : isWorking ? { cx: 19, cy: -25 } : { cx: 26, cy: -19 },
-                        exit: { cx: 26, cy: 2 },
-                        transition: { duration: 0.3, ease: "easeInOut" },
-                        r: "1.5",
-                        fill: activeColor
-                      }
-                    ),
-                    /* @__PURE__ */ jsx9(AnimatePresence2, { children: isWorking ? /* @__PURE__ */ jsx9(
-                      motion2.circle,
-                      {
-                        initial: { cx: 19, cy: -25, r: 1, opacity: 0.8 },
-                        animate: { r: 8, opacity: 0 },
-                        exit: { opacity: 0 },
-                        transition: { duration: 0.6, repeat: Infinity, ease: "easeOut", delay: 0.2 },
-                        fill: "none",
-                        stroke: activeColor,
-                        strokeWidth: "1.5"
-                      }
-                    ) : null })
-                  ]
-                }
-              )
-            ]
-          },
-          "hair-tennae"
-        ) : null }),
-        /* @__PURE__ */ jsx9(AnimatePresence2, { children: isActive && !isBlinking && !isWorking && !isDragging ? /* @__PURE__ */ jsxs8(Fragment5, { children: [
-          /* @__PURE__ */ jsx9(
-            motion2.circle,
-            {
-              initial: { opacity: 0, scale: 0 },
-              animate: { opacity: 0.5, scale: 1 },
-              exit: { opacity: 0, scale: 0 },
-              cx: "3",
-              cy: "14",
-              r: "2",
-              fill: activeColor
-            }
-          ),
-          /* @__PURE__ */ jsx9(
-            motion2.circle,
-            {
-              initial: { opacity: 0, scale: 0 },
-              animate: { opacity: 0.5, scale: 1 },
-              exit: { opacity: 0, scale: 0 },
-              cx: "21",
-              cy: "14",
-              r: "2",
-              fill: activeColor
-            }
-          )
-        ] }) : null })
-      ]
-    }
-  );
-}
-function SleepingZzz(props) {
-  const { inactiveColor } = getGenieBrandPalette(props.themeMode);
-  return /* @__PURE__ */ jsx9(
-    "div",
-    {
-      "aria-hidden": "true",
-      style: {
-        position: "absolute",
-        inset: 0,
-        pointerEvents: "none",
-        overflow: "visible"
-      },
-      children: [0, 1, 2].map((index) => /* @__PURE__ */ jsx9(
-        motion2.div,
-        {
-          style: {
-            position: "absolute",
-            top: 0,
-            right: 0,
-            fontSize: 10,
-            fontWeight: 700,
-            color: inactiveColor,
-            lineHeight: 1
-          },
-          initial: { opacity: 0, y: 0, x: 0, scale: 0.5 },
-          animate: {
-            opacity: [0, 1, 0],
-            y: -10 - index * 6,
-            x: 5 + index * 4,
-            scale: [0.5, 1, 1.2]
-          },
-          transition: {
-            duration: 3,
-            repeat: Infinity,
-            delay: index * 1,
-            ease: "easeOut"
-          },
-          children: "z"
-        },
-        index
-      ))
-    }
-  );
-}
-var GenieBrandButton = React10.forwardRef(
-  function GenieBrandButton2(props, ref) {
-    const {
-      state: state2,
-      size = 36,
-      disabled = false,
-      loading = false,
-      title = state2 === "awake" ? "AI \u5DF2\u6253\u5F00" : "\u6253\u5F00 AI",
-      themeMode = "light",
-      dragVelocity = { x: 0, y: 0 },
-      onClick,
-      onMouseEnter,
-      onMouseLeave,
-      onMouseMove,
-      style,
-      type = "button",
-      ...buttonProps
-    } = props;
-    const [hovered, setHovered] = React10.useState(false);
-    const [mousePos, setMousePos] = React10.useState({ x: 0, y: 0 });
-    const isDark = themeMode === "dark";
-    const isActive = state2 !== "sleeping";
-    const isWorking = state2 === "working";
-    const palette = getGenieBrandPalette(themeMode);
-    const handleMouseMove = React10.useCallback(
-      (event) => {
-        if (!isActive || disabled || state2 === "dragging") return;
-        const rect = event.currentTarget.getBoundingClientRect();
-        const x = clamp((event.clientX - rect.left) / rect.width * 2 - 1, -1, 1);
-        const y = clamp((event.clientY - rect.top) / rect.height * 2 - 1, -1, 1);
-        setMousePos({ x, y });
-      },
-      [disabled, isActive, state2]
-    );
-    const background = isActive ? palette.activeBackground : hovered ? palette.sleepingHoverBackground : "transparent";
-    const boxShadow = isActive ? palette.activeInsetShadow : hovered ? palette.sleepingHoverShadow : "none";
-    return /* @__PURE__ */ jsxs8(
-      "button",
-      {
-        ...buttonProps,
-        ref,
-        type,
-        "aria-label": title,
-        title,
-        disabled,
-        "data-we-no-drag": "true",
-        "data-genie-state": state2,
-        "data-theme": themeMode,
-        onClick,
-        onMouseEnter: (event) => {
-          onMouseEnter?.(event);
-          setHovered(true);
-        },
-        onMouseLeave: (event) => {
-          onMouseLeave?.(event);
-          setHovered(false);
-          setMousePos({ x: 0, y: 0 });
-        },
-        onMouseMove: (event) => {
-          onMouseMove?.(event);
-          handleMouseMove(event);
-        },
-        style: {
-          position: "relative",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: size,
-          height: size,
-          padding: 0,
-          border: "none",
-          borderRadius: 999,
-          background,
-          boxShadow,
-          color: isActive ? palette.activeColor : palette.inactiveColor,
-          cursor: disabled ? "default" : "pointer",
-          transition: "transform 220ms ease, box-shadow 240ms ease, background-color 240ms ease",
-          overflow: "visible",
-          outline: "none",
-          pointerEvents: "auto",
-          touchAction: "manipulation",
-          WebkitTapHighlightColor: "transparent",
-          userSelect: "none",
-          ...style
-        },
-        children: [
-          /* @__PURE__ */ jsx9(AnimatePresence2, { children: isActive ? /* @__PURE__ */ jsxs8(Fragment5, { children: [
-            /* @__PURE__ */ jsx9(
-              motion2.div,
-              {
-                initial: { opacity: 0, scale: 0.8 },
-                animate: { opacity: 1, scale: 1 },
-                exit: { opacity: 0, scale: 0.8 },
-                transition: { duration: 0.5 },
-                style: {
-                  position: "absolute",
-                  inset: 0,
-                  borderRadius: 999,
-                  background: "rgba(0, 143, 93, 0.20)",
-                  filter: "blur(12px)",
-                  pointerEvents: "none"
-                }
-              },
-              "genie-face-glow"
-            ),
-            isWorking ? /* @__PURE__ */ jsx9(
-              motion2.div,
-              {
-                "data-genie-working-ring": "true",
-                initial: { opacity: 0.8, scale: 1 },
-                animate: { opacity: 0, scale: 1.6 },
-                exit: { opacity: 0 },
-                transition: { duration: 1.5, repeat: Infinity, ease: "easeOut" },
-                style: {
-                  position: "absolute",
-                  inset: 0,
-                  borderRadius: 999,
-                  border: `1px solid ${isDark ? "rgba(0, 214, 143, 0.40)" : "rgba(0, 143, 93, 0.35)"}`,
-                  pointerEvents: "none"
-                }
-              },
-              "genie-working-ring"
-            ) : null
-          ] }) : null }),
-          loading ? /* @__PURE__ */ jsx9(
-            LoadingOutlined2,
-            {
-              spin: true,
-              style: {
-                position: "relative",
-                zIndex: 1,
-                fontSize: Math.max(16, Math.round(size * 0.42)),
-                color: palette.activeColor
-              }
-            }
-          ) : /* @__PURE__ */ jsxs8(Fragment5, { children: [
-            /* @__PURE__ */ jsx9(
-              AIFace,
-              {
-                state: state2,
-                themeMode,
-                hovered,
-                mousePos,
-                dragVelocity,
-                size
-              }
-            ),
-            /* @__PURE__ */ jsx9(AnimatePresence2, { children: !isActive ? /* @__PURE__ */ jsx9(SleepingZzz, { themeMode }) : null })
-          ] })
-        ]
-      }
-    );
-  }
-);
-GenieBrandButton.displayName = "GenieBrandButton";
 
 // src/ui/floating-drag.ts
 var WINDOW_CAPTURE = { capture: true, passive: false };
@@ -15980,12 +16321,12 @@ function dockFloatingPanelRight(options) {
 }
 
 // src/ui/property-panel/react-page-tweak-panel.tsx
-import React12 from "react";
+import React11 from "react";
 import { DeleteOutlined as DeleteOutlined2, LinkOutlined as LinkOutlined2 } from "@ant-design/icons";
 import { Button as Button3, Collapse as Collapse2, Empty as Empty4, Tooltip as Tooltip4 } from "antd";
 
 // src/ui/property-panel/react-tweak-panel.tsx
-import React11 from "react";
+import React10 from "react";
 import { CaretRightOutlined, InfoCircleOutlined } from "@ant-design/icons";
 import {
   ColorPicker as ColorPicker2,
@@ -15998,17 +16339,17 @@ import {
   Tooltip as Tooltip3,
   Typography
 } from "antd";
-import { jsx as jsx10, jsxs as jsxs9 } from "react/jsx-runtime";
+import { jsx as jsx9, jsxs as jsxs8 } from "react/jsx-runtime";
 function InfoTooltipIcon(props) {
   const { title } = props;
-  return /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9(
     Tooltip3,
     {
       title,
       placement: "left",
       arrow: { pointAtCenter: true },
       getPopupContainer: resolveRuntimePopupContainer,
-      children: /* @__PURE__ */ jsx10(InfoCircleOutlined, { className: "we-runtime-config-panel__info-icon" })
+      children: /* @__PURE__ */ jsx9(InfoCircleOutlined, { className: "we-runtime-config-panel__info-icon" })
     }
   );
 }
@@ -16044,23 +16385,23 @@ function asBooleanValue(value) {
 function AttrLabel(props) {
   const { config, canCollapse = false, collapsed = false, onClick } = props;
   if (!config.displayName) return null;
-  return /* @__PURE__ */ jsxs9(
+  return /* @__PURE__ */ jsxs8(
     "div",
     {
       className: "we-runtime-config-panel__attr-label",
       style: { cursor: onClick ? "pointer" : "default" },
       onClick,
       children: [
-        canCollapse ? /* @__PURE__ */ jsx10(
+        canCollapse ? /* @__PURE__ */ jsx9(
           CaretRightOutlined,
           {
             rotate: collapsed ? 0 : 90,
             className: "we-runtime-config-panel__collapse-icon"
           }
         ) : null,
-        /* @__PURE__ */ jsx10("div", { className: "we-runtime-config-panel__label-main", children: /* @__PURE__ */ jsxs9("span", { className: "we-runtime-config-panel__label-inline", children: [
-          /* @__PURE__ */ jsx10("span", { className: "we-runtime-config-panel__label-text", children: config.displayName }),
-          config.info ? /* @__PURE__ */ jsx10(InfoTooltipIcon, { title: config.info }) : null
+        /* @__PURE__ */ jsx9("div", { className: "we-runtime-config-panel__label-main", children: /* @__PURE__ */ jsxs8("span", { className: "we-runtime-config-panel__label-inline", children: [
+          /* @__PURE__ */ jsx9("span", { className: "we-runtime-config-panel__label-text", children: config.displayName }),
+          config.info ? /* @__PURE__ */ jsx9(InfoTooltipIcon, { title: config.info }) : null
         ] }) })
       ]
     }
@@ -16068,14 +16409,14 @@ function AttrLabel(props) {
 }
 function BaseComponent(props) {
   const { config, multiline = false, controlClassName, children } = props;
-  return /* @__PURE__ */ jsxs9(
+  return /* @__PURE__ */ jsxs8(
     "div",
     {
       className: "we-runtime-config-panel__attr-component",
       "data-multiline": multiline ? "true" : "false",
       children: [
-        /* @__PURE__ */ jsx10(AttrLabel, { config }),
-        /* @__PURE__ */ jsx10(
+        /* @__PURE__ */ jsx9(AttrLabel, { config }),
+        /* @__PURE__ */ jsx9(
           "div",
           {
             className: ["we-runtime-config-panel__control", controlClassName].filter(Boolean).join(" "),
@@ -16090,7 +16431,7 @@ function TextComponent(props) {
   const { config, attributes } = props;
   const value = asStringValue(readValue(attributes, config));
   if (config.hint) {
-    return /* @__PURE__ */ jsx10("div", { className: "we-runtime-config-panel__hint", children: /* @__PURE__ */ jsx10(
+    return /* @__PURE__ */ jsx9("div", { className: "we-runtime-config-panel__hint", children: /* @__PURE__ */ jsx9(
       Typography.Text,
       {
         className: "we-runtime-config-panel__hint-text",
@@ -16099,9 +16440,9 @@ function TextComponent(props) {
       }
     ) });
   }
-  return /* @__PURE__ */ jsxs9("div", { className: "we-runtime-config-panel__text-row", children: [
-    config.displayName ? /* @__PURE__ */ jsx10(AttrLabel, { config }) : null,
-    /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsxs8("div", { className: "we-runtime-config-panel__text-row", children: [
+    config.displayName ? /* @__PURE__ */ jsx9(AttrLabel, { config }) : null,
+    /* @__PURE__ */ jsx9(
       Typography.Text,
       {
         className: "we-runtime-config-panel__text",
@@ -16113,7 +16454,7 @@ function TextComponent(props) {
 }
 function InputComponent(props) {
   const { config, attributes, onChange } = props;
-  return /* @__PURE__ */ jsx10(BaseComponent, { config, children: /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9(BaseComponent, { config, children: /* @__PURE__ */ jsx9(
     Input4,
     {
       variant: "filled",
@@ -16130,13 +16471,13 @@ function InputComponent(props) {
 }
 function CustomTextAreaComponent(props) {
   const { config, attributes, onChange } = props;
-  return /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9(
     BaseComponent,
     {
       config,
       multiline: true,
       controlClassName: "we-runtime-config-panel__control--full",
-      children: /* @__PURE__ */ jsx10(
+      children: /* @__PURE__ */ jsx9(
         Input4.TextArea,
         {
           variant: "filled",
@@ -16158,7 +16499,7 @@ function CustomTextAreaComponent(props) {
 }
 function InputNumberComponent(props) {
   const { config, attributes, onChange } = props;
-  return /* @__PURE__ */ jsx10(BaseComponent, { config, children: /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9(BaseComponent, { config, children: /* @__PURE__ */ jsx9(
     InputNumber2,
     {
       variant: "filled",
@@ -16180,7 +16521,7 @@ function InputNumberComponent(props) {
 }
 function SelectComponent(props) {
   const { config, attributes, onChange } = props;
-  return /* @__PURE__ */ jsx10(BaseComponent, { config, children: /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9(BaseComponent, { config, children: /* @__PURE__ */ jsx9(
     Select2,
     {
       allowClear: true,
@@ -16203,13 +16544,13 @@ function SelectComponent(props) {
 }
 function SegmentedComponent(props) {
   const { config, attributes, onChange } = props;
-  return /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9(
     BaseComponent,
     {
       config,
       multiline: true,
       controlClassName: "we-runtime-config-panel__control--full",
-      children: /* @__PURE__ */ jsx10(
+      children: /* @__PURE__ */ jsx9(
         Segmented3,
         {
           block: true,
@@ -16218,9 +16559,9 @@ function SegmentedComponent(props) {
           value: readValue(attributes, config),
           options: (config.options ?? []).map((option) => ({
             value: option.value,
-            label: /* @__PURE__ */ jsxs9("span", { className: "we-runtime-config-panel__segmented-option", children: [
-              /* @__PURE__ */ jsx10("span", { className: "we-runtime-config-panel__segmented-option-label", children: option.label }),
-              option.description ? /* @__PURE__ */ jsx10("span", { className: "we-runtime-config-panel__segmented-option-description", children: option.description }) : null
+            label: /* @__PURE__ */ jsxs8("span", { className: "we-runtime-config-panel__segmented-option", children: [
+              /* @__PURE__ */ jsx9("span", { className: "we-runtime-config-panel__segmented-option-label", children: option.label }),
+              option.description ? /* @__PURE__ */ jsx9("span", { className: "we-runtime-config-panel__segmented-option-description", children: option.description }) : null
             ] })
           })),
           disabled: config.disabled,
@@ -16236,13 +16577,13 @@ function SegmentedComponent(props) {
 function CardSelectComponent(props) {
   const { config, attributes, onChange } = props;
   const currentValue = readValue(attributes, config);
-  return /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9(
     BaseComponent,
     {
       config,
       multiline: true,
       controlClassName: "we-runtime-config-panel__control--full",
-      children: /* @__PURE__ */ jsx10(
+      children: /* @__PURE__ */ jsx9(
         "div",
         {
           className: "we-runtime-config-panel__card-list",
@@ -16250,7 +16591,7 @@ function CardSelectComponent(props) {
           "aria-label": config.displayName ?? "\u5361\u7247\u9009\u62E9",
           children: (config.options ?? []).map((option) => {
             const selected = currentValue === option.value;
-            return /* @__PURE__ */ jsxs9(
+            return /* @__PURE__ */ jsxs8(
               "button",
               {
                 type: "button",
@@ -16267,8 +16608,8 @@ function CardSelectComponent(props) {
                   void onChange({ [config.attributeId]: option.value });
                 },
                 children: [
-                  /* @__PURE__ */ jsx10("span", { className: "we-runtime-config-panel__card-option-title", children: option.label }),
-                  option.description ? /* @__PURE__ */ jsx10("span", { className: "we-runtime-config-panel__card-option-description", children: option.description }) : null
+                  /* @__PURE__ */ jsx9("span", { className: "we-runtime-config-panel__card-option-title", children: option.label }),
+                  option.description ? /* @__PURE__ */ jsx9("span", { className: "we-runtime-config-panel__card-option-description", children: option.description }) : null
                 ]
               },
               String(option.value)
@@ -16281,7 +16622,7 @@ function CardSelectComponent(props) {
 }
 function SwitchComponent(props) {
   const { config, attributes, onChange } = props;
-  return /* @__PURE__ */ jsx10(BaseComponent, { config, controlClassName: "we-runtime-config-panel__control--auto", children: /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9(BaseComponent, { config, controlClassName: "we-runtime-config-panel__control--auto", children: /* @__PURE__ */ jsx9(
     Switch,
     {
       size: "small",
@@ -16297,7 +16638,7 @@ function SwitchComponent(props) {
 function ColorPickerComponent(props) {
   const { config, attributes, onChange } = props;
   const value = asStringValue(readValue(attributes, config)) || void 0;
-  return /* @__PURE__ */ jsx10(BaseComponent, { config, controlClassName: "we-runtime-config-panel__control--auto", children: /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9(BaseComponent, { config, controlClassName: "we-runtime-config-panel__control--auto", children: /* @__PURE__ */ jsx9(
     ColorPicker2,
     {
       size: "small",
@@ -16314,8 +16655,8 @@ function ColorPickerComponent(props) {
 }
 function GroupComponent(props) {
   const { config, attributes, onChange } = props;
-  const [collapsed, setCollapsed] = React11.useState(config.defaultExpanded === false);
-  return /* @__PURE__ */ jsxs9(
+  const [collapsed, setCollapsed] = React10.useState(config.defaultExpanded === false);
+  return /* @__PURE__ */ jsxs8(
     "div",
     {
       className: [
@@ -16323,7 +16664,7 @@ function GroupComponent(props) {
         config.displayType === "inline" ? "we-runtime-config-panel__group--inline" : ""
       ].filter(Boolean).join(" "),
       children: [
-        /* @__PURE__ */ jsx10(
+        /* @__PURE__ */ jsx9(
           AttrLabel,
           {
             config,
@@ -16332,14 +16673,14 @@ function GroupComponent(props) {
             onClick: () => setCollapsed((previous) => !previous)
           }
         ),
-        /* @__PURE__ */ jsx10(
+        /* @__PURE__ */ jsx9(
           "div",
           {
             className: [
               "we-runtime-config-panel__group-content",
               collapsed ? "we-runtime-config-panel__group-content--collapsed" : ""
             ].filter(Boolean).join(" "),
-            children: (config.children ?? []).map((child, index) => /* @__PURE__ */ jsx10(
+            children: (config.children ?? []).map((child, index) => /* @__PURE__ */ jsx9(
               AttributeTree,
               {
                 attributes,
@@ -16372,7 +16713,7 @@ function AttributeTree(props) {
     return null;
   }
   const Component = configComponents[titleCase(config.type)];
-  return Component ? /* @__PURE__ */ jsx10(Component, { ...props }) : null;
+  return Component ? /* @__PURE__ */ jsx9(Component, { ...props }) : null;
 }
 function convertFieldToConfig(field, values, disabled) {
   const common = {
@@ -16456,7 +16797,7 @@ function buildConfigNodes(schema, values, disabled) {
 function ReactTweakPanel(props) {
   const { schema, values, disabled = false, onChange } = props;
   if (!schema?.fields?.length) {
-    return /* @__PURE__ */ jsx10(
+    return /* @__PURE__ */ jsx9(
       Empty3,
       {
         image: Empty3.PRESENTED_IMAGE_SIMPLE,
@@ -16467,7 +16808,7 @@ function ReactTweakPanel(props) {
   }
   const attributes = values ?? {};
   const configNodes = buildConfigNodes(schema, values, disabled);
-  return /* @__PURE__ */ jsx10("div", { className: "we-runtime-prop-panel__body we-runtime-config-panel", children: configNodes.map((config, index) => /* @__PURE__ */ jsx10(
+  return /* @__PURE__ */ jsx9("div", { className: "we-runtime-prop-panel__body we-runtime-config-panel", children: configNodes.map((config, index) => /* @__PURE__ */ jsx9(
     AttributeTree,
     {
       attributes,
@@ -16481,7 +16822,7 @@ function ReactTweakPanel(props) {
 }
 
 // src/ui/property-panel/react-page-tweak-panel.tsx
-import { jsx as jsx11, jsxs as jsxs10 } from "react/jsx-runtime";
+import { jsx as jsx10, jsxs as jsxs9 } from "react/jsx-runtime";
 function resolveNextActivePageTweakKeys(params) {
   const { previousKeys, allKeys, initialized } = params;
   const validKeySet = new Set(allKeys);
@@ -16509,14 +16850,14 @@ function stopHeaderActionEvent(event) {
 }
 function HeaderActionButton(props) {
   const { title, icon, disabled = false, onClick } = props;
-  return /* @__PURE__ */ jsx11(
+  return /* @__PURE__ */ jsx10(
     Tooltip4,
     {
       title,
       placement: "left",
       arrow: { pointAtCenter: true },
       getPopupContainer: resolveRuntimePopupContainer,
-      children: /* @__PURE__ */ jsx11("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ jsx11(
+      children: /* @__PURE__ */ jsx10("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ jsx10(
         Button3,
         {
           type: "text",
@@ -16539,29 +16880,29 @@ function CollapseHeaderLabel(props) {
     onClear,
     onLocate
   } = props;
-  return /* @__PURE__ */ jsxs10("span", { className: "we-runtime-page-tweak-panel__header-row", children: [
-    /* @__PURE__ */ jsx11("span", { className: "we-runtime-page-tweak-panel__header-label", children: /* @__PURE__ */ jsx11("span", { className: "we-runtime-page-tweak-panel__header-label-text", children: title }) }),
-    /* @__PURE__ */ jsxs10(
+  return /* @__PURE__ */ jsxs9("span", { className: "we-runtime-page-tweak-panel__header-row", children: [
+    /* @__PURE__ */ jsx10("span", { className: "we-runtime-page-tweak-panel__header-label", children: /* @__PURE__ */ jsx10("span", { className: "we-runtime-page-tweak-panel__header-label-text", children: title }) }),
+    /* @__PURE__ */ jsxs9(
       "span",
       {
         className: "we-runtime-page-tweak-panel__header-actions",
         onClick: stopHeaderActionEvent,
         onPointerDown: stopHeaderActionEvent,
         children: [
-          /* @__PURE__ */ jsx11(
+          /* @__PURE__ */ jsx10(
             HeaderActionButton,
             {
               title: "\u6E05\u7A7A\u5F53\u524D\u5206\u7EC4\u7F16\u8F91",
-              icon: /* @__PURE__ */ jsx11(DeleteOutlined2, {}),
+              icon: /* @__PURE__ */ jsx10(DeleteOutlined2, {}),
               disabled: disabled || !onClear,
               onClick: onClear
             }
           ),
-          /* @__PURE__ */ jsx11(
+          /* @__PURE__ */ jsx10(
             HeaderActionButton,
             {
               title: "\u5B9A\u4F4D\u5F53\u524D\u5143\u7D20",
-              icon: /* @__PURE__ */ jsx11(LinkOutlined2, {}),
+              icon: /* @__PURE__ */ jsx10(LinkOutlined2, {}),
               disabled: disabled || !onLocate,
               onClick: onLocate
             }
@@ -16579,15 +16920,15 @@ function ReactPageTweakPanel(props) {
     onClearEntry,
     onLocateEntry
   } = props;
-  const allKeys = React12.useMemo(
+  const allKeys = React11.useMemo(
     () => entries.map((entry, index) => `${index}:${entry.schema.title ?? describeElement(entry.element)}`),
     [entries]
   );
-  const [activeKeys, setActiveKeys] = React12.useState(
+  const [activeKeys, setActiveKeys] = React11.useState(
     () => allKeys
   );
-  const activeKeysInitializedRef = React12.useRef(allKeys.length > 0);
-  React12.useEffect(() => {
+  const activeKeysInitializedRef = React11.useRef(allKeys.length > 0);
+  React11.useEffect(() => {
     setActiveKeys((previous) => {
       const resolved = resolveNextActivePageTweakKeys({
         previousKeys: previous,
@@ -16599,7 +16940,7 @@ function ReactPageTweakPanel(props) {
     });
   }, [allKeys]);
   if (entries.length <= 0) {
-    return /* @__PURE__ */ jsx11(
+    return /* @__PURE__ */ jsx10(
       Empty4,
       {
         image: Empty4.PRESENTED_IMAGE_SIMPLE,
@@ -16608,7 +16949,7 @@ function ReactPageTweakPanel(props) {
       }
     );
   }
-  return /* @__PURE__ */ jsx11("div", { className: "we-runtime-prop-panel__body", style: { gap: 8 }, children: /* @__PURE__ */ jsx11(
+  return /* @__PURE__ */ jsx10("div", { className: "we-runtime-prop-panel__body", style: { gap: 8 }, children: /* @__PURE__ */ jsx10(
     Collapse2,
     {
       className: "we-runtime-prop-panel__collapse",
@@ -16625,7 +16966,7 @@ function ReactPageTweakPanel(props) {
         const bodySchema = entry.schema.title ? { ...entry.schema, title: void 0, description: void 0 } : entry.schema;
         return {
           key,
-          label: /* @__PURE__ */ jsx11(
+          label: /* @__PURE__ */ jsx10(
             CollapseHeaderLabel,
             {
               title: headerLabel,
@@ -16638,7 +16979,7 @@ function ReactPageTweakPanel(props) {
               } : void 0
             }
           ),
-          children: /* @__PURE__ */ jsx11(
+          children: /* @__PURE__ */ jsx10(
             ReactTweakPanel,
             {
               schema: bodySchema,
@@ -16656,8 +16997,8 @@ function ReactPageTweakPanel(props) {
 }
 
 // src/ui/runtime/shortcut-capture-card.tsx
-import React13 from "react";
-import { jsx as jsx12, jsxs as jsxs11 } from "react/jsx-runtime";
+import React12 from "react";
+import { jsx as jsx11, jsxs as jsxs10 } from "react/jsx-runtime";
 var shortcutCaptureHintStyle = {
   fontSize: 11,
   color: EDITOR_CHROME.textMuted,
@@ -16679,10 +17020,10 @@ var shortcutCaptureCardStyle = {
   cursor: "pointer",
   font: "inherit"
 };
-var ShortcutCaptureCard = React13.forwardRef(
+var ShortcutCaptureCard = React12.forwardRef(
   function ShortcutCaptureCard2(props, ref) {
     const { label, value, capturing, onActivate, onCapture, onCancelCapture, onClear } = props;
-    return /* @__PURE__ */ jsxs11(
+    return /* @__PURE__ */ jsxs10(
       "button",
       {
         ref,
@@ -16706,10 +17047,10 @@ var ShortcutCaptureCard = React13.forwardRef(
           onCapture(normalized);
         },
         children: [
-          /* @__PURE__ */ jsx12("span", { style: { fontSize: 12, fontWeight: 600, color: EDITOR_CHROME.textSecondary }, children: label }),
-          /* @__PURE__ */ jsx12("span", { style: { fontSize: 18, fontWeight: 600, color: EDITOR_CHROME.textPrimary }, children: capturing ? "\u6309\u4E0B\u4FEE\u9970\u952E\u2026" : formatModifierShortcutLabel(value) }),
-          /* @__PURE__ */ jsx12("span", { style: shortcutCaptureHintStyle, children: capturing ? "\u4EC5\u652F\u6301 Shift / Alt / Ctrl / Command\uFF0C\u6309 Esc \u53D6\u6D88\u3002" : "\u70B9\u51FB\u540E\u5F55\u5165\u4E00\u4E2A\u4FEE\u9970\u952E\u3002" }),
-          value ? /* @__PURE__ */ jsx12(
+          /* @__PURE__ */ jsx11("span", { style: { fontSize: 12, fontWeight: 600, color: EDITOR_CHROME.textSecondary }, children: label }),
+          /* @__PURE__ */ jsx11("span", { style: { fontSize: 18, fontWeight: 600, color: EDITOR_CHROME.textPrimary }, children: capturing ? "\u6309\u4E0B\u4FEE\u9970\u952E\u2026" : formatModifierShortcutLabel(value) }),
+          /* @__PURE__ */ jsx11("span", { style: shortcutCaptureHintStyle, children: capturing ? "\u4EC5\u652F\u6301 Shift / Alt / Ctrl / Command\uFF0C\u6309 Esc \u53D6\u6D88\u3002" : "\u70B9\u51FB\u540E\u5F55\u5165\u4E00\u4E2A\u4FEE\u9970\u952E\u3002" }),
+          value ? /* @__PURE__ */ jsx11(
             "span",
             {
               style: { ...shortcutCaptureHintStyle, color: EDITOR_CHROME.accent },
@@ -16738,32 +17079,81 @@ function notifyRuntimeMessage(type, content) {
 }
 
 // src/ui/runtime/property-panel-view.tsx
-import { Fragment as Fragment6, jsx as jsx13, jsxs as jsxs12 } from "react/jsx-runtime";
-var GENIE_WAKE_FAILURE_MESSAGE = "AI \u5524\u9192\u5931\u8D25\uFF0C\u8BF7\u5728\u7EC8\u7AEF\u6267\u884C npx @axhub/genie@latest\uFF0C\u518D\u91CD\u8BD5";
-var GENIE_WAKE_TIMEOUT_MS = 12e3;
-var GENIE_INTERRUPT_TIMEOUT_MS = 12e3;
-var EXPLORE_OPTIONS_SKILL_PATH = ".agents/skills/explore-options/SKILL.md";
-var CLAUDE_EXPLORE_OPTIONS_SKILL_PATH = ".claude/skills/explore-options/SKILL.md";
-var GENIE_MENU_AGENT_OPTIONS = [
+import { Fragment as Fragment5, jsx as jsx12, jsxs as jsxs11 } from "react/jsx-runtime";
+var AGENT_WAKE_FAILURE_MESSAGE = "AI \u5524\u9192\u5931\u8D25\uFF0C\u8BF7\u5728\u7EC8\u7AEF\u6267\u884C npx @axhub/acp@latest\uFF0C\u518D\u91CD\u8BD5";
+var AGENT_WAKE_TIMEOUT_MS = 12e3;
+var AGENT_INTERRUPT_TIMEOUT_MS = 12e3;
+var COMMENTARY_CLIENT_SKILL_URL = "https://github.com/lintendo/Axhub-Skills/blob/main/skills/axhub-commentary-client/SKILL.md";
+var AGENT_MENU_OPTIONS = [
   { value: "claude", label: "Claude" },
   { value: "codex", label: "Codex" },
-  { value: "gemini", label: "Gemini" },
   { value: "opencode", label: "OpenCode" }
 ];
-var GENIE_AGENT_DEFAULT_MENU_KEY = "genie-agent:default";
+var DEFAULT_AI_EXECUTION_PROVIDER = "codex";
+var DEFAULT_AI_EXECUTION_RUN_CONCURRENCY = 5;
+var MIN_AI_EXECUTION_RUN_CONCURRENCY = 1;
+var MAX_AI_EXECUTION_RUN_CONCURRENCY = 10;
+var AI_EXECUTION_PROVIDER_OPTIONS = [
+  { value: "codex", label: "Codex" },
+  { value: "claude", label: "Claude" },
+  { value: "opencode", label: "OpenCode" },
+  { value: "cursor", label: "Cursor" },
+  { value: "qoder", label: "Qoder" },
+  { value: "codebuddy", label: "CodeBuddy" },
+  { value: "reasonix", label: "Reasonix" }
+];
+var AGENT_DEFAULT_MENU_KEY = "agent-provider:default";
 var PROPERTY_PANEL_HELP_TOOLTIP = "\u53EF\u4EE5\u76F4\u63A5\u628A\u9700\u6C42\u53D1\u7ED9\u4F60\u6B63\u5728\u7528\u7684 IDE \u6216\u672C\u5730 agent\uFF0C\u4E5F\u53EF\u4EE5\u5148\u5728\u9875\u9762\u4E0A\u6279\u6CE8\uFF0C\u8BA9\u5B83\u5E2E\u4F60\u751F\u6210\u6216\u6574\u7406\u8BBE\u8BA1\u51B3\u7B56\u3002";
 var SELECTION_MODE_TOGGLE_SHORTCUT_LABEL = "Ctrl / Cmd + S";
+var PARENT_SELECT_SHORTCUT_LABEL = "\u2191";
+var PARENT_RETURN_SHORTCUT_LABEL = "\u2193";
+var PARENT_SELECT_INPUT_TOUCHED_ATTR2 = "data-we-parent-select-input-touched";
+function mergeCommentarySkillOptions(options) {
+  const merged = /* @__PURE__ */ new Map();
+  for (const item of [...PROMPT_CARD_SKILL_OPTIONS, ...options]) {
+    const id = item.id.trim();
+    const label = item.label.trim();
+    if (!id || !label) continue;
+    merged.set(id, {
+      id,
+      label,
+      description: item.description?.trim() || void 0,
+      sourceUrl: "sourceUrl" in item ? item.sourceUrl?.trim() || void 0 : void 0
+    });
+  }
+  return [...merged.values()];
+}
+function normalizeCommentarySkillIds(value, options) {
+  const allowedIds = new Set(options.map((item) => item.id));
+  const rawValues = Array.isArray(value) ? value : [];
+  const result = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const item of rawValues) {
+    const id = typeof item === "string" ? item.trim() : "";
+    if (!id || seen.has(id) || !allowedIds.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
+function resolveCommentarySkillIds(value, options, configured) {
+  if (!configured || !Array.isArray(value)) {
+    return options.map((item) => item.id);
+  }
+  return normalizeCommentarySkillIds(value, options);
+}
 function buildSkillInstallPrompt(skillInstallSource) {
   const resolvedSkillInstallSource = typeof skillInstallSource === "string" && skillInstallSource.trim() ? skillInstallSource.trim() : "";
   return [
-    "\u5904\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u76F8\u5173\u7684\u8BBE\u8BA1\u51B3\u7B56\u3001\u591A\u65B9\u6848\u63A2\u7D22\u3001\u591A\u65B9\u6848\u5BF9\u6BD4\u65F6\uFF0C\u4F7F\u7528\u672C\u5730 explore-options\uFF08\u591A\u65B9\u6848\u63A2\u7D22\uFF09\u6280\u80FD\u3002",
+    "\u5904\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u6279\u6CE8\u3001\u8BBE\u8BA1\u51B3\u7B56\u3001\u591A\u65B9\u6848\u63A2\u7D22\u3001\u591A\u65B9\u6848\u5BF9\u6BD4\u65F6\uFF0C\u9ED8\u8BA4\u4F7F\u7528 axhub-commentary-client \u6280\u80FD\u4F5C\u4E3A\u7B2C\u4E09\u65B9\u515C\u5E95\u3002",
     "",
-    "\u6280\u80FD\u4F4D\u7F6E\uFF1A",
-    `- Codex / OpenAI\uFF1A${EXPLORE_OPTIONS_SKILL_PATH}`,
-    `- Claude\uFF1A${CLAUDE_EXPLORE_OPTIONS_SKILL_PATH}`,
+    "\u6280\u80FD\u6765\u6E90\uFF1A",
+    `- axhub-commentary-client\uFF1A${COMMENTARY_CLIENT_SKILL_URL}`,
     ...resolvedSkillInstallSource ? ["", "\u5BBF\u4E3B\u8865\u5145\u6280\u80FD\u6765\u6E90\uFF1A", resolvedSkillInstallSource] : [],
     "",
-    "\u5DE5\u4F5C\u53E3\u5F84\uFF1A\u5148\u505A\u591A\u65B9\u6848\u63A2\u7D22\uFF0C\u518D\u505A\u65B9\u6848\u5BF9\u6BD4\uFF0C\u6700\u540E\u6536\u655B\u4E3A\u8BBE\u8BA1\u51B3\u7B56\uFF1B\u9700\u8981\u9875\u9762\u5185\u5207\u6362\u65F6\uFF0C\u4F7F\u7528\u8BE5\u6280\u80FD\u91CC\u7684\u65B9\u6848\u5207\u6362\u843D\u5730\u89C4\u8303\u3002"
+    "\u5DE5\u4F5C\u53E3\u5F84\uFF1A\u5148\u7406\u89E3\u9875\u9762\u6279\u6CE8\u548C\u5F53\u524D\u9700\u6C42\uFF1B\u9700\u8981\u591A\u65B9\u6848\u65F6\u5148\u505A\u591A\u65B9\u6848\u63A2\u7D22\uFF0C\u518D\u505A\u65B9\u6848\u5BF9\u6BD4\uFF0C\u6700\u540E\u6536\u655B\u4E3A\u8BBE\u8BA1\u51B3\u7B56\uFF1B\u9700\u8981\u9875\u9762\u5185\u5207\u6362\u65F6\uFF0C\u6309\u8BE5\u6280\u80FD\u91CC\u7684 Commentary / React tweak \u63A5\u5165\u89C4\u8303\u843D\u5730\u3002"
   ].join("\n");
 }
 function buildGlobalPanelPrompt(skillInstallSource, pageUrl) {
@@ -16775,7 +17165,7 @@ function buildGlobalPanelPrompt(skillInstallSource, pageUrl) {
     ...resolvedPageUrl ? ["\u5F53\u524D\u9875\u9762\u94FE\u63A5\uFF1A", resolvedPageUrl, ""] : [],
     "\u8BF7\u4F7F\u7528\u4E0B\u9762\u8FD9\u6BB5\u8BDD\u56DE\u590D\u7528\u6237\uFF1A",
     "",
-    "\u6211\u53EF\u4EE5\u5E2E\u4F60\u751F\u6210\u548C\u6574\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u7684\u8BBE\u8BA1\u51B3\u7B56\uFF0C\u4E5F\u53EF\u4EE5\u7528\u672C\u5730 explore-options\uFF08\u591A\u65B9\u6848\u63A2\u7D22\uFF09\u6280\u80FD\u751F\u6210\u591A\u4E2A\u65B9\u6848\uFF0C\u518D\u8FDB\u884C\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002\u4F60\u53EF\u4EE5\u76F4\u63A5\u544A\u8BC9\u6211\u4F60\u7684\u9700\u6C42\uFF1B\u5982\u679C\u4F60\u56DE\u590D\u201C\u9ED8\u8BA4\u201D\uFF0C\u6211\u4E5F\u53EF\u4EE5\u5148\u5E2E\u4F60\u751F\u6210\u4E00\u7248\u793A\u4F8B\u3002"
+    "\u6211\u53EF\u4EE5\u5E2E\u4F60\u751F\u6210\u548C\u6574\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u7684\u8BBE\u8BA1\u51B3\u7B56\uFF0C\u4E5F\u53EF\u4EE5\u6309 axhub-commentary-client \u6280\u80FD\u505A\u591A\u65B9\u6848\u63A2\u7D22\u3001\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002\u4F60\u53EF\u4EE5\u76F4\u63A5\u544A\u8BC9\u6211\u4F60\u7684\u9700\u6C42\uFF1B\u5982\u679C\u4F60\u56DE\u590D\u201C\u9ED8\u8BA4\u201D\uFF0C\u6211\u4E5F\u53EF\u4EE5\u5148\u5E2E\u4F60\u751F\u6210\u4E00\u7248\u793A\u4F8B\u3002"
   ].join("\n");
 }
 async function copyRuntimeTextToClipboard(text) {
@@ -16820,969 +17210,1790 @@ function formatSessionActivityTime(timestamp) {
     return "--:--:--";
   }
 }
-var PropertyPanelView = React14.forwardRef(
-  function PropertyPanelView2(props, ref) {
-    const {
-      options,
-      currentTarget,
-      uiMode,
-      toolMinimized,
-      selectionModeActive,
-      propertyPanelOpen,
-      inlineTextEditing = false,
-      uiSettings: propUiSettings,
-      interactionProfile,
-      genieVisualState,
-      genieProviderAvailabilities,
-      onPropertyPanelOpenChange,
-      onGenieVisualStateChange,
-      onUiSettingsChange,
-      onRefreshGenieProviderAvailabilities,
-      onHoverSelectionSuppressedChange,
-      onSelectionInteractionLockChange,
-      onUiModeChange,
-      onToolMinimizedChange,
-      onSelectionModeActiveChange,
-      onTargetChange,
-      onRefreshNoteState,
-      onInlineTextEditingChange,
-      onBlockingLayerOpenChange,
-      canEditText,
-      draftText,
-      textDirty,
-      onTextDraftChange,
-      onCancelText,
-      onConfirmText,
-      images,
-      onRemoveImage,
-      onNotePasteCapture,
-      canEditNote,
-      draftNote,
-      noteDirty,
-      onDraftChange,
-      onClearCurrentElementEdits,
-      onConfirmNote,
-      onDismissSelection
-    } = props;
-    const toolbarMode = props.toolbarMode ?? options.toolbarMode ?? "inline";
-    const isHostToolbarMode = toolbarMode === "host";
-    const hideExecutionControls = Boolean(options.hideExecutionControls);
-    const rootRef = React14.useRef(null);
-    const pagePanelRef = React14.useRef(null);
-    const pagePanelBodyRef = React14.useRef(null);
-    const pagePanelHeaderRef = React14.useRef(null);
-    const toolbarHeaderRef = React14.useRef(null);
-    const minimizedButtonRef = React14.useRef(null);
-    const collapseActionRef = React14.useRef(null);
-    const textComposerRef = React14.useRef(null);
-    const noteComposerRef = React14.useRef(null);
-    const inlineTextEditingRef = React14.useRef(inlineTextEditing);
-    const shortcutCardRefs = React14.useRef([]);
-    const styleObserverRef = React14.useRef(null);
-    const styleObserverRafIdRef = React14.useRef(null);
-    const currentTargetRef = React14.useRef(currentTarget);
-    const toolbarPositionRef = React14.useRef(null);
-    const pagePanelPositionRef = React14.useRef(
-      options.initialPosition ?? null
-    );
-    const onDismissSelectionRef = React14.useRef(onDismissSelection);
-    const onTargetChangeRef = React14.useRef(onTargetChange);
-    const hostToolbarListenersRef = React14.useRef(/* @__PURE__ */ new Set());
-    const [undoCount, setUndoCount] = React14.useState(0);
-    const [redoCount, setRedoCount] = React14.useState(0);
-    const [modifiedCount, setModifiedCount] = React14.useState(
-      Math.max(0, options.getModifiedElementCount?.() ?? 0)
-    );
-    const [actionBusy, setActionBusy] = React14.useState(false);
-    const [geniePromptSending, setGeniePromptSending] = React14.useState(false);
-    const [geniePromptInterrupting, setGeniePromptInterrupting] = React14.useState(false);
-    const [genieWakeChecking, setGenieWakeChecking] = React14.useState(false);
-    const [genieMenuOpen, setGenieMenuOpen] = React14.useState(false);
-    const [sessionActivityCardOpen, setSessionActivityCardOpen] = React14.useState(false);
-    const [sessionActivities, setSessionActivities] = React14.useState([]);
-    const [toolbarPosition, setToolbarPosition] = React14.useState(null);
-    const [pagePanelPosition, setPagePanelPosition] = React14.useState(
-      options.initialPosition ?? null
-    );
-    const [toolbarDragging, setToolbarDragging] = React14.useState(false);
-    const [toolbarDragVelocity, setToolbarDragVelocity] = React14.useState({
-      velocityX: 0,
-      velocityY: 0
+var lockPageScrollForRuntimeModal = () => {
+  if (typeof document === "undefined") return () => {
+  };
+  const targets = [document.documentElement, document.body].filter(
+    (element) => Boolean(element)
+  );
+  const snapshots = targets.map((element) => ({
+    element,
+    overflow: element.style.getPropertyValue("overflow"),
+    overflowPriority: element.style.getPropertyPriority("overflow"),
+    overscrollBehavior: element.style.getPropertyValue("overscroll-behavior"),
+    overscrollBehaviorPriority: element.style.getPropertyPriority(
+      "overscroll-behavior"
+    )
+  }));
+  targets.forEach((element) => {
+    element.style.setProperty("overflow", "hidden", "important");
+    element.style.setProperty("overscroll-behavior", "none", "important");
+  });
+  return () => {
+    snapshots.forEach((snapshot) => {
+      if (snapshot.overflow) {
+        snapshot.element.style.setProperty(
+          "overflow",
+          snapshot.overflow,
+          snapshot.overflowPriority
+        );
+      } else {
+        snapshot.element.style.removeProperty("overflow");
+      }
+      if (snapshot.overscrollBehavior) {
+        snapshot.element.style.setProperty(
+          "overscroll-behavior",
+          snapshot.overscrollBehavior,
+          snapshot.overscrollBehaviorPriority
+        );
+      } else {
+        snapshot.element.style.removeProperty("overscroll-behavior");
+      }
     });
-    const [viewportSize, setViewportSize] = React14.useState(() => ({
-      width: window.innerWidth,
-      height: window.innerHeight
-    }));
-    const [compactAnchorRect, setCompactAnchorRect] = React14.useState(null);
-    const [shortcutDialogOpen, setShortcutDialogOpen] = React14.useState(false);
-    const [shortcutDraft, setShortcutDraft] = React14.useState(
-      options.getCommentShortcutSettings?.() ?? { ...DEFAULT_COMMENT_SHORTCUT_SETTINGS }
+  };
+};
+var normalizeAiExecutionProvider = (value) => typeof value === "string" && value.trim() ? value.trim() : DEFAULT_AI_EXECUTION_PROVIDER;
+var normalizeAiExecutionWorkspacePath = (value) => typeof value === "string" ? value.trim() : "";
+var normalizeAiExecutionRunConcurrency = (value) => {
+  const numeric = typeof value === "string" ? Number(value.trim()) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return DEFAULT_AI_EXECUTION_RUN_CONCURRENCY;
+  }
+  return Math.min(
+    MAX_AI_EXECUTION_RUN_CONCURRENCY,
+    Math.max(MIN_AI_EXECUTION_RUN_CONCURRENCY, Math.trunc(numeric))
+  );
+};
+var getPathDisplayName = (value) => {
+  const normalized = normalizeAiExecutionWorkspacePath(value).replace(
+    /[\\/]+$/u,
+    ""
+  );
+  if (!normalized) return "";
+  return normalized.split(/[\\/]/u).filter(Boolean).pop() || normalized;
+};
+var readAiExecutionConfigResult = (value) => {
+  if (!value || typeof value !== "object") return {};
+  const record = value;
+  const provider = normalizeAiExecutionProvider(record.provider);
+  const workspacePath = normalizeAiExecutionWorkspacePath(record.workspacePath);
+  const hasRunConcurrency = Object.prototype.hasOwnProperty.call(
+    record,
+    "runConcurrency"
+  );
+  const runConcurrency = normalizeAiExecutionRunConcurrency(
+    record.runConcurrency
+  );
+  const defaultWorkspacePath = normalizeAiExecutionWorkspacePath(
+    record.defaultWorkspacePath
+  );
+  const providerOptions = Array.isArray(record.providerOptions) ? record.providerOptions.map((item) => {
+    if (!item || typeof item !== "object") return null;
+    const itemRecord = item;
+    const optionValue = normalizeAiExecutionWorkspacePath(
+      itemRecord.value
     );
-    const [capturingShortcutIndex, setCapturingShortcutIndex] = React14.useState(null);
-    const [panelRefreshKey, setPanelRefreshKey] = React14.useState(0);
-    const [tweakRevision, setTweakRevision] = React14.useState(0);
-    const [geniePromptSendingElementKey, setGeniePromptSendingElementKey] = React14.useState(null);
-    const [settingsPopoverOpen, setSettingsPopoverOpen] = React14.useState(false);
-    const [keyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = React14.useState(false);
-    const [annotationToolbarTick, setAnnotationToolbarTick] = React14.useState(0);
-    const [genieProviderRefreshPending, setGenieProviderRefreshPending] = React14.useState(false);
-    const uiSettings = React14.useMemo(
-      () => options.getUiSettings?.() ?? propUiSettings,
-      [options, panelRefreshKey, propUiSettings]
+    if (!optionValue) return null;
+    const label = normalizeAiExecutionWorkspacePath(itemRecord.label) || optionValue;
+    return {
+      value: optionValue,
+      label,
+      disabled: itemRecord.disabled === true
+    };
+  }).filter(
+    (item) => Boolean(item)
+  ) : void 0;
+  return {
+    ...provider ? { provider } : {},
+    ...workspacePath ? { workspacePath } : {},
+    ...hasRunConcurrency ? { runConcurrency } : {},
+    ...defaultWorkspacePath ? { defaultWorkspacePath } : {},
+    ...providerOptions && providerOptions.length > 0 ? { providerOptions } : {}
+  };
+};
+var readLocalDirectoryBrowserResult = (value) => {
+  if (!value || typeof value !== "object") return null;
+  const record = value;
+  const path = normalizeAiExecutionWorkspacePath(record.path);
+  if (!path) return null;
+  const directories = Array.isArray(record.directories) ? record.directories.map((item) => {
+    if (!item || typeof item !== "object") return null;
+    const itemRecord = item;
+    const name = normalizeAiExecutionWorkspacePath(itemRecord.name);
+    const directoryPath = normalizeAiExecutionWorkspacePath(
+      itemRecord.path
     );
-    const genieProviderAvailabilityMap = React14.useMemo(
-      () => new Map(
-        genieProviderAvailabilities.map((item) => [item.provider, item])
-      ),
-      [genieProviderAvailabilities]
+    return name && directoryPath ? { name, path: directoryPath } : null;
+  }).filter((item) => Boolean(item)) : [];
+  const roots = Array.isArray(record.roots) ? record.roots.map((item) => normalizeAiExecutionWorkspacePath(item)).filter(Boolean) : [];
+  return {
+    path,
+    home: normalizeAiExecutionWorkspacePath(record.home),
+    parent: normalizeAiExecutionWorkspacePath(record.parent) || null,
+    roots,
+    directories
+  };
+};
+var PropertyPanelView = React13.forwardRef(function PropertyPanelView2(props, ref) {
+  const {
+    options,
+    currentTarget,
+    uiMode,
+    toolMinimized,
+    selectionModeActive,
+    propertyPanelVisible = true,
+    propertyPanelOpen,
+    inlineTextEditing = false,
+    uiSettings: propUiSettings,
+    interactionProfile,
+    agentVisualState,
+    agentProviderAvailabilities,
+    onPropertyPanelOpenChange,
+    onAgentVisualStateChange,
+    onUiSettingsChange,
+    onRefreshAgentProviderAvailabilities,
+    onHoverSelectionSuppressedChange,
+    onSelectionInteractionLockChange,
+    onUiModeChange,
+    onToolMinimizedChange,
+    onSelectionModeActiveChange,
+    onTargetChange,
+    onRefreshNoteState,
+    onInlineTextEditingChange,
+    onBlockingLayerOpenChange,
+    canEditText,
+    draftText,
+    textDirty,
+    onTextDraftChange,
+    onCancelText,
+    onConfirmText,
+    images,
+    onRemoveImage,
+    onNotePasteCapture,
+    canEditNote,
+    draftNote,
+    noteDirty,
+    onDraftChange,
+    onClearCurrentElementEdits,
+    onConfirmNote,
+    onDismissSelection
+  } = props;
+  const toolbarMode = props.toolbarMode ?? options.toolbarMode ?? "inline";
+  const isHostToolbarMode = toolbarMode === "host";
+  const hideExecutionControls = Boolean(options.hideExecutionControls);
+  const rootRef = React13.useRef(null);
+  const pagePanelRef = React13.useRef(null);
+  const pagePanelBodyRef = React13.useRef(null);
+  const pagePanelHeaderRef = React13.useRef(null);
+  const toolbarHeaderRef = React13.useRef(null);
+  const minimizedButtonRef = React13.useRef(null);
+  const textComposerRef = React13.useRef(null);
+  const noteComposerRef = React13.useRef(null);
+  const inlineTextEditingRef = React13.useRef(inlineTextEditing);
+  const shortcutCardRefs = React13.useRef([]);
+  const styleObserverRef = React13.useRef(null);
+  const styleObserverRafIdRef = React13.useRef(null);
+  const currentTargetRef = React13.useRef(currentTarget);
+  const toolbarPositionRef = React13.useRef(null);
+  const pagePanelPositionRef = React13.useRef(
+    options.initialPosition ?? null
+  );
+  const onDismissSelectionRef = React13.useRef(onDismissSelection);
+  const onTargetChangeRef = React13.useRef(onTargetChange);
+  const hostToolbarListenersRef = React13.useRef(/* @__PURE__ */ new Set());
+  const [undoCount, setUndoCount] = React13.useState(0);
+  const [redoCount, setRedoCount] = React13.useState(0);
+  const [modifiedCount, setModifiedCount] = React13.useState(
+    Math.max(0, options.getModifiedElementCount?.() ?? 0)
+  );
+  const [actionBusy, setActionBusy] = React13.useState(false);
+  const [agentPromptSending, setAgentPromptSending] = React13.useState(false);
+  const [agentPromptInterrupting, setAgentPromptInterrupting] = React13.useState(false);
+  const [agentWakeChecking, setAgentWakeChecking] = React13.useState(false);
+  const [sessionActivityCardOpen, setSessionActivityCardOpen] = React13.useState(false);
+  const [sessionActivities, setSessionActivities] = React13.useState([]);
+  const [toolbarPosition, setToolbarPosition] = React13.useState(null);
+  const [pagePanelPosition, setPagePanelPosition] = React13.useState(options.initialPosition ?? null);
+  const [toolbarDragging, setToolbarDragging] = React13.useState(false);
+  const [viewportSize, setViewportSize] = React13.useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight
+  }));
+  const [compactAnchorRect, setCompactAnchorRect] = React13.useState(null);
+  const [shortcutDialogOpen, setShortcutDialogOpen] = React13.useState(false);
+  const [shortcutDraft, setShortcutDraft] = React13.useState(
+    options.getCommentShortcutSettings?.() ?? {
+      ...DEFAULT_COMMENT_SHORTCUT_SETTINGS
+    }
+  );
+  const [capturingShortcutIndex, setCapturingShortcutIndex] = React13.useState(null);
+  const [panelRefreshKey, setPanelRefreshKey] = React13.useState(0);
+  const [tweakRevision, setTweakRevision] = React13.useState(0);
+  const [agentPromptSendingElementKey, setAgentPromptSendingElementKey] = React13.useState(null);
+  const [settingsPopoverOpen, setSettingsPopoverOpen] = React13.useState(false);
+  const [commentarySkillDialogOpen, setCommentarySkillDialogOpen] = React13.useState(false);
+  const [commentarySkillDraftIds, setCommentarySkillDraftIds] = React13.useState(
+    () => resolveCommentarySkillIds(
+      options.commentarySelectedSkillIds,
+      mergeCommentarySkillOptions(options.commentarySkillOptions ?? []),
+      options.commentarySkillSettingsConfigured === true
+    )
+  );
+  const [commentarySkillSaving, setCommentarySkillSaving] = React13.useState(false);
+  const [keyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = React13.useState(false);
+  const [annotationToolbarTick, setAnnotationToolbarTick] = React13.useState(0);
+  const [agentProviderRefreshPending, setAgentProviderRefreshPending] = React13.useState(false);
+  const uiSettings = React13.useMemo(
+    () => options.getUiSettings?.() ?? propUiSettings,
+    [options, panelRefreshKey, propUiSettings]
+  );
+  const commentarySkillOptions = React13.useMemo(
+    () => mergeCommentarySkillOptions(options.commentarySkillOptions ?? []),
+    [options.commentarySkillOptions]
+  );
+  const showCommentarySkillSettings = commentarySkillOptions.length > 0 && (Boolean(options.onHostToolbarAction) || (options.commentarySkillOptions?.length ?? 0) > 0);
+  const [aiExecutionProvider, setAiExecutionProvider] = React13.useState(
+    () => normalizeAiExecutionProvider(options.aiExecutionProvider)
+  );
+  const [aiExecutionWorkspacePath, setAiExecutionWorkspacePath] = React13.useState(
+    () => normalizeAiExecutionWorkspacePath(options.aiExecutionWorkspacePath)
+  );
+  const [aiExecutionRunConcurrency, setAiExecutionRunConcurrency] = React13.useState(
+    () => normalizeAiExecutionRunConcurrency(options.aiExecutionRunConcurrency)
+  );
+  const [aiExecutionProviderOptionsState, setAiExecutionProviderOptionsState] = React13.useState(
+    () => [...AI_EXECUTION_PROVIDER_OPTIONS]
+  );
+  const [aiExecutionConfigBusy, setAiExecutionConfigBusy] = React13.useState(false);
+  const [directoryPickerOpen, setDirectoryPickerOpen] = React13.useState(false);
+  const [directoryPickerBusy, setDirectoryPickerBusy] = React13.useState(false);
+  const [directoryPickerError, setDirectoryPickerError] = React13.useState("");
+  const [directoryPickerState, setDirectoryPickerState] = React13.useState(null);
+  const agentProviderAvailabilityMap = React13.useMemo(
+    () => new Map(
+      agentProviderAvailabilities.map(
+        (item) => [item.provider, item]
+      )
+    ),
+    [agentProviderAvailabilities]
+  );
+  React13.useEffect(() => {
+    setAiExecutionProvider(
+      normalizeAiExecutionProvider(options.aiExecutionProvider)
     );
-    React14.useEffect(() => {
-      inlineTextEditingRef.current = inlineTextEditing;
-    }, [inlineTextEditing]);
-    React14.useEffect(() => {
-      onDismissSelectionRef.current = onDismissSelection;
-    }, [onDismissSelection]);
-    React14.useEffect(() => {
-      onTargetChangeRef.current = onTargetChange;
-    }, [onTargetChange]);
-    currentTargetRef.current = currentTarget;
-    React14.useEffect(() => {
-      if (!options.subscribeTweak) return;
-      return options.subscribeTweak(() => {
-        setTweakRevision((value) => value + 1);
-      });
-    }, [options]);
-    const pageTweakEntries = React14.useMemo(
-      () => options.getPageTweakEntries?.() ?? [],
-      [options, tweakRevision]
+  }, [options.aiExecutionProvider]);
+  React13.useEffect(() => {
+    setAiExecutionWorkspacePath(
+      normalizeAiExecutionWorkspacePath(options.aiExecutionWorkspacePath)
     );
-    const hasPageTweakEntries = pageTweakEntries.length > 0;
-    const {
-      currentTask: currentGenieTask,
-      currentTaskRunning,
-      currentTaskSessionReady,
-      currentTaskTerminal,
-      pageTaskRunning,
-      pageTaskSessionReady,
-      hasReusableConversation,
-      effectiveVisualState
-    } = deriveGenieUiState({
-      currentTarget,
-      visualState: uiSettings.genieAwake ? "awake" : genieVisualState,
-      getElementGenieTaskState: options.getElementGenieTaskState,
-      getVisibleElementGenieTaskStates: options.getVisibleElementGenieTaskStates,
-      getHasReusableGenieConversation: options.getHasReusableGenieConversation,
-      getGenieBridgeConnected: options.getGenieBridgeConnected
+  }, [options.aiExecutionWorkspacePath]);
+  React13.useEffect(() => {
+    setAiExecutionRunConcurrency(
+      normalizeAiExecutionRunConcurrency(options.aiExecutionRunConcurrency)
+    );
+  }, [options.aiExecutionRunConcurrency]);
+  React13.useEffect(() => {
+    if (!Array.isArray(options.aiExecutionProviderOptions)) return;
+    const nextOptions = options.aiExecutionProviderOptions.map((item) => {
+      const value = normalizeAiExecutionWorkspacePath(item?.value);
+      if (!value) return null;
+      return {
+        value,
+        label: normalizeAiExecutionWorkspacePath(item?.label) || value,
+        disabled: item?.disabled === true
+      };
+    }).filter(
+      (item) => Boolean(item)
+    );
+    if (nextOptions.length > 0) {
+      setAiExecutionProviderOptionsState(nextOptions);
+    }
+  }, [options.aiExecutionProviderOptions]);
+  React13.useEffect(() => {
+    inlineTextEditingRef.current = inlineTextEditing;
+  }, [inlineTextEditing]);
+  React13.useEffect(() => {
+    onDismissSelectionRef.current = onDismissSelection;
+  }, [onDismissSelection]);
+  React13.useEffect(() => {
+    onTargetChangeRef.current = onTargetChange;
+  }, [onTargetChange]);
+  currentTargetRef.current = currentTarget;
+  React13.useEffect(() => {
+    if (!options.subscribeTweak) return;
+    return options.subscribeTweak(() => {
+      setTweakRevision((value) => value + 1);
     });
-    const visibleExecutionTerminalTaskCount = (options.getVisibleElementGenieTaskStates?.() ?? []).filter(
-      (task) => task.status === "completed" || task.status === "error"
-    ).length;
-    const visibleTerminalTaskCount = hideExecutionControls ? 0 : visibleExecutionTerminalTaskCount;
-    const currentGenieConversation = options.getCurrentGenieConversationState?.() ?? null;
-    const sessionActivityTarget = React14.useMemo(
-      () => resolveSessionActivityTarget({
-        requestId: currentGenieTask?.requestId ?? null,
-        sessionId: currentGenieTask?.sessionId ?? null,
-        provider: currentGenieTask?.provider ?? null,
-        conversationSessionId: currentGenieConversation?.sessionId ?? null,
-        conversationProvider: currentGenieConversation?.provider ?? null
-      }),
-      [
-        currentGenieConversation?.provider,
-        currentGenieConversation?.sessionId,
-        currentGenieTask?.provider,
-        currentGenieTask?.requestId,
-        currentGenieTask?.sessionId
-      ]
-    );
-    const activeTaskCanInterrupt = Boolean(
-      options.getCanAbortSendPromptToGenie?.(currentTarget)
-    );
-    const currentTaskIsSending = Boolean(
-      geniePromptSending && currentGenieTask && geniePromptSendingElementKey && currentGenieTask.elementKey === geniePromptSendingElementKey
-    );
-    React14.useEffect(() => {
-      if (!geniePromptSending) return;
-      if (currentTaskRunning && hasReusableConversation) {
-        setGeniePromptSending(false);
-        setGeniePromptSendingElementKey(null);
-      }
-    }, [currentTaskRunning, geniePromptSending, hasReusableConversation]);
-    React14.useEffect(() => {
-      if (!sessionActivityCardOpen) {
-        setSessionActivities([]);
-        return;
-      }
-      if (!options.subscribeSessionActivity || !sessionActivityTarget) {
-        setSessionActivities([]);
-        return;
-      }
+  }, [options]);
+  const pageTweakEntries = React13.useMemo(
+    () => options.getPageTweakEntries?.() ?? [],
+    [options, tweakRevision]
+  );
+  const hasPageTweakEntries = pageTweakEntries.length > 0;
+  const showPropertyPanelToolbarButton = propertyPanelVisible && hasPageTweakEntries;
+  const showPropertyPanelSettingsItem = propertyPanelVisible && !showPropertyPanelToolbarButton;
+  const {
+    currentTask: currentAgentTask,
+    currentTaskRunning,
+    currentTaskSessionReady,
+    currentTaskTerminal,
+    pageTaskRunning,
+    pageTaskSessionReady,
+    hasReusableConversation,
+    effectiveVisualState
+  } = deriveAgentUiState({
+    currentTarget,
+    visualState: uiSettings.agentAwake ? "awake" : agentVisualState,
+    getElementAgentTaskState: options.getElementAgentTaskState,
+    getVisibleElementAgentTaskStates: options.getVisibleElementAgentTaskStates,
+    getHasReusableAgentConversation: options.getHasReusableAgentConversation,
+    getAgentBridgeConnected: options.getAgentBridgeConnected
+  });
+  const visibleExecutionTerminalTaskCount = (options.getVisibleElementAgentTaskStates?.() ?? []).filter(
+    (task) => task.status === "completed" || task.status === "error"
+  ).length;
+  const visibleTerminalTaskCount = hideExecutionControls ? 0 : visibleExecutionTerminalTaskCount;
+  const currentAgentConversation = options.getCurrentAgentConversationState?.() ?? null;
+  const sessionActivityTarget = React13.useMemo(
+    () => resolveSessionActivityTarget({
+      requestId: currentAgentTask?.requestId ?? null,
+      sessionId: currentAgentTask?.sessionId ?? null,
+      provider: currentAgentTask?.provider ?? null,
+      conversationSessionId: currentAgentConversation?.sessionId ?? null,
+      conversationProvider: currentAgentConversation?.provider ?? null
+    }),
+    [
+      currentAgentConversation?.provider,
+      currentAgentConversation?.sessionId,
+      currentAgentTask?.provider,
+      currentAgentTask?.requestId,
+      currentAgentTask?.sessionId
+    ]
+  );
+  const activeTaskCanInterrupt = Boolean(
+    currentTarget ? options.getCanAbortAgentPrompt?.(currentTarget) : false
+  );
+  const pageTaskCanInterrupt = Boolean(options.getCanAbortAgentPrompt?.(null));
+  const currentTaskIsSending = Boolean(
+    agentPromptSending && currentAgentTask && agentPromptSendingElementKey && currentAgentTask.elementKey === agentPromptSendingElementKey
+  );
+  React13.useEffect(() => {
+    if (!agentPromptSending) return;
+    if (currentTaskRunning && currentTaskSessionReady) {
+      setAgentPromptSending(false);
+      setAgentPromptSendingElementKey(null);
+    }
+  }, [currentTaskRunning, currentTaskSessionReady, agentPromptSending]);
+  React13.useEffect(() => {
+    if (!sessionActivityCardOpen) {
       setSessionActivities([]);
-      return options.subscribeSessionActivity(sessionActivityTarget, (item) => {
-        setSessionActivities((previous) => appendRecentSessionActivities(previous, item));
-      });
-    }, [options, sessionActivityCardOpen, sessionActivityTarget]);
-    React14.useEffect(() => {
-      if (!genieMenuOpen || typeof document === "undefined") {
+      return;
+    }
+    if (!options.subscribeSessionActivity || !sessionActivityTarget) {
+      setSessionActivities([]);
+      return;
+    }
+    setSessionActivities([]);
+    return options.subscribeSessionActivity(sessionActivityTarget, (item) => {
+      setSessionActivities(
+        (previous) => appendRecentSessionActivities(previous, item)
+      );
+    });
+  }, [options, sessionActivityCardOpen, sessionActivityTarget]);
+  const visibleSessionActivities = React13.useMemo(
+    () => limitVisibleSessionActivities(sessionActivities),
+    [sessionActivities]
+  );
+  const disconnectStyleObserver = React13.useCallback(() => {
+    if (styleObserverRafIdRef.current !== null) {
+      window.cancelAnimationFrame(styleObserverRafIdRef.current);
+      styleObserverRafIdRef.current = null;
+    }
+    try {
+      styleObserverRef.current?.disconnect();
+    } catch {
+    }
+    styleObserverRef.current = null;
+  }, [options.skillInstallSource]);
+  const requestPanelRefresh = React13.useCallback(() => {
+    setPanelRefreshKey((value) => value + 1);
+  }, [options.skillInstallSource]);
+  const scheduleLiveStyleRefresh = React13.useCallback(() => {
+    if (styleObserverRafIdRef.current !== null) return;
+    styleObserverRafIdRef.current = window.requestAnimationFrame(() => {
+      styleObserverRafIdRef.current = null;
+      requestPanelRefresh();
+    });
+  }, [requestPanelRefresh]);
+  const connectStyleObserver = React13.useCallback(
+    (element) => {
+      disconnectStyleObserver();
+      if (!element || !element.isConnected || typeof MutationObserver === "undefined")
         return;
-      }
-      const handleDocumentPointerDown = (event) => {
-        const target = event.target;
-        if (!(target instanceof Element)) {
-          setGenieMenuOpen(false);
-          return;
-        }
-        if (target.closest(".we-runtime-genie-menu-dropdown")) {
-          return;
-        }
-        if (collapseActionRef.current?.contains(target)) {
-          return;
-        }
-        setGenieMenuOpen(false);
-      };
-      document.addEventListener("pointerdown", handleDocumentPointerDown, true);
-      return () => {
-        document.removeEventListener("pointerdown", handleDocumentPointerDown, true);
-      };
-    }, [genieMenuOpen]);
-    const visibleSessionActivities = React14.useMemo(
-      () => limitVisibleSessionActivities(sessionActivities),
-      [sessionActivities]
-    );
-    const disconnectStyleObserver = React14.useCallback(() => {
-      if (styleObserverRafIdRef.current !== null) {
-        window.cancelAnimationFrame(styleObserverRafIdRef.current);
-        styleObserverRafIdRef.current = null;
-      }
-      try {
-        styleObserverRef.current?.disconnect();
-      } catch {
-      }
-      styleObserverRef.current = null;
-    }, [options.skillInstallSource]);
-    const requestPanelRefresh = React14.useCallback(() => {
-      setPanelRefreshKey((value) => value + 1);
-    }, [options.skillInstallSource]);
-    const scheduleLiveStyleRefresh = React14.useCallback(() => {
-      if (styleObserverRafIdRef.current !== null) return;
-      styleObserverRafIdRef.current = window.requestAnimationFrame(() => {
-        styleObserverRafIdRef.current = null;
-        requestPanelRefresh();
+      const observer = new MutationObserver(() => {
+        if (currentTargetRef.current !== element) return;
+        scheduleLiveStyleRefresh();
       });
-    }, [requestPanelRefresh]);
-    const connectStyleObserver = React14.useCallback(
-      (element) => {
-        disconnectStyleObserver();
-        if (!element || !element.isConnected || typeof MutationObserver === "undefined") return;
-        const observer = new MutationObserver(() => {
-          if (currentTargetRef.current !== element) return;
-          scheduleLiveStyleRefresh();
+      try {
+        observer.observe(element, {
+          attributes: true,
+          attributeFilter: ["style"]
         });
+        styleObserverRef.current = observer;
+      } catch {
         try {
-          observer.observe(element, {
-            attributes: true,
-            attributeFilter: ["style"]
-          });
-          styleObserverRef.current = observer;
+          observer.disconnect();
         } catch {
-          try {
-            observer.disconnect();
-          } catch {
-          }
         }
-      },
-      [disconnectStyleObserver, scheduleLiveStyleRefresh]
-    );
-    const clampToViewport = React14.useCallback(
-      (position, sizeOverride) => {
-        const root = rootRef.current;
-        const rect = root?.getBoundingClientRect();
-        const width = sizeOverride?.width ?? rect?.width ?? (toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_WIDTH);
-        const height = sizeOverride?.height ?? rect?.height ?? (toolMinimized ? COMPACT_TOOL_SIZE : 72);
-        return clampFloatingPosition({
-          position,
-          size: { width, height },
-          viewport: viewportSize,
-          margin: FLOATING_CLAMP_MARGIN
-        });
-      },
-      [toolMinimized, viewportSize]
-    );
-    const applyToolbarPosition = React14.useCallback(
-      (nextPosition) => {
-        toolbarPositionRef.current = nextPosition ? clampToViewport(nextPosition, {
-          width: COMPACT_TOOL_SIZE,
-          height: COMPACT_TOOL_SIZE
-        }) : null;
-        setToolbarPosition(toolbarPositionRef.current);
-      },
-      [clampToViewport]
-    );
-    const clampPagePanelToViewport = React14.useCallback(
-      (position, sizeOverride) => {
-        const pagePanel = pagePanelRef.current;
-        const rect = pagePanel ? pagePanel.getBoundingClientRect() : null;
-        const size = sizeOverride ?? (rect ? { width: rect.width, height: rect.height } : { width: PAGE_CONFIG_PANEL_WIDTH, height: 160 });
-        return clampFloatingPosition({
-          position,
-          size,
-          viewport: viewportSize,
-          margin: FLOATING_CLAMP_MARGIN
-        });
-      },
-      [viewportSize]
-    );
-    const applyPanelPosition = React14.useCallback(
-      (nextPosition) => {
-        pagePanelPositionRef.current = nextPosition ? clampPagePanelToViewport(nextPosition) : null;
-        setPagePanelPosition(pagePanelPositionRef.current);
-        options.onPositionChange?.(pagePanelPositionRef.current);
-      },
-      [clampPagePanelToViewport, options]
-    );
-    const dockPagePanelRight = React14.useCallback(() => {
+      }
+    },
+    [disconnectStyleObserver, scheduleLiveStyleRefresh]
+  );
+  const clampToViewport = React13.useCallback(
+    (position, sizeOverride) => {
+      const root = rootRef.current;
+      const rect = root?.getBoundingClientRect();
+      const width = sizeOverride?.width ?? rect?.width ?? (toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_WIDTH);
+      const height = sizeOverride?.height ?? rect?.height ?? (toolMinimized ? COMPACT_TOOL_SIZE : 72);
+      return clampFloatingPosition({
+        position,
+        size: { width, height },
+        viewport: viewportSize,
+        margin: FLOATING_CLAMP_MARGIN
+      });
+    },
+    [toolMinimized, viewportSize]
+  );
+  const applyToolbarPosition = React13.useCallback(
+    (nextPosition) => {
+      toolbarPositionRef.current = nextPosition ? clampToViewport(nextPosition, {
+        width: COMPACT_TOOL_SIZE,
+        height: COMPACT_TOOL_SIZE
+      }) : null;
+      setToolbarPosition(toolbarPositionRef.current);
+    },
+    [clampToViewport]
+  );
+  const clampPagePanelToViewport = React13.useCallback(
+    (position, sizeOverride) => {
       const pagePanel = pagePanelRef.current;
       const rect = pagePanel ? pagePanel.getBoundingClientRect() : null;
-      const size = rect ? { width: rect.width, height: rect.height } : { width: PAGE_CONFIG_PANEL_WIDTH, height: 160 };
-      applyPanelPosition(
-        dockFloatingPanelRight({
-          currentPosition: pagePanelPositionRef.current,
-          size,
-          viewport: viewportSize,
-          panelTop: PROPERTY_PANEL_TOP,
-          panelRight: PROPERTY_PANEL_RIGHT,
-          margin: FLOATING_CLAMP_MARGIN
-        })
-      );
-    }, [applyPanelPosition, viewportSize]);
-    const syncPanelMetaState = React14.useCallback(() => {
-      setModifiedCount(Math.max(0, options.getModifiedElementCount?.() ?? 0));
-    }, [options]);
-    const runAction = React14.useCallback(
-      async (action) => {
-        if (!action) return;
-        setActionBusy(true);
-        try {
-          await action();
-        } finally {
-          setActionBusy(false);
-          syncPanelMetaState();
-        }
-      },
-      [syncPanelMetaState]
-    );
-    const genieAwake = effectiveVisualState === "awake";
-    const wakeGenieForAction = React14.useCallback(async () => {
-      if (genieWakeChecking) {
-        return false;
-      }
-      if (genieAwake && options.getGenieBridgeConnected?.() !== false) {
-        return true;
-      }
-      if (!options.onWakeGenie) {
-        return options.getGenieBridgeConnected?.() !== false;
-      }
-      setGenieWakeChecking(true);
-      const createWakeTimeout = () => new Promise((resolve) => {
-        window.setTimeout(() => resolve(false), GENIE_WAKE_TIMEOUT_MS);
+      const size = sizeOverride ?? (rect ? { width: rect.width, height: rect.height } : { width: PAGE_CONFIG_PANEL_WIDTH, height: 160 });
+      return clampFloatingPosition({
+        position,
+        size,
+        viewport: viewportSize,
+        margin: FLOATING_CLAMP_MARGIN
       });
+    },
+    [viewportSize]
+  );
+  const applyPanelPosition = React13.useCallback(
+    (nextPosition) => {
+      pagePanelPositionRef.current = nextPosition ? clampPagePanelToViewport(nextPosition) : null;
+      setPagePanelPosition(pagePanelPositionRef.current);
+      options.onPositionChange?.(pagePanelPositionRef.current);
+    },
+    [clampPagePanelToViewport, options]
+  );
+  const dockPagePanelRight = React13.useCallback(() => {
+    const pagePanel = pagePanelRef.current;
+    const rect = pagePanel ? pagePanel.getBoundingClientRect() : null;
+    const size = rect ? { width: rect.width, height: rect.height } : { width: PAGE_CONFIG_PANEL_WIDTH, height: 160 };
+    applyPanelPosition(
+      dockFloatingPanelRight({
+        currentPosition: pagePanelPositionRef.current,
+        size,
+        viewport: viewportSize,
+        panelTop: PROPERTY_PANEL_TOP,
+        panelRight: PROPERTY_PANEL_RIGHT,
+        margin: FLOATING_CLAMP_MARGIN
+      })
+    );
+  }, [applyPanelPosition, viewportSize]);
+  const syncPanelMetaState = React13.useCallback(() => {
+    setModifiedCount(Math.max(0, options.getModifiedElementCount?.() ?? 0));
+  }, [options]);
+  const runAction = React13.useCallback(
+    async (action) => {
+      if (!action) return;
+      setActionBusy(true);
       try {
-        const wakeResult = await Promise.race([options.onWakeGenie(), createWakeTimeout()]);
-        if (wakeResult !== true) {
-          notifyRuntimeMessage("warning", GENIE_WAKE_FAILURE_MESSAGE);
-          return false;
-        }
-        onGenieVisualStateChange("awake");
-        return true;
-      } catch {
-        notifyRuntimeMessage("warning", GENIE_WAKE_FAILURE_MESSAGE);
-        return false;
+        await action();
       } finally {
-        setGenieWakeChecking(false);
-      }
-    }, [genieAwake, genieWakeChecking, onGenieVisualStateChange, options]);
-    const handleConfirmSendPromptToGenie = React14.useCallback(async () => {
-      if (!options.onSendPromptToGenie) return;
-      const ready = await wakeGenieForAction();
-      if (!ready) return;
-      setGeniePromptSending(true);
-      setGeniePromptSendingElementKey(currentGenieTask?.elementKey ?? null);
-      setGeniePromptInterrupting(false);
-      try {
-        await options.onSendPromptToGenie(currentTarget);
-      } catch {
-      } finally {
-        setGeniePromptSending(false);
-        setGeniePromptInterrupting(false);
-        setGeniePromptSendingElementKey(null);
+        setActionBusy(false);
         syncPanelMetaState();
       }
-    }, [currentGenieTask?.elementKey, currentTarget, options, syncPanelMetaState, wakeGenieForAction]);
-    const handleInterruptSendPromptToGenie = React14.useCallback(async () => {
-      if (!options.onAbortSendPromptToGenie) return;
-      setGeniePromptInterrupting(true);
+    },
+    [syncPanelMetaState]
+  );
+  const agentAwake = effectiveVisualState === "awake";
+  const wakeAgentForAction = React13.useCallback(async () => {
+    if (agentWakeChecking) {
+      return false;
+    }
+    if (agentAwake && options.getAgentBridgeConnected?.() !== false) {
+      return true;
+    }
+    if (!options.onWakeAgent) {
+      return options.getAgentBridgeConnected?.() !== false;
+    }
+    setAgentWakeChecking(true);
+    const createWakeTimeout = () => new Promise((resolve) => {
+      window.setTimeout(() => resolve(false), AGENT_WAKE_TIMEOUT_MS);
+    });
+    try {
+      const wakeResult = await Promise.race([
+        options.onWakeAgent(),
+        createWakeTimeout()
+      ]);
+      if (wakeResult !== true) {
+        notifyRuntimeMessage("warning", AGENT_WAKE_FAILURE_MESSAGE);
+        return false;
+      }
+      onAgentVisualStateChange("awake");
+      return true;
+    } catch {
+      notifyRuntimeMessage("warning", AGENT_WAKE_FAILURE_MESSAGE);
+      return false;
+    } finally {
+      setAgentWakeChecking(false);
+    }
+  }, [agentAwake, agentWakeChecking, onAgentVisualStateChange, options]);
+  const handleConfirmSendPromptToAgent = React13.useCallback(async () => {
+    if (!options.onSendPromptToAgent) return;
+    const ready = await wakeAgentForAction();
+    if (!ready) return;
+    setAgentPromptSending(true);
+    setAgentPromptSendingElementKey(currentAgentTask?.elementKey ?? null);
+    setAgentPromptInterrupting(false);
+    try {
+      await options.onSendPromptToAgent(currentTarget);
+    } catch {
+    } finally {
+      setAgentPromptSending(false);
+      setAgentPromptInterrupting(false);
+      setAgentPromptSendingElementKey(null);
+      syncPanelMetaState();
+    }
+  }, [
+    currentAgentTask?.elementKey,
+    currentTarget,
+    options,
+    syncPanelMetaState,
+    wakeAgentForAction
+  ]);
+  const handleInterruptSendPromptToAgent = React13.useCallback(
+    async (target) => {
+      if (!options.onAbortAgentPrompt) return;
+      setAgentPromptInterrupting(true);
       const createInterruptTimeout = () => new Promise((resolve) => {
-        window.setTimeout(() => resolve(), GENIE_INTERRUPT_TIMEOUT_MS);
+        window.setTimeout(() => resolve(), AGENT_INTERRUPT_TIMEOUT_MS);
       });
       try {
-        await Promise.race([options.onAbortSendPromptToGenie(currentTarget), createInterruptTimeout()]);
+        await Promise.race([
+          options.onAbortAgentPrompt(
+            target === void 0 ? currentTarget : target
+          ),
+          createInterruptTimeout()
+        ]);
       } catch {
       } finally {
-        setGeniePromptInterrupting(false);
+        setAgentPromptInterrupting(false);
       }
-    }, [currentTarget, options]);
-    const restoreTool = React14.useCallback(() => {
-      setCompactAnchorRect(null);
-      onToolMinimizedChange(false);
-    }, [onToolMinimizedChange]);
-    const minimizeTool = React14.useCallback(() => {
-      setCompactAnchorRect(null);
-      onToolMinimizedChange(true);
-    }, [onToolMinimizedChange]);
-    const closeShortcutDialog = React14.useCallback(() => {
-      setShortcutDialogOpen(false);
-      setCapturingShortcutIndex(null);
-      options.onCommentShortcutDialogOpenChange?.(false);
-    }, [options]);
-    const shortcutValidationError = React14.useMemo(() => {
-      const [first, second] = shortcutDraft.shortcuts;
-      if (first && second && first === second) {
-        return "\u4E24\u4E2A\u5FEB\u6377\u952E\u4E0D\u80FD\u914D\u7F6E\u4E3A\u540C\u4E00\u4E2A\u4FEE\u9970\u952E\u3002";
+    },
+    [currentTarget, options]
+  );
+  const restoreTool = React13.useCallback(() => {
+    setCompactAnchorRect(null);
+    onToolMinimizedChange(false);
+  }, [onToolMinimizedChange]);
+  const minimizeTool = React13.useCallback(() => {
+    setCompactAnchorRect(null);
+    onToolMinimizedChange(true);
+  }, [onToolMinimizedChange]);
+  const handleTogglePropertyPanel = React13.useCallback(
+    (nextOpen = !propertyPanelOpen) => {
+      if (nextOpen && toolMinimized) {
+        restoreTool();
       }
-      return "";
-    }, [shortcutDraft.shortcuts]);
-    const showExpandedPanel = !toolMinimized && propertyPanelOpen;
-    const pageZoomActive = showExpandedPanel && uiSettings.pageZoomEnabled;
-    const previousPageZoomEnabledRef = React14.useRef(uiSettings.pageZoomEnabled);
-    const previousPageZoomActiveRef = React14.useRef(pageZoomActive);
-    const themeMode = uiSettings.darkMode ? "dark" : "light";
-    const handleGenieBrandClick = React14.useCallback(async () => {
-      await wakeGenieForAction();
-    }, [wakeGenieForAction]);
-    React14.useEffect(() => {
-      if (!genieAwake) {
-        setGenieMenuOpen(false);
-      }
-    }, [genieAwake]);
-    const handleShortcutDraftChange = React14.useCallback(
-      (updater) => {
-        setShortcutDraft((prev) => sanitizeCommentShortcutSettings(updater(prev)));
-      },
-      []
+      onPropertyPanelOpenChange(nextOpen);
+    },
+    [onPropertyPanelOpenChange, propertyPanelOpen, restoreTool, toolMinimized]
+  );
+  const closeShortcutDialog = React13.useCallback(() => {
+    setShortcutDialogOpen(false);
+    setCapturingShortcutIndex(null);
+    options.onCommentShortcutDialogOpenChange?.(false);
+  }, [options]);
+  const shortcutValidationError = React13.useMemo(() => {
+    const [first, second] = shortcutDraft.shortcuts;
+    if (first && second && first === second) {
+      return "\u4E24\u4E2A\u5FEB\u6377\u952E\u4E0D\u80FD\u914D\u7F6E\u4E3A\u540C\u4E00\u4E2A\u4FEE\u9970\u952E\u3002";
+    }
+    return "";
+  }, [shortcutDraft.shortcuts]);
+  const showExpandedPanel = !toolMinimized && propertyPanelOpen;
+  const pageZoomActive = showExpandedPanel && uiSettings.pageZoomEnabled;
+  const previousPageZoomEnabledRef = React13.useRef(uiSettings.pageZoomEnabled);
+  const previousPageZoomActiveRef = React13.useRef(pageZoomActive);
+  const handleShortcutDraftChange = React13.useCallback(
+    (updater) => {
+      setShortcutDraft(
+        (prev) => sanitizeCommentShortcutSettings(updater(prev))
+      );
+    },
+    []
+  );
+  const handleShortcutSave = React13.useCallback(() => {
+    if (shortcutValidationError) return;
+    const nextSettings = sanitizeCommentShortcutSettings(shortcutDraft);
+    const currentSettings = sanitizeCommentShortcutSettings(
+      options.getCommentShortcutSettings?.() ?? DEFAULT_COMMENT_SHORTCUT_SETTINGS
     );
-    const handleShortcutSave = React14.useCallback(() => {
-      if (shortcutValidationError) return;
-      const nextSettings = sanitizeCommentShortcutSettings(shortcutDraft);
-      const currentSettings = sanitizeCommentShortcutSettings(
-        options.getCommentShortcutSettings?.() ?? DEFAULT_COMMENT_SHORTCUT_SETTINGS
-      );
-      if (!commentShortcutSettingsEqual(nextSettings, currentSettings)) {
-        options.onCommentShortcutSettingsChange?.(nextSettings);
-      }
-      closeShortcutDialog();
-    }, [closeShortcutDialog, options, shortcutDraft, shortcutValidationError]);
-    React14.useEffect(() => {
-      const root = rootRef.current;
-      if (!root) return;
-      setToolbarDragging(false);
-      setToolbarDragVelocity({ velocityX: 0, velocityY: 0 });
-      const updatePosition = (nextPosition) => {
-        setCompactAnchorRect(null);
-        applyToolbarPosition(nextPosition);
-      };
-      if (toolMinimized) {
-        const handle = minimizedButtonRef.current;
-        if (!handle) return;
-        return installFloatingDrag({
-          handleEl: handle,
-          targetEl: root,
-          clampMargin: FLOATING_CLAMP_MARGIN,
-          onPositionChange: updatePosition,
-          moveThresholdPx: isMobileDevice() ? 8 : 3,
-          onDragStateChange: (active) => {
-            setToolbarDragging(active);
-            if (!active) {
-              setToolbarDragVelocity({ velocityX: 0, velocityY: 0 });
-            }
-          }
-        });
-      }
-      const handles = [toolbarHeaderRef.current].filter(
-        (handle) => Boolean(handle)
-      );
-      if (handles.length === 0) return;
-      const cleanups = handles.map(
-        (handle) => installFloatingDrag({
-          handleEl: handle,
-          targetEl: root,
-          clampMargin: FLOATING_CLAMP_MARGIN,
-          onPositionChange: updatePosition,
-          moveThresholdPx: isMobileDevice() ? 8 : 3,
-          ignoreInteractiveChildren: true,
-          onDragStateChange: (active) => {
-            setToolbarDragging(active);
-            if (!active) {
-              setToolbarDragVelocity({ velocityX: 0, velocityY: 0 });
-            }
-          },
-          onDragMetricsChange: (metrics) => {
-            setToolbarDragVelocity(metrics);
-          }
-        })
-      );
-      return () => {
-        setToolbarDragging(false);
-        setToolbarDragVelocity({ velocityX: 0, velocityY: 0 });
-        cleanups.forEach((cleanup) => cleanup());
-      };
-    }, [applyToolbarPosition, showExpandedPanel, toolMinimized]);
-    React14.useEffect(() => {
-      const pagePanel = pagePanelRef.current;
-      const pagePanelHeader = pagePanelHeaderRef.current;
-      if (!pagePanel || !pagePanelHeader || !showExpandedPanel || toolMinimized) return;
+    if (!commentShortcutSettingsEqual(nextSettings, currentSettings)) {
+      options.onCommentShortcutSettingsChange?.(nextSettings);
+    }
+    closeShortcutDialog();
+  }, [closeShortcutDialog, options, shortcutDraft, shortcutValidationError]);
+  React13.useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    setToolbarDragging(false);
+    const updatePosition = (nextPosition) => {
+      setCompactAnchorRect(null);
+      applyToolbarPosition(nextPosition);
+    };
+    if (toolMinimized) {
+      const handle = minimizedButtonRef.current;
+      if (!handle) return;
       return installFloatingDrag({
-        handleEl: pagePanelHeader,
-        targetEl: pagePanel,
+        handleEl: handle,
+        targetEl: root,
         clampMargin: FLOATING_CLAMP_MARGIN,
-        onPositionChange: applyPanelPosition,
+        onPositionChange: updatePosition,
+        moveThresholdPx: isMobileDevice() ? 8 : 3,
+        onDragStateChange: (active) => {
+          setToolbarDragging(active);
+        }
+      });
+    }
+    const handles = [toolbarHeaderRef.current].filter(
+      (handle) => Boolean(handle)
+    );
+    if (handles.length === 0) return;
+    const cleanups = handles.map(
+      (handle) => installFloatingDrag({
+        handleEl: handle,
+        targetEl: root,
+        clampMargin: FLOATING_CLAMP_MARGIN,
+        onPositionChange: updatePosition,
         moveThresholdPx: isMobileDevice() ? 8 : 3,
         ignoreInteractiveChildren: true,
         onDragStateChange: (active) => {
           setToolbarDragging(active);
-          if (!active) {
-            setToolbarDragVelocity({ velocityX: 0, velocityY: 0 });
-          }
         }
-      });
-    }, [applyPanelPosition, showExpandedPanel, toolMinimized]);
-    React14.useEffect(() => {
-      const updateViewport = () => {
-        setViewportSize({ width: window.innerWidth, height: window.innerHeight });
-      };
-      window.addEventListener("resize", updateViewport);
-      return () => {
-        window.removeEventListener("resize", updateViewport);
-      };
-    }, []);
-    React14.useEffect(() => {
-      const onWindowWheel = (event) => {
-        const body = pagePanelBodyRef.current;
-        if (!body || !showExpandedPanel) return;
-        const rect = body.getBoundingClientRect();
-        const withinX = event.clientX >= rect.left && event.clientX <= rect.right;
-        const withinY = event.clientY >= rect.top && event.clientY <= rect.bottom;
-        if (!withinX || !withinY) return;
-        if (body.scrollHeight <= body.clientHeight) return;
-        body.scrollTop += event.deltaY;
-        if (event.cancelable) {
-          event.preventDefault();
-        }
-        event.stopPropagation();
-      };
-      window.addEventListener("wheel", onWindowWheel, { capture: true, passive: false });
-      return () => {
-        window.removeEventListener("wheel", onWindowWheel, { capture: true });
-      };
-    }, [showExpandedPanel]);
-    React14.useEffect(() => {
-      connectStyleObserver(currentTarget);
-      return () => {
-        disconnectStyleObserver();
-      };
-    }, [connectStyleObserver, currentTarget, disconnectStyleObserver]);
-    React14.useEffect(() => {
-      requestPanelRefresh();
-    }, [currentTarget, requestPanelRefresh]);
-    React14.useEffect(() => {
-      return () => {
-        options.onCommentShortcutDialogOpenChange?.(false);
-      };
-    }, [options]);
-    const blockingLayerOpen = settingsPopoverOpen || shortcutDialogOpen || keyboardShortcutsDialogOpen;
-    React14.useEffect(() => {
-      onBlockingLayerOpenChange?.(blockingLayerOpen);
-      return () => {
-        onBlockingLayerOpenChange?.(false);
-      };
-    }, [blockingLayerOpen, onBlockingLayerOpenChange]);
-    const focusPanelTextInput = React14.useCallback(() => {
-      if (inlineTextEditingRef.current) return false;
-      const input = textComposerRef.current?.querySelector("input");
-      if (!(input instanceof HTMLInputElement) || input.disabled) return false;
-      input.focus({ preventScroll: true });
-      try {
-        input.setSelectionRange(input.value.length, input.value.length);
-      } catch {
-      }
-      return true;
-    }, []);
-    const focusPanelNoteTextarea = React14.useCallback(() => {
-      if (inlineTextEditingRef.current) return false;
-      const textarea = noteComposerRef.current?.querySelector("textarea");
-      if (!(textarea instanceof HTMLTextAreaElement) || textarea.disabled) return false;
-      textarea.focus({ preventScroll: true });
-      try {
-        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      } catch {
-      }
-      return true;
-    }, []);
-    React14.useEffect(() => {
-      if (inlineTextEditing || toolMinimized || !showExpandedPanel) return;
-      const rafId = window.requestAnimationFrame(() => {
-        focusPanelTextInput();
-      });
-      return () => {
-        window.cancelAnimationFrame(rafId);
-      };
-    }, [focusPanelTextInput, inlineTextEditing, showExpandedPanel, toolMinimized]);
-    React14.useEffect(() => {
-      if (!inlineTextEditing) return;
-      const textarea = noteComposerRef.current?.querySelector("textarea");
-      if (textarea instanceof HTMLTextAreaElement) {
-        textarea.blur();
-      }
-      const input = textComposerRef.current?.querySelector("input");
-      if (input instanceof HTMLInputElement) {
-        input.blur();
-      }
-    }, [inlineTextEditing]);
-    const saveAndCloseNoteComposer = React14.useCallback(async () => {
-      await onConfirmNote();
-      const textarea = noteComposerRef.current?.querySelector("textarea");
-      if (textarea instanceof HTMLTextAreaElement) {
-        textarea.blur();
-      }
-      onDismissSelection?.();
-    }, [onConfirmNote, onDismissSelection]);
-    React14.useEffect(() => {
-      if (toolMinimized) {
-        onHoverSelectionSuppressedChange(false);
-      }
-    }, [onHoverSelectionSuppressedChange, toolMinimized]);
-    React14.useEffect(() => {
-      if (toolMinimized) {
-        onSelectionInteractionLockChange(false);
-      }
-    }, [onSelectionInteractionLockChange, toolMinimized]);
-    React14.useEffect(() => {
-      if (!toolMinimized) return;
-      setSessionActivityCardOpen(false);
-      setSettingsPopoverOpen(false);
-    }, [toolMinimized]);
-    React14.useEffect(() => {
-      return () => {
-        onHoverSelectionSuppressedChange(false);
-        onSelectionInteractionLockChange(false);
-      };
-    }, [onHoverSelectionSuppressedChange, onSelectionInteractionLockChange]);
-    React14.useEffect(() => {
-      syncPanelMetaState();
-    }, [syncPanelMetaState]);
-    React14.useEffect(() => {
-      setPageAnimationsDisabled(uiSettings.disablePageAnimations);
-      return () => {
-        setPageAnimationsDisabled(false);
-      };
-    }, [uiSettings.disablePageAnimations]);
-    React14.useEffect(() => {
-      if (previousPageZoomEnabledRef.current !== uiSettings.pageZoomEnabled) {
-        onDismissSelection?.();
-        onTargetChange(null);
-      }
-      previousPageZoomEnabledRef.current = uiSettings.pageZoomEnabled;
-    }, [onDismissSelection, onTargetChange, uiSettings.pageZoomEnabled]);
-    React14.useEffect(() => {
-      if (previousPageZoomActiveRef.current !== pageZoomActive) {
-        onDismissSelection?.();
-        onTargetChange(null);
-      }
-      previousPageZoomActiveRef.current = pageZoomActive;
-    }, [onDismissSelection, onTargetChange, pageZoomActive]);
-    React14.useEffect(() => {
-      setPageZoomEnabled(pageZoomActive, {
-        reservedRightWidth: PAGE_CONFIG_PANEL_WIDTH + PROPERTY_PANEL_RIGHT + 24
-      });
-      return () => {
-        setPageZoomEnabled(false);
-      };
-    }, [pageZoomActive]);
-    React14.useEffect(
-      () => () => {
-        if (!previousPageZoomActiveRef.current) return;
-        onDismissSelectionRef.current?.();
-        onTargetChangeRef.current(null);
-      },
-      []
+      })
     );
-    React14.useEffect(() => {
-      if (!toolMinimized) return;
-      if (shortcutDialogOpen) {
-        closeShortcutDialog();
+    return () => {
+      setToolbarDragging(false);
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, [applyToolbarPosition, showExpandedPanel, toolMinimized]);
+  React13.useEffect(() => {
+    const pagePanel = pagePanelRef.current;
+    const pagePanelHeader = pagePanelHeaderRef.current;
+    if (!pagePanel || !pagePanelHeader || !showExpandedPanel || toolMinimized)
+      return;
+    return installFloatingDrag({
+      handleEl: pagePanelHeader,
+      targetEl: pagePanel,
+      clampMargin: FLOATING_CLAMP_MARGIN,
+      onPositionChange: applyPanelPosition,
+      moveThresholdPx: isMobileDevice() ? 8 : 3,
+      ignoreInteractiveChildren: true,
+      onDragStateChange: (active) => {
+        setToolbarDragging(active);
       }
-    }, [closeShortcutDialog, shortcutDialogOpen, toolMinimized]);
-    React14.useLayoutEffect(() => {
-      if (toolMinimized) return;
-      const updateAnchor = () => {
-        const rect = collapseActionRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        setCompactAnchorRect((prev) => {
-          const next = {
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height
-          };
-          if (prev && prev.left === next.left && prev.top === next.top && prev.width === next.width && prev.height === next.height) {
-            return prev;
-          }
-          return next;
-        });
-      };
-      updateAnchor();
-      window.addEventListener("resize", updateAnchor);
-      return () => {
-        window.removeEventListener("resize", updateAnchor);
-      };
-    }, [
-      actionBusy,
-      currentTarget,
-      modifiedCount,
-      pagePanelPosition,
-      redoCount,
-      shortcutDialogOpen,
-      toolbarPosition,
-      toolMinimized,
-      uiMode,
-      undoCount
-    ]);
-    React14.useEffect(() => {
-      if (capturingShortcutIndex === null) return;
-      const button = shortcutCardRefs.current[capturingShortcutIndex];
-      if (!button) return;
-      const rafId = window.requestAnimationFrame(() => {
-        button.focus({ preventScroll: true });
-      });
-      return () => {
-        window.cancelAnimationFrame(rafId);
-      };
-    }, [capturingShortcutIndex]);
-    const copyReason = options.getCopyPromptBlockReason?.();
-    const copyBlocked = !options.onCopyPrompt || !!copyReason;
-    const geniePromptToolbarAction = getGeniePromptToolbarActionState({
-      toolMinimized,
-      visualState: effectiveVisualState,
-      waking: genieWakeChecking,
-      sending: currentTaskIsSending,
-      interrupting: geniePromptInterrupting,
-      hasReusableConversation,
-      pageTaskRunning,
-      pageTaskSessionReady,
-      currentTaskRunning,
-      currentTaskSessionReady,
-      canInterrupt: activeTaskCanInterrupt,
-      canWakeGenie: Boolean(options.onWakeGenie),
-      onSendPromptToGenie: options.onSendPromptToGenie,
-      getGenieBridgeConnected: options.getGenieBridgeConnected,
-      getSendPromptToGenieBlockReason: () => options.getSendPromptToGenieBlockReason?.(currentTarget)
     });
-    const geniePromptCanInterrupt = activeTaskCanInterrupt;
-    const genieShellAwake = geniePromptToolbarAction.robotState === "awake" || geniePromptToolbarAction.robotState === "working";
-    const genieBrandState = toolbarDragging && genieShellAwake ? "dragging" : geniePromptToolbarAction.robotState === "waking" ? effectiveVisualState : geniePromptToolbarAction.robotState;
-    const currentTaskSessionHref = currentGenieTask?.sessionUrl ?? (currentGenieTask?.sessionId ? `/session/${currentGenieTask.sessionId}` : "");
-    const currentTaskDescription = resolveExternalEditingStatusDescription(
-      currentGenieTask,
-      options.externalEditingStatusDescription
+  }, [applyPanelPosition, showExpandedPanel, toolMinimized]);
+  React13.useEffect(() => {
+    const updateViewport = () => {
+      setViewportSize({ width: window.innerWidth, height: window.innerHeight });
+    };
+    window.addEventListener("resize", updateViewport);
+    return () => {
+      window.removeEventListener("resize", updateViewport);
+    };
+  }, []);
+  React13.useEffect(() => {
+    const onWindowWheel = (event) => {
+      const body = pagePanelBodyRef.current;
+      if (!body || !showExpandedPanel) return;
+      const rect = body.getBoundingClientRect();
+      const withinX = event.clientX >= rect.left && event.clientX <= rect.right;
+      const withinY = event.clientY >= rect.top && event.clientY <= rect.bottom;
+      if (!withinX || !withinY) return;
+      if (body.scrollHeight <= body.clientHeight) return;
+      body.scrollTop += event.deltaY;
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      event.stopPropagation();
+    };
+    window.addEventListener("wheel", onWindowWheel, {
+      capture: true,
+      passive: false
+    });
+    return () => {
+      window.removeEventListener("wheel", onWindowWheel, { capture: true });
+    };
+  }, [showExpandedPanel]);
+  React13.useEffect(() => {
+    connectStyleObserver(currentTarget);
+    return () => {
+      disconnectStyleObserver();
+    };
+  }, [connectStyleObserver, currentTarget, disconnectStyleObserver]);
+  React13.useEffect(() => {
+    requestPanelRefresh();
+  }, [currentTarget, requestPanelRefresh]);
+  React13.useEffect(() => {
+    return () => {
+      options.onCommentShortcutDialogOpenChange?.(false);
+    };
+  }, [options]);
+  const blockingLayerOpen = settingsPopoverOpen || commentarySkillDialogOpen || shortcutDialogOpen || keyboardShortcutsDialogOpen || directoryPickerOpen;
+  React13.useEffect(() => {
+    onBlockingLayerOpenChange?.(blockingLayerOpen);
+    return () => {
+      onBlockingLayerOpenChange?.(false);
+    };
+  }, [blockingLayerOpen, onBlockingLayerOpenChange]);
+  React13.useEffect(() => {
+    if (!directoryPickerOpen) return void 0;
+    return lockPageScrollForRuntimeModal();
+  }, [directoryPickerOpen]);
+  const focusPanelTextInput = React13.useCallback(() => {
+    if (inlineTextEditingRef.current) return false;
+    const input = textComposerRef.current?.querySelector("input");
+    if (!(input instanceof HTMLInputElement) || input.disabled) return false;
+    input.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR2, "false");
+    input.focus({ preventScroll: true });
+    try {
+      input.setSelectionRange(input.value.length, input.value.length);
+    } catch {
+    }
+    return true;
+  }, []);
+  const focusPanelNoteTextarea = React13.useCallback(() => {
+    if (inlineTextEditingRef.current) return false;
+    const textarea = noteComposerRef.current?.querySelector("textarea");
+    if (!(textarea instanceof HTMLTextAreaElement) || textarea.disabled)
+      return false;
+    textarea.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR2, "false");
+    textarea.focus({ preventScroll: true });
+    try {
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    } catch {
+    }
+    return true;
+  }, []);
+  React13.useEffect(() => {
+    if (inlineTextEditing || toolMinimized || !showExpandedPanel) return;
+    const rafId = window.requestAnimationFrame(() => {
+      focusPanelTextInput();
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [
+    focusPanelTextInput,
+    inlineTextEditing,
+    showExpandedPanel,
+    toolMinimized
+  ]);
+  React13.useEffect(() => {
+    if (!inlineTextEditing) return;
+    const textarea = noteComposerRef.current?.querySelector("textarea");
+    if (textarea instanceof HTMLTextAreaElement) {
+      textarea.blur();
+    }
+    const input = textComposerRef.current?.querySelector("input");
+    if (input instanceof HTMLInputElement) {
+      input.blur();
+    }
+  }, [inlineTextEditing]);
+  const saveAndCloseNoteComposer = React13.useCallback(async () => {
+    await onConfirmNote();
+    const textarea = noteComposerRef.current?.querySelector("textarea");
+    if (textarea instanceof HTMLTextAreaElement) {
+      textarea.blur();
+    }
+    onDismissSelection?.();
+  }, [onConfirmNote, onDismissSelection]);
+  React13.useEffect(() => {
+    if (toolMinimized) {
+      onHoverSelectionSuppressedChange(false);
+    }
+  }, [onHoverSelectionSuppressedChange, toolMinimized]);
+  React13.useEffect(() => {
+    if (toolMinimized) {
+      onSelectionInteractionLockChange(false);
+    }
+  }, [onSelectionInteractionLockChange, toolMinimized]);
+  React13.useEffect(() => {
+    if (!toolMinimized) return;
+    setSessionActivityCardOpen(false);
+    setSettingsPopoverOpen(false);
+    setCommentarySkillDialogOpen(false);
+    setDirectoryPickerOpen(false);
+  }, [toolMinimized]);
+  React13.useEffect(() => {
+    return () => {
+      onHoverSelectionSuppressedChange(false);
+      onSelectionInteractionLockChange(false);
+    };
+  }, [onHoverSelectionSuppressedChange, onSelectionInteractionLockChange]);
+  React13.useEffect(() => {
+    syncPanelMetaState();
+  }, [syncPanelMetaState]);
+  React13.useEffect(() => {
+    setPageAnimationsDisabled(uiSettings.disablePageAnimations);
+    return () => {
+      setPageAnimationsDisabled(false);
+    };
+  }, [uiSettings.disablePageAnimations]);
+  React13.useEffect(() => {
+    if (previousPageZoomEnabledRef.current !== uiSettings.pageZoomEnabled) {
+      onDismissSelection?.();
+      onTargetChange(null);
+    }
+    previousPageZoomEnabledRef.current = uiSettings.pageZoomEnabled;
+  }, [onDismissSelection, onTargetChange, uiSettings.pageZoomEnabled]);
+  React13.useEffect(() => {
+    if (previousPageZoomActiveRef.current !== pageZoomActive) {
+      onDismissSelection?.();
+      onTargetChange(null);
+    }
+    previousPageZoomActiveRef.current = pageZoomActive;
+  }, [onDismissSelection, onTargetChange, pageZoomActive]);
+  React13.useEffect(() => {
+    setPageZoomEnabled(pageZoomActive, {
+      reservedRightWidth: PAGE_CONFIG_PANEL_WIDTH + PROPERTY_PANEL_RIGHT + 24
+    });
+    return () => {
+      setPageZoomEnabled(false);
+    };
+  }, [pageZoomActive]);
+  React13.useEffect(
+    () => () => {
+      if (!previousPageZoomActiveRef.current) return;
+      onDismissSelectionRef.current?.();
+      onTargetChangeRef.current(null);
+    },
+    []
+  );
+  React13.useEffect(() => {
+    if (!toolMinimized) return;
+    if (shortcutDialogOpen) {
+      closeShortcutDialog();
+    }
+  }, [closeShortcutDialog, shortcutDialogOpen, toolMinimized]);
+  React13.useLayoutEffect(() => {
+    if (toolMinimized) return;
+    const updateAnchor = () => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setCompactAnchorRect((prev) => {
+        const next = {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height
+        };
+        if (prev && prev.left === next.left && prev.top === next.top && prev.width === next.width && prev.height === next.height) {
+          return prev;
+        }
+        return next;
+      });
+    };
+    updateAnchor();
+    window.addEventListener("resize", updateAnchor);
+    return () => {
+      window.removeEventListener("resize", updateAnchor);
+    };
+  }, [
+    actionBusy,
+    currentTarget,
+    modifiedCount,
+    pagePanelPosition,
+    redoCount,
+    shortcutDialogOpen,
+    toolbarPosition,
+    toolMinimized,
+    uiMode,
+    undoCount
+  ]);
+  React13.useEffect(() => {
+    if (capturingShortcutIndex === null) return;
+    const button = shortcutCardRefs.current[capturingShortcutIndex];
+    if (!button) return;
+    const rafId = window.requestAnimationFrame(() => {
+      button.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [capturingShortcutIndex]);
+  const copyReason = options.getCopyPromptBlockReason?.();
+  const copyBlocked = !options.onCopyPrompt || !!copyReason;
+  const agentPromptToolbarAction = getAgentPromptToolbarActionState({
+    toolMinimized,
+    visualState: effectiveVisualState,
+    waking: agentWakeChecking,
+    sending: currentTaskIsSending,
+    interrupting: agentPromptInterrupting,
+    hasReusableConversation,
+    pageTaskRunning,
+    pageTaskSessionReady,
+    currentTaskRunning,
+    currentTaskSessionReady,
+    canInterrupt: activeTaskCanInterrupt || pageTaskCanInterrupt,
+    canWakeAgent: Boolean(options.onWakeAgent),
+    onSendPromptToAgent: options.onSendPromptToAgent,
+    getAgentBridgeConnected: options.getAgentBridgeConnected,
+    getSendPromptToAgentBlockReason: () => options.getSendPromptToAgentBlockReason?.(currentTarget)
+  });
+  const agentPromptCanInterrupt = activeTaskCanInterrupt;
+  const agentShellAwake = agentPromptToolbarAction.robotState === "awake" || agentPromptToolbarAction.robotState === "working";
+  const currentTaskSessionHref = currentAgentTask?.sessionUrl ?? (currentAgentTask?.sessionId ? `/session/${currentAgentTask.sessionId}` : "");
+  const currentTaskDescription = resolveExternalEditingStatusDescription(
+    currentAgentTask,
+    options.externalEditingStatusDescription
+  );
+  const handleOpenCurrentTaskSession = React13.useCallback(() => {
+    if (!currentTaskSessionHref) return;
+    window.open(currentTaskSessionHref, "_blank", "noopener,noreferrer");
+  }, [currentTaskSessionHref]);
+  const handleDismissCurrentTaskState = React13.useCallback(() => {
+    if (!currentTarget || !options.dismissElementAgentTaskState) return;
+    options.dismissElementAgentTaskState(currentTarget);
+  }, [currentTarget, options]);
+  const agentTaskStatusCard = currentAgentTask ? /* @__PURE__ */ jsxs11(
+    "div",
+    {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        padding: "12px 14px",
+        borderRadius: 18,
+        border: currentAgentTask.status === "error" ? "1px solid rgba(239, 68, 68, 0.24)" : currentAgentTask.status === "completed" ? "1px solid rgba(34, 197, 94, 0.24)" : "1px solid rgba(0, 143, 93, 0.22)",
+        background: currentAgentTask.status === "error" ? "rgba(127, 29, 29, 0.14)" : currentAgentTask.status === "completed" ? "rgba(20, 83, 45, 0.14)" : "rgba(0, 143, 93, 0.08)",
+        boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)"
+      },
+      children: [
+        /* @__PURE__ */ jsxs11("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [
+          currentAgentTask.status === "completed" ? /* @__PURE__ */ jsx12(CheckCircleFilled2, { style: { color: "#22c55e" } }) : currentAgentTask.status === "error" ? /* @__PURE__ */ jsx12(ExclamationCircleFilled2, { style: { color: "#ef4444" } }) : /* @__PURE__ */ jsx12(AgentSparkleIcon, {}),
+          /* @__PURE__ */ jsx12(
+            "span",
+            {
+              style: {
+                fontSize: 12,
+                fontWeight: 700,
+                color: EDITOR_CHROME.textPrimary
+              },
+              children: currentAgentTask.status === "pending" ? "AI \u51C6\u5907\u4E2D" : currentAgentTask.status === "created" ? "AI \u6B63\u5728\u4FEE\u6539" : currentAgentTask.status === "completed" ? "AI \u4FEE\u6539\u5B8C\u6210" : "AI \u4FEE\u6539\u5931\u8D25"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxs11(
+          "span",
+          {
+            style: {
+              fontSize: 12,
+              lineHeight: 1.6,
+              color: EDITOR_CHROME.textSecondary,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis"
+            },
+            children: [
+              currentTaskDescription,
+              currentAgentTask.sessionId ? ` \xB7 Session ${currentAgentTask.sessionId}` : ""
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxs11(Space2, { size: 8, wrap: true, children: [
+          !hideExecutionControls && currentTaskRunning ? /* @__PURE__ */ jsx12(
+            Button4,
+            {
+              size: "small",
+              danger: true,
+              icon: /* @__PURE__ */ jsx12(StopOutlined, {}),
+              disabled: !agentPromptCanInterrupt || agentPromptInterrupting,
+              loading: agentPromptInterrupting,
+              onClick: () => {
+                void handleInterruptSendPromptToAgent();
+              },
+              children: "\u4E2D\u65AD"
+            }
+          ) : null,
+          !hideExecutionControls && currentAgentTask.status === "error" ? /* @__PURE__ */ jsx12(
+            Button4,
+            {
+              size: "small",
+              icon: /* @__PURE__ */ jsx12(ReloadOutlined, {}),
+              disabled: agentPromptToolbarAction.sendDisabled || actionBusy,
+              onClick: () => {
+                void handleConfirmSendPromptToAgent();
+              },
+              children: "\u91CD\u8BD5"
+            }
+          ) : null,
+          currentTaskSessionHref ? /* @__PURE__ */ jsx12(
+            Button4,
+            {
+              size: "small",
+              icon: /* @__PURE__ */ jsx12(LinkOutlined3, {}),
+              onClick: handleOpenCurrentTaskSession,
+              children: "\u6253\u5F00\u4F1A\u8BDD"
+            }
+          ) : null,
+          currentTaskTerminal ? /* @__PURE__ */ jsx12(
+            Button4,
+            {
+              size: "small",
+              icon: /* @__PURE__ */ jsx12(CloseToolIcon, {}),
+              onClick: handleDismissCurrentTaskState,
+              children: "\u5173\u95ED\u63D0\u793A"
+            }
+          ) : null
+        ] })
+      ]
+    }
+  ) : null;
+  const compactPosition = React13.useMemo(
+    () => computeCompactPanelPosition({
+      actionRect: compactAnchorRect,
+      floatingPosition: toolbarPosition,
+      viewport: viewportSize,
+      panelWidth: PAGE_CONFIG_PANEL_WIDTH,
+      panelTop: PROPERTY_PANEL_TOP,
+      panelRight: PROPERTY_PANEL_RIGHT,
+      panelBottom: TOOLBAR_BOTTOM,
+      compactSize: COMPACT_TOOL_SIZE,
+      compactWidth: toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_WIDTH,
+      compactHeight: toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_HEIGHT,
+      margin: FLOATING_CLAMP_MARGIN,
+      headerPaddingX: HEADER_HORIZONTAL_PADDING,
+      headerPaddingY: HEADER_VERTICAL_PADDING,
+      controlSize: HEADER_CONTROL_SIZE
+    }),
+    [compactAnchorRect, toolbarPosition, toolMinimized, viewportSize]
+  );
+  const clampedExpandedToolbarPosition = React13.useMemo(
+    () => toolbarPosition ? clampToViewport(toolbarPosition, {
+      width: COMPACT_TOOLBAR_WIDTH,
+      height: COMPACT_TOOLBAR_HEIGHT
+    }) : null,
+    [clampToViewport, toolbarPosition]
+  );
+  const mobileHideToolbar = isMobileDevice() && !toolMinimized && uiMode === "bubble-card" && !!currentTarget;
+  const shellStyle = toolMinimized ? {
+    ...toolbarPosition ? {
+      left: toolbarPosition.left,
+      top: toolbarPosition.top,
+      right: "auto",
+      bottom: "auto"
+    } : compactAnchorRect ? {
+      left: compactPosition.left,
+      top: compactPosition.top,
+      right: "auto",
+      bottom: "auto"
+    } : {
+      right: PROPERTY_PANEL_RIGHT,
+      bottom: TOOLBAR_BOTTOM,
+      top: "auto"
+    },
+    position: "absolute",
+    zIndex: panelStyle.zIndex,
+    width: COMPACT_TOOL_SIZE,
+    height: COMPACT_TOOL_SIZE,
+    maxWidth: COMPACT_TOOL_SIZE,
+    borderRadius: 999,
+    pointerEvents: "auto",
+    overflow: "visible",
+    border: "none",
+    background: "transparent",
+    boxShadow: "none"
+  } : !showExpandedPanel ? {
+    ...panelStyle,
+    width: "fit-content",
+    height: "auto",
+    maxWidth: "calc(100vw - 32px)",
+    border: "none",
+    background: "transparent",
+    boxShadow: "none",
+    pointerEvents: mobileHideToolbar ? "none" : "auto",
+    overflow: "visible",
+    opacity: mobileHideToolbar ? 0 : 1,
+    ...clampedExpandedToolbarPosition ? {
+      left: clampedExpandedToolbarPosition.left,
+      top: clampedExpandedToolbarPosition.top,
+      right: "auto",
+      bottom: "auto"
+    } : {
+      right: PROPERTY_PANEL_RIGHT,
+      bottom: TOOLBAR_BOTTOM,
+      top: "auto"
+    }
+  } : {
+    ...panelStyle,
+    width: "fit-content",
+    height: "auto",
+    maxWidth: "calc(100vw - 32px)",
+    border: "none",
+    background: "transparent",
+    boxShadow: "none",
+    pointerEvents: mobileHideToolbar ? "none" : "auto",
+    overflow: "visible",
+    opacity: mobileHideToolbar ? 0 : 1,
+    ...clampedExpandedToolbarPosition ? {
+      left: clampedExpandedToolbarPosition.left,
+      top: clampedExpandedToolbarPosition.top,
+      right: "auto",
+      bottom: "auto"
+    } : {
+      right: PROPERTY_PANEL_RIGHT,
+      bottom: TOOLBAR_BOTTOM,
+      top: "auto"
+    }
+  };
+  const showCopyPromptAction = options.showCopyPromptAction !== false;
+  const hasPrototypeClearableEdits = isHostToolbarMode && Boolean(options.hasPrototypeComments?.());
+  const hasClearableEdits = modifiedCount + visibleTerminalTaskCount > 0 || hasPrototypeClearableEdits;
+  const clearAllEditsDisabled = actionBusy || !hasClearableEdits || !options.onClearEdits;
+  const copyPromptDisabled = clearAllEditsDisabled || copyBlocked;
+  const copyToolbarButton = showCopyPromptAction ? /* @__PURE__ */ jsx12(
+    AgentToolbarIconButton,
+    {
+      title: copyReason ?? "\u590D\u5236 Prompt",
+      icon: /* @__PURE__ */ jsx12(CopyOutlined2, {}),
+      awake: agentShellAwake,
+      disabled: copyPromptDisabled,
+      onClick: () => {
+        void runAction(options.onCopyPrompt);
+      }
+    }
+  ) : null;
+  const copyPromptVisible = Boolean(copyToolbarButton);
+  const inlineSendVisible = !hideExecutionControls && agentPromptToolbarAction.sendVisible;
+  const inlineInterruptVisible = !hideExecutionControls && agentPromptToolbarAction.interruptVisible;
+  const hostSendVisible = agentPromptToolbarAction.sendVisible;
+  const sessionActivityCardContent = /* @__PURE__ */ jsxs11(
+    "div",
+    {
+      style: {
+        width: 320,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        padding: 4
+      },
+      children: [
+        /* @__PURE__ */ jsxs11(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12
+            },
+            children: [
+              /* @__PURE__ */ jsx12(
+                "span",
+                {
+                  style: {
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: EDITOR_CHROME.textPrimary
+                  },
+                  children: "\u6700\u8FD1\u52A8\u6001"
+                }
+              ),
+              !hideExecutionControls && currentTaskRunning ? /* @__PURE__ */ jsx12(
+                Button4,
+                {
+                  size: "small",
+                  danger: true,
+                  icon: /* @__PURE__ */ jsx12(StopOutlined, {}),
+                  disabled: !agentPromptCanInterrupt || agentPromptInterrupting,
+                  loading: agentPromptInterrupting,
+                  onClick: () => {
+                    void handleInterruptSendPromptToAgent();
+                  },
+                  children: "\u505C\u6B62\u6267\u884C"
+                }
+              ) : null
+            ]
+          }
+        ),
+        visibleSessionActivities.length > 0 ? /* @__PURE__ */ jsx12(
+          Timeline,
+          {
+            items: visibleSessionActivities.map((item) => ({
+              key: item.id,
+              children: /* @__PURE__ */ jsxs11(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    paddingBottom: 4
+                  },
+                  children: [
+                    /* @__PURE__ */ jsx12(
+                      "span",
+                      {
+                        style: {
+                          fontSize: 12,
+                          lineHeight: 1.6,
+                          color: EDITOR_CHROME.textPrimary,
+                          display: "-webkit-box",
+                          WebkitBoxOrient: "vertical",
+                          WebkitLineClamp: 2,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          wordBreak: "break-word"
+                        },
+                        children: item.text
+                      }
+                    ),
+                    /* @__PURE__ */ jsx12(
+                      "span",
+                      {
+                        style: {
+                          fontSize: 11,
+                          lineHeight: 1.5,
+                          color: EDITOR_CHROME.textMuted
+                        },
+                        children: formatSessionActivityTime(item.timestamp)
+                      }
+                    )
+                  ]
+                }
+              )
+            }))
+          }
+        ) : /* @__PURE__ */ jsx12(
+          "div",
+          {
+            style: {
+              fontSize: 12,
+              lineHeight: 1.6,
+              color: EDITOR_CHROME.textMuted
+            },
+            children: "\u6700\u8FD1\u6682\u65E0\u52A8\u6001"
+          }
+        )
+      ]
+    }
+  );
+  const agentPrimaryMenuLabel = agentPromptToolbarAction.sendTitle.includes(
+    "\u8FFD\u52A0"
+  ) ? "\u8FFD\u52A0" : "\u5FEB\u901F\u6267\u884C";
+  const clearAllEditsToolbarButton = clearAllEditsDisabled ? /* @__PURE__ */ jsx12(
+    AgentToolbarIconButton,
+    {
+      title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+      icon: /* @__PURE__ */ jsx12(DeleteOutlined3, {}),
+      awake: agentShellAwake,
+      disabled: true
+    }
+  ) : /* @__PURE__ */ jsx12(
+    Popconfirm2,
+    {
+      title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+      description: "\u786E\u8BA4\u540E\u4F1A\u6E05\u7A7A\u6240\u6709\u5F85\u4FEE\u6539\u5185\u5BB9\uFF0C\u5DF2\u4FDD\u5B58\u7684\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002",
+      arrow: { pointAtCenter: true },
+      getPopupContainer: resolveRuntimePopupContainer,
+      okText: "\u6E05\u7A7A",
+      cancelText: "\u53D6\u6D88",
+      okButtonProps: { danger: true },
+      onConfirm: () => runAction(() => options.onClearEdits?.({ skipConfirm: true })),
+      children: /* @__PURE__ */ jsx12("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ jsx12(
+        AgentToolbarIconButton,
+        {
+          title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+          icon: /* @__PURE__ */ jsx12(DeleteOutlined3, {}),
+          awake: agentShellAwake
+        }
+      ) })
+    }
+  );
+  const agentExecutionToolbarButton = inlineInterruptVisible ? /* @__PURE__ */ jsx12(
+    Popconfirm2,
+    {
+      title: "\u7EC8\u6B62\u5168\u90E8\u4FEE\u6539",
+      description: "\u786E\u8BA4\u540E\u4F1A\u7EC8\u6B62\u5F53\u524D\u9875\u9762\u6240\u6709\u6B63\u5728\u8FDB\u884C\u7684 AI \u4FEE\u6539\u3002",
+      okText: "\u7EC8\u6B62",
+      cancelText: "\u53D6\u6D88",
+      okButtonProps: { danger: true },
+      disabled: agentPromptToolbarAction.interruptDisabled,
+      getPopupContainer: resolveRuntimePopupContainer,
+      onConfirm: () => {
+        void handleInterruptSendPromptToAgent(null);
+      },
+      children: /* @__PURE__ */ jsx12("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ jsx12(
+        AgentToolbarIconButton,
+        {
+          title: agentPromptToolbarAction.interruptTitle,
+          ariaLabel: "\u7EC8\u6B62\u5168\u90E8\u4FEE\u6539",
+          icon: /* @__PURE__ */ jsx12(PoweroffOutlined, {}),
+          awake: agentShellAwake,
+          active: !agentPromptToolbarAction.interruptDisabled,
+          disabled: agentPromptToolbarAction.interruptDisabled,
+          loading: agentPromptToolbarAction.interruptLoading
+        }
+      ) })
+    }
+  ) : /* @__PURE__ */ jsx12(
+    AgentToolbarIconButton,
+    {
+      title: agentPromptToolbarAction.sendDisabled ? agentPromptToolbarAction.sendTitle : agentPrimaryMenuLabel,
+      ariaLabel: agentPrimaryMenuLabel,
+      icon: /* @__PURE__ */ jsx12(CaretRightFilled2, {}),
+      awake: agentShellAwake,
+      active: inlineSendVisible && !agentPromptToolbarAction.sendDisabled,
+      disabled: !inlineSendVisible || agentPromptToolbarAction.sendDisabled || actionBusy,
+      loading: agentPromptToolbarAction.sendLoading,
+      onClick: () => {
+        void handleConfirmSendPromptToAgent();
+      }
+    }
+  );
+  const handleCopySkillInstallPrompt = React13.useCallback(async () => {
+    const text = buildSkillInstallPrompt(options.skillInstallSource);
+    try {
+      await copyRuntimeTextToClipboard(text);
+      if (text) {
+        notifyRuntimeMessage(
+          "success",
+          "\u5DF2\u590D\u5236\u6280\u80FD\u8BF4\u660E\uFF0C\u8BF7\u53D1\u7ED9\u5BF9\u5E94 agent \u5904\u7406"
+        );
+        return;
+      }
+      notifyRuntimeMessage("info", "\u63D0\u793A\u8BCD\u6682\u672A\u914D\u7F6E\uFF0C\u5DF2\u590D\u5236\u7A7A\u6A21\u677F");
+    } catch {
+      notifyRuntimeMessage("error", "\u590D\u5236\u5931\u8D25");
+    }
+  }, []);
+  const handleCopyGlobalPanelPrompt = React13.useCallback(async () => {
+    const pageUrl = typeof window !== "undefined" && typeof window.location?.href === "string" ? window.location.href : "";
+    const text = buildGlobalPanelPrompt(options.skillInstallSource, pageUrl);
+    try {
+      await copyRuntimeTextToClipboard(text);
+      if (text) {
+        notifyRuntimeMessage("success", "\u5DF2\u590D\u5236\u63D0\u793A\uFF0C\u8BF7\u53D1\u7ED9\u5BF9\u5E94 agent \u5904\u7406");
+        return;
+      }
+      notifyRuntimeMessage("info", "\u63D0\u793A\u8BCD\u6682\u672A\u914D\u7F6E\uFF0C\u5DF2\u590D\u5236\u7A7A\u6A21\u677F");
+    } catch {
+      notifyRuntimeMessage("error", "\u590D\u5236\u5931\u8D25");
+    }
+  }, []);
+  const handleRefreshAgentProviders = React13.useCallback(async () => {
+    if (!onRefreshAgentProviderAvailabilities) return;
+    setAgentProviderRefreshPending(true);
+    try {
+      await onRefreshAgentProviderAvailabilities(
+        AGENT_MENU_OPTIONS.map((item) => item.value)
+      );
+    } finally {
+      setAgentProviderRefreshPending(false);
+    }
+  }, [onRefreshAgentProviderAvailabilities]);
+  const agentProviderSettingsMenuItems = AGENT_MENU_OPTIONS.map((item) => {
+    const availability = agentProviderAvailabilityMap.get(item.value) ?? null;
+    const agentInstalled = availability?.installed !== false;
+    return {
+      key: `agent-provider:${item.value}`,
+      label: `${item.label}${agentInstalled ? "" : "\uFF08\u672A\u5B89\u88C5\uFF09"}`,
+      disabled: !agentInstalled
+    };
+  });
+  const selectedAgentMenuKey = uiSettings.agentProvider ? `agent-provider:${uiSettings.agentProvider}` : AGENT_DEFAULT_MENU_KEY;
+  const agentProviderDropdownItems = hideExecutionControls ? [] : [
+    {
+      key: AGENT_DEFAULT_MENU_KEY,
+      label: "\u9ED8\u8BA4"
+    },
+    ...agentProviderSettingsMenuItems
+  ];
+  const handleAgentProviderMenuClick = React13.useCallback(
+    ({ key }) => {
+      if (key === AGENT_DEFAULT_MENU_KEY) {
+        onUiSettingsChange({ ...uiSettings, agentProvider: null });
+        return;
+      }
+      if (String(key).startsWith("agent-provider:")) {
+        const nextAgent = String(key).replace("agent-provider:", "").trim();
+        if (nextAgent && nextAgent !== uiSettings.agentProvider) {
+          onUiSettingsChange({
+            ...uiSettings,
+            agentProvider: nextAgent
+          });
+        }
+        return;
+      }
+    },
+    [onUiSettingsChange, uiSettings]
+  );
+  const selectedAgentMenuLabel = uiSettings.agentProvider ? AGENT_MENU_OPTIONS.find(
+    (item) => item.value === uiSettings.agentProvider
+  )?.label ?? uiSettings.agentProvider : "\u9ED8\u8BA4";
+  const aiExecutionProviderOptions = React13.useMemo(() => {
+    const merged = /* @__PURE__ */ new Map();
+    for (const item of AI_EXECUTION_PROVIDER_OPTIONS) {
+      merged.set(item.value, item);
+    }
+    for (const item of aiExecutionProviderOptionsState) {
+      const value = normalizeAiExecutionWorkspacePath(item.value);
+      if (!value) continue;
+      merged.set(value, {
+        value,
+        label: normalizeAiExecutionWorkspacePath(item.label) || value,
+        disabled: item.disabled === true
+      });
+    }
+    if (aiExecutionProvider && !merged.has(aiExecutionProvider)) {
+      merged.set(aiExecutionProvider, {
+        value: aiExecutionProvider,
+        label: aiExecutionProvider
+      });
+    }
+    return [...merged.values()];
+  }, [aiExecutionProvider, aiExecutionProviderOptionsState]);
+  const applyAiExecutionConfigResult = React13.useCallback((result) => {
+    const resultRecord = result && typeof result === "object" ? result : null;
+    const resolved = readAiExecutionConfigResult(result);
+    if (resultRecord && Object.prototype.hasOwnProperty.call(resultRecord, "provider")) {
+      setAiExecutionProvider(
+        normalizeAiExecutionProvider(resultRecord.provider)
+      );
+    } else if (resolved.provider) {
+      setAiExecutionProvider(resolved.provider);
+    }
+    if (resultRecord && Object.prototype.hasOwnProperty.call(resultRecord, "workspacePath")) {
+      setAiExecutionWorkspacePath(
+        normalizeAiExecutionWorkspacePath(resultRecord.workspacePath)
+      );
+    } else if (resolved.workspacePath) {
+      setAiExecutionWorkspacePath(resolved.workspacePath);
+    }
+    if (resultRecord && Object.prototype.hasOwnProperty.call(resultRecord, "runConcurrency")) {
+      setAiExecutionRunConcurrency(
+        normalizeAiExecutionRunConcurrency(resultRecord.runConcurrency)
+      );
+    } else if (resolved.runConcurrency) {
+      setAiExecutionRunConcurrency(resolved.runConcurrency);
+    }
+    if (resolved.providerOptions?.length) {
+      setAiExecutionProviderOptionsState(resolved.providerOptions);
+    }
+    return resolved;
+  }, []);
+  const commitAiExecutionConfig = React13.useCallback(
+    async (nextProvider, nextWorkspacePath, nextRunConcurrency) => {
+      const result = await options.onHostToolbarAction?.({
+        type: "set-ai-execution-config",
+        provider: normalizeAiExecutionProvider(nextProvider),
+        workspacePath: normalizeAiExecutionWorkspacePath(nextWorkspacePath),
+        runConcurrency: normalizeAiExecutionRunConcurrency(nextRunConcurrency)
+      });
+      applyAiExecutionConfigResult(result);
+      return result;
+    },
+    [applyAiExecutionConfigResult, options]
+  );
+  const handleRefreshAiExecutionConfig = React13.useCallback(async () => {
+    if (!options.onHostToolbarAction) return;
+    setAiExecutionConfigBusy(true);
+    try {
+      const result = await options.onHostToolbarAction({
+        type: "get-ai-execution-config"
+      });
+      applyAiExecutionConfigResult(result);
+    } catch (error) {
+      notifyRuntimeMessage(
+        "warning",
+        error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      setAiExecutionConfigBusy(false);
+    }
+  }, [applyAiExecutionConfigResult, options]);
+  const handleAiExecutionProviderChange = React13.useCallback(
+    (nextProvider) => {
+      const normalizedProvider = normalizeAiExecutionProvider(nextProvider);
+      setAiExecutionProvider(normalizedProvider);
+      setAiExecutionConfigBusy(true);
+      void commitAiExecutionConfig(
+        normalizedProvider,
+        aiExecutionWorkspacePath,
+        aiExecutionRunConcurrency
+      ).catch((error) => {
+        notifyRuntimeMessage(
+          "error",
+          error instanceof Error ? error.message : String(error)
+        );
+      }).finally(() => {
+        setAiExecutionConfigBusy(false);
+      });
+    },
+    [
+      aiExecutionRunConcurrency,
+      aiExecutionWorkspacePath,
+      commitAiExecutionConfig
+    ]
+  );
+  const handleAiExecutionWorkspacePathCommit = React13.useCallback(() => {
+    const normalizedWorkspacePath = normalizeAiExecutionWorkspacePath(
+      aiExecutionWorkspacePath
     );
-    const handleOpenCurrentTaskSession = React14.useCallback(() => {
-      if (!currentTaskSessionHref) return;
-      window.open(currentTaskSessionHref, "_blank", "noopener,noreferrer");
-    }, [currentTaskSessionHref]);
-    const handleDismissCurrentTaskState = React14.useCallback(() => {
-      if (!currentTarget || !options.dismissElementGenieTaskState) return;
-      options.dismissElementGenieTaskState(currentTarget);
-    }, [currentTarget, options]);
-    const genieTaskStatusCard = currentGenieTask ? /* @__PURE__ */ jsxs12(
+    setAiExecutionWorkspacePath(normalizedWorkspacePath);
+    setAiExecutionConfigBusy(true);
+    void commitAiExecutionConfig(
+      aiExecutionProvider,
+      normalizedWorkspacePath,
+      aiExecutionRunConcurrency
+    ).catch((error) => {
+      notifyRuntimeMessage(
+        "error",
+        error instanceof Error ? error.message : String(error)
+      );
+    }).finally(() => {
+      setAiExecutionConfigBusy(false);
+    });
+  }, [
+    aiExecutionProvider,
+    aiExecutionRunConcurrency,
+    aiExecutionWorkspacePath,
+    commitAiExecutionConfig
+  ]);
+  const handleAiExecutionRunConcurrencyCommit = React13.useCallback(() => {
+    const normalizedRunConcurrency = normalizeAiExecutionRunConcurrency(
+      aiExecutionRunConcurrency
+    );
+    setAiExecutionRunConcurrency(normalizedRunConcurrency);
+    setAiExecutionConfigBusy(true);
+    void commitAiExecutionConfig(
+      aiExecutionProvider,
+      aiExecutionWorkspacePath,
+      normalizedRunConcurrency
+    ).catch((error) => {
+      notifyRuntimeMessage(
+        "error",
+        error instanceof Error ? error.message : String(error)
+      );
+    }).finally(() => {
+      setAiExecutionConfigBusy(false);
+    });
+  }, [
+    aiExecutionProvider,
+    aiExecutionRunConcurrency,
+    aiExecutionWorkspacePath,
+    commitAiExecutionConfig
+  ]);
+  const browseAiExecutionDirectories = React13.useCallback(
+    async (path) => {
+      if (!options.onHostToolbarAction) return;
+      setDirectoryPickerBusy(true);
+      setDirectoryPickerError("");
+      try {
+        const result = await options.onHostToolbarAction({
+          type: "browse-ai-execution-directories",
+          ...path ? { path } : {}
+        });
+        const nextState = readLocalDirectoryBrowserResult(result);
+        if (!nextState) {
+          throw new Error("ACP \u672A\u8FD4\u56DE\u53EF\u7528\u76EE\u5F55\u5217\u8868");
+        }
+        setDirectoryPickerState(nextState);
+        return nextState;
+      } catch (error) {
+        const message3 = error instanceof Error ? error.message : String(error);
+        setDirectoryPickerError(message3);
+        notifyRuntimeMessage("error", message3);
+        return null;
+      } finally {
+        setDirectoryPickerBusy(false);
+      }
+    },
+    [options]
+  );
+  const handleOpenDirectoryPicker = React13.useCallback(async () => {
+    setDirectoryPickerOpen(true);
+    setSettingsPopoverOpen(false);
+    const initialPath = normalizeAiExecutionWorkspacePath(
+      aiExecutionWorkspacePath
+    );
+    const opened = await browseAiExecutionDirectories(initialPath || void 0);
+    if (!opened && initialPath) {
+      await browseAiExecutionDirectories(void 0);
+    }
+  }, [aiExecutionWorkspacePath, browseAiExecutionDirectories]);
+  const handleConfirmDirectoryPicker = React13.useCallback(async () => {
+    const selectedPath = normalizeAiExecutionWorkspacePath(
+      directoryPickerState?.path
+    );
+    if (!selectedPath) return;
+    setDirectoryPickerBusy(true);
+    try {
+      setAiExecutionWorkspacePath(selectedPath);
+      await commitAiExecutionConfig(
+        aiExecutionProvider,
+        selectedPath,
+        aiExecutionRunConcurrency
+      );
+      setDirectoryPickerOpen(false);
+      notifyRuntimeMessage("success", "\u5DF2\u9009\u62E9 AI \u5DE5\u4F5C\u76EE\u5F55");
+    } catch (error) {
+      const message3 = error instanceof Error ? error.message : String(error);
+      setDirectoryPickerError(message3);
+      notifyRuntimeMessage("error", message3);
+    } finally {
+      setDirectoryPickerBusy(false);
+    }
+  }, [
+    aiExecutionProvider,
+    aiExecutionRunConcurrency,
+    commitAiExecutionConfig,
+    directoryPickerState?.path
+  ]);
+  const aiExecutionProviderLabel = aiExecutionProviderOptions.find(
+    (item) => item.value === aiExecutionProvider
+  )?.label ?? aiExecutionProvider ?? DEFAULT_AI_EXECUTION_PROVIDER;
+  const aiExecutionWorkspaceDisplayName = getPathDisplayName(
+    aiExecutionWorkspacePath
+  );
+  const aiExecutionConfigSummary = aiExecutionWorkspaceDisplayName ? `${aiExecutionProviderLabel} / ${aiExecutionWorkspaceDisplayName}` : `${aiExecutionProviderLabel} / \u672A\u914D\u7F6E AI \u5DE5\u4F5C\u76EE\u5F55`;
+  const aiExecutionConfigConfigured = Boolean(aiExecutionWorkspacePath) || options.aiExecutionConfigConfigured === true;
+  const toggleSelectionMode = React13.useCallback(() => {
+    const nextSelectionModeActive = !selectionModeActive;
+    if (!nextSelectionModeActive) {
+      onDismissSelection?.();
+      onTargetChange(null);
+      onSelectionInteractionLockChange(false);
+      onHoverSelectionSuppressedChange(false);
+    }
+    if (nextSelectionModeActive) {
+      onSelectionInteractionLockChange(false);
+      onHoverSelectionSuppressedChange(false);
+    }
+    onSelectionModeActiveChange(nextSelectionModeActive);
+  }, [
+    onDismissSelection,
+    onHoverSelectionSuppressedChange,
+    onSelectionInteractionLockChange,
+    onSelectionModeActiveChange,
+    onTargetChange,
+    selectionModeActive
+  ]);
+  const handleOpenCommentarySkillDialog = React13.useCallback(async () => {
+    setSettingsPopoverOpen(false);
+    setCommentarySkillDraftIds(
+      resolveCommentarySkillIds(
+        options.commentarySelectedSkillIds,
+        commentarySkillOptions,
+        options.commentarySkillSettingsConfigured === true
+      )
+    );
+    setCommentarySkillDialogOpen(true);
+    try {
+      const selectedSkillIds = await options.onCommentarySkillSelectionLoad?.();
+      if (selectedSkillIds) {
+        setCommentarySkillDraftIds(
+          normalizeCommentarySkillIds(selectedSkillIds, commentarySkillOptions)
+        );
+      }
+    } catch {
+      notifyRuntimeMessage("error", "\u8BFB\u53D6\u6280\u80FD\u914D\u7F6E\u5931\u8D25");
+    }
+  }, [commentarySkillOptions, options]);
+  const handleSaveCommentarySkillSelection = React13.useCallback(async () => {
+    const nextSkillIds = normalizeCommentarySkillIds(
+      commentarySkillDraftIds,
+      commentarySkillOptions
+    );
+    setCommentarySkillSaving(true);
+    try {
+      await options.onCommentarySkillSelectionChange?.(nextSkillIds);
+      setCommentarySkillDraftIds(nextSkillIds);
+      setCommentarySkillDialogOpen(false);
+      notifyRuntimeMessage("success", "\u6280\u80FD\u914D\u7F6E\u5DF2\u4FDD\u5B58");
+    } catch {
+      notifyRuntimeMessage("error", "\u4FDD\u5B58\u6280\u80FD\u914D\u7F6E\u5931\u8D25");
+    } finally {
+      setCommentarySkillSaving(false);
+    }
+  }, [commentarySkillDraftIds, commentarySkillOptions, options]);
+  const agentProviderSettingsItem = hideExecutionControls || options.onHostToolbarAction ? null : {
+    key: "agent-provider",
+    label: "\u6267\u884C AI",
+    control: /* @__PURE__ */ jsx12(
+      Dropdown,
+      {
+        trigger: ["click"],
+        placement: "bottomRight",
+        getPopupContainer: resolveRuntimePopupContainer,
+        overlayClassName: "we-runtime-agent-menu-dropdown",
+        menu: {
+          items: agentProviderDropdownItems,
+          onClick: handleAgentProviderMenuClick,
+          selectedKeys: [selectedAgentMenuKey]
+        },
+        onOpenChange: (open) => {
+          if (open) {
+            void handleRefreshAgentProviders();
+          }
+        },
+        children: /* @__PURE__ */ jsx12(
+          Button4,
+          {
+            type: "text",
+            size: "small",
+            loading: agentProviderRefreshPending,
+            disabled: agentProviderRefreshPending,
+            style: {
+              color: EDITOR_CHROME.textSecondary,
+              paddingInline: 4,
+              height: 24
+            },
+            children: selectedAgentMenuLabel
+          }
+        )
+      }
+    )
+  };
+  const aiExecutionConfigSettingsItem = hideExecutionControls || !options.onHostToolbarAction ? null : {
+    key: "ai-execution-config",
+    fullWidth: true,
+    control: /* @__PURE__ */ jsxs11(
       "div",
       {
         style: {
           display: "flex",
           flexDirection: "column",
           gap: 10,
-          padding: "12px 14px",
-          borderRadius: 18,
-          border: currentGenieTask.status === "error" ? "1px solid rgba(239, 68, 68, 0.24)" : currentGenieTask.status === "completed" ? "1px solid rgba(34, 197, 94, 0.24)" : "1px solid rgba(0, 143, 93, 0.22)",
-          background: currentGenieTask.status === "error" ? "rgba(127, 29, 29, 0.14)" : currentGenieTask.status === "completed" ? "rgba(20, 83, 45, 0.14)" : "rgba(0, 143, 93, 0.08)",
-          boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)"
+          width: "100%"
         },
         children: [
-          /* @__PURE__ */ jsxs12("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [
-            currentGenieTask.status === "completed" ? /* @__PURE__ */ jsx13(CheckCircleFilled2, { style: { color: "#22c55e" } }) : currentGenieTask.status === "error" ? /* @__PURE__ */ jsx13(ExclamationCircleFilled2, { style: { color: "#ef4444" } }) : /* @__PURE__ */ jsx13(GenieSparkleIcon, {}),
-            /* @__PURE__ */ jsx13("span", { style: { fontSize: 12, fontWeight: 700, color: EDITOR_CHROME.textPrimary }, children: currentGenieTask.status === "pending" ? "AI \u51C6\u5907\u4E2D" : currentGenieTask.status === "created" ? "AI \u6B63\u5728\u4FEE\u6539" : currentGenieTask.status === "completed" ? "AI \u4FEE\u6539\u5B8C\u6210" : "AI \u4FEE\u6539\u5931\u8D25" })
-          ] }),
-          /* @__PURE__ */ jsxs12(
-            "span",
-            {
-              style: {
-                fontSize: 12,
-                lineHeight: 1.6,
-                color: EDITOR_CHROME.textSecondary,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis"
-              },
-              children: [
-                currentTaskDescription,
-                currentGenieTask.sessionId ? ` \xB7 Session ${currentGenieTask.sessionId}` : ""
-              ]
-            }
-          ),
-          /* @__PURE__ */ jsxs12(Space2, { size: 8, wrap: true, children: [
-            !hideExecutionControls && currentTaskRunning ? /* @__PURE__ */ jsx13(
-              Button4,
-              {
-                size: "small",
-                danger: true,
-                icon: /* @__PURE__ */ jsx13(StopOutlined, {}),
-                disabled: !geniePromptCanInterrupt || geniePromptInterrupting,
-                loading: geniePromptInterrupting,
-                onClick: () => {
-                  void handleInterruptSendPromptToGenie();
-                },
-                children: "\u4E2D\u65AD"
-              }
-            ) : null,
-            !hideExecutionControls && currentGenieTask.status === "error" ? /* @__PURE__ */ jsx13(
-              Button4,
-              {
-                size: "small",
-                icon: /* @__PURE__ */ jsx13(ReloadOutlined, {}),
-                disabled: geniePromptToolbarAction.sendDisabled || actionBusy,
-                onClick: () => {
-                  void handleConfirmSendPromptToGenie();
-                },
-                children: "\u91CD\u8BD5"
-              }
-            ) : null,
-            currentTaskSessionHref ? /* @__PURE__ */ jsx13(Button4, { size: "small", icon: /* @__PURE__ */ jsx13(LinkOutlined3, {}), onClick: handleOpenCurrentTaskSession, children: "\u6253\u5F00\u4F1A\u8BDD" }) : null,
-            currentTaskTerminal ? /* @__PURE__ */ jsx13(Button4, { size: "small", icon: /* @__PURE__ */ jsx13(CloseToolIcon, {}), onClick: handleDismissCurrentTaskState, children: "\u5173\u95ED\u63D0\u793A" }) : null
-          ] })
-        ]
-      }
-    ) : null;
-    const compactPosition = React14.useMemo(
-      () => computeCompactPanelPosition({
-        actionRect: compactAnchorRect,
-        floatingPosition: toolbarPosition,
-        viewport: viewportSize,
-        panelWidth: PAGE_CONFIG_PANEL_WIDTH,
-        panelTop: PROPERTY_PANEL_TOP,
-        panelRight: PROPERTY_PANEL_RIGHT,
-        panelBottom: TOOLBAR_BOTTOM,
-        compactSize: COMPACT_TOOL_SIZE,
-        compactWidth: toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_WIDTH,
-        compactHeight: toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_HEIGHT,
-        margin: FLOATING_CLAMP_MARGIN,
-        headerPaddingX: HEADER_HORIZONTAL_PADDING,
-        headerPaddingY: HEADER_VERTICAL_PADDING,
-        controlSize: HEADER_CONTROL_SIZE
-      }),
-      [compactAnchorRect, toolbarPosition, toolMinimized, viewportSize]
-    );
-    const clampedExpandedToolbarPosition = React14.useMemo(
-      () => toolbarPosition ? clampToViewport(toolbarPosition, {
-        width: COMPACT_TOOLBAR_WIDTH,
-        height: COMPACT_TOOLBAR_HEIGHT
-      }) : null,
-      [clampToViewport, toolbarPosition]
-    );
-    const mobileHideToolbar = isMobileDevice() && !toolMinimized && uiMode === "bubble-card" && !!currentTarget;
-    const shellStyle = toolMinimized ? {
-      ...toolbarPosition ? {
-        left: toolbarPosition.left,
-        top: toolbarPosition.top,
-        right: "auto",
-        bottom: "auto"
-      } : compactAnchorRect ? {
-        left: compactPosition.left,
-        top: compactPosition.top,
-        right: "auto",
-        bottom: "auto"
-      } : { right: PROPERTY_PANEL_RIGHT, bottom: TOOLBAR_BOTTOM, top: "auto" },
-      position: "absolute",
-      zIndex: panelStyle.zIndex,
-      width: COMPACT_TOOL_SIZE,
-      height: COMPACT_TOOL_SIZE,
-      maxWidth: COMPACT_TOOL_SIZE,
-      borderRadius: 999,
-      pointerEvents: "auto",
-      overflow: "visible",
-      border: "none",
-      background: "transparent",
-      boxShadow: "none"
-    } : !showExpandedPanel ? {
-      ...panelStyle,
-      width: "fit-content",
-      height: "auto",
-      maxWidth: "calc(100vw - 32px)",
-      border: "none",
-      background: "transparent",
-      boxShadow: "none",
-      pointerEvents: mobileHideToolbar ? "none" : "auto",
-      overflow: "visible",
-      opacity: mobileHideToolbar ? 0 : 1,
-      ...clampedExpandedToolbarPosition ? {
-        left: clampedExpandedToolbarPosition.left,
-        top: clampedExpandedToolbarPosition.top,
-        right: "auto",
-        bottom: "auto"
-      } : { right: PROPERTY_PANEL_RIGHT, bottom: TOOLBAR_BOTTOM, top: "auto" }
-    } : {
-      ...panelStyle,
-      width: "fit-content",
-      height: "auto",
-      maxWidth: "calc(100vw - 32px)",
-      border: "none",
-      background: "transparent",
-      boxShadow: "none",
-      pointerEvents: mobileHideToolbar ? "none" : "auto",
-      overflow: "visible",
-      opacity: mobileHideToolbar ? 0 : 1,
-      ...clampedExpandedToolbarPosition ? {
-        left: clampedExpandedToolbarPosition.left,
-        top: clampedExpandedToolbarPosition.top,
-        right: "auto",
-        bottom: "auto"
-      } : { right: PROPERTY_PANEL_RIGHT, bottom: TOOLBAR_BOTTOM, top: "auto" }
-    };
-    const showCopyPromptAction = options.showCopyPromptAction !== false;
-    const copyToolbarButton = showCopyPromptAction && !genieShellAwake ? /* @__PURE__ */ jsx13(
-      GenieToolbarIconButton,
-      {
-        title: copyReason ?? "\u590D\u5236 Prompt",
-        icon: /* @__PURE__ */ jsx13(CopyOutlined2, {}),
-        awake: genieShellAwake,
-        disabled: actionBusy || copyBlocked,
-        onClick: () => {
-          void runAction(options.onCopyPrompt);
-        }
-      }
-    ) : null;
-    const copyPromptVisible = Boolean(copyToolbarButton);
-    const inlineSendVisible = !hideExecutionControls && geniePromptToolbarAction.sendVisible;
-    const hostSendVisible = geniePromptToolbarAction.sendVisible;
-    const sessionActivityCardContent = /* @__PURE__ */ jsxs12(
-      "div",
-      {
-        style: {
-          width: 320,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-          padding: 4
-        },
-        children: [
-          /* @__PURE__ */ jsxs12(
+          /* @__PURE__ */ jsxs11(
             "div",
             {
               style: {
@@ -17792,1338 +19003,1812 @@ var PropertyPanelView = React14.forwardRef(
                 gap: 12
               },
               children: [
-                /* @__PURE__ */ jsx13("span", { style: { fontSize: 13, fontWeight: 700, color: EDITOR_CHROME.textPrimary }, children: "\u6700\u8FD1\u52A8\u6001" }),
-                !hideExecutionControls && currentTaskRunning ? /* @__PURE__ */ jsx13(
-                  Button4,
+                /* @__PURE__ */ jsx12(
+                  "span",
+                  {
+                    style: {
+                      fontSize: 14,
+                      color: EDITOR_CHROME.textPrimary,
+                      whiteSpace: "nowrap"
+                    },
+                    children: "\u6267\u884C AI"
+                  }
+                ),
+                /* @__PURE__ */ jsx12(
+                  Select3,
                   {
                     size: "small",
-                    danger: true,
-                    icon: /* @__PURE__ */ jsx13(StopOutlined, {}),
-                    disabled: !geniePromptCanInterrupt || geniePromptInterrupting,
-                    loading: geniePromptInterrupting,
-                    onClick: () => {
-                      void handleInterruptSendPromptToGenie();
-                    },
-                    children: "\u505C\u6B62\u6267\u884C"
+                    value: aiExecutionProvider,
+                    options: aiExecutionProviderOptions,
+                    disabled: aiExecutionConfigBusy,
+                    onChange: handleAiExecutionProviderChange,
+                    getPopupContainer: resolveRuntimePopupContainer,
+                    popupClassName: "we-runtime-ai-execution-provider-dropdown",
+                    placement: "bottomRight",
+                    style: { width: 142 }
                   }
-                ) : null
+                )
               ]
             }
           ),
-          visibleSessionActivities.length > 0 ? /* @__PURE__ */ jsx13(
-            Timeline,
+          /* @__PURE__ */ jsxs11(
+            "div",
             {
-              items: visibleSessionActivities.map((item) => ({
-                key: item.id,
-                children: /* @__PURE__ */ jsxs12(
+              style: {
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12
+              },
+              children: [
+                /* @__PURE__ */ jsx12(
+                  "span",
+                  {
+                    style: {
+                      fontSize: 14,
+                      color: EDITOR_CHROME.textPrimary,
+                      whiteSpace: "nowrap"
+                    },
+                    children: "AI \u5E76\u53D1\u6570"
+                  }
+                ),
+                /* @__PURE__ */ jsx12(
+                  InputNumber3,
+                  {
+                    min: MIN_AI_EXECUTION_RUN_CONCURRENCY,
+                    max: MAX_AI_EXECUTION_RUN_CONCURRENCY,
+                    precision: 0,
+                    size: "small",
+                    value: aiExecutionRunConcurrency,
+                    disabled: aiExecutionConfigBusy,
+                    onChange: (value) => {
+                      setAiExecutionRunConcurrency(
+                        normalizeAiExecutionRunConcurrency(value)
+                      );
+                    },
+                    onBlur: handleAiExecutionRunConcurrencyCommit,
+                    style: { width: 76 }
+                  }
+                )
+              ]
+            }
+          ),
+          /* @__PURE__ */ jsxs11(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12
+              },
+              children: [
+                /* @__PURE__ */ jsx12(
+                  "span",
+                  {
+                    style: {
+                      fontSize: 14,
+                      color: EDITOR_CHROME.textPrimary,
+                      whiteSpace: "nowrap"
+                    },
+                    children: "AI \u5DE5\u4F5C\u76EE\u5F55"
+                  }
+                ),
+                /* @__PURE__ */ jsx12(
                   "div",
                   {
                     style: {
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                      paddingBottom: 4
+                      flex: "0 0 auto"
                     },
-                    children: [
-                      /* @__PURE__ */ jsx13(
-                        "span",
-                        {
-                          style: {
-                            fontSize: 12,
-                            lineHeight: 1.6,
-                            color: EDITOR_CHROME.textPrimary,
-                            display: "-webkit-box",
-                            WebkitBoxOrient: "vertical",
-                            WebkitLineClamp: 2,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            wordBreak: "break-word"
-                          },
-                          children: item.text
-                        }
-                      ),
-                      /* @__PURE__ */ jsx13("span", { style: { fontSize: 11, lineHeight: 1.5, color: EDITOR_CHROME.textMuted }, children: formatSessionActivityTime(item.timestamp) })
-                    ]
-                  }
-                )
-              }))
-            }
-          ) : /* @__PURE__ */ jsx13(
-            "div",
-            {
-              style: {
-                fontSize: 12,
-                lineHeight: 1.6,
-                color: EDITOR_CHROME.textMuted
-              },
-              children: "\u6700\u8FD1\u6682\u65E0\u52A8\u6001"
-            }
-          )
-        ]
-      }
-    );
-    const geniePrimaryMenuLabel = geniePromptToolbarAction.sendTitle.includes("\u8FFD\u52A0") ? "\u8FFD\u52A0" : "\u5FEB\u901F\u6267\u884C";
-    const clearAllEditsDisabled = actionBusy || pageTaskRunning || currentTaskRunning || modifiedCount + visibleTerminalTaskCount <= 0 || !options.onClearEdits;
-    const clearAllEditsToolbarButton = clearAllEditsDisabled ? /* @__PURE__ */ jsx13(
-      GenieToolbarIconButton,
-      {
-        title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-        icon: /* @__PURE__ */ jsx13(DeleteOutlined3, {}),
-        awake: genieShellAwake,
-        disabled: true
-      }
-    ) : /* @__PURE__ */ jsx13(
-      Popconfirm2,
-      {
-        title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-        description: "\u786E\u8BA4\u540E\u4F1A\u6E05\u7A7A\u6240\u6709\u5F85\u4FEE\u6539\u5185\u5BB9\uFF0C\u5DF2\u4FDD\u5B58\u7684\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002",
-        arrow: { pointAtCenter: true },
-        getPopupContainer: resolveRuntimePopupContainer,
-        okText: "\u6E05\u7A7A",
-        cancelText: "\u53D6\u6D88",
-        okButtonProps: { danger: true },
-        onConfirm: () => runAction(() => options.onClearEdits?.({ skipConfirm: true })),
-        children: /* @__PURE__ */ jsx13("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ jsx13(
-          GenieToolbarIconButton,
-          {
-            title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-            icon: /* @__PURE__ */ jsx13(DeleteOutlined3, {}),
-            awake: genieShellAwake
-          }
-        ) })
-      }
-    );
-    const genieSendToolbarButton = inlineSendVisible ? /* @__PURE__ */ jsx13(
-      GenieToolbarIconButton,
-      {
-        title: geniePromptToolbarAction.sendDisabled ? geniePromptToolbarAction.sendTitle : geniePrimaryMenuLabel,
-        ariaLabel: geniePrimaryMenuLabel,
-        icon: /* @__PURE__ */ jsx13(CaretRightFilled2, {}),
-        awake: genieShellAwake,
-        active: !geniePromptToolbarAction.sendDisabled,
-        disabled: geniePromptToolbarAction.sendDisabled || actionBusy,
-        loading: geniePromptToolbarAction.sendLoading,
-        onClick: () => {
-          void handleConfirmSendPromptToGenie();
-        }
-      }
-    ) : null;
-    const handleCopySkillInstallPrompt = React14.useCallback(async () => {
-      const text = buildSkillInstallPrompt(options.skillInstallSource);
-      try {
-        await copyRuntimeTextToClipboard(text);
-        if (text) {
-          notifyRuntimeMessage("success", "\u5DF2\u590D\u5236\u6280\u80FD\u8BF4\u660E\uFF0C\u8BF7\u53D1\u7ED9\u5BF9\u5E94 agent \u5904\u7406");
-          return;
-        }
-        notifyRuntimeMessage("info", "\u63D0\u793A\u8BCD\u6682\u672A\u914D\u7F6E\uFF0C\u5DF2\u590D\u5236\u7A7A\u6A21\u677F");
-      } catch {
-        notifyRuntimeMessage("error", "\u590D\u5236\u5931\u8D25");
-      }
-    }, []);
-    const handleCopyGlobalPanelPrompt = React14.useCallback(async () => {
-      const pageUrl = typeof window !== "undefined" && typeof window.location?.href === "string" ? window.location.href : "";
-      const text = buildGlobalPanelPrompt(options.skillInstallSource, pageUrl);
-      try {
-        await copyRuntimeTextToClipboard(text);
-        if (text) {
-          notifyRuntimeMessage("success", "\u5DF2\u590D\u5236\u63D0\u793A\uFF0C\u8BF7\u53D1\u7ED9\u5BF9\u5E94 agent \u5904\u7406");
-          return;
-        }
-        notifyRuntimeMessage("info", "\u63D0\u793A\u8BCD\u6682\u672A\u914D\u7F6E\uFF0C\u5DF2\u590D\u5236\u7A7A\u6A21\u677F");
-      } catch {
-        notifyRuntimeMessage("error", "\u590D\u5236\u5931\u8D25");
-      }
-    }, []);
-    const handleRefreshGenieProviders = React14.useCallback(async () => {
-      if (!onRefreshGenieProviderAvailabilities) return;
-      setGenieProviderRefreshPending(true);
-      try {
-        await onRefreshGenieProviderAvailabilities(
-          GENIE_MENU_AGENT_OPTIONS.map((item) => item.value)
-        );
-      } finally {
-        setGenieProviderRefreshPending(false);
-      }
-    }, [onRefreshGenieProviderAvailabilities]);
-    const genieAgentMenuItems = GENIE_MENU_AGENT_OPTIONS.map((item) => {
-      const availability = genieProviderAvailabilityMap.get(item.value) ?? null;
-      const agentInstalled = availability?.installed !== false;
-      return {
-        key: `genie-agent:${item.value}`,
-        label: `${item.label}${agentInstalled ? "" : "\uFF08\u672A\u5B89\u88C5\uFF09"}`,
-        disabled: !agentInstalled
-      };
-    });
-    const selectedGenieAgentMenuKey = uiSettings.genieAgent ? `genie-agent:${uiSettings.genieAgent}` : GENIE_AGENT_DEFAULT_MENU_KEY;
-    const genieExecutionMenuItems = hideExecutionControls ? [] : [
-      {
-        key: "genie-agent-submenu",
-        label: "\u6267\u884C Agent",
-        popupClassName: "we-runtime-genie-menu-submenu-popup",
-        children: [
-          {
-            key: GENIE_AGENT_DEFAULT_MENU_KEY,
-            label: "\u9ED8\u8BA4"
-          },
-          ...genieAgentMenuItems
-        ]
-      }
-    ];
-    const genieMenuItems = [
-      ...genieExecutionMenuItems,
-      {
-        key: "close-genie-service",
-        label: "\u65AD\u5F00\u94FE\u63A5",
-        icon: /* @__PURE__ */ jsx13(CloseOutlined3, {}),
-        disabled: actionBusy || genieProviderRefreshPending
-      },
-      {
-        key: "stop-work",
-        label: "\u505C\u6B62\u5DE5\u4F5C",
-        icon: /* @__PURE__ */ jsx13(StopOutlined, {}),
-        disabled: geniePromptToolbarAction.interruptDisabled || genieProviderRefreshPending
-      },
-      {
-        key: "copy-skill",
-        label: "\u6280\u80FD\u8BF4\u660E",
-        icon: /* @__PURE__ */ jsx13(CopyOutlined2, {}),
-        disabled: actionBusy || genieProviderRefreshPending
-      }
-    ];
-    const handleGenieMenuClick = React14.useCallback(
-      ({ key }) => {
-        if (key === GENIE_AGENT_DEFAULT_MENU_KEY) {
-          onUiSettingsChange({ ...uiSettings, genieAgent: null });
-          return;
-        }
-        if (String(key).startsWith("genie-agent:")) {
-          const nextAgent = String(key).replace("genie-agent:", "").trim();
-          if (nextAgent && nextAgent !== uiSettings.genieAgent) {
-            onUiSettingsChange({ ...uiSettings, genieAgent: nextAgent });
-          }
-          return;
-        }
-        setGenieMenuOpen(false);
-        switch (key) {
-          case "copy-skill":
-            void handleCopySkillInstallPrompt();
-            return;
-          case "close-genie-service":
-            onGenieVisualStateChange("sleeping");
-            return;
-          case "stop-work":
-            void handleInterruptSendPromptToGenie();
-            return;
-          default:
-            return;
-        }
-      },
-      [
-        handleCopySkillInstallPrompt,
-        handleInterruptSendPromptToGenie,
-        onGenieVisualStateChange,
-        onUiSettingsChange,
-        uiSettings
-      ]
-    );
-    const settingsItems = [
-      {
-        key: "keyboard-shortcuts",
-        label: "\u5FEB\u6377\u952E",
-        action: () => {
-          setKeyboardShortcutsDialogOpen(true);
-          setSettingsPopoverOpen(false);
-        },
-        control: /* @__PURE__ */ jsxs12(
-          "span",
-          {
-            style: {
-              color: EDITOR_CHROME.textSecondary,
-              fontSize: 13,
-              display: "flex",
-              alignItems: "center",
-              gap: 6
-            },
-            children: [
-              /* @__PURE__ */ jsx13("span", { children: "\u67E5\u770B" }),
-              /* @__PURE__ */ jsx13(RightOutlined, { style: { fontSize: 10 } })
-            ]
-          }
-        )
-      },
-      {
-        key: "disable-page-animations",
-        label: "\u5173\u95ED\u9875\u9762\u52A8\u753B",
-        control: /* @__PURE__ */ jsx13(
-          Switch2,
-          {
-            checked: uiSettings.disablePageAnimations,
-            onChange: (checked) => {
-              onUiSettingsChange({ ...uiSettings, disablePageAnimations: checked });
-            }
-          }
-        )
-      },
-      {
-        key: "fully-exit-genie-editor",
-        label: "\u5B8C\u5168\u9000\u51FA AI \u7F16\u8F91",
-        action: () => {
-          setSettingsPopoverOpen(false);
-          void options.onRequestFullExit?.();
-        },
-        control: null
-      }
-    ];
-    const settingsCardContent = /* @__PURE__ */ jsxs12("div", { onPointerDownCapture: (event) => event.stopPropagation(), style: { width: 238 }, children: [
-      /* @__PURE__ */ jsxs12(
-        "div",
-        {
-          style: {
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            paddingBottom: 12,
-            borderBottom: `1px solid ${EDITOR_CHROME.divider}`,
-            marginBottom: 4
-          },
-          children: [
-            /* @__PURE__ */ jsx13("span", { style: { fontSize: 15, fontWeight: 700, color: EDITOR_CHROME.textPrimary }, children: "Axhub Commentary" }),
-            /* @__PURE__ */ jsx13(
-              Button4,
-              {
-                type: "text",
-                size: "small",
-                icon: uiSettings.darkMode ? /* @__PURE__ */ jsx13(MoonFilled, { style: { fontSize: 15 } }) : /* @__PURE__ */ jsx13(MoonOutlined, { style: { fontSize: 15 } }),
-                onClick: () => onUiSettingsChange({ ...uiSettings, darkMode: !uiSettings.darkMode }),
-                style: { color: EDITOR_CHROME.textSecondary }
-              }
-            )
-          ]
-        }
-      ),
-      /* @__PURE__ */ jsx13("div", { style: { display: "flex", flexDirection: "column" }, children: settingsItems.map((item) => /* @__PURE__ */ jsxs12(
-        "div",
-        {
-          onClick: () => {
-            if ("action" in item && item.action) {
-              void item.action();
-            }
-          },
-          style: {
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "10px 8px",
-            borderRadius: 10,
-            cursor: "action" in item && item.action ? "pointer" : "default",
-            transition: "background-color 160ms ease, color 160ms ease"
-          },
-          onMouseEnter: (event) => {
-            if (!("action" in item && item.action)) return;
-            event.currentTarget.style.background = EDITOR_CHROME.hoverSubtle;
-          },
-          onMouseLeave: (event) => {
-            event.currentTarget.style.background = "transparent";
-          },
-          children: [
-            /* @__PURE__ */ jsx13(
-              "span",
-              {
-                style: {
-                  fontSize: 14,
-                  color: EDITOR_CHROME.textPrimary,
-                  whiteSpace: "nowrap",
-                  flex: "0 0 auto"
-                },
-                children: item.label
-              }
-            ),
-            /* @__PURE__ */ jsx13(
-              "div",
-              {
-                style: {
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "flex-end",
-                  flex: "0 0 auto"
-                },
-                children: item.control
-              }
-            )
-          ]
-        },
-        item.key
-      )) })
-    ] });
-    const settingsToolbarButton = /* @__PURE__ */ jsx13(
-      Popover2,
-      {
-        trigger: "click",
-        placement: "bottomRight",
-        open: actionBusy ? false : settingsPopoverOpen,
-        getPopupContainer: resolveRuntimePopupContainer,
-        onOpenChange: (open) => {
-          if (actionBusy) return;
-          setSettingsPopoverOpen(open);
-        },
-        arrow: false,
-        content: settingsCardContent,
-        children: /* @__PURE__ */ jsx13("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ jsx13(
-          GenieToolbarIconButton,
-          {
-            title: "\u8BBE\u7F6E",
-            icon: /* @__PURE__ */ jsx13(SettingOutlined, {}),
-            awake: genieShellAwake,
-            disabled: actionBusy
-          }
-        ) })
-      }
-    );
-    const closeToolbarButton = /* @__PURE__ */ jsx13(
-      GenieToolbarIconButton,
-      {
-        title: "\u5173\u95ED\u5DE5\u5177\u680F",
-        icon: /* @__PURE__ */ jsx13(CloseToolIcon, {}),
-        ariaLabel: "\u5173\u95ED\u5DE5\u5177\u680F",
-        awake: genieShellAwake,
-        disabled: actionBusy,
-        onClick: minimizeTool
-      }
-    );
-    const propertyPanelEmptyState = /* @__PURE__ */ jsxs12(
-      "div",
-      {
-        className: "we-runtime-prop-panel__empty-state",
-        style: { padding: "14px 0 4px", display: "flex", flexDirection: "column", gap: 8 },
-        children: [
-          /* @__PURE__ */ jsx13(Typography2.Text, { style: { color: EDITOR_CHROME.textMuted, fontSize: 12, lineHeight: 1.7 }, children: "\u6682\u65F6\u6CA1\u6709\u9700\u8981\u5904\u7406\u7684\u8BBE\u8BA1\u51B3\u7B56\u3002\u53EF\u4EE5\u5148\u751F\u6210\u591A\u4E2A\u8BBE\u8BA1\u65B9\u6848\uFF0C\u518D\u8FDB\u884C\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002" }),
-          /* @__PURE__ */ jsx13(
-            Button4,
-            {
-              type: "default",
-              size: "small",
-              icon: /* @__PURE__ */ jsx13(CopyOutlined2, {}),
-              onClick: () => {
-                void handleCopyGlobalPanelPrompt();
-              },
-              style: { alignSelf: "flex-start" },
-              children: "\u590D\u5236\u63D0\u793A\u8BCD"
-            }
-          )
-        ]
-      }
-    );
-    const propertyPanelToggleButton = /* @__PURE__ */ jsx13(
-      GenieToolbarIconButton,
-      {
-        title: propertyPanelOpen ? "\u5173\u95ED\u8BBE\u8BA1\u51B3\u7B56" : "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
-        icon: /* @__PURE__ */ jsx13(SlidersOutlined, {}),
-        ariaLabel: "\u8BBE\u8BA1\u51B3\u7B56",
-        awake: genieShellAwake,
-        active: propertyPanelOpen,
-        disabled: actionBusy,
-        onClick: () => onPropertyPanelOpenChange(!propertyPanelOpen)
-      }
-    );
-    const handleTogglePageZoom = React14.useCallback(() => {
-      onDismissSelection?.();
-      onTargetChange(null);
-      const nextPageZoomEnabled = !uiSettings.pageZoomEnabled;
-      if (nextPageZoomEnabled) {
-        dockPagePanelRight();
-      }
-      onUiSettingsChange({ ...uiSettings, pageZoomEnabled: nextPageZoomEnabled });
-    }, [dockPagePanelRight, onDismissSelection, onTargetChange, onUiSettingsChange, uiSettings]);
-    const hostToolbarState = React14.useMemo(() => {
-      const agentOptions = [
-        { value: null, label: "\u9ED8\u8BA4" },
-        ...GENIE_MENU_AGENT_OPTIONS.map((item) => {
-          const availability = genieProviderAvailabilityMap.get(item.value) ?? null;
-          return {
-            value: item.value,
-            label: item.label,
-            disabled: availability?.installed === false
-          };
-        })
-      ];
-      const annotationEnabled = options.getAnnotationEnabled?.() ?? false;
-      const annotationEnableAvailable = options.getAnnotationEnableAvailable?.() ?? false;
-      const annotationEnableLoading = options.getAnnotationEnableLoading?.() ?? false;
-      return {
-        toolbarMode,
-        visible: isHostToolbarMode,
-        robotState: geniePromptToolbarAction.robotState,
-        robotTitle: geniePromptToolbarAction.robotTitle,
-        robotDisabled: geniePromptToolbarAction.robotDisabled,
-        robotLoading: geniePromptToolbarAction.robotLoading,
-        sendVisible: hostSendVisible,
-        sendTitle: geniePromptToolbarAction.sendTitle,
-        sendDisabled: geniePromptToolbarAction.sendDisabled || actionBusy,
-        sendLoading: geniePromptToolbarAction.sendLoading,
-        interruptVisible: !hideExecutionControls && geniePromptToolbarAction.interruptVisible,
-        interruptTitle: geniePromptToolbarAction.interruptTitle,
-        interruptDisabled: geniePromptToolbarAction.interruptDisabled,
-        interruptLoading: geniePromptToolbarAction.interruptLoading,
-        copyPromptVisible,
-        copyPromptTitle: copyReason ?? "\u590D\u5236 Prompt",
-        copyPromptDisabled: actionBusy || copyBlocked,
-        clearEditsTitle: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-        clearEditsDisabled: clearAllEditsDisabled,
-        propertyPanelOpen,
-        propertyPanelTitle: propertyPanelOpen ? "\u5173\u95ED\u8BBE\u8BA1\u51B3\u7B56" : "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
-        modifiedCount,
-        terminalTaskCount: visibleTerminalTaskCount,
-        selectedAgent: hideExecutionControls ? null : uiSettings.genieAgent,
-        agentOptions: hideExecutionControls ? [] : agentOptions,
-        darkMode: uiSettings.darkMode,
-        disablePageAnimations: uiSettings.disablePageAnimations,
-        pageZoomEnabled: uiSettings.pageZoomEnabled,
-        copySkillInstallPromptDisabled: actionBusy || genieProviderRefreshPending,
-        selectionModeActive,
-        fullExitAvailable: Boolean(options.onRequestFullExit),
-        annotationEnabled,
-        annotationEnableAvailable,
-        annotationEnableLoading,
-        annotationEnableDisabled: Boolean(
-          annotationEnabled || annotationEnableLoading || !annotationEnableAvailable || !options.onEnableAnnotation
-        ),
-        annotationEnableTitle: annotationEnabled ? "\u9700\u6C42\u6807\u6CE8\u5DF2\u5F00\u542F" : "\u5F00\u542F\u9700\u6C42\u6807\u6CE8"
-      };
-    }, [
-      actionBusy,
-      annotationToolbarTick,
-      clearAllEditsDisabled,
-      copyBlocked,
-      copyPromptVisible,
-      copyReason,
-      geniePromptToolbarAction,
-      genieProviderAvailabilityMap,
-      genieProviderRefreshPending,
-      hideExecutionControls,
-      hostSendVisible,
-      isHostToolbarMode,
-      modifiedCount,
-      options.getAnnotationEnabled,
-      options.getAnnotationEnableAvailable,
-      options.getAnnotationEnableLoading,
-      options.onEnableAnnotation,
-      options.onRequestFullExit,
-      propertyPanelOpen,
-      selectionModeActive,
-      toolbarMode,
-      uiSettings.disablePageAnimations,
-      uiSettings.darkMode,
-      uiSettings.genieAgent,
-      uiSettings.pageZoomEnabled,
-      visibleTerminalTaskCount
-    ]);
-    const onHostToolbarStateChange = props.onHostToolbarStateChange;
-    const optionHostToolbarStateChange = options.onHostToolbarStateChange;
-    React14.useEffect(() => {
-      onHostToolbarStateChange?.(hostToolbarState);
-      optionHostToolbarStateChange?.(hostToolbarState);
-      for (const listener of hostToolbarListenersRef.current) {
-        try {
-          listener(hostToolbarState);
-        } catch {
-        }
-      }
-    }, [hostToolbarState, onHostToolbarStateChange, optionHostToolbarStateChange]);
-    const runHostToolbarAction = React14.useCallback(
-      async (action) => {
-        switch (action.type) {
-          case "wake-agent":
-            if (geniePromptToolbarAction.robotDisabled) return false;
-            await handleGenieBrandClick();
-            return true;
-          case "send-to-agent":
-            if (!hostSendVisible || geniePromptToolbarAction.sendDisabled || actionBusy) {
-              return false;
-            }
-            await handleConfirmSendPromptToGenie();
-            return true;
-          case "interrupt-agent":
-            if (!geniePromptToolbarAction.interruptVisible || geniePromptToolbarAction.interruptDisabled) {
-              return false;
-            }
-            await handleInterruptSendPromptToGenie();
-            return true;
-          case "copy-prompt":
-            if (!copyPromptVisible || actionBusy || copyBlocked) return false;
-            await runAction(options.onCopyPrompt);
-            return true;
-          case "clear-edits":
-            if (clearAllEditsDisabled || !options.onClearEdits) return false;
-            await runAction(
-              () => options.onClearEdits?.(
-                action.skipConfirm ? { skipConfirm: true } : void 0
-              )
-            );
-            return true;
-          case "toggle-property-panel": {
-            const nextOpen = action.open ?? !propertyPanelOpen;
-            if (nextOpen && toolMinimized) {
-              restoreTool();
-            }
-            onPropertyPanelOpenChange(nextOpen);
-            return true;
-          }
-          case "set-active-agent": {
-            const nextAgent = action.agent;
-            if (nextAgent && !GENIE_MENU_AGENT_OPTIONS.some((item) => item.value === nextAgent)) {
-              return false;
-            }
-            onUiSettingsChange({ ...uiSettings, genieAgent: nextAgent });
-            return true;
-          }
-          case "disconnect-agent":
-            setGenieWakeChecking(false);
-            setGeniePromptInterrupting(false);
-            setGeniePromptSending(false);
-            setGeniePromptSendingElementKey(null);
-            onGenieVisualStateChange("sleeping");
-            return true;
-          case "copy-skill-install-prompt":
-            await handleCopySkillInstallPrompt();
-            return true;
-          case "copy-global-panel-prompt":
-            await handleCopyGlobalPanelPrompt();
-            return true;
-          case "toggle-dark-mode":
-            onUiSettingsChange({
-              ...uiSettings,
-              darkMode: typeof action.darkMode === "boolean" ? action.darkMode : !uiSettings.darkMode
-            });
-            return true;
-          case "toggle-page-animations":
-            onUiSettingsChange({
-              ...uiSettings,
-              disablePageAnimations: !uiSettings.disablePageAnimations
-            });
-            return true;
-          case "toggle-page-zoom":
-            handleTogglePageZoom();
-            return true;
-          case "toggle-selection-mode": {
-            const nextSelectionModeActive = action.active ?? !selectionModeActive;
-            if (!nextSelectionModeActive) {
-              onDismissSelection?.();
-              onTargetChange(null);
-              onSelectionInteractionLockChange(false);
-              onHoverSelectionSuppressedChange(false);
-            }
-            if (nextSelectionModeActive) {
-              onSelectionInteractionLockChange(false);
-              onHoverSelectionSuppressedChange(false);
-            }
-            onSelectionModeActiveChange(nextSelectionModeActive);
-            return true;
-          }
-          case "enable-annotation":
-            if (options.getAnnotationEnabled?.()) return true;
-            if (options.getAnnotationEnableLoading?.()) return false;
-            if (!(options.getAnnotationEnableAvailable?.() ?? false)) return false;
-            if (!await options.onEnableAnnotation?.()) return false;
-            setAnnotationToolbarTick((value) => value + 1);
-            return true;
-          case "open-keyboard-shortcuts":
-            setKeyboardShortcutsDialogOpen(true);
-            return true;
-          case "full-exit":
-            if (!options.onRequestFullExit) return false;
-            await options.onRequestFullExit();
-            return true;
-          default:
-            return false;
-        }
-      },
-      [
-        actionBusy,
-        clearAllEditsDisabled,
-        copyBlocked,
-        copyPromptVisible,
-        geniePromptToolbarAction,
-        handleConfirmSendPromptToGenie,
-        handleCopyGlobalPanelPrompt,
-        handleCopySkillInstallPrompt,
-        handleGenieBrandClick,
-        handleInterruptSendPromptToGenie,
-        handleTogglePageZoom,
-        hostSendVisible,
-        onDismissSelection,
-        onGenieVisualStateChange,
-        onHoverSelectionSuppressedChange,
-        onPropertyPanelOpenChange,
-        onSelectionInteractionLockChange,
-        onTargetChange,
-        onToolMinimizedChange,
-        onSelectionModeActiveChange,
-        onUiSettingsChange,
-        options,
-        propertyPanelOpen,
-        restoreTool,
-        runAction,
-        selectionModeActive,
-        toolMinimized,
-        uiSettings
-      ]
-    );
-    React14.useImperativeHandle(
-      ref,
-      () => ({
-        setTarget(element) {
-          onTargetChange(element);
-        },
-        setTab() {
-        },
-        getTab() {
-          return "tweak";
-        },
-        refresh() {
-          onRefreshNoteState();
-          requestPanelRefresh();
-          setAnnotationToolbarTick((value) => value + 1);
-          syncPanelMetaState();
-        },
-        setHistory(nextUndo, nextRedo) {
-          setUndoCount(Math.max(0, Math.floor(nextUndo)));
-          setRedoCount(Math.max(0, Math.floor(nextRedo)));
-          syncPanelMetaState();
-        },
-        getPosition() {
-          return showExpandedPanel ? pagePanelPositionRef.current : toolbarPositionRef.current;
-        },
-        setPosition(position) {
-          applyPanelPosition(position);
-        },
-        enterCommentInput(mode = "bubble-card") {
-          if (toolMinimized) {
-            restoreTool();
-          }
-          onUiModeChange(mode);
-          onRefreshNoteState();
-        },
-        enterInlineTextEdit() {
-          if (toolMinimized) {
-            restoreTool();
-          }
-          onInlineTextEditingChange?.(true);
-        },
-        getHostToolbarState() {
-          return hostToolbarState;
-        },
-        subscribeHostToolbarState(listener) {
-          hostToolbarListenersRef.current.add(listener);
-          listener(hostToolbarState);
-          return () => {
-            hostToolbarListenersRef.current.delete(listener);
-          };
-        },
-        runHostToolbarAction
-      }),
-      [
-        applyPanelPosition,
-        hostToolbarState,
-        onInlineTextEditingChange,
-        onRefreshNoteState,
-        onTargetChange,
-        onUiModeChange,
-        requestPanelRefresh,
-        restoreTool,
-        runHostToolbarAction,
-        showExpandedPanel,
-        syncPanelMetaState,
-        toolMinimized
-      ]
-    );
-    const pageConfigPanelHeader = showExpandedPanel ? /* @__PURE__ */ jsxs12(
-      "div",
-      {
-        ref: pagePanelHeaderRef,
-        className: "we-runtime-page-config-panel__header we-runtime-prop-panel__drag-handle",
-        children: [
-          /* @__PURE__ */ jsxs12("div", { className: "we-runtime-prop-panel__header-title-group", children: [
-            /* @__PURE__ */ jsx13("span", { className: "we-runtime-prop-panel__header-title", children: "\u8BBE\u8BA1\u51B3\u7B56" }),
-            /* @__PURE__ */ jsx13(
-              Tooltip5,
-              {
-                title: PROPERTY_PANEL_HELP_TOOLTIP,
-                placement: "bottomRight",
-                arrow: { pointAtCenter: true },
-                getPopupContainer: resolveRuntimePopupContainer,
-                children: /* @__PURE__ */ jsx13(
-                  Button4,
-                  {
-                    type: "text",
-                    size: "small",
-                    className: "we-runtime-prop-panel__header-action we-runtime-prop-panel__header-help",
-                    "aria-label": "\u8BBE\u8BA1\u51B3\u7B56\u8BF4\u660E",
-                    title: "\u8BBE\u8BA1\u51B3\u7B56\u8BF4\u660E",
-                    icon: /* @__PURE__ */ jsx13(QuestionCircleOutlined, {})
-                  }
-                )
-              }
-            )
-          ] }),
-          /* @__PURE__ */ jsxs12(
-            "div",
-            {
-              className: "we-runtime-prop-panel__header-actions",
-              onPointerDownCapture: (event) => event.stopPropagation(),
-              children: [
-                /* @__PURE__ */ jsx13(
-                  Button4,
-                  {
-                    type: "text",
-                    size: "small",
-                    className: "we-runtime-prop-panel__header-action",
-                    "aria-label": "\u590D\u5236\u63D0\u793A\u8BCD",
-                    title: "\u590D\u5236\u63D0\u793A\u8BCD",
-                    icon: /* @__PURE__ */ jsx13(CopyOutlined2, {}),
-                    onClick: () => {
-                      void handleCopyGlobalPanelPrompt();
-                    }
-                  }
-                ),
-                /* @__PURE__ */ jsx13(
-                  Button4,
-                  {
-                    type: "text",
-                    size: "small",
-                    className: [
-                      "we-runtime-prop-panel__header-action",
-                      uiSettings.pageZoomEnabled ? "we-runtime-prop-panel__header-action--active" : ""
-                    ].filter(Boolean).join(" "),
-                    "aria-label": "\u9875\u9762\u7F29\u653E\u6A21\u5F0F",
-                    title: "\u9875\u9762\u7F29\u653E\u6A21\u5F0F",
-                    icon: /* @__PURE__ */ jsx13(ColumnWidthOutlined, {}),
-                    onClick: handleTogglePageZoom
+                    children: /* @__PURE__ */ jsx12(
+                      Input5,
+                      {
+                        size: "small",
+                        value: aiExecutionWorkspacePath,
+                        placeholder: "\u5DE5\u4F5C\u76EE\u5F55",
+                        title: aiExecutionWorkspacePath || void 0,
+                        disabled: aiExecutionConfigBusy,
+                        onChange: (event) => {
+                          setAiExecutionWorkspacePath(event.target.value);
+                        },
+                        onBlur: handleAiExecutionWorkspacePathCommit,
+                        onPressEnter: (event) => {
+                          event.currentTarget.blur();
+                        },
+                        suffix: /* @__PURE__ */ jsx12(
+                          Tooltip5,
+                          {
+                            title: "\u9009\u62E9 AI \u5DE5\u4F5C\u76EE\u5F55",
+                            placement: "bottomRight",
+                            getPopupContainer: resolveRuntimePopupContainer,
+                            children: /* @__PURE__ */ jsx12(
+                              Button4,
+                              {
+                                type: "text",
+                                size: "small",
+                                "aria-label": "\u9009\u62E9 AI \u5DE5\u4F5C\u76EE\u5F55",
+                                icon: /* @__PURE__ */ jsx12(FolderOpenOutlined, {}),
+                                loading: directoryPickerBusy,
+                                disabled: aiExecutionConfigBusy || directoryPickerBusy,
+                                onMouseDown: (event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                },
+                                onClick: (event) => {
+                                  event.stopPropagation();
+                                  void handleOpenDirectoryPicker();
+                                },
+                                style: {
+                                  width: 22,
+                                  height: 20,
+                                  paddingInline: 0,
+                                  marginInlineEnd: -4,
+                                  color: EDITOR_CHROME.textSecondary
+                                }
+                              }
+                            )
+                          }
+                        ),
+                        style: { width: 180 }
+                      }
+                    )
                   }
                 )
               ]
             }
-          )
-        ]
-      }
-    ) : null;
-    const expandedToolbar = /* @__PURE__ */ jsx13(
-      GenieToolbarShell,
-      {
-        awake: genieShellAwake,
-        dragHandleRef: toolbarHeaderRef,
-        style: {
-          alignSelf: "flex-start",
-          width: "fit-content",
-          maxWidth: "calc(100% - 8px)",
-          margin: 0
-        },
-        children: /* @__PURE__ */ jsxs12(
-          "div",
-          {
-            style: {
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-start",
-              gap: 8,
-              width: "auto",
-              minWidth: 0
-            },
-            children: [
-              /* @__PURE__ */ jsxs12(Space2, { size: 4, style: { minWidth: 0, flex: "0 0 auto" }, children: [
-                /* @__PURE__ */ jsx13(
-                  Dropdown,
+          ),
+          showCommentarySkillSettings ? /* @__PURE__ */ jsxs11(
+            "button",
+            {
+              type: "button",
+              onClick: () => {
+                void handleOpenCommentarySkillDialog();
+              },
+              style: {
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: 0,
+                border: 0,
+                background: "transparent",
+                color: "inherit",
+                cursor: "pointer",
+                textAlign: "left"
+              },
+              children: [
+                /* @__PURE__ */ jsx12(
+                  "span",
                   {
-                    trigger: ["click"],
-                    placement: "topLeft",
-                    align: { offset: [0, -6] },
-                    open: genieAwake && genieMenuOpen,
-                    getPopupContainer: resolveRuntimePopupContainer,
-                    overlayClassName: "we-runtime-genie-menu-dropdown",
-                    menu: {
-                      items: genieMenuItems,
-                      onClick: handleGenieMenuClick,
-                      selectedKeys: [selectedGenieAgentMenuKey],
-                      triggerSubMenuAction: "hover"
+                    style: {
+                      fontSize: 14,
+                      color: EDITOR_CHROME.textPrimary,
+                      whiteSpace: "nowrap"
                     },
-                    onOpenChange: (open) => {
-                      if (!genieAwake || genieWakeChecking) return;
-                      if (open) {
-                        void handleRefreshGenieProviders();
-                      }
-                      setGenieMenuOpen(open);
-                    },
-                    children: /* @__PURE__ */ jsx13("div", { ref: collapseActionRef, style: { display: "inline-flex", alignItems: "center" }, children: /* @__PURE__ */ jsx13(
-                      GenieBrandButton,
-                      {
-                        state: genieBrandState,
-                        size: GENIE_BRAND_BUTTON_SIZE,
-                        title: geniePromptToolbarAction.robotTitle,
-                        disabled: geniePromptToolbarAction.robotDisabled,
-                        loading: geniePromptToolbarAction.robotLoading,
-                        themeMode,
-                        dragVelocity: {
-                          x: toolbarDragVelocity.velocityX,
-                          y: toolbarDragVelocity.velocityY
-                        },
-                        onClick: () => {
-                          void handleGenieBrandClick();
-                        }
-                      }
-                    ) })
+                    children: "\u6280\u80FD\u7BA1\u7406"
                   }
                 ),
-                genieSendToolbarButton
-              ] }),
-              /* @__PURE__ */ jsxs12(
-                Space2,
-                {
-                  size: 4,
-                  style: { minWidth: 0, flex: "0 1 auto" },
-                  children: [
-                    copyToolbarButton,
-                    clearAllEditsToolbarButton,
-                    propertyPanelToggleButton,
-                    settingsToolbarButton,
-                    closeToolbarButton
-                  ]
-                }
-              )
-            ]
-          }
-        )
-      }
-    );
-    const minimizedToolbar = /* @__PURE__ */ jsxs12(
-      "button",
-      {
-        className: "we-runtime-prop-panel__minimized-trigger we-runtime-prop-panel__drag-handle",
-        ref: minimizedButtonRef,
-        type: "button",
-        "aria-label": "\u5F00\u542F\u7F16\u8F91",
-        title: "\u5F00\u542F\u7F16\u8F91",
-        onClick: restoreTool,
-        style: {
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          overflow: "visible",
-          border: "none",
-          background: "transparent",
-          color: EDITOR_CHROME.textPrimary,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: 999,
-          touchAction: "none",
-          pointerEvents: toolMinimized ? "auto" : "none",
-          opacity: toolMinimized ? 1 : 0,
-          transform: toolMinimized ? "scale(1)" : "scale(0.9)",
-          transition: "opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), filter 220ms ease"
-        },
-        children: [
-          /* @__PURE__ */ jsx13(
-            "span",
-            {
-              "aria-hidden": "true",
-              style: {
-                position: "absolute",
-                inset: 0,
-                borderRadius: 999,
-                background: EDITOR_CHROME.toolbarShellBorder,
-                boxShadow: EDITOR_CHROME.shadowCompact
-              }
-            }
-          ),
-          /* @__PURE__ */ jsx13(
-            "span",
-            {
-              "aria-hidden": "true",
-              style: {
-                position: "absolute",
-                inset: 1,
-                borderRadius: 999,
-                background: EDITOR_CHROME.surface,
-                boxShadow: EDITOR_CHROME.toolbarShellInset
-              }
-            }
-          ),
-          /* @__PURE__ */ jsx13(
-            "span",
-            {
-              style: {
-                position: "relative",
-                zIndex: 1,
-                width: 32,
-                height: 32,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: EDITOR_CHROME.textSecondary,
-                transition: "background-color 220ms ease, color 220ms ease, transform 220ms ease"
-              },
-              children: /* @__PURE__ */ jsx13(GenieSparkleIcon, {})
-            }
-          ),
-          modifiedCount > 0 ? /* @__PURE__ */ jsx13(
-            "span",
-            {
-              style: {
-                position: "absolute",
-                top: -6,
-                right: -6,
-                minWidth: 18,
-                height: 18,
-                paddingInline: 5,
-                borderRadius: 999,
-                background: EDITOR_CHROME.accent,
-                color: "#FFFFFF",
-                fontSize: 10,
-                fontWeight: 700,
-                lineHeight: "18px",
-                boxShadow: `0 6px 14px ${BRAND_PRIMARY_SHADOW}`,
-                pointerEvents: "none",
-                zIndex: 2
-              },
-              children: modifiedCount > 99 ? "99+" : modifiedCount
+                /* @__PURE__ */ jsxs11(
+                  "span",
+                  {
+                    style: {
+                      color: EDITOR_CHROME.textSecondary,
+                      fontSize: 13,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6
+                    },
+                    children: [
+                      /* @__PURE__ */ jsx12("span", { children: commentarySkillDraftIds.length > 0 ? `${commentarySkillDraftIds.length} \u9879` : "\u672A\u9009\u62E9" }),
+                      /* @__PURE__ */ jsx12(RightOutlined, { style: { fontSize: 10 } })
+                    ]
+                  }
+                )
+              ]
             }
           ) : null
         ]
       }
-    );
-    const pageConfigPanelStyle = {
-      position: "fixed",
-      zIndex: Number(panelStyle.zIndex ?? 10008) + 1,
-      pointerEvents: mobileHideToolbar ? "none" : "auto",
-      opacity: mobileHideToolbar ? 0 : 1,
-      ...pagePanelPosition ? {
-        left: pagePanelPosition.left,
-        top: pagePanelPosition.top,
-        right: "auto",
-        bottom: "auto"
-      } : { right: PROPERTY_PANEL_RIGHT, top: PROPERTY_PANEL_TOP }
-    };
-    const pageConfigPanel = showExpandedPanel ? /* @__PURE__ */ jsxs12(
-      "div",
+    )
+  };
+  const propertyPanelSettingsItem = showPropertyPanelSettingsItem ? {
+    key: "property-panel",
+    label: "\u8BBE\u8BA1\u51B3\u7B56",
+    control: /* @__PURE__ */ jsx12(
+      Switch2,
       {
-        ref: pagePanelRef,
-        className: "we-runtime-page-config-panel",
-        "data-we-selection-lock-root": "true",
-        style: pageConfigPanelStyle,
-        onPointerDownCapture: () => {
-          onSelectionInteractionLockChange(true);
+        checked: propertyPanelOpen,
+        onChange: (checked) => {
+          handleTogglePropertyPanel(checked);
+        }
+      }
+    )
+  } : null;
+  const agentRunConcurrencySettingsItem = hideExecutionControls || options.onHostToolbarAction ? null : {
+    key: "agent-run-concurrency",
+    label: "AI \u5E76\u53D1\u6570",
+    control: /* @__PURE__ */ jsx12(
+      InputNumber3,
+      {
+        min: MIN_AI_EXECUTION_RUN_CONCURRENCY,
+        max: MAX_AI_EXECUTION_RUN_CONCURRENCY,
+        precision: 0,
+        size: "small",
+        value: uiSettings.agentRunConcurrency,
+        onChange: (value) => {
+          onUiSettingsChange({
+            ...uiSettings,
+            agentRunConcurrency: typeof value === "number" ? value : uiSettings.agentRunConcurrency
+          });
         },
-        onFocusCapture: () => {
-          onSelectionInteractionLockChange(true);
+        style: { width: 64 }
+      }
+    )
+  };
+  const commentarySkillSettingsItem = showCommentarySkillSettings ? {
+    key: "commentary-skills",
+    label: "\u6280\u80FD\u7BA1\u7406",
+    action: handleOpenCommentarySkillDialog,
+    control: /* @__PURE__ */ jsxs11(
+      "span",
+      {
+        style: {
+          color: EDITOR_CHROME.textSecondary,
+          fontSize: 13,
+          display: "flex",
+          alignItems: "center",
+          gap: 6
         },
-        onPointerEnter: () => {
-          onHoverSelectionSuppressedChange(true);
-        },
-        onPointerLeave: () => onHoverSelectionSuppressedChange(false),
         children: [
-          pageConfigPanelHeader,
-          /* @__PURE__ */ jsx13(
-            "div",
-            {
-              ref: pagePanelBodyRef,
-              className: "we-runtime-page-config-panel__body",
-              style: pageConfigPanelBodyStyle,
-              "aria-hidden": false,
-              children: /* @__PURE__ */ jsx13(
-                "div",
+          /* @__PURE__ */ jsx12("span", { children: commentarySkillDraftIds.length > 0 ? `${commentarySkillDraftIds.length} \u9879` : "\u672A\u9009\u62E9" }),
+          /* @__PURE__ */ jsx12(RightOutlined, { style: { fontSize: 10 } })
+        ]
+      }
+    )
+  } : null;
+  const settingsItems = [
+    ...aiExecutionConfigSettingsItem ? [aiExecutionConfigSettingsItem] : [],
+    ...agentProviderSettingsItem ? [agentProviderSettingsItem] : [],
+    ...propertyPanelSettingsItem ? [propertyPanelSettingsItem] : [],
+    ...agentRunConcurrencySettingsItem ? [agentRunConcurrencySettingsItem] : [],
+    ...!options.onHostToolbarAction && commentarySkillSettingsItem ? [commentarySkillSettingsItem] : [],
+    {
+      key: "disable-page-animations",
+      label: "\u5173\u95ED\u9875\u9762\u52A8\u753B",
+      control: /* @__PURE__ */ jsx12(
+        Switch2,
+        {
+          checked: uiSettings.disablePageAnimations,
+          onChange: (checked) => {
+            onUiSettingsChange({
+              ...uiSettings,
+              disablePageAnimations: checked
+            });
+          }
+        }
+      )
+    },
+    {
+      key: "keyboard-shortcuts",
+      label: "\u5FEB\u6377\u952E",
+      action: () => {
+        setKeyboardShortcutsDialogOpen(true);
+        setSettingsPopoverOpen(false);
+      },
+      control: /* @__PURE__ */ jsxs11(
+        "span",
+        {
+          style: {
+            color: EDITOR_CHROME.textSecondary,
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            gap: 6
+          },
+          children: [
+            /* @__PURE__ */ jsx12("span", { children: "\u67E5\u770B" }),
+            /* @__PURE__ */ jsx12(RightOutlined, { style: { fontSize: 10 } })
+          ]
+        }
+      )
+    }
+  ];
+  const settingsCardContent = /* @__PURE__ */ jsxs11(
+    "div",
+    {
+      onPointerDownCapture: (event) => event.stopPropagation(),
+      style: { width: 286 },
+      children: [
+        /* @__PURE__ */ jsxs11(
+          "div",
+          {
+            style: {
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              paddingBottom: 12,
+              borderBottom: `1px solid ${EDITOR_CHROME.divider}`,
+              marginBottom: 4
+            },
+            children: [
+              /* @__PURE__ */ jsx12(
+                "span",
                 {
-                  onPointerDownCapture: (event) => event.stopPropagation(),
-                  style: { display: "flex", flexDirection: "column", gap: 10 },
-                  children: hasPageTweakEntries ? /* @__PURE__ */ jsx13(
-                    ReactPageTweakPanel,
+                  style: {
+                    fontSize: 15,
+                    fontWeight: 700,
+                    color: EDITOR_CHROME.textPrimary
+                  },
+                  children: "Axhub \u6279\u6CE8"
+                }
+              ),
+              /* @__PURE__ */ jsx12(
+                Tooltip5,
+                {
+                  title: uiSettings.darkMode ? "\u5173\u95ED\u6DF1\u8272\u6A21\u5F0F" : "\u5F00\u542F\u6DF1\u8272\u6A21\u5F0F",
+                  placement: "bottomRight",
+                  getPopupContainer: resolveRuntimePopupContainer,
+                  children: /* @__PURE__ */ jsx12(
+                    Button4,
                     {
-                      entries: pageTweakEntries,
-                      disabled: actionBusy || !options.onUpdateTweakValues,
-                      onChange: (element, patch) => {
-                        if (!options.onUpdateTweakValues) return;
-                        onDismissSelection?.();
-                        onTargetChange(null);
-                        void options.onUpdateTweakValues(element, patch);
+                      type: "text",
+                      size: "small",
+                      className: "we-runtime-settings-dark-mode-button",
+                      "aria-label": uiSettings.darkMode ? "\u5173\u95ED\u6DF1\u8272\u6A21\u5F0F" : "\u5F00\u542F\u6DF1\u8272\u6A21\u5F0F",
+                      icon: /* @__PURE__ */ jsx12(MoonOutlined, { style: { fontSize: 18 } }),
+                      onClick: (event) => {
+                        event.stopPropagation();
+                        onUiSettingsChange({
+                          ...uiSettings,
+                          darkMode: !uiSettings.darkMode
+                        });
                       },
-                      onClearEntry: options.onClearCurrentElementEdits ? (element) => {
-                        void options.onClearCurrentElementEdits?.(element);
-                      } : void 0,
-                      onLocateEntry: (element) => {
-                        onSelectionInteractionLockChange(false);
-                        onHoverSelectionSuppressedChange(false);
-                        options.onLocateElement?.(element);
+                      style: {
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        height: 32,
+                        width: 32,
+                        padding: 0,
+                        color: uiSettings.darkMode ? EDITOR_CHROME.accent : EDITOR_CHROME.textSecondary
                       }
                     }
-                  ) : propertyPanelEmptyState
+                  )
+                }
+              )
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsx12("div", { style: { display: "flex", flexDirection: "column" }, children: settingsItems.map((item) => /* @__PURE__ */ jsx12(
+          "div",
+          {
+            onClick: () => {
+              if ("action" in item && item.action) {
+                void item.action();
+              }
+            },
+            style: {
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "10px 8px",
+              borderRadius: 10,
+              cursor: "action" in item && item.action ? "pointer" : "default",
+              transition: "background-color 160ms ease, color 160ms ease"
+            },
+            onMouseEnter: (event) => {
+              if (!("action" in item && item.action)) return;
+              event.currentTarget.style.background = EDITOR_CHROME.hoverSubtle;
+            },
+            onMouseLeave: (event) => {
+              event.currentTarget.style.background = "transparent";
+            },
+            children: item.fullWidth ? /* @__PURE__ */ jsx12("div", { style: { width: "100%" }, children: item.control }) : /* @__PURE__ */ jsxs11(Fragment5, { children: [
+              /* @__PURE__ */ jsx12(
+                "span",
+                {
+                  style: {
+                    fontSize: 14,
+                    color: EDITOR_CHROME.textPrimary,
+                    whiteSpace: "nowrap",
+                    flex: "0 0 auto"
+                  },
+                  children: item.label
+                }
+              ),
+              /* @__PURE__ */ jsx12(
+                "div",
+                {
+                  style: {
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                    flex: "0 0 auto"
+                  },
+                  children: item.control
+                }
+              )
+            ] })
+          },
+          item.key
+        )) })
+      ]
+    }
+  );
+  const settingsToolbarButton = /* @__PURE__ */ jsx12(
+    Popover2,
+    {
+      trigger: "click",
+      placement: "bottomRight",
+      open: settingsPopoverOpen,
+      onOpenChange: (nextOpen) => {
+        if (actionBusy && nextOpen) return;
+        setSettingsPopoverOpen(nextOpen);
+        if (nextOpen) {
+          void handleRefreshAiExecutionConfig();
+        }
+      },
+      content: settingsCardContent,
+      getPopupContainer: resolveRuntimePopupContainer,
+      children: /* @__PURE__ */ jsx12("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ jsx12(
+        AgentToolbarIconButton,
+        {
+          title: "\u8BBE\u7F6E",
+          icon: /* @__PURE__ */ jsx12(SettingOutlined, {}),
+          awake: agentShellAwake,
+          disabled: actionBusy
+        }
+      ) })
+    }
+  );
+  const selectionModeToolbarTitle = `${selectionModeActive ? "\u5173\u95ED\u9009\u62E9\u5143\u7D20" : "\u5F00\u542F\u9009\u62E9\u5143\u7D20"}\uFF08${SELECTION_MODE_TOGGLE_SHORTCUT_LABEL}\uFF09`;
+  const selectionModeToolbarButton = /* @__PURE__ */ jsx12(
+    AgentToolbarIconButton,
+    {
+      title: selectionModeToolbarTitle,
+      icon: /* @__PURE__ */ jsx12(SelectOutlined, {}),
+      ariaLabel: selectionModeActive ? "\u5173\u95ED\u9009\u62E9\u5143\u7D20" : "\u5F00\u542F\u9009\u62E9\u5143\u7D20",
+      awake: agentShellAwake,
+      active: selectionModeActive,
+      disabled: actionBusy,
+      onClick: toggleSelectionMode
+    }
+  );
+  const closeToolbarButton = /* @__PURE__ */ jsx12(
+    AgentToolbarIconButton,
+    {
+      title: options.onRequestFullExit ? "\u9000\u51FA\u6279\u6CE8" : "\u5173\u95ED\u5DE5\u5177\u680F",
+      icon: /* @__PURE__ */ jsx12(CloseToolIcon, {}),
+      ariaLabel: options.onRequestFullExit ? "\u9000\u51FA\u6279\u6CE8" : "\u5173\u95ED\u5DE5\u5177\u680F",
+      awake: agentShellAwake,
+      disabled: actionBusy,
+      onClick: () => {
+        if (options.onRequestFullExit) {
+          void options.onRequestFullExit();
+          return;
+        }
+        minimizeTool();
+      }
+    }
+  );
+  const propertyPanelEmptyState = /* @__PURE__ */ jsxs11(
+    "div",
+    {
+      className: "we-runtime-prop-panel__empty-state",
+      style: {
+        padding: "14px 0 4px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8
+      },
+      children: [
+        /* @__PURE__ */ jsx12(
+          Typography2.Text,
+          {
+            style: {
+              color: EDITOR_CHROME.textMuted,
+              fontSize: 12,
+              lineHeight: 1.7
+            },
+            children: "\u6682\u65F6\u6CA1\u6709\u9700\u8981\u5904\u7406\u7684\u8BBE\u8BA1\u51B3\u7B56\u3002\u53EF\u4EE5\u5148\u751F\u6210\u591A\u4E2A\u8BBE\u8BA1\u65B9\u6848\uFF0C\u518D\u8FDB\u884C\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002"
+          }
+        ),
+        /* @__PURE__ */ jsx12(
+          Button4,
+          {
+            type: "default",
+            size: "small",
+            icon: /* @__PURE__ */ jsx12(CopyOutlined2, {}),
+            onClick: () => {
+              void handleCopyGlobalPanelPrompt();
+            },
+            style: { alignSelf: "flex-start" },
+            children: "\u590D\u5236\u63D0\u793A\u8BCD"
+          }
+        )
+      ]
+    }
+  );
+  const propertyPanelToggleButton = showPropertyPanelToolbarButton ? /* @__PURE__ */ jsx12(
+    AgentToolbarIconButton,
+    {
+      title: propertyPanelOpen ? "\u5173\u95ED\u8BBE\u8BA1\u51B3\u7B56" : "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
+      icon: /* @__PURE__ */ jsx12(SlidersOutlined, {}),
+      ariaLabel: "\u8BBE\u8BA1\u51B3\u7B56",
+      awake: agentShellAwake,
+      active: propertyPanelOpen,
+      disabled: actionBusy,
+      onClick: () => handleTogglePropertyPanel()
+    }
+  ) : null;
+  const handleTogglePageZoom = React13.useCallback(() => {
+    onDismissSelection?.();
+    onTargetChange(null);
+    const nextPageZoomEnabled = !uiSettings.pageZoomEnabled;
+    if (nextPageZoomEnabled) {
+      dockPagePanelRight();
+    }
+    onUiSettingsChange({ ...uiSettings, pageZoomEnabled: nextPageZoomEnabled });
+  }, [
+    dockPagePanelRight,
+    onDismissSelection,
+    onTargetChange,
+    onUiSettingsChange,
+    uiSettings
+  ]);
+  const hostToolbarState = React13.useMemo(() => {
+    const agentOptions = [
+      { value: null, label: "\u9ED8\u8BA4" },
+      ...AGENT_MENU_OPTIONS.map((item) => {
+        const availability = agentProviderAvailabilityMap.get(item.value) ?? null;
+        return {
+          value: item.value,
+          label: item.label,
+          disabled: availability?.installed === false
+        };
+      })
+    ];
+    const annotationEnabled = options.getAnnotationEnabled?.() ?? false;
+    const annotationEnableAvailable = options.getAnnotationEnableAvailable?.() ?? false;
+    const annotationEnableLoading = options.getAnnotationEnableLoading?.() ?? false;
+    return {
+      toolbarMode,
+      visible: isHostToolbarMode,
+      robotState: agentPromptToolbarAction.robotState,
+      robotTitle: agentPromptToolbarAction.robotTitle,
+      robotDisabled: agentPromptToolbarAction.robotDisabled,
+      robotLoading: agentPromptToolbarAction.robotLoading,
+      sendVisible: hostSendVisible,
+      sendTitle: agentPromptToolbarAction.sendTitle,
+      sendDisabled: agentPromptToolbarAction.sendDisabled || actionBusy,
+      sendLoading: agentPromptToolbarAction.sendLoading,
+      interruptVisible: !hideExecutionControls && agentPromptToolbarAction.interruptVisible,
+      interruptTitle: agentPromptToolbarAction.interruptTitle,
+      interruptDisabled: agentPromptToolbarAction.interruptDisabled,
+      interruptLoading: agentPromptToolbarAction.interruptLoading,
+      copyPromptVisible,
+      copyPromptTitle: copyReason ?? "\u590D\u5236 Prompt",
+      copyPromptDisabled,
+      clearEditsTitle: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+      clearEditsDisabled: clearAllEditsDisabled,
+      propertyPanelVisible: showPropertyPanelToolbarButton,
+      propertyPanelOpen,
+      propertyPanelTitle: propertyPanelOpen ? "\u5173\u95ED\u8BBE\u8BA1\u51B3\u7B56" : "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
+      modifiedCount,
+      terminalTaskCount: visibleTerminalTaskCount,
+      selectedAgent: hideExecutionControls ? null : uiSettings.agentProvider,
+      agentOptions: hideExecutionControls ? [] : agentOptions,
+      aiExecutionConfigSummary,
+      aiExecutionConfigConfigured,
+      aiExecutionProvider,
+      aiExecutionWorkspacePath,
+      aiExecutionRunConcurrency,
+      aiExecutionProviderOptions,
+      darkMode: uiSettings.darkMode,
+      disablePageAnimations: uiSettings.disablePageAnimations,
+      pageZoomEnabled: uiSettings.pageZoomEnabled,
+      copySkillInstallPromptDisabled: actionBusy || agentProviderRefreshPending,
+      selectionModeActive,
+      fullExitAvailable: Boolean(options.onRequestFullExit),
+      annotationEnabled,
+      annotationEnableAvailable,
+      annotationEnableLoading,
+      annotationEnableDisabled: Boolean(
+        annotationEnabled || annotationEnableLoading || !annotationEnableAvailable || !options.onEnableAnnotation
+      ),
+      annotationEnableTitle: annotationEnabled ? "\u9700\u6C42\u6807\u6CE8\u5DF2\u5F00\u542F" : "\u5F00\u542F\u9700\u6C42\u6807\u6CE8"
+    };
+  }, [
+    actionBusy,
+    annotationToolbarTick,
+    clearAllEditsDisabled,
+    copyBlocked,
+    copyPromptDisabled,
+    copyPromptVisible,
+    copyReason,
+    agentPromptToolbarAction,
+    agentProviderAvailabilityMap,
+    agentProviderRefreshPending,
+    hideExecutionControls,
+    hostSendVisible,
+    isHostToolbarMode,
+    aiExecutionProvider,
+    aiExecutionProviderOptions,
+    aiExecutionRunConcurrency,
+    aiExecutionWorkspacePath,
+    modifiedCount,
+    options.getAnnotationEnabled,
+    options.getAnnotationEnableAvailable,
+    options.getAnnotationEnableLoading,
+    options.onEnableAnnotation,
+    options.onRequestFullExit,
+    aiExecutionConfigConfigured,
+    aiExecutionConfigSummary,
+    propertyPanelOpen,
+    showPropertyPanelToolbarButton,
+    selectionModeActive,
+    toolbarMode,
+    uiSettings.disablePageAnimations,
+    uiSettings.darkMode,
+    uiSettings.agentProvider,
+    uiSettings.pageZoomEnabled,
+    visibleTerminalTaskCount
+  ]);
+  const onHostToolbarStateChange = props.onHostToolbarStateChange;
+  const optionHostToolbarStateChange = options.onHostToolbarStateChange;
+  React13.useEffect(() => {
+    onHostToolbarStateChange?.(hostToolbarState);
+    optionHostToolbarStateChange?.(hostToolbarState);
+    for (const listener of hostToolbarListenersRef.current) {
+      try {
+        listener(hostToolbarState);
+      } catch {
+      }
+    }
+  }, [
+    hostToolbarState,
+    onHostToolbarStateChange,
+    optionHostToolbarStateChange
+  ]);
+  const runHostToolbarAction = React13.useCallback(
+    async (action) => {
+      switch (action.type) {
+        case "wake-agent":
+          if (agentPromptToolbarAction.robotDisabled) return false;
+          return wakeAgentForAction();
+        case "send-to-agent":
+          if (!hostSendVisible || agentPromptToolbarAction.sendDisabled || actionBusy) {
+            return false;
+          }
+          await handleConfirmSendPromptToAgent();
+          return true;
+        case "interrupt-agent":
+          if (!agentPromptToolbarAction.interruptVisible || agentPromptToolbarAction.interruptDisabled) {
+            return false;
+          }
+          await handleInterruptSendPromptToAgent(null);
+          return true;
+        case "copy-prompt":
+          if (!copyPromptVisible || copyPromptDisabled) return false;
+          await runAction(options.onCopyPrompt);
+          return true;
+        case "clear-edits":
+          if (clearAllEditsDisabled || !options.onClearEdits) return false;
+          await runAction(
+            () => options.onClearEdits?.({
+              ...action.skipConfirm ? { skipConfirm: true } : {},
+              ...action.scope ? { scope: action.scope } : {}
+            })
+          );
+          return true;
+        case "toggle-property-panel": {
+          const nextOpen = action.open ?? !propertyPanelOpen;
+          handleTogglePropertyPanel(nextOpen);
+          return true;
+        }
+        case "set-active-agent": {
+          const nextAgent = action.agent;
+          if (nextAgent && !AGENT_MENU_OPTIONS.some((item) => item.value === nextAgent)) {
+            return false;
+          }
+          onUiSettingsChange({ ...uiSettings, agentProvider: nextAgent });
+          return true;
+        }
+        case "open-ai-settings":
+          return Boolean(await options.onHostToolbarAction?.(action));
+        case "get-ai-execution-config":
+        case "set-ai-execution-config":
+        case "browse-ai-execution-directories":
+          return Boolean(await options.onHostToolbarAction?.(action));
+        case "disconnect-agent":
+          setAgentWakeChecking(false);
+          setAgentPromptInterrupting(false);
+          setAgentPromptSending(false);
+          setAgentPromptSendingElementKey(null);
+          onAgentVisualStateChange("sleeping");
+          return true;
+        case "copy-skill-install-prompt":
+          await handleCopySkillInstallPrompt();
+          return true;
+        case "copy-global-panel-prompt":
+          await handleCopyGlobalPanelPrompt();
+          return true;
+        case "toggle-dark-mode":
+          onUiSettingsChange({
+            ...uiSettings,
+            darkMode: typeof action.darkMode === "boolean" ? action.darkMode : !uiSettings.darkMode
+          });
+          return true;
+        case "toggle-page-animations":
+          onUiSettingsChange({
+            ...uiSettings,
+            disablePageAnimations: !uiSettings.disablePageAnimations
+          });
+          return true;
+        case "toggle-page-zoom":
+          handleTogglePageZoom();
+          return true;
+        case "toggle-selection-mode": {
+          const nextSelectionModeActive = action.active ?? !selectionModeActive;
+          if (!nextSelectionModeActive) {
+            onDismissSelection?.();
+            onTargetChange(null);
+            onSelectionInteractionLockChange(false);
+            onHoverSelectionSuppressedChange(false);
+          }
+          if (nextSelectionModeActive) {
+            onSelectionInteractionLockChange(false);
+            onHoverSelectionSuppressedChange(false);
+          }
+          onSelectionModeActiveChange(nextSelectionModeActive);
+          return true;
+        }
+        case "enable-annotation":
+          if (options.getAnnotationEnabled?.()) return true;
+          if (options.getAnnotationEnableLoading?.()) return false;
+          if (!(options.getAnnotationEnableAvailable?.() ?? false))
+            return false;
+          if (!await options.onEnableAnnotation?.()) return false;
+          setAnnotationToolbarTick((value) => value + 1);
+          return true;
+        case "open-keyboard-shortcuts":
+          setKeyboardShortcutsDialogOpen(true);
+          return true;
+        case "full-exit":
+          if (!options.onRequestFullExit) return false;
+          await options.onRequestFullExit();
+          return true;
+        default:
+          return false;
+      }
+    },
+    [
+      actionBusy,
+      clearAllEditsDisabled,
+      copyBlocked,
+      copyPromptDisabled,
+      copyPromptVisible,
+      agentPromptToolbarAction,
+      handleConfirmSendPromptToAgent,
+      handleCopyGlobalPanelPrompt,
+      handleCopySkillInstallPrompt,
+      handleTogglePropertyPanel,
+      handleInterruptSendPromptToAgent,
+      handleTogglePageZoom,
+      hostSendVisible,
+      onDismissSelection,
+      onAgentVisualStateChange,
+      onHoverSelectionSuppressedChange,
+      onSelectionInteractionLockChange,
+      onTargetChange,
+      onToolMinimizedChange,
+      onSelectionModeActiveChange,
+      onUiSettingsChange,
+      options,
+      propertyPanelOpen,
+      runAction,
+      selectionModeActive,
+      uiSettings,
+      wakeAgentForAction
+    ]
+  );
+  React13.useImperativeHandle(
+    ref,
+    () => ({
+      setTarget(element) {
+        onTargetChange(element);
+      },
+      setTab() {
+      },
+      getTab() {
+        return "tweak";
+      },
+      refresh() {
+        onRefreshNoteState();
+        requestPanelRefresh();
+        setAnnotationToolbarTick((value) => value + 1);
+        syncPanelMetaState();
+      },
+      setHistory(nextUndo, nextRedo) {
+        setUndoCount(Math.max(0, Math.floor(nextUndo)));
+        setRedoCount(Math.max(0, Math.floor(nextRedo)));
+        syncPanelMetaState();
+      },
+      getPosition() {
+        return showExpandedPanel ? pagePanelPositionRef.current : toolbarPositionRef.current;
+      },
+      setPosition(position) {
+        applyPanelPosition(position);
+      },
+      enterCommentInput(mode = "bubble-card") {
+        if (toolMinimized) {
+          restoreTool();
+        }
+        onUiModeChange(mode);
+        onRefreshNoteState();
+      },
+      enterInlineTextEdit() {
+        if (toolMinimized) {
+          restoreTool();
+        }
+        onInlineTextEditingChange?.(true);
+      },
+      getHostToolbarState() {
+        return hostToolbarState;
+      },
+      subscribeHostToolbarState(listener) {
+        hostToolbarListenersRef.current.add(listener);
+        listener(hostToolbarState);
+        return () => {
+          hostToolbarListenersRef.current.delete(listener);
+        };
+      },
+      runHostToolbarAction
+    }),
+    [
+      applyPanelPosition,
+      hostToolbarState,
+      onInlineTextEditingChange,
+      onRefreshNoteState,
+      onTargetChange,
+      onUiModeChange,
+      requestPanelRefresh,
+      restoreTool,
+      runHostToolbarAction,
+      showExpandedPanel,
+      syncPanelMetaState,
+      toolMinimized
+    ]
+  );
+  const pageConfigPanelHeader = showExpandedPanel ? /* @__PURE__ */ jsxs11(
+    "div",
+    {
+      ref: pagePanelHeaderRef,
+      className: "we-runtime-page-config-panel__header we-runtime-prop-panel__drag-handle",
+      children: [
+        /* @__PURE__ */ jsxs11("div", { className: "we-runtime-prop-panel__header-title-group", children: [
+          /* @__PURE__ */ jsx12("span", { className: "we-runtime-prop-panel__header-title", children: "\u8BBE\u8BA1\u51B3\u7B56" }),
+          /* @__PURE__ */ jsx12(
+            Tooltip5,
+            {
+              title: PROPERTY_PANEL_HELP_TOOLTIP,
+              placement: "bottomRight",
+              arrow: { pointAtCenter: true },
+              getPopupContainer: resolveRuntimePopupContainer,
+              children: /* @__PURE__ */ jsx12(
+                Button4,
+                {
+                  type: "text",
+                  size: "small",
+                  className: "we-runtime-prop-panel__header-action we-runtime-prop-panel__header-help",
+                  "aria-label": "\u8BBE\u8BA1\u51B3\u7B56\u8BF4\u660E",
+                  title: "\u8BBE\u8BA1\u51B3\u7B56\u8BF4\u660E",
+                  icon: /* @__PURE__ */ jsx12(QuestionCircleOutlined, {})
                 }
               )
             }
           )
-        ]
-      }
-    ) : null;
-    return /* @__PURE__ */ jsxs12(Fragment6, { children: [
-      /* @__PURE__ */ jsxs12(
+        ] }),
+        /* @__PURE__ */ jsx12(
+          "div",
+          {
+            className: "we-runtime-prop-panel__header-actions",
+            onPointerDownCapture: (event) => event.stopPropagation(),
+            children: /* @__PURE__ */ jsx12(
+              Button4,
+              {
+                type: "text",
+                size: "small",
+                className: "we-runtime-prop-panel__header-action",
+                "aria-label": "\u590D\u5236\u63D0\u793A\u8BCD",
+                title: "\u590D\u5236\u63D0\u793A\u8BCD",
+                icon: /* @__PURE__ */ jsx12(CopyOutlined2, {}),
+                onClick: () => {
+                  void handleCopyGlobalPanelPrompt();
+                }
+              }
+            )
+          }
+        )
+      ]
+    }
+  ) : null;
+  const expandedToolbar = /* @__PURE__ */ jsx12(
+    AgentToolbarShell,
+    {
+      awake: agentShellAwake,
+      dragHandleRef: toolbarHeaderRef,
+      style: {
+        alignSelf: "flex-start",
+        width: "fit-content",
+        maxWidth: "calc(100% - 8px)",
+        margin: 0
+      },
+      children: /* @__PURE__ */ jsx12(
         "div",
         {
-          ref: rootRef,
-          "data-we-selection-lock-root": "true",
           style: {
-            ...shellStyle,
-            transition: toolbarDragging ? "none" : "left 220ms cubic-bezier(0.2, 0.8, 0.2, 1), top 220ms cubic-bezier(0.2, 0.8, 0.2, 1), width 220ms cubic-bezier(0.2, 0.8, 0.2, 1), height 220ms cubic-bezier(0.2, 0.8, 0.2, 1), max-height 220ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 220ms ease, border-radius 220ms ease, border-color 220ms ease, background-color 220ms ease",
-            willChange: toolbarDragging ? "left, top" : void 0
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-start",
+            gap: 8,
+            width: "auto",
+            minWidth: 0
           },
-          onPointerDownCapture: () => {
-            if (toolMinimized) return;
-            onSelectionInteractionLockChange(true);
-          },
-          onFocusCapture: () => {
-            if (toolMinimized) return;
-            onSelectionInteractionLockChange(true);
-          },
-          onPointerEnter: () => {
-            if (!toolMinimized) {
-              onHoverSelectionSuppressedChange(true);
+          children: /* @__PURE__ */ jsxs11(Space2, { size: 4, style: { minWidth: 0, flex: "0 0 auto" }, children: [
+            selectionModeToolbarButton,
+            agentExecutionToolbarButton,
+            copyToolbarButton,
+            propertyPanelToggleButton,
+            clearAllEditsToolbarButton,
+            settingsToolbarButton,
+            closeToolbarButton
+          ] })
+        }
+      )
+    }
+  );
+  const minimizedToolbar = /* @__PURE__ */ jsxs11(
+    "button",
+    {
+      className: "we-runtime-prop-panel__minimized-trigger we-runtime-prop-panel__drag-handle",
+      ref: minimizedButtonRef,
+      type: "button",
+      "aria-label": "\u5F00\u542F\u7F16\u8F91",
+      title: "\u5F00\u542F\u7F16\u8F91",
+      onClick: restoreTool,
+      style: {
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        overflow: "visible",
+        border: "none",
+        background: "transparent",
+        color: EDITOR_CHROME.textPrimary,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 999,
+        touchAction: "none",
+        pointerEvents: toolMinimized ? "auto" : "none",
+        opacity: toolMinimized ? 1 : 0,
+        transform: toolMinimized ? "scale(1)" : "scale(0.9)",
+        transition: "opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), filter 220ms ease"
+      },
+      children: [
+        /* @__PURE__ */ jsx12(
+          "span",
+          {
+            "aria-hidden": "true",
+            style: {
+              position: "absolute",
+              inset: 0,
+              borderRadius: 999,
+              background: EDITOR_CHROME.toolbarShellBorder,
+              boxShadow: EDITOR_CHROME.shadowCompact
             }
-          },
-          onPointerLeave: () => onHoverSelectionSuppressedChange(false),
-          children: [
-            /* @__PURE__ */ jsx13("style", { children: PROPERTY_PANEL_LOCAL_STYLES }),
-            isHostToolbarMode ? null : toolMinimized ? minimizedToolbar : expandedToolbar,
-            /* @__PURE__ */ jsx13(
-              Modal2,
+          }
+        ),
+        /* @__PURE__ */ jsx12(
+          "span",
+          {
+            "aria-hidden": "true",
+            style: {
+              position: "absolute",
+              inset: 1,
+              borderRadius: 999,
+              background: EDITOR_CHROME.surface,
+              boxShadow: EDITOR_CHROME.toolbarShellInset
+            }
+          }
+        ),
+        /* @__PURE__ */ jsx12(
+          "span",
+          {
+            style: {
+              position: "relative",
+              zIndex: 1,
+              width: 32,
+              height: 32,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: EDITOR_CHROME.textSecondary,
+              transition: "background-color 220ms ease, color 220ms ease, transform 220ms ease"
+            },
+            children: /* @__PURE__ */ jsx12(AgentSparkleIcon, {})
+          }
+        ),
+        modifiedCount > 0 ? /* @__PURE__ */ jsx12(
+          "span",
+          {
+            style: {
+              position: "absolute",
+              top: -6,
+              right: -6,
+              minWidth: 18,
+              height: 18,
+              paddingInline: 5,
+              borderRadius: 999,
+              background: EDITOR_CHROME.accent,
+              color: "#FFFFFF",
+              fontSize: 10,
+              fontWeight: 700,
+              lineHeight: "18px",
+              boxShadow: `0 6px 14px ${BRAND_PRIMARY_SHADOW}`,
+              pointerEvents: "none",
+              zIndex: 2
+            },
+            children: modifiedCount > 99 ? "99+" : modifiedCount
+          }
+        ) : null
+      ]
+    }
+  );
+  const pageConfigPanelStyle = {
+    position: "fixed",
+    zIndex: Number(panelStyle.zIndex ?? 10008) + 1,
+    pointerEvents: mobileHideToolbar ? "none" : "auto",
+    opacity: mobileHideToolbar ? 0 : 1,
+    ...pagePanelPosition ? {
+      left: pagePanelPosition.left,
+      top: pagePanelPosition.top,
+      right: "auto",
+      bottom: "auto"
+    } : { right: PROPERTY_PANEL_RIGHT, top: PROPERTY_PANEL_TOP }
+  };
+  const pageConfigPanel = showExpandedPanel ? /* @__PURE__ */ jsxs11(
+    "div",
+    {
+      ref: pagePanelRef,
+      className: "we-runtime-page-config-panel",
+      "data-we-selection-lock-root": "true",
+      style: pageConfigPanelStyle,
+      onPointerDownCapture: () => {
+        onSelectionInteractionLockChange(true);
+      },
+      onFocusCapture: () => {
+        onSelectionInteractionLockChange(true);
+      },
+      onPointerEnter: () => {
+        onHoverSelectionSuppressedChange(true);
+      },
+      onPointerLeave: () => onHoverSelectionSuppressedChange(false),
+      children: [
+        pageConfigPanelHeader,
+        /* @__PURE__ */ jsx12(
+          "div",
+          {
+            ref: pagePanelBodyRef,
+            className: "we-runtime-page-config-panel__body",
+            style: pageConfigPanelBodyStyle,
+            "aria-hidden": false,
+            children: /* @__PURE__ */ jsx12(
+              "div",
               {
-                title: "\u8BED\u97F3\u5FEB\u6377\u952E",
-                open: shortcutDialogOpen,
-                centered: true,
-                getContainer: false,
-                maskClosable: true,
-                onCancel: closeShortcutDialog,
-                footer: [
-                  /* @__PURE__ */ jsx13(Button4, { onClick: closeShortcutDialog, children: "\u53D6\u6D88" }, "cancel"),
-                  /* @__PURE__ */ jsx13(
-                    Button4,
-                    {
-                      type: "primary",
-                      disabled: Boolean(shortcutValidationError),
-                      onClick: handleShortcutSave,
-                      children: "\u4FDD\u5B58"
+                onPointerDownCapture: (event) => event.stopPropagation(),
+                style: { display: "flex", flexDirection: "column", gap: 10 },
+                children: hasPageTweakEntries ? /* @__PURE__ */ jsx12(
+                  ReactPageTweakPanel,
+                  {
+                    entries: pageTweakEntries,
+                    disabled: actionBusy || !options.onUpdateTweakValues,
+                    onChange: (element, patch) => {
+                      if (!options.onUpdateTweakValues) return;
+                      onDismissSelection?.();
+                      onTargetChange(null);
+                      void options.onUpdateTweakValues(element, patch);
                     },
-                    "save"
-                  )
-                ],
-                children: /* @__PURE__ */ jsxs12("div", { style: { display: "flex", flexDirection: "column", gap: 16 }, children: [
-                  /* @__PURE__ */ jsxs12(
-                    "div",
-                    {
-                      style: {
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 12,
-                        padding: "12px 0"
-                      },
-                      children: [
-                        /* @__PURE__ */ jsxs12("div", { children: [
-                          /* @__PURE__ */ jsx13("div", { style: { fontSize: 13, fontWeight: 600, color: EDITOR_CHROME.textPrimary }, children: "\u542F\u7528\u8BED\u97F3\u5FEB\u6377\u952E" }),
-                          /* @__PURE__ */ jsx13("div", { style: shortcutCaptureHintStyle, children: "\u5F00\u542F\u540E\u624D\u4F1A\u54CD\u5E94\u957F\u6309\u4FEE\u9970\u952E\u548C\u9F20\u6807\u4E2D\u952E\u3002" })
-                        ] }),
-                        /* @__PURE__ */ jsx13(
-                          Switch2,
-                          {
-                            checked: shortcutDraft.enabled,
-                            onChange: (checked) => {
-                              handleShortcutDraftChange((prev) => ({ ...prev, enabled: checked }));
-                            }
-                          }
-                        )
-                      ]
+                    onClearEntry: options.onClearCurrentElementEdits ? (element) => {
+                      void options.onClearCurrentElementEdits?.(element);
+                    } : void 0,
+                    onLocateEntry: (element) => {
+                      onSelectionInteractionLockChange(false);
+                      onHoverSelectionSuppressedChange(false);
+                      options.onLocateElement?.(element);
                     }
-                  ),
-                  /* @__PURE__ */ jsxs12(
-                    "div",
-                    {
-                      style: {
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 12,
-                        padding: "12px 0",
-                        borderTop: `1px solid ${EDITOR_CHROME.border}`,
-                        borderBottom: `1px solid ${EDITOR_CHROME.border}`
-                      },
-                      children: [
-                        /* @__PURE__ */ jsxs12("div", { children: [
-                          /* @__PURE__ */ jsx13("div", { style: { fontSize: 13, fontWeight: 600, color: EDITOR_CHROME.textPrimary }, children: "\u542F\u7528\u9F20\u6807\u4E2D\u952E\u76D1\u542C" }),
-                          /* @__PURE__ */ jsx13("div", { style: shortcutCaptureHintStyle, children: "\u9F20\u6807\u4E2D\u952E\u5355\u51FB\u4F1A\u76F4\u63A5\u8FDB\u5165\u6279\u6CE8\u6C14\u6CE1\u5361\u7247\u3002" })
-                        ] }),
-                        /* @__PURE__ */ jsx13(
-                          Switch2,
-                          {
-                            checked: shortcutDraft.middleClickEnabled,
-                            onChange: (checked) => {
-                              handleShortcutDraftChange((prev) => ({
-                                ...prev,
-                                middleClickEnabled: checked
-                              }));
-                            }
-                          }
-                        )
-                      ]
-                    }
-                  ),
-                  /* @__PURE__ */ jsx13("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }, children: [0, 1].map((index) => /* @__PURE__ */ jsx13(
-                    ShortcutCaptureCard,
-                    {
-                      ref: (node) => {
-                        shortcutCardRefs.current[index] = node;
-                      },
-                      label: `\u5FEB\u6377\u952E ${index + 1}`,
-                      value: shortcutDraft.shortcuts[index] ?? null,
-                      capturing: capturingShortcutIndex === index,
-                      onActivate: () => setCapturingShortcutIndex(index),
-                      onCapture: (key) => {
-                        handleShortcutDraftChange((prev) => {
-                          const nextShortcuts = [
-                            ...prev.shortcuts
-                          ];
-                          nextShortcuts[index] = key;
-                          return {
-                            ...prev,
-                            shortcuts: nextShortcuts
-                          };
-                        });
-                        setCapturingShortcutIndex(null);
-                      },
-                      onCancelCapture: () => setCapturingShortcutIndex(null),
-                      onClear: () => {
-                        handleShortcutDraftChange((prev) => {
-                          const nextShortcuts = [
-                            ...prev.shortcuts
-                          ];
-                          nextShortcuts[index] = null;
-                          return {
-                            ...prev,
-                            shortcuts: nextShortcuts
-                          };
-                        });
-                      }
-                    },
-                    index
-                  )) }),
-                  /* @__PURE__ */ jsxs12("div", { style: shortcutCaptureHintStyle, children: [
-                    "\u4EC5\u652F\u6301 Shift / Alt / Ctrl / Command\uFF0C\u957F\u6309 ",
-                    COMMENT_SHORTCUT_LONG_PRESS_MS,
-                    "ms \u89E6\u53D1\u3002"
-                  ] }),
-                  shortcutValidationError ? /* @__PURE__ */ jsx13("div", { style: { fontSize: 12, color: EDITOR_CHROME.textDanger }, children: shortcutValidationError }) : null
-                ] })
-              }
-            ),
-            /* @__PURE__ */ jsx13(
-              Modal2,
-              {
-                title: "\u5FEB\u6377\u952E",
-                open: keyboardShortcutsDialogOpen,
-                className: "we-runtime-keyboard-shortcuts-modal",
-                centered: true,
-                getContainer: false,
-                maskClosable: true,
-                onCancel: () => setKeyboardShortcutsDialogOpen(false),
-                footer: [
-                  /* @__PURE__ */ jsx13(
-                    Button4,
-                    {
-                      type: "primary",
-                      onClick: () => setKeyboardShortcutsDialogOpen(false),
-                      children: "\u77E5\u9053\u4E86"
-                    },
-                    "close"
-                  )
-                ],
-                children: /* @__PURE__ */ jsx13("div", { style: { display: "flex", flexDirection: "column", gap: 0 }, children: [
-                  {
-                    keys: ["Enter", "Esc"],
-                    label: "\u4FDD\u5B58\u5E76\u5173\u95ED\u6C14\u6CE1\u5361\u7247",
-                    desc: "\u5728\u6C14\u6CE1\u5361\u7247\u7684\u8F93\u5165\u6846\u4E2D\u6309\u4E0B\uFF0C\u4FDD\u5B58\u5F53\u524D\u6279\u6CE8\u5185\u5BB9\u5E76\u5173\u95ED\u5361\u7247"
-                  },
-                  {
-                    keys: [`${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + Enter`],
-                    label: "\u5FEB\u6377\u6267\u884C\u5E76\u5173\u95ED",
-                    desc: "\u4FDD\u5B58\u5F53\u524D\u6279\u6CE8\u5E76\u7ACB\u5373\u53D1\u9001\u7ED9 AI \u6267\u884C\uFF0C\u540C\u65F6\u5173\u95ED\u6C14\u6CE1\u5361\u7247"
-                  },
-                  {
-                    keys: [`${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + V`],
-                    label: "\u7C98\u8D34\u56FE\u7247\u6216\u6587\u6848",
-                    desc: "AI \u5F00\u542F\u65F6\uFF0C\u5728\u6C14\u6CE1\u5361\u7247\u6216\u5F85\u9009\u6846\u4E2D\u53EF\u76F4\u63A5\u7C98\u8D34\u56FE\u7247\u548C\u6587\u6848"
-                  },
-                  {
-                    keys: [SELECTION_MODE_TOGGLE_SHORTCUT_LABEL],
-                    label: "\u5207\u6362\u9009\u62E9\u5143\u7D20",
-                    desc: "\u5173\u95ED\u540E\u9875\u9762\u70B9\u51FB\u6062\u590D\u539F\u751F\u4EA4\u4E92\uFF0C\u518D\u6309\u4E00\u6B21\u91CD\u65B0\u5F00\u542F\u5143\u7D20\u9009\u62E9"
                   }
-                ].map((item) => /* @__PURE__ */ jsxs12(
+                ) : propertyPanelEmptyState
+              }
+            )
+          }
+        )
+      ]
+    }
+  ) : null;
+  return /* @__PURE__ */ jsxs11(Fragment5, { children: [
+    /* @__PURE__ */ jsxs11(
+      "div",
+      {
+        ref: rootRef,
+        "data-we-selection-lock-root": "true",
+        style: {
+          ...shellStyle,
+          transition: toolbarDragging ? "none" : "left 220ms cubic-bezier(0.2, 0.8, 0.2, 1), top 220ms cubic-bezier(0.2, 0.8, 0.2, 1), width 220ms cubic-bezier(0.2, 0.8, 0.2, 1), height 220ms cubic-bezier(0.2, 0.8, 0.2, 1), max-height 220ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 220ms ease, border-radius 220ms ease, border-color 220ms ease, background-color 220ms ease",
+          willChange: toolbarDragging ? "left, top" : void 0
+        },
+        onPointerDownCapture: () => {
+          if (toolMinimized) return;
+          onSelectionInteractionLockChange(true);
+        },
+        onFocusCapture: () => {
+          if (toolMinimized) return;
+          onSelectionInteractionLockChange(true);
+        },
+        onPointerEnter: () => {
+          if (!toolMinimized) {
+            onHoverSelectionSuppressedChange(true);
+          }
+        },
+        onPointerLeave: () => onHoverSelectionSuppressedChange(false),
+        children: [
+          /* @__PURE__ */ jsx12("style", { children: PROPERTY_PANEL_LOCAL_STYLES }),
+          isHostToolbarMode ? null : toolMinimized ? minimizedToolbar : expandedToolbar,
+          /* @__PURE__ */ jsx12(
+            Modal2,
+            {
+              title: "\u6280\u80FD\u7BA1\u7406",
+              open: commentarySkillDialogOpen,
+              centered: true,
+              getContainer: false,
+              maskClosable: !commentarySkillSaving,
+              onCancel: () => {
+                if (commentarySkillSaving) return;
+                setCommentarySkillDialogOpen(false);
+              },
+              footer: [
+                /* @__PURE__ */ jsx12(
+                  Button4,
+                  {
+                    disabled: commentarySkillSaving,
+                    onClick: () => setCommentarySkillDialogOpen(false),
+                    children: "\u53D6\u6D88"
+                  },
+                  "cancel"
+                ),
+                /* @__PURE__ */ jsx12(
+                  Button4,
+                  {
+                    type: "primary",
+                    loading: commentarySkillSaving,
+                    onClick: () => {
+                      void handleSaveCommentarySkillSelection();
+                    },
+                    children: "\u4FDD\u5B58"
+                  },
+                  "save"
+                )
+              ],
+              children: /* @__PURE__ */ jsx12("div", { style: { display: "flex", flexDirection: "column", gap: 10 }, children: commentarySkillOptions.map((skill) => {
+                const checked = commentarySkillDraftIds.includes(skill.id);
+                const toggleSkill = () => {
+                  if (commentarySkillSaving) return;
+                  setCommentarySkillDraftIds((prev) => {
+                    const current = new Set(prev);
+                    if (current.has(skill.id)) {
+                      current.delete(skill.id);
+                    } else {
+                      current.add(skill.id);
+                    }
+                    return normalizeCommentarySkillIds(
+                      [...current],
+                      commentarySkillOptions
+                    );
+                  });
+                };
+                return /* @__PURE__ */ jsxs11(
+                  "div",
+                  {
+                    role: "checkbox",
+                    "aria-checked": checked,
+                    tabIndex: commentarySkillSaving ? -1 : 0,
+                    onClick: toggleSkill,
+                    onKeyDown: (event) => {
+                      if (commentarySkillSaving) return;
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      toggleSkill();
+                    },
+                    style: {
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: `1px solid ${checked ? EDITOR_CHROME.accent : EDITOR_CHROME.border}`,
+                      background: checked ? EDITOR_CHROME.hoverSubtle : EDITOR_CHROME.surface,
+                      cursor: commentarySkillSaving ? "not-allowed" : "pointer",
+                      outline: "none"
+                    },
+                    children: [
+                      /* @__PURE__ */ jsx12(
+                        Checkbox,
+                        {
+                          checked,
+                          disabled: commentarySkillSaving,
+                          onClick: (event) => {
+                            event.stopPropagation();
+                          },
+                          onChange: (event) => {
+                            const nextChecked = event.target.checked;
+                            setCommentarySkillDraftIds((prev) => {
+                              const current = new Set(prev);
+                              if (nextChecked) {
+                                current.add(skill.id);
+                              } else {
+                                current.delete(skill.id);
+                              }
+                              return normalizeCommentarySkillIds(
+                                [...current],
+                                commentarySkillOptions
+                              );
+                            });
+                          },
+                          children: /* @__PURE__ */ jsx12(
+                            "span",
+                            {
+                              style: {
+                                color: EDITOR_CHROME.textPrimary,
+                                fontWeight: 600
+                              },
+                              children: skill.label
+                            }
+                          )
+                        }
+                      ),
+                      skill.description ? /* @__PURE__ */ jsx12(
+                        "span",
+                        {
+                          style: {
+                            marginLeft: 24,
+                            color: EDITOR_CHROME.textSecondary,
+                            fontSize: 12,
+                            lineHeight: 1.45
+                          },
+                          children: skill.description
+                        }
+                      ) : null
+                    ]
+                  },
+                  skill.id
+                );
+              }) })
+            }
+          ),
+          /* @__PURE__ */ jsx12(
+            Modal2,
+            {
+              title: "\u8BED\u97F3\u5FEB\u6377\u952E",
+              open: shortcutDialogOpen,
+              centered: true,
+              getContainer: false,
+              maskClosable: true,
+              onCancel: closeShortcutDialog,
+              footer: [
+                /* @__PURE__ */ jsx12(Button4, { onClick: closeShortcutDialog, children: "\u53D6\u6D88" }, "cancel"),
+                /* @__PURE__ */ jsx12(
+                  Button4,
+                  {
+                    type: "primary",
+                    disabled: Boolean(shortcutValidationError),
+                    onClick: handleShortcutSave,
+                    children: "\u4FDD\u5B58"
+                  },
+                  "save"
+                )
+              ],
+              children: /* @__PURE__ */ jsxs11("div", { style: { display: "flex", flexDirection: "column", gap: 16 }, children: [
+                /* @__PURE__ */ jsxs11(
                   "div",
                   {
                     style: {
                       display: "flex",
-                      alignItems: "flex-start",
+                      alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 16,
-                      padding: "14px 0",
-                      borderBottom: `1px solid ${EDITOR_CHROME.border}`
+                      gap: 12,
+                      padding: "12px 0"
                     },
                     children: [
-                      /* @__PURE__ */ jsxs12("div", { style: { flex: 1, minWidth: 0 }, children: [
-                        /* @__PURE__ */ jsx13("div", { style: { fontSize: 13, fontWeight: 600, color: EDITOR_CHROME.textPrimary }, children: item.label }),
-                        /* @__PURE__ */ jsx13("div", { style: { fontSize: 12, color: EDITOR_CHROME.textMuted, marginTop: 2 }, children: item.desc })
-                      ] }),
-                      /* @__PURE__ */ jsx13(
-                        "div",
-                        {
-                          style: {
-                            display: "flex",
-                            gap: 4,
-                            flexShrink: 0,
-                            alignItems: "center",
-                            paddingTop: 2
-                          },
-                          children: item.keys.map((key) => /* @__PURE__ */ jsx13(
-                            "kbd",
-                            {
-                              style: {
-                                display: "inline-block",
-                                padding: "2px 8px",
-                                fontSize: 12,
-                                fontFamily: "system-ui, -apple-system, sans-serif",
-                                fontWeight: 500,
-                                lineHeight: "20px",
-                                color: EDITOR_CHROME.textPrimary,
-                                background: EDITOR_CHROME.surfaceMuted,
-                                border: `1px solid ${EDITOR_CHROME.border}`,
-                                borderRadius: 6,
-                                whiteSpace: "nowrap"
-                              },
-                              children: key
+                      /* @__PURE__ */ jsxs11("div", { children: [
+                        /* @__PURE__ */ jsx12(
+                          "div",
+                          {
+                            style: {
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: EDITOR_CHROME.textPrimary
                             },
-                            key
-                          ))
+                            children: "\u542F\u7528\u8BED\u97F3\u5FEB\u6377\u952E"
+                          }
+                        ),
+                        /* @__PURE__ */ jsx12("div", { style: shortcutCaptureHintStyle, children: "\u5F00\u542F\u540E\u624D\u4F1A\u54CD\u5E94\u957F\u6309\u4FEE\u9970\u952E\u548C\u9F20\u6807\u4E2D\u952E\u3002" })
+                      ] }),
+                      /* @__PURE__ */ jsx12(
+                        Switch2,
+                        {
+                          checked: shortcutDraft.enabled,
+                          onChange: (checked) => {
+                            handleShortcutDraftChange((prev) => ({
+                              ...prev,
+                              enabled: checked
+                            }));
+                          }
                         }
                       )
                     ]
+                  }
+                ),
+                /* @__PURE__ */ jsxs11(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "12px 0",
+                      borderTop: `1px solid ${EDITOR_CHROME.border}`,
+                      borderBottom: `1px solid ${EDITOR_CHROME.border}`
+                    },
+                    children: [
+                      /* @__PURE__ */ jsxs11("div", { children: [
+                        /* @__PURE__ */ jsx12(
+                          "div",
+                          {
+                            style: {
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: EDITOR_CHROME.textPrimary
+                            },
+                            children: "\u542F\u7528\u9F20\u6807\u4E2D\u952E\u76D1\u542C"
+                          }
+                        ),
+                        /* @__PURE__ */ jsx12("div", { style: shortcutCaptureHintStyle, children: "\u9F20\u6807\u4E2D\u952E\u5355\u51FB\u4F1A\u76F4\u63A5\u8FDB\u5165\u6279\u6CE8\u6C14\u6CE1\u5361\u7247\u3002" })
+                      ] }),
+                      /* @__PURE__ */ jsx12(
+                        Switch2,
+                        {
+                          checked: shortcutDraft.middleClickEnabled,
+                          onChange: (checked) => {
+                            handleShortcutDraftChange((prev) => ({
+                              ...prev,
+                              middleClickEnabled: checked
+                            }));
+                          }
+                        }
+                      )
+                    ]
+                  }
+                ),
+                /* @__PURE__ */ jsx12(
+                  "div",
+                  {
+                    style: {
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 12
+                    },
+                    children: [0, 1].map((index) => /* @__PURE__ */ jsx12(
+                      ShortcutCaptureCard,
+                      {
+                        ref: (node) => {
+                          shortcutCardRefs.current[index] = node;
+                        },
+                        label: `\u5FEB\u6377\u952E ${index + 1}`,
+                        value: shortcutDraft.shortcuts[index] ?? null,
+                        capturing: capturingShortcutIndex === index,
+                        onActivate: () => setCapturingShortcutIndex(index),
+                        onCapture: (key) => {
+                          handleShortcutDraftChange((prev) => {
+                            const nextShortcuts = [
+                              ...prev.shortcuts
+                            ];
+                            nextShortcuts[index] = key;
+                            return {
+                              ...prev,
+                              shortcuts: nextShortcuts
+                            };
+                          });
+                          setCapturingShortcutIndex(null);
+                        },
+                        onCancelCapture: () => setCapturingShortcutIndex(null),
+                        onClear: () => {
+                          handleShortcutDraftChange((prev) => {
+                            const nextShortcuts = [
+                              ...prev.shortcuts
+                            ];
+                            nextShortcuts[index] = null;
+                            return {
+                              ...prev,
+                              shortcuts: nextShortcuts
+                            };
+                          });
+                        }
+                      },
+                      index
+                    ))
+                  }
+                ),
+                /* @__PURE__ */ jsxs11("div", { style: shortcutCaptureHintStyle, children: [
+                  "\u4EC5\u652F\u6301 Shift / Alt / Ctrl / Command\uFF0C\u957F\u6309",
+                  " ",
+                  COMMENT_SHORTCUT_LONG_PRESS_MS,
+                  "ms \u89E6\u53D1\u3002"
+                ] }),
+                shortcutValidationError ? /* @__PURE__ */ jsx12("div", { style: { fontSize: 12, color: EDITOR_CHROME.textDanger }, children: shortcutValidationError }) : null
+              ] })
+            }
+          ),
+          /* @__PURE__ */ jsx12(
+            Modal2,
+            {
+              title: "\u9009\u62E9 AI \u5DE5\u4F5C\u76EE\u5F55",
+              open: directoryPickerOpen,
+              centered: true,
+              width: 720,
+              className: "we-runtime-directory-picker-modal",
+              getContainer: false,
+              maskClosable: !directoryPickerBusy,
+              onCancel: () => {
+                if (!directoryPickerBusy) {
+                  setDirectoryPickerOpen(false);
+                }
+              },
+              footer: [
+                /* @__PURE__ */ jsx12(
+                  Button4,
+                  {
+                    disabled: directoryPickerBusy,
+                    onClick: () => setDirectoryPickerOpen(false),
+                    children: "\u53D6\u6D88"
                   },
-                  item.label
-                )) })
-              }
-            )
-          ]
-        }
-      ),
-      pageConfigPanel
-    ] });
-  }
-);
+                  "cancel"
+                ),
+                /* @__PURE__ */ jsx12(
+                  Button4,
+                  {
+                    type: "primary",
+                    loading: directoryPickerBusy,
+                    disabled: !directoryPickerState?.path,
+                    onClick: () => {
+                      void handleConfirmDirectoryPicker();
+                    },
+                    children: "\u4F7F\u7528\u5F53\u524D\u76EE\u5F55"
+                  },
+                  "select"
+                )
+              ],
+              children: /* @__PURE__ */ jsxs11(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12
+                  },
+                  children: [
+                    /* @__PURE__ */ jsxs11(
+                      "div",
+                      {
+                        style: {
+                          display: "grid",
+                          gridTemplateColumns: "minmax(0, 1fr) 40px",
+                          gap: 10
+                        },
+                        children: [
+                          /* @__PURE__ */ jsx12(
+                            Input5,
+                            {
+                              size: "large",
+                              readOnly: true,
+                              value: directoryPickerState?.path || "",
+                              placeholder: "\u6B63\u5728\u8BFB\u53D6\u76EE\u5F55...",
+                              title: directoryPickerState?.path || "",
+                              style: {
+                                height: 40,
+                                borderRadius: 10,
+                                fontSize: 14
+                              }
+                            }
+                          ),
+                          /* @__PURE__ */ jsx12(
+                            Button4,
+                            {
+                              size: "large",
+                              "aria-label": "\u5237\u65B0\u76EE\u5F55",
+                              icon: /* @__PURE__ */ jsx12(ReloadOutlined, {}),
+                              loading: directoryPickerBusy,
+                              onClick: () => {
+                                void browseAiExecutionDirectories(directoryPickerState?.path);
+                              },
+                              style: {
+                                height: 40,
+                                width: 40,
+                                paddingInline: 0,
+                                borderRadius: 10
+                              }
+                            }
+                          )
+                        ]
+                      }
+                    ),
+                    /* @__PURE__ */ jsxs11("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" }, children: [
+                      /* @__PURE__ */ jsx12(
+                        Button4,
+                        {
+                          size: "middle",
+                          icon: /* @__PURE__ */ jsx12(HomeOutlined, {}),
+                          disabled: directoryPickerBusy || !directoryPickerState?.home,
+                          onClick: () => {
+                            void browseAiExecutionDirectories(directoryPickerState?.home);
+                          },
+                          style: { height: 36, borderRadius: 10 },
+                          children: "Home"
+                        }
+                      ),
+                      /* @__PURE__ */ jsx12(
+                        Button4,
+                        {
+                          size: "middle",
+                          icon: /* @__PURE__ */ jsx12(ArrowLeftOutlined, {}),
+                          disabled: directoryPickerBusy || !directoryPickerState?.parent,
+                          onClick: () => {
+                            void browseAiExecutionDirectories(
+                              directoryPickerState?.parent ?? void 0
+                            );
+                          },
+                          style: { height: 36, borderRadius: 10 },
+                          children: "\u4E0A\u4E00\u7EA7"
+                        }
+                      )
+                    ] }),
+                    directoryPickerState?.roots.length ? /* @__PURE__ */ jsx12("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" }, children: directoryPickerState.roots.map((rootPath) => /* @__PURE__ */ jsx12(
+                      Button4,
+                      {
+                        size: "small",
+                        disabled: directoryPickerBusy,
+                        onClick: () => {
+                          void browseAiExecutionDirectories(rootPath);
+                        },
+                        children: rootPath
+                      },
+                      rootPath
+                    )) }) : null,
+                    directoryPickerError ? /* @__PURE__ */ jsx12("div", { style: { fontSize: 12, color: EDITOR_CHROME.textDanger }, children: directoryPickerError }) : null,
+                    /* @__PURE__ */ jsx12(
+                      "div",
+                      {
+                        className: "we-runtime-directory-picker__list",
+                        style: {
+                          height: 260,
+                          overflow: "auto",
+                          overscrollBehavior: "contain",
+                          border: `1px solid ${EDITOR_CHROME.border}`,
+                          borderRadius: 10,
+                          padding: "8px 10px"
+                        },
+                        children: directoryPickerState?.directories.length ? directoryPickerState.directories.map((directory) => /* @__PURE__ */ jsxs11(
+                          "button",
+                          {
+                            type: "button",
+                            className: "we-runtime-directory-picker__row",
+                            disabled: directoryPickerBusy,
+                            onClick: () => {
+                              void browseAiExecutionDirectories(directory.path);
+                            },
+                            style: {
+                              width: "100%",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              minHeight: 34,
+                              padding: "5px 8px",
+                              border: 0,
+                              background: "transparent",
+                              color: EDITOR_CHROME.textPrimary,
+                              cursor: directoryPickerBusy ? "default" : "pointer",
+                              textAlign: "left",
+                              borderRadius: 6
+                            },
+                            children: [
+                              /* @__PURE__ */ jsx12(
+                                FolderOpenOutlined,
+                                {
+                                  style: {
+                                    flex: "0 0 auto",
+                                    color: "#059669",
+                                    fontSize: 15
+                                  }
+                                }
+                              ),
+                              /* @__PURE__ */ jsx12(
+                                "span",
+                                {
+                                  style: {
+                                    minWidth: 0,
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                    fontSize: 14
+                                  },
+                                  children: directory.name
+                                }
+                              )
+                            ]
+                          },
+                          directory.path
+                        )) : /* @__PURE__ */ jsx12(
+                          "div",
+                          {
+                            style: {
+                              height: "100%",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              padding: "28px 12px",
+                              textAlign: "center",
+                              color: EDITOR_CHROME.textMuted,
+                              fontSize: 12
+                            },
+                            children: directoryPickerBusy ? "\u6B63\u5728\u8BFB\u53D6\u76EE\u5F55..." : "\u5F53\u524D\u76EE\u5F55\u6CA1\u6709\u53EF\u8FDB\u5165\u7684\u5B50\u76EE\u5F55"
+                          }
+                        )
+                      }
+                    )
+                  ]
+                }
+              )
+            }
+          ),
+          /* @__PURE__ */ jsx12(
+            Modal2,
+            {
+              title: "\u5FEB\u6377\u952E",
+              open: keyboardShortcutsDialogOpen,
+              className: "we-runtime-keyboard-shortcuts-modal",
+              centered: true,
+              getContainer: false,
+              maskClosable: true,
+              onCancel: () => setKeyboardShortcutsDialogOpen(false),
+              footer: [
+                /* @__PURE__ */ jsx12(
+                  Button4,
+                  {
+                    type: "primary",
+                    onClick: () => setKeyboardShortcutsDialogOpen(false),
+                    children: "\u77E5\u9053\u4E86"
+                  },
+                  "close"
+                )
+              ],
+              children: /* @__PURE__ */ jsx12("div", { style: { display: "flex", flexDirection: "column", gap: 0 }, children: [
+                {
+                  keys: [
+                    `${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + Enter`,
+                    "Esc"
+                  ],
+                  label: "\u4FDD\u5B58\u5E76\u5173\u95ED\u6C14\u6CE1\u5361\u7247",
+                  desc: "\u4FDD\u5B58\u5F53\u524D\u6279\u6CE8\u5185\u5BB9\u5E76\u5173\u95ED\u5361\u7247"
+                },
+                {
+                  keys: [
+                    `${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + V`
+                  ],
+                  label: "\u7C98\u8D34\u56FE\u7247\u6216\u6587\u6848",
+                  desc: "AI \u5F00\u542F\u65F6\uFF0C\u5728\u6C14\u6CE1\u5361\u7247\u6216\u5F85\u9009\u6846\u4E2D\u53EF\u76F4\u63A5\u7C98\u8D34\u56FE\u7247\u548C\u6587\u6848"
+                },
+                {
+                  keys: [SELECTION_MODE_TOGGLE_SHORTCUT_LABEL],
+                  label: "\u5F00\u542F / \u5173\u95ED\u9009\u62E9\u5143\u7D20",
+                  desc: "\u5173\u95ED\u540E\u9875\u9762\u70B9\u51FB\u6062\u590D\u539F\u751F\u4EA4\u4E92\uFF0C\u518D\u6309\u4E00\u6B21\u91CD\u65B0\u5F00\u542F\u5143\u7D20\u9009\u62E9"
+                },
+                {
+                  keys: [PARENT_SELECT_SHORTCUT_LABEL, PARENT_RETURN_SHORTCUT_LABEL],
+                  label: "\u9009\u62E9\u4E0A / \u4E0B\u7EA7\u5143\u7D20",
+                  desc: "\u2191 \u5207\u6362\u5230\u5F53\u524D\u5143\u7D20\u7684\u4E0A\u4E00\u7EA7\uFF0C\u2193 \u8FD4\u56DE\u521A\u624D\u9009\u4E2D\u7684\u4E0B\u4E00\u7EA7"
+                }
+              ].map((item) => /* @__PURE__ */ jsxs11(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 16,
+                    padding: "14px 0",
+                    borderBottom: `1px solid ${EDITOR_CHROME.border}`
+                  },
+                  children: [
+                    /* @__PURE__ */ jsxs11("div", { style: { flex: 1, minWidth: 0 }, children: [
+                      /* @__PURE__ */ jsx12(
+                        "div",
+                        {
+                          style: {
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: EDITOR_CHROME.textPrimary
+                          },
+                          children: item.label
+                        }
+                      ),
+                      /* @__PURE__ */ jsx12(
+                        "div",
+                        {
+                          style: {
+                            fontSize: 12,
+                            color: EDITOR_CHROME.textMuted,
+                            marginTop: 2
+                          },
+                          children: item.desc
+                        }
+                      )
+                    ] }),
+                    /* @__PURE__ */ jsx12(
+                      "div",
+                      {
+                        style: {
+                          display: "flex",
+                          gap: 4,
+                          flexShrink: 0,
+                          alignItems: "center",
+                          paddingTop: 2
+                        },
+                        children: item.keys.map((key) => /* @__PURE__ */ jsx12(
+                          "kbd",
+                          {
+                            style: {
+                              display: "inline-block",
+                              padding: "2px 8px",
+                              fontSize: 12,
+                              fontFamily: "system-ui, -apple-system, sans-serif",
+                              fontWeight: 500,
+                              lineHeight: "20px",
+                              color: EDITOR_CHROME.textPrimary,
+                              background: EDITOR_CHROME.surfaceMuted,
+                              border: `1px solid ${EDITOR_CHROME.border}`,
+                              borderRadius: 6,
+                              whiteSpace: "nowrap"
+                            },
+                            children: key
+                          },
+                          key
+                        ))
+                      }
+                    )
+                  ]
+                },
+                item.label
+              )) })
+            }
+          )
+        ]
+      }
+    ),
+    pageConfigPanel
+  ] });
+});
 
 // src/ui/runtime/shared-state.ts
 function syncDraftAgainstSaved(prev, nextSaved, resetDraft) {
@@ -19142,14 +20827,14 @@ function syncDraftAgainstSaved(prev, nextSaved, resetDraft) {
 }
 
 // src/ui/runtime/runtime-effects/use-feedback-bridge.ts
-import React15 from "react";
-import { App, Input as Input5 } from "antd";
-var PromptBridgeContent = React15.forwardRef(
+import React14 from "react";
+import { App, Input as Input6 } from "antd";
+var PromptBridgeContent = React14.forwardRef(
   (props, ref) => {
-    const [value, setValue] = React15.useState(props.defaultValue ?? "");
-    const [error, setError] = React15.useState("");
-    const inputElementRef = React15.useRef(null);
-    React15.useImperativeHandle(ref, () => ({
+    const [value, setValue] = React14.useState(props.defaultValue ?? "");
+    const [error, setError] = React14.useState("");
+    const inputElementRef = React14.useRef(null);
+    React14.useImperativeHandle(ref, () => ({
       getValue: () => value,
       setError: (nextError) => {
         setError(nextError);
@@ -19169,7 +20854,7 @@ var PromptBridgeContent = React15.forwardRef(
         setError("");
       }
     };
-    const field = props.multiline ? React15.createElement(Input5.TextArea, {
+    const field = props.multiline ? React14.createElement(Input6.TextArea, {
       ref: (instance) => {
         inputElementRef.current = instance?.resizableTextArea?.textArea ?? null;
       },
@@ -19178,7 +20863,7 @@ var PromptBridgeContent = React15.forwardRef(
       readOnly: props.readOnly,
       placeholder: props.placeholder,
       onChange: handleChange
-    }) : React15.createElement(Input5, {
+    }) : React14.createElement(Input6, {
       ref: (instance) => {
         inputElementRef.current = instance?.input ?? null;
       },
@@ -19187,17 +20872,17 @@ var PromptBridgeContent = React15.forwardRef(
       placeholder: props.placeholder,
       onChange: handleChange
     });
-    return React15.createElement(
+    return React14.createElement(
       "div",
       { style: { display: "grid", gap: 10 } },
-      props.content ? React15.createElement("div", { style: { whiteSpace: "pre-line" } }, props.content) : null,
-      props.label ? React15.createElement(
+      props.content ? React14.createElement("div", { style: { whiteSpace: "pre-line" } }, props.content) : null,
+      props.label ? React14.createElement(
         "div",
         { style: { fontSize: 12, fontWeight: 600, color: "rgba(0,0,0,0.88)" } },
         props.label
       ) : null,
       field,
-      error ? React15.createElement(
+      error ? React14.createElement(
         "div",
         { style: { fontSize: 12, color: "#ff4d4f" } },
         error
@@ -19208,7 +20893,7 @@ var PromptBridgeContent = React15.forwardRef(
 PromptBridgeContent.displayName = "PromptBridgeContent";
 function useFeedbackBridge() {
   const app = App.useApp();
-  React15.useEffect(() => {
+  React14.useEffect(() => {
     setWebEditorFeedbackBridge({
       confirm: ({ title, content, okText, cancelText, okType, getContainer, onOk, onCancel }) => {
         app.modal.confirm({
@@ -19256,10 +20941,10 @@ function useFeedbackBridge() {
         onOk,
         onCancel
       }) => {
-        const contentRef = React15.createRef();
+        const contentRef = React14.createRef();
         const modalRef = app.modal.confirm({
           title,
-          content: React15.createElement(PromptBridgeContent, {
+          content: React14.createElement(PromptBridgeContent, {
             ref: contentRef,
             content,
             label,
@@ -19310,10 +20995,10 @@ function useFeedbackBridge() {
 }
 
 // src/ui/runtime/runtime-effects/use-pointer-tracker.ts
-import React16 from "react";
+import React15 from "react";
 function usePointerTracker() {
-  const latestPointerPositionRef = React16.useRef(null);
-  React16.useEffect(() => {
+  const latestPointerPositionRef = React15.useRef(null);
+  React15.useEffect(() => {
     const recordPointerPosition = (event) => {
       if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return;
       latestPointerPositionRef.current = {
@@ -19336,35 +21021,35 @@ function usePointerTracker() {
 }
 
 // src/ui/runtime/runtime-effects/use-selection-mode-guards.ts
-import React17 from "react";
+import React16 from "react";
 function useSelectionModeGuards(params) {
   const { propertyPanelOptions, setToolMinimized } = params;
   const initialSelectionModeActive = params.initialSelectionModeActive ?? true;
-  const toolMinimizedRef = React17.useRef(false);
-  const [selectionModeActive, setSelectionModeActive] = React17.useState(initialSelectionModeActive);
-  const selectionModeActiveRef = React17.useRef(initialSelectionModeActive);
-  const selectionHoverOwnersRef = React17.useRef(/* @__PURE__ */ new Set());
-  const selectionInteractionLockOwnersRef = React17.useRef(/* @__PURE__ */ new Set());
-  const selectionRestoreTimerRef = React17.useRef(null);
-  const selectionNeedsExplicitReactivateRef = React17.useRef(false);
-  const markerVisibilityBeforeMinimizeRef = React17.useRef(
+  const toolMinimizedRef = React16.useRef(false);
+  const [selectionModeActive, setSelectionModeActive] = React16.useState(initialSelectionModeActive);
+  const selectionModeActiveRef = React16.useRef(initialSelectionModeActive);
+  const selectionHoverOwnersRef = React16.useRef(/* @__PURE__ */ new Set());
+  const selectionInteractionLockOwnersRef = React16.useRef(/* @__PURE__ */ new Set());
+  const selectionRestoreTimerRef = React16.useRef(null);
+  const selectionNeedsExplicitReactivateRef = React16.useRef(false);
+  const markerVisibilityBeforeMinimizeRef = React16.useRef(
     propertyPanelOptions?.getChangeMarkersVisible?.() ?? true
   );
-  const shouldAllowPageInteraction = React17.useCallback(
+  const shouldAllowPageInteraction = React16.useCallback(
     () => toolMinimizedRef.current || !selectionModeActiveRef.current,
     []
   );
-  const syncSelectionModeAvailability = React17.useCallback(() => {
+  const syncSelectionModeAvailability = React16.useCallback(() => {
     const enabled = selectionModeActiveRef.current && !toolMinimizedRef.current && !selectionNeedsExplicitReactivateRef.current && selectionHoverOwnersRef.current.size === 0 && selectionInteractionLockOwnersRef.current.size === 0;
     propertyPanelOptions?.onToggleSelectionMode?.(enabled, {
       allowPageInteraction: shouldAllowPageInteraction()
     });
   }, [propertyPanelOptions, shouldAllowPageInteraction]);
-  const isSelectionModeActive = React17.useCallback(
+  const isSelectionModeActive = React16.useCallback(
     () => selectionModeActiveRef.current && !toolMinimizedRef.current && !selectionNeedsExplicitReactivateRef.current && selectionHoverOwnersRef.current.size === 0 && selectionInteractionLockOwnersRef.current.size === 0,
     []
   );
-  const handleHoverSelectionSuppressedChange = React17.useCallback(
+  const handleHoverSelectionSuppressedChange = React16.useCallback(
     (source, hovered) => {
       if (selectionRestoreTimerRef.current !== null) {
         window.clearTimeout(selectionRestoreTimerRef.current);
@@ -19387,7 +21072,7 @@ function useSelectionModeGuards(params) {
     },
     [syncSelectionModeAvailability]
   );
-  const handleSelectionInteractionLockChange = React17.useCallback(
+  const handleSelectionInteractionLockChange = React16.useCallback(
     (source, locked) => {
       if (locked) {
         selectionInteractionLockOwnersRef.current.add(source);
@@ -19398,7 +21083,7 @@ function useSelectionModeGuards(params) {
     },
     [syncSelectionModeAvailability]
   );
-  const handleSelectionModeActiveChange = React17.useCallback(
+  const handleSelectionModeActiveChange = React16.useCallback(
     (active) => {
       const nextActive = Boolean(active);
       if (selectionModeActiveRef.current === nextActive) {
@@ -19422,13 +21107,13 @@ function useSelectionModeGuards(params) {
         markerVisibilityBeforeMinimizeRef.current = propertyPanelOptions?.getChangeMarkersVisible?.() ?? true;
         propertyPanelOptions?.onChangeMarkersVisible?.(false, { persist: false });
         propertyPanelOptions?.onSelectionChromeVisibleChange?.(false);
-        propertyPanelOptions?.dismissVisibleElementGenieTaskStates?.();
+        propertyPanelOptions?.dismissVisibleElementAgentTaskStates?.();
       }
       syncSelectionModeAvailability();
     },
     [propertyPanelOptions, syncSelectionModeAvailability]
   );
-  const handleToolMinimizedChange = React17.useCallback(
+  const handleToolMinimizedChange = React16.useCallback(
     (nextMinimized) => {
       if (toolMinimizedRef.current === nextMinimized) return;
       toolMinimizedRef.current = nextMinimized;
@@ -19437,7 +21122,7 @@ function useSelectionModeGuards(params) {
         markerVisibilityBeforeMinimizeRef.current = propertyPanelOptions?.getChangeMarkersVisible?.() ?? true;
         propertyPanelOptions?.onChangeMarkersVisible?.(false, { persist: false });
         propertyPanelOptions?.onSelectionChromeVisibleChange?.(false);
-        propertyPanelOptions?.dismissVisibleElementGenieTaskStates?.();
+        propertyPanelOptions?.dismissVisibleElementAgentTaskStates?.();
       } else {
         selectionNeedsExplicitReactivateRef.current = false;
         if (selectionModeActiveRef.current) {
@@ -19459,7 +21144,7 @@ function useSelectionModeGuards(params) {
     },
     [propertyPanelOptions, setToolMinimized, syncSelectionModeAvailability]
   );
-  React17.useEffect(() => {
+  React16.useEffect(() => {
     return () => {
       if (selectionRestoreTimerRef.current !== null) {
         window.clearTimeout(selectionRestoreTimerRef.current);
@@ -19488,7 +21173,7 @@ function useSelectionModeGuards(params) {
 }
 
 // src/ui/runtime/runtime-effects/use-clipboard-comment-paste.ts
-import React18 from "react";
+import React17 from "react";
 
 // src/ui/runtime/dom-utils.ts
 function isEditableOrFormControl(element) {
@@ -19615,15 +21300,15 @@ function useClipboardCommentPaste(params) {
     selectionNeedsExplicitReactivateRef,
     onApplyImagesToElement
   } = params;
-  const pasteDebugStatsRef = React18.useRef({
+  const pasteDebugStatsRef = React17.useRef({
     hotkeyCount: 0,
     pasteEventCount: 0,
     tryApplyCount: 0,
     lastResult: "idle",
     lastTextPreview: ""
   });
-  const recentImageSignaturesRef = React18.useRef(/* @__PURE__ */ new Map());
-  React18.useEffect(() => {
+  const recentImageSignaturesRef = React17.useRef(/* @__PURE__ */ new Map());
+  React17.useEffect(() => {
     getWindowRuntimeRecord(window)[WEB_EDITOR_V2_PASTE_DEBUG_KEY] = {
       getState: () => ({
         hasSameOriginParentWindow: hasSameOriginParentWindow(),
@@ -19650,7 +21335,7 @@ function useClipboardCommentPaste(params) {
     propertyPanelOptions,
     selectionNeedsExplicitReactivateRef
   ]);
-  React18.useEffect(() => {
+  React17.useEffect(() => {
     if (!propertyPanelOptions?.onAiNoteChange || !propertyPanelOptions.getAiNote || !propertyPanelOptions.getHoveredElement) {
       return;
     }
@@ -20154,7 +21839,7 @@ function useClipboardCommentPaste(params) {
 }
 
 // src/ui/runtime/runtime-effects/use-outside-click-selection-restore.ts
-import React19 from "react";
+import React18 from "react";
 function isElementNode(node) {
   return typeof Element !== "undefined" && node instanceof Element;
 }
@@ -20194,7 +21879,7 @@ function useOutsideClickSelectionRestore(params) {
     selectionNeedsExplicitReactivateRef,
     syncSelectionModeAvailability
   } = params;
-  React19.useEffect(() => {
+  React18.useEffect(() => {
     const restoreSelectionAfterOutsideClick = (event) => {
       restoreSelectionModeFromOutsidePointerDown({
         event,
@@ -20216,14 +21901,38 @@ function useOutsideClickSelectionRestore(params) {
   ]);
 }
 
+// src/ui/runtime/plain-text-selection.ts
+function insertPlainTextAtSelection(element, text) {
+  const ownerDocument = element.ownerDocument;
+  const selection = ownerDocument.getSelection?.();
+  if (!selection || selection.rangeCount < 1) return false;
+  const range = selection.getRangeAt(0);
+  if (!element.contains(range.commonAncestorContainer)) return false;
+  try {
+    if (ownerDocument.execCommand?.("insertText", false, text)) {
+      return true;
+    }
+  } catch {
+  }
+  try {
+    range.deleteContents();
+    const textNode = ownerDocument.createTextNode(text);
+    range.insertNode(textNode);
+    range.setStartAfter(textNode);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/ui/runtime/runtime-shell.tsx
-import { jsx as jsx14, jsxs as jsxs13 } from "react/jsx-runtime";
+import { jsx as jsx13, jsxs as jsxs12 } from "react/jsx-runtime";
 function normalizeRuntimeUiSettings(settings, interactionProfile) {
   const normalized = applyMobileSettingsOverride(
-    applyInteractionProfileToUiSettings(
-      sanitizeWebEditorUiSettings(settings),
-      interactionProfile
-    )
+    applyInteractionProfileToUiSettings(sanitizeWebEditorUiSettings(settings), interactionProfile)
   );
   if (interactionProfile === "text-comment" || isMobileDevice()) {
     return normalized;
@@ -20268,6 +21977,24 @@ function restoreInlineStyle2(element, property, snapshot) {
   }
   element.style.removeProperty(property);
 }
+function normalizeRuntimeSkillIds(value) {
+  const rawValues = Array.isArray(value) ? value : [];
+  const result = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const item of rawValues) {
+    const id = String(item ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
+function resolveRuntimeSkillIds(value, options, configured) {
+  if (!configured) {
+    return (options ?? []).map((item) => String(item.id ?? "").trim()).filter(Boolean);
+  }
+  return normalizeRuntimeSkillIds(value);
+}
 function WebEditorUiApp(props) {
   const {
     propertyPanelOptions,
@@ -20287,41 +22014,52 @@ function WebEditorUiApp(props) {
     propertyPanelOptions?.getUiMode?.() ?? propertyPanelOptions?.initialUiMode ?? "bubble-card"
   );
   const interactionProfile = propertyPanelOptions?.interactionProfile ?? "design";
-  const [currentTarget, setCurrentTarget] = React20.useState(null);
-  const [anchorRect, setAnchorRect] = React20.useState(null);
-  const [uiMode, setUiMode] = React20.useState(initialUiMode);
-  const [toolMinimized, setToolMinimized] = React20.useState(false);
-  const [propertyPanelOpen, setPropertyPanelOpen] = React20.useState(initialPropertyPanelOpen);
-  const [bubbleStyleEditorOpen, setBubbleStyleEditorOpen] = React20.useState(false);
-  const [inlineTextEditing, setInlineTextEditing] = React20.useState(false);
-  const [blockingLayerOpen, setBlockingLayerOpen] = React20.useState(false);
-  const [uiSettings, setUiSettings] = React20.useState(
+  const [currentTarget, setCurrentTarget] = React19.useState(null);
+  const [anchorRect, setAnchorRect] = React19.useState(null);
+  const [uiMode, setUiMode] = React19.useState(initialUiMode);
+  const [toolMinimized, setToolMinimized] = React19.useState(false);
+  const [propertyPanelOpen, setPropertyPanelOpen] = React19.useState(initialPropertyPanelOpen);
+  const [bubbleStyleEditorOpen, setBubbleStyleEditorOpen] = React19.useState(false);
+  const [inlineTextEditing, setInlineTextEditing] = React19.useState(false);
+  const [blockingLayerOpen, setBlockingLayerOpen] = React19.useState(false);
+  const commentarySkillSelectionManaged = Boolean(propertyPanelOptions?.commentarySkillOptions?.length);
+  const [commentarySkillSettingsConfigured, setCommentarySkillSettingsConfigured] = React19.useState(
+    () => propertyPanelOptions?.commentarySkillSettingsConfigured === true
+  );
+  const [enabledCommentarySkillIds, setEnabledCommentarySkillIds] = React19.useState(
+    () => resolveRuntimeSkillIds(
+      propertyPanelOptions?.commentarySelectedSkillIds,
+      propertyPanelOptions?.commentarySkillOptions,
+      propertyPanelOptions?.commentarySkillSettingsConfigured === true
+    )
+  );
+  const [uiSettings, setUiSettings] = React19.useState(
     () => normalizeRuntimeUiSettings(
       propertyPanelOptions?.getUiSettings?.() ?? DEFAULT_WEB_EDITOR_UI_SETTINGS,
       interactionProfile
     )
   );
-  const [genieVisualState, setGenieVisualState] = React20.useState(
+  const [agentVisualState, setAgentVisualState] = React19.useState(
     () => normalizeRuntimeUiSettings(
       propertyPanelOptions?.getUiSettings?.() ?? DEFAULT_WEB_EDITOR_UI_SETTINGS,
       interactionProfile
-    ).genieAwake ? "awake" : "sleeping"
+    ).agentAwake ? "awake" : "sleeping"
   );
-  const [noteState, setNoteState] = React20.useState({
+  const [noteState, setNoteState] = React19.useState({
     savedNote: "",
     draftNote: "",
     noteDirty: false,
     savedNoteMeta: { skillIds: [] }
   });
-  const [textState, setTextState] = React20.useState({
+  const [textState, setTextState] = React19.useState({
     savedText: "",
     draftText: "",
     textDirty: false
   });
-  const [imageState, setImageState] = React20.useState({
+  const [imageState, setImageState] = React19.useState({
     images: []
   });
-  const [annotationState, setAnnotationState] = React20.useState({
+  const [annotationState, setAnnotationState] = React19.useState({
     annotationEnabled: false,
     savedAnnotationMarkdown: "",
     annotationDraftMarkdown: "",
@@ -20329,71 +22067,115 @@ function WebEditorUiApp(props) {
     annotationLoading: false,
     annotationSaving: false
   });
-  const currentTargetRef = React20.useRef(null);
-  const uiModeRef = React20.useRef(initialUiMode);
-  const noteStateRef = React20.useRef(noteState);
-  const textStateRef = React20.useRef(textState);
-  const imageStateRef = React20.useRef(imageState);
-  const annotationStateRef = React20.useRef(annotationState);
+  const currentTargetRef = React19.useRef(null);
+  const uiModeRef = React19.useRef(initialUiMode);
+  const noteStateRef = React19.useRef(noteState);
+  const textStateRef = React19.useRef(textState);
+  const imageStateRef = React19.useRef(imageState);
+  const annotationStateRef = React19.useRef(annotationState);
   const latestPointerPositionRef = usePointerTracker();
   const selectionGuards = useSelectionModeGuards({
     propertyPanelOptions,
     initialSelectionModeActive,
     setToolMinimized
   });
-  const promptSelectionInteractionLockChangeRef = React20.useRef(
+  const promptSelectionInteractionLockChangeRef = React19.useRef(
     selectionGuards.handlePromptSelectionInteractionLockChange
   );
   useFeedbackBridge();
-  React20.useEffect(() => {
+  React19.useEffect(() => {
     promptSelectionInteractionLockChangeRef.current = selectionGuards.handlePromptSelectionInteractionLockChange;
   }, [selectionGuards.handlePromptSelectionInteractionLockChange]);
-  React20.useEffect(() => {
+  React19.useEffect(() => {
     noteStateRef.current = noteState;
   }, [noteState]);
-  React20.useEffect(() => {
+  React19.useEffect(() => {
     textStateRef.current = textState;
   }, [textState]);
-  React20.useEffect(() => {
+  React19.useEffect(() => {
     imageStateRef.current = imageState;
   }, [imageState]);
-  React20.useEffect(() => {
+  React19.useEffect(() => {
     annotationStateRef.current = annotationState;
   }, [annotationState]);
-  React20.useEffect(() => {
+  React19.useEffect(() => {
+    if (!commentarySkillSelectionManaged) return;
+    const configured = propertyPanelOptions?.commentarySkillSettingsConfigured === true;
+    setCommentarySkillSettingsConfigured(configured);
+    setEnabledCommentarySkillIds(
+      resolveRuntimeSkillIds(
+        propertyPanelOptions?.commentarySelectedSkillIds,
+        propertyPanelOptions?.commentarySkillOptions,
+        configured
+      )
+    );
+  }, [
+    commentarySkillSelectionManaged,
+    propertyPanelOptions?.commentarySkillOptions,
+    propertyPanelOptions?.commentarySelectedSkillIds,
+    propertyPanelOptions?.commentarySkillSettingsConfigured
+  ]);
+  const effectivePropertyPanelOptions = React19.useMemo(() => {
+    if (!propertyPanelOptions || !commentarySkillSelectionManaged) {
+      return propertyPanelOptions;
+    }
+    return {
+      ...propertyPanelOptions,
+      commentarySelectedSkillIds: enabledCommentarySkillIds,
+      commentarySkillSettingsConfigured,
+      onCommentarySkillSelectionLoad: async () => {
+        const loadedSkillIds = await propertyPanelOptions.onCommentarySkillSelectionLoad?.();
+        const nextSkillIds = Array.isArray(loadedSkillIds) ? normalizeRuntimeSkillIds(loadedSkillIds) : normalizeRuntimeSkillIds(propertyPanelOptions.commentarySelectedSkillIds);
+        setEnabledCommentarySkillIds(nextSkillIds);
+        return nextSkillIds;
+      },
+      onCommentarySkillSelectionChange: async (skillIds) => {
+        const nextSkillIds = normalizeRuntimeSkillIds(skillIds);
+        await propertyPanelOptions.onCommentarySkillSelectionChange?.(nextSkillIds);
+        setCommentarySkillSettingsConfigured(true);
+        setEnabledCommentarySkillIds(nextSkillIds);
+      }
+    };
+  }, [
+    commentarySkillSettingsConfigured,
+    commentarySkillSelectionManaged,
+    enabledCommentarySkillIds,
+    propertyPanelOptions
+  ]);
+  React19.useEffect(() => {
     const nextUiMode = normalizeRuntimeUiMode(propertyPanelOptions?.getUiMode?.());
     if (!nextUiMode || uiModeRef.current === nextUiMode) return;
     uiModeRef.current = nextUiMode;
     setUiMode(nextUiMode);
   });
-  React20.useEffect(() => {
+  React19.useEffect(() => {
     onThemeModeChange?.(uiSettings.darkMode ? "dark" : "light");
   }, [onThemeModeChange, uiSettings.darkMode]);
-  React20.useEffect(() => {
-    const nextVisualState = uiSettings.genieAwake ? "awake" : "sleeping";
-    setGenieVisualState((prev) => prev === nextVisualState ? prev : nextVisualState);
-  }, [uiSettings.genieAwake]);
-  React20.useEffect(() => {
+  React19.useEffect(() => {
+    const nextVisualState = uiSettings.agentAwake ? "awake" : "sleeping";
+    setAgentVisualState((prev) => prev === nextVisualState ? prev : nextVisualState);
+  }, [uiSettings.agentAwake]);
+  React19.useEffect(() => {
     selectionGuards.toolMinimizedRef.current = toolMinimized;
   }, [selectionGuards.toolMinimizedRef, toolMinimized]);
-  React20.useEffect(() => {
+  React19.useEffect(() => {
     if (!propertyPanelVisible) {
       setPropertyPanelOpen(false);
     }
   }, [propertyPanelVisible]);
-  const taskStateProvider = React20.useMemo(
+  const taskStateProvider = React19.useMemo(
     () => ({
-      getCurrentTask: (element) => propertyPanelOptions?.getElementGenieTaskState?.(element) ?? breadcrumbsOptions?.getElementGenieTaskState?.(element) ?? null,
-      getVisibleTasks: () => propertyPanelOptions?.getVisibleElementGenieTaskStates?.() ?? breadcrumbsOptions?.getVisibleElementGenieTaskStates?.() ?? [],
+      getCurrentTask: (element) => propertyPanelOptions?.getElementAgentTaskState?.(element) ?? breadcrumbsOptions?.getElementAgentTaskState?.(element) ?? null,
+      getVisibleTasks: () => propertyPanelOptions?.getVisibleElementAgentTaskStates?.() ?? breadcrumbsOptions?.getVisibleElementAgentTaskStates?.() ?? [],
       dismissTask: (element) => {
-        propertyPanelOptions?.dismissElementGenieTaskState?.(element);
-        breadcrumbsOptions?.dismissElementGenieTaskState?.(element);
+        propertyPanelOptions?.dismissElementAgentTaskState?.(element);
+        breadcrumbsOptions?.dismissElementAgentTaskState?.(element);
       }
     }),
     [breadcrumbsOptions, propertyPanelOptions]
   );
-  const [taskRenderTick, setTaskRenderTick] = React20.useState(0);
-  React20.useEffect(() => {
+  const [taskRenderTick, setTaskRenderTick] = React19.useState(0);
+  React19.useEffect(() => {
     let previousSignature = "";
     const timerId = window.setInterval(() => {
       const tasks = taskStateProvider.getVisibleTasks();
@@ -20416,7 +22198,7 @@ function WebEditorUiApp(props) {
       window.clearInterval(timerId);
     };
   }, [taskStateProvider]);
-  const syncSavedNote = React20.useCallback(
+  const syncSavedNote = React19.useCallback(
     (element, resetDraft) => {
       const nextSavedNote = propertyPanelOptions?.getAiNote?.(element) ?? "";
       const nextSkillIds = propertyPanelOptions?.getAiNoteSkillIds?.(element) ?? [];
@@ -20441,7 +22223,7 @@ function WebEditorUiApp(props) {
     },
     [propertyPanelOptions]
   );
-  const syncSavedText = React20.useCallback(
+  const syncSavedText = React19.useCallback(
     (element, resetDraft) => {
       const canEditText2 = propertyPanelOptions?.canEditText?.(element) ?? false;
       const nextSavedText = canEditText2 ? propertyPanelOptions?.getTextValue?.(element) ?? "" : "";
@@ -20465,15 +22247,20 @@ function WebEditorUiApp(props) {
     },
     [propertyPanelOptions]
   );
-  const syncSavedImages = React20.useCallback(
+  const imageAttachmentsEnabled = propertyPanelOptions?.enableImageAttachments !== false;
+  const syncSavedImages = React19.useCallback(
     (element) => {
+      if (!imageAttachmentsEnabled) {
+        setImageState({ images: [] });
+        return;
+      }
       setImageState({
         images: (propertyPanelOptions?.getAiNoteImages?.(element) ?? []).slice(0, MAX_PROMPT_IMAGE_ATTACHMENTS)
       });
     },
-    [propertyPanelOptions]
+    [imageAttachmentsEnabled, propertyPanelOptions]
   );
-  const syncSavedAnnotationMarkdown = React20.useCallback(
+  const syncSavedAnnotationMarkdown = React19.useCallback(
     (element, resetDraft) => {
       const canEditAnnotationMarkdown = Boolean(
         element && propertyPanelOptions?.canEditAnnotationMarkdown?.(element) && propertyPanelOptions?.onAnnotationMarkdownChange
@@ -20526,7 +22313,7 @@ function WebEditorUiApp(props) {
     },
     [propertyPanelOptions]
   );
-  const commitDraftNote = React20.useCallback(
+  const commitDraftNote = React19.useCallback(
     async (elementOverride, options2 = {}) => {
       const element = elementOverride ?? currentTargetRef.current;
       if (!propertyPanelOptions?.onAiNoteChange) return false;
@@ -20534,7 +22321,9 @@ function WebEditorUiApp(props) {
       const nextSkillIds = options2.skillIds?.slice() ?? noteStateRef.current.savedNoteMeta?.skillIds ?? [];
       const skillsDirty = nextSkillIds.join("\0") !== (noteStateRef.current.savedNoteMeta?.skillIds ?? []).join("\0");
       if (!noteStateRef.current.noteDirty && !skillsDirty) return false;
-      await propertyPanelOptions.onAiNoteChange(element, nextValue, { skillIds: nextSkillIds });
+      await propertyPanelOptions.onAiNoteChange(element, nextValue, {
+        skillIds: nextSkillIds
+      });
       if (currentTargetRef.current === element) {
         const nextState = {
           savedNote: nextValue,
@@ -20549,18 +22338,14 @@ function WebEditorUiApp(props) {
     },
     [propertyPanelOptions]
   );
-  const commitDraftText = React20.useCallback(
+  const commitDraftText = React19.useCallback(
     async (elementOverride) => {
       const element = elementOverride ?? currentTargetRef.current;
       if (!element || !propertyPanelOptions?.onTextValueChange) return false;
       if (!(propertyPanelOptions?.canEditText?.(element) ?? false)) return false;
       if (!textStateRef.current.textDirty) return false;
       const nextValue = textStateRef.current.draftText;
-      await propertyPanelOptions.onTextValueChange(
-        element,
-        nextValue,
-        textStateRef.current.savedText
-      );
+      await propertyPanelOptions.onTextValueChange(element, nextValue, textStateRef.current.savedText);
       if (currentTargetRef.current === element) {
         const nextState = {
           savedText: nextValue,
@@ -20574,11 +22359,12 @@ function WebEditorUiApp(props) {
     },
     [propertyPanelOptions]
   );
-  const commitDraftAnnotationMarkdown = React20.useCallback(
+  const commitDraftAnnotationMarkdown = React19.useCallback(
     async (elementOverride, markdownOverride, options2 = {}) => {
       const element = elementOverride ?? currentTargetRef.current;
       if (!element || !propertyPanelOptions?.onAnnotationMarkdownChange) return false;
       if (!(propertyPanelOptions?.canEditAnnotationMarkdown?.(element) ?? false)) return false;
+      if (getAnnotationManualEditLocatorState(element).disabled) return false;
       const nextValue = typeof markdownOverride === "string" ? markdownOverride : annotationStateRef.current.annotationDraftMarkdown;
       if (!options2.force && nextValue === annotationStateRef.current.savedAnnotationMarkdown) return false;
       const savingState = {
@@ -20616,7 +22402,7 @@ function WebEditorUiApp(props) {
     },
     [propertyPanelOptions]
   );
-  const handleTargetChange = React20.useCallback(
+  const handleTargetChange = React19.useCallback(
     (element) => {
       if (currentTargetRef.current === element) return;
       const previousTarget = currentTargetRef.current;
@@ -20651,29 +22437,27 @@ function WebEditorUiApp(props) {
       syncSavedText
     ]
   );
-  const handleAnchorRectChange = React20.useCallback((rect) => {
+  const handleAnchorRectChange = React19.useCallback((rect) => {
     setAnchorRect(rect);
   }, []);
-  const handleUiModeChange = React20.useCallback(
+  const handleUiModeChange = React19.useCallback(
     (mode) => {
       const normalizedMode = normalizeRuntimeUiMode(mode);
       if (uiModeRef.current === normalizedMode) return;
       uiModeRef.current = normalizedMode;
       setUiMode(normalizedMode);
       propertyPanelOptions?.onUiModeChange?.(normalizedMode);
-      propertyPanelOptions?.onSelectionChromeVisibleChange?.(
-        !selectionGuards.toolMinimizedRef.current
-      );
+      propertyPanelOptions?.onSelectionChromeVisibleChange?.(!selectionGuards.toolMinimizedRef.current);
     },
     [propertyPanelOptions, selectionGuards.toolMinimizedRef]
   );
-  const handleRefreshNoteState = React20.useCallback(() => {
+  const handleRefreshNoteState = React19.useCallback(() => {
     syncSavedNote(currentTargetRef.current, false);
     syncSavedText(currentTargetRef.current, false);
     syncSavedImages(currentTargetRef.current);
     syncSavedAnnotationMarkdown(currentTargetRef.current, false);
   }, [syncSavedAnnotationMarkdown, syncSavedImages, syncSavedNote, syncSavedText]);
-  const handleUiSettingsChange = React20.useCallback(
+  const handleUiSettingsChange = React19.useCallback(
     (nextSettings) => {
       const sanitized = normalizeRuntimeUiSettings(nextSettings, interactionProfile);
       setUiSettings(sanitized);
@@ -20681,32 +22465,35 @@ function WebEditorUiApp(props) {
     },
     [interactionProfile, propertyPanelOptions]
   );
-  const handleGenieVisualStateChange = React20.useCallback(
+  const handleAgentVisualStateChange = React19.useCallback(
     (nextState) => {
-      setGenieVisualState(nextState);
+      setAgentVisualState(nextState);
       setUiSettings((prev) => {
         const nextAwake = nextState === "awake";
-        if (prev.genieAwake === nextAwake) {
+        if (prev.agentAwake === nextAwake) {
           return prev;
         }
-        const sanitized = normalizeRuntimeUiSettings({
-          ...prev,
-          genieAwake: nextAwake
-        }, interactionProfile);
+        const sanitized = normalizeRuntimeUiSettings(
+          {
+            ...prev,
+            agentAwake: nextAwake
+          },
+          interactionProfile
+        );
         propertyPanelOptions?.onUiSettingsChange?.(sanitized);
         return sanitized;
       });
     },
     [interactionProfile, propertyPanelOptions]
   );
-  const currentGenieTask = taskStateProvider.getCurrentTask(currentTarget);
-  const currentTaskRunning = currentGenieTask?.status === "pending" || currentGenieTask?.status === "created";
+  const currentAgentTask = taskStateProvider.getCurrentTask(currentTarget);
+  const currentTaskRunning = currentAgentTask?.status === "pending" || currentAgentTask?.status === "created";
   const canEditNote = Boolean(propertyPanelOptions?.onAiNoteChange);
-  const annotationDocumentEditUrl = React20.useMemo(() => {
+  const annotationDocumentEditUrl = React19.useMemo(() => {
     const resolver = breadcrumbsOptions?.getAnnotationDocumentEditUrl ?? propertyPanelOptions?.getAnnotationDocumentEditUrl;
     return String(resolver?.(currentTarget) ?? "").trim();
   }, [breadcrumbsOptions, currentTarget, propertyPanelOptions]);
-  const canStartInlineTextEditing = React20.useCallback(
+  const canStartInlineTextEditing = React19.useCallback(
     (element) => {
       if (!element || !element.isConnected) return false;
       if (!propertyPanelOptions?.onTextValueChange) return false;
@@ -20717,7 +22504,7 @@ function WebEditorUiApp(props) {
     [propertyPanelOptions, taskStateProvider]
   );
   const canEditText = canStartInlineTextEditing(currentTarget);
-  const handleDraftChange = React20.useCallback((value) => {
+  const handleDraftChange = React19.useCallback((value) => {
     const prev = noteStateRef.current;
     const nextState = {
       ...prev,
@@ -20727,7 +22514,7 @@ function WebEditorUiApp(props) {
     noteStateRef.current = nextState;
     setNoteState(nextState);
   }, []);
-  const handleCancelNote = React20.useCallback(() => {
+  const handleCancelNote = React19.useCallback(() => {
     const prev = noteStateRef.current;
     const nextState = {
       ...prev,
@@ -20737,10 +22524,13 @@ function WebEditorUiApp(props) {
     noteStateRef.current = nextState;
     setNoteState(nextState);
   }, []);
-  const handleConfirmNote = React20.useCallback(async (options2 = {}) => {
-    await commitDraftNote(void 0, options2);
-  }, [commitDraftNote]);
-  const handleTextDraftChange = React20.useCallback((value) => {
+  const handleConfirmNote = React19.useCallback(
+    async (options2 = {}) => {
+      await commitDraftNote(void 0, options2);
+    },
+    [commitDraftNote]
+  );
+  const handleTextDraftChange = React19.useCallback((value) => {
     const prev = textStateRef.current;
     const nextState = {
       ...prev,
@@ -20750,7 +22540,7 @@ function WebEditorUiApp(props) {
     textStateRef.current = nextState;
     setTextState(nextState);
   }, []);
-  const handleCancelText = React20.useCallback(() => {
+  const handleCancelText = React19.useCallback(() => {
     const prev = textStateRef.current;
     const nextState = {
       ...prev,
@@ -20760,10 +22550,10 @@ function WebEditorUiApp(props) {
     textStateRef.current = nextState;
     setTextState(nextState);
   }, []);
-  const handleConfirmText = React20.useCallback(async () => {
+  const handleConfirmText = React19.useCallback(async () => {
     await commitDraftText();
   }, [commitDraftText]);
-  const handleAnnotationDraftChange = React20.useCallback((value) => {
+  const handleAnnotationDraftChange = React19.useCallback((value) => {
     const prev = annotationStateRef.current;
     const nextState = {
       ...prev,
@@ -20773,13 +22563,16 @@ function WebEditorUiApp(props) {
     annotationStateRef.current = nextState;
     setAnnotationState(nextState);
   }, []);
-  const handleClearAnnotationMarkdown = React20.useCallback(() => {
+  const handleClearAnnotationMarkdown = React19.useCallback(() => {
     void commitDraftAnnotationMarkdown(void 0, "", { force: true });
   }, [commitDraftAnnotationMarkdown]);
-  const handleConfirmAnnotationMarkdown = React20.useCallback(async (markdownOverride) => {
-    await commitDraftAnnotationMarkdown(void 0, markdownOverride);
-  }, [commitDraftAnnotationMarkdown]);
-  const handleInlineTextEditingChange = React20.useCallback(
+  const handleConfirmAnnotationMarkdown = React19.useCallback(
+    async (markdownOverride) => {
+      await commitDraftAnnotationMarkdown(void 0, markdownOverride);
+    },
+    [commitDraftAnnotationMarkdown]
+  );
+  const handleInlineTextEditingChange = React19.useCallback(
     (editing) => {
       if (!editing) {
         selectionGuards.handlePromptSelectionInteractionLockChange(false);
@@ -20792,9 +22585,10 @@ function WebEditorUiApp(props) {
     },
     [canStartInlineTextEditing, selectionGuards]
   );
-  const handleImagesChange = React20.useCallback(
+  const handleImagesChange = React19.useCallback(
     async (images) => {
       const element = currentTargetRef.current;
+      if (!imageAttachmentsEnabled) return;
       if (!element || !propertyPanelOptions?.onAiNoteImagesChange) return;
       const clippedImages = images.slice(0, MAX_PROMPT_IMAGE_ATTACHMENTS);
       await propertyPanelOptions.onAiNoteImagesChange(element, clippedImages);
@@ -20802,22 +22596,39 @@ function WebEditorUiApp(props) {
         setImageState({ images: clippedImages.slice() });
       }
     },
-    [propertyPanelOptions]
+    [imageAttachmentsEnabled, propertyPanelOptions]
   );
-  const handleRemoveImage = React20.useCallback(
+  const handleRemoveImage = React19.useCallback(
     async (imageId) => {
       const nextImages = imageStateRef.current.images.filter((image) => image.id !== imageId);
       await handleImagesChange(nextImages);
     },
     [handleImagesChange]
   );
-  const applyImagesToElement = React20.useCallback(
+  const applyImagesToElement = React19.useCallback(
     async (element, incomingImages) => {
+      if (!imageAttachmentsEnabled) {
+        return { acceptedCount: 0, droppedCount: incomingImages.length };
+      }
       if (!incomingImages.length || !propertyPanelOptions?.onAiNoteImagesChange) {
         return { acceptedCount: 0, droppedCount: 0 };
       }
-      const currentImages = (propertyPanelOptions.getAiNoteImages?.(element) ?? []).slice(0, MAX_PROMPT_IMAGE_ATTACHMENTS);
-      const merged = mergePromptImageAttachments(currentImages, incomingImages, MAX_PROMPT_IMAGE_ATTACHMENTS);
+      let preparedImages = incomingImages;
+      try {
+        preparedImages = propertyPanelOptions.onPrepareAiNoteImages ? await propertyPanelOptions.onPrepareAiNoteImages(element, incomingImages) : incomingImages;
+      } catch (error) {
+        const message3 = error instanceof Error ? error.message : String(error);
+        notifyRuntimeMessage("error", message3 || "\u56FE\u7247\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u7C98\u8D34\u540E\u518D\u8BD5\u3002");
+        return { acceptedCount: 0, droppedCount: incomingImages.length };
+      }
+      if (!preparedImages.length) {
+        return { acceptedCount: 0, droppedCount: incomingImages.length };
+      }
+      const currentImages = (propertyPanelOptions.getAiNoteImages?.(element) ?? []).slice(
+        0,
+        MAX_PROMPT_IMAGE_ATTACHMENTS
+      );
+      const merged = mergePromptImageAttachments(currentImages, preparedImages, MAX_PROMPT_IMAGE_ATTACHMENTS);
       await propertyPanelOptions.onAiNoteImagesChange(element, merged.images);
       if (currentTargetRef.current === element) {
         setImageState({ images: merged.images.slice() });
@@ -20830,11 +22641,12 @@ function WebEditorUiApp(props) {
         droppedCount: merged.droppedCount
       };
     },
-    [propertyPanelOptions]
+    [imageAttachmentsEnabled, propertyPanelOptions]
   );
-  const handleNotePasteCapture = React20.useCallback(
+  const handleNotePasteCapture = React19.useCallback(
     (event) => {
       const element = currentTargetRef.current;
+      if (!imageAttachmentsEnabled) return;
       if (!element || !propertyPanelOptions?.onAiNoteImagesChange) return;
       const clipboardItems = event.clipboardData?.items;
       if (!clipboardItems?.length) return;
@@ -20864,9 +22676,9 @@ function WebEditorUiApp(props) {
         await applyImagesToElement(element, images);
       })();
     },
-    [applyImagesToElement, propertyPanelOptions]
+    [applyImagesToElement, imageAttachmentsEnabled, propertyPanelOptions]
   );
-  const handleClearCurrentElementEdits = React20.useCallback(async () => {
+  const handleClearCurrentElementEdits = React19.useCallback(async () => {
     const element = currentTargetRef.current;
     if (!element || !propertyPanelOptions?.onClearCurrentElementEdits) return;
     const didClear = await propertyPanelOptions.onClearCurrentElementEdits(element);
@@ -20878,7 +22690,7 @@ function WebEditorUiApp(props) {
     setInlineTextEditing(false);
     propertyPanelOptions.onDismissSelection?.();
   }, [propertyPanelOptions, syncSavedAnnotationMarkdown, syncSavedImages, syncSavedNote, syncSavedText]);
-  const handleDeleteCurrentAnnotationNode = React20.useCallback(async () => {
+  const handleDeleteCurrentAnnotationNode = React19.useCallback(async () => {
     const element = currentTargetRef.current;
     if (!element || !propertyPanelOptions?.onDeleteCurrentAnnotationNode) return;
     await propertyPanelOptions.onDeleteCurrentAnnotationNode(element);
@@ -20889,14 +22701,14 @@ function WebEditorUiApp(props) {
     setInlineTextEditing(false);
     propertyPanelOptions.onDismissSelection?.();
   }, [propertyPanelOptions, syncSavedAnnotationMarkdown, syncSavedImages, syncSavedNote, syncSavedText]);
-  const handleSendCurrentElementPromptToGenie = React20.useMemo(() => {
-    if (!propertyPanelOptions?.onSendCurrentElementPromptToGenie) {
+  const handleSendCurrentElementPromptToAgent = React19.useMemo(() => {
+    if (!propertyPanelOptions?.onSendCurrentElementPromptToAgent) {
       return void 0;
     }
     return async (element) => {
       await commitDraftText(element);
       await commitDraftNote(element);
-      await propertyPanelOptions.onSendCurrentElementPromptToGenie?.(element);
+      await propertyPanelOptions.onSendCurrentElementPromptToAgent?.(element);
     };
   }, [commitDraftNote, commitDraftText, propertyPanelOptions]);
   useClipboardCommentPaste({
@@ -20905,7 +22717,7 @@ function WebEditorUiApp(props) {
     latestPointerPositionRef,
     isSelectionModeActive: selectionGuards.isSelectionModeActive,
     selectionNeedsExplicitReactivateRef: selectionGuards.selectionNeedsExplicitReactivateRef,
-    onApplyImagesToElement: applyImagesToElement
+    onApplyImagesToElement: imageAttachmentsEnabled ? applyImagesToElement : void 0
   });
   useOutsideClickSelectionRestore({
     selectionInteractionLockOwnersRef: selectionGuards.selectionInteractionLockOwnersRef,
@@ -20913,12 +22725,12 @@ function WebEditorUiApp(props) {
     selectionNeedsExplicitReactivateRef: selectionGuards.selectionNeedsExplicitReactivateRef,
     syncSelectionModeAvailability: selectionGuards.syncSelectionModeAvailability
   });
-  React20.useEffect(() => {
+  React19.useEffect(() => {
     if (!inlineTextEditing) return;
     if (canEditText && currentTarget?.isConnected) return;
     setInlineTextEditing(false);
   }, [canEditText, currentTarget, inlineTextEditing]);
-  React20.useEffect(() => {
+  React19.useEffect(() => {
     const editableElement = inlineTextEditing && canEditText && currentTarget instanceof HTMLElement ? currentTarget : null;
     propertyPanelOptions?.onInlineTextEditingElementChange?.(editableElement);
     if (!editableElement) {
@@ -20936,7 +22748,7 @@ function WebEditorUiApp(props) {
     const previousOutlineOffset = snapshotInlineStyle(editableElement, "outline-offset");
     const previousBoxShadow = snapshotInlineStyle(editableElement, "box-shadow");
     const previousCursor = snapshotInlineStyle(editableElement, "cursor");
-    editableElement.setAttribute("contenteditable", "true");
+    editableElement.setAttribute("contenteditable", "plaintext-only");
     editableElement.spellcheck = false;
     editableElement.style.setProperty("outline", "none", "important");
     editableElement.style.setProperty("outline-offset", "0px", "important");
@@ -20955,6 +22767,15 @@ function WebEditorUiApp(props) {
     };
     const handleInput = () => {
       syncDraftFromDom();
+    };
+    const handlePaste = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const plainText = event.clipboardData?.getData("text/plain") ?? "";
+      if (!plainText) return;
+      if (insertPlainTextAtSelection(editableElement, plainText)) {
+        syncDraftFromDom();
+      }
     };
     const handleKeyDown = (event) => {
       if (event.isComposing) return;
@@ -20987,6 +22808,7 @@ function WebEditorUiApp(props) {
       })();
     };
     editableElement.addEventListener("input", handleInput);
+    editableElement.addEventListener("paste", handlePaste);
     editableElement.addEventListener("keydown", handleKeyDown);
     editableElement.addEventListener("blur", handleBlur);
     const editorHostCandidate = editableElement.ownerDocument.getElementById(WEB_EDITOR_V2_HOST_ID);
@@ -21033,6 +22855,7 @@ function WebEditorUiApp(props) {
         window.cancelAnimationFrame(restoreFocusRafId);
       }
       editableElement.removeEventListener("input", handleInput);
+      editableElement.removeEventListener("paste", handlePaste);
       editableElement.removeEventListener("keydown", handleKeyDown);
       editableElement.removeEventListener("blur", handleBlur);
       if (editorShadowRoot) {
@@ -21051,18 +22874,11 @@ function WebEditorUiApp(props) {
       restoreInlineStyle2(editableElement, "cursor", previousCursor);
       propertyPanelOptions?.onInlineTextEditingElementChange?.(null);
     };
-  }, [
-    canEditText,
-    commitDraftText,
-    currentTarget,
-    handleCancelText,
-    inlineTextEditing,
-    propertyPanelOptions
-  ]);
-  return /* @__PURE__ */ jsxs13("div", { style: panelContainerStyle, children: [
-    /* @__PURE__ */ jsx14("style", { children: WEB_EDITOR_POPUP_ROOT_STYLES }),
-    /* @__PURE__ */ jsx14(
-      ElementGenieTaskOverlays,
+  }, [canEditText, commitDraftText, currentTarget, handleCancelText, inlineTextEditing, propertyPanelOptions]);
+  return /* @__PURE__ */ jsxs12("div", { style: panelContainerStyle, children: [
+    /* @__PURE__ */ jsx13("style", { children: WEB_EDITOR_POPUP_ROOT_STYLES }),
+    /* @__PURE__ */ jsx13(
+      ElementAgentTaskOverlays,
       {
         tasks: blockingLayerOpen ? [] : taskStateProvider.getVisibleTasks(),
         subscribeSessionActivity: propertyPanelOptions?.subscribeSessionActivity,
@@ -21070,7 +22886,7 @@ function WebEditorUiApp(props) {
         renderTick: taskRenderTick
       }
     ),
-    breadcrumbsOptions ? /* @__PURE__ */ jsx14(
+    breadcrumbsOptions ? /* @__PURE__ */ jsx13(
       PromptCardView,
       {
         ref: breadcrumbsRef,
@@ -21086,20 +22902,21 @@ function WebEditorUiApp(props) {
         propertyPanelEnabled: propertyPanelVisible,
         styleDesignEnabled: uiSettings.styleDesignEnabled,
         bubbleStyleEditorOpen,
-        genieVisualState,
+        agentVisualState,
         hideExecutionControls: Boolean(
           breadcrumbsOptions.hideExecutionControls ?? propertyPanelOptions?.hideExecutionControls
         ),
         hideContextAppendAction: Boolean(
           breadcrumbsOptions.hideExecutionControls ?? propertyPanelOptions?.hideExecutionControls
         ),
+        enabledSkillIds: commentarySkillSelectionManaged ? enabledCommentarySkillIds : void 0,
         onBubbleStyleEditorOpenChange: setBubbleStyleEditorOpen,
-        onSendCurrentElementPromptToGenie: handleSendCurrentElementPromptToGenie,
-        onWakeGenie: propertyPanelOptions?.onWakeGenie,
-        onGenieVisualStateChange: handleGenieVisualStateChange,
-        getGenieBridgeConnected: propertyPanelOptions?.getGenieBridgeConnected,
-        getHasReusableGenieConversation: propertyPanelOptions?.getHasReusableGenieConversation,
-        getSendCurrentElementPromptToGenieBlockReason: propertyPanelOptions?.getSendCurrentElementPromptToGenieBlockReason,
+        onSendCurrentElementPromptToAgent: handleSendCurrentElementPromptToAgent,
+        onWakeAgent: propertyPanelOptions?.onWakeAgent,
+        onAgentVisualStateChange: handleAgentVisualStateChange,
+        getAgentBridgeConnected: propertyPanelOptions?.getAgentBridgeConnected,
+        getHasReusableAgentConversation: propertyPanelOptions?.getHasReusableAgentConversation,
+        getSendCurrentElementPromptToAgentBlockReason: propertyPanelOptions?.getSendCurrentElementPromptToAgentBlockReason,
         canExportSelectionToDesignTool: propertyPanelOptions?.canExportSelectionToDesignTool,
         onExportSelectionToDesignTool: propertyPanelOptions?.onExportSelectionToDesignTool,
         getExportSelectionToDesignToolBlockReason: propertyPanelOptions?.getExportSelectionToDesignToolBlockReason,
@@ -21145,25 +22962,26 @@ function WebEditorUiApp(props) {
         onDeleteCurrentAnnotationNode: handleDeleteCurrentAnnotationNode
       }
     ) : null,
-    propertyPanelOptions && propertyPanelVisible ? /* @__PURE__ */ jsx14(
+    effectivePropertyPanelOptions && propertyPanelVisible ? /* @__PURE__ */ jsx13(
       PropertyPanelView,
       {
         ref: propertyPanelRef,
-        options: propertyPanelOptions,
+        options: effectivePropertyPanelOptions,
         currentTarget,
         uiMode,
         toolMinimized,
         selectionModeActive: selectionGuards.selectionModeActive,
+        propertyPanelVisible,
         propertyPanelOpen,
         inlineTextEditing,
         uiSettings,
         interactionProfile,
-        genieVisualState,
-        genieProviderAvailabilities: propertyPanelOptions?.getGenieProviderAvailabilities?.() ?? [],
+        agentVisualState,
+        agentProviderAvailabilities: propertyPanelOptions?.getAgentProviderAvailabilities?.() ?? [],
         onPropertyPanelOpenChange: setPropertyPanelOpen,
-        onGenieVisualStateChange: handleGenieVisualStateChange,
+        onAgentVisualStateChange: handleAgentVisualStateChange,
         onUiSettingsChange: handleUiSettingsChange,
-        onRefreshGenieProviderAvailabilities: propertyPanelOptions?.refreshGenieProviderAvailabilities,
+        onRefreshAgentProviderAvailabilities: propertyPanelOptions?.refreshAgentProviderAvailabilities,
         onHoverSelectionSuppressedChange: selectionGuards.handlePanelHoverSelectionSuppressedChange,
         onSelectionInteractionLockChange: selectionGuards.handlePanelSelectionInteractionLockChange,
         onUiModeChange: handleUiModeChange,
@@ -21236,7 +23054,7 @@ function createQueuedBridge(getApi) {
 }
 
 // src/ui/runtime/create-web-editor-ui-runtime.tsx
-import { jsx as jsx15, jsxs as jsxs14 } from "react/jsx-runtime";
+import { jsx as jsx14, jsxs as jsxs13 } from "react/jsx-runtime";
 function subscribeDeferredHostToolbarState(options) {
   const current = options.getCurrent();
   if (current) {
@@ -21296,8 +23114,8 @@ function createWebEditorUiRuntime(options) {
   }
   options.container.append(host);
   const root = createRoot2(host);
-  const propertyPanelRef = React21.createRef();
-  const breadcrumbsRef = React21.createRef();
+  const propertyPanelRef = React20.createRef();
+  const breadcrumbsRef = React20.createRef();
   let disposed = false;
   const dispose = () => {
     if (disposed) return;
@@ -21336,12 +23154,19 @@ function createWebEditorUiRuntime(options) {
     copyPromptDisabled: true,
     clearEditsTitle: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
     clearEditsDisabled: true,
+    propertyPanelVisible: false,
     propertyPanelOpen: false,
     propertyPanelTitle: "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
     modifiedCount: 0,
     terminalTaskCount: 0,
     selectedAgent: null,
     agentOptions: [{ value: null, label: "\u9ED8\u8BA4" }],
+    aiExecutionConfigSummary: "",
+    aiExecutionConfigConfigured: false,
+    aiExecutionProvider: "",
+    aiExecutionWorkspacePath: "",
+    aiExecutionRunConcurrency: 5,
+    aiExecutionProviderOptions: [],
     darkMode: false,
     disablePageAnimations: false,
     pageZoomEnabled: false,
@@ -21355,22 +23180,22 @@ function createWebEditorUiRuntime(options) {
     annotationEnableTitle: "\u5F00\u542F\u9700\u6C42\u6807\u6CE8"
   });
   function RuntimeMount() {
-    const styleCache = React21.useMemo(() => createCache(), []);
-    const popupContainerRef = React21.useRef(null);
-    const [themeMode, setThemeMode] = React21.useState(
+    const styleCache = React20.useMemo(() => createCache(), []);
+    const popupContainerRef = React20.useRef(null);
+    const [themeMode, setThemeMode] = React20.useState(
       () => options.propertyPanelOptions?.getUiSettings?.()?.darkMode ? "dark" : "light"
     );
-    React21.useEffect(() => {
+    React20.useEffect(() => {
       propertyPanelBridge?.flush();
       breadcrumbsBridge?.flush();
     });
-    return /* @__PURE__ */ jsx15(StyleProvider, { cache: styleCache, container: options.shadowRoot, children: /* @__PURE__ */ jsx15(
+    return /* @__PURE__ */ jsx14(StyleProvider, { cache: styleCache, container: options.shadowRoot, children: /* @__PURE__ */ jsx14(
       ConfigProvider,
       {
         componentSize: "small",
         getPopupContainer: () => popupContainerRef.current ?? options.container,
         theme: createRuntimeAntdTheme(themeMode),
-        children: /* @__PURE__ */ jsx15(App2, { children: /* @__PURE__ */ jsxs14(
+        children: /* @__PURE__ */ jsx14(App2, { children: /* @__PURE__ */ jsxs13(
           "div",
           {
             style: {
@@ -21380,7 +23205,7 @@ function createWebEditorUiRuntime(options) {
               ...createEditorChromeCssVars(themeMode)
             },
             children: [
-              /* @__PURE__ */ jsx15(
+              /* @__PURE__ */ jsx14(
                 WebEditorUiApp,
                 {
                   propertyPanelOptions: options.propertyPanelOptions,
@@ -21394,14 +23219,14 @@ function createWebEditorUiRuntime(options) {
                   onThemeModeChange: setThemeMode
                 }
               ),
-              /* @__PURE__ */ jsx15("div", { ref: popupContainerRef, ...{ [WEB_EDITOR_POPUP_ROOT_ATTR]: "true" } })
+              /* @__PURE__ */ jsx14("div", { ref: popupContainerRef, ...{ [WEB_EDITOR_POPUP_ROOT_ATTR]: "true" } })
             ]
           }
         ) })
       }
     ) });
   }
-  root.render(/* @__PURE__ */ jsx15(RuntimeMount, {}));
+  root.render(/* @__PURE__ */ jsx14(RuntimeMount, {}));
   return {
     propertyPanel: propertyPanelBridge ? {
       setTarget(element) {
@@ -21510,7 +23335,7 @@ function isValidLine(line) {
   if (!line) return false;
   return Number.isFinite(line.x1) && Number.isFinite(line.y1) && Number.isFinite(line.x2) && Number.isFinite(line.y2);
 }
-function clamp2(value, min, max) {
+function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, value));
 }
@@ -21849,8 +23674,8 @@ function createCanvasOverlay(options) {
       }
       const maxPillX = Math.max(2, viewportWidth - pillWidth - 2);
       const maxPillY = Math.max(2, viewportHeight - pillHeight - 2);
-      pillX = clamp2(pillX, 2, maxPillX);
-      pillY = clamp2(pillY, 2, maxPillY);
+      pillX = clamp(pillX, 2, maxPillX);
+      pillY = clamp(pillY, 2, maxPillY);
       ctx.save();
       ctx.fillStyle = WEB_EDITOR_V2_COLORS.distanceLabelBg;
       ctx.strokeStyle = WEB_EDITOR_V2_COLORS.distanceLabelBorder;
@@ -21902,7 +23727,7 @@ function createCanvasOverlay(options) {
     let hoverRectToRender = hoverRect;
     if (hoverAnimation) {
       const elapsed = now - hoverAnimation.startTime;
-      const progress = clamp2(elapsed / hoverAnimation.durationMs, 0, 1);
+      const progress = clamp(elapsed / hoverAnimation.durationMs, 0, 1);
       const easedProgress = easeOutCubic2(progress);
       hoverRectToRender = lerpRect(hoverAnimation.start, hoverAnimation.end, easedProgress);
       if (progress >= 1) {
@@ -21941,7 +23766,7 @@ function createCanvasOverlay(options) {
     let fromRect = hoverRect;
     if (hoverAnimation) {
       const elapsed = now - hoverAnimation.startTime;
-      const progress = clamp2(elapsed / hoverAnimation.durationMs, 0, 1);
+      const progress = clamp(elapsed / hoverAnimation.durationMs, 0, 1);
       const easedProgress = easeOutCubic2(progress);
       fromRect = lerpRect(hoverAnimation.start, hoverAnimation.end, easedProgress);
     }
@@ -22427,7 +24252,7 @@ function formatDistanceText(px) {
   const normalized = Object.is(rounded, -0) ? 0 : rounded;
   return `${normalized}px`;
 }
-function clamp3(value, min, max) {
+function clamp2(value, min, max) {
   if (!isFiniteNumber(value)) return min;
   return Math.min(max, Math.max(min, value));
 }
@@ -22483,7 +24308,7 @@ function computeDistanceLabels(params) {
     }
   }
   if (lockX && lockX.source === "viewport") {
-    const y = clamp3(rectCenterY(rect), 0, viewportHeight);
+    const y = clamp2(rectCenterY(rect), 0, viewportHeight);
     const leftGap = rect.left;
     const rightGap = viewportWidth - rectRight(rect);
     const addLeft = () => {
@@ -22518,7 +24343,7 @@ function computeDistanceLabels(params) {
     }
   }
   if (lockY && lockY.source === "viewport") {
-    const x = clamp3(rectCenterX(rect), 0, viewportWidth);
+    const x = clamp2(rectCenterX(rect), 0, viewportWidth);
     const topGap = rect.top;
     const bottomGap = viewportHeight - rectBottom(rect);
     const addTop = () => {
@@ -23208,6 +25033,8 @@ function createParentSelectCorner(options) {
   let currentTarget = null;
   let selectionRect = null;
   let parentCandidate = null;
+  const selectionHistory = [];
+  let expectedNavigationTarget = null;
   const button = document.createElement("button");
   button.type = "button";
   button.className = "we-parent-corner";
@@ -23227,9 +25054,7 @@ function createParentSelectCorner(options) {
   button.addEventListener("pointerdown", stopEvent2);
   button.addEventListener("click", (event) => {
     stopEvent2(event);
-    const parent = parentCandidate;
-    if (!parent || !parent.isConnected) return;
-    options.onSelectParent(parent);
+    selectParentCandidate();
   });
   disposer.add(() => {
     button.removeEventListener("pointerdown", stopEvent2);
@@ -23246,8 +25071,43 @@ function createParentSelectCorner(options) {
     button.style.top = `${nextPosition.top}px`;
     button.dataset.hidden = "false";
   }
+  function navigateTo(target) {
+    expectedNavigationTarget = target;
+    const accepted = options.onNavigate(target);
+    if (!accepted) {
+      expectedNavigationTarget = null;
+    }
+    return accepted;
+  }
+  function selectParentCandidate() {
+    const current = currentTarget;
+    const parent = parentCandidate;
+    if (!current || !current.isConnected || !parent || !parent.isConnected) return false;
+    if (!navigateTo(parent)) return false;
+    selectionHistory.push(current);
+    return true;
+  }
+  function selectPreviousTarget() {
+    while (selectionHistory.length > 0) {
+      const previous = selectionHistory.at(-1);
+      if (!previous?.isConnected) {
+        selectionHistory.pop();
+        continue;
+      }
+      if (!navigateTo(previous)) return false;
+      selectionHistory.pop();
+      return true;
+    }
+    return false;
+  }
   return {
     setTarget(target) {
+      const targetChanged = target !== currentTarget;
+      const isExpectedNavigation = target !== null && target === expectedNavigationTarget;
+      if (targetChanged && !isExpectedNavigation) {
+        selectionHistory.length = 0;
+      }
+      expectedNavigationTarget = null;
       currentTarget = target;
       syncVisibility();
     },
@@ -23255,7 +25115,16 @@ function createParentSelectCorner(options) {
       selectionRect = rect;
       syncVisibility();
     },
+    selectParent() {
+      syncVisibility();
+      return selectParentCandidate();
+    },
+    selectPrevious() {
+      return selectPreviousTarget();
+    },
     dispose() {
+      selectionHistory.length = 0;
+      expectedNavigationTarget = null;
       disposer.dispose();
     }
   };
@@ -24104,7 +25973,6 @@ var BLOCKED_MOUSE_EVENTS = [
   "mouseup",
   "click",
   "dblclick",
-  "contextmenu",
   "auxclick",
   "mouseover",
   "mouseout",
@@ -24113,6 +25981,15 @@ var BLOCKED_MOUSE_EVENTS = [
 ];
 var BLOCKED_KEYBOARD_EVENTS = ["keyup", "keypress"];
 var BLOCKED_TOUCH_EVENTS = ["touchstart", "touchmove", "touchend", "touchcancel"];
+var NON_PRIMARY_BUTTON_BYPASS_EVENTS = /* @__PURE__ */ new Set([
+  "pointerdown",
+  "pointerup",
+  "mousedown",
+  "mouseup",
+  "click",
+  "dblclick",
+  "auxclick"
+]);
 function createEventController(options) {
   const {
     isOverlayElement,
@@ -24174,6 +26051,12 @@ function createEventController(options) {
     event.stopPropagation();
   }
   function shouldEventBypassPageBlock(event) {
+    if (event.type === "contextmenu") {
+      return true;
+    }
+    if (event instanceof MouseEvent && NON_PRIMARY_BUTTON_BYPASS_EVENTS.has(event.type) && event.button !== 0) {
+      return true;
+    }
     if (isAxhubAnnotationDirectActionEvent(event)) {
       return true;
     }
@@ -26753,8 +28636,9 @@ async function exportSelectionToDesignTool(tool, element) {
   }
   const rootName = getSelectionExportName(element);
   const { htmlToAxure, htmlToFigma, safeCopyToFigmaWithKiwi } = await exportCoreLoader();
+  const exportElement = element;
   if (tool === "figma" || tool === "pencil") {
-    const layers = await htmlToFigma(element, {
+    const layers = await htmlToFigma(exportElement, {
       rootName,
       enableAutoLayout: true
     });
@@ -26771,7 +28655,7 @@ async function exportSelectionToDesignTool(tool, element) {
     }
     return;
   }
-  const payload = await htmlToAxure(element, {
+  const payload = await htmlToAxure(exportElement, {
     rootName,
     preserveHierarchy: false,
     preserveSvgIcons: true
@@ -26785,35 +28669,132 @@ function createLifecycleService(deps) {
   const { state: state2, services, onStatusChange } = deps;
   const rawOptions = deps.options ? deps.options : {};
   const options = resolveWebEditorOptions(rawOptions);
-  if (rawOptions.genieBridge && !Object.prototype.hasOwnProperty.call(rawOptions.genieBridge, "enableContextAppend")) {
-    options.genieBridge.enableContextAppend = void 0;
+  if (rawOptions.agentBridge && !Object.prototype.hasOwnProperty.call(rawOptions.agentBridge, "enableContextAppend")) {
+    options.agentBridge.enableContextAppend = void 0;
   }
   let inlineTextEditingElement = null;
   let pendingCommentContextSync = false;
   let routeChangeCleanup = null;
   function shouldDelegateAiActionToHost() {
-    return options.ui.toolbarMode === "host" && typeof options.ui.onHostToolbarAction === "function";
+    return typeof rawOptions.ui?.onHostToolbarAction === "function" && typeof options.ui.onHostToolbarAction === "function";
   }
   function buildHostSendToAgentAction(element) {
     const meta = services.changes.getMetaForElement(element ?? null);
+    const promptText = element ? buildSaveRunPromptForAgentElement(element) : "";
     return meta?.elementKey ? {
       type: "send-to-agent",
       elementKey: meta.elementKey,
       locator: meta.locator,
-      label: meta.label
+      label: meta.label,
+      promptText: promptText || void 0
     } : { type: "send-to-agent" };
   }
+  function toExternalEditingTarget(meta) {
+    return {
+      elementKey: meta.elementKey,
+      locator: meta.locator,
+      label: meta.label
+    };
+  }
+  function canReuseAgentConversationForElement(element) {
+    if (services.agentBridge.canReuseConversationForElement) {
+      return services.agentBridge.canReuseConversationForElement(element);
+    }
+    return services.agentBridge.hasReusableConversation();
+  }
+  function buildSaveRunPromptForAgentElement(element) {
+    return canReuseAgentConversationForElement(element) ? services.summaries.buildAppendSaveRunPromptForElement(element) : services.summaries.buildSaveRunPromptForElement(element);
+  }
+  function createHostExternalEditingTaskRef() {
+    return {
+      provider: "host",
+      requestId: `host_ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    };
+  }
+  function resolveHostExternalEditingElement(target) {
+    try {
+      const element = locateElement(target.locator);
+      return element?.isConnected ? element : null;
+    } catch {
+      return null;
+    }
+  }
+  function beginHostExternalEditing(targetRefs) {
+    if (!services.agentBridge.setExternalEditingStateByElementKey && !services.agentBridge.setExternalEditingState) {
+      return null;
+    }
+    const validTargets = targetRefs.filter((target) => String(target?.elementKey ?? "").trim() && target?.locator);
+    if (validTargets.length === 0) {
+      return null;
+    }
+    const taskRef = createHostExternalEditingTaskRef();
+    const appliedTargets = [];
+    for (const target of validTargets) {
+      if (services.agentBridge.setExternalEditingStateByElementKey) {
+        const task = services.agentBridge.setExternalEditingStateByElementKey(target, taskRef);
+        if (task) {
+          appliedTargets.push(target);
+        }
+        continue;
+      }
+      const element = resolveHostExternalEditingElement(target);
+      if (element && services.agentBridge.setExternalEditingState) {
+        const task = services.agentBridge.setExternalEditingState(element, taskRef);
+        if (task) {
+          appliedTargets.push(target);
+        }
+      }
+    }
+    if (appliedTargets.length === 0) {
+      return null;
+    }
+    state2.positionTracker?.forceUpdate(true);
+    return { taskRef, targetRefs: appliedTargets };
+  }
+  function markHostExternalEditingError(editingRun, errorMessage) {
+    if (!editingRun) return;
+    const taskRef = {
+      ...editingRun.taskRef,
+      ...errorMessage ? { error: errorMessage, code: "HOST_AI_ACTION_FAILED" } : {}
+    };
+    for (const target of editingRun.targetRefs) {
+      if (services.agentBridge.setExternalEditingTerminalStateByElementKey) {
+        services.agentBridge.setExternalEditingTerminalStateByElementKey(target, "error", taskRef);
+        continue;
+      }
+      const element = resolveHostExternalEditingElement(target);
+      if (!element) continue;
+      if (services.agentBridge.setExternalEditingTerminalState) {
+        services.agentBridge.setExternalEditingTerminalState(element, "error", taskRef);
+      } else {
+        services.agentBridge.clearExternalEditingState?.(element, editingRun.taskRef);
+      }
+    }
+    state2.positionTracker?.forceUpdate(true);
+  }
+  let lastHostAiActionError = null;
   async function runHostAiAction(action) {
     if (!shouldDelegateAiActionToHost()) {
       return false;
     }
+    lastHostAiActionError = null;
     try {
       return Boolean(await options.ui.onHostToolbarAction(action));
     } catch (error) {
       const message3 = error instanceof Error ? error.message : String(error);
+      lastHostAiActionError = message3 || "AI \u6267\u884C\u8BF7\u6C42\u5931\u8D25\u3002";
       if (message3) {
-        services.feedback.toast("warning", message3);
+        services.feedback.toast("error", `AI \u6267\u884C\u5931\u8D25\uFF1A${message3}`);
       }
+      return false;
+    }
+  }
+  async function interruptVisibleTasksLocally() {
+    if (!services.agentBridge.interruptVisibleTasks) return false;
+    try {
+      await services.agentBridge.interruptVisibleTasks();
+      return true;
+    } catch {
       return false;
     }
   }
@@ -26841,7 +28822,7 @@ function createLifecycleService(deps) {
     return event.type.startsWith("key") || event.type === "beforeinput" || event.type === "input" || event.type === "change" || event.type.startsWith("composition") || event.type === "selectionchange";
   }
   function sendCommentContextSync(element, mode) {
-    void services.genieBridge.handleSyncCommentContextToGenie(element, mode).then(() => {
+    void services.agentBridge.handleSyncCommentContextToAgent(element, mode).then(() => {
       if (mode === "replace") {
         pendingCommentContextSync = false;
       }
@@ -26859,7 +28840,7 @@ function createLifecycleService(deps) {
     }
   }
   function flushPendingCommentContextSync() {
-    if (!options.genieBridge.enabled || !services.genieBridge.isAvailable()) {
+    if (!options.agentBridge.enabled || !services.agentBridge.isAvailable()) {
       return;
     }
     if (!pendingCommentContextSync && !hasCommentContextToSync()) {
@@ -26869,10 +28850,10 @@ function createLifecycleService(deps) {
   }
   function syncCommentContextAfterNoteSave(element, note) {
     const mode = String(note ?? "").trim() ? "append" : "replace";
-    if (!options.genieBridge.enabled) {
+    if (!options.agentBridge.enabled) {
       return;
     }
-    if (!services.genieBridge.isAvailable()) {
+    if (!services.agentBridge.isAvailable()) {
       pendingCommentContextSync = true;
       return;
     }
@@ -26908,6 +28889,28 @@ function createLifecycleService(deps) {
     }
     return elements;
   }
+  function resolvePromptTargetRefsFromEditHistory() {
+    return Array.from(state2.editMetaByKey.values()).filter(
+      (meta) => meta.dirtySince !== null || String(meta.note ?? "").trim() || Array.isArray(meta.images) && meta.images.length > 0
+    ).sort((a, b) => Number(b.dirtySince ?? 0) - Number(a.dirtySince ?? 0)).map(toExternalEditingTarget);
+  }
+  function resolvePromptTargetRefs(preferredElement) {
+    const recoveredTargets = resolvePromptTargetRefsFromEditHistory();
+    if (recoveredTargets.length > 0) {
+      return recoveredTargets;
+    }
+    const fallbackElement = preferredElement?.isConnected ? preferredElement : state2.selectedElement?.isConnected ? state2.selectedElement : null;
+    const fallbackMeta = fallbackElement ? services.changes.getMetaForElement(fallbackElement) : null;
+    return fallbackMeta ? [toExternalEditingTarget(fallbackMeta)] : [];
+  }
+  function resolvePromptTargetRef(preferredElement) {
+    const fallbackElement = preferredElement?.isConnected ? preferredElement : state2.selectedElement?.isConnected ? state2.selectedElement : null;
+    const fallbackMeta = fallbackElement ? services.changes.getMetaForElement(fallbackElement) : null;
+    if (fallbackMeta) {
+      return toExternalEditingTarget(fallbackMeta);
+    }
+    return resolvePromptTargetRefsFromEditHistory()[0] ?? null;
+  }
   function resolvePromptTargets(preferredElement) {
     const recoveredElements = resolvePromptTargetsFromEditHistory();
     if (recoveredElements.length > 0) {
@@ -26931,7 +28934,7 @@ function createLifecycleService(deps) {
     return resolvePromptTargetsFromEditHistory()[0] ?? null;
   }
   function resolveVisibleRunningTaskTarget() {
-    const runningTasks = services.genieBridge.getVisibleTaskStates().filter((task) => task.status === "pending" || task.status === "created").sort((a, b) => Number(b.startedAt ?? 0) - Number(a.startedAt ?? 0));
+    const runningTasks = services.agentBridge.getVisibleTaskStates().filter((task) => task.status === "pending" || task.status === "created").sort((a, b) => Number(b.startedAt ?? 0) - Number(a.startedAt ?? 0));
     for (const task of runningTasks) {
       try {
         const element = locateElement(task.locator);
@@ -26945,7 +28948,7 @@ function createLifecycleService(deps) {
   }
   function resolveInterruptTarget(preferredElement) {
     const preferredTarget = resolvePromptTarget(preferredElement);
-    if (preferredTarget && services.genieBridge.canInterruptElementTask(preferredTarget)) {
+    if (preferredTarget && services.agentBridge.canInterruptElementTask(preferredTarget)) {
       return preferredTarget;
     }
     return resolveVisibleRunningTaskTarget();
@@ -26953,15 +28956,15 @@ function createLifecycleService(deps) {
   function handleTransactionError(error) {
     console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Transaction apply error:`, error);
   }
-  function dismissVisibleElementGenieTaskStates() {
-    const tasks = services.genieBridge.getVisibleTaskStates();
+  function dismissVisibleElementAgentTaskStates() {
+    const tasks = services.agentBridge.getVisibleTaskStates();
     for (const task of tasks) {
       try {
         const element = locateElement(task.locator);
         if (!element?.isConnected) {
           continue;
         }
-        services.genieBridge.dismissElementTaskState(element);
+        services.agentBridge.dismissElementTaskState(element);
       } catch {
       }
     }
@@ -26973,12 +28976,18 @@ function createLifecycleService(deps) {
         clearableElementKeys.add(meta.elementKey);
       }
     }
-    for (const task of services.genieBridge.getVisibleTaskStates()) {
+    for (const task of services.agentBridge.getVisibleTaskStates()) {
       if (task.status === "completed" || task.status === "error") {
         clearableElementKeys.add(task.elementKey);
       }
     }
     return clearableElementKeys.size;
+  }
+  function hasPrototypeComments() {
+    const document2 = services.persistence.getPersistedPrototypeCommentsDocument?.() ?? null;
+    return Boolean(
+      document2 && (document2.comments.length > 0 || document2.images.length > 0 || Object.keys(document2.tasks).length > 0)
+    );
   }
   function getTweakProtocol() {
     return getGlobalCommentaryTweakProtocol();
@@ -26986,7 +28995,7 @@ function createLifecycleService(deps) {
   function cleanupMountedRuntime() {
     inlineTextEditingElement = null;
     services.integrationWs?.stop();
-    services.genieBridge.stop();
+    services.agentBridge.stop();
     routeChangeCleanup?.();
     routeChangeCleanup = null;
     state2.uiResizeCleanup?.();
@@ -27011,6 +29020,8 @@ function createLifecycleService(deps) {
     state2.handlesController = null;
     state2.parentSelectController?.dispose();
     state2.parentSelectController = null;
+    state2.parentSelectHotkeyCleanup?.();
+    state2.parentSelectHotkeyCleanup = null;
     state2.transactionManager?.dispose();
     state2.transactionManager = null;
     state2.positionTracker?.dispose();
@@ -27043,7 +29054,10 @@ function createLifecycleService(deps) {
       event.stopPropagation();
       event.stopImmediatePropagation();
     };
-    const hotkeyOptions = { capture: true, passive: false };
+    const hotkeyOptions = {
+      capture: true,
+      passive: false
+    };
     window.addEventListener("keydown", handler, hotkeyOptions);
     state2.perfHotkeyCleanup = () => {
       window.removeEventListener("keydown", handler, hotkeyOptions);
@@ -27054,6 +29068,87 @@ function createLifecycleService(deps) {
     if (!isMod || event.altKey || event.shiftKey) return false;
     const key = (event.key || "").toLowerCase();
     return key === "s";
+  }
+  function getParentNavigationAction(event) {
+    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return null;
+    }
+    if (event.key === "ArrowUp") return "select-parent";
+    if (event.key === "ArrowDown") return "return-previous";
+    return null;
+  }
+  const PARENT_SELECT_EDITABLE_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+  const PARENT_SELECT_INPUT_TOUCHED_ATTR3 = "data-we-parent-select-input-touched";
+  function isTextualInputType(type) {
+    const normalizedType = (type || "text").toLowerCase();
+    return ["", "email", "password", "search", "tel", "text", "url"].includes(normalizedType);
+  }
+  function isEmptyTextEntryControl(control) {
+    if (!isTextEntryControl(control)) return false;
+    return getTextEntryControlValue(control).length === 0;
+  }
+  function isTextEntryControl(control) {
+    const tagName = control.tagName.toLowerCase();
+    if (tagName === "textarea") {
+      return true;
+    }
+    if (tagName === "input") {
+      return isTextualInputType(control.type);
+    }
+    return control.isContentEditable;
+  }
+  function getTextEntryControlValue(control) {
+    const tagName = control.tagName.toLowerCase();
+    if (tagName === "textarea") return control.value ?? "";
+    if (tagName === "input") return control.value ?? "";
+    return control.textContent ?? "";
+  }
+  function getParentSelectEditableControlFromNode(node) {
+    if (typeof HTMLElement === "undefined" || !(node instanceof HTMLElement)) {
+      return null;
+    }
+    if (node.isContentEditable) return node;
+    if (typeof node.matches === "function" && node.matches(PARENT_SELECT_EDITABLE_SELECTOR)) {
+      return node;
+    }
+    const nearestControl = typeof node.closest === "function" ? node.closest(PARENT_SELECT_EDITABLE_SELECTOR) : null;
+    if (!(nearestControl instanceof HTMLElement)) {
+      return null;
+    }
+    return nearestControl;
+  }
+  function getParentSelectEditableControl(event) {
+    if (typeof event.composedPath === "function") {
+      try {
+        for (const node of event.composedPath()) {
+          const control = getParentSelectEditableControlFromNode(node);
+          if (control) return control;
+        }
+      } catch {
+      }
+    }
+    return getParentSelectEditableControlFromNode(event.target);
+  }
+  function shouldBlockParentSelectEvent(event, eventFromEditorUi) {
+    const editableControl = getParentSelectEditableControl(event);
+    if (editableControl) {
+      if (!isTextEntryControl(editableControl)) return true;
+      if (eventFromEditorUi) {
+        return editableControl.getAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR3) === "true";
+      }
+      return !isEmptyTextEntryControl(editableControl);
+    }
+    return eventFromEditorUi;
+  }
+  function markParentSelectTextEntryControlTouched(event) {
+    const editableControl = getParentSelectEditableControl(event);
+    if (!editableControl || !isTextEntryControl(editableControl)) return;
+    editableControl.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR3, "true");
+  }
+  function markParentSelectTextEntryControlUntouched(event) {
+    const editableControl = getParentSelectEditableControl(event);
+    if (!editableControl || !isTextEntryControl(editableControl)) return;
+    editableControl.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR3, "false");
   }
   function describeHotkeyTarget(target) {
     if (typeof Element === "undefined" || !(target instanceof Element)) {
@@ -27172,7 +29267,9 @@ function createLifecycleService(deps) {
         debug.lastAction = action;
       }
       void Promise.resolve(
-        state2.propertyPanel?.runHostToolbarAction?.({ type: "toggle-selection-mode" }) ?? false
+        state2.propertyPanel?.runHostToolbarAction?.({
+          type: "toggle-selection-mode"
+        }) ?? false
       ).then((result) => {
         action.pending = false;
         action.result = Boolean(result);
@@ -27182,13 +29279,48 @@ function createLifecycleService(deps) {
         action.error = error instanceof Error ? error.message : String(error);
       });
     };
-    const hotkeyOptions = { capture: true, passive: false };
+    const hotkeyOptions = {
+      capture: true,
+      passive: false
+    };
     window.addEventListener("keydown", handler, hotkeyOptions);
     state2.selectionModeHotkeyCleanup = () => {
       window.removeEventListener("keydown", handler, hotkeyOptions);
       if (debug) {
         debug.installed = false;
       }
+    };
+  }
+  function installParentSelectHotkey() {
+    state2.parentSelectHotkeyCleanup?.();
+    state2.parentSelectHotkeyCleanup = null;
+    const handler = (event) => {
+      if (!state2.active) return;
+      const action = getParentNavigationAction(event);
+      if (!action) return;
+      const eventFromEditorUi = state2.shadowHost?.isEventFromUi(event) ?? false;
+      if (shouldBlockParentSelectEvent(event, eventFromEditorUi)) return;
+      const didNavigate = action === "select-parent" ? state2.parentSelectController?.selectParent() ?? false : state2.parentSelectController?.selectPrevious() ?? false;
+      if (!didNavigate) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+    const hotkeyOptions = {
+      capture: true,
+      passive: false
+    };
+    const inputStateOptions = {
+      capture: true,
+      passive: true
+    };
+    window.addEventListener("keydown", handler, hotkeyOptions);
+    window.addEventListener("focusin", markParentSelectTextEntryControlUntouched, inputStateOptions);
+    window.addEventListener("input", markParentSelectTextEntryControlTouched, inputStateOptions);
+    state2.parentSelectHotkeyCleanup = () => {
+      window.removeEventListener("keydown", handler, hotkeyOptions);
+      window.removeEventListener("focusin", markParentSelectTextEntryControlUntouched, inputStateOptions);
+      window.removeEventListener("input", markParentSelectTextEntryControlTouched, inputStateOptions);
     };
   }
   function installUiResizeClamp() {
@@ -27215,10 +29347,18 @@ function createLifecycleService(deps) {
     };
     const canListenOnDocument = typeof document?.addEventListener === "function";
     window.addEventListener("resize", onWindowResize, { passive: true });
-    window.addEventListener("resize", syncChangeMarkersToViewport, { passive: true });
-    window.addEventListener("scroll", syncChangeMarkersToViewport, { passive: true, capture: true });
+    window.addEventListener("resize", syncChangeMarkersToViewport, {
+      passive: true
+    });
+    window.addEventListener("scroll", syncChangeMarkersToViewport, {
+      passive: true,
+      capture: true
+    });
     if (canListenOnDocument) {
-      document.addEventListener("scroll", syncChangeMarkersToViewport, { passive: true, capture: true });
+      document.addEventListener("scroll", syncChangeMarkersToViewport, {
+        passive: true,
+        capture: true
+      });
     }
     state2.uiResizeCleanup = () => {
       window.removeEventListener("resize", onWindowResize);
@@ -27394,14 +29534,14 @@ function createLifecycleService(deps) {
         onApplyError: handleTransactionError
       });
       void Promise.resolve(services.persistence.restoreCachedChanges()).then(() => {
-        services.genieBridge.rehydratePersistedGenieState();
+        services.agentBridge.rehydratePersistedAgentState();
         ensureMarkersVisible();
         services.persistence.persistFromTransactions();
         state2.propertyPanel?.refresh();
         onStatusChange?.();
       }).catch((error) => {
         console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to restore cached changes:`, error);
-        services.genieBridge.rehydratePersistedGenieState();
+        services.agentBridge.rehydratePersistedAgentState();
         ensureMarkersVisible();
         services.persistence.persistFromTransactions();
       });
@@ -27414,12 +29554,13 @@ function createLifecycleService(deps) {
       state2.parentSelectController = createParentSelectCorner({
         container: elements.overlayRoot,
         getParentCandidate: (element) => state2.selectionEngine?.getParentCandidate(element) ?? null,
-        onSelectParent: (parent) => {
-          const rect = parent.getBoundingClientRect();
+        onNavigate: (target) => {
+          if (services.agentBridge.isElementInteractionLocked(target)) return false;
+          const rect = target.getBoundingClientRect();
           const clientX = Number.isFinite(rect.left) ? rect.left + rect.width / 2 : void 0;
           const clientY = Number.isFinite(rect.top) ? rect.top + Math.min(18, Math.max(10, rect.height / 2)) : void 0;
           void services.interaction.handleSelect(
-            parent,
+            target,
             {
               alt: false,
               shift: false,
@@ -27428,6 +29569,7 @@ function createLifecycleService(deps) {
             },
             clientX !== void 0 && clientY !== void 0 ? { clientX, clientY } : void 0
           );
+          return true;
         }
       });
       state2.eventController = createEventController({
@@ -27437,7 +29579,7 @@ function createLifecycleService(deps) {
         onHover: isTextComment ? () => {
         } : services.interaction.handleHover,
         onSelect: (event) => {
-          const target = services.genieBridge.resolveSelectableElement(event.element);
+          const target = services.agentBridge.resolveSelectableElement(event.element);
           if (!target?.isConnected) return;
           void services.interaction.handleSelect(target, event.modifiers, {
             clientX: event.clientX,
@@ -27446,21 +29588,23 @@ function createLifecycleService(deps) {
         },
         onDoubleClickSelected: isTextComment ? void 0 : (event) => {
           if (!services.textSession.isEditable(event.element)) return;
-          if (services.genieBridge.isElementInteractionLocked(event.element)) return;
+          if (services.agentBridge.isElementInteractionLocked(event.element)) return;
           state2.breadcrumbs?.enterInlineTextEdit?.();
           state2.propertyPanel?.enterInlineTextEdit?.();
         },
         onDeselect: services.interaction.handleDeselect,
-        resolveTargetForHover: isTextComment ? void 0 : (target) => services.genieBridge.resolveSelectableElement(target),
+        resolveTargetForHover: isTextComment ? void 0 : (target) => services.agentBridge.resolveSelectableElement(target),
         findTargetForSelect: isTextComment ? void 0 : (_x, _y, modifiers, event) => {
           const target = state2.selectionEngine?.findBestTargetFromEvent(event, modifiers) ?? null;
-          return services.genieBridge.resolveSelectableElement(target);
+          return services.agentBridge.resolveSelectableElement(target);
         },
         getSelectedElement: () => state2.selectedElement,
-        isElementInteractionLocked: (element) => services.genieBridge.isElementInteractionLocked(element)
+        isElementInteractionLocked: (element) => services.agentBridge.isElementInteractionLocked(element)
       });
       if (!options.ui.initialSelectionModeActive) {
-        state2.eventController.setMode("interaction", { allowPageInteraction: true });
+        state2.eventController.setMode("interaction", {
+          allowPageInteraction: true
+        });
         state2.selectionChromeVisible = false;
       }
       if (isTextComment && state2.textCommentManager) {
@@ -27476,25 +29620,34 @@ function createLifecycleService(deps) {
             if (!comment) return;
             state2.activeTextComment = comment;
             const usedNativeHighlight = textCommentManager.setActiveHighlight(comment);
-            state2.canvasOverlay?.setTextHighlightRects(
-              usedNativeHighlight ? null : comment.clientRects
-            );
+            state2.canvasOverlay?.setTextHighlightRects(usedNativeHighlight ? null : comment.clientRects);
             state2.canvasOverlay?.render();
             const rect = comment.boundingRect;
             const clientX = rect.left + rect.width / 2;
             const clientY = rect.top;
-            services.interaction.enterTextComment(comment, { clientX, clientY });
+            services.interaction.enterTextComment(comment, {
+              clientX,
+              clientY
+            });
           }, 10);
         };
-        window.addEventListener("pointerup", queueTextSelectionCommit, { capture: true });
-        window.addEventListener("mouseup", queueTextSelectionCommit, { capture: true });
+        window.addEventListener("pointerup", queueTextSelectionCommit, {
+          capture: true
+        });
+        window.addEventListener("mouseup", queueTextSelectionCommit, {
+          capture: true
+        });
         state2.commentShortcutCleanup = () => {
           if (pendingTextSelectionCommitTimer !== null) {
             window.clearTimeout(pendingTextSelectionCommitTimer);
             pendingTextSelectionCommitTimer = null;
           }
-          window.removeEventListener("pointerup", queueTextSelectionCommit, { capture: true });
-          window.removeEventListener("mouseup", queueTextSelectionCommit, { capture: true });
+          window.removeEventListener("pointerup", queueTextSelectionCommit, {
+            capture: true
+          });
+          window.removeEventListener("mouseup", queueTextSelectionCommit, {
+            capture: true
+          });
         };
       }
       if (options.ui.propertyPanel) {
@@ -27546,7 +29699,7 @@ function createLifecycleService(deps) {
             services.persistence.setUiSettings(settings);
           },
           onLocateElement: (element) => {
-            const target = services.genieBridge.resolveSelectableElement(element) ?? element;
+            const target = services.agentBridge.resolveSelectableElement(element) ?? element;
             if (!target?.isConnected) return;
             services.interaction.clearSelection();
             state2.eventController?.setMode("hover");
@@ -27563,9 +29716,9 @@ function createLifecycleService(deps) {
           getAnnotationEnabled: options.ui.getAnnotationEnabled,
           getAnnotationEnableAvailable: options.ui.getAnnotationEnableAvailable,
           getAnnotationEnableLoading: options.ui.getAnnotationEnableLoading,
-          onWakeGenie: shouldDelegateAiActionToHost() ? () => runHostAiAction({ type: "wake-agent" }) : options.genieBridge.allowWake !== false ? async () => {
+          onWakeAgent: shouldDelegateAiActionToHost() ? () => runHostAiAction({ type: "wake-agent" }) : options.agentBridge.allowWake !== false ? async () => {
             try {
-              return await services.genieBridge.requestWake();
+              return await services.agentBridge.requestWake();
             } catch (error) {
               const message3 = error instanceof Error ? error.message : String(error);
               if (message3) {
@@ -27574,11 +29727,15 @@ function createLifecycleService(deps) {
               return false;
             }
           } : void 0,
-          onSendPromptToGenie: async (element) => {
+          onSendPromptToAgent: async (element) => {
             if (shouldDelegateAiActionToHost()) {
+              const targetRefs = resolvePromptTargetRefs(element);
+              const editingRun = beginHostExternalEditing(targetRefs);
               const handled = await runHostAiAction(buildHostSendToAgentAction(element));
               if (!handled) {
-                throw new Error("\u5BBF\u4E3B\u6682\u672A\u5904\u7406 AI \u6267\u884C\u8BF7\u6C42\u3002");
+                const message3 = lastHostAiActionError || "\u5BBF\u4E3B\u6682\u672A\u5904\u7406 AI \u6267\u884C\u8BF7\u6C42\u3002";
+                markHostExternalEditingError(editingRun, message3);
+                throw new Error(message3);
               }
               return;
             }
@@ -27586,59 +29743,83 @@ function createLifecycleService(deps) {
             if (targetElements.length === 0) {
               throw new Error("\u5F53\u524D\u6CA1\u6709\u53EF\u53D1\u9001\u7ED9 AI \u7684\u7F16\u8F91\u5143\u7D20\u3002");
             }
-            const prompt = services.genieBridge.hasReusableConversation() ? services.summaries.buildAppendSaveRunPrompt() : services.summaries.buildSaveRunPrompt();
             try {
-              await services.genieBridge.handleSendPromptToGenieForElements(
+              await services.agentBridge.handleSendPromptToAgentForElements(
                 targetElements,
-                prompt
+                buildSaveRunPromptForAgentElement
               );
             } finally {
               state2.positionTracker?.forceUpdate(true);
             }
           },
-          onSendCurrentElementPromptToGenie: async (element) => {
+          onSendCurrentElementPromptToAgent: async (element) => {
             if (shouldDelegateAiActionToHost()) {
+              const targetRef = resolvePromptTargetRef(element);
+              const editingRun = beginHostExternalEditing(targetRef ? [targetRef] : []);
               const handled = await runHostAiAction(buildHostSendToAgentAction(element));
               if (!handled) {
-                throw new Error("\u5BBF\u4E3B\u6682\u672A\u5904\u7406 AI \u6267\u884C\u8BF7\u6C42\u3002");
+                const message3 = lastHostAiActionError || "\u5BBF\u4E3B\u6682\u672A\u5904\u7406 AI \u6267\u884C\u8BF7\u6C42\u3002";
+                markHostExternalEditingError(editingRun, message3);
+                throw new Error(message3);
               }
               return;
             }
             if (!element?.isConnected) {
               throw new Error("\u5F53\u524D\u5143\u7D20\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u540E\u518D\u8BD5\u3002");
             }
-            const prompt = services.genieBridge.hasReusableConversation() ? services.summaries.buildAppendSaveRunPromptForElement(element) : services.summaries.buildSaveRunPromptForElement(element);
+            const prompt = buildSaveRunPromptForAgentElement(element);
             if (!prompt) {
               throw new Error("\u5F53\u524D\u5143\u7D20\u6CA1\u6709\u53EF\u53D1\u9001\u7ED9 AI \u7684\u7F16\u8F91\u3002");
             }
             try {
-              await services.genieBridge.handleSendPromptToGenieForElement(element, prompt);
+              await services.agentBridge.handleSendPromptToAgentForElement(element, prompt);
             } finally {
               state2.positionTracker?.forceUpdate(true);
             }
           },
-          onAbortSendPromptToGenie: async (element) => {
+          onAbortAgentPrompt: async (element) => {
             if (shouldDelegateAiActionToHost()) {
-              await runHostAiAction({ type: "interrupt-agent" });
+              const locallyInterrupted = element === null ? await interruptVisibleTasksLocally() : false;
+              const handled = await runHostAiAction({
+                type: "interrupt-agent"
+              });
+              if (!handled && !locallyInterrupted) {
+                throw new Error(lastHostAiActionError || "\u5BBF\u4E3B\u6682\u672A\u5904\u7406 AI \u7EC8\u6B62\u8BF7\u6C42\u3002");
+              }
+              return;
+            }
+            if (element === null) {
+              if (services.agentBridge.interruptVisibleTasks) {
+                await services.agentBridge.interruptVisibleTasks();
+                return;
+              }
+              const targetElement2 = resolveVisibleRunningTaskTarget();
+              if (!targetElement2) {
+                throw new Error("\u5F53\u524D\u6CA1\u6709\u53EF\u4E2D\u65AD\u7684 AI \u7F16\u8F91\u5143\u7D20\u3002");
+              }
+              await services.agentBridge.interruptElementTask(targetElement2);
               return;
             }
             const targetElement = resolveInterruptTarget(element);
             if (!targetElement) {
               throw new Error("\u5F53\u524D\u6CA1\u6709\u53EF\u4E2D\u65AD\u7684 AI \u7F16\u8F91\u5143\u7D20\u3002");
             }
-            await services.genieBridge.interruptElementTask(targetElement);
+            await services.agentBridge.interruptElementTask(targetElement);
           },
           onRequestClose: services.interaction.clearSelection,
           onRequestFullExit: options.ui.onRequestFullExit,
           onClearEdits: async (clearOptions) => {
             await services.localActions.handleClearEdits(clearOptions);
-            services.genieBridge.invalidateCurrentConversation?.();
-            dismissVisibleElementGenieTaskStates();
+            services.agentBridge.invalidateCurrentConversation?.();
+            dismissVisibleElementAgentTaskStates();
           },
+          hasPrototypeComments,
           onClearCurrentElementEdits: async (element) => {
             const didClear = await services.localActions.handleClearElementEdits(element);
             if (didClear) {
-              services.genieBridge.dismissElementTaskState(element, { includeRunning: true });
+              services.agentBridge.dismissElementTaskState(element, {
+                includeRunning: true
+              });
             }
             return didClear;
           },
@@ -27647,29 +29828,46 @@ function createLifecycleService(deps) {
           showCopyPromptAction: options.ui.showCopyPromptAction,
           toolbarMode: options.ui.toolbarMode,
           hideExecutionControls: options.ui.hideExecutionControls,
+          aiExecutionConfigSummary: options.ui.aiExecutionConfigSummary,
+          aiExecutionConfigConfigured: options.ui.aiExecutionConfigConfigured,
+          aiExecutionProvider: options.ui.aiExecutionProvider,
+          aiExecutionWorkspacePath: options.ui.aiExecutionWorkspacePath,
+          aiExecutionRunConcurrency: options.ui.aiExecutionRunConcurrency,
+          aiExecutionProviderOptions: options.ui.aiExecutionProviderOptions,
+          onHostToolbarAction: options.ui.onHostToolbarAction,
           externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
-          getGenieBridgeAvailable: () => services.genieBridge.isAvailable(),
-          getGenieBridgeConnected: () => services.genieBridge.isConnected(),
-          getCanAbortSendPromptToGenie: (element) => services.genieBridge.canInterruptElementTask(resolveInterruptTarget(element)),
-          getHasReusableGenieConversation: () => services.genieBridge.hasReusableConversation(),
-          getCurrentGenieConversationState: () => services.genieBridge.getCurrentConversationState(),
-          getElementGenieTaskState: (element) => services.genieBridge.getElementTaskState(element),
-          getVisibleElementGenieTaskStates: () => services.genieBridge.getVisibleTaskStates(),
-          getGenieProviderAvailability: (provider) => services.genieBridge.getProviderAvailability(provider),
-          getGenieProviderAvailabilities: () => services.genieBridge.getProviderAvailabilities(),
-          refreshGenieProviderAvailabilities: (providers) => services.genieBridge.refreshProviderAvailabilities(providers),
-          subscribeSessionActivity: (target, listener) => services.genieBridge.subscribeSessionActivity(target, listener),
-          dismissElementGenieTaskState: (element) => services.genieBridge.dismissElementTaskState(element),
-          dismissVisibleElementGenieTaskStates,
-          getSendPromptToGenieBlockReason: (element) => {
+          commentarySkillOptions: options.ui.commentarySkillOptions,
+          commentarySelectedSkillIds: options.ui.commentarySelectedSkillIds,
+          commentarySkillSettingsConfigured: options.ui.commentarySkillSettingsConfigured,
+          onCommentarySkillSelectionLoad: options.ui.onCommentarySkillSelectionLoad,
+          onCommentarySkillSelectionChange: options.ui.onCommentarySkillSelectionChange,
+          getAgentBridgeAvailable: () => services.agentBridge.isAvailable(),
+          getAgentBridgeConnected: () => services.agentBridge.isConnected(),
+          getCanAbortAgentPrompt: (element) => {
+            if (element === null) {
+              return services.agentBridge.canInterruptVisibleTasks?.() ?? services.agentBridge.canInterruptElementTask(resolveVisibleRunningTaskTarget());
+            }
+            return services.agentBridge.canInterruptElementTask(resolveInterruptTarget(element));
+          },
+          getHasReusableAgentConversation: () => services.agentBridge.hasReusableConversation(),
+          getCurrentAgentConversationState: () => services.agentBridge.getCurrentConversationState(),
+          getElementAgentTaskState: (element) => services.agentBridge.getElementTaskState(element),
+          getVisibleElementAgentTaskStates: () => services.agentBridge.getVisibleTaskStates(),
+          getAgentProviderAvailability: (provider) => services.agentBridge.getProviderAvailability(provider),
+          getAgentProviderAvailabilities: () => services.agentBridge.getProviderAvailabilities(),
+          refreshAgentProviderAvailabilities: (providers) => services.agentBridge.refreshProviderAvailabilities(providers),
+          subscribeSessionActivity: (target, listener) => services.agentBridge.subscribeSessionActivity(target, listener),
+          dismissElementAgentTaskState: (element) => services.agentBridge.dismissElementTaskState(element),
+          dismissVisibleElementAgentTaskStates,
+          getSendPromptToAgentBlockReason: (element) => {
             const targetElements = resolvePromptTargets(element);
             if (targetElements.length === 0) {
               return "\u5F53\u524D\u6CA1\u6709\u53EF\u53D1\u9001\u7ED9 AI \u7684\u7F16\u8F91\u5143\u7D20";
             }
             return services.summaries.getSaveRunPromptBlockReason();
           },
-          getSendCurrentElementPromptToGenieBlockReason: (element) => {
+          getSendCurrentElementPromptToAgentBlockReason: (element) => {
             if (!element?.isConnected) {
               return "\u5F53\u524D\u5143\u7D20\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u540E\u518D\u8BD5\u3002";
             }
@@ -27697,7 +29895,7 @@ function createLifecycleService(deps) {
             if (!targetElement) {
               return "\u5F53\u524D\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u5143\u7D20";
             }
-            if (services.genieBridge.isElementInteractionLocked(targetElement)) {
+            if (services.agentBridge.isElementInteractionLocked(targetElement)) {
               return "\u5F53\u524D\u5143\u7D20\u6B63\u5728\u7531 AI \u66F4\u65B0";
             }
             return getDesignToolExportBlockReason(targetElement);
@@ -27735,6 +29933,8 @@ function createLifecycleService(deps) {
           subscribeTweak: (listener) => getTweakProtocol()?.subscribe(listener) ?? (() => void 0),
           getAiNote: (element) => services.changes.getMetaForElement(element)?.note ?? "",
           getAiNoteSkillIds: (element) => services.changes.getMetaForElement(element)?.skillIds?.slice() ?? [],
+          enableImageAttachments: options.ui.enableImageAttachments,
+          onPrepareAiNoteImages: options.ui.onPrepareImageAttachments,
           getAiNoteImages: (element) => services.changes.getImagesForElement(element),
           getHoveredElement: () => state2.hoveredElement,
           onRememberSelectionAnchor: (element, selectionAnchor) => {
@@ -27807,18 +30007,20 @@ function createLifecycleService(deps) {
             dock: "top",
             onSelect: selectElementWithCenterAnchor,
             getAssistantPanelOpen: options.ui.getAssistantPanelOpen,
-            getGenieBridgeAvailable: () => services.genieBridge.isAvailable(),
+            getAgentBridgeAvailable: () => services.agentBridge.isAvailable(),
             hideExecutionControls: options.ui.hideExecutionControls,
             getCommentShortcutSettings: () => state2.commentShortcutSettings,
-            getElementGenieTaskState: (element) => services.genieBridge.getElementTaskState(element),
-            getVisibleElementGenieTaskStates: () => services.genieBridge.getVisibleTaskStates(),
-            dismissElementGenieTaskState: (element) => services.genieBridge.dismissElementTaskState(element),
+            getElementAgentTaskState: (element) => services.agentBridge.getElementTaskState(element),
+            getVisibleElementAgentTaskStates: () => services.agentBridge.getVisibleTaskStates(),
+            dismissElementAgentTaskState: (element) => services.agentBridge.dismissElementTaskState(element),
             externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
-            onSendToGenie: options.genieBridge.enableContextAppend ? (element) => {
+            onAppendElementToAgentContext: options.agentBridge.enableContextAppend ? (element) => {
               if (!element.isConnected) return;
-              void services.genieBridge.handleSendSelectionToGenie(element);
+              void services.agentBridge.handleSendSelectionToAgent(element);
             } : void 0,
             getElementStyleSummaryLines: (element) => services.changes.getMetaForElement(element)?.styleSummaryLines ?? [],
+            getElementTools: options.host.getElementTools,
+            onElementToolAction: options.host.onElementToolAction,
             canEditAnnotationMarkdown: options.host.canEditAnnotationMarkdown,
             getAnnotationDocumentEditUrl: options.host.getAnnotationDocumentEditUrl,
             getAnnotationMarkdown: options.host.getAnnotationMarkdown,
@@ -27847,13 +30049,14 @@ function createLifecycleService(deps) {
         state2.propertyPanel.refresh();
       }
       services.changes.renderChangeMarkers();
+      installParentSelectHotkey();
       installSelectionModeHotkey();
       installUiResizeClamp();
       installRouteChangeRefresh();
       state2.active = true;
       state2.panelOnlyMode = false;
-      if (options.genieBridge.autoStartOnLaunch !== false) {
-        services.genieBridge.start();
+      if (options.agentBridge.autoStartOnLaunch !== false) {
+        services.agentBridge.start();
       }
       services.integrationWs?.start();
       onStatusChange?.();
@@ -27868,7 +30071,7 @@ function createLifecycleService(deps) {
   function cleanupInteractionComponents() {
     inlineTextEditingElement = null;
     services.integrationWs?.stop();
-    services.genieBridge.stop();
+    services.agentBridge.stop();
     routeChangeCleanup?.();
     routeChangeCleanup = null;
     state2.uiResizeCleanup?.();
@@ -27889,6 +30092,8 @@ function createLifecycleService(deps) {
     state2.handlesController = null;
     state2.parentSelectController?.dispose();
     state2.parentSelectController = null;
+    state2.parentSelectHotkeyCleanup?.();
+    state2.parentSelectHotkeyCleanup = null;
     state2.transactionManager?.dispose();
     state2.transactionManager = null;
     state2.positionTracker?.dispose();
@@ -28004,12 +30209,12 @@ function createLifecycleService(deps) {
           getAnnotationEnabled: options.ui.getAnnotationEnabled,
           getAnnotationEnableAvailable: options.ui.getAnnotationEnableAvailable,
           getAnnotationEnableLoading: options.ui.getAnnotationEnableLoading,
-          onWakeGenie: void 0,
-          onSendPromptToGenie: async () => {
+          onWakeAgent: void 0,
+          onSendPromptToAgent: async () => {
           },
-          onSendCurrentElementPromptToGenie: async () => {
+          onSendCurrentElementPromptToAgent: async () => {
           },
-          onAbortSendPromptToGenie: () => {
+          onAbortAgentPrompt: () => {
           },
           onRequestClose: () => {
           },
@@ -28021,25 +30226,37 @@ function createLifecycleService(deps) {
           showCopyPromptAction: options.ui.showCopyPromptAction,
           toolbarMode: options.ui.toolbarMode,
           hideExecutionControls: options.ui.hideExecutionControls,
+          aiExecutionConfigSummary: options.ui.aiExecutionConfigSummary,
+          aiExecutionConfigConfigured: options.ui.aiExecutionConfigConfigured,
+          aiExecutionProvider: options.ui.aiExecutionProvider,
+          aiExecutionWorkspacePath: options.ui.aiExecutionWorkspacePath,
+          aiExecutionRunConcurrency: options.ui.aiExecutionRunConcurrency,
+          aiExecutionProviderOptions: options.ui.aiExecutionProviderOptions,
+          onHostToolbarAction: options.ui.onHostToolbarAction,
           externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
-          getGenieBridgeAvailable: () => false,
-          getGenieBridgeConnected: () => false,
-          getCanAbortSendPromptToGenie: () => false,
-          getHasReusableGenieConversation: () => false,
-          getCurrentGenieConversationState: () => null,
-          getElementGenieTaskState: () => null,
-          getVisibleElementGenieTaskStates: () => [],
-          getGenieProviderAvailability: () => null,
-          getGenieProviderAvailabilities: () => [],
-          refreshGenieProviderAvailabilities: () => Promise.resolve(),
+          commentarySkillOptions: options.ui.commentarySkillOptions,
+          commentarySelectedSkillIds: options.ui.commentarySelectedSkillIds,
+          commentarySkillSettingsConfigured: options.ui.commentarySkillSettingsConfigured,
+          onCommentarySkillSelectionLoad: options.ui.onCommentarySkillSelectionLoad,
+          onCommentarySkillSelectionChange: options.ui.onCommentarySkillSelectionChange,
+          getAgentBridgeAvailable: () => false,
+          getAgentBridgeConnected: () => false,
+          getCanAbortAgentPrompt: () => false,
+          getHasReusableAgentConversation: () => false,
+          getCurrentAgentConversationState: () => null,
+          getElementAgentTaskState: () => null,
+          getVisibleElementAgentTaskStates: () => [],
+          getAgentProviderAvailability: () => null,
+          getAgentProviderAvailabilities: () => [],
+          refreshAgentProviderAvailabilities: () => Promise.resolve(),
           subscribeSessionActivity: () => () => void 0,
-          dismissElementGenieTaskState: () => {
+          dismissElementAgentTaskState: () => {
           },
-          dismissVisibleElementGenieTaskStates: () => {
+          dismissVisibleElementAgentTaskStates: () => {
           },
-          getSendPromptToGenieBlockReason: () => "\u5C5E\u6027\u9762\u677F\u4EC5\u9884\u89C8\u6A21\u5F0F\uFF0C\u4E0D\u53EF\u53D1\u9001",
-          getSendCurrentElementPromptToGenieBlockReason: () => "\u5C5E\u6027\u9762\u677F\u4EC5\u9884\u89C8\u6A21\u5F0F\uFF0C\u4E0D\u53EF\u53D1\u9001",
+          getSendPromptToAgentBlockReason: () => "\u5C5E\u6027\u9762\u677F\u4EC5\u9884\u89C8\u6A21\u5F0F\uFF0C\u4E0D\u53EF\u53D1\u9001",
+          getSendCurrentElementPromptToAgentBlockReason: () => "\u5C5E\u6027\u9762\u677F\u4EC5\u9884\u89C8\u6A21\u5F0F\uFF0C\u4E0D\u53EF\u53D1\u9001",
           canExportSelectionToDesignTool: () => false,
           onExportSelectionToDesignTool: async () => {
           },
@@ -28148,7 +30365,13 @@ function createLifecycleService(deps) {
       onStatusChange?.();
     }
   }
-  return { start, startPanelOnly, stop, stopPanelOnly, flushPendingCommentContextSync };
+  return {
+    start,
+    startPanelOnly,
+    stop,
+    stopPanelOnly,
+    flushPendingCommentContextSync
+  };
 }
 
 // src/core/editor/local-actions.ts
@@ -28205,10 +30428,11 @@ function createLocalActionsService(options) {
   }
   async function handleClearEdits(config = {}) {
     const tm = options.state.transactionManager;
+    const clearsPrototype = config.scope === "prototype";
     if (!config.skipConfirm) {
       const confirmed = await options.feedback.confirm({
-        title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-        content: "\u786E\u5B9A\u8981\u6E05\u7A7A\u6240\u6709\u5F85\u4FEE\u6539\u5185\u5BB9\u5417\uFF1F\u5DF2\u4FDD\u5B58\u7684\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002",
+        title: clearsPrototype ? "\u6E05\u7A7A\u5F53\u524D\u539F\u578B\u5168\u90E8\u6279\u6CE8" : "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+        content: clearsPrototype ? "\u786E\u5B9A\u8981\u6E05\u7A7A\u5F53\u524D\u539F\u578B\u6240\u6709\u9875\u9762\u7684\u6279\u6CE8\u5417\uFF1F\u5DF2\u4FDD\u5B58\u7684\u4EE3\u7801\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002" : "\u786E\u5B9A\u8981\u6E05\u7A7A\u6240\u6709\u5F85\u4FEE\u6539\u5185\u5BB9\u5417\uFF1F\u5DF2\u4FDD\u5B58\u7684\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002",
         confirmText: "\u6E05\u7A7A",
         cancelText: "\u53D6\u6D88",
         confirmTone: "primary"
@@ -28223,7 +30447,7 @@ function createLocalActionsService(options) {
     }
     await options.changes.revertAllRecordedTweaks();
     options.changes.clearAllEditMeta();
-    options.persistence.clearStorage();
+    options.persistence.clearStorage(config.scope);
     options.state.propertyPanel?.refresh();
     options.onStatusChange?.();
   }
@@ -28300,47 +30524,24 @@ var CACHE_KEY_PREFIX = "web-editor-v2-cache:";
 var MARKER_VISIBILITY_KEY_PREFIX = "web-editor-v2-markers:";
 var COMMENT_SHORTCUT_SETTINGS_KEY_PREFIX = "web-editor-v2-comment-shortcuts:";
 var UI_SETTINGS_KEY = "web-editor-v2-ui-settings";
-var GENIE_CONVERSATION_KEY_PREFIX = "web-editor-v2-genie-conversation:";
-var GENIE_TASKS_KEY_PREFIX = "web-editor-v2-genie-tasks:";
+var AGENT_CONVERSATION_KEY_PREFIX = "web-editor-v2-agent-conversation:";
+var AGENT_TASKS_KEY_PREFIX = "web-editor-v2-agent-tasks:";
 var SCOPED_COMMENT_TASK_KEY_PREFIX = "page-scope:";
 function stripLocatorDebugSource(locator) {
   if (!locator.debugSource) return locator;
   const { debugSource: _debugSource, ...rest } = locator;
   return rest;
 }
-function extractAnnotationPanelNodeId(locator) {
-  for (const selector of locator?.selectors ?? []) {
-    const normalized = String(selector ?? "").trim();
-    if (!normalized) continue;
-    const match = normalized.match(/\[data-axhub-annotation-panel-node-id=(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/);
-    const rawValue = match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
-    const nodeId = String(rawValue).trim();
-    if (nodeId) return nodeId;
-  }
-  return "";
-}
 function normalizeAnnotationPanelCacheIdentity(locator) {
-  const nodeId = extractAnnotationPanelNodeId(locator);
-  if (!nodeId) return null;
-  const nextElementKey = `annotation-panel:${nodeId}`;
+  const identity = resolveAnnotationTargetIdentity({
+    locator,
+    label: "Annotation Panel"
+  });
+  if (!identity) return null;
   return {
-    elementKey: nextElementKey,
-    locator: {
-      ...locator,
-      fingerprint: nextElementKey
-    }
+    elementKey: identity.elementKey,
+    locator: identity.locator
   };
-}
-function collectAnnotationSourceNodeIdsFromWindow() {
-  if (typeof window === "undefined") return null;
-  const runtimeWindow = window;
-  const documentNodes = runtimeWindow.__AXHUB_ANNOTATION_SOURCE_DOCUMENT__?.data?.nodes;
-  const snapshotNodes = runtimeWindow.__AXHUB_ANNOTATION_SOURCE__?.nodes;
-  const nodes = Array.isArray(documentNodes) ? documentNodes : Array.isArray(snapshotNodes) ? snapshotNodes : null;
-  if (!nodes) return null;
-  return new Set(
-    nodes.map((node) => String(node?.id ?? "").trim()).filter(Boolean)
-  );
 }
 function cloneTweakValue(value) {
   return Array.isArray(value) ? value.slice() : value;
@@ -28362,6 +30563,7 @@ function createPersistenceService(options) {
   let lastAdapterDocument = null;
   let preserveMissingCurrentScopeRecordsOnNextWrite = false;
   const commentTaskStateByElementKey = /* @__PURE__ */ new Map();
+  const clearedCurrentPageRecordKeys = /* @__PURE__ */ new Set();
   function readResourceMetaString2(key) {
     try {
       const resource = getResourceContext();
@@ -28549,7 +30751,7 @@ function createPersistenceService(options) {
     try {
       const url = new URL(window.location.href);
       const params = new URLSearchParams(url.search);
-      for (const key of ["editor", "axhubPane", "axhubQuickEditContext", "genieToolbar"]) {
+      for (const key of ["editor", "axhubPane", "axhubQuickEditContext", "agentToolbar"]) {
         params.delete(key);
       }
       const sortedParams = new URLSearchParams();
@@ -28642,6 +30844,18 @@ function createPersistenceService(options) {
       return "";
     }
   }
+  function normalizeElementRecordKey(value) {
+    const normalized = String(value ?? "").trim();
+    return normalized ? normalized : null;
+  }
+  function isExplicitlyClearedCurrentPageRecord(elementKey, pageScope) {
+    const normalizedElementKey = normalizeElementRecordKey(elementKey);
+    if (!normalizedElementKey || !clearedCurrentPageRecordKeys.has(normalizedElementKey)) {
+      return false;
+    }
+    const normalizedPageScope = normalizePageScope(pageScope);
+    return !normalizedPageScope || normalizedPageScope === resolveCurrentPageScope();
+  }
   function stableJson(value) {
     if (Array.isArray(value)) {
       return `[${value.map((item) => stableJson(item)).join(",")}]`;
@@ -28713,14 +30927,17 @@ function createPersistenceService(options) {
     const tasks = {};
     for (const [elementKey, task] of commentTaskStateByElementKey.entries()) {
       const scopedTask = withCurrentPageScope({ ...task });
+      if (isExplicitlyClearedCurrentPageRecord(elementKey, scopedTask.pageScope)) continue;
+      if (scopedTask.state === "completed") continue;
       tasks[buildCommentTaskDocumentKey(elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
     }
     const allTasks = [
-      ...state2.genieTaskByElementKey.values(),
+      ...state2.agentTaskByElementKey.values(),
       ...state2.externalEditingTaskByElementKey.values()
     ];
     for (const task of allTasks) {
       if (!task?.elementKey) continue;
+      if (task.origin === "external-editing" && task.status === "completed") continue;
       const scopedTask = withCurrentPageScope({
         state: normalizeDocumentTaskState(task.status),
         provider: task.provider,
@@ -28729,6 +30946,7 @@ function createPersistenceService(options) {
         updatedAt: task.updatedAt,
         message: task.message
       });
+      if (isExplicitlyClearedCurrentPageRecord(task.elementKey, scopedTask.pageScope)) continue;
       tasks[buildCommentTaskDocumentKey(task.elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
     }
     return tasks;
@@ -28761,9 +30979,23 @@ function createPersistenceService(options) {
       ...comment ? { note: comment } : {}
     };
   }
-  function buildAdapterDocument(entries, reason = "changes") {
+  function buildAdapterDocument(entries, reason = "changes", clearScope = "page") {
     const scope = resolvePersistenceScope();
     if (!scope) return null;
+    if (reason === "clear" && clearScope === "prototype") {
+      return {
+        schemaVersion: 1,
+        kind: "prototype-edit-comments",
+        resource: {
+          id: scope.prototypeId,
+          targetPath: scope.targetPath,
+          filePath: `src/${scope.targetPath}/.spec/prototype-comments.json`
+        },
+        comments: [],
+        tasks: {},
+        images: []
+      };
+    }
     const currentPageScope = resolveCurrentPageScope();
     const currentComments = entries.map(
       (entry) => withCurrentPageScope(cacheEntryToCommentEntry(entry))
@@ -28771,9 +31003,9 @@ function createPersistenceService(options) {
     const currentImages = buildDocumentImages();
     const currentTasks = buildDocumentTasks();
     const currentTaskElementKeys = new Set([
-      ...commentTaskStateByElementKey.keys(),
-      ...Array.from(state2.genieTaskByElementKey.values()).map((task) => task.elementKey),
-      ...Array.from(state2.externalEditingTaskByElementKey.values()).map((task) => task.elementKey)
+      ...Array.from(commentTaskStateByElementKey.entries()).filter(([, task]) => task.state !== "completed").map(([elementKey]) => elementKey),
+      ...Array.from(state2.agentTaskByElementKey.values()).filter((task) => !(task.origin === "external-editing" && task.status === "completed")).map((task) => task.elementKey),
+      ...Array.from(state2.externalEditingTaskByElementKey.values()).filter((task) => !(task.origin === "external-editing" && task.status === "completed")).map((task) => task.elementKey)
     ].map((elementKey) => String(elementKey ?? "").trim()).filter(Boolean));
     const currentImageKeys = new Set(
       currentImages.map((image) => String(image.elementKey ?? "").trim()).filter(Boolean)
@@ -28789,6 +31021,7 @@ function createPersistenceService(options) {
     const preservedComments = (lastAdapterDocument?.comments ?? []).filter((entry) => {
       const entryScope = normalizePageScope(entry.pageScope);
       const entryKey = resolveCommentRecordKey(entry);
+      if (isExplicitlyClearedCurrentPageRecord(entryKey, entryScope)) return false;
       const hasCurrentRecord = Boolean(entryKey && currentCommentRecordKeys.has(entryKey));
       const entryContentSignature = resolveCommentContentSignature(entry);
       const hasCurrentContent = Boolean(
@@ -28810,14 +31043,29 @@ function createPersistenceService(options) {
     });
     const preservedImages = (lastAdapterDocument?.images ?? []).filter((image) => {
       const imageScope = normalizePageScope(image.pageScope);
-      if (imageScope) return imageScope !== currentPageScope;
       const imageElementKey = String(image.elementKey ?? "").trim();
+      if (isExplicitlyClearedCurrentPageRecord(imageElementKey, imageScope)) return false;
+      if (imageScope) {
+        if (imageScope !== currentPageScope) return true;
+        if (shouldDropMissingCurrentScopeRecords) return false;
+        if (shouldPreserveMissingCurrentScopeRecords) {
+          return !imageElementKey || !currentImageKeys.has(imageElementKey);
+        }
+        return false;
+      }
+      if (shouldDropMissingCurrentScopeRecords) return false;
+      if (shouldPreserveMissingCurrentScopeRecords) {
+        return !imageElementKey || !currentImageKeys.has(imageElementKey);
+      }
       return !imageElementKey || !currentImageKeys.has(imageElementKey);
     });
     const preservedTasks = Object.fromEntries(
       Object.entries(lastAdapterDocument?.tasks ?? {}).filter(([elementKey, task]) => {
         const taskScope = normalizePageScope(task.pageScope);
+        const taskElementKey = resolveCommentTaskElementKey(elementKey, task);
+        if (isExplicitlyClearedCurrentPageRecord(taskElementKey, taskScope)) return false;
         if (taskScope) return taskScope !== currentPageScope;
+        if (shouldDropMissingCurrentScopeRecords) return false;
         return !currentTaskElementKeys.has(elementKey);
       })
     );
@@ -28863,11 +31111,11 @@ function createPersistenceService(options) {
       commentTaskStateByElementKey.set(normalizedElementKey, { ...task });
     }
   }
-  function writeAdapterDocument(entries, reason) {
+  function writeAdapterDocument(entries, reason, clearScope = "page") {
     if (!persistenceAdapter?.write) return;
     const scope = resolvePersistenceScope();
     if (!scope) return;
-    const document2 = buildAdapterDocument(entries, reason);
+    const document2 = buildAdapterDocument(entries, reason, clearScope);
     if (!document2) return;
     lastAdapterDocument = document2;
     preserveMissingCurrentScopeRecordsOnNextWrite = false;
@@ -28891,13 +31139,13 @@ function createPersistenceService(options) {
     } catch {
     }
   }
-  function resolveGenieConversationKey(scopeKey) {
-    return `${GENIE_CONVERSATION_KEY_PREFIX}${scopeKey}`;
+  function resolveAgentConversationKey(scopeKey) {
+    return `${AGENT_CONVERSATION_KEY_PREFIX}${scopeKey}`;
   }
-  function resolveGenieTasksKey(scopeKey) {
-    return `${GENIE_TASKS_KEY_PREFIX}${scopeKey}`;
+  function resolveAgentTasksKey(scopeKey) {
+    return `${AGENT_TASKS_KEY_PREFIX}${scopeKey}`;
   }
-  function sanitizePageGenieConversationState(value) {
+  function sanitizePageAgentConversationState(value) {
     if (!value || typeof value !== "object") return null;
     const record = value;
     const scopeKey = String(record.scopeKey ?? "").trim();
@@ -28921,7 +31169,7 @@ function createPersistenceService(options) {
       sessionUrl: typeof record.sessionUrl === "string" && record.sessionUrl.trim() ? record.sessionUrl.trim() : null
     };
   }
-  function sanitizePersistedElementGenieTaskState(value) {
+  function sanitizePersistedElementAgentTaskState(value) {
     if (!value || typeof value !== "object") return null;
     const record = value;
     const scopeKey = String(record.scopeKey ?? "").trim();
@@ -28934,7 +31182,7 @@ function createPersistenceService(options) {
     const startedAt = Number(record.startedAt ?? 0);
     const updatedAt = Number(record.updatedAt ?? startedAt);
     const lastEventAt = Number(record.lastEventAt ?? updatedAt);
-    const origin = record.origin === "genie-run" || record.origin === "external-editing" ? record.origin : void 0;
+    const origin = record.origin === "agent-run" || record.origin === "external-editing" ? record.origin : void 0;
     return {
       scopeKey,
       elementKey: String(record.elementKey ?? "").trim() || locatorKey(record.locator),
@@ -29019,56 +31267,62 @@ function createPersistenceService(options) {
     } catch {
     }
   }
-  function readGenieConversationState(scopeKey) {
+  function readAgentConversationState(scopeKey) {
     const normalizedScopeKey = String(scopeKey ?? "").trim();
     if (!normalizedScopeKey) return null;
-    return sanitizePageGenieConversationState(
-      readStorageJson(resolveGenieConversationKey(normalizedScopeKey))
+    return sanitizePageAgentConversationState(
+      readStorageJson(resolveAgentConversationKey(normalizedScopeKey))
     );
   }
-  function writeGenieConversationState(scopeKey, conversation) {
+  function writeAgentConversationState(scopeKey, conversation) {
     const normalizedScopeKey = String(scopeKey ?? "").trim();
     if (!normalizedScopeKey) return;
-    const sanitized = sanitizePageGenieConversationState(conversation);
+    const sanitized = sanitizePageAgentConversationState(conversation);
     if (!sanitized) {
-      removeStorageKey(resolveGenieConversationKey(normalizedScopeKey));
+      removeStorageKey(resolveAgentConversationKey(normalizedScopeKey));
       return;
     }
-    writeStorageJson(resolveGenieConversationKey(normalizedScopeKey), sanitized);
+    writeStorageJson(resolveAgentConversationKey(normalizedScopeKey), sanitized);
   }
-  function clearGenieConversationState(scopeKey) {
+  function clearAgentConversationState(scopeKey) {
     const normalizedScopeKey = String(scopeKey ?? "").trim();
     if (!normalizedScopeKey) return;
-    removeStorageKey(resolveGenieConversationKey(normalizedScopeKey));
+    removeStorageKey(resolveAgentConversationKey(normalizedScopeKey));
   }
-  function readGenieTaskStates(scopeKey) {
+  function readAgentTaskStates(scopeKey) {
     const normalizedScopeKey = String(scopeKey ?? "").trim();
     if (!normalizedScopeKey) return [];
-    const raw = readStorageJson(resolveGenieTasksKey(normalizedScopeKey));
+    const raw = readStorageJson(resolveAgentTasksKey(normalizedScopeKey));
     if (!Array.isArray(raw)) return [];
-    return raw.map((entry) => sanitizePersistedElementGenieTaskState(entry)).filter((entry) => {
+    return raw.map((entry) => sanitizePersistedElementAgentTaskState(entry)).filter((entry) => {
       if (!entry || entry.dismissed) return false;
       if (entry.origin === "external-editing") return true;
       return (entry.status === "pending" || entry.status === "created") && typeof entry.sessionId === "string" && entry.sessionId.trim().length > 0 && typeof entry.provider === "string" && entry.provider.trim().length > 0;
     });
   }
-  function writeGenieTaskStates(scopeKey, tasks) {
+  function writeAgentTaskStates(scopeKey, tasks) {
     const normalizedScopeKey = String(scopeKey ?? "").trim();
     if (!normalizedScopeKey) return;
-    const sanitized = Array.isArray(tasks) ? tasks.map((entry) => sanitizePersistedElementGenieTaskState(entry)).filter((entry) => {
+    const sanitized = Array.isArray(tasks) ? tasks.map((entry) => sanitizePersistedElementAgentTaskState(entry)).filter((entry) => {
       if (!entry || entry.dismissed) return false;
       if (entry.origin === "external-editing") return true;
       return (entry.status === "pending" || entry.status === "created") && typeof entry.sessionId === "string" && entry.sessionId.trim().length > 0 && typeof entry.provider === "string" && entry.provider.trim().length > 0;
     }) : [];
     if (sanitized.length === 0) {
-      removeStorageKey(resolveGenieTasksKey(normalizedScopeKey));
+      removeStorageKey(resolveAgentTasksKey(normalizedScopeKey));
       return;
     }
-    writeStorageJson(resolveGenieTasksKey(normalizedScopeKey), sanitized);
+    writeStorageJson(resolveAgentTasksKey(normalizedScopeKey), sanitized);
   }
   function recordCommentTaskState(elementKey, stateValue, taskRef = null) {
-    const normalizedElementKey = String(elementKey ?? "").trim();
+    const normalizedElementKey = normalizeElementRecordKey(elementKey);
     if (!normalizedElementKey) return;
+    if (stateValue === "completed") {
+      clearCommentRecord(normalizedElementKey);
+      persistTaskDocument();
+      return;
+    }
+    clearedCurrentPageRecordKeys.delete(normalizedElementKey);
     commentTaskStateByElementKey.set(normalizedElementKey, {
       ...resolveCurrentPageScope() ? { pageScope: resolveCurrentPageScope() } : {},
       state: stateValue,
@@ -29076,18 +31330,24 @@ function createPersistenceService(options) {
       requestId: typeof taskRef?.requestId === "string" && taskRef.requestId.trim() ? taskRef.requestId.trim() : null,
       sessionId: typeof taskRef?.sessionId === "string" && taskRef.sessionId.trim() ? taskRef.sessionId.trim() : null,
       updatedAt: Date.now(),
-      message: stateValue === "completed" ? "\u4FEE\u6539\u5B8C\u6210" : stateValue === "error" ? "AI \u4FEE\u6539\u5931\u8D25" : stateValue === "editing" ? "AI \u7F16\u8F91\u4E2D" : ""
+      message: stateValue === "error" ? "AI \u4FEE\u6539\u5931\u8D25" : stateValue === "editing" ? "AI \u7F16\u8F91\u4E2D" : ""
     });
     persistTaskDocument();
   }
-  function pruneExpiredGenieTaskStates(scopeKey) {
+  function clearCommentRecord(elementKey) {
+    const normalizedElementKey = normalizeElementRecordKey(elementKey);
+    if (!normalizedElementKey) return;
+    clearedCurrentPageRecordKeys.add(normalizedElementKey);
+    commentTaskStateByElementKey.delete(normalizedElementKey);
+  }
+  function pruneExpiredAgentTaskStates(scopeKey) {
     const normalizedScopeKey = String(scopeKey ?? "").trim();
     if (!normalizedScopeKey) return;
-    writeGenieTaskStates(normalizedScopeKey, readGenieTaskStates(normalizedScopeKey));
+    writeAgentTaskStates(normalizedScopeKey, readAgentTaskStates(normalizedScopeKey));
   }
-  function writeCache(entries, reason = "changes") {
+  function writeCache(entries, reason = "changes", clearScope = "page") {
     writeLocalCache(entries);
-    writeAdapterDocument(entries, reason);
+    writeAdapterDocument(entries, reason, clearScope);
   }
   function buildCacheEntriesFromTransactions() {
     const tm = state2.transactionManager;
@@ -29463,8 +31723,8 @@ function createPersistenceService(options) {
     }
     writeCache(nextEntries);
   }
-  function clearStorage() {
-    writeCache([], "clear");
+  function clearStorage(scope = "page") {
+    writeCache([], "clear", scope);
   }
   return {
     readMarkerVisibility,
@@ -29473,16 +31733,17 @@ function createPersistenceService(options) {
     setCommentShortcutSettings,
     readUiSettings,
     setUiSettings,
-    readGenieConversationState,
-    writeGenieConversationState,
-    clearGenieConversationState,
-    readGenieTaskStates,
-    writeGenieTaskStates(scopeKey, tasks) {
-      writeGenieTaskStates(scopeKey, tasks);
+    readAgentConversationState,
+    writeAgentConversationState,
+    clearAgentConversationState,
+    readAgentTaskStates,
+    writeAgentTaskStates(scopeKey, tasks) {
+      writeAgentTaskStates(scopeKey, tasks);
       persistTaskDocument();
     },
-    pruneExpiredGenieTaskStates,
+    pruneExpiredAgentTaskStates,
     recordCommentTaskState,
+    clearCommentRecord,
     scheduleWrite,
     persistFromTransactions,
     flushPendingWrite,
@@ -29494,9 +31755,6 @@ function createPersistenceService(options) {
 }
 
 // src/core/editor/summaries.ts
-var ANNOTATION_PANEL_TARGET_ATTR = "data-axhub-annotation-panel-target";
-var ANNOTATION_PANEL_NODE_ID_ATTR2 = "data-axhub-annotation-panel-node-id";
-var ANNOTATION_SOURCE_KEY = "__AXHUB_ANNOTATION_SOURCE__";
 var ANNOTATION_PROTO_DEV_KEY = "__AXHUB_PROTO_DEV__";
 var ANNOTATION_TEXT_MAX_LENGTH = 280;
 function normalizeNote(value) {
@@ -29568,10 +31826,7 @@ function readElementAttr(element, attr) {
     return "";
   }
 }
-function readAnnotationPanelNodeId(element) {
-  return readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR2);
-}
-function isPlainObject(value) {
+function isPlainObject2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function truncateInlineText(value, maxLength) {
@@ -29579,7 +31834,7 @@ function truncateInlineText(value, maxLength) {
   return `${value.slice(0, Math.max(0, maxLength - 1)).trimEnd()}\u2026`;
 }
 function formatAnnotationLocator(locator) {
-  if (!isPlainObject(locator)) return "";
+  if (!isPlainObject2(locator)) return "";
   const selectors = Array.isArray(locator.selectors) ? locator.selectors.map((selector) => normalizePathValue2(selector)).filter(Boolean) : [];
   if (selectors.length > 0) return selectors.join(" | ");
   const path = Array.isArray(locator.path) ? locator.path.map((part) => normalizePathValue2(part)).filter(Boolean) : [];
@@ -29598,7 +31853,7 @@ function formatAnnotationControlValue(value) {
   }
 }
 function formatAnnotationControlOption(option) {
-  if (!isPlainObject(option)) return formatAnnotationControlValue(option);
+  if (!isPlainObject2(option)) return formatAnnotationControlValue(option);
   const label = normalizeInlineText(option.label);
   const value = formatAnnotationControlValue(option.value);
   if (label && value && label !== value) return `${label}=${value}`;
@@ -29625,17 +31880,15 @@ function resolveAnnotationAvailablePanels(node) {
   if (annotationText) {
     panels.push("\u5185\u5BB9");
   }
-  if (Array.isArray(node?.controls) && node.controls.some(isPlainObject)) {
+  if (Array.isArray(node?.controls) && node.controls.some(isPlainObject2)) {
     panels.push("\u72B6\u6001");
   }
   return panels;
 }
 function readAnnotationSourceNode(nodeId) {
-  if (!nodeId || typeof window === "undefined") return null;
-  const snapshot = window[ANNOTATION_SOURCE_KEY];
-  const nodes = isPlainObject(snapshot) && Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
-  const matched = nodes.find((node) => isPlainObject(node) && normalizePathValue2(node.id) === nodeId);
-  return isPlainObject(matched) ? matched : null;
+  if (!nodeId) return null;
+  const matched = readAnnotationSourceNodes().find((node) => node.id === nodeId);
+  return matched?.raw && isPlainObject2(matched.raw) ? matched.raw : null;
 }
 function readAnnotationProtoDevState() {
   if (typeof window === "undefined") return null;
@@ -29645,7 +31898,7 @@ function readAnnotationProtoDevState() {
   }
   try {
     const state2 = runtime.getState();
-    return isPlainObject(state2) ? state2 : null;
+    return isPlainObject2(state2) ? state2 : null;
   } catch {
     return null;
   }
@@ -29762,6 +32015,28 @@ function createEditorSummariesService(options) {
       }).replace(/\?$/, "");
     }
   }
+  function resolvePageScopeFromLocation() {
+    if (typeof window === "undefined") return "";
+    try {
+      const url = new URL(window.location.href);
+      const params = new URLSearchParams(url.search);
+      for (const key of ["editor", "axhubPane", "axhubQuickEditContext", "agentToolbar"]) {
+        params.delete(key);
+      }
+      const sortedParams = new URLSearchParams();
+      Array.from(params.entries()).sort(
+        ([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
+      ).forEach(([key, value]) => sortedParams.append(key, value));
+      const search = sortedParams.toString();
+      return `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
+    } catch {
+      return String(window.location.pathname ?? "").trim();
+    }
+  }
+  function resolveCurrentPageScope() {
+    const resource = resolveResourceContext();
+    return readResourceMetaString(resource, "commentPageScope") || readResourceMetaString(resource, "pageScope") || resolvePageScopeFromLocation() || resolveTargetPath() || "";
+  }
   function getUndoStack() {
     return state2.transactionManager?.getUndoStack() ?? [];
   }
@@ -29774,10 +32049,8 @@ function createEditorSummariesService(options) {
     if (textCommentMeta) {
       return textCommentMeta.elementKey;
     }
-    const annotationNodeId = readAnnotationPanelNodeId(element);
-    if (annotationNodeId) {
-      return `annotation-panel:${annotationNodeId}`;
-    }
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) return annotationIdentity.elementKey;
     const locator = createElementLocator(element);
     return generateStableElementKey(element, locator.shadowHostChain);
   }
@@ -29895,6 +32168,21 @@ function createEditorSummariesService(options) {
     }
     return out;
   }
+  function collectTargetedTextChanges() {
+    return aggregateTransactionsByElement(getActiveTransactions()).flatMap((summary) => {
+      const textChange = summary.netEffect.textChange;
+      if (!textChange) return [];
+      const before = normalizeInlineText(textChange.before);
+      const after = normalizeInlineText(textChange.after);
+      if (before === after) return [];
+      return [{
+        elementKey: summary.elementKey,
+        locator: summary.netEffect.locator,
+        before,
+        after
+      }];
+    });
+  }
   function collectStyleCss() {
     const summaries = aggregateTransactionsByElement(getActiveTransactions());
     const rules = [];
@@ -29947,7 +32235,14 @@ ${lines.join("\n")}
   }
   function readElementSnapshot(locator, options2 = {}) {
     const element = tryLocateElement(locator);
-    const currentText = readElementText(element) || formatTextFallback(options2.fallbackText);
+    const isReferenceOnlyDiagram = (() => {
+      try {
+        return Boolean(resolveCommentaryDiagramTarget(element));
+      } catch {
+        return false;
+      }
+    })();
+    const currentText = isReferenceOnlyDiagram ? "" : readElementText(element) || formatTextFallback(options2.fallbackText);
     return {
       tagName: inferTagName(locator, options2.fallbackLabel ?? ""),
       currentText
@@ -29973,9 +32268,11 @@ ${lines.join("\n")}
     lines.push("\u7EA6\u675F: \u5143\u7D20\u63CF\u8FF0\u4EC5\u7528\u4E8E\u5B9A\u4F4D\uFF0C\u53EA\u6539\u52A8\u660E\u786E\u6307\u51FA\u7684\u5185\u5BB9\uFF0C\u5176\u4F59\u4FDD\u6301\u4E0D\u52A8\u3002");
   }
   function resolveAnnotationPromptContext(locator) {
-    const element = tryLocateElement(locator);
-    if (readElementAttr(element, ANNOTATION_PANEL_TARGET_ATTR) !== "true") return null;
-    const nodeId = readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR2);
+    const nodeId = resolveAnnotationNodeIdFromLocator(locator) || (() => {
+      const element = tryLocateElement(locator);
+      if (readElementAttr(element, ANNOTATION_PANEL_TARGET_ATTR) !== "true") return "";
+      return readElementAttr(element, ANNOTATION_PANEL_NODE_ID_ATTR);
+    })();
     if (!nodeId) return null;
     return {
       nodeId,
@@ -30000,7 +32297,7 @@ ${lines.join("\n")}
     );
     if (annotationText) lines.push(`  - \u8282\u70B9\u5185\u5BB9: ${annotationText}`);
     const runtimeState = readAnnotationProtoDevState();
-    const controls = Array.isArray(node?.controls) ? node.controls.filter(isPlainObject).map((control) => formatAnnotationControl(control, runtimeState)).filter(Boolean) : [];
+    const controls = Array.isArray(node?.controls) ? node.controls.filter(isPlainObject2).map((control) => formatAnnotationControl(control, runtimeState)).filter(Boolean) : [];
     if (controls.length > 0) {
       lines.push("  - \u8282\u70B9\u63A7\u4EF6:");
       for (const control of controls) {
@@ -30151,6 +32448,12 @@ ${lines.join("\n")}
       (comment) => Boolean(comment.locator) && (Boolean(comment.note) || (comment.skillIds?.length ?? 0) > 0 || comment.actions.length > 0 || comment.imageAssetPaths.length > 0)
     );
   }
+  function isPersistedCurrentPageMeta(meta, currentPageScope) {
+    const normalizedPageScope = normalizePathValue2(meta.pageScope);
+    const normalizedCurrentPageScope = normalizePathValue2(currentPageScope);
+    if (!normalizedPageScope) return true;
+    return Boolean(normalizedCurrentPageScope && normalizedPageScope === normalizedCurrentPageScope);
+  }
   function buildDefaultCopyPrompt() {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
@@ -30159,7 +32462,10 @@ ${lines.join("\n")}
     const noteOnlyMetas = collectNoteOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     );
-    if (persistedCommentMetas.length === 0 && summaries.length === 0 && noteOnlyMetas.length === 0 && moveSummaries.length === 0) {
+    const currentPageScope = resolveCurrentPageScope();
+    const hasCurrentPageRuntimeItems = summaries.length > 0 || noteOnlyMetas.length > 0 || moveSummaries.length > 0;
+    const effectivePersistedCommentMetas = hasCurrentPageRuntimeItems ? persistedCommentMetas.filter((meta) => !isPersistedCurrentPageMeta(meta, currentPageScope)) : persistedCommentMetas;
+    if (effectivePersistedCommentMetas.length === 0 && summaries.length === 0 && noteOnlyMetas.length === 0 && moveSummaries.length === 0) {
       return "";
     }
     const currentFilePath = resolveCurrentFilePath();
@@ -30191,57 +32497,56 @@ ${lines.join("\n")}
       lines.push("\u4FEE\u6539\u5217\u8868:");
     }
     let itemIndex = 1;
-    if (persistedCommentMetas.length > 0) {
-      for (const meta of persistedCommentMetas) {
+    for (const meta of effectivePersistedCommentMetas) {
+      appendChangeItem(lines, {
+        index: itemIndex,
+        locator: meta.locator,
+        fallbackLabel: meta.label,
+        actions: meta.actions,
+        pageScope: meta.pageScope,
+        imageAssetPaths: meta.imageAssetPaths,
+        note: meta.note
+      });
+      itemIndex += 1;
+    }
+    for (const summary of summaries) {
+      const meta = state2.editMetaByKey.get(summary.elementKey);
+      const note = buildPromptNoteWithSkills(meta?.note ?? "", meta);
+      const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
+      const imageAssetPaths = collectPromptImageAssetPaths(meta?.images);
+      appendChangeItem(lines, {
+        index: itemIndex,
+        locator: summary.netEffect.locator,
+        fallbackLabel: summary.fullLabel || summary.label,
+        fallbackText: summary.netEffect.textChange?.after ?? summary.netEffect.textChange?.before ?? "",
+        debugFileHint: includeDebugFileHint ? formatDebugSource(summary.debugSource) : "",
+        pageScope: currentPageScope,
+        imageAssetPaths,
+        actions,
+        note
+      });
+      itemIndex += 1;
+    }
+    for (const meta of noteOnlyMetas) {
+      const comment = isTextCommentKey(meta.elementKey) ? findTextComment(meta.elementKey) : null;
+      if (comment) {
+        appendTextCommentItem(lines, {
+          index: itemIndex,
+          comment,
+          note: meta.note
+        });
+      } else if (meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0 || meta.imageAssetPaths.length > 0) {
         appendChangeItem(lines, {
           index: itemIndex,
           locator: meta.locator,
           fallbackLabel: meta.label,
           actions: meta.actions,
-          pageScope: meta.pageScope,
+          pageScope: currentPageScope,
           imageAssetPaths: meta.imageAssetPaths,
           note: meta.note
         });
-        itemIndex += 1;
       }
-    } else {
-      for (const summary of summaries) {
-        const meta = state2.editMetaByKey.get(summary.elementKey);
-        const note = buildPromptNoteWithSkills(meta?.note ?? "", meta);
-        const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
-        const imageAssetPaths = collectPromptImageAssetPaths(meta?.images);
-        appendChangeItem(lines, {
-          index: itemIndex,
-          locator: summary.netEffect.locator,
-          fallbackLabel: summary.fullLabel || summary.label,
-          fallbackText: summary.netEffect.textChange?.after ?? summary.netEffect.textChange?.before ?? "",
-          debugFileHint: includeDebugFileHint ? formatDebugSource(summary.debugSource) : "",
-          imageAssetPaths,
-          actions,
-          note
-        });
-        itemIndex += 1;
-      }
-      for (const meta of noteOnlyMetas) {
-        const comment = isTextCommentKey(meta.elementKey) ? findTextComment(meta.elementKey) : null;
-        if (comment) {
-          appendTextCommentItem(lines, {
-            index: itemIndex,
-            comment,
-            note: meta.note
-          });
-        } else if (meta.note || (meta.skillIds?.length ?? 0) > 0 || meta.actions.length > 0 || meta.imageAssetPaths.length > 0) {
-          appendChangeItem(lines, {
-            index: itemIndex,
-            locator: meta.locator,
-            fallbackLabel: meta.label,
-            actions: meta.actions,
-            imageAssetPaths: meta.imageAssetPaths,
-            note: meta.note
-          });
-        }
-        itemIndex += 1;
-      }
+      itemIndex += 1;
     }
     if (moveSummaries.length > 0) {
       lines.push("");
@@ -30428,13 +32733,17 @@ ${lines.join("\n")}
   }
   function buildSaveRunPromptForElement(element) {
     const elementKey = resolveElementKey(element);
-    if (!elementKey) return "";
+    return buildSaveRunPromptForElementKey(elementKey);
+  }
+  function buildSaveRunPromptForElementKey(elementKey) {
+    const normalizedElementKey = String(elementKey || "").trim();
+    if (!normalizedElementKey) return "";
     const undoStack = getActiveTransactions();
-    const summaries = aggregateTransactionsByElement(undoStack).filter((summary) => String(summary.elementKey) === elementKey);
+    const summaries = aggregateTransactionsByElement(undoStack).filter((summary) => String(summary.elementKey) === normalizedElementKey);
     const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
-    ).filter((meta) => meta.elementKey === elementKey);
-    const moveSummaries = collectMoveSummariesWithKeys(undoStack).filter((summary) => summary.elementKey === elementKey).map(({ elementKey: _elementKey, ...summary }) => summary);
+    ).filter((meta) => meta.elementKey === normalizedElementKey);
+    const moveSummaries = collectMoveSummariesWithKeys(undoStack).filter((summary) => summary.elementKey === normalizedElementKey).map(({ elementKey: _elementKey, ...summary }) => summary);
     return buildSaveRunPromptFromParts({
       mode: "initial",
       summaries,
@@ -30515,12 +32824,14 @@ ${lines.join("\n")}
     formatSelectorPath,
     formatElementLabelFromLocator,
     collectTextChanges,
+    collectTargetedTextChanges,
     collectStyleCss,
     collectStyleChanges,
     collectMoveSummaries,
     buildSaveRunPrompt,
     buildAppendSaveRunPrompt,
     buildSaveRunPromptForElement,
+    buildSaveRunPromptForElementKey,
     buildAppendSaveRunPromptForElement,
     buildCopyPrompt,
     getCopyPromptContext,
@@ -30535,11 +32846,19 @@ ${lines.join("\n")}
 function normalizeTextForEditorInput(value) {
   return String(value ?? "").replace(/\r\n?/g, "\n").replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
 }
+function hasOnlyEditableCaretBreaks(element) {
+  const contentEditable = element.getAttribute("contenteditable");
+  if (contentEditable !== "" && contentEditable !== "true" && contentEditable !== "plaintext-only") {
+    return false;
+  }
+  if ((element.textContent ?? "") !== "") return false;
+  return Array.from(element.children).every((child) => child.tagName === "BR");
+}
 function isEditableTextTarget(element) {
   if (!(element instanceof HTMLElement)) return false;
   if (element instanceof HTMLInputElement) return false;
   if (element instanceof HTMLTextAreaElement) return false;
-  if (element.childElementCount > 0) return false;
+  if (element.childElementCount > 0 && !hasOnlyEditableCaretBreaks(element)) return false;
   return true;
 }
 function createTextSessionService(options) {
@@ -30556,7 +32875,7 @@ function createTextSessionService(options) {
     if (normalizedBefore === nextText) {
       return false;
     }
-    if (liveBeforeText !== nextText) {
+    if (liveBeforeText !== nextText || nextText === "" && element.childElementCount > 0) {
       element.textContent = nextText;
     }
     state2.transactionManager?.recordText(element, beforeText, nextText);
@@ -30585,15 +32904,16 @@ function createCommentary(options = {}) {
   const cleanupMobileModeOverride = pushMobileModeOverride(resolvedOptions.mobileMode);
   const state2 = createEditorRuntimeState();
   const statusListeners = /* @__PURE__ */ new Set();
-  const hostResourceProjectPath = (() => {
+  const initialHostResource = (() => {
     try {
-      return String(resolvedOptions.host.getResourceContext?.()?.meta?.projectPath ?? "").trim();
+      return resolvedOptions.host.getResourceContext?.() ?? null;
     } catch {
-      return "";
+      return null;
     }
   })();
+  const hostResourceProjectPath = String(initialHostResource?.meta?.projectPath ?? "").trim();
   const resolvedProjectPath = String(
-    resolvedOptions.genieBridge.projectPath || hostResourceProjectPath
+    resolvedOptions.agentBridge.projectPath || hostResourceProjectPath
   ).trim();
   const summaries = createEditorSummariesService({
     state: state2,
@@ -30608,7 +32928,7 @@ function createCommentary(options = {}) {
   });
   let persistence = null;
   let interaction = null;
-  let genieBridge = null;
+  let agentBridge = null;
   let destroyed = false;
   function buildSelectedElementSummary() {
     const element = state2.selectedElement;
@@ -30645,6 +32965,9 @@ function createCommentary(options = {}) {
   function getTextChanges() {
     return summaries.collectTextChanges();
   }
+  function getTargetedTextChanges() {
+    return summaries.collectTargetedTextChanges();
+  }
   function getClearableCount() {
     const clearableElementKeys = /* @__PURE__ */ new Set();
     for (const meta of state2.editMetaByKey.values()) {
@@ -30652,7 +32975,7 @@ function createCommentary(options = {}) {
         clearableElementKeys.add(meta.elementKey);
       }
     }
-    for (const task of genieBridge?.getVisibleTaskStates() ?? []) {
+    for (const task of agentBridge?.getVisibleTaskStates() ?? []) {
       if (task.status === "completed" || task.status === "error") {
         clearableElementKeys.add(task.elementKey);
       }
@@ -30679,14 +33002,14 @@ function createCommentary(options = {}) {
   }
   function getDebugState() {
     const selectedElement = buildSelectedElementSummary();
-    const currentConversation = genieBridge?.getCurrentConversationState() ?? null;
-    const currentTask = genieBridge?.getElementTaskState(state2.selectedElement) ?? null;
-    const visibleTasks = genieBridge?.getVisibleTaskStates() ?? [];
-    const bridgeConfig = genieBridge?.getDebugInfo?.() ?? null;
+    const currentConversation = agentBridge?.getCurrentConversationState() ?? null;
+    const currentTask = agentBridge?.getElementTaskState(state2.selectedElement) ?? null;
+    const visibleTasks = agentBridge?.getVisibleTaskStates() ?? [];
+    const bridgeConfig = agentBridge?.getDebugInfo?.() ?? null;
     const integrationWsDebugState = services.integrationWs?.getDebugState() ?? null;
     return {
-      available: genieBridge?.isAvailable() ?? false,
-      connected: genieBridge?.isConnected() ?? false,
+      available: agentBridge?.isAvailable() ?? false,
+      connected: agentBridge?.isConnected() ?? false,
       integrationWsStatus: integrationWsDebugState?.status ?? "disconnected",
       integrationWsUrl: integrationWsDebugState?.url ?? null,
       integrationWsLastError: integrationWsDebugState?.lastError ?? null,
@@ -30701,7 +33024,7 @@ function createCommentary(options = {}) {
         expiresAt: currentConversation.expiresAt,
         sessionUrl: currentConversation.sessionUrl
       } : null,
-      hasReusableConversation: genieBridge?.hasReusableConversation() ?? false,
+      hasReusableConversation: agentBridge?.hasReusableConversation() ?? false,
       currentElementTask: currentTask ? {
         elementKey: currentTask.elementKey,
         status: currentTask.status,
@@ -30762,12 +33085,19 @@ function createCommentary(options = {}) {
       copyPromptDisabled: true,
       clearEditsTitle: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
       clearEditsDisabled: true,
+      propertyPanelVisible: false,
       propertyPanelOpen: false,
       propertyPanelTitle: "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
       modifiedCount: 0,
       terminalTaskCount: 0,
       selectedAgent: null,
       agentOptions: [{ value: null, label: "\u9ED8\u8BA4" }],
+      aiExecutionConfigSummary: "",
+      aiExecutionConfigConfigured: false,
+      aiExecutionProvider: "",
+      aiExecutionWorkspacePath: "",
+      aiExecutionRunConcurrency: 5,
+      aiExecutionProviderOptions: [],
       darkMode: false,
       disablePageAnimations: false,
       pageZoomEnabled: false,
@@ -30831,7 +33161,7 @@ function createCommentary(options = {}) {
     if (selectedSummary?.elementKey === elementKey && state2.selectedElement?.isConnected) {
       return state2.selectedElement;
     }
-    const locator = state2.editMetaByKey.get(elementKey)?.locator ?? genieBridge?.getTaskStateByElementKey?.(elementKey)?.locator ?? state2.externalEditingTaskByElementKey.get(elementKey)?.locator ?? state2.genieTaskByElementKey.get(elementKey)?.locator ?? targetRef?.locator ?? null;
+    const locator = state2.editMetaByKey.get(elementKey)?.locator ?? agentBridge?.getTaskStateByElementKey?.(elementKey)?.locator ?? state2.externalEditingTaskByElementKey.get(elementKey)?.locator ?? state2.agentTaskByElementKey.get(elementKey)?.locator ?? targetRef?.locator ?? null;
     if (!locator) return null;
     try {
       const element = locateElement(locator);
@@ -30840,16 +33170,127 @@ function createCommentary(options = {}) {
       return null;
     }
   }
+  function resolveExternalEditingTargetByKey(elementKey, targetRef) {
+    const normalizedElementKey = String(elementKey ?? "").trim();
+    if (!normalizedElementKey) return null;
+    const meta = state2.editMetaByKey.get(normalizedElementKey) ?? null;
+    const task = agentBridge?.getTaskStateByElementKey?.(normalizedElementKey) ?? state2.externalEditingTaskByElementKey.get(normalizedElementKey) ?? state2.agentTaskByElementKey.get(normalizedElementKey) ?? null;
+    const locator = meta?.locator ?? task?.locator ?? targetRef?.locator ?? null;
+    if (!locator) return null;
+    const label = meta?.label ?? task?.label ?? (String(targetRef?.label ?? "").trim() || normalizedElementKey);
+    const annotationTarget = resolveAnnotationTargetIdentity({
+      elementKey: normalizedElementKey,
+      locator,
+      label
+    });
+    if (annotationTarget) {
+      return {
+        elementKey: annotationTarget.elementKey,
+        locator: annotationTarget.locator,
+        label: annotationTarget.label
+      };
+    }
+    return {
+      elementKey: normalizedElementKey,
+      locator,
+      label
+    };
+  }
+  function resolveLiveExternalEditingTarget(target) {
+    if (!target.locator) return null;
+    let element = null;
+    try {
+      element = locateElement(target.locator);
+    } catch {
+      element = null;
+    }
+    if (!element?.isConnected) return null;
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) {
+      return {
+        elementKey: annotationIdentity.elementKey,
+        locator: annotationIdentity.locator,
+        label: annotationIdentity.label
+      };
+    }
+    const locator = createElementLocator(element);
+    return {
+      elementKey: generateStableElementKey(element, locator.shadowHostChain),
+      locator,
+      label: generateFullElementLabel(element, locator.shadowHostChain)
+    };
+  }
+  function locateElementForTarget(target) {
+    if (!target.locator) return null;
+    try {
+      const element = locateElement(target.locator);
+      return element?.isConnected ? element : null;
+    } catch {
+      return null;
+    }
+  }
+  function collectTerminalCleanupTargets(target) {
+    const targets = /* @__PURE__ */ new Map();
+    const addTarget = (item) => {
+      const elementKey = String(item?.elementKey ?? "").trim();
+      if (!item || !elementKey || !item.locator || targets.has(elementKey)) return;
+      targets.set(elementKey, {
+        elementKey,
+        locator: item.locator,
+        label: String(item.label || "").trim() || elementKey
+      });
+    };
+    addTarget(target);
+    const annotationTarget = resolveAnnotationTargetIdentity(target);
+    addTarget(annotationTarget);
+    const liveTarget = resolveLiveExternalEditingTarget(target);
+    addTarget(liveTarget);
+    const liveElement = liveTarget ? locateElementForTarget(liveTarget) : locateElementForTarget(target);
+    const annotationNodeId = annotationTarget?.nodeId || (liveElement ? resolveAnnotationElementIdentity(liveElement)?.nodeId : "") || resolveAnnotationNodeIdFromLocator(target.locator);
+    if (liveElement?.isConnected) {
+      for (const meta of state2.editMetaByKey.values()) {
+        if (!meta.locator) continue;
+        const metaElement = locateElementForTarget({
+          elementKey: meta.elementKey,
+          locator: meta.locator,
+          label: meta.label
+        });
+        if (metaElement === liveElement) {
+          addTarget({
+            elementKey: meta.elementKey,
+            locator: meta.locator,
+            label: meta.label
+          });
+        }
+      }
+    }
+    if (annotationNodeId) {
+      for (const meta of state2.editMetaByKey.values()) {
+        if (!meta.locator) continue;
+        const metaNodeId = resolveAnnotationNodeIdFromLocator(meta.locator);
+        const metaKeyNodeId = String(meta.elementKey ?? "").startsWith("annotation-panel:") ? String(meta.elementKey).replace(/^annotation-panel:/, "") : "";
+        if (metaNodeId !== annotationNodeId && metaKeyNodeId !== annotationNodeId) {
+          continue;
+        }
+        addTarget({
+          elementKey: meta.elementKey,
+          locator: meta.locator,
+          label: meta.label
+        });
+      }
+    }
+    return Array.from(targets.values());
+  }
   function listEditorNodes() {
     const nodeKeys = /* @__PURE__ */ new Set([
       ...state2.editMetaByKey.keys(),
       ...state2.processedEditTimestampsByKey.keys(),
-      ...state2.genieTaskByElementKey.keys(),
+      ...state2.agentTaskByElementKey.keys(),
       ...state2.externalEditingTaskByElementKey.keys()
     ]);
     const items = Array.from(nodeKeys).map((elementKey) => {
       const meta = state2.editMetaByKey.get(elementKey) ?? null;
-      const task = genieBridge?.getTaskStateByElementKey?.(elementKey) ?? state2.externalEditingTaskByElementKey.get(elementKey) ?? state2.genieTaskByElementKey.get(elementKey) ?? null;
+      const task = agentBridge?.getTaskStateByElementKey?.(elementKey) ?? state2.externalEditingTaskByElementKey.get(elementKey) ?? state2.agentTaskByElementKey.get(elementKey) ?? null;
       const lastHandledAtRaw = state2.processedEditTimestampsByKey.get(elementKey);
       const lastHandledAt = Number.isFinite(Number(lastHandledAtRaw)) ? Number(lastHandledAtRaw) : null;
       const hasNote = Boolean(String(meta?.note ?? "").trim());
@@ -30932,34 +33373,171 @@ function createCommentary(options = {}) {
     };
   }
   async function setNodeEditingState(elementKey, nextState, taskRef, targetRef) {
+    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
+    const recordNodeTaskState = (targetElementKey) => {
+      if (nextState === "completed") return;
+      persistence?.recordCommentTaskState?.(targetElementKey, nextState, normalizedTaskRef);
+    };
+    const canForceCompleteWithoutTask = (targetElementKey) => {
+      if (nextState !== "completed") return false;
+      const existingTask = agentBridge?.getTaskStateByElementKey?.(targetElementKey) ?? null;
+      if (!existingTask) return true;
+      return Boolean(
+        normalizedTaskRef?.requestId && existingTask.requestId === normalizedTaskRef.requestId
+      );
+    };
+    const forceCompleteEditsByTarget = (target) => {
+      let applied = false;
+      for (const cleanupTarget of collectTerminalCleanupTargets(target)) {
+        if (!canForceCompleteWithoutTask(cleanupTarget.elementKey)) continue;
+        changes.markElementEditsHandledByKey(cleanupTarget);
+        persistence?.clearCommentRecord?.(cleanupTarget.elementKey);
+        applied = true;
+      }
+      if (applied) {
+        persistence?.flushPendingWrite();
+      }
+      return applied;
+    };
     const targetElement = resolveElementByKey(elementKey, targetRef);
     if (!targetElement) {
+      const target = resolveExternalEditingTargetByKey(elementKey, targetRef);
+      if (nextState === "editing" && target && agentBridge?.setExternalEditingStateByElementKey) {
+        const task = agentBridge.setExternalEditingStateByElementKey(target, taskRef);
+        recordNodeTaskState(target.elementKey);
+        notifyStatusChange();
+        return {
+          elementKey: target.elementKey,
+          state: nextState,
+          applied: Boolean(task),
+          ...normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}
+        };
+      }
+      if ((nextState === "completed" || nextState === "error") && target && agentBridge?.setExternalEditingTerminalStateByElementKey) {
+        const task = agentBridge.setExternalEditingTerminalStateByElementKey(
+          target,
+          nextState,
+          taskRef
+        );
+        if (task && nextState === "completed") {
+          forceCompleteEditsByTarget(target);
+        }
+        if (!task) {
+          if (forceCompleteEditsByTarget(target)) {
+            notifyStatusChange();
+            return {
+              elementKey: target.elementKey,
+              state: nextState,
+              applied: true,
+              ...normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}
+            };
+          }
+          notifyStatusChange();
+          return {
+            elementKey: target.elementKey,
+            state: nextState,
+            applied: false,
+            ...normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}
+          };
+        }
+        recordNodeTaskState(target.elementKey);
+        notifyStatusChange();
+        return {
+          elementKey: target.elementKey,
+          state: nextState,
+          applied: Boolean(task),
+          ...normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}
+        };
+      }
+      if (nextState !== "editing" && agentBridge?.clearExternalEditingStateByElementKey) {
+        const applied = agentBridge.clearExternalEditingStateByElementKey(elementKey, taskRef);
+        recordNodeTaskState(elementKey);
+        notifyStatusChange();
+        return {
+          elementKey,
+          state: nextState,
+          applied,
+          ...normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}
+        };
+      }
       throw new Error(`NOT_FOUND: Element not found for key: ${elementKey}`);
     }
     if (targetRef?.locator) {
-      changes.getOrCreateEditMeta(
+      const annotationTarget = resolveAnnotationTargetIdentity({
         elementKey,
-        targetRef.locator,
-        String(targetRef.label || "").trim() || elementKey
+        locator: targetRef.locator,
+        label: targetRef.label ?? null
+      });
+      const metaTarget = annotationTarget ?? {
+        elementKey,
+        locator: targetRef.locator,
+        label: String(targetRef.label || "").trim() || elementKey
+      };
+      changes.getOrCreateEditMeta(
+        metaTarget.elementKey,
+        metaTarget.locator,
+        metaTarget.label
       );
     }
-    if (!genieBridge?.setExternalEditingState || !genieBridge.clearExternalEditingState) {
+    if (!agentBridge?.setExternalEditingState || !agentBridge.clearExternalEditingState) {
       throw new Error("NOT_IMPLEMENTED: External editing state control is unavailable");
     }
     if (nextState === "editing") {
-      genieBridge.setExternalEditingState(targetElement, taskRef);
+      agentBridge.setExternalEditingState(targetElement, taskRef);
     } else if (nextState === "idle") {
-      genieBridge.clearExternalEditingState(targetElement, taskRef);
+      agentBridge.clearExternalEditingState(targetElement, taskRef);
     } else if (nextState === "completed" || nextState === "error") {
-      if (!genieBridge.setExternalEditingTerminalState) {
-        genieBridge.clearExternalEditingState(targetElement, taskRef);
+      const target = resolveExternalEditingTargetByKey(elementKey, targetRef);
+      let task = null;
+      if (target && agentBridge.setExternalEditingTerminalStateByElementKey) {
+        task = agentBridge.setExternalEditingTerminalStateByElementKey(target, nextState, taskRef);
+        if (task && nextState === "completed") {
+          forceCompleteEditsByTarget(target);
+        }
+        if (!task) {
+          if (forceCompleteEditsByTarget(target)) {
+            notifyStatusChange();
+            return {
+              elementKey,
+              state: nextState,
+              applied: true,
+              ...normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}
+            };
+          }
+          notifyStatusChange();
+          return {
+            elementKey,
+            state: nextState,
+            applied: false,
+            ...normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}
+          };
+        }
+      } else if (agentBridge.setExternalEditingTerminalState) {
+        task = agentBridge.setExternalEditingTerminalState(targetElement, nextState, taskRef);
+        if (!task) {
+          notifyStatusChange();
+          return {
+            elementKey,
+            state: nextState,
+            applied: false,
+            ...normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}
+          };
+        }
       } else {
-        genieBridge.setExternalEditingTerminalState(targetElement, nextState, taskRef);
+        const applied = agentBridge.clearExternalEditingState(targetElement, taskRef);
+        if (!applied) {
+          notifyStatusChange();
+          return {
+            elementKey,
+            state: nextState,
+            applied: false,
+            ...normalizedTaskRef ? { taskRef: normalizedTaskRef } : {}
+          };
+        }
       }
     }
     notifyStatusChange();
-    const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
-    persistence?.recordCommentTaskState?.(elementKey, nextState, normalizedTaskRef);
+    recordNodeTaskState(elementKey);
     return {
       elementKey,
       state: nextState,
@@ -30991,6 +33569,11 @@ function createCommentary(options = {}) {
     },
     onStatusChange: notifyStatusChange
   });
+  const reviewCommentInstallation = installGlobalCommentaryReviewCommentProtocol({
+    isActive: () => !destroyed && state2.active,
+    setComment: (element, comment) => changes.setNoteForElement(element, comment),
+    clearComment: (element) => changes.setNoteForElement(element, "")
+  });
   const textSession = createTextSessionService({
     state: state2,
     ensureSelected: (element, modifiers) => {
@@ -31006,21 +33589,21 @@ function createCommentary(options = {}) {
     interactionProfile: resolvedOptions.interactionProfile
   });
   let flushPendingCommentContextSync = null;
-  genieBridge = createGenieBridgeService({
+  agentBridge = createAgentBridgeService({
     state: state2,
     changes,
     feedback,
     persistence,
     summaries,
     bridgeOptions: {
-      ...resolvedOptions.genieBridge,
+      ...resolvedOptions.agentBridge,
       projectPath: resolvedProjectPath
     },
     onAvailabilityChange: (available) => {
-      if (genieBridge?.isConnected() && !state2.uiSettings.genieAwake) {
+      if (agentBridge?.isConnected() && !state2.uiSettings.agentAwake) {
         state2.uiSettings = {
           ...state2.uiSettings,
-          genieAwake: true
+          agentAwake: true
         };
       }
       if (available) {
@@ -31039,7 +33622,7 @@ function createCommentary(options = {}) {
     getSessionId: () => {
       const integrationSessionId = String(resolvedOptions.integrationWs.sessionId ?? "").trim();
       if (integrationSessionId) return integrationSessionId;
-      return genieBridge?.getCurrentConversationState()?.sessionId ?? null;
+      return agentBridge?.getCurrentConversationState()?.sessionId ?? null;
     },
     getEditedSnapshotPayload,
     listEditorNodes,
@@ -31055,7 +33638,7 @@ function createCommentary(options = {}) {
     changes,
     persistence,
     textSession,
-    genieBridge,
+    agentBridge,
     logPrefix: "[WebEditorV2]",
     onStatusChange: notifyStatusChange
   });
@@ -31075,7 +33658,7 @@ function createCommentary(options = {}) {
     persistence,
     textSession,
     interaction,
-    genieBridge,
+    agentBridge,
     integrationWs,
     localActions
   };
@@ -31158,13 +33741,13 @@ function createCommentary(options = {}) {
   async function clearAllEdits() {
     if (destroyed) return;
     await localActions.handleClearEdits({ skipConfirm: true });
-    for (const task of genieBridge?.getVisibleTaskStates() ?? []) {
+    for (const task of agentBridge?.getVisibleTaskStates() ?? []) {
       if (task.status !== "completed" && task.status !== "error") {
         continue;
       }
       const element = resolveElementByKey(task.elementKey);
       if (element?.isConnected) {
-        genieBridge?.dismissElementTaskState(element);
+        agentBridge?.dismissElementTaskState(element);
       }
     }
     notifyStatusChange();
@@ -31189,6 +33772,7 @@ function createCommentary(options = {}) {
   function destroy() {
     if (destroyed) return;
     destroyed = true;
+    reviewCommentInstallation.dispose();
     lifecycle.stop();
     statusListeners.clear();
     cleanupMobileModeOverride();
@@ -31207,6 +33791,7 @@ function createCommentary(options = {}) {
     getSelectedElement: buildSelectedElementSummary,
     getModifiedElements,
     getTextChanges,
+    getTargetedTextChanges,
     getStyleChanges,
     getEditedSnapshot,
     getDebugState,
@@ -31221,25 +33806,27 @@ function createCommentary(options = {}) {
     subscribeHostToolbarState,
     runHostToolbarAction,
     setNodeEditingState,
-    getCopyPromptText: () => summaries.buildCopyPrompt()
+    getCopyPromptText: () => summaries.buildCopyPrompt(),
+    getElementPromptText: (elementKey) => summaries.buildSaveRunPromptForElementKey(elementKey)
   };
 }
 function createWebEditorV2(options = {}) {
   return createCommentary(options);
 }
 export {
-  AXHUB_WEB_EDITOR_GENIE_REQUEST,
+  AXHUB_WEB_EDITOR_AGENT_REQUEST,
   GLOBAL_COMMENTARY_TWEAK_PROTOCOL_KEY,
-  GenieBrandButton,
   WEB_EDITOR_V1_ACTIONS,
   WEB_EDITOR_V2_ACTIONS,
   createCommentary,
   createCommentaryTweakProtocol,
-  createWebEditorGenieRequestMessage,
+  createWebEditorAgentRequestMessage,
   createWebEditorV2,
   ensureGlobalCommentaryTweakProtocol,
   getGlobalCommentaryTweakProtocol,
-  isWebEditorGenieRequestMessage,
+  installGlobalCommentaryReviewCommentProtocol,
+  isWebEditorAgentRequestMessage,
   notifyGlobalCommentaryTweakProtocol,
-  postWebEditorGenieRequest
+  postWebEditorAgentRequest,
+  resolveCommentaryDiagramTarget
 };

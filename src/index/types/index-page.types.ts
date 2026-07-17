@@ -2,7 +2,14 @@ import type { MutableRefObject, RefObject } from 'react';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../common/ide';
 import type { RuntimeAgentAvailability } from '../../common/agent';
 import type { AcpProvider } from '@/common/assistant-context/types';
-import type { CloudPublishTarget, ReviewResult } from '../services/api';
+import type {
+    CloudPublishTarget,
+    ReviewAxhubConfig,
+    ReviewLanSubmitConfig,
+    ReviewReportDetail,
+    ReviewReportSummary,
+    ReviewResult,
+} from '../services/api';
 import type {
     PreviewConfig,
     MultiPageColumns,
@@ -183,6 +190,8 @@ export interface NewSidebarState {
     webAgentPanelOpen?: boolean;
     aiPanelMode?: AiPanelMode;
     prototypeStartPageActive?: boolean;
+    resourceStartDraftActive?: boolean;
+    themeStartDraftActive?: boolean;
 }
 
 export interface NewSidebarActions {
@@ -216,10 +225,12 @@ export interface NewSidebarActions {
     handleCopyDocPath: (item: ItemData) => void | Promise<void>;
     handleDocVersionManagement: (item: ItemData) => void | Promise<void>;
     onOpenCreateDialog: (initialTab?: CreateDialogTab) => void;
-    onImportTheme: () => void;
     onUploadedResourceFiles?: (files: UploadedResourceFile[]) => void | Promise<void>;
-    onCreateCanvasFile: () => void;
     onCreatePlaceholderPrototype: () => void;
+    onCreateResourceStart: () => void;
+    onCreateThemeStart: () => void;
+    onCreateResourceCanvasFile?: (targetFolder?: string | null) => void | Promise<void>;
+    onCreateDrawioResourceFile?: (targetFolder?: string | null) => void | Promise<void>;
     handleRenameCanvasItem: (item: ItemData, nextName: string) => void | Promise<void>;
     handleDuplicateCanvasItem: (item: ItemData) => void | Promise<void>;
     handleDeleteCanvasItem: (item: ItemData) => void | Promise<void>;
@@ -283,6 +294,8 @@ export interface PresentationAreaState {
     collapsed: boolean;
     selectedItem: ItemData | null;
     prototypeStartDraftActive?: boolean;
+    resourceStartDraftActive?: boolean;
+    themeStartDraftActive?: boolean;
     viewMode: ViewMode;
     activeTab: TabType;
     selectedDeviceId: string;
@@ -302,14 +315,19 @@ export interface PresentationAreaState {
     markdownPromptCopying?: boolean;
     drawioResourceEditAvailable?: boolean;
     reviewPanelOpen?: boolean;
-    activeReviewKind?: ReviewKind;
-    reviewMarkdown?: string;
-    reviewUpdatedAt?: string | null;
+    activeReviewReportId?: string | null;
+    reviewReports?: ReviewReportSummary[];
+    selectedReviewReport?: ReviewReportDetail | null;
     reviewLoading?: boolean;
+    reviewDetailLoading?: boolean;
+    reviewUploadLoading?: boolean;
     reviewError?: string;
-    reviewPageZoomEnabled?: boolean;
+    reviewLanSubmitConfig?: ReviewLanSubmitConfig | null;
+    reviewAxhubSubmitConfig?: ReviewAxhubConfig | null;
     reviewPrompt?: string;
     reviewDocumentPath?: string;
+    reviewPrompts?: Partial<Record<ReviewKind, string>>;
+    reviewDocumentPaths?: Partial<Record<ReviewKind, string>>;
     quickEditRuntimeStatus?: QuickEditRuntimeStatus;
     exportAvailability?: ExportAvailability;
     editorMode?: 'none' | 'quickEdit';
@@ -331,7 +349,7 @@ export interface PresentationAreaState {
     primaryIframeUrl: string;
     secondaryIframeUrl: string;
     elementIframeSize: { width: number; height: number };
-    contentMode?: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
+    contentMode?: 'preview' | 'prototype-spec' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
     docsItems?: ItemData[];
     sidebarTrees?: Partial<Record<SidebarTreeTab, SidebarTreeNode[]>>;
     selectedDoc?: ItemData | null;
@@ -339,6 +357,9 @@ export interface PresentationAreaState {
     selectedCanvas?: CanvasItem | null;
     canvasItems?: CanvasItem[];
     selectedTemplate?: ItemData | null;
+    selectedPrototypeSpec?: ItemData | null;
+    prototypeSpecSupported?: boolean;
+    prototypeSpecLoading?: boolean;
     isDarkMode?: boolean;
     selectedTheme?: ThemeResourceItem | null;
     selectedDataTable?: DataTableResourceItem | null;
@@ -383,16 +404,22 @@ export interface PresentationAreaActions {
     handleChangeSplitPreviewHeight: (pane: 'primary' | 'secondary', height: number) => void;
     handleChangePreviewScaleMode: (mode: PreviewScaleMode) => void;
     handleOpenWebEditor: () => void;
-    handleEnableDocEdit: (mode?: SpecQuickEditMode) => void;
+    handleEnableDocEdit: (mode?: SpecQuickEditMode, options?: { disableSelectionMode?: boolean; preserveSidebar?: boolean }) => void;
     handleSaveDocEdit: () => void;
     handleExitDocEdit: () => void;
     handleSwitchDocQuickEditMode: (mode: SpecQuickEditMode) => void;
     handleOpenDrawioResourceEditor: () => void | Promise<void>;
     handleCopyMarkdownPrompt: () => void | Promise<void>;
     handleReviewPanelToggle?: () => void | Promise<void>;
-    handleReviewKindChange?: (kind: ReviewKind) => void;
-    handleCopyReviewPrompt?: () => void | Promise<void>;
-    handleToggleReviewPageZoom?: () => void;
+    handleSelectReviewReport?: (report: ReviewReportSummary) => void | Promise<void>;
+    handleBackToReviewList?: () => void;
+    handleCopyReviewReportPath?: (report: ReviewReportDetail) => void | Promise<void>;
+    handleDeleteReviewReport?: (report: ReviewReportDetail) => void | Promise<void>;
+    handleStartReview?: (kind: ReviewKind) => void | Promise<void>;
+    handleRunReviewDirect?: (kind: ReviewKind) => void | Promise<boolean | void>;
+    handleUploadReviewReport?: (files: File[], meta: { title?: string; reviewer?: string }) => void | Promise<void>;
+    handleReviewLanSubmitEnabledChange?: (enabled: boolean) => void | Promise<void>;
+    handleReviewAxhubSubmitEnabledChange?: (enabled: boolean) => void | Promise<void>;
     handleRunHostToolbarAction?: (action: CommentaryHostToolbarAction) => void | Promise<boolean>;
     handleRunPrototypePanePromptAction?: (
         pane: PreviewPane,
@@ -413,7 +440,6 @@ export interface PresentationAreaActions {
     handleOpenCloudPublishSettings: (target?: ConfigurableCloudPublishTarget | 'publish-settings') => void;
     handleOpenAxhubPublishDialog: () => void | Promise<void>;
     currentPublishResourcePath: string;
-    visibleCloudPublishTargets: CloudPublishTarget[];
     latestCloudPublishUrl: string;
     handleCopyLatestCloudPublishUrl: () => void | Promise<void>;
     setIsExportModalOpen: (open: boolean) => void;
@@ -423,6 +449,7 @@ export interface PresentationAreaActions {
     handleOpenAxureUsageGuide: () => void;
     handleOpenIdeFile: () => void | Promise<void>;
     handleOpenDocInIDE: () => void | Promise<void>;
+    handleOpenPrototypeSpec: () => void | Promise<void>;
     handleOpenThemeInIDE: () => void | Promise<void>;
     handleOpenThemeDocInIDE: () => void | Promise<void>;
     handleOpenDataTableInIDE: () => void | Promise<void>;
@@ -451,7 +478,12 @@ export interface PresentationAreaActions {
     onPreferredIDEChange?: (ide: MainIDEPreference) => void;
     onOpenAISettings?: () => void;
     onCreatePrototypeForDraftStart?: () => Promise<ItemData | null>;
+    onUploadResourceFiles?: () => void;
+    onCreateResourceCanvasFile?: () => void | Promise<void>;
+    onCreateDrawioResourceFile?: () => void | Promise<void>;
+    onOpenDesignImport?: () => void;
     onRefreshPrototypes?: (preferredName?: string) => Promise<ItemData[]>;
+    agentRunConcurrency?: number;
     onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     onAddCanvasScreenshotToAI?: (attachment: AssistantImageAttachmentPayload) => Promise<boolean> | boolean;
     onAddCanvasImageToAI?: (attachment: AssistantImageAttachmentPayload, promptText?: string) => Promise<boolean> | boolean;

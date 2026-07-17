@@ -77,9 +77,9 @@ describe('make-server project data and theme APIs', () => {
       expect(csv.headers.get('content-type')).toContain('text/csv');
       expect(await csv.text()).toContain('imported');
 
-      expect(JSON.parse(fs.readFileSync(path.join(firstRoot, 'src/database/orders.json'), 'utf8')).records)
+      expect(JSON.parse(fs.readFileSync(path.join(firstRoot, 'src/resources/data/orders.json'), 'utf8')).records)
         .toEqual([{ id: 1, title: 'first' }]);
-      expect(JSON.parse(fs.readFileSync(path.join(secondRoot, 'src/database/orders.json'), 'utf8')).records)
+      expect(JSON.parse(fs.readFileSync(path.join(secondRoot, 'src/resources/data/orders.json'), 'utf8')).records)
         .toEqual([{ id: 3, title: 'imported' }]);
 
       const rename = await fetch(`${server.origin}/api/data/tables/orders`, {
@@ -95,8 +95,8 @@ describe('make-server project data and theme APIs', () => {
           tableName: 'Customers',
         },
       });
-      expect(fs.existsSync(path.join(secondRoot, 'src/database/orders.json'))).toBe(false);
-      expect(JSON.parse(fs.readFileSync(path.join(secondRoot, 'src/database/customers.json'), 'utf8'))).toMatchObject({
+      expect(fs.existsSync(path.join(secondRoot, 'src/resources/data/orders.json'))).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(secondRoot, 'src/resources/data/customers.json'), 'utf8'))).toMatchObject({
         tableName: 'Customers',
       });
       const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(secondRoot), 'utf8'));
@@ -201,7 +201,7 @@ describe('make-server project data and theme APIs', () => {
       const deletedTable = await fetch(`${server.origin}/api/data/tables/customers`, { method: 'DELETE' })
         .then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(deletedTable).toEqual({ status: 200, body: { success: true } });
-      expect(fs.existsSync(path.join(projectRoot, 'src/database/customers.json'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'src/resources/data/customers.json'))).toBe(false);
       const metadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
       expect(metadata.resources).not.toHaveProperty('data');
       expect(metadata.orders).not.toHaveProperty('data');

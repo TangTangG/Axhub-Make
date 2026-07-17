@@ -91,9 +91,8 @@ function normalizeProjectServerConfig(server: unknown, availableLANHosts: string
   const configuredLANHost = normalizeString(raw.lanHost);
   const fallbackLANHost = availableLANHosts.find(Boolean) || '';
   return {
-    ...raw,
+    ...Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'allowLAN')),
     host,
-    allowLAN: raw.allowLAN !== false,
     ...(configuredLANHost || fallbackLANHost ? { lanHost: configuredLANHost || fallbackLANHost } : {}),
   };
 }
@@ -369,7 +368,7 @@ export function handleConfigApi(
         }
         if (hasProjectConfigFields && (!nextConfig.server || typeof nextConfig.server !== 'object')) {
           const currentProjectConfig = handlers.readProjectConfig(requestProjectRoot);
-          nextConfig.server = currentProjectConfig.server || { host: 'localhost', allowLAN: true };
+          nextConfig.server = currentProjectConfig.server || { host: 'localhost' };
         }
         if (nextConfig.automation || nextConfig.assistant || nextConfig.ai || nextConfig.uiPreferences || nextConfig.toolOpenState) {
           serverConfigStore.saveConfig({
@@ -401,6 +400,9 @@ export function handleConfigApi(
           };
           if ('port' in (projectConfig.server as Record<string, unknown>)) {
             delete (projectConfig.server as Record<string, unknown>).port;
+          }
+          if ('allowLAN' in (projectConfig.server as Record<string, unknown>)) {
+            delete (projectConfig.server as Record<string, unknown>).allowLAN;
           }
           if (nextConfig.projectInfo && typeof nextConfig.projectInfo === 'object') {
             const nextProjectName = handlers.stringValue((nextConfig.projectInfo as Record<string, unknown>).name);

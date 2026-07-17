@@ -386,6 +386,85 @@ function buildDocsFileUrl(name: string, projectId: string | null): string {
     return withProjectIdQuery(`/api/docs/${encodeURIComponent(normalizedName)}`, projectId);
 }
 
+function getResourceFileExtension(value: unknown): string {
+    const normalized = String(value || '').trim().replace(/\\/g, '/').toLowerCase();
+    if (normalized.endsWith('.drawio.svg')) {
+        return '.drawio.svg';
+    }
+    const fileName = normalized.split('/').filter(Boolean).pop() || '';
+    const dotIndex = fileName.lastIndexOf('.');
+    return dotIndex >= 0 ? fileName.slice(dotIndex) : '';
+}
+
+function inferResourceOpenMode(...values: unknown[]): ItemData['openMode'] | undefined {
+    for (const value of values) {
+        const ext = getResourceFileExtension(value);
+        if (ext === '.excalidraw') return 'canvas';
+        if (ext === '.drawio' || ext === '.drawio.svg') return 'drawio';
+    }
+    return undefined;
+}
+
+function resolveResourceBackedDocFilePath(openMode: ItemData['openMode'] | undefined, routeName: string, sourcePath: string): string {
+    if (!openMode) {
+        return sourcePath;
+    }
+    const normalizedSourcePath = String(sourcePath || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    if (normalizedSourcePath.startsWith('src/resources/')) {
+        return normalizedSourcePath;
+    }
+    const normalizedRouteName = String(routeName || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    return normalizedRouteName ? `src/resources/${normalizedRouteName}` : normalizedSourcePath;
+}
+
+function normalizeResourceItemIdentity(value: unknown): string {
+    let normalized = String(value || '').trim().replace(/\\/g, '/');
+    if (!normalized) {
+        return '';
+    }
+    try {
+        normalized = decodeURIComponent(normalized);
+    } catch {
+        // Keep the original value when it is not URI-encoded.
+    }
+    normalized = normalized.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/');
+    const resourcesMarker = 'src/resources/';
+    const resourcesIndex = normalized.indexOf(resourcesMarker);
+    if (resourcesIndex >= 0) {
+        normalized = normalized.slice(resourcesIndex + resourcesMarker.length);
+    }
+    for (const prefix of ['api/docs/', 'docs/']) {
+        if (normalized.startsWith(prefix)) {
+            normalized = normalized.slice(prefix.length);
+            break;
+        }
+    }
+    return normalized.replace(/^\/+|\/+$/g, '');
+}
+
+export function findResourceItemByPathOrName(
+    items: ItemData[],
+    resourcePath: unknown,
+    resourceName?: unknown,
+): ItemData | null {
+    const pathCandidate = normalizeResourceItemIdentity(resourcePath);
+    const nameCandidate = normalizeResourceItemIdentity(resourceName);
+    const matches = (item: ItemData, candidate: string) => {
+        if (!candidate) {
+            return false;
+        }
+        return [
+            item.resourceId,
+            item.name,
+            item.filePath,
+            item.absoluteFilePath,
+        ].some((value) => normalizeResourceItemIdentity(value) === candidate);
+    };
+    return items.find((item) => matches(item, pathCandidate))
+        || items.find((item) => matches(item, nameCandidate))
+        || null;
+}
+
 export function normalizeDocItem(
     doc: { name?: string; displayName?: string; path?: string; absoluteFilePath?: string; fileSize?: number },
     projectId: string | null = null,
@@ -394,22 +473,28 @@ export function normalizeDocItem(
     const sourcePath = String(doc?.path || '').trim();
     const absoluteFilePath = String(doc?.absoluteFilePath || '').trim();
     const routeName = normalizeMarkdownResourceName('doc', sourcePath) || normalizedName;
-    const displayName = getDocDisplayName(getDocFileName(normalizedName));
+    const openMode = inferResourceOpenMode(normalizedName, routeName, sourcePath, absoluteFilePath);
+    const filePath = resolveResourceBackedDocFilePath(openMode, routeName, sourcePath);
     const isMarkdown = [
         normalizedName,
         sourcePath,
         absoluteFilePath,
     ].some(hasMarkdownExtension);
-    const directDocsFileUrl = !isMarkdown ? buildDocsFileUrl(routeName, projectId) : '';
+    const directDocsFileUrl = buildDocsFileUrl(routeName, projectId);
+    const itemName = directDocsFileUrl && routeName ? routeName : normalizedName;
+    const displayName = getDocDisplayName(getDocFileName(itemName));
     const markdownUrl = directDocsFileUrl || buildMarkdownFileUrl(absoluteFilePath || sourcePath);
     return {
-        name: normalizedName,
-        displayName: displayName || normalizedName,
+        name: itemName,
+        displayName: displayName || itemName,
         jsUrl: '',
         specUrl: markdownUrl,
         previewUrl: isMarkdown ? buildSpecTemplatePreviewUrl(markdownUrl) : markdownUrl,
-        filePath: sourcePath || undefined,
+        filePath: filePath || undefined,
         absoluteFilePath: absoluteFilePath || undefined,
+        resourceId: itemName || undefined,
+        ...(openMode ? { openMode } : {}),
+        ...(openMode === 'canvas' && filePath ? { canvasFilePath: filePath } : {}),
         ...(typeof doc?.fileSize === 'number' ? { fileSize: doc.fileSize } : {}),
     };
 }

@@ -42,7 +42,7 @@ describe('make-server project resource capability APIs', () => {
       },
       resourceWriteTargets: {
         docs: { path: 'content/docs' },
-        data: { path: 'content/data' },
+        data: { path: 'src/resources/data' },
         prototypes: { path: 'content/prototypes' },
         themes: { path: 'content/themes' },
         templates: { path: 'content/templates' },
@@ -105,15 +105,16 @@ describe('make-server project resource capability APIs', () => {
       expect(resources.capabilities.resourceWrites).toMatchObject({
         docCreate: true,
         docImport: true,
-        templateCreate: false,
-        templateDuplicate: false,
+        dataCreate: true,
+        templateCreate: true,
+        templateDuplicate: true,
       });
     } finally {
       await server.close();
     }
   });
 
-  it('disables create/upload/import routes that need a resource write adapter', async () => {
+  it('keeps adapter-bound routes disabled while default resource file writes work', async () => {
     const projectRoot = createTempRoot();
     writeProjectMetadata(projectRoot, {
       project: { id: 'upload-client', name: 'Upload Client' },
@@ -195,13 +196,14 @@ describe('make-server project resource capability APIs', () => {
         body: JSON.stringify({ displayName: 'Spec Template' }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(templateCreate).toMatchObject({
-        status: 424,
+        status: 201,
         body: {
-          code: 'RESOURCE_WRITE_ADAPTER_REQUIRED',
-          adapterRequired: true,
-          details: { route: '/api/docs/templates' },
+          success: true,
+          name: 'spec-template.md',
+          projectId: 'upload-client',
         },
       });
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/templates/spec-template.md'), 'utf8')).toContain('Spec Template');
 
       fs.mkdirSync(path.join(projectRoot, 'src/resources/templates'), { recursive: true });
       fs.writeFileSync(path.join(projectRoot, 'src/resources/templates/base.md'), '# Base\n', 'utf8');
@@ -209,14 +211,14 @@ describe('make-server project resource capability APIs', () => {
         method: 'POST',
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(templateCopy).toMatchObject({
-        status: 424,
+        status: 201,
         body: {
-          code: 'RESOURCE_WRITE_ADAPTER_REQUIRED',
-          adapterRequired: true,
-          details: { route: '/api/docs/templates/:name/copy' },
+          success: true,
+          name: 'base-copy.md',
+          projectId: 'upload-client',
         },
       });
-      expect(fs.existsSync(path.join(projectRoot, 'src/resources/templates/base-copy.md'))).toBe(false);
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/templates/base-copy.md'), 'utf8')).toBe('# Base\n');
 
       const createTable = await fetch(`${server.origin}/api/data/tables`, {
         method: 'POST',
@@ -224,14 +226,18 @@ describe('make-server project resource capability APIs', () => {
         body: JSON.stringify({ tableName: 'Customers' }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(createTable).toMatchObject({
-        status: 424,
+        status: 201,
         body: {
-          code: 'RESOURCE_WRITE_ADAPTER_REQUIRED',
-          adapterRequired: true,
-          details: { route: '/api/data/tables' },
+          success: true,
+          fileName: 'customers',
+          tableName: 'Customers',
+          projectId: 'upload-client',
         },
       });
-      expect(fs.existsSync(path.join(projectRoot, 'src/database/Customers.json'))).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/resources/data/customers.json'), 'utf8'))).toEqual({
+        tableName: 'Customers',
+        records: [],
+      });
 
       const itemCheck = await fetch(`${server.origin}/api/items/check-references`, {
         method: 'POST',
@@ -273,7 +279,7 @@ describe('make-server project resource capability APIs', () => {
         },
       },
       resourceWriteTargets: {
-        data: { path: 'content/data' },
+        data: { path: 'src/resources/data' },
         themes: { path: 'content/themes' },
         templates: { path: '../outside-templates' },
       },

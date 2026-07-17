@@ -4,8 +4,8 @@ import {
     ClaudeCode,
     Codex,
     Cursor,
-    GeminiCLI,
     Microsoft,
+    OpenAI,
     OpenCode,
     Qoder,
     Trae,
@@ -25,12 +25,14 @@ import {
 } from '../../../common/ide';
 import {
     CLI_AGENT_OPTIONS,
+    LOCAL_APP_AGENT_APP_NAMES,
     LOCAL_APP_AGENT_OPTIONS,
     type CLIAgent,
     type LocalAppAgent,
     type RuntimeAgentAvailability,
     type WebAgent,
 } from '../../../common/agent';
+import { formatLocalAppOpenFailureMessage } from '../../../common/localAppOpenMessage';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -76,11 +78,11 @@ interface OpenInDropdownProps {
 const LOCAL_APP_GROUP_HELP = [
     {
         title: '本地应用',
-        items: ['Codex', 'OpenCode', 'Cursor', 'TRAE', 'vscode', 'TRAE CN', 'Windsurf', 'Qoder', 'Antigravity'],
+        items: ['ChatGPT', 'OpenCode', 'Cursor', 'TRAE', 'vscode', 'TRAE CN', 'Windsurf', 'Qoder', 'Antigravity'],
     },
     {
         title: '本地 CLI',
-        items: ['Codex', 'Gemini', 'Claude Code', 'OpenCode'],
+        items: ['Codex', 'Claude Code', 'OpenCode'],
     },
 ] as const;
 const WEB_AGENT_GROUP_HELP = '打开浏览器内置的 Web AI 面板。';
@@ -109,7 +111,7 @@ const resolveStoredWebOpenMethod = (method: OpenMethod) => {
     if (method.value === 'acp') {
         return { agent: 'acp' as const };
     }
-    if (method.value === 'claude' || method.value === 'codex' || method.value === 'gemini' || method.value === 'opencode') {
+    if (method.value === 'claude' || method.value === 'codex' || method.value === 'opencode') {
         return { agent: 'acp' as const, provider: method.value as AcpProvider };
     }
     return null;
@@ -185,14 +187,13 @@ export default function OpenInDropdown({
 
     const getCLIAgentIcon = (agent: CLIAgent) => {
         if (agent === 'codex') return <Codex.Color size={14} />;
-        if (agent === 'gemini') return <GeminiCLI.Color size={14} />;
         if (agent === 'claudecode') return <ClaudeCode.Color size={14} />;
         if (agent === 'opencode') return <OpenCode size={14} />;
         return <SquareTerminal className="h-3.5 w-3.5" />;
     };
 
     const getLocalAppIcon = (agent: LocalAppAgent) => {
-        if (agent === 'codex') return <Codex.Color size={14} />;
+        if (agent === 'codex') return <OpenAI size={14} />;
         if (agent === 'opencode') return <OpenCode size={14} />;
         return <SquareTerminal className="h-3.5 w-3.5" />;
     };
@@ -269,8 +270,8 @@ export default function OpenInDropdown({
                 window.location.href = result.url;
             }
             toast.success('已在本地应用中打开');
-        } catch (error: any) {
-            toast.warning(error?.message || '打开本地应用失败');
+        } catch {
+            toast.warning(formatLocalAppOpenFailureMessage(LOCAL_APP_AGENT_APP_NAMES[agent]));
         } finally {
             setOpenLoading(false);
         }
@@ -476,7 +477,7 @@ export default function OpenInDropdown({
                     </div>
 
                     <p className="mt-4 text-[12px] leading-5 text-muted-foreground">
-                        适用于 WorkBuddy、TRAE SOLO 等应用。
+                        适用于 WorkBuddy、TRAE WORK 等未在列表中显示或打开失败的应用。
                     </p>
 
                     <DialogFooter className="mt-5 flex flex-row justify-end gap-2 sm:space-x-0">

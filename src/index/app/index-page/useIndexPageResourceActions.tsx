@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CanvasItem, ItemData, SidebarTreeNode, SidebarTreeTab } from '../../types';
 import type { SelectedResourceFolder, UploadedResourceFile } from '../../types/index-page.types';
 import PromptActionButton from '../../components/PromptActionButton';
+import { openDrawioResourceEditor } from '../../domains/drawio/drawioResourceEditor';
 import { sidebarApi } from '../../services/sidebar.api';
 import { hasExplicitLocalPath } from '../../utils/localPath';
 import { removeDocsSidebarTreeItem, sanitizeSidebarTree } from '../../utils/sidebarTree';
 import {
     getDocDisplayName,
     getDocFileName,
+    findResourceItemByPathOrName,
     isProtectedDocItemName,
     isProtectedTemplateName,
     normalizeDocItem,
@@ -30,6 +32,18 @@ import {
     withResourceProject,
     withResourceProjectBody,
 } from './resourceActions.helpers';
+
+const EMPTY_EXCALIDRAW_RESOURCE_CONTENT = JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'https://excalidraw.com',
+    elements: [],
+    appState: {
+        viewBackgroundColor: '#ffffff',
+    },
+    files: {},
+}, null, 2);
+const EMPTY_DRAWIO_RESOURCE_CONTENT = '<mxfile host="embed.diagrams.net"><diagram id="axhub-drawio-default" name="Page-1"><mxGraphModel dx="960" dy="540" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>\n';
 
 function buildCreatedPlaceholderPrototypeItem(result: any): ItemData | null {
     const name = String(result?.name || result?.folderName || '').trim();
@@ -58,6 +72,51 @@ function buildCreatedPlaceholderPrototypeItem(result: any): ItemData | null {
         ...(result?.placeholder === true ? { placeholder: true } : {}),
         ...(result?.placeholderGuide ? { placeholderGuide: result.placeholderGuide } : {}),
     };
+}
+
+function normalizeResourceTreePath(value: unknown): string {
+    const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    const marker = 'src/resources/';
+    if (normalized.startsWith(marker)) {
+        return normalized.slice(marker.length);
+    }
+    const markerIndex = normalized.indexOf(`/${marker}`);
+    if (markerIndex >= 0) {
+        return normalized.slice(markerIndex + marker.length + 1);
+    }
+    return normalized;
+}
+
+function normalizeResourceTargetFolder(value: unknown): string {
+    return normalizeResourceTreePath(value)
+        .replace(/^resources\//u, '')
+        .replace(/\/+/gu, '/')
+        .replace(/^\/+|\/+$/gu, '');
+}
+
+function buildUniqueResourceFileName(items: ItemData[], targetFolder: string | null | undefined, baseName: string): string {
+    const normalizedFolder = normalizeResourceTargetFolder(targetFolder);
+    const normalizedBaseName = String(baseName || 'untitled').trim().replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'untitled';
+    const dotIndex = normalizedBaseName.lastIndexOf('.');
+    const stem = dotIndex > 0 ? normalizedBaseName.slice(0, dotIndex) : normalizedBaseName;
+    const ext = dotIndex > 0 ? normalizedBaseName.slice(dotIndex) : '';
+    const existingPaths = new Set(items
+        .map((item) => normalizeResourceTreePath(item.filePath || item.resourceId || item.name))
+        .filter(Boolean));
+    const buildCandidate = (suffix = '') => (
+        normalizedFolder ? `${normalizedFolder}/${stem}${suffix}${ext}` : `${stem}${suffix}${ext}`
+    );
+    let candidate = buildCandidate();
+    let counter = 2;
+    while (existingPaths.has(candidate)) {
+        candidate = buildCandidate(`-${counter}`);
+        counter += 1;
+    }
+    return candidate;
+}
+
+function getResourceItemPath(item: ItemData): string {
+    return normalizeResourceTreePath(item.filePath || item.name || item.resourceId || '');
 }
 
 function toSelectedResourceFolder(folder: SidebarTreeNode, treeTab: SidebarTreeTab = 'docs'): SelectedResourceFolder {
@@ -183,6 +242,8 @@ export function useIndexPageResourceActions(params: any) {
         reloadCanvasItems,
         getSidebarTabItems,
         loadSidebarTree,
+        resourceStartDraftActive,
+        themeStartDraftActive,
     } = params;
 
     const [defaultThemeName, setDefaultThemeName] = useState<string | null>(null);
@@ -209,6 +270,9 @@ export function useIndexPageResourceActions(params: any) {
 
     useEffect(() => {
         setSelectedDoc((previous) => {
+            if (resourceStartDraftActive) {
+                return previous;
+            }
             if (selectedDocsResourceFolder) {
                 return previous && docsItems.some((item: ItemData) => item.name === previous.name) ? previous : null;
             }
@@ -220,7 +284,7 @@ export function useIndexPageResourceActions(params: any) {
             }
             return docsItems.find((item: ItemData) => item.name === previous.name) || docsItems[0] || null;
         });
-    }, [docsItems, selectedDocsResourceFolder]);
+    }, [docsItems, resourceStartDraftActive, selectedDocsResourceFolder]);
 
     useEffect(() => {
         setSelectedResourceFolder((previous) => {
@@ -250,11 +314,13 @@ export function useIndexPageResourceActions(params: any) {
 
     useEffect(() => {
         setSelectedTheme((previous: any) => (
-            previous && themes.some((item: any) => item.name === previous.name)
+            themeStartDraftActive
+                ? previous
+                : previous && themes.some((item: any) => item.name === previous.name)
                 ? previous
                 : (themes[0] || null)
         ));
-    }, [themes]);
+    }, [themeStartDraftActive, themes]);
 
     useEffect(() => {
         setSelectedDataTable((previous: any) => (
@@ -322,6 +388,118 @@ export function useIndexPageResourceActions(params: any) {
             setSelectedDoc(uploadedDoc);
         }
     }, [loadSidebarTree, reloadDocsItems, setSidebarTab, setViewMode]);
+
+    const findCreatedResourceDoc = useCallback((items: ItemData[], createdName: string): ItemData => {
+        const normalizedCreatedName = normalizeResourceTreePath(createdName);
+        const matchedDoc = items.find((doc) => (
+            normalizeResourceTreePath(doc.filePath || doc.resourceId || doc.name) === normalizedCreatedName
+            || normalizeResourceTreePath(doc.name) === normalizedCreatedName
+        ));
+        if (matchedDoc) {
+            return matchedDoc;
+        }
+        return normalizeDocItem({
+            name: createdName,
+            path: `src/resources/${createdName}`,
+        }, activeProjectId);
+    }, [activeProjectId]);
+
+    const handleCreateResourceCanvasFile = useCallback(async (targetFolder?: string | null) => {
+        const createdName = buildUniqueResourceFileName(docsItems, targetFolder, 'untitled.excalidraw');
+        const hide = messageApi.loading('正在创建画布...', 0);
+        try {
+            const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(createdName)}`), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(buildResourceBody({ content: EMPTY_EXCALIDRAW_RESOURCE_CONTENT })),
+            });
+            const payload = await response.json().catch(() => ({} as any));
+            if (!response.ok) {
+                throw new Error(payload?.error || '创建画布失败');
+            }
+            const nextDocs = await reloadDocsItems();
+            if (typeof loadSidebarTree === 'function') {
+                await loadSidebarTree('docs', { force: true, items: nextDocs });
+            }
+            const createdDoc = findCreatedResourceDoc(nextDocs, createdName);
+            const createdCanvasFilePath = `src/resources/${createdName}`;
+            const selectedCanvasDoc: ItemData = {
+                ...createdDoc,
+                openMode: 'canvas',
+                resourceId: createdDoc.resourceId || createdName,
+                ext: createdDoc.ext || '.excalidraw',
+                filePath: createdDoc.filePath || createdCanvasFilePath,
+                canvasFilePath: createdDoc.canvasFilePath || createdDoc.filePath || createdCanvasFilePath,
+            };
+            setSidebarTab('document');
+            setViewMode('canvas');
+            setSelectedResourceFolder(null);
+            setSelectedDoc(selectedCanvasDoc);
+            messageApi.success('画布已创建');
+        } catch (error: any) {
+            messageApi.error(error?.message || '创建画布失败');
+        } finally {
+            hide();
+        }
+    }, [
+        buildResourceBody,
+        buildResourceUrl,
+        docsItems,
+        findCreatedResourceDoc,
+        loadSidebarTree,
+        messageApi,
+        reloadDocsItems,
+        setSidebarTab,
+        setViewMode,
+    ]);
+
+    const handleCreateDrawioResourceFile = useCallback(async (targetFolder?: string | null) => {
+        const createdName = buildUniqueResourceFileName(docsItems, targetFolder, 'untitled.drawio');
+        const hide = messageApi.loading('正在创建 Drawio 图表...', 0);
+        try {
+            const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(createdName)}`), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(buildResourceBody({ content: EMPTY_DRAWIO_RESOURCE_CONTENT })),
+            });
+            const payload = await response.json().catch(() => ({} as any));
+            if (!response.ok) {
+                throw new Error(payload?.error || '创建 Drawio 图表失败');
+            }
+            const nextDocs = await reloadDocsItems();
+            if (typeof loadSidebarTree === 'function') {
+                await loadSidebarTree('docs', { force: true, items: nextDocs });
+            }
+            const createdDoc = {
+                ...findCreatedResourceDoc(nextDocs, createdName),
+                openMode: 'drawio' as const,
+            };
+            setSidebarTab('document');
+            setViewMode('demo');
+            setSelectedResourceFolder(null);
+            setSelectedDoc(createdDoc);
+            await openDrawioResourceEditor({
+                resource: createdDoc,
+                kind: 'doc',
+                messageApi,
+                onSaved: reloadDocsItems,
+            });
+        } catch (error: any) {
+            messageApi.error(error?.message || '创建 Drawio 图表失败');
+        } finally {
+            hide();
+        }
+    }, [
+        buildResourceBody,
+        buildResourceUrl,
+        docsItems,
+        findCreatedResourceDoc,
+        loadSidebarTree,
+        messageApi,
+        reloadDocsItems,
+        setSidebarTab,
+        setViewMode,
+    ]);
 
     const handleSelectResourceFolder = useCallback((
         folder: SidebarTreeNode,
@@ -1112,7 +1290,7 @@ export function useIndexPageResourceActions(params: any) {
 
     const handleRenameDocItem = useCallback(async (item: ItemData, nextName: string) => {
         const currentName = item.name;
-        const currentResourcePath = String(item.filePath || item.name || '').trim();
+        const currentResourcePath = getResourceItemPath(item);
         const dotIndex = currentName.lastIndexOf('.');
         const currentExt = dotIndex > 0 ? currentName.slice(dotIndex) : '';
         const currentBaseName = resolveDocRenameBaseName(currentName, currentExt);
@@ -1206,9 +1384,8 @@ export function useIndexPageResourceActions(params: any) {
                 } catch {
                 }
             }
-            setSelectedThemeDocRefs((previous) => replaceDocNameInSelections(previous, currentName, renamedDocName));
             const nextDocs = await reloadDocsItems();
-            const renamedDoc = nextDocs.find((doc) => doc.name === renamedDocName);
+            const renamedDoc = findResourceItemByPathOrName(nextDocs, renamedResourcePath, renamedDocName);
             setSelectedDoc(renamedDoc || nextDocs[0] || null);
             messageApi.success('重命名成功');
         } catch (error: any) {
@@ -1229,7 +1406,7 @@ export function useIndexPageResourceActions(params: any) {
     ]);
 
     const handleDuplicateDocItem = useCallback(async (item: ItemData) => {
-        const currentResourcePath = String(item.filePath || item.name || '').trim();
+        const currentResourcePath = getResourceItemPath(item);
         const hide = messageApi.loading('正在创建副本...', 0);
         try {
             const response = await fetch(buildResourceUrl(`/api/docs/${encodeURIComponent(currentResourcePath)}/copy`), {
@@ -1256,7 +1433,7 @@ export function useIndexPageResourceActions(params: any) {
     }, [buildResourceBody, buildResourceUrl, messageApi, reloadDocsItems]);
 
     const handleDeleteDocItem = useCallback(async (item: ItemData) => {
-        const currentResourcePath = String(item.filePath || item.name || '').trim();
+        const currentResourcePath = getResourceItemPath(item);
         const hideChecking = messageApi.loading('正在检查引用...', 0);
         try {
             const checkResult = await checkDocReferences(item.name, 'delete');
@@ -1360,29 +1537,6 @@ export function useIndexPageResourceActions(params: any) {
         setThemeCreateDialogVisible(true);
     }, [setResourceSection, setSidebarTab]);
 
-    const handleCreateCanvasFile = useCallback(async () => {
-        try {
-            const response = await fetch('/api/canvas/create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ displayName: '' }),
-            });
-            if (!response.ok) {
-                const payload = await response.json().catch(() => ({}));
-                throw new Error((payload as any)?.error || '创建画布失败');
-            }
-            const result = await response.json();
-            const nextItems = await reloadCanvasItems();
-            const created = nextItems.find((canvas) => canvas.name === result.name);
-            if (created) {
-                setSidebarTab('canvas');
-                setSelectedCanvas(created);
-            }
-        } catch (error: any) {
-            messageApi.error(error?.message || '创建画布失败');
-        }
-    }, [messageApi, reloadCanvasItems, setSidebarTab]);
-
     const handleCreatePlaceholderPrototype = useCallback(async () => {
         try {
             const response = await fetch(buildResourceUrl('/api/prototypes/create-placeholder'), {
@@ -1422,93 +1576,6 @@ export function useIndexPageResourceActions(params: any) {
             messageApi.error(error?.message || '创建原型失败');
         }
     }, [buildResourceUrl, messageApi, loadData, data, getSidebarTabItems, setSelectedItem, setSidebarTab, setActiveTab, setPendingReturnTarget, setViewMode]);
-
-    const handleRenameCanvasItem = useCallback(async (item: ItemData, nextName: string) => {
-        const hide = messageApi.loading('正在重命名...', 0);
-        try {
-            const response = await fetch(`/api/canvas/${encodeURIComponent(item.name)}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ newBaseName: nextName }),
-            });
-            if (!response.ok) {
-                const payload = await response.json().catch(() => ({}));
-                throw new Error((payload as any)?.error || '重命名失败');
-            }
-            const result = await response.json();
-            const nextItems = await reloadCanvasItems();
-            const renamed = nextItems.find((canvas) => canvas.name === result.name);
-            if (renamed) {
-                setSelectedCanvas(renamed);
-            }
-        } catch (error: any) {
-            messageApi.error(error?.message || '重命名画布失败');
-        } finally {
-            hide();
-        }
-    }, [messageApi, reloadCanvasItems]);
-
-    const handleDuplicateCanvasItem = useCallback(async (item: ItemData) => {
-        const hide = messageApi.loading('正在复制...', 0);
-        try {
-            const response = await fetch(`/api/canvas/${encodeURIComponent(item.name)}/copy`, {
-                method: 'POST',
-            });
-            if (!response.ok) {
-                const payload = await response.json().catch(() => ({}));
-                throw new Error((payload as any)?.error || '复制画布失败');
-            }
-            const result = await response.json();
-            const nextItems = await reloadCanvasItems();
-            const duplicated = nextItems.find((canvas) => canvas.name === result.name);
-            if (duplicated) {
-                setSelectedCanvas(duplicated);
-            }
-        } catch (error: any) {
-            messageApi.error(error?.message || '复制画布失败');
-        } finally {
-            hide();
-        }
-    }, [messageApi, reloadCanvasItems]);
-
-    const handleDeleteCanvasItem = useCallback(async (item: ItemData) => {
-        modal.confirm({
-            title: '确认删除',
-            content: `确定要删除画布 "${item.displayName}" 吗？`,
-            okText: '删除',
-            cancelText: '取消',
-            okButtonProps: { danger: true },
-            onOk: async () => {
-                try {
-                    const response = await fetch(`/api/canvas/${encodeURIComponent(item.name)}`, {
-                        method: 'DELETE',
-                    });
-                    if (!response.ok) {
-                        const payload = await response.json().catch(() => ({}));
-                        throw new Error((payload as any)?.error || '删除画布失败');
-                    }
-                    const nextItems = await reloadCanvasItems();
-                    setSelectedCanvas((previous) => {
-                        if (previous && previous.name !== item.name) {
-                            return previous;
-                        }
-                        return nextItems[0] || null;
-                    });
-                } catch (error: any) {
-                    messageApi.error(error?.message || '删除画布失败');
-                }
-            },
-        });
-    }, [messageApi, modal, reloadCanvasItems]);
-
-    const handleCopyCanvasPath = useCallback(async (item: ItemData) => {
-        try {
-            await navigator.clipboard.writeText(`src/canvas/${item.name}`);
-            messageApi.success('路径已复制');
-        } catch {
-            messageApi.error('复制路径失败');
-        }
-    }, [messageApi]);
 
     const handleCreateFolder = useCallback(async (tab: SidebarTreeTab) => {
         try {
@@ -1643,12 +1710,9 @@ export function useIndexPageResourceActions(params: any) {
         handleDocVersionManagement,
         handleImportThemeResource,
         handleUploadedResourceFiles,
-        handleCreateCanvasFile,
+        handleCreateResourceCanvasFile,
+        handleCreateDrawioResourceFile,
         handleCreatePlaceholderPrototype,
-        handleRenameCanvasItem,
-        handleDuplicateCanvasItem,
-        handleDeleteCanvasItem,
-        handleCopyCanvasPath,
         handleCreateFolder,
         handleProjectTitleChange: async (title: string) => {
             const nextTitle = title.trim();

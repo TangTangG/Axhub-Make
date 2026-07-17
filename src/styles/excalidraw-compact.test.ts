@@ -116,16 +116,12 @@ describe('excalidraw compact canvas styles', () => {
         expect(css).toContain('background: var(--button-hover-bg, var(--axhub-excalidraw-control-hover-bg)) !important;');
     });
 
-    it('keeps canvas welcome hints from intercepting toolbar hover events', () => {
+    it('does not ship custom canvas welcome hint overlay styles', () => {
         const css = readCompactCss();
-        const hintRule = readRuleBlock(css, '.axhub-canvas-welcome-hints');
-        const hintChildrenRule = readRuleBlock(
-            css,
-            '.axhub-canvas-welcome-hints *',
-        );
 
-        expect(hintRule).toContain('pointer-events: none;');
-        expect(hintChildrenRule).toContain('pointer-events: none;');
+        expect(css).not.toContain('.axhub-canvas-welcome-hints');
+        expect(css).not.toContain('.axhub-canvas-welcome-hint');
+        expect(css).not.toContain('axhub-canvas-welcome-hint__arrow');
     });
 
     it('removes the duplicate footer help button and moves undo redo to the footer right', () => {

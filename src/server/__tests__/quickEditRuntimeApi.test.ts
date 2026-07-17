@@ -11,7 +11,10 @@ afterEach(() => {
 });
 
 describe('quick edit runtime script', () => {
-  function createRuntimeHarness(extraWindow: Record<string, any> = {}) {
+  function createRuntimeHarness(
+    extraWindow: Record<string, any> = {},
+    importedModules: Record<string, Record<string, unknown>> = {},
+  ) {
     const listeners = new Map<string, Array<(...args: any[]) => void>>();
     const messages: Array<{ message: any; targetOrigin: string }> = [];
     const appendedElements: any[] = [];
@@ -118,6 +121,8 @@ describe('quick edit runtime script', () => {
       focus: vi.fn(),
       ...extraWindow,
     };
+    const importModule = vi.fn(async (moduleUrl: string) => importedModules[moduleUrl]);
+    windowStub.__importModule = importModule;
     const emitCopyListeners = (event: any) => {
       for (const listener of listeners.get('document:copy') || []) {
         listener(event);
@@ -160,7 +165,11 @@ describe('quick edit runtime script', () => {
       elementFromPoint: vi.fn(),
     };
 
-    vm.runInNewContext(QUICK_EDIT_RUNTIME_SCRIPT, {
+    const runtimeScriptForTest = QUICK_EDIT_RUNTIME_SCRIPT.replace(
+      'axureExportModulePromise = import(moduleUrl).then',
+      'axureExportModulePromise = window.__importModule(moduleUrl).then',
+    );
+    vm.runInNewContext(runtimeScriptForTest, {
       window: windowStub,
       document: documentStub,
       navigator: windowStub.navigator,
@@ -183,7 +192,7 @@ describe('quick edit runtime script', () => {
       }
     };
 
-    return { appendedElements, copiedPlainTexts, documentStub, emit, listeners, messages, windowStub };
+    return { appendedElements, copiedPlainTexts, documentStub, emit, importModule, listeners, messages, windowStub };
   }
 
   function expectStoredTransientRetryToken(windowStub: any, token: string) {
@@ -499,17 +508,29 @@ describe('quick edit runtime script', () => {
     const messageHandlerSource = QUICK_EDIT_RUNTIME_SCRIPT.slice(messageHandlerStart);
     expect(messageHandlerSource).toContain("if (data.type === 'axhub.quickEdit.export.copyToFigma') {\n      updateHostRuntimeOrigin(data);");
     expect(messageHandlerSource).toContain("if (data.type === 'axhub.quickEdit.export.captureScreenshot') {\n      updateHostRuntimeOrigin(data);");
-    expect(messageHandlerSource).toContain("if (data.type === 'axhub.quickEdit.export.axureJson') {\n      updateHostRuntimeOrigin(data);");
+    expect(messageHandlerSource).not.toContain("if (data.type === 'axhub.quickEdit.export.axureJson') {\n      updateHostRuntimeOrigin(data);");
+  });
+
+  it('loads Axure from the exact module URL supplied by the admin host', () => {
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).toContain('let axureExportModulePromise = null;');
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).toContain('function loadAxureExportModule(moduleUrl)');
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).toContain('axureExportModulePromise = import(moduleUrl)');
+    expect(QUICK_EDIT_RUNTIME_SCRIPT).toContain('const exportCore = await loadAxureExportModule(data.axureExportModuleUrl);');
+
+    const axureBranch = QUICK_EDIT_RUNTIME_SCRIPT.slice(
+      QUICK_EDIT_RUNTIME_SCRIPT.indexOf('async function exportAxureJson(data)'),
+      QUICK_EDIT_RUNTIME_SCRIPT.indexOf('async function captureScreenshot(data)'),
+    );
+    expect(axureBranch).not.toContain('loadExportCore()');
+    expect(axureBranch).not.toContain('getRuntimeExportCoreUrl()');
   });
 
   it('handles editable Axure export requests in the make-server runtime and returns the matching request id', async () => {
     const axurePayload = { scene: { items: [] }, imageMap: {} };
+    const axureExportModuleUrl = 'http://localhost:53817/assets/axure-export-runtime.js';
     const htmlToAxure = vi.fn(async () => axurePayload);
-    const { listeners, messages, windowStub } = createRuntimeHarness({
-      axhubExportCore: {
-        copyDocumentForFigmaNewOfficialClipboard: vi.fn(),
-        htmlToAxure,
-      },
+    const { importModule, listeners, messages, windowStub } = createRuntimeHarness({}, {
+      [axureExportModuleUrl]: { htmlToAxure },
     });
 
     listeners.get('window:message')?.[0]?.({
@@ -519,6 +540,7 @@ describe('quick edit runtime script', () => {
         projectId: 'project-1',
         resourceId: 'home',
         resourceType: 'prototypes',
+        axureExportModuleUrl,
         rootName: 'Home Page',
         preserveHierarchy: true,
         preserveSvgIcons: false,
@@ -528,6 +550,7 @@ describe('quick edit runtime script', () => {
       expect(messages.at(-1)?.message?.type).toBe('axhub.quickEdit.export.axureJsonResult');
     });
 
+    expect(importModule).toHaveBeenCalledWith(axureExportModuleUrl);
     expect(windowStub.focus).toHaveBeenCalled();
     expect(htmlToAxure).toHaveBeenCalledWith('#root', {
       rootName: 'Home Page',

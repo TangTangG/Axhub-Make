@@ -120,6 +120,21 @@ function writeCanvasFile(filePath: string, data: any = {}) {
   }, null, 2), 'utf8');
 }
 
+function createDefaultCanvasPayload(data: any = {}) {
+  return {
+    type: 'excalidraw',
+    version: 2,
+    elements: [],
+    appState: {},
+    files: {},
+    ...data,
+  };
+}
+
+function encodeResourceCanvasPath(resourcePath: string): string {
+  return resourcePath.split('/').filter(Boolean).map((segment) => encodeURIComponent(segment)).join('/');
+}
+
 function writeScreenshotProjectMetadata(projectRoot: string) {
   writeProjectMetadata(projectRoot, {
     resourceWriteTargets: {
@@ -148,288 +163,112 @@ describe('canvas API', () => {
     cleanupProjectApiTestRoots();
   });
 
-  it('ensures, reads, and saves the fixed canvas file for a prototype', async () => {
+  it('reads and saves resource canvas files with sibling assets', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
+    const resourcesDir = path.join(projectRoot, 'src', 'resources');
+    const canvasPath = path.join(resourcesDir, 'flows', 'app.excalidraw');
+    writeCanvasFile(canvasPath);
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
-      expect(fs.existsSync(canvasPath)).toBe(false);
-
-      const ensureResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/ensure`, {
-        method: 'POST',
-      });
-      const ensureBody = await ensureResponse.json();
-
-      expect(ensureResponse.status).toBe(201);
-      expect(ensureBody).toMatchObject({
-        success: true,
-        name: 'prototypes/home/canvas.excalidraw',
-        displayName: 'home Canvas',
-        path: 'src/prototypes/home/canvas.excalidraw',
-      });
-      expect(fs.existsSync(canvasPath)).toBe(true);
-
-      const getResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`);
-      expect(getResponse.status).toBe(200);
-      expect(getResponse.headers.get('content-type')).toContain('application/json');
-      expect(await getResponse.json()).toMatchObject({
+      const readResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeURIComponent('flows/app.excalidraw')}`);
+      expect(readResponse.status).toBe(200);
+      await expect(readResponse.json()).resolves.toMatchObject({
         type: 'excalidraw',
         version: 2,
-        elements: [],
       });
 
-      const nextCanvas = {
-        type: 'excalidraw',
-        version: 2,
-        source: '@axhub/make-test',
-        elements: [{ id: 'rect-1', type: 'rectangle' }],
-        appState: { viewBackgroundColor: '#f8fafc' },
-        files: {},
-      };
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: JSON.stringify(nextCanvas, null, 2) }),
-      });
-
-      expect(putResponse.status).toBe(200);
-      expect(await putResponse.json()).toMatchObject({
-        success: true,
-        name: 'prototypes/home/canvas.excalidraw',
-      });
-      expect(JSON.parse(fs.readFileSync(canvasPath, 'utf8'))).toMatchObject(nextCanvas);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('creates standalone canvases without starter content', async () => {
-    const projectRoot = createTempRoot('axhub-make-canvas-api-');
-    writeProjectMetadata(projectRoot);
-    const server = await startActiveCanvasTestServer(projectRoot);
-
-    try {
-      const createResponse = await fetch(`${server.origin}/api/canvas/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: 'Main Canvas' }),
-      });
-      const createBody = await createResponse.json();
-
-      expect(createResponse.status).toBe(201);
-      expect(createBody).toMatchObject({
-        success: true,
-        name: 'main-canvas.excalidraw',
-        displayName: 'Main Canvas',
-      });
-
-      const canvas = JSON.parse(fs.readFileSync(path.join(projectRoot, 'src/canvas/main-canvas.excalidraw'), 'utf8'));
-      expect(canvas).toMatchObject({
+      const canvas = {
         type: 'excalidraw',
         version: 2,
         source: '@axhub/make',
-        elements: [],
-        appState: {
-          viewBackgroundColor: '#ffffff',
+        elements: [
+          {
+            id: 'image-1',
+            type: 'image',
+            fileId: 'resource-image-file',
+          },
+        ],
+        appState: { viewBackgroundColor: '#ffffff' },
+        files: {
+          'resource-image-file': {
+            mimeType: 'image/png',
+            id: 'Resource Image File',
+            dataURL: PNG_DATA_URL,
+          },
         },
-        files: {},
+      };
+
+      const putResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeURIComponent('flows/app.excalidraw')}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: canvas }),
       });
-      expect(JSON.stringify(canvas)).not.toContain('对话技巧');
-      expect(JSON.stringify(canvas)).not.toContain('选择正确模型');
+      expect(putResponse.status).toBe(200);
+      await expect(putResponse.json()).resolves.toMatchObject({
+        success: true,
+        changed: true,
+        name: 'flows/app.excalidraw',
+        path: 'src/resources/flows/app.excalidraw',
+      });
+
+      const rawSaved = fs.readFileSync(canvasPath, 'utf8');
+      expect(rawSaved).not.toContain('data:image');
+      const saved = JSON.parse(rawSaved);
+      expect(saved.files['resource-image-file']).toMatchObject({
+        mimeType: 'image/png',
+        id: 'Resource Image File',
+        path: 'app.assets/images/resource-image-file.png',
+      });
+      const assetPath = path.join(resourcesDir, 'flows', 'app.assets', 'images', 'resource-image-file.png');
+      expect(fs.existsSync(assetPath)).toBe(true);
+
+      const hydrated = await fetch(`${server.origin}/api/canvas/resources/${encodeURIComponent('flows/app.excalidraw')}`)
+        .then((response) => response.json());
+      expect(hydrated.files['resource-image-file']).toMatchObject({
+        path: 'app.assets/images/resource-image-file.png',
+        dataURL: PNG_DATA_URL,
+      });
     } finally {
       await server.close();
     }
   });
 
-  it('accepts beacon-compatible POST writes for canvas content', async () => {
+  it('does not expose legacy prototype or standalone canvas file identity APIs', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
-    const canvasDir = path.join(projectRoot, 'src/canvas');
-    const standaloneCanvasPath = path.join(canvasDir, 'main.excalidraw');
-    writeCanvasFile(standaloneCanvasPath);
+    writeCanvasFile(path.join(projectRoot, 'src', 'canvas', 'main.excalidraw'));
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const prototypeCanvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
-      const prototypeCanvas = {
-        type: 'excalidraw',
-        version: 2,
-        source: '@axhub/make-test',
-        elements: [{ id: 'beacon-rect', type: 'rectangle' }],
-        appState: { viewBackgroundColor: '#f8fafc' },
-        files: {},
-      };
-
-      const prototypeResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: JSON.stringify(prototypeCanvas, null, 2) }),
-      });
-
-      expect(prototypeResponse.status).toBe(200);
-      expect(await prototypeResponse.json()).toMatchObject({
-        success: true,
-        changed: true,
-        name: 'prototypes/home/canvas.excalidraw',
-      });
-      expect(JSON.parse(fs.readFileSync(prototypeCanvasPath, 'utf8'))).toMatchObject(prototypeCanvas);
-
-      const malformedPrototypePost = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      expect(malformedPrototypePost.status).toBe(400);
-      expect(JSON.parse(fs.readFileSync(prototypeCanvasPath, 'utf8'))).toMatchObject(prototypeCanvas);
-
-      const standaloneCanvas = {
-        type: 'excalidraw',
-        version: 2,
-        source: '@axhub/make-test',
-        elements: [{ id: 'standalone-note', type: 'text' }],
-        appState: { viewBackgroundColor: '#fff7ed' },
-        files: {},
-      };
-      const standaloneResponse = await fetch(`${server.origin}/api/canvas/main.excalidraw`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: standaloneCanvas }),
-      });
-
-      expect(standaloneResponse.status).toBe(200);
-      expect(await standaloneResponse.json()).toMatchObject({
-        success: true,
-        changed: true,
-        name: 'main.excalidraw',
-      });
-      expect(JSON.parse(fs.readFileSync(standaloneCanvasPath, 'utf8'))).toMatchObject(standaloneCanvas);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('keeps standalone canvas creation names unique and reports malformed writes', async () => {
-    const projectRoot = createTempRoot('axhub-make-canvas-api-');
-    writeProjectMetadata(projectRoot);
-    const server = await startActiveCanvasTestServer(projectRoot);
-
-    try {
-      const first = await fetch(`${server.origin}/api/canvas/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: 'Main Canvas' }),
-      }).then(async (response) => ({ status: response.status, body: await response.json() }));
-      const second = await fetch(`${server.origin}/api/canvas/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: 'Main Canvas' }),
-      }).then(async (response) => ({ status: response.status, body: await response.json() }));
-      const badCreate = await fetch(`${server.origin}/api/canvas/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{',
-      });
-      const missingRead = await fetch(`${server.origin}/api/canvas/missing.excalidraw`);
-      const missingCopy = await fetch(`${server.origin}/api/canvas/missing.excalidraw/copy`, { method: 'POST' });
-      const badUpdate = await fetch(`${server.origin}/api/canvas/main-canvas.excalidraw`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{',
-      });
-
-      expect(first).toMatchObject({
-        status: 201,
-        body: { success: true, name: 'main-canvas.excalidraw' },
-      });
-      expect(second).toMatchObject({
-        status: 201,
-        body: { success: true, name: 'main-canvas-2.excalidraw' },
-      });
-      expect(badCreate.status).toBe(400);
-      expect(missingRead.status).toBe(404);
-      expect(missingCopy.status).toBe(404);
-      expect(badUpdate.status).toBe(400);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('copies, renames, updates, reads, and deletes standalone canvases safely', async () => {
-    const projectRoot = createTempRoot('axhub-make-canvas-api-');
-    writeProjectMetadata(projectRoot);
-    const canvasDir = path.join(projectRoot, 'src/canvas');
-    fs.mkdirSync(canvasDir, { recursive: true });
-    fs.writeFileSync(path.join(canvasDir, 'main.excalidraw'), JSON.stringify({
-      type: 'excalidraw',
-      version: 2,
-      elements: [],
-      appState: {},
-      files: {},
-    }, null, 2), 'utf8');
-    const server = await startActiveCanvasTestServer(projectRoot);
-
-    try {
-      const list = await fetch(`${server.origin}/api/canvas`).then((response) => response.json());
-      expect(list).toEqual([
-        expect.objectContaining({
-          name: 'main.excalidraw',
-          displayName: 'main',
+      const requests = [
+        fetch(`${server.origin}/api/canvas/prototypes/home/ensure`, { method: 'POST' }),
+        fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`),
+        fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: createDefaultCanvasPayload() }),
         }),
-      ]);
-
-      const copy = await fetch(`${server.origin}/api/canvas/main.excalidraw/copy`, { method: 'POST' })
-        .then(async (response) => ({ status: response.status, body: await response.json() }));
-      expect(copy).toMatchObject({
-        status: 201,
-        body: { success: true, name: 'main-copy.excalidraw' },
-      });
-
-      const rename = await fetch(`${server.origin}/api/canvas/main-copy.excalidraw`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newBaseName: 'Review Board' }),
-      }).then(async (response) => ({ status: response.status, body: await response.json() }));
-      expect(rename).toMatchObject({
-        status: 200,
-        body: { success: true, name: 'review-board.excalidraw' },
-      });
-      expect(fs.existsSync(path.join(canvasDir, 'main-copy.excalidraw'))).toBe(false);
-
-      const update = await fetch(`${server.origin}/api/canvas/review-board.excalidraw`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: {
-            type: 'excalidraw',
-            version: 2,
-            elements: [{ id: 'rect-1', type: 'rectangle' }],
-            appState: {},
-            files: {},
-          },
+        fetch(`${server.origin}/api/canvas`),
+        fetch(`${server.origin}/api/canvas/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ displayName: 'Main Canvas' }),
         }),
-      }).then(async (response) => ({ status: response.status, body: await response.json() }));
-      expect(update).toMatchObject({
-        status: 200,
-        body: { success: true, changed: true, name: 'review-board.excalidraw' },
-      });
+        fetch(`${server.origin}/api/canvas/main.excalidraw`),
+        fetch(`${server.origin}/api/canvas/main.excalidraw/copy`, { method: 'POST' }),
+        fetch(`${server.origin}/api/canvas/main.excalidraw`, { method: 'DELETE' }),
+      ];
 
-      const read = await fetch(`${server.origin}/api/canvas/review-board.excalidraw`);
-      expect(read.status).toBe(200);
-      await expect(read.json()).resolves.toMatchObject({
-        elements: [{ id: 'rect-1' }],
-      });
-
-      const invalid = await fetch(`${server.origin}/api/canvas/${encodeURIComponent('../escape.excalidraw')}`);
-      expect(invalid.status).toBe(403);
-
-      const deleted = await fetch(`${server.origin}/api/canvas/review-board.excalidraw`, { method: 'DELETE' })
-        .then(async (response) => ({ status: response.status, body: await response.json() }));
-      expect(deleted).toEqual({ status: 200, body: { success: true } });
-      expect(fs.existsSync(path.join(canvasDir, 'review-board.excalidraw'))).toBe(false);
+      for (const response of await Promise.all(requests)) {
+        expect(response.status).toBe(404);
+        await expect(response.json()).resolves.toEqual({ error: 'Canvas not found' });
+      }
+      expect(fs.existsSync(path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'src', 'canvas', 'main.excalidraw'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src', 'canvas', 'main-canvas.excalidraw'))).toBe(false);
     } finally {
       await server.close();
     }
@@ -546,14 +385,14 @@ describe('canvas API', () => {
     }
   });
 
-  it('does not rewrite an unchanged prototype canvas file', async () => {
+  it('does not rewrite an unchanged resource canvas file', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
+      const canvasPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.excalidraw');
+      writeCanvasFile(canvasPath);
       const canvas = {
         type: 'excalidraw',
         version: 2,
@@ -562,10 +401,11 @@ describe('canvas API', () => {
         appState: { viewBackgroundColor: '#ffffff' },
         files: {},
       };
+      fs.mkdirSync(path.dirname(canvasPath), { recursive: true });
       fs.writeFileSync(canvasPath, JSON.stringify(canvas, null, 2), 'utf8');
       const beforeMtime = fs.statSync(canvasPath).mtimeMs;
 
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
+      const putResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/app.excalidraw')}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: JSON.stringify(canvas, null, 2) }),
@@ -576,7 +416,7 @@ describe('canvas API', () => {
       expect(await putResponse.json()).toMatchObject({
         success: true,
         changed: false,
-        name: 'prototypes/home/canvas.excalidraw',
+        name: 'flows/app.excalidraw',
       });
     } finally {
       await server.close();
@@ -586,11 +426,11 @@ describe('canvas API', () => {
   it('strips embedded screenshot data URLs when a persisted screenshot URL is available', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
+      const canvasPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.excalidraw');
+      writeCanvasFile(canvasPath);
       const canvas = {
         type: 'excalidraw',
         version: 2,
@@ -611,7 +451,7 @@ describe('canvas API', () => {
         files: {},
       };
 
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
+      const putResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/app.excalidraw')}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: JSON.stringify(canvas, null, 2) }),
@@ -633,11 +473,11 @@ describe('canvas API', () => {
   it('stores Excalidraw image file data as local canvas asset paths instead of inline data URLs', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
+      const canvasPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.excalidraw');
+      writeCanvasFile(canvasPath);
       const canvas = {
         type: 'excalidraw',
         version: 2,
@@ -661,7 +501,7 @@ describe('canvas API', () => {
         },
       };
 
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
+      const putResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/app.excalidraw')}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: JSON.stringify(canvas, null, 2) }),
@@ -676,7 +516,7 @@ describe('canvas API', () => {
       expect(saved.files['image-file-1']).toMatchObject({
         mimeType: 'image/png',
         id: 'image-file-1',
-        path: 'canvas-assets/images/image-file-1.png',
+        path: 'app.assets/images/image-file-1.png',
         created: 1778751138363,
         lastRetrieved: 1778751138363,
       });
@@ -685,9 +525,9 @@ describe('canvas API', () => {
       const assetPath = path.join(
         projectRoot,
         'src',
-        'prototypes',
-        'home',
-        'canvas-assets',
+        'resources',
+        'flows',
+        'app.assets',
         'images',
         'image-file-1.png',
       );
@@ -696,13 +536,13 @@ describe('canvas API', () => {
         Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
       );
 
-      const getResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`);
+      const getResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/app.excalidraw')}`);
       expect(getResponse.status).toBe(200);
       const hydrated = await getResponse.json();
       expect(hydrated.files['image-file-1']).toMatchObject({
         mimeType: 'image/png',
         id: 'image-file-1',
-        path: 'canvas-assets/images/image-file-1.png',
+        path: 'app.assets/images/image-file-1.png',
         dataURL: PNG_DATA_URL,
       });
     } finally {
@@ -713,11 +553,11 @@ describe('canvas API', () => {
   it('stores supported non-PNG Excalidraw image files as local canvas asset paths', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
+      const canvasPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.excalidraw');
+      writeCanvasFile(canvasPath);
       const canvas = {
         type: 'excalidraw',
         version: 2,
@@ -731,7 +571,7 @@ describe('canvas API', () => {
         },
       };
 
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
+      const putResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/app.excalidraw')}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: JSON.stringify(canvas, null, 2) }),
@@ -742,21 +582,21 @@ describe('canvas API', () => {
       expect(saved.files.jpeg).toMatchObject({
         mimeType: 'image/jpeg',
         id: 'Hero Photo',
-        path: 'canvas-assets/images/hero-photo.jpg',
+        path: 'app.assets/images/hero-photo.jpg',
       });
       expect(saved.files.gif).toMatchObject({
         mimeType: 'image/gif',
         id: 'Loop Clip',
-        path: 'canvas-assets/images/loop-clip.gif',
+        path: 'app.assets/images/loop-clip.gif',
       });
       expect(saved.files.webp).toMatchObject({
         mimeType: 'image/webp',
         id: 'Web Preview',
-        path: 'canvas-assets/images/web-preview.webp',
+        path: 'app.assets/images/web-preview.webp',
       });
-      expect(fs.existsSync(path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas-assets', 'images', 'hero-photo.jpg'))).toBe(true);
-      expect(fs.existsSync(path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas-assets', 'images', 'loop-clip.gif'))).toBe(true);
-      expect(fs.existsSync(path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas-assets', 'images', 'web-preview.webp'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src', 'resources', 'flows', 'app.assets', 'images', 'hero-photo.jpg'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src', 'resources', 'flows', 'app.assets', 'images', 'loop-clip.gif'))).toBe(true);
+      expect(fs.existsSync(path.join(projectRoot, 'src', 'resources', 'flows', 'app.assets', 'images', 'web-preview.webp'))).toBe(true);
     } finally {
       await server.close();
     }
@@ -765,11 +605,11 @@ describe('canvas API', () => {
   it('saves generated image results while preserving SVG generator placeholders inline', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
+      const canvasPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.excalidraw');
+      writeCanvasFile(canvasPath);
       const canvas = {
         type: 'excalidraw',
         version: 2,
@@ -808,7 +648,7 @@ describe('canvas API', () => {
         },
       };
 
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
+      const putResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/app.excalidraw')}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: JSON.stringify(canvas, null, 2) }),
@@ -819,7 +659,7 @@ describe('canvas API', () => {
       expect(saved.files['generated-image-file']).toMatchObject({
         mimeType: 'image/png',
         id: 'generated-image-file',
-        path: 'canvas-assets/images/generated-image-file.png',
+        path: 'app.assets/images/generated-image-file.png',
       });
       expect(saved.files['generated-image-file']).not.toHaveProperty('dataURL');
       expect(saved.files['axhub-ai-image-placeholder-v2']).toMatchObject({
@@ -830,9 +670,9 @@ describe('canvas API', () => {
       expect(fs.existsSync(path.join(
         projectRoot,
         'src',
-        'prototypes',
-        'home',
-        'canvas-assets',
+        'resources',
+        'flows',
+        'app.assets',
         'images',
         'generated-image-file.png',
       ))).toBe(true);
@@ -841,12 +681,11 @@ describe('canvas API', () => {
     }
   });
 
-  it('stores standalone Excalidraw image file data as local canvas asset paths instead of inline data URLs', async () => {
+  it('stores nested resource Excalidraw image file data as local canvas asset paths instead of inline data URLs', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    const legacyCanvasDir = path.join(projectRoot, 'src', 'canvas');
-    fs.mkdirSync(legacyCanvasDir, { recursive: true });
-    const canvasPath = path.join(legacyCanvasDir, 'legacy.excalidraw');
+    const canvasPath = path.join(projectRoot, 'src', 'resources', 'boards', 'legacy.excalidraw');
+    fs.mkdirSync(path.dirname(canvasPath), { recursive: true });
     fs.writeFileSync(canvasPath, JSON.stringify({
       type: 'excalidraw',
       version: 2,
@@ -880,7 +719,7 @@ describe('canvas API', () => {
         },
       };
 
-      const putResponse = await fetch(`${server.origin}/api/canvas/legacy.excalidraw`, {
+      const putResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('boards/legacy.excalidraw')}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: JSON.stringify(canvas, null, 2) }),
@@ -895,7 +734,7 @@ describe('canvas API', () => {
       expect(saved.files['legacy-image-file']).toMatchObject({
         mimeType: 'image/png',
         id: 'legacy-image-file',
-        path: 'canvas-assets/legacy/images/legacy-image-file.png',
+        path: 'legacy.assets/images/legacy-image-file.png',
         created: 1778751138363,
         lastRetrieved: 1778751138363,
       });
@@ -904,9 +743,9 @@ describe('canvas API', () => {
       const assetPath = path.join(
         projectRoot,
         'src',
-        'canvas',
-        'canvas-assets',
-        'legacy',
+        'resources',
+        'boards',
+        'legacy.assets',
         'images',
         'legacy-image-file.png',
       );
@@ -915,13 +754,13 @@ describe('canvas API', () => {
         Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
       );
 
-      const getResponse = await fetch(`${server.origin}/api/canvas/legacy.excalidraw`);
+      const getResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('boards/legacy.excalidraw')}`);
       expect(getResponse.status).toBe(200);
       const hydrated = await getResponse.json();
       expect(hydrated.files['legacy-image-file']).toMatchObject({
         mimeType: 'image/png',
         id: 'legacy-image-file',
-        path: 'canvas-assets/legacy/images/legacy-image-file.png',
+        path: 'legacy.assets/images/legacy-image-file.png',
         dataURL: PNG_DATA_URL,
       });
     } finally {
@@ -932,11 +771,10 @@ describe('canvas API', () => {
   it('rejects invalid Excalidraw image file data without writing inline data URLs', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const canvasPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas.excalidraw');
+      const canvasPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.excalidraw');
       const canvas = {
         type: 'excalidraw',
         version: 2,
@@ -960,7 +798,7 @@ describe('canvas API', () => {
         },
       };
 
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
+      const putResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/app.excalidraw')}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: JSON.stringify(canvas, null, 2) }),
@@ -974,9 +812,9 @@ describe('canvas API', () => {
       expect(fs.existsSync(path.join(
         projectRoot,
         'src',
-        'prototypes',
-        'home',
-        'canvas-assets',
+        'resources',
+        'flows',
+        'app.assets',
         'images',
         'image-file-1.png',
       ))).toBe(false);
@@ -985,18 +823,18 @@ describe('canvas API', () => {
     }
   });
 
-  it('persists prototype embed screenshots under canvas-assets and serves them back', async () => {
+  it('persists resource canvas screenshots under sibling assets and serves them back', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
-    writeScreenshotProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
+    writeProjectMetadata(projectRoot);
+    writeCanvasFile(path.join(projectRoot, 'src', 'resources', 'flows', 'app.excalidraw'));
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const screenshotPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas-assets', 'screenshot.png');
-      const legacyScreenshotPath = path.join(projectRoot, 'src', 'prototypes', 'home', 'screenshot.png');
+      const encodedCanvas = encodeResourceCanvasPath('flows/app.excalidraw');
+      const screenshotPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.assets', 'screenshot.png');
       expect(fs.existsSync(screenshotPath)).toBe(false);
 
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/screenshot`, {
+      const putResponse = await fetch(`${server.origin}/api/canvas/resources/${encodedCanvas}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1011,24 +849,23 @@ describe('canvas API', () => {
       expect(putBody).toMatchObject({
         success: true,
         changed: true,
-        prototypeId: 'home',
-        path: 'src/prototypes/home/canvas-assets/screenshot.png',
-        screenshotUrl: expect.stringMatching(/^\/prototypes\/home\/canvas-assets\/screenshot\.png\?v=\d+$/u),
-        apiScreenshotUrl: expect.stringMatching(/^\/api\/canvas\/prototypes\/home\/canvas-assets\/screenshot\.png\?v=\d+$/u),
+        resourcePath: 'flows/app.excalidraw',
+        path: 'src/resources/flows/app.assets/screenshot.png',
+        screenshotUrl: expect.stringMatching(/^\/api\/canvas\/resources\/flows\/app\.excalidraw\/app\.assets\/screenshot\.png\?v=\d+$/u),
+        apiScreenshotUrl: expect.stringMatching(/^\/api\/canvas\/resources\/flows\/app\.excalidraw\/app\.assets\/screenshot\.png\?v=\d+$/u),
         width: 320,
         height: 180,
       });
       expect(fs.existsSync(screenshotPath)).toBe(true);
-      expect(fs.existsSync(legacyScreenshotPath)).toBe(false);
       const written = fs.readFileSync(screenshotPath);
       expect(written.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
 
-      const getResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas-assets/screenshot.png`);
+      const getResponse = await fetch(`${server.origin}/api/canvas/resources/${encodedCanvas}/app.assets/screenshot.png`);
       expect(getResponse.status).toBe(200);
       expect(getResponse.headers.get('content-type')).toBe('image/png');
       expect(Buffer.from(await getResponse.arrayBuffer())).toEqual(written);
 
-      const unchangedResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/screenshot`, {
+      const unchangedResponse = await fetch(`${server.origin}/api/canvas/resources/${encodedCanvas}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dataUrl: PNG_DATA_URL }),
@@ -1037,13 +874,13 @@ describe('canvas API', () => {
       await expect(unchangedResponse.json()).resolves.toMatchObject({
         success: true,
         changed: false,
-        path: 'src/prototypes/home/canvas-assets/screenshot.png',
+        path: 'src/resources/flows/app.assets/screenshot.png',
       });
 
-      const missingResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas-assets/missing.png`);
+      const missingResponse = await fetch(`${server.origin}/api/canvas/resources/${encodedCanvas}/app.assets/missing.png`);
       expect(missingResponse.status).toBe(404);
 
-      const wrongMethodResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas-assets/screenshot.png`, {
+      const wrongMethodResponse = await fetch(`${server.origin}/api/canvas/resources/${encodedCanvas}/app.assets/screenshot.png`, {
         method: 'POST',
       });
       expect(wrongMethodResponse.status).toBe(405);
@@ -1052,34 +889,19 @@ describe('canvas API', () => {
     }
   });
 
-  it('persists canvas-owned embed screenshots with element-specific image files', async () => {
+  it('persists element and page screenshots inside the resource canvas assets folder', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
-    writeScreenshotProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'ref-tutorial');
+    writeProjectMetadata(projectRoot);
+    writeCanvasFile(path.join(projectRoot, 'src', 'resources', 'flows', 'app.excalidraw'));
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const elementScreenshotPath = path.join(
-        projectRoot,
-        'src',
-        'prototypes',
-        'ref-tutorial',
-        'canvas-assets',
-        'embed-embed-1.png',
-      );
-      const latestScreenshotPath = path.join(
-        projectRoot,
-        'src',
-        'prototypes',
-        'ref-tutorial',
-        'canvas-assets',
-        'screenshot.png',
-      );
-      const legacyLatestScreenshotPath = path.join(projectRoot, 'src', 'prototypes', 'ref-tutorial', 'screenshot.png');
-      expect(fs.existsSync(elementScreenshotPath)).toBe(false);
-      expect(fs.existsSync(latestScreenshotPath)).toBe(false);
+      const encodedCanvas = encodeResourceCanvasPath('flows/app.excalidraw');
+      const elementScreenshotPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.assets', 'embed-embed-1.png');
+      const pageScreenshotPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.assets', 'page-order-detail.png');
+      const latestScreenshotPath = path.join(projectRoot, 'src', 'resources', 'flows', 'app.assets', 'screenshot.png');
 
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/ref-tutorial/screenshot`, {
+      const elementResponse = await fetch(`${server.origin}/api/canvas/resources/${encodedCanvas}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1089,64 +911,18 @@ describe('canvas API', () => {
           height: 180,
         }),
       });
-      const putBody = await putResponse.json();
-
-      expect(putResponse.status).toBe(201);
-      expect(putBody).toMatchObject({
+      expect(elementResponse.status).toBe(201);
+      await expect(elementResponse.json()).resolves.toMatchObject({
         success: true,
         changed: true,
-        prototypeId: 'ref-tutorial',
         fileName: 'embed-embed-1.png',
-        path: 'src/prototypes/ref-tutorial/canvas-assets/embed-embed-1.png',
-        latestPath: 'src/prototypes/ref-tutorial/canvas-assets/screenshot.png',
-        screenshotUrl: expect.stringMatching(/^\/prototypes\/ref-tutorial\/canvas-assets\/embed-embed-1\.png\?v=\d+$/u),
-        apiScreenshotUrl: expect.stringMatching(/^\/api\/canvas\/prototypes\/ref-tutorial\/canvas-assets\/embed-embed-1\.png\?v=\d+$/u),
-        width: 320,
-        height: 180,
+        path: 'src/resources/flows/app.assets/embed-embed-1.png',
+        latestPath: 'src/resources/flows/app.assets/screenshot.png',
       });
       expect(fs.existsSync(elementScreenshotPath)).toBe(true);
-      expect(fs.existsSync(latestScreenshotPath)).toBe(true);
-      expect(fs.existsSync(legacyLatestScreenshotPath)).toBe(false);
+      expect(fs.readFileSync(latestScreenshotPath)).toEqual(fs.readFileSync(elementScreenshotPath));
 
-      const written = fs.readFileSync(elementScreenshotPath);
-      expect(fs.readFileSync(latestScreenshotPath)).toEqual(written);
-
-      const getResponse = await fetch(`${server.origin}/api/canvas/prototypes/ref-tutorial/canvas-assets/embed-embed-1.png`);
-      expect(getResponse.status).toBe(200);
-      expect(getResponse.headers.get('content-type')).toBe('image/png');
-      expect(Buffer.from(await getResponse.arrayBuffer())).toEqual(written);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('persists page-level prototype screenshots with page-specific image files', async () => {
-    const projectRoot = createTempRoot('axhub-make-canvas-api-');
-    writeScreenshotProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'checkout');
-    const server = await startActiveCanvasTestServer(projectRoot);
-
-    try {
-      const pageScreenshotPath = path.join(
-        projectRoot,
-        'src',
-        'prototypes',
-        'checkout',
-        'canvas-assets',
-        'page-order-detail.png',
-      );
-      const latestScreenshotPath = path.join(
-        projectRoot,
-        'src',
-        'prototypes',
-        'checkout',
-        'canvas-assets',
-        'screenshot.png',
-      );
-      expect(fs.existsSync(pageScreenshotPath)).toBe(false);
-      expect(fs.existsSync(latestScreenshotPath)).toBe(false);
-
-      const putResponse = await fetch(`${server.origin}/api/canvas/prototypes/checkout/screenshot`, {
+      const pageResponse = await fetch(`${server.origin}/api/canvas/resources/${encodedCanvas}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1156,33 +932,20 @@ describe('canvas API', () => {
           height: 852,
         }),
       });
-      const putBody = await putResponse.json();
-
-      expect(putResponse.status).toBe(201);
-      expect(putBody).toMatchObject({
+      expect(pageResponse.status).toBe(201);
+      await expect(pageResponse.json()).resolves.toMatchObject({
         success: true,
         changed: true,
-        prototypeId: 'checkout',
         fileName: 'page-order-detail.png',
-        path: 'src/prototypes/checkout/canvas-assets/page-order-detail.png',
-        latestPath: 'src/prototypes/checkout/canvas-assets/screenshot.png',
-        screenshotUrl: expect.stringMatching(/^\/prototypes\/checkout\/canvas-assets\/page-order-detail\.png\?v=\d+$/u),
-        apiScreenshotUrl: expect.stringMatching(/^\/api\/canvas\/prototypes\/checkout\/canvas-assets\/page-order-detail\.png\?v=\d+$/u),
+        path: 'src/resources/flows/app.assets/page-order-detail.png',
+        latestPath: 'src/resources/flows/app.assets/screenshot.png',
         width: 393,
         height: 852,
       });
       expect(fs.existsSync(pageScreenshotPath)).toBe(true);
-      expect(fs.existsSync(latestScreenshotPath)).toBe(true);
+      expect(fs.readFileSync(latestScreenshotPath)).toEqual(fs.readFileSync(pageScreenshotPath));
 
-      const written = fs.readFileSync(pageScreenshotPath);
-      expect(fs.readFileSync(latestScreenshotPath)).toEqual(written);
-
-      const getResponse = await fetch(`${server.origin}/api/canvas/prototypes/checkout/canvas-assets/page-order-detail.png`);
-      expect(getResponse.status).toBe(200);
-      expect(getResponse.headers.get('content-type')).toBe('image/png');
-      expect(Buffer.from(await getResponse.arrayBuffer())).toEqual(written);
-
-      const invalidPageResponse = await fetch(`${server.origin}/api/canvas/prototypes/checkout/screenshot`, {
+      const invalidPageResponse = await fetch(`${server.origin}/api/canvas/resources/${encodedCanvas}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1197,136 +960,71 @@ describe('canvas API', () => {
     }
   });
 
-  it('rejects unsafe or non-png prototype screenshots', async () => {
+  it('rejects unsafe or non-png resource canvas screenshots', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
-    writeScreenshotProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
+    writeProjectMetadata(projectRoot);
+    writeCanvasFile(path.join(projectRoot, 'src', 'resources', 'flows', 'app.excalidraw'));
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const escapedResponse = await fetch(`${server.origin}/api/canvas/prototypes/${encodeURIComponent('../outside')}/screenshot`, {
+      const escapedResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeURIComponent('../outside.excalidraw')}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dataUrl: PNG_DATA_URL }),
       });
       expect(escapedResponse.status).toBe(403);
 
-      const jpegResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/screenshot`, {
+      const jpegResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/app.excalidraw')}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dataUrl: 'data:image/jpeg;base64,abcd' }),
       });
       expect(jpegResponse.status).toBe(400);
 
-      const wrongMethodResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/screenshot`);
+      const wrongMethodResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/app.excalidraw')}/screenshot`);
       expect(wrongMethodResponse.status).toBe(405);
 
-      const missingPrototypeResponse = await fetch(`${server.origin}/api/canvas/prototypes/missing/screenshot`, {
+      const missingCanvasResponse = await fetch(`${server.origin}/api/canvas/resources/${encodeResourceCanvasPath('flows/missing.excalidraw')}/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dataUrl: PNG_DATA_URL }),
       });
-      expect(missingPrototypeResponse.status).toBe(404);
-      expect(fs.existsSync(path.join(projectRoot, 'src', 'outside', 'screenshot.png'))).toBe(false);
-      expect(fs.existsSync(path.join(projectRoot, 'src', 'prototypes', 'home', 'screenshot.png'))).toBe(false);
+      expect(missingCanvasResponse.status).toBe(404);
+      expect(fs.existsSync(path.join(projectRoot, 'src', 'outside.assets', 'screenshot.png'))).toBe(false);
+      expect(fs.existsSync(path.join(projectRoot, 'src', 'resources', 'flows', 'app.assets', 'outside.png'))).toBe(false);
     } finally {
       await server.close();
     }
   });
 
-  it('rejects prototype canvas path escapes and missing prototype directories', async () => {
+  it('does not expose legacy prototype screenshot APIs', async () => {
     const projectRoot = createTempRoot('axhub-make-canvas-api-');
     writeProjectMetadata(projectRoot);
     writePrototypeDir(projectRoot, 'home');
     const server = await startActiveCanvasTestServer(projectRoot);
 
     try {
-      const escapedResponse = await fetch(`${server.origin}/api/canvas/prototypes/${encodeURIComponent('../outside')}/ensure`, {
-        method: 'POST',
-      });
-      expect(escapedResponse.status).toBe(403);
-      expect(fs.existsSync(path.join(projectRoot, 'src', 'outside', 'canvas.excalidraw'))).toBe(false);
-
-      const missingResponse = await fetch(`${server.origin}/api/canvas/prototypes/missing/ensure`, {
-        method: 'POST',
-      });
-      expect(missingResponse.status).toBe(404);
-      expect(fs.existsSync(path.join(projectRoot, 'src', 'prototypes', 'missing', 'canvas.excalidraw'))).toBe(false);
-
-      const invalidEncodedResponse = await fetch(`${server.origin}/api/canvas/prototypes/%E0%A4%A/ensure`, {
-        method: 'POST',
-      });
-      expect(invalidEncodedResponse.status).toBe(400);
-
-      const wrongEnsureMethod = await fetch(`${server.origin}/api/canvas/prototypes/home/ensure`);
-      expect(wrongEnsureMethod.status).toBe(405);
-
-      const wrongCanvasMethod = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas.excalidraw`, {
-        method: 'DELETE',
-      });
-      expect(wrongCanvasMethod.status).toBe(405);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('requires declared prototype write targets before persisting screenshots', async () => {
-    const projectRoot = createTempRoot('axhub-make-canvas-api-');
-    writeProjectMetadata(projectRoot);
-    writePrototypeDir(projectRoot, 'home');
-    const server = await startActiveCanvasTestServer(projectRoot);
-
-    try {
-      const response = await fetch(`${server.origin}/api/canvas/prototypes/home/screenshot`, {
+      const screenshotResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/screenshot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dataUrl: PNG_DATA_URL }),
       });
+      expect(screenshotResponse.status).toBe(404);
+      await expect(screenshotResponse.json()).resolves.toEqual({ error: 'Canvas not found' });
 
-      expect(response.status).toBe(424);
-      expect(await response.json()).toEqual({
-        error: 'Prototype screenshot persistence requires declared prototype write target',
+      const readResponse = await fetch(`${server.origin}/api/canvas/prototypes/home/canvas-assets/screenshot.png`);
+      expect(readResponse.status).toBe(404);
+      await expect(readResponse.json()).resolves.toEqual({ error: 'Canvas not found' });
+
+      const escapedResponse = await fetch(`${server.origin}/api/canvas/prototypes/${encodeURIComponent('../outside')}/screenshot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl: PNG_DATA_URL }),
       });
+      expect(escapedResponse.status).toBe(404);
+      await expect(escapedResponse.json()).resolves.toEqual({ error: 'Canvas not found' });
       expect(fs.existsSync(path.join(projectRoot, 'src', 'prototypes', 'home', 'canvas-assets'))).toBe(false);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('keeps legacy canvas listing and reading limited to src/canvas excalidraw files', async () => {
-    const projectRoot = createTempRoot('axhub-make-canvas-api-');
-    writeProjectMetadata(projectRoot);
-    const legacyCanvasDir = path.join(projectRoot, 'src', 'canvas');
-    fs.mkdirSync(legacyCanvasDir, { recursive: true });
-    fs.writeFileSync(path.join(legacyCanvasDir, 'legacy.excalidraw'), JSON.stringify({
-      type: 'excalidraw',
-      version: 2,
-      elements: [{ id: 'legacy' }],
-      appState: {},
-      files: {},
-    }), 'utf8');
-    fs.writeFileSync(path.join(legacyCanvasDir, 'old.json'), '{"type":"excalidraw"}', 'utf8');
-    const server = await startActiveCanvasTestServer(projectRoot);
-
-    try {
-      const listResponse = await fetch(`${server.origin}/api/canvas`);
-      expect(listResponse.status).toBe(200);
-      expect(await listResponse.json()).toEqual([
-        expect.objectContaining({
-          name: 'legacy.excalidraw',
-          displayName: 'legacy',
-        }),
-      ]);
-
-      const getResponse = await fetch(`${server.origin}/api/canvas/legacy.excalidraw`);
-      expect(getResponse.status).toBe(200);
-      expect(await getResponse.json()).toMatchObject({
-        type: 'excalidraw',
-        elements: [{ id: 'legacy' }],
-      });
-
-      const jsonResponse = await fetch(`${server.origin}/api/canvas/old.json`);
-      expect(jsonResponse.status).toBe(404);
+      expect(fs.existsSync(path.join(projectRoot, 'src', 'outside', 'screenshot.png'))).toBe(false);
     } finally {
       await server.close();
     }

@@ -16,6 +16,7 @@ import type { AssistantImageAttachmentPayload } from '../assistantContextPayload
 interface AcpChatSubmitResult {
     ok: true;
     canSend: boolean;
+    isRunning?: boolean;
     textLength: number;
     threadId: string;
 }
@@ -52,6 +53,7 @@ interface SubmitPromptOptions {
     model?: string | null;
     modeId?: string | null;
     thoughtLevel?: string | null;
+    autoSend?: boolean;
 }
 
 interface QueryArtifactsOptions {
@@ -414,6 +416,19 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         }
     }, [resolveTargetOrigin]);
 
+    const syncCanvasMcpConfigWithAck = useCallback((config: { makeOrigin?: string | null; token?: string | null } | null | undefined) => {
+        const requestId = createAcpRuntimeConfigRequestId();
+        return postAcpRequestWithRetry({
+            request: {
+                ...buildAcpCanvasMcpPostMessage(config, requestId),
+                requestId,
+            },
+            successTypes: ['acp.runtime.result'],
+            errorTypes: ['acp.runtime.error'],
+            defaultErrorMessage: 'AI 助手画布 MCP 配置同步失败',
+        });
+    }, [postAcpRequestWithRetry]);
+
     const syncCanvasMcpConfigWithRetry = useCallback((config: { makeOrigin?: string | null; token?: string | null } | null | undefined) => {
         const attempt = canvasMcpConfigSyncAttemptRef.current + 1;
         canvasMcpConfigSyncAttemptRef.current = attempt;
@@ -463,6 +478,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
                 ...(submitOptions?.model ? { model: submitOptions.model } : {}),
                 ...(submitOptions?.modeId ? { modeId: submitOptions.modeId } : {}),
                 ...(submitOptions?.thoughtLevel ? { thoughtLevel: submitOptions.thoughtLevel } : {}),
+                ...(submitOptions?.autoSend === false ? { autoSend: false } : {}),
                 ...(submitOptions?.newThread === true ? { newThread: true } : {}),
             },
         };
@@ -481,6 +497,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
                 return {
                     ok: true,
                     canSend: Boolean(data.payload?.canSend),
+                    isRunning: Boolean(data.payload?.isRunning),
                     textLength: Number(data.payload?.textLength || 0),
                     threadId: resultThreadId,
                 };
@@ -646,6 +663,7 @@ export function useAssistantBridge(iframeSrc: string, bridgeOptions?: UseAssista
         syncPreviewMcpConfigWithAck,
         syncPreviewMcpConfigWithRetry,
         syncCanvasMcpConfig,
+        syncCanvasMcpConfigWithAck,
         syncCanvasMcpConfigWithRetry,
         addImageAttachmentWithRetry,
         appendComposerTextWithRetry,

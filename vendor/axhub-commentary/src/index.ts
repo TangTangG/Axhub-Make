@@ -1,6 +1,8 @@
 export * from './web-editor-types';
 export * from './agent-bridge';
 export * from './tweak/protocol';
+export * from './review/comment-protocol';
+export * from './review/diagram-target';
 export { createCommentary, createWebEditorV2 } from './core/editor';
 export type {
   PromptImageAttachment,

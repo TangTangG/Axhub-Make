@@ -16,10 +16,13 @@ describe('useAssistantBridge source', () => {
     expect(source).toContain('targetWindow.postMessage(request, targetOrigin);');
     expect(source).toContain("successTypes: ['acp.ui.ready']");
     expect(source).toContain("successTypes: ['acp.runtime.result']");
+    expect(source).toContain('const syncCanvasMcpConfigWithAck = useCallback((config: { makeOrigin?: string | null; token?: string | null } | null | undefined) => {');
+    expect(source).toContain('...buildAcpCanvasMcpPostMessage(config, requestId),');
     expect(source).toContain("successTypes: ['acp.context.result']");
     expect(source).toContain("errorTypes: ['acp.runtime.error']");
     expect(source).toContain("errorTypes: ['acp.context.error']");
     expect(source).toContain("errorTypes: ['acp.query.error']");
+    expect(source).toContain('syncCanvasMcpConfigWithAck,');
   });
 
   it('reuses the shared helper for request/response composer actions instead of duplicating message listeners', () => {

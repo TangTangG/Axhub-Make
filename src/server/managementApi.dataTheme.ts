@@ -82,7 +82,7 @@ function toKebabBaseName(input: string, fallbackPrefix: string): string {
 }
 
 function getDataDir(projectRoot: string): string {
-  return path.join(projectRoot, 'src/database');
+  return path.join(projectRoot, 'src/resources/data');
 }
 
 function getThemesDir(projectRoot: string): string {

@@ -6,6 +6,10 @@ function readPresentationAreaSource() {
   return readFileSync(resolve(__dirname, './PresentationArea.tsx'), 'utf8');
 }
 
+function readPresentationPropsBuilderSource() {
+  return readFileSync(resolve(__dirname, '../../app/hooks/useIndexPagePresentationPropsBuilder.ts'), 'utf8');
+}
+
 describe('PresentationArea resource folder source', () => {
   it('hides the presentation toolbar while previewing a resource folder', () => {
     const source = readPresentationAreaSource();
@@ -20,6 +24,17 @@ describe('PresentationArea resource folder source', () => {
 
     expect(source).toContain('const isPrototypeStartDraft = isPreviewContentMode && props.prototypeStartDraftActive === true && !props.selectedItem;');
     expect(source).toContain('&& !isPrototypeStartDraft');
+  });
+
+  it('hides the presentation toolbar on resource and design start draft pages', () => {
+    const source = readPresentationAreaSource();
+
+    expect(source).toContain("const isResourceStartDraft = props.contentMode === 'doc' && props.resourceStartDraftActive === true && !props.selectedDoc;");
+    expect(source).toContain("const isThemeStartDraft = props.contentMode === 'theme' && props.themeStartDraftActive === true && !props.selectedTheme;");
+    expect(source).toContain('&& !isResourceStartDraft');
+    expect(source).toContain('&& !isThemeStartDraft');
+    expect(source).toContain('&& !isResourceStartDraft');
+    expect(source).toContain('&& !isThemeStartDraft');
   });
 
   it('hides the presentation toolbar on existing placeholder prototype start pages', () => {
@@ -39,30 +54,21 @@ describe('PresentationArea resource folder source', () => {
     expect(source).not.toContain("{props.reviewPanelOpen && props.viewMode !== 'canvas' ? (");
   });
 
-  it('shows a non-sticky canvas action in the old toolbar top-right position on prototype start pages', () => {
+  it('does not expose prototype start canvas actions', () => {
     const source = readPresentationAreaSource();
     const startActionSource = source.slice(
-      source.indexOf('{shouldShowPrototypeStartActions ? ('),
+      source.indexOf('return ('),
       source.indexOf('{shouldShowPresentationToolbar ? ('),
     );
-    const openCanvasHandlerSource = source.slice(
-      source.indexOf('const handleOpenPrototypeStartCanvas = async () => {'),
-      source.indexOf('return (', source.indexOf('const handleOpenPrototypeStartCanvas = async () => {')),
-    );
 
-    expect(source).toContain('const shouldShowPrototypeStartActions = isPrototypeStartDraft || isPrototypeStartPlaceholder;');
-    expect(source).toContain('{shouldShowPrototypeStartActions ? (');
-    expect(openCanvasHandlerSource).toContain('const draftCreatedItem = isPrototypeStartDraft');
-    expect(openCanvasHandlerSource).toContain('await props.onCreatePrototypeForDraftStart?.()');
-    expect(openCanvasHandlerSource).toContain('const startItem = draftCreatedItem || props.selectedItem;');
-    expect(openCanvasHandlerSource).toContain("props.setViewMode?.('canvas');");
+    expect(source).not.toContain('const shouldShowPrototypeStartActions =');
+    expect(source).not.toContain('{shouldShowPrototypeStartActions ? (');
+    expect(source).not.toContain('const handleOpenPrototypeStartCanvas = async () => {');
+    expect(source).not.toContain("props.setViewMode?.('canvas');");
     expect(source).toContain('className="relative flex flex-col flex-1 h-full min-h-0 min-w-0 bg-background"');
-    expect(startActionSource).toContain('absolute right-8 top-5 z-10');
-    expect(startActionSource).toContain('aria-label="打开画布"');
-    expect(startActionSource).toContain('onClick={() => { void handleOpenPrototypeStartCanvas(); }}');
-    expect(startActionSource).toContain('<PencilRuler className="h-4 w-4" />');
-    expect(startActionSource).toContain('<span>画布</span>');
-    expect(startActionSource).not.toContain('sticky');
+    expect(startActionSource).not.toContain('aria-label="打开画布"');
+    expect(startActionSource).not.toContain('handleOpenPrototypeStartCanvas');
+    expect(startActionSource).not.toContain('<span>画布</span>');
     expect(startActionSource).not.toContain('<PresentationToolbar');
   });
 
@@ -74,25 +80,44 @@ describe('PresentationArea resource folder source', () => {
     expect(source).toContain('const isPrototypeStartPlaceholder = isPreviewContentMode');
   });
 
-  it('passes review tab state and host page zoom into the review layout without panel close wiring', () => {
+  it('passes review report list state into the review layout without panel close or zoom wiring', () => {
     const source = readPresentationAreaSource();
+    const propsBuilderSource = readPresentationPropsBuilderSource();
     const reviewPanelSource = source.slice(
       source.indexOf('{shouldShowAssistantPanel ? ('),
       source.indexOf('</div>', source.indexOf('{shouldShowAssistantPanel ? (')),
     );
 
-    expect(source).toContain('reviewPageZoomEnabled={props.reviewPageZoomEnabled}');
     expect(source).toContain('{shouldShowAssistantPanel ? (');
-    expect(reviewPanelSource).toContain('activeKind={props.activeReviewKind || \'design\'}');
+    expect(reviewPanelSource).toContain('reports={props.reviewReports || []}');
+    expect(reviewPanelSource).toContain('selectedReport={props.selectedReviewReport || null}');
+    expect(reviewPanelSource).toContain('activeReportId={props.activeReviewReportId}');
     expect(reviewPanelSource).toContain('reviewPrompt={props.reviewPrompt || \'\'}');
     expect(reviewPanelSource).toContain('reviewDocumentPath={props.reviewDocumentPath}');
-    expect(reviewPanelSource).toContain("assistantOpen={props.assistantVisible === true && props.aiPanelMode === 'general-ai'}");
+    expect(reviewPanelSource).toContain('reviewPrompts={props.reviewPrompts}');
+    expect(reviewPanelSource).toContain('reviewDocumentPaths={props.reviewDocumentPaths}');
+    expect(reviewPanelSource).toContain('lanSubmitConfig={props.reviewLanSubmitConfig}');
+    expect(reviewPanelSource).toContain('axhubSubmitConfig={props.reviewAxhubSubmitConfig}');
+    expect(reviewPanelSource).not.toContain('feishuConfig');
+    expect(reviewPanelSource).not.toContain('Feishu');
     expect(reviewPanelSource).toContain('onExecutePrompt={props.onExecutePrompt}');
-    expect(reviewPanelSource).toContain('onKindChange={(kind) => props.handleReviewKindChange?.(kind)}');
-    expect(reviewPanelSource).toContain('onCopyPrompt={() => { void props.handleCopyReviewPrompt?.(); }}');
-    expect(reviewPanelSource).toContain('onTogglePageZoom={() => props.handleToggleReviewPageZoom?.()}');
+    expect(reviewPanelSource).toContain('onSelectReport={(report) => props.handleSelectReviewReport?.(report)}');
+    expect(reviewPanelSource).toContain('onBackToList={() => props.handleBackToReviewList?.()}');
+    expect(reviewPanelSource).toContain('onCopyReportPath={(report) => props.handleCopyReviewReportPath?.(report)}');
+    expect(reviewPanelSource).toContain('onDeleteReport={(report) => props.handleDeleteReviewReport?.(report)}');
+    expect(reviewPanelSource).toContain('onStartReview={(kind) => props.handleStartReview?.(kind)}');
+    expect(reviewPanelSource).toContain('onRunReviewDirect={(kind) => props.handleRunReviewDirect?.(kind)}');
+    expect(reviewPanelSource).toContain('onUploadReport={(files, meta) => props.handleUploadReviewReport?.(files, meta)}');
+    expect(reviewPanelSource).toContain('onLanSubmitEnabledChange={(enabled) => props.handleReviewLanSubmitEnabledChange?.(enabled)}');
+    expect(reviewPanelSource).toContain('onAxhubSubmitEnabledChange={(enabled) => props.handleReviewAxhubSubmitEnabledChange?.(enabled)}');
+    expect(propsBuilderSource).toContain('reviewAxhubSubmitConfig: preview.reviewAxhubSubmitConfig');
+    expect(propsBuilderSource).toContain('handleReviewAxhubSubmitEnabledChange: preview.handleReviewAxhubSubmitEnabledChange');
+    expect(propsBuilderSource).not.toContain('reviewFeishu');
+    expect(propsBuilderSource).not.toContain('ReviewFeishu');
     expect(reviewPanelSource).not.toContain('onClose');
     expect(reviewPanelSource).not.toContain('handleReviewPanelToggle');
+    expect(reviewPanelSource).not.toContain('reviewPageZoomEnabled');
+    expect(reviewPanelSource).not.toContain('handleToggleReviewPageZoom');
   });
 
   it('forwards pane-scoped prototype prompt actions into the content area', () => {
@@ -109,6 +134,16 @@ describe('PresentationArea resource folder source', () => {
     );
 
     expect(toolbarSource).toContain('prototypeDecisionDataAvailable={props.prototypeDecisionDataAvailable}');
+  });
+
+  it('forwards AI settings actions into the presentation toolbar', () => {
+    const source = readPresentationAreaSource();
+    const toolbarSource = source.slice(
+      source.indexOf('<PresentationToolbar'),
+      source.indexOf('/>', source.indexOf('<PresentationToolbar')),
+    );
+
+    expect(toolbarSource).toContain('onOpenAISettings={props.onOpenAISettings}');
   });
 
   it('forwards canvas AI prompt submissions into the content area', () => {

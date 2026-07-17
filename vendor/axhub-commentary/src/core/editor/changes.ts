@@ -2,7 +2,7 @@ import type { ElementLocator, WebEditorElementKey } from '../../web-editor-types
 import { aggregateTransactionsByElement } from '../transaction-aggregator';
 import { createElementLocator, locateElement } from '../locator';
 import { generateFullElementLabel, generateStableElementKey } from '../element-key';
-import type { EditorChangesService } from './contracts';
+import type { EditorChangesService, ExternalEditingElementTarget } from './contracts';
 import type {
   EditChangeKind,
   EditorRuntimeState,
@@ -26,10 +26,11 @@ import type {
 } from '../../tweak/protocol';
 import { getGlobalCommentaryTweakProtocol } from '../../tweak/protocol';
 import { normalizePromptCardSkillIds } from '../../ui/runtime/prompt-card-skills';
-
-const ANNOTATION_MARKER_NODE_ID_ATTR = 'data-axhub-annotation-node-id';
-const ANNOTATION_HOST_ID = '__axhub_annotation_host__';
-const ANNOTATION_PANEL_NODE_ID_ATTR = 'data-axhub-annotation-panel-node-id';
+import {
+  extractAnnotationPanelNodeId,
+  findAnnotationMarkerByNodeId,
+  resolveAnnotationElementIdentity,
+} from './annotation-target';
 
 type ChangeMarkerTaskState = 'editing' | 'error';
 
@@ -54,54 +55,17 @@ export function createChangesService(options: {
     return String(value ?? '').replace(/\r\n/g, '\n');
   }
 
-  function cssEscape(value: string): string {
-    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
-      return CSS.escape(value);
-    }
-    return String(value).replace(/["\\]/g, '\\$&');
-  }
-
-  function extractAnnotationPanelNodeId(locator: ElementLocator): string {
-    for (const selector of locator.selectors ?? []) {
-      const normalized = String(selector ?? '').trim();
-      if (!normalized) continue;
-      const match = normalized.match(/\[data-axhub-annotation-panel-node-id=(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/);
-      const rawValue = match?.[1] ?? match?.[2] ?? match?.[3] ?? '';
-      const nodeId = String(rawValue).trim();
-      if (nodeId) return nodeId;
-    }
-    return '';
-  }
-
-  function readAnnotationPanelNodeId(element: Element | null): string {
-    try {
-      return String(element?.getAttribute?.(ANNOTATION_PANEL_NODE_ID_ATTR) ?? '').trim();
-    } catch {
-      return '';
-    }
-  }
-
-  function buildAnnotationPanelLocator(nodeId: string): ElementLocator {
-    return {
-      selectors: [`[${ANNOTATION_PANEL_NODE_ID_ATTR}="${cssEscape(nodeId)}"]`],
-      fingerprint: `annotation-panel:${nodeId}`,
-      path: [],
-      shadowHostChain: [],
-    };
-  }
-
   function resolveEditableElementIdentity(element: Element): {
     elementKey: WebEditorElementKey;
     locator: ElementLocator;
     label: string;
   } {
-    const annotationNodeId = readAnnotationPanelNodeId(element);
-    if (annotationNodeId) {
-      const locator = buildAnnotationPanelLocator(annotationNodeId);
+    const annotationIdentity = resolveAnnotationElementIdentity(element);
+    if (annotationIdentity) {
       return {
-        elementKey: `annotation-panel:${annotationNodeId}`,
-        locator,
-        label: 'Annotation Panel',
+        elementKey: annotationIdentity.elementKey,
+        locator: annotationIdentity.locator,
+        label: annotationIdentity.label,
       };
     }
 
@@ -111,24 +75,6 @@ export function createChangesService(options: {
       locator,
       label: generateFullElementLabel(element, locator.shadowHostChain),
     };
-  }
-
-  function findAnnotationMarkerByNodeId(nodeId: string): Element | null {
-    if (!nodeId || typeof document === 'undefined') {
-      return null;
-    }
-    const selector = `[${ANNOTATION_MARKER_NODE_ID_ATTR}="${cssEscape(nodeId)}"]`;
-    try {
-      const host = typeof document.getElementById === 'function'
-        ? document.getElementById(ANNOTATION_HOST_ID)
-        : null;
-      const shadowRoot = (host as (Element & { shadowRoot?: ShadowRoot | null }) | null)?.shadowRoot ?? null;
-      const shadowMarker = shadowRoot?.querySelector(selector) ?? null;
-      if (shadowMarker) return shadowMarker;
-      return typeof document.querySelector === 'function' ? document.querySelector(selector) : null;
-    } catch {
-      return null;
-    }
   }
 
   function locateMarkerRenderableElement(locator: ElementLocator): Element | null {
@@ -484,8 +430,7 @@ export function createChangesService(options: {
       return buildAnchorFromPoint(element, selectionAnchor.clientX, selectionAnchor.clientY);
     }
 
-    const locator = createElementLocator(element);
-    const elementKey = generateStableElementKey(element, locator.shadowHostChain);
+    const { elementKey } = resolveEditableElementIdentity(element);
     const meta = state.editMetaByKey.get(elementKey);
     const pendingAnchor = state.pendingMarkerAnchors.get(elementKey) ?? null;
     return pendingAnchor ?? meta?.anchor ?? buildFallbackAnchor(element);
@@ -607,8 +552,7 @@ export function createChangesService(options: {
       if (state.commentEntryMode !== 'bubble-card') return null;
       const selected = state.selectedElement;
       if (!selected || !selected.isConnected) return null;
-      const locator = createElementLocator(selected);
-      return generateStableElementKey(selected, locator.shadowHostChain);
+      return resolveEditableElementIdentity(selected).elementKey;
     })();
 
     const visibleMetas = filterVisibleChangeMarkerMetas(dirtyMetas, activeMarkerKey);
@@ -813,18 +757,11 @@ export function createChangesService(options: {
     renderChangeMarkers();
   }
 
-  function markElementEditsHandled(element: Element): void {
-    if (!element || !element.isConnected) return;
-    const locator = createElementLocator(element);
-    const elementKey = generateStableElementKey(element, locator.shadowHostChain);
+  function markEditMetaHandled(
+    meta: ElementEditMeta,
+    selectedElement: Element | null,
+  ): void {
     const handledAt = Date.now();
-    const meta = getOrCreateEditMeta(
-      elementKey,
-      locator,
-      generateFullElementLabel(element, locator.shadowHostChain),
-    );
-    meta.locator = locator;
-    meta.label = generateFullElementLabel(element, locator.shadowHostChain);
     meta.note = '';
     delete meta.skillIds;
     meta.images = [];
@@ -837,15 +774,41 @@ export function createChangesService(options: {
     meta.styleSummaryLines = [];
     meta.textSummary = null;
     meta.classSummaryLines = [];
-    state.processedEditTimestampsByKey.set(elementKey, handledAt);
-    state.pendingMarkerAnchors.delete(elementKey);
-    if (state.selectedElement === element) {
+    state.processedEditTimestampsByKey.set(meta.elementKey, handledAt);
+    state.pendingMarkerAnchors.delete(meta.elementKey);
+    if (selectedElement && state.selectedElement === selectedElement) {
       state.selectionAnchor = null;
     }
-    pruneIdleMeta(elementKey);
+    pruneIdleMeta(meta.elementKey);
     options.scheduleCacheWrite();
     state.propertyPanel?.refresh();
     renderChangeMarkers();
+  }
+
+  function markElementEditsHandled(element: Element): void {
+    if (!element || !element.isConnected) return;
+    const { elementKey, locator, label } = resolveEditableElementIdentity(element);
+    const meta = getOrCreateEditMeta(
+      elementKey,
+      locator,
+      label,
+    );
+    meta.locator = locator;
+    meta.label = label;
+    markEditMetaHandled(meta, element);
+  }
+
+  function markElementEditsHandledByKey(target: ExternalEditingElementTarget): void {
+    const elementKey = String(target?.elementKey ?? '').trim() as WebEditorElementKey;
+    if (!elementKey || !target?.locator) return;
+    const meta = getOrCreateEditMeta(
+      elementKey,
+      target.locator,
+      String(target.label || '').trim() || elementKey,
+    );
+    meta.locator = target.locator;
+    meta.label = String(target.label || '').trim() || elementKey;
+    markEditMetaHandled(meta, null);
   }
 
   function clearElementEditMeta(element: Element | null): void {
@@ -1140,8 +1103,7 @@ export function createChangesService(options: {
     element: Element,
     selectionAnchor?: { clientX: number; clientY: number },
   ): void {
-    const locator = createElementLocator(element);
-    const elementKey = generateStableElementKey(element, locator.shadowHostChain);
+    const { elementKey } = resolveEditableElementIdentity(element);
     const resolvedAnchor = resolveSelectionAnchor(element, selectionAnchor);
     state.selectionAnchor = resolvedAnchor;
 
@@ -1180,6 +1142,7 @@ export function createChangesService(options: {
     revertRecordedTweakForElement,
     revertAllRecordedTweaks,
     markElementEditsHandled,
+    markElementEditsHandledByKey,
     clearElementEditMeta,
     clearAllEditMeta,
     getSelectedElementNote,

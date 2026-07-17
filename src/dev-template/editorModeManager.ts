@@ -22,7 +22,12 @@ export interface DevEditorEnableOptions {
   annotationProjectId?: string;
 }
 
-const MAKE_COMMENTARY_SKILL_INSTALL_SOURCE = '.agents/skills/prototype-comments/SKILL.md';
+const MAKE_COMMENTARY_SKILL_INSTALL_SOURCE = [
+  '.agents/skills/explore-options/SKILL.md',
+  '.claude/skills/explore-options/SKILL.md',
+  '.agents/skills/prototype-comments/SKILL.md',
+  '.claude/skills/prototype-comments/SKILL.md',
+].join('\n');
 
 export interface DevEditorsApi {
   getMode: () => EditorMode;
@@ -39,6 +44,7 @@ export interface DevEditorsApi {
   subscribeHostToolbarState: (listener: (state: CommentaryHostToolbarState) => void) => () => void;
   runHostToolbarAction: (action: CommentaryHostToolbarAction) => Promise<boolean>;
   getEditedSnapshot: () => CommentaryEditedSnapshot | null;
+  getElementPromptText?: (elementKey: string) => string;
   setNodeEditingState: (
     elementKey: string,
     nextState: CommentaryExternalEditingState,
@@ -129,6 +135,7 @@ export const createEditorModeManager = (initialMode?: EditorMode) => {
     subscribeHostToolbarState: (listener) => webEditorController.subscribeHostToolbarState(listener),
     runHostToolbarAction: (action) => webEditorController.runHostToolbarAction(action),
     getEditedSnapshot: () => webEditorController.getEditedSnapshot(),
+    getElementPromptText: (elementKey) => webEditorController.getElementPromptText?.(elementKey) ?? '',
     setNodeEditingState: (elementKey, nextState, taskRef, targetRef) => webEditorController.setNodeEditingState(elementKey, nextState, taskRef, targetRef ?? null),
     getCopyPromptText: () => webEditorController.getCopyPromptText?.() ?? '',
     getDecisionDataCount: () => webEditorController.getDecisionDataCount(),

@@ -1,18 +1,19 @@
 export type AcpProviderKey =
   | 'claude'
   | 'codex'
-  | 'gemini'
   | 'opencode'
   | 'cursor'
   | 'qoder'
   | 'codebuddy'
-  | 'reasonix';
+  | 'reasonix'
+  | 'grok-build';
 
 export interface AcpProviderOption {
   provider: AcpProviderKey;
   client: `acp:${AcpProviderKey}`;
   label: string;
   defaultAnnotationModel: string;
+  supportsNpxFallback?: boolean;
 }
 
 export interface AcpAnnotationModelPreference {
@@ -23,12 +24,12 @@ export interface AcpAnnotationModelPreference {
 export const ACP_PROVIDER_OPTIONS: readonly AcpProviderOption[] = [
   { provider: 'claude', client: 'acp:claude', label: 'Claude Code', defaultAnnotationModel: 'sonnet' },
   { provider: 'codex', client: 'acp:codex', label: 'Codex CLI', defaultAnnotationModel: 'gpt-5.5' },
-  { provider: 'gemini', client: 'acp:gemini', label: 'Gemini CLI', defaultAnnotationModel: 'gemini-3-pro-preview' },
   { provider: 'opencode', client: 'acp:opencode', label: 'OpenCode', defaultAnnotationModel: 'opencode/big-pickle' },
   { provider: 'cursor', client: 'acp:cursor', label: 'Cursor CLI', defaultAnnotationModel: 'default' },
   { provider: 'qoder', client: 'acp:qoder', label: 'Qoder CLI', defaultAnnotationModel: 'auto' },
   { provider: 'codebuddy', client: 'acp:codebuddy', label: 'CodeBuddy CLI', defaultAnnotationModel: 'default' },
   { provider: 'reasonix', client: 'acp:reasonix', label: 'Reasonix CLI', defaultAnnotationModel: 'deepseek-v4-pro/deepseek-v4-pro' },
+  { provider: 'grok-build', client: 'acp:grok-build', label: 'Grok Build', defaultAnnotationModel: 'grok-build', supportsNpxFallback: true },
 ] as const;
 
 export const ACP_PROVIDER_KEYS = ACP_PROVIDER_OPTIONS.map((option) => option.provider) as AcpProviderKey[];
@@ -38,6 +39,7 @@ const ACP_PROVIDER_KEY_SET = new Set<string>(ACP_PROVIDER_KEYS);
 const ACP_PROVIDER_ALIASES: Record<string, AcpProviderKey> = {
   openai: 'codex',
   claudecode: 'claude',
+  gemini: 'codex',
 };
 
 function normalizeString(value: unknown): string {

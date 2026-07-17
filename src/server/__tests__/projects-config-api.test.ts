@@ -125,6 +125,7 @@ describe('make-server project config APIs', () => {
         },
         annotationPromptClient: null,
         annotationModel: null,
+        agentRunConcurrency: 5,
       });
       expect(legacyConfig.assistant).toEqual({
         webBaseUrl: 'http://legacy.local',
@@ -151,7 +152,7 @@ describe('make-server project config APIs', () => {
       expect(saved).toMatchObject({ status: 200, body: { success: true } });
       const projectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(projectConfig).toEqual({
-        server: { host: '0.0.0.0', allowLAN: false },
+        server: { host: '0.0.0.0' },
       });
       expect(projectConfig.projectInfo).toBeUndefined();
       expect(projectConfig.automation).toBeUndefined();
@@ -179,6 +180,7 @@ describe('make-server project config APIs', () => {
           },
           annotationPromptClient: null,
           annotationModel: null,
+          agentRunConcurrency: 5,
         },
         assistant: {
           webBaseUrl: 'http://assistant.local',
@@ -202,7 +204,7 @@ describe('make-server project config APIs', () => {
       expect(nextConfig).toMatchObject({
         projectId: 'config-client',
         projectPath: projectRoot,
-        server: { host: '0.0.0.0', allowLAN: false },
+        server: { host: '0.0.0.0' },
         projectInfo: { name: 'Updated Project' },
         automation: {
           defaultPromptClient: 'manual',
@@ -388,15 +390,20 @@ describe('make-server project config APIs', () => {
       const before = await fetch(`${server.origin}/api/config`).then((response) => response.json());
       expect(before.server).toEqual(expect.objectContaining({
         host: 'localhost',
-        allowLAN: true,
       }));
+      expect(before.server).not.toHaveProperty('allowLAN');
       expect(before.availableLANHosts).toEqual(expect.any(Array));
 
       const saved = await fetch(`${server.origin}/api/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          server: { host: 'localhost', allowLAN: true, lanHost: '10.0.8.42' },
+          server: {
+            host: 'localhost',
+            allowLAN: true,
+            lanHost: '10.0.8.42',
+            skipLanPreviewAuth: true,
+          },
           projectInfo: { name: 'LAN Config Client' },
         }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
@@ -405,16 +412,17 @@ describe('make-server project config APIs', () => {
       const projectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(projectConfig.server).toEqual({
         host: 'localhost',
-        allowLAN: true,
         lanHost: '10.0.8.42',
+        skipLanPreviewAuth: true,
       });
 
       const after = await fetch(`${server.origin}/api/config`).then((response) => response.json());
       expect(after.server).toEqual(expect.objectContaining({
         host: 'localhost',
-        allowLAN: true,
         lanHost: '10.0.8.42',
+        skipLanPreviewAuth: true,
       }));
+      expect(after.server).not.toHaveProperty('allowLAN');
       expect(after.availableLANHosts).toEqual(expect.any(Array));
     } finally {
       await server.close();
@@ -503,7 +511,7 @@ describe('make-server project config APIs', () => {
         projectPath: projectRoot,
         projectInfo: { name: 'Bootstrap Client' },
         automation: {
-          defaultPromptClient: 'acp:codex',
+          defaultPromptClient: null,
         },
         uiPreferences: {
           excalidrawPropertyPanelMode: 'collapsed',
@@ -576,7 +584,7 @@ describe('make-server project config APIs', () => {
       });
       const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
       expect(serverConfig.automation).toEqual({
-        defaultPromptClient: 'acp:codex',
+        defaultPromptClient: null,
         defaultIDE: 'windsurf',
         acp: {
           mode: 'prompt',
@@ -585,6 +593,59 @@ describe('make-server project config APIs', () => {
         },
         annotationPromptClient: null,
         annotationModel: null,
+        agentRunConcurrency: 5,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('upgrades legacy short ACP timeout values when saving server preferences', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'legacy-acp-timeout-client', name: 'Legacy ACP Timeout Client' },
+    });
+    writeJson(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), {
+      server: { host: 'localhost', allowLAN: true },
+      projectInfo: { name: 'Legacy ACP Timeout Client' },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    writeJson(getGlobalServerConfigPath(registryHome), {
+      automation: {
+        defaultPromptClient: 'acp:codex',
+        defaultIDE: 'web:acp',
+        acp: {
+          mode: 'prompt',
+          permission: 'approve-all',
+          timeout: 30,
+        },
+        annotationPromptClient: 'acp:codex',
+        annotationModel: null,
+        agentRunConcurrency: 5,
+      },
+    });
+    const server = await startRegisteredConfigTestServer(projectRoot, registryHome, 'legacy-acp-timeout-client', 'Legacy ACP Timeout Client');
+
+    try {
+      const currentConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());
+      expect(currentConfig.automation.acp.timeout).toBe(1_200);
+
+      const saved = await fetch(`${server.origin}/api/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          automation: {
+            defaultIDE: 'cursor',
+          },
+        }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(saved).toMatchObject({ status: 200, body: { success: true } });
+      const serverConfig = JSON.parse(fs.readFileSync(getGlobalServerConfigPath(registryHome), 'utf8'));
+      expect(serverConfig.automation.acp).toEqual({
+        mode: 'prompt',
+        permission: 'approve-all',
+        timeout: 1_200,
       });
     } finally {
       await server.close();
@@ -697,6 +758,7 @@ describe('make-server project config APIs', () => {
       await saveAndExpectDefaultPromptClient('qoder', 'acp:qoder');
       await saveAndExpectDefaultPromptClient('codebuddy', 'acp:codebuddy');
       await saveAndExpectDefaultPromptClient('reasonix', 'acp:reasonix');
+      await saveAndExpectDefaultPromptClient('grok-build', 'acp:grok-build');
 
       const savedWithoutAnnotationProvider = await fetch(`${server.origin}/api/config`, {
         method: 'POST',
@@ -1130,7 +1192,7 @@ describe('make-server project config APIs', () => {
       });
       const blankProjectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(blankProjectConfig).toEqual({
-        server: { host: 'localhost', allowLAN: true },
+        server: { host: 'localhost' },
         projectInfo: { description: 'Updated description' },
       });
       const blankMetadata = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
@@ -1162,7 +1224,7 @@ describe('make-server project config APIs', () => {
       });
       const namedProjectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
       expect(namedProjectConfig).toEqual({
-        server: { host: 'localhost', allowLAN: true },
+        server: { host: 'localhost' },
         projectInfo: { description: 'Named description' },
       });
       const namedConfig = await fetch(`${server.origin}/api/config`).then((response) => response.json());

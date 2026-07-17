@@ -9,6 +9,7 @@ import {
   getAcpPreviewMcpConfigSignature,
   getAcpCanvasMcpConfigSignature,
   getAcpImageGenerationConfigSignature,
+  buildAcpCanvasMcpServers,
   mapAssistantContextToAcpContextBundle,
 } from './assistantAcpContext';
 
@@ -121,7 +122,7 @@ describe('assistant ACP context mapping', () => {
       version: '1',
       systemContext: '',
       currentFile: {
-        path: 'src/prototypes/home/canvas.excalidraw',
+        path: 'src/resources/flows/home.excalidraw',
         displayName: 'Home Canvas',
       },
       selectedElements: [],
@@ -133,7 +134,7 @@ describe('assistant ACP context mapping', () => {
             body: '',
             origin: 'canvas',
             target: {
-              filePath: 'src/prototypes/home/canvas.excalidraw',
+              filePath: 'src/resources/flows/home.excalidraw',
               elementId: 'rect-1',
               elementType: 'rectangle',
             },
@@ -149,7 +150,7 @@ describe('assistant ACP context mapping', () => {
       body: '主按钮',
       target: {
         type: 'canvas-element',
-        filePath: 'src/prototypes/home/canvas.excalidraw',
+        filePath: 'src/resources/flows/home.excalidraw',
         elementId: 'rect-1',
         elementType: 'rectangle',
         label: '主按钮',
@@ -157,7 +158,7 @@ describe('assistant ACP context mapping', () => {
       title: '主按钮',
       source: 'axhub-runtime',
       metadata: {
-        filePath: 'src/prototypes/home/canvas.excalidraw',
+        filePath: 'src/resources/flows/home.excalidraw',
         elementId: 'rect-1',
         elementType: 'rectangle',
       },
@@ -168,7 +169,7 @@ describe('assistant ACP context mapping', () => {
     const buildContext = (body: string) => ({
       version: '1' as const,
       systemContext: '',
-      currentFile: 'src/prototypes/home/canvas.excalidraw',
+      currentFile: 'src/resources/flows/home.excalidraw',
       selectedElements: [],
       extensions: {
         comments: [
@@ -177,7 +178,7 @@ describe('assistant ACP context mapping', () => {
             body,
             origin: 'canvas',
             target: {
-              filePath: 'src/prototypes/home/canvas.excalidraw',
+              filePath: 'src/resources/flows/home.excalidraw',
               elementId: 'rect-1',
               elementType: 'rectangle',
             },
@@ -199,6 +200,65 @@ describe('assistant ACP context mapping', () => {
     expect(afterAnnotation).toMatchObject({
       body: '改成品牌色主 CTA',
     });
+  });
+
+  it('merges canvas generation pasted context bundle and local context refs into ACP context', () => {
+    const bundle = mapAssistantContextToAcpContextBundle({
+      version: '1',
+      systemContext: '',
+      currentFile: {
+        path: 'src/resources/product-canvas.excalidraw',
+        displayName: 'Product Canvas',
+      },
+      selectedElements: [],
+      extensions: {
+        canvasAiGeneration: {
+          contextBundle: {
+            version: '2',
+            items: [
+              {
+                kind: 'file',
+                id: 'axhub:pasted-resource:brief',
+                path: 'src/resources/brief.md',
+                name: 'Brief',
+                metadata: {
+                  source: 'composer',
+                },
+              },
+            ],
+            updatedAt: '2026-06-02T09:00:00.000Z',
+          },
+          localContextRefs: [
+            {
+              resourceType: 'doc',
+              resourceId: 'requirements/product-brief.md',
+              title: 'Product Brief',
+              paths: ['src/resources/requirements/product-brief.md'],
+            },
+          ],
+        },
+      },
+    }, new Date('2026-06-02T10:00:00.000Z'));
+
+    expect(bundle.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'file',
+        id: 'axhub:pasted-resource:brief',
+        path: 'src/resources/brief.md',
+        name: 'Brief',
+      }),
+      expect.objectContaining({
+        kind: 'file',
+        id: 'axhub:canvas-local-context:doc:requirements/product-brief.md:src/resources/requirements/product-brief.md',
+        path: 'src/resources/requirements/product-brief.md',
+        name: 'Product Brief',
+        metadata: expect.objectContaining({
+          source: 'axhub-make-canvas',
+          resourceType: 'doc',
+          resourceId: 'requirements/product-brief.md',
+        }),
+      }),
+    ]));
   });
 
   it('builds ACP image generation configure messages from complete Make AI settings', () => {
@@ -350,6 +410,21 @@ describe('assistant ACP context mapping', () => {
         }],
       },
     });
+  });
+
+  it('builds reusable canvas MCP server definitions for direct API runs', () => {
+    expect(buildAcpCanvasMcpServers({
+      makeOrigin: ' http://localhost:5174/ ',
+      token: ' canvas-secret ',
+    })).toEqual([{
+      name: 'axhub-canvas',
+      type: 'http',
+      url: 'http://localhost:5174/api/mcp/axhub-canvas',
+      headers: [{
+        name: 'x-axhub-canvas-mcp-token',
+        value: 'canvas-secret',
+      }],
+    }]);
   });
 
   it('builds ACP runtime MCP clear messages when preview MCP details are unavailable', () => {

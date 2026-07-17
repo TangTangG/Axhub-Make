@@ -43,12 +43,22 @@ export interface CanvasGenerationPromptCanvasContext {
   canvasFilePath?: string;
   canvasName?: string;
   generatorElementId?: string;
+  statusTaskId?: string;
+  statusTaskBounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
   source?: string;
 }
 
 export type CanvasGenerationFinalGuide = 'update-canvas' | 'local-ai-acknowledgement' | 'none';
 
-export const CANVAS_UPDATE_FINAL_GUIDE = '请在完成生成任务后，再阅读 canvas-workspace 技能说明并更新当前画布。';
+export const CANVAS_UPDATE_FINAL_GUIDE = [
+  '请在完成生成任务后',
+  '再阅读 canvas-workspace 技能说明并更新当前画布。',
+].join('，');
 export const LOCAL_AI_COPY_FINAL_GUIDE = '请回复了解并等待用户发送需求。';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -146,39 +156,23 @@ function normalizeCanvasContextValue(value: unknown): string {
   return typeof value === 'string' ? value.trim().replace(/\\/g, '/') : '';
 }
 
-function deriveCanvasNameFromFilePath(filePath: string): string {
-  const normalized = normalizeCanvasContextValue(filePath).replace(/^src\//u, '');
-  return normalized.match(/^prototypes\/[^/]+\/canvas\.excalidraw$/u)
-    ? normalized
-    : '';
-}
-
 function resolveCanvasGenerationFinalGuide(finalGuide: CanvasGenerationFinalGuide = 'update-canvas'): string {
   if (finalGuide === 'none') return '';
   return finalGuide === 'local-ai-acknowledgement'
     ? LOCAL_AI_COPY_FINAL_GUIDE
-    : CANVAS_UPDATE_FINAL_GUIDE;
+    : '';
 }
 
 function formatCanvasWorkspaceInstructionLines(canvasContext?: CanvasGenerationPromptCanvasContext): string[] {
   const canvasFilePath = normalizeCanvasContextValue(canvasContext?.canvasFilePath);
-  const canvasName = normalizeCanvasContextValue(canvasContext?.canvasName) || deriveCanvasNameFromFilePath(canvasFilePath);
-  const source = normalizeCanvasContextValue(canvasContext?.source);
-  const generatorElementId = source === 'canvas-start'
-    ? ''
-    : normalizeCanvasContextValue(canvasContext?.generatorElementId);
+  const statusTaskId = normalizeCanvasContextValue(canvasContext?.statusTaskId);
+  if (!canvasFilePath && !statusTaskId) return [];
 
   return [
-    ...(canvasFilePath ? [`- 当前画布文件：${canvasFilePath}`] : []),
-    ...(canvasName ? [`- 当前画布名称：${canvasName}`] : []),
-    ...(generatorElementId ? [`- 当前 AI 生成节点 ID：${generatorElementId}`] : []),
-    ...(source ? [`- 触发来源：${source}`] : []),
-    ...(canvasFilePath || canvasName || generatorElementId ? [
-      '- 直接编辑并保存当前画布 JSON 文件，保留已有 elements、files、appState，不要只创建资源文件或只回复说明。',
-      '- 将本次生成的原型页面、图片、流程图、文档等产物落到当前画布；每个产物节点的 customData.generatedBy 必须为 `axhub-ai-generation`，customData.aiArtifact.kind 必须写明产物类型。',
-      ...(generatorElementId ? ['- 如果画布里存在当前 AI 生成节点，优先在它附近替换或追加结果节点，并保留 sourceTaskId/sourceArtifactId 等可追踪字段。'] : []),
-      '- 完成前必须重新读取画布文件，确认需要的产物节点已经写入并且 JSON 可解析。',
-    ] : []),
+    ...(canvasFilePath ? [`- 画布文件：${canvasFilePath}`] : []),
+    ...(statusTaskId ? [`- 占位节点：${statusTaskId}`] : []),
+    '- 首个产物必须覆盖或替换占位节点；多个产物从该位置向右排列。',
+    '- 写回方式按 canvas-workspace 技能执行。',
   ];
 }
 
@@ -186,7 +180,7 @@ export function appendCanvasWorkspaceInstruction(
   prompt: string,
   canvasContext?: CanvasGenerationPromptCanvasContext,
 ): string {
-  return appendSettingsBlock(prompt, '画布协作说明：', [
+  return appendSettingsBlock(prompt, '画布写回定位：', [
     ...formatCanvasWorkspaceInstructionLines(canvasContext),
   ]);
 }

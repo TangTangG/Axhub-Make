@@ -260,6 +260,7 @@ describe('make-server admin static assets', () => {
       expect(html).toContain("window.__PROJECT_PREFIX__ = '';");
       expect(html).toContain(`window.__LOCAL_PORT__ = ${server.port};`);
       expect(html).toContain("window.__PROJECT_ROOT__ = '");
+      expect(html).toContain('window.__AXHUB_MAKE_API_ORIGIN__ = window.location.origin;');
       expect(html).toContain("\\'quoted-");
     } finally {
       await server.close();
@@ -339,7 +340,7 @@ describe('make-server admin static assets', () => {
     }
   });
 
-  it('serves canvas template HTML without Vite dev-only module imports', async () => {
+  it('serves resource canvas template HTML without Vite dev-only module imports', async () => {
     const projectRoot = createTempRoot('axhub-canvas-static-project-');
     const adminRoot = createTempRoot('axhub-canvas-static-dist-');
     writeFile(path.join(adminRoot, 'index.html'), '<html><head></head><body>Admin</body></html>');
@@ -361,12 +362,12 @@ describe('make-server admin static assets', () => {
     const server = await startAdminStaticServer(projectRoot, adminRoot);
 
     try {
-      const response = await fetch(`${server.origin}/canvas/prototypes/ref-antd/canvas.excalidraw`);
+      const response = await fetch(`${server.origin}/canvas/resources/flows/ref-antd.excalidraw`);
       const html = await response.text();
 
       expect(response.status).toBe(200);
-      expect(html).toContain('content="prototypes/ref-antd/canvas.excalidraw"');
-      expect(html).toContain('canvas - Canvas');
+      expect(html).toContain('content="resources/flows/ref-antd.excalidraw"');
+      expect(html).toContain('ref-antd - Canvas');
       expect(html).toContain('/assets/canvas-template-bootstrap.js');
       expect(html).not.toContain('/@vite/client');
       expect(html).not.toContain('@vitejs/plugin-react/preamble');
@@ -657,8 +658,15 @@ describe('make-server admin static assets', () => {
 
     const missingCanvasTemplate = createResponse();
     expect(handleAdminStatic(
-      createRequest('/canvas/prototypes/home/canvas.excalidraw'),
+      createRequest('/canvas/resources/flows/home.excalidraw'),
       missingCanvasTemplate.response,
+      { adminRoot, projectRoot, host: 'localhost', port: 5174 },
+    )).toBe(false);
+
+    const removedPrototypeCanvas = createResponse();
+    expect(handleAdminStatic(
+      createRequest('/canvas/prototypes/home/canvas.excalidraw'),
+      removedPrototypeCanvas.response,
       { adminRoot, projectRoot, host: 'localhost', port: 5174 },
     )).toBe(false);
 

@@ -18,7 +18,7 @@ describe('SettingsDialog source', () => {
   it('can open directly on the AI settings tab', () => {
     const source = readSource();
 
-    expect(source).toContain("export type SettingsDialogInitialTab = 'project' | 'update' | 'ai';");
+    expect(source).toContain("export type SettingsDialogInitialTab = 'project' | 'update' | 'ai' | 'network';");
     expect(source).toContain('initialTab?: SettingsDialogInitialTab;');
     expect(source).toContain('initialAcpRuntime?: AssistantRuntimeResponse | null;');
     expect(source).toContain('initialAcpFailureSource?: string;');
@@ -34,16 +34,18 @@ describe('SettingsDialog source', () => {
 
     expect(source).toContain("from '@/components/ui/tabs'");
     expect(source).toContain('<Tabs value={activeTab} onValueChange={handleTabValueChange} className="flex h-full flex-col"');
-    expect(source).toContain('<SheetTitle className="sr-only">项目设置 / 项目更新 / AI 设置</SheetTitle>');
+    expect(source).toContain('<SheetTitle className="sr-only">项目设置 / 项目更新 / AI 设置 / 网络配置</SheetTitle>');
     expect(source).toContain('<SheetHeader className="border-b px-5 py-3.5">');
     expect(source).toContain('<div className="flex items-center justify-between gap-3">');
-    expect(source).toContain('grid-cols-3');
+    expect(source).toContain('grid-cols-4');
     expect(source).toContain('<TabsTrigger value="project"');
     expect(source).toContain('项目设置');
     expect(source).toContain('<TabsTrigger value="update"');
     expect(source).toContain('项目更新');
     expect(source).toContain('<TabsTrigger value="ai"');
     expect(source).toContain('AI 设置');
+    expect(source).toContain('<TabsTrigger value="network"');
+    expect(source).toContain('网络配置');
     expect(source).not.toContain('<SheetTitle className="m-0 text-[14px] font-medium leading-none">项目设置</SheetTitle>');
     expect(source).not.toContain('<div className="border-b px-5 py-3">');
   });
@@ -56,23 +58,66 @@ describe('SettingsDialog source', () => {
     expect(source).not.toContain('默认 IDE');
   });
 
-  it('exposes configurable local and LAN share hosts in server settings', () => {
+  it('exposes local and LAN share settings without the legacy allow-LAN switch', () => {
     const source = readSource();
+    const handleSaveSource = source.slice(
+      source.indexOf('const handleSave = async () => {'),
+      source.indexOf('\n    return (', source.indexOf('const handleSave = async () => {')),
+    );
+    const projectTabSource = source.slice(
+      source.indexOf('<TabsContent value="project"'),
+      source.indexOf('<TabsContent value="update"'),
+    );
+    const aiTabSource = source.slice(
+      source.indexOf('<TabsContent value="ai"'),
+      source.indexOf('<TabsContent value="network"'),
+    );
+    const networkTabSource = source.slice(
+      source.indexOf('<TabsContent value="network"'),
+      source.indexOf('<SheetFooter'),
+    );
 
+    expect(source).toContain("import { Switch } from '@/components/ui/switch';");
     expect(source).toContain('lanHost: string;');
+    expect(source).toContain('skipLanPreviewAuth?: boolean;');
+    expect(source).toContain('skipLanPreviewAuth: boolean;');
     expect(source).toContain('availableLANHosts?: string[];');
     expect(source).toContain('lanHost: config.server.lanHost || config.availableLANHosts?.[0] ||');
+    expect(source).toContain('skipLanPreviewAuth: config.server.skipLanPreviewAuth === true');
     expect(source).toContain('const [availableLANHosts, setAvailableLANHosts] = useState<string[]>([]);');
     expect(source).toContain('setAvailableLANHosts(Array.isArray(config.availableLANHosts) ? config.availableLANHosts : []);');
     expect(source).toContain('lanHost: formState.lanHost.trim()');
+    expect(source).toContain('skipLanPreviewAuth: formState.skipLanPreviewAuth');
     expect(source).toContain('window.__AXHUB_SHARE_HOSTS__ = {');
-    expect(source).toContain('本地地址');
-    expect(source).toContain('局域网地址');
-    expect(source).toContain('availableLANHosts.slice(0, 4).map');
-    expect(source).toContain("onClick={() => updateField('lanHost', host)}");
-    expect(source).toContain('rounded-full border border-border bg-muted/40');
-    expect(source).toContain("updateField('lanHost'");
-    expect(source).toContain('formState.allowLAN');
+    expect(projectTabSource).not.toContain('本地地址');
+    expect(projectTabSource).not.toContain('局域网地址');
+    expect(projectTabSource).not.toContain('局域网访问密码');
+    expect(projectTabSource).not.toContain('全局二维码');
+    expect(aiTabSource).not.toContain('本地地址');
+    expect(aiTabSource).not.toContain('局域网地址');
+    expect(networkTabSource).toContain('网络配置');
+    expect(networkTabSource).toContain('配置服务监听地址与网络访问范围。');
+    expect(networkTabSource).toContain('本地地址');
+    expect(networkTabSource).toContain('局域网地址');
+    expect(networkTabSource).toContain('availableLANHosts.slice(0, 4).map');
+    expect(networkTabSource).toContain("onClick={() => updateField('lanHost', host)}");
+    expect(networkTabSource).toContain('rounded-full border border-border bg-muted/40');
+    expect(networkTabSource).toContain("updateField('lanHost'");
+    expect(networkTabSource).toContain('局域网访问密码');
+    expect(networkTabSource).toContain('全局二维码');
+    expect(source).toContain('apiService.getLanAccessStatus');
+    expect(source).toContain('apiService.setLanAccessPassword');
+    expect(source).toContain('apiService.clearLanAccessPassword');
+    expect(source).toContain('apiService.createLanAccessShareUrl');
+    expect(networkTabSource).toContain('预览免验证');
+    expect(networkTabSource).toContain('开启后，局域网可直接访问当前项目预览；管理端和 API 仍需验证。');
+    expect(networkTabSource).toContain('checked={formState.skipLanPreviewAuth}');
+    expect(networkTabSource).toContain("onCheckedChange={(checked) => updateField('skipLanPreviewAuth', checked === true)}");
+    expect(handleSaveSource).toContain('await loadConfig();');
+    expect(source).not.toContain('服务配置');
+    expect(source).not.toContain('allowLAN: boolean;');
+    expect(source).not.toContain('formState.allowLAN');
+    expect(source).not.toContain('允许局域网访问');
     expect(source).not.toContain('<SelectTrigger className="w-[168px] shrink-0">');
     expect(source).not.toContain('<SelectValue placeholder="选择地址" />');
   });
@@ -82,6 +127,7 @@ describe('SettingsDialog source', () => {
     const projectIndex = source.indexOf('<TabsTrigger value="project"');
     const updateIndex = source.indexOf('<TabsTrigger value="update"');
     const aiIndex = source.indexOf('<TabsTrigger value="ai"');
+    const networkIndex = source.indexOf('<TabsTrigger value="network"');
     const updateTabSource = source.slice(
       source.indexOf('<TabsContent value="update"'),
       source.indexOf('<TabsContent value="ai"'),
@@ -90,6 +136,7 @@ describe('SettingsDialog source', () => {
     expect(projectIndex).toBeGreaterThan(-1);
     expect(updateIndex).toBeGreaterThan(projectIndex);
     expect(aiIndex).toBeGreaterThan(updateIndex);
+    expect(networkIndex).toBeGreaterThan(aiIndex);
     expect(source).toContain('MakeClientUpdateStatus');
     expect(source).toContain('MakeClientUpdateApplyResult');
     expect(source).toContain('makeClientUpdateStatus');
@@ -99,8 +146,10 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('apiService.applyMakeClientUpdate');
     expect(source).toContain("if (value === 'update')");
     expect(updateTabSource).toContain('当前客户端版本');
-    expect(updateTabSource).toContain('服务端最新版本');
+    expect(updateTabSource).toContain('最新模板版本');
     expect(updateTabSource).toContain('项目路径');
+    expect(updateTabSource).toContain("makeClientUpdateStatus?.metadataSource === 'bundled'");
+    expect(updateTabSource).toContain('未能连接线上更新源，当前显示本机可用版本。');
     expect(updateTabSource).toContain('版本说明');
     expect(updateTabSource).toContain('makeClientUpdateStatus?.releaseNotes');
     expect(updateTabSource).toContain('whitespace-pre-wrap');
@@ -262,8 +311,8 @@ describe('SettingsDialog source', () => {
     expect(panelSource).toContain('renderOnlineRemoteSetupCard()');
     expect(panelSource).toContain('renderOnlineInfoCard()');
     expect(panelSource).toContain('线上分支');
-    expect(panelSource).toContain('线上有更新');
-    expect(panelSource).toContain('本地待同步');
+    expect(panelSource).toContain("getVersionChangeTitle('incoming', behindCount)");
+    expect(panelSource).toContain("getVersionChangeTitle('outgoing', aheadCount)");
     expect(panelSource).toContain('incomingChangeItems.length > 0 ? (');
     expect(panelSource).toContain('outgoingChangeItems.length > 0 ? (');
     expect(panelSource).toContain('hasConfiguredRemote ? (');
@@ -289,22 +338,18 @@ describe('SettingsDialog source', () => {
     expect(panelSource).not.toContain('CHANGE_GROUP_PLACEHOLDER');
     expect(panelSource).not.toContain('remote.provider');
     expect(panelSource).not.toContain('remoteProvider');
-    expect(panelSource).toContain('MAX_VISIBLE_CHANGE_ITEM_ROWS');
+    expect(panelSource).toContain('MAX_VISIBLE_CHANGE_ITEMS');
     expect(panelSource).toContain('getVisibleChangeItems');
     expect(panelSource).toContain('remainingCount');
     expect(panelSource).toContain('查看更多');
     expect(panelSource).toContain('+{visibleChangeItems.remainingCount}');
-    expect(panelSource).toContain('getVisibleChangeItems(items, visibleItemCount)');
-    expect(panelSource).toContain('data-change-item-measure-list');
-    expect(panelSource).toContain('data-change-item-measure-chip');
-    expect(panelSource).toContain('data-change-item-measure-summary');
-    expect(panelSource).toContain('measureCandidateVisibleRows');
-    expect(panelSource).toContain('const listContainerRef = useRef<HTMLDivElement | null>(null);');
-    expect(panelSource).toContain('const visibleItemCountRef = useRef(items.length);');
-    expect(panelSource).toContain('if (visibleItemCountRef.current !== nextVisibleItemCount)');
-    expect(panelSource).toContain('observer?.observe(listContainer);');
-    expect(panelSource).not.toContain('observer?.observe(measureList);');
-    expect(panelSource).toContain('pointer-events-none absolute left-0 top-0 flex h-0 w-full flex-wrap items-center gap-1.5 overflow-hidden opacity-0');
+    expect(panelSource).toContain('getVisibleChangeItems(items, MAX_VISIBLE_CHANGE_ITEMS)');
+    expect(panelSource).not.toContain('data-change-item-measure-list');
+    expect(panelSource).not.toContain('data-change-item-measure-chip');
+    expect(panelSource).not.toContain('data-change-item-measure-summary');
+    expect(panelSource).not.toContain('measureCandidateVisibleRows');
+    expect(panelSource).not.toContain('ResizeObserver');
+    expect(panelSource).not.toContain('requestAnimationFrame');
     expect(panelSource).toContain('flex flex-wrap items-center gap-1.5 overflow-hidden');
     expect(panelSource).not.toContain('留空时使用当前分支');
     expect(panelSource).not.toContain('placeholder={status?.currentBranch || \'main\'}');
@@ -315,7 +360,7 @@ describe('SettingsDialog source', () => {
     expect(apiSource).toContain('export interface GitWorkspaceRemoteConfig');
     expect(apiSource).toContain('url?: string;');
     expect(apiSource).toContain('defaultBranch?: string;');
-    expect(apiSource).toContain("async getGitWorkspaceStatus(options: { gitVersion?: string } = {})");
+    expect(apiSource).toContain("async getGitWorkspaceStatus(options: { gitVersion?: string; path?: string } = {})");
     expect(apiSource).toContain("async switchGitWorkspaceBranch(branch: string)");
     expect(apiSource).toContain("async createGitWorkspaceRemoteRepository(payload: CreateGitWorkspaceRemoteRepositoryRequest)");
     expect(apiSource).not.toContain('remote.provider');
@@ -362,7 +407,7 @@ describe('SettingsDialog source', () => {
     expect(localAiSource).toContain('<div className="inline-flex min-w-0 max-w-full items-center justify-center gap-2">');
     expect(localAiSource).toContain('<TableCell className="w-[180px] max-w-[180px] px-3 py-2 text-xs text-muted-foreground">');
     expect(localAiSource).toContain('className="block max-w-[144px] truncate font-mono text-[11px] leading-4"');
-    expect(localAiSource).toContain('aria-label="刷新版本"');
+    expect(localAiSource).toContain('aria-label={`刷新 ${option.label} 版本`}');
     expect(localAiSource).toContain('<RefreshCw');
     expect(localAiSource).toContain('<RadioGroup');
     expect(localAiSource).toContain('<RadioGroupItem');
@@ -372,19 +417,22 @@ describe('SettingsDialog source', () => {
     expect(source).toContain("defaultPromptClient: formState.defaultPromptClient");
     expect(source).toContain("normalizePromptClientPreference(config.automation?.defaultPromptClient)");
     expect(source).toContain('配置本地可用的 AI Agent。');
-    expect(source).toContain("defaultPromptClient: 'acp:codex'");
+    expect(source).toContain('defaultPromptClient: null');
     expect(source).toContain('ACP_PROVIDER_OPTIONS.map((option) => ({');
     expect(source).toContain('value: option.client');
     expect(source).toContain('provider: option.provider');
     expect(source).toContain('label: option.label');
     expect(source).toContain('versionKey: option.provider');
-    for (const provider of ['claude', 'codex', 'gemini', 'opencode', 'cursor', 'qoder', 'codebuddy', 'reasonix']) {
+    for (const provider of ['claude', 'codex', 'opencode', 'cursor', 'qoder', 'codebuddy', 'reasonix', 'grok-build']) {
       expect(acpConfigSource).toContain(`provider: '${provider}'`);
       expect(acpConfigSource).toContain(`client: 'acp:${provider}'`);
     }
-    for (const label of ['Claude Code', 'Codex CLI', 'Gemini CLI', 'OpenCode', 'Cursor CLI', 'Qoder CLI', 'CodeBuddy CLI', 'Reasonix CLI']) {
+    expect(acpConfigSource).not.toContain("provider: 'gemini'");
+    expect(acpConfigSource).not.toContain("client: 'acp:gemini'");
+    for (const label of ['Claude Code', 'Codex CLI', 'OpenCode', 'Cursor CLI', 'Qoder CLI', 'CodeBuddy CLI', 'Reasonix CLI', 'Grok Build']) {
       expect(acpConfigSource).toContain(`label: '${label}'`);
     }
+    expect(acpConfigSource).not.toContain("label: 'Gemini CLI'");
     expect(source).not.toContain("value: 'genie:codex'");
     expect(source).not.toContain('配置 Genie 默认使用的本地执行 agent。');
   });
@@ -398,12 +446,16 @@ describe('SettingsDialog source', () => {
 
     expect(source).toContain('annotationPromptClient: PromptClientPreference;');
     expect(source).toContain('annotationModel: string;');
+    expect(source).toContain('agentRunConcurrency: number;');
     expect(source).toContain('annotationPromptClient: null');
     expect(source).toContain("annotationModel: ''");
+    expect(source).toContain('agentRunConcurrency: 5');
     expect(source).toContain('normalizePromptClientPreference(config.automation?.annotationPromptClient)');
     expect(source).toContain('annotationModel: config.automation?.annotationModel ||');
+    expect(source).toContain('agentRunConcurrency: sanitizeAgentRunConcurrency(config.automation?.agentRunConcurrency)');
     expect(source).toContain('annotationPromptClient: formState.annotationPromptClient || null');
     expect(source).toContain('annotationModel: formState.annotationModel.trim() || null');
+    expect(source).toContain('agentRunConcurrency: sanitizeAgentRunConcurrency(formState.agentRunConcurrency)');
     expect(aiTabSource).toContain('批注执行 AI');
     expect(aiTabSource).toContain('可以单独为批注场景配置一个执行速度更快的 AI；不选择时使用上面的执行 Agent。');
     expect(aiTabSource).toContain('批注供应商');
@@ -415,6 +467,11 @@ describe('SettingsDialog source', () => {
     expect(aiTabSource).toContain("onClear={() => updateField('annotationPromptClient', null)}");
     expect(aiTabSource).toContain('<SelectValue placeholder="默认供应商" />');
     expect(aiTabSource).toContain('批注执行模型');
+    expect(aiTabSource).toContain('AI 并发数');
+    expect(aiTabSource).toContain('批量批注执行时同时发送的 AI 任务数量，默认 5。');
+    expect(aiTabSource).toContain('min={1}');
+    expect(aiTabSource).toContain('max={10}');
+    expect(aiTabSource).toContain("onChange={(event) => updateField('agentRunConcurrency', sanitizeAgentRunConcurrency(event.target.value))}");
     expect(aiTabSource).toContain('<Select');
     expect(aiTabSource).toContain('LOCAL_AI_AGENT_OPTIONS.map((option) => (');
     expect(aiTabSource).not.toContain('模型配置');
@@ -426,7 +483,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const aiTabSource = source.slice(
       source.indexOf('<TabsContent value="ai"'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
 
     expect(source).toContain('AssistantRuntimeResponse');
@@ -498,7 +555,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const aiTabSource = source.slice(
       source.indexOf('<TabsContent value="ai"'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
 
     expect(source).toContain('function resolveLocalAcpRepairCommand(runtime: AssistantRuntimeResponse | null): string');
@@ -543,20 +600,28 @@ describe('SettingsDialog source', () => {
   it('saves the selected local AI provider only through defaultPromptClient form state', () => {
     const source = readSource();
 
-    expect(source).toContain("value={formState.defaultPromptClient || 'acp:codex'}");
-    expect(source).toContain("onValueChange={(value) => updateField('defaultPromptClient', normalizePromptClientPreference(value) || 'acp:codex')}");
+    expect(source).toContain('value={formState.defaultPromptClient || undefined}');
+    expect(source).toContain("onValueChange={(value) => updateField('defaultPromptClient', normalizePromptClientPreference(value))}");
     expect(source).toContain("defaultPromptClient: formState.defaultPromptClient");
+    expect(source).not.toContain("value={formState.defaultPromptClient || 'acp:codex'}");
+    expect(source).not.toContain("normalizePromptClientPreference(value) || 'acp:codex'");
   });
 
-  it('checks agent versions when the AI tab is activated and reuses a larger cache with latest versions', () => {
+  it('checks agent versions when the AI tab is activated, clears missing selections, and reuses a larger cache with latest versions', () => {
     const source = readSource();
     const agentVersionCacheSource = readFileSync(resolve(__dirname, '../utils/agentVersionCache.ts'), 'utf8');
 
     expect(source).toContain('handleTabValueChange');
     expect(source).toContain("if (value === 'ai')");
-    expect(source).toContain('loadAgentVersions(true)');
+    expect(source).toContain('void loadAgentVersions().then(clearMissingDefaultPromptClientAfterVersionCheck);');
+    expect(source).toContain('clearMissingDefaultPromptClientAfterVersionCheck');
+    expect(source).toContain("status === 'missing'");
+    expect(source).toContain('defaultPromptClient: null');
     expect(source).toContain('刷新版本');
     expect(source).toContain('apiService.getAgentVersions');
+    expect(source).toContain('const refreshAgentVersion = async (provider: AcpProviderKey): Promise<AgentVersionMap> =>');
+    expect(source).toContain("apiService.getAgentVersions({ agent: provider })");
+    expect(source).toContain('setAgentVersionRefreshingProvider(provider);');
     expect(source).toContain('agentVersionCacheRef');
     expect(source).toContain('formatAgentVersionMeta');
     expect(source).toContain('formatAgentVersionMetaTitle');
@@ -576,6 +641,46 @@ describe('SettingsDialog source', () => {
     expect(agentVersionCacheSource).toContain('latestVersions');
     expect(agentVersionCacheSource).toContain('（${latestMeta}）');
     expect(agentVersionCacheSource).toContain('未安装');
+  });
+
+  it('disables unavailable local AI provider selection and tests while keeping version refresh available', () => {
+    const source = readSource();
+    const tableBodySource = source.slice(
+      source.indexOf('{LOCAL_AI_AGENT_OPTIONS.map'),
+      source.indexOf('</TableBody>'),
+    );
+    const providerCellSource = tableBodySource.slice(
+      tableBodySource.indexOf('<TableCell className="w-[170px] max-w-[170px] px-2 py-2">'),
+      tableBodySource.indexOf('<TableCell className="w-[180px] max-w-[180px] px-3 py-2 text-xs text-muted-foreground">'),
+    );
+    const versionCellSource = tableBodySource.slice(
+      tableBodySource.indexOf('<TableCell className="w-[180px] max-w-[180px] px-3 py-2 text-xs text-muted-foreground">'),
+      tableBodySource.indexOf('<TableCell className="w-[230px] max-w-[230px] px-3 py-2 text-center text-xs align-middle">'),
+    );
+    const aiAgentHeaderSource = source.slice(
+      source.indexOf('<h3 className="text-base font-semibold text-foreground">AI Agent</h3>'),
+      source.indexOf('<Field>', source.indexOf('<h3 className="text-base font-semibold text-foreground">AI Agent</h3>')),
+    );
+
+    expect(source).toContain('const isAgentProviderMissing = (provider: AcpProviderKey): boolean =>');
+    expect(source).toContain('supportsNpxFallback: option.supportsNpxFallback === true');
+    expect(source).toContain('const providerSupportsNpxFallback = (provider: AcpProviderKey): boolean =>');
+    expect(source).toContain("versions[provider]?.status === 'missing' && !providerSupportsNpxFallback(provider)");
+    expect(source).toContain('const allLocalAiAgentOptionsDisabled =');
+    expect(source).toContain('未检测到可用的本地 AI Agent，暂时无法设置。请先安装后刷新版本检测。');
+    expect(aiAgentHeaderSource).toContain('allLocalAiAgentOptionsDisabled');
+    expect(tableBodySource).toContain('const optionDisabled = isAgentProviderMissing(option.provider);');
+    expect(tableBodySource).toContain('const versionRefreshing = agentVersionRefreshingProvider === option.provider;');
+    expect(tableBodySource).toContain('data-state={!optionDisabled && formState.defaultPromptClient === option.value ?');
+    expect(tableBodySource).toContain('<RadioGroupItem value={option.value} disabled={optionDisabled}');
+    expect(tableBodySource).toContain('disabled={isTesting || optionDisabled}');
+    expect(providerCellSource).not.toContain('refreshAgentVersion');
+    expect(versionCellSource).toContain('onClick={() => refreshAgentVersion(option.provider)}');
+    expect(versionCellSource).toContain('disabled={versionRefreshing}');
+    expect(versionCellSource).toContain('aria-label={`刷新 ${option.label} 版本`}');
+    expect(versionCellSource).toContain('versionRefreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />');
+    expect(source).not.toContain('onClick={() => loadAgentVersions(true).then(clearMissingDefaultPromptClientAfterVersionCheck)}');
+    expect(tableBodySource).not.toContain('disabled={agentVersionsLoading || optionDisabled}');
   });
 
   it('tests local AI providers through prompt execution without adding a backend endpoint', () => {
@@ -637,16 +742,19 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('Qoder');
     expect(source).toContain('CodeBuddy');
     expect(source).toContain('DeepSeek');
+    expect(source).toContain('Grok');
     expect(source).toContain("if (provider === 'codex') return <Codex.Color size={16} />;");
-    expect(source).toContain("if (provider === 'gemini') return <GeminiCLI.Color size={16} />;");
+    expect(source).not.toContain('GeminiCLI');
+    expect(source).not.toContain("if (provider === 'gemini') return");
     expect(source).toContain("if (provider === 'claude') return <ClaudeCode.Color size={16} />;");
     expect(source).toContain("if (provider === 'opencode') return <OpenCode size={16} />;");
     expect(source).toContain("if (provider === 'cursor') return <Cursor size={16} />;");
     expect(source).toContain("if (provider === 'qoder') return <Qoder.Color size={16} />;");
     expect(source).toContain("if (provider === 'codebuddy') return <CodeBuddy.Color size={16} />;");
     expect(source).toContain("if (provider === 'reasonix') return <DeepSeek.Color size={16} />;");
+    expect(source).toContain("if (provider === 'grok-build') return <Grok size={16} />;");
     expect(source).toContain('getAgentProviderIcon(option.provider)');
-    expect(source).toContain("defaultPromptClient: 'acp:codex'");
+    expect(source).toContain('defaultPromptClient: null');
     expect(source).not.toContain('Bot');
     expect(source).not.toContain('data-provider={provider}');
   });
@@ -714,7 +822,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const imageSectionSource = source.slice(
       source.indexOf('图片生成 AI'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
     const footerSource = source.slice(source.indexOf('<SheetFooter'));
 
@@ -739,7 +847,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const imageSectionSource = source.slice(
       source.indexOf('图片生成 AI'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
 
     expect(source).toContain('setAiImageConfigLastTest(normalizeAiImageConfigLastTest(config.ai?.imageGeneration?.lastTest));');
@@ -766,7 +874,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const imageSectionSource = source.slice(
       source.indexOf('图片生成 AI'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
 
     expect(imageSectionSource).toContain('data-ai-image-config-actions');

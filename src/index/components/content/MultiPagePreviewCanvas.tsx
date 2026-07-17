@@ -830,6 +830,7 @@ export default function MultiPagePreviewCanvas({
                                         key={`${iframeKey}-${slotId}-${page.id}`}
                                         src={iframeSrc}
                                         title={`${selectedItem.displayName} - ${page.title}`}
+                                        allow="clipboard-write"
                                         onLoad={() => handleLiveIframeLoad(slotId, page)}
                                         className="block origin-top-left border-none"
                                         style={{
@@ -876,6 +877,7 @@ export default function MultiPagePreviewCanvas({
                         }}
                         src={buildPrototypePageHashUrl(screenshotPreviewUrl, page.id)}
                         title={`${selectedItem.displayName} - ${page.title} screenshot`}
+                        allow="clipboard-write"
                         onLoad={() => {
                             requestMissingPageScreenshots();
                         }}

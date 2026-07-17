@@ -12,23 +12,25 @@ const LEGACY_PROMPT_CLIENT_MAP: Record<string, AcpPromptClient> = {
   claudecode: 'acp:claude',
   codex: 'acp:codex',
   openai: 'acp:codex',
-  gemini: 'acp:gemini',
+  gemini: 'acp:codex',
+  'acp:gemini': 'acp:codex',
   opencode: 'acp:opencode',
   cursor: 'acp:cursor',
   qoder: 'acp:qoder',
   codebuddy: 'acp:codebuddy',
   reasonix: 'acp:reasonix',
+  'grok-build': 'acp:grok-build',
 };
 
 const ACP_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
   'acp:claude',
   'acp:codex',
-  'acp:gemini',
   'acp:opencode',
   'acp:cursor',
   'acp:qoder',
   'acp:codebuddy',
   'acp:reasonix',
+  'acp:grok-build',
 ]);
 
 const LOCAL_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([

@@ -46,7 +46,6 @@ interface ResolvedOpenTarget {
 
 const CLI_AGENT_COMMANDS: Record<CLIAgent, CommandSpec> = {
   codex: { command: 'codex', args: [], displayCommand: 'codex' },
-  gemini: { command: 'gemini', args: [], displayCommand: 'gemini' },
   claudecode: { command: 'claude', args: [], displayCommand: 'claude' },
   opencode: { command: 'opencode', args: [], displayCommand: 'opencode' },
 };

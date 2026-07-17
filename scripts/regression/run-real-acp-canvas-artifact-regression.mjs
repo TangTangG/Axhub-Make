@@ -188,6 +188,19 @@ function encodeCanvasApiPath(canvasName) {
   return String(canvasName || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
 }
 
+function getCanvasResourcePathForPrototype(prototypeName) {
+  const safeName = String(prototypeName || 'recording')
+    .replace(/[^a-z0-9-]+/giu, '-')
+    .replace(/-+/gu, '-')
+    .replace(/^-|-$/gu, '')
+    .toLowerCase() || 'recording';
+  return `regression/${safeName}.excalidraw`;
+}
+
+function buildResourceCanvasApiUrl(baseUrl, resourcePath) {
+  return new URL(`/api/canvas/resources/${encodeCanvasApiPath(resourcePath)}`, baseUrl);
+}
+
 function appendProjectIdSearchParam(url, projectId) {
   const normalizedProjectId = String(projectId || '').trim();
   if (normalizedProjectId) {
@@ -561,7 +574,7 @@ function buildRealAcpPrompt({ runId, prototypeName }) {
     '4. document：生成一份 Markdown 或文档记录，说明本次生成流程和产物清单。',
     '',
     `本次回归 run id 是 ${runId}，请把这个 id 放进产物标题、正文或可见内容中，方便测试报告追踪。`,
-    `当前画布原型是 ${prototypeName}，请把产物落到这个当前画布，不要切换到其他项目或只创建草稿。`,
+    `当前资源画布是 src/resources/regression/${prototypeName}.excalidraw，请把产物落到这个当前画布，不要切换到其他项目或只创建草稿。`,
     '完成后请简短回复已生成 prototype、image、drawio、document 四类产物。',
   ].join('\n');
 }
@@ -1809,7 +1822,9 @@ async function waitForRealAcpCanvasActiveWrite({
   let latestCanvasRequests = [];
 
   while (Date.now() < deadline) {
-    const url = new URL(`/api/canvas/${encodeCanvasApiPath(`prototypes/${prototypeName}/canvas.excalidraw`)}`, baseUrl);
+    const canvasResourcePath = getCanvasResourcePathForPrototype(prototypeName);
+    const canvasApiPath = `/api/canvas/resources/${encodeCanvasApiPath(canvasResourcePath)}`;
+    const url = buildResourceCanvasApiUrl(baseUrl, canvasResourcePath);
     appendProjectIdSearchParam(url, projectId);
     latest = await fetchJson(url).catch((error) => ({
       error: error?.message || String(error),
@@ -1822,7 +1837,7 @@ async function waitForRealAcpCanvasActiveWrite({
       .filter((request) => {
         try {
           const requestUrl = new URL(request.url);
-          return requestUrl.pathname.includes(`/api/canvas/${encodeCanvasApiPath(`prototypes/${prototypeName}/canvas.excalidraw`)}`);
+          return requestUrl.pathname.includes(canvasApiPath);
         } catch {
           return false;
         }
@@ -1830,7 +1845,7 @@ async function waitForRealAcpCanvasActiveWrite({
     if (latestCoverage.allRequiredKindsPresent) {
       return {
         source: 'canvas-file',
-        canvasName: `prototypes/${prototypeName}/canvas.excalidraw`,
+        canvasName: `resources/${canvasResourcePath}`,
         elementCount: Array.isArray(latest?.elements) ? latest.elements.length : 0,
         requiredKinds,
         generatedElements,
@@ -1843,7 +1858,7 @@ async function waitForRealAcpCanvasActiveWrite({
     await sleep(1000);
   }
   throw new Error(`Timed out waiting for real ACP canvas active write result: ${JSON.stringify({
-    canvasName: `prototypes/${prototypeName}/canvas.excalidraw`,
+    canvasName: `resources/${getCanvasResourcePathForPrototype(prototypeName)}`,
     latestCoverage,
     latestCanvasBridgeReloadCount: latestReloadEvents.length,
     latestCanvasRequests: latestCanvasRequests.slice(-20),
@@ -1945,8 +1960,9 @@ async function waitForPersistedCanvasArtifactElements(baseUrl, prototypeName, pr
   const deadline = Date.now() + timeoutMs;
   let latest = null;
   let latestCoverage = null;
+  const canvasResourcePath = getCanvasResourcePathForPrototype(prototypeName);
   while (Date.now() < deadline) {
-    const url = new URL(`/api/canvas/${encodeCanvasApiPath(`prototypes/${prototypeName}/canvas.excalidraw`)}`, baseUrl);
+    const url = buildResourceCanvasApiUrl(baseUrl, canvasResourcePath);
     appendProjectIdSearchParam(url, projectId);
     latest = await fetchJson(url).catch((error) => ({
       error: error?.message || String(error),
@@ -1955,7 +1971,7 @@ async function waitForPersistedCanvasArtifactElements(baseUrl, prototypeName, pr
     latestCoverage = summarizeArtifactKindCoverage(generatedElements, requiredKinds);
     if (latestCoverage.allRequiredKindsPresent) {
       return {
-        canvasName: `prototypes/${prototypeName}/canvas.excalidraw`,
+        canvasName: `resources/${canvasResourcePath}`,
         elementCount: Array.isArray(latest?.elements) ? latest.elements.length : 0,
         requiredKinds,
         generatedElements,
@@ -2375,7 +2391,7 @@ async function main() {
 
     history = await waitForGenerationHistory(baseUrl, canvasPrototype, requiredKinds);
     await refreshExternalDiagnostics();
-    await capture(page, frames, frameDir, '8. 生成记录已写入当前画布原型，四类 artifact 可被历史接口读取');
+    await capture(page, frames, frameDir, '8. 生成记录已写入当前资源画布，四类 artifact 可被历史接口读取');
     pageState = await getPageState(page);
     await refreshExternalDiagnostics();
     diagnostics.browserPageStates = await collectBrowserPageStates(browser);

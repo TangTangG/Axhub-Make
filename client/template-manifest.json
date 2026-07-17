@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "runtime": {
+    "files": [
+      ".gitignore",
+      "AGENTS.md",
+      "AGENTS.template.md",
+      "CLAUDE.md",
+      "LICENSE",
+      "README.md",
+      "RELEASE_NOTES.md",
+      "package.json",
+      "skills-lock.json",
+      "src/index.html",
+      "src/vite-env.d.ts",
+      "tsconfig.base.json",
+      "tsconfig.json",
+      "tsconfig.typecheck.json",
+      "vite.config.ts"
+    ],
+    "directories": [
+      ".agents/skills",
+      ".claude/skills",
+      "rules",
+      "scripts",
+      "src/common",
+      "src/preview-templates",
+      "vite-plugins"
+    ],
+    "fileRules": [
+      {
+        "action": "exclude",
+        "pattern": "^scripts/subset-beginner-guide-fonts\\.mjs$",
+        "description": "发布包只保留已裁剪字体，不携带字体裁剪开发工具。"
+      }
+    ]
+  },
+  "makeMetadata": {
+    "seedDirectory": "template-seed/.axhub/make",
+    "outputDirectory": ".axhub/make",
+    "files": [
+      {
+        "path": "README.md",
+        "strategy": "copy",
+        "description": "发布模板中的 Make 元数据说明。"
+      },
+      {
+        "path": "axhub.config.json",
+        "strategy": "sanitize",
+        "description": "使用无本地配置和密钥的安全默认设置。"
+      },
+      {
+        "path": "client.json",
+        "strategy": "copy",
+        "description": "发布模板的客户端识别信息。"
+      },
+      {
+        "path": "sidebar-tree.json",
+        "strategy": "filter",
+        "description": "以固定目录结构为基底，只保留清单声明的原型和主题。"
+      }
+    ]
+  },
+  "prototypes": [
+    {
+      "id": "annotation-demo"
+    },
+    {
+      "id": "beginner-guide",
+      "fileRules": [
+        {
+          "action": "exclude",
+          "pattern": "^annotation-source\\.json$",
+          "description": "新手指导不携带标注源数据，即使源码目录中存在也不进入发布包。"
+        },
+        {
+          "action": "exclude",
+          "pattern": "\\.(?:otf|ttf)$",
+          "description": "新手指导只发布已裁剪的 WOFF2 字体，不携带原始 OTF 或 TTF 字体。"
+        }
+      ]
+    },
+    {
+      "id": "touch-and-talk-annotation-demo",
+      "fileRules": [
+        {
+          "action": "exclude",
+          "pattern": "^annotation-source\\.json$",
+          "description": "批注演示不携带标注源数据，即使源码目录中存在也不进入发布包。"
+        }
+      ]
+    }
+  ],
+  "themes": {
+    "idRules": [
+      {
+        "action": "exclude",
+        "pattern": "^(?:trae|whop)$",
+        "description": "排除仅用于本地调试、不属于正式主题库的主题。"
+      }
+    ]
+  },
+  "resources": {
+    "files": [
+      "src/resources/.gitkeep",
+      "src/resources/README.md",
+      "src/resources/templates/prd-template.md",
+      "src/resources/templates/prototype-review-report-template.md",
+      "src/resources/templates/ui-review-report-template.md",
+      "src/resources/templates/规格文档 HTML 模板.html",
+      "src/resources/templates/规格文档 Markdown 模板.md"
+    ]
+  }
+}

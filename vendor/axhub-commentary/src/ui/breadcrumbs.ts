@@ -16,6 +16,7 @@ import { createSparkleIcon } from './icons';
 import { Disposer } from '../utils/disposables';
 import type { ElementAgentTaskState } from '../core/editor/state';
 import type { CommentShortcutSettings } from '../core/editor/comment-shortcut-settings';
+import type { CommentaryElementTool } from '../web-editor-types';
 
 // =============================================================================
 // Types
@@ -52,6 +53,13 @@ export interface BreadcrumbsOptions {
   getElementStyleSummaryLines?: (element: Element | null) => string[];
   /** Read current comment shortcut settings for tooltip/help rendering */
   getCommentShortcutSettings?: () => CommentShortcutSettings;
+  /** Optional host-owned actions shown for the selected element. */
+  getElementTools?: (element: Element | null) => CommentaryElementTool[];
+  /** Execute a host-owned action for the selected element. */
+  onElementToolAction?: (
+    tool: CommentaryElementTool,
+    element: Element,
+  ) => void | Promise<void>;
   /** Whether local annotation markdown editing is available for the selected element */
   canEditAnnotationMarkdown?: (element: Element | null) => boolean;
   /** Return an edit URL for the selected annotation document, or an empty value to hide the document edit entry */

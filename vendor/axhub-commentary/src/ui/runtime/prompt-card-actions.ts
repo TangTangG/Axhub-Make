@@ -3,6 +3,7 @@ export async function executePromptCardCurrentElementAction(options: {
   onConfirmText: () => Promise<void>;
   onConfirmNote: () => Promise<void>;
   onDismissSelection?: () => void;
+  onDispatched?: () => void;
   onSendCurrentElementPromptToAgent?: ((
     element: Element,
   ) => void | Promise<void>) | undefined;
@@ -12,6 +13,7 @@ export async function executePromptCardCurrentElementAction(options: {
     onConfirmText,
     onConfirmNote,
     onDismissSelection,
+    onDispatched,
     onSendCurrentElementPromptToAgent,
   } = options;
 
@@ -23,6 +25,7 @@ export async function executePromptCardCurrentElementAction(options: {
   await onConfirmNote();
   const sendPromise = Promise.resolve(onSendCurrentElementPromptToAgent(currentTarget));
   onDismissSelection?.();
+  onDispatched?.();
   await sendPromise;
   return true;
 }

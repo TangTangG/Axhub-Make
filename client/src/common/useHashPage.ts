@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 export interface HashPageRoutePage {
     id: string;
     title: string;
+    group?: string;
 }
 
 export interface HashPageRoute {
@@ -38,7 +39,8 @@ function normalizeRoutePages(pages: HashPageRoutePage[]): HashPageRoutePage[] {
         .map((page) => {
             const id = normalizePageId(page?.id);
             const title = typeof page?.title === 'string' ? page.title.trim() : '';
-            return id && title ? { id, title } : null;
+            const group = typeof page?.group === 'string' ? page.group.trim() : '';
+            return id && title ? { id, title, ...(group ? { group } : {}) } : null;
         })
         .filter((page): page is HashPageRoutePage => Boolean(page));
 }
@@ -113,7 +115,7 @@ function notifyHostPrototypeRouteInfo(
 export function useHashPage(routeOrDefault: HashPageRoute | string = 'home') {
     const route = normalizeRouteInput(routeOrDefault);
     const { pages, defaultPageId } = route;
-    const routeSignature = `${defaultPageId}:${pages.map((routePage) => `${routePage.id}=${routePage.title}`).join('|')}`;
+    const routeSignature = `${defaultPageId}:${pages.map((routePage) => `${routePage.id}=${routePage.title}@${routePage.group || ''}`).join('|')}`;
     const [page, setPageState] = useState<string>(() => {
         if (typeof window === 'undefined') {
             return defaultPageId;

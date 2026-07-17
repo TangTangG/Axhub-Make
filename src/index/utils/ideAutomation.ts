@@ -1,5 +1,6 @@
 import { toast } from 'sonner';
 import { MAIN_IDE_APP_NAMES, MainIDEPreference } from '../../common/ide';
+import { formatLocalAppOpenFailureMessage } from '../../common/localAppOpenMessage';
 import { apiService } from '../services/api';
 
 interface OpenConfiguredIDEOptions {
@@ -8,39 +9,10 @@ interface OpenConfiguredIDEOptions {
     targetPath?: string | null;
 }
 
-const IDE_NOT_FOUND_PATTERNS = [
-    /未检测到.+请先安装/,
-    /system cannot find the file/i,
-    /cannot find the file specified/i,
-    /系统找不到指定的文件/,
-    /no such file or directory/i,
-    /is not recognized as an internal or external command/i,
-    /command not found/i,
-    /enoent/i,
-];
-
-const IDE_RETRY_PATTERNS = [
-    /^failed to fetch$/i,
-    /network\s*error/i,
-    /load failed/i,
-];
-
 export function resolveOpenIDEErrorMessage(error: unknown, preferredIDE: MainIDEPreference, hasFollowupAction: boolean): string {
-    const rawMessage = typeof (error as any)?.message === 'string' ? (error as any).message.trim() : '';
-
+    void error;
     const ideName = preferredIDE ? MAIN_IDE_APP_NAMES[preferredIDE] : '编辑器';
-    const editorMissingMessage = `未检测到 ${ideName}，请先安装后再试`;
-    const genericMessage = `打开${ideName}失败，请稍后重试`;
-
-    const baseMessage = !rawMessage
-        ? genericMessage
-        : /^未检测到.+请先安装/u.test(rawMessage)
-          ? rawMessage
-        : IDE_NOT_FOUND_PATTERNS.some((pattern) => pattern.test(rawMessage))
-          ? editorMissingMessage
-        : IDE_RETRY_PATTERNS.some((pattern) => pattern.test(rawMessage))
-          ? genericMessage
-          : genericMessage;
+    const baseMessage = formatLocalAppOpenFailureMessage(ideName);
 
     return hasFollowupAction ? `${baseMessage}，已继续后续操作` : baseMessage;
 }

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Loader2, Plus, RefreshCw, Send, X } from 'lucide-react';
+import { ExternalLink, Loader2, Plus, RefreshCw, Send, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -16,6 +16,12 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 interface AxhubPublishDialogProps {
     open: boolean;
@@ -87,6 +93,7 @@ export default function AxhubPublishDialog({
     const [connectingEnterprise, setConnectingEnterprise] = useState(false);
     const [creating, setCreating] = useState(false);
     const [publishing, setPublishing] = useState(false);
+    const [clearingProjectId, setClearingProjectId] = useState('');
 
     const connected = status?.connected === true;
     const provider = status?.provider || 'online';
@@ -110,11 +117,18 @@ export default function AxhubPublishDialog({
             const nextStatus = await apiService.getAxhubStatus();
             setStatus(nextStatus);
             if (nextStatus.connected && nextStatus.me?.isPlus === true) {
-                const result = await apiService.getAxhubHtmlProjects();
+                const [result, latest] = await Promise.all([
+                    apiService.getAxhubHtmlProjects(),
+                    apiService.getCloudPublishingLatest(targetPath, projectId),
+                ]);
                 setProjects(result.projects || []);
+                const boundProjectId = String(latest.targets.axhub?.axhubProjectId || '');
                 setSelectedProjectId((current) => {
                     if (current && result.projects?.some((project) => String(project.pid) === current)) {
                         return current;
+                    }
+                    if (boundProjectId && result.projects?.some((project) => String(project.pid) === boundProjectId)) {
+                        return boundProjectId;
                     }
                     return result.projects?.[0] ? String(result.projects[0].pid) : '';
                 });
@@ -132,7 +146,7 @@ export default function AxhubPublishDialog({
                 setLoading(false);
             }
         }
-    }, []);
+    }, [projectId, targetPath]);
 
     useEffect(() => {
         if (!open) {
@@ -248,6 +262,26 @@ export default function AxhubPublishDialog({
         }
     };
 
+    const handleClearReviewReports = async (project: AxhubHtmlProject, event: React.MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const count = Math.max(0, Number(project.reviewReportCount || 0));
+        if (count <= 0 || clearingProjectId) return;
+        if (!window.confirm(`将删除云端 ${count} 份评审报告，不影响已同步到本地的报告`)) return;
+        setClearingProjectId(String(project.pid));
+        try {
+            await apiService.clearAxhubHtmlProjectReviewReports(project.pid);
+            setProjects((current) => current.map((item) => item.pid === project.pid
+                ? { ...item, reviewReportCount: 0 }
+                : item));
+            toast.success('云端评审报告已清空');
+        } catch (error: any) {
+            toast.error(error?.message || '清空 Axhub 评审报告失败');
+        } finally {
+            setClearingProjectId('');
+        }
+    };
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="flex h-[min(88vh,560px)] w-[min(90vw,680px)] max-w-[680px] flex-col overflow-hidden p-0 text-sm [&>[data-dialog-close]]:hidden">
@@ -266,27 +300,9 @@ export default function AxhubPublishDialog({
                             加载中...
                         </div>
                     ) : !connected ? (
-                        <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-4 text-center">
-                            <div className="text-base font-semibold">连接 Axhub</div>
-                            <div className="max-w-[400px] text-sm leading-6 text-muted-foreground">
-                                选择 Axhub Online 授权，或使用企业版地址和 Enterprise Token 连接。
-                            </div>
-                            <div className="flex flex-wrap justify-center gap-2">
-                                <Button type="button" onClick={() => void handleConnect()} disabled={authorizing || connectingEnterprise}>
-                                    {authorizing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                                    {authorizing ? '等待授权完成' : '连接 Axhub Online'}
-                                </Button>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => setEnterpriseFormOpen((value) => !value)}
-                                    disabled={authorizing || connectingEnterprise}
-                                >
-                                    连接企业版
-                                </Button>
-                            </div>
-                            {enterpriseFormOpen ? (
-                                <div className="grid w-full max-w-[420px] gap-2 rounded-md border bg-muted/20 p-3 text-left">
+                        enterpriseFormOpen ? (
+                            <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3 text-center">
+                                <div className="grid w-full max-w-[420px] gap-2 text-left">
                                     <Input
                                         value={enterpriseServerUrl}
                                         onChange={(event) => setEnterpriseServerUrl(event.target.value)}
@@ -307,7 +323,16 @@ export default function AxhubPublishDialog({
                                             }
                                         }}
                                     />
-                                    <div className="flex justify-end">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <Button
+                                            type="button"
+                                            variant="link"
+                                            className="h-8 px-1 text-muted-foreground hover:text-foreground"
+                                            onClick={() => setEnterpriseFormOpen(false)}
+                                            disabled={connectingEnterprise}
+                                        >
+                                            返回
+                                        </Button>
                                         <Button
                                             type="button"
                                             size="sm"
@@ -319,8 +344,30 @@ export default function AxhubPublishDialog({
                                         </Button>
                                     </div>
                                 </div>
-                            ) : null}
-                        </div>
+                            </div>
+                        ) : (
+                            <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-4 text-center">
+                                <div className="text-base font-semibold">连接 Axhub</div>
+                                <div className="max-w-full text-sm leading-6 text-muted-foreground sm:whitespace-nowrap">
+                                    选择 Axhub 授权，或使用企业版地址和 Enterprise Token 连接。
+                                </div>
+                                <div className="flex flex-wrap justify-center gap-2">
+                                    <Button type="button" onClick={() => void handleConnect()} disabled={authorizing || connectingEnterprise}>
+                                        {authorizing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                        {authorizing ? '等待授权完成' : '连接 Axhub'}
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="link"
+                                        className="px-1 text-muted-foreground hover:text-foreground"
+                                        onClick={() => setEnterpriseFormOpen(true)}
+                                        disabled={authorizing || connectingEnterprise}
+                                    >
+                                        连接企业版
+                                    </Button>
+                                </div>
+                            </div>
+                        )
                     ) : (
                         <div className="flex h-full min-h-0 flex-col gap-4">
                             <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2">
@@ -411,25 +458,57 @@ export default function AxhubPublishDialog({
                                                             <div className="shrink-0 text-xs text-muted-foreground">
                                                                 {formatBytes(project.htmlUsedSpace)}
                                                                 {projectUpdatedAt(project) ? ` · ${projectUpdatedAt(project)}` : ''}
+                                                                {Number(project.reviewReportCount || 0) > 0 ? (
+                                                                    <> · 评审报告 {project.reviewReportCount} 份</>
+                                                                ) : null}
                                                             </div>
                                                         </div>
-                                                        <Button
-                                                            type="button"
-                                                            variant="ghost"
-                                                            size="icon-xs"
-                                                            className="shrink-0 text-muted-foreground hover:text-foreground"
-                                                            aria-label={`打开 ${project.name} 预览`}
-                                                            onClick={(event) => {
-                                                                event.preventDefault();
-                                                                event.stopPropagation();
-                                                                const previewUrl = isEnterprise
-                                                                    ? buildEnterpriseProjectPreviewUrl(status?.serverUrl || status?.me?.serverUrl, project)
-                                                                    : buildProjectPreviewUrl(status?.onlineBaseUrl, project);
-                                                                window.open(previewUrl, '_blank', 'noopener,noreferrer');
-                                                            }}
-                                                        >
-                                                            <ExternalLink className="h-4 w-4" />
-                                                        </Button>
+                                                        <TooltipProvider delayDuration={150}>
+                                                            <div className="flex shrink-0 items-center gap-1">
+                                                                {Number(project.reviewReportCount || 0) > 0 ? (
+                                                                    <Tooltip>
+                                                                        <TooltipTrigger asChild>
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="ghost"
+                                                                                size="icon-xs"
+                                                                                className="shrink-0 text-muted-foreground hover:text-destructive"
+                                                                                aria-label="清空评审报告"
+                                                                                disabled={clearingProjectId === String(project.pid)}
+                                                                                onClick={(event) => { void handleClearReviewReports(project, event); }}
+                                                                            >
+                                                                                {clearingProjectId === String(project.pid)
+                                                                                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                                                                                    : <Trash2 className="h-4 w-4" />}
+                                                                            </Button>
+                                                                        </TooltipTrigger>
+                                                                        <TooltipContent>清空评审报告</TooltipContent>
+                                                                    </Tooltip>
+                                                                ) : null}
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="ghost"
+                                                                            size="icon-xs"
+                                                                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                                                                            aria-label="打开 Axhub 项目"
+                                                                            onClick={(event) => {
+                                                                                event.preventDefault();
+                                                                                event.stopPropagation();
+                                                                                const previewUrl = isEnterprise
+                                                                                    ? buildEnterpriseProjectPreviewUrl(status?.serverUrl || status?.me?.serverUrl, project)
+                                                                                    : buildProjectPreviewUrl(status?.onlineBaseUrl, project);
+                                                                                window.open(previewUrl, '_blank', 'noopener,noreferrer');
+                                                                            }}
+                                                                        >
+                                                                            <ExternalLink className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent>打开 Axhub 项目</TooltipContent>
+                                                                </Tooltip>
+                                                            </div>
+                                                        </TooltipProvider>
                                                     </label>
                                                 ))}
                                             </RadioGroup>

@@ -159,7 +159,7 @@ export async function setActiveProject(origin: string, projectId: string) {
 }
 
 export function writeTable(projectRoot: string, fileName: string, tableName: string, records: any[]) {
-  writeJson(path.join(projectRoot, 'src', 'database', `${fileName}.json`), { tableName, records });
+  writeJson(path.join(projectRoot, 'src', 'resources', 'data', `${fileName}.json`), { tableName, records });
 }
 
 export function createZipFromDirectory(sourceDir: string, zipPath: string): void {

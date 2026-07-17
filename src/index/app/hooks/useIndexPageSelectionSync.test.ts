@@ -125,26 +125,33 @@ describe('useIndexPageSelectionSync source', () => {
     expect(themeMissingHandled).toBeGreaterThan(themeResolvedCheck);
   });
 
-  it('opens document deep links in demo view so the document editing toolbar is shown', () => {
+  it('opens document deep links in their resolved view mode', () => {
     const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
     const docResolvedStart = source.indexOf("if (resolvedDeepLink?.kind === 'doc') {");
     const docResolvedEnd = source.indexOf('return;', docResolvedStart);
     const docResolvedSource = source.slice(docResolvedStart, docResolvedEnd);
 
     expect(docResolvedStart).toBeGreaterThanOrEqual(0);
-    expect(docResolvedSource).toContain("setViewMode('demo');");
+    expect(docResolvedSource).toContain('setViewMode(resolvedDeepLink.viewMode);');
     expect(docResolvedSource).toContain('setSelectedDoc(resolvedDeepLink.item);');
   });
 
-  it('keeps the selected prototype while resource tabs are browsed in prototype canvas mode', () => {
+  it('does not block direct project-file deep links on sidebar asset loading', () => {
     const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
 
-    expect(source).toContain("import { isBrowsingResourceSidebarInPrototypeCanvas } from '../index-page/contentMode';");
-    expect(source).toContain('isBrowsingResourceSidebarInPrototypeCanvas({ sidebarTab, viewMode }) && currentCanvasItem');
+    expect(source).toContain('doesResourceDeepLinkRequireSidebarAssets');
+    expect(source).toContain('doesResourceDeepLinkRequireSidebarAssets(initialResourceDeepLink)');
+  });
+
+  it('does not keep prototype-canvas resource browsing special sync branches', () => {
+    const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
+
+    expect(source).not.toContain("import { isBrowsingResourceSidebarInPrototypeCanvas } from '../index-page/contentMode';");
+    expect(source).not.toContain('isBrowsingResourceSidebarInPrototypeCanvas({ sidebarTab, viewMode }) && currentCanvasItem');
     expect(source).toContain('lastPrototypeCanvasItemRef');
   });
 
-  it('does not auto-select the first prototype while browsing resource tabs in prototype canvas mode', () => {
+  it('uses normal prototype auto-selection while resource tabs are browsed in canvas mode', () => {
     const firstPrototype = createPrototype('first-prototype');
     const canvasPrototype = createPrototype('canvas-prototype');
     const sidebarTrees = {
@@ -163,8 +170,10 @@ describe('useIndexPageSelectionSync source', () => {
       sidebarTrees,
       viewMode: 'canvas',
     })).toMatchObject({
-      kind: 'keep',
-      markExplicitSelection: true,
+      kind: 'select',
+      item: firstPrototype,
+      markExplicitSelection: false,
+      resetPageSelection: true,
       nextCanvasItem: canvasPrototype,
     });
 
@@ -179,8 +188,9 @@ describe('useIndexPageSelectionSync source', () => {
       viewMode: 'canvas',
     })).toMatchObject({
       kind: 'select',
-      item: canvasPrototype,
-      markExplicitSelection: true,
+      item: firstPrototype,
+      markExplicitSelection: false,
+      resetPageSelection: true,
       nextCanvasItem: canvasPrototype,
     });
   });

@@ -1,6 +1,6 @@
 import { isMobileDevice } from '../../utils/mobile-detect';
 
-export type WebEditorAgentProvider = 'claude' | 'codex' | 'gemini' | 'opencode';
+export type WebEditorAgentProvider = 'claude' | 'codex' | 'opencode';
 export type WebEditorDesignAdjustmentTool = 'figma' | 'axure' | 'pencil';
 export type WebEditorInteractionProfile = 'design' | 'text-comment';
 export type CommentaryAgentProvider = WebEditorAgentProvider;
@@ -17,6 +17,8 @@ export interface WebEditorUiSettings {
   disablePageAnimations: boolean;
   /** When true, the host page content scales down from the right edge to make room for the panel. */
   pageZoomEnabled: boolean;
+  /** Maximum number of concurrent element-level Agent runs. */
+  agentRunConcurrency: number;
 }
 export type CommentaryUiSettings = WebEditorUiSettings;
 
@@ -28,12 +30,12 @@ export const DEFAULT_WEB_EDITOR_UI_SETTINGS: WebEditorUiSettings = {
   darkMode: false,
   disablePageAnimations: false,
   pageZoomEnabled: false,
+  agentRunConcurrency: 5,
 };
 
 const AGENT_PROVIDER_SET: ReadonlySet<WebEditorAgentProvider> = new Set([
   'claude',
   'codex',
-  'gemini',
   'opencode',
 ]);
 
@@ -45,6 +47,14 @@ const DESIGN_ADJUSTMENT_TOOL_SET: ReadonlySet<WebEditorDesignAdjustmentTool> = n
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function sanitizeAgentRunConcurrency(value: unknown): number {
+  const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return DEFAULT_WEB_EDITOR_UI_SETTINGS.agentRunConcurrency;
+  }
+  return Math.min(10, Math.max(1, Math.trunc(numeric)));
 }
 
 export function sanitizeWebEditorUiSettings(value: unknown): WebEditorUiSettings {
@@ -61,6 +71,10 @@ export function sanitizeWebEditorUiSettings(value: unknown): WebEditorUiSettings
       ? (agentProvider as WebEditorAgentProvider)
       : null,
     agentAwake: Boolean(record.agentAwake),
+    agentRunConcurrency:
+      record.agentRunConcurrency === undefined
+        ? DEFAULT_WEB_EDITOR_UI_SETTINGS.agentRunConcurrency
+        : sanitizeAgentRunConcurrency(record.agentRunConcurrency),
     designAdjustmentTool: DESIGN_ADJUSTMENT_TOOL_SET.has(
       designAdjustmentTool as WebEditorDesignAdjustmentTool,
     )

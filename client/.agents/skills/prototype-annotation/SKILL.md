@@ -48,6 +48,8 @@ description: 原型标注替代 PRD 时使用：把页面目录、组件说明�
 
 多原型入口优先用 `link` 指向 `/prototypes/<prototype-id>` 或完整 URL；当前原型内部页面/状态入口再用 `route`。
 
+这里的相对 `link` 只用于 annotation 运行时数据。回复用户、请求验收或给预览入口时，必须使用 ready 检查返回的完整 `targetUrl`，或按项目规则把 `/prototypes/<prototype-id>` 补齐为当前 dev server 的完整 URL。
+
 ## 组件标注
 
 组件标注使用 `data.nodes[]`。每个节点至少需要稳定 `id`、`locator`、正文字段和时间字段。

@@ -317,7 +317,7 @@ export default defineConfig({
         '**/midscene/**',
         '**/vendor/**',
         '**/*.excalidraw',
-        '**/canvas-assets/**',
+        '**/*.assets/**',
       ],
     },
   },

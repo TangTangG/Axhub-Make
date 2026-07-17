@@ -221,4 +221,185 @@ describe('Axhub management API', () => {
     });
     expect(JSON.stringify(status.body)).not.toContain('axent_secret_123');
   });
+
+  it('returns the detailed upstream project creation error instead of a generic server error', async () => {
+    const homeDir = createTempRoot();
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://enterprise.example.com/api/runtime/axhub/me') {
+        return new Response(JSON.stringify({
+          code: 0,
+          data: {
+            name: 'Make 发布 Token',
+            role: 'service',
+            isPlus: true,
+            scopes: ['html:read', 'html:create', 'html:publish'],
+            tokenPrefix: 'axent_secret',
+          },
+        }), { status: 200 });
+      }
+      expect(url).toBe('https://enterprise.example.com/api/runtime/axhub/html-projects');
+      expect(init?.method).toBe('POST');
+      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer axent_secret_123');
+      expect(JSON.parse(String(init?.body))).toEqual({ name: 'Demo Project' });
+      return new Response(JSON.stringify({
+        code: 'AXHUB_PROJECT_CREATE_FAILED',
+        error: '服务器错误',
+        data: {
+          error: {
+            message: '项目名称已存在，请换一个名称',
+          },
+        },
+      }), { status: 500 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await callAxhubApi({
+      homeDir,
+      pathname: '/api/axhub/connect-enterprise',
+      method: 'POST',
+      body: {
+        serverUrl: 'https://enterprise.example.com/',
+        token: 'axent_secret_123',
+      },
+    });
+
+    const created = await callAxhubApi({
+      homeDir,
+      pathname: '/api/axhub/html-projects',
+      method: 'POST',
+      body: {
+        name: 'Demo Project',
+      },
+    });
+
+    expect(created).toMatchObject({
+      handled: true,
+      status: 500,
+      body: {
+        error: '项目名称已存在，请换一个名称',
+        code: 'AXHUB_PROJECT_CREATE_FAILED',
+        details: {
+          code: 'AXHUB_PROJECT_CREATE_FAILED',
+          error: '服务器错误',
+          data: {
+            error: {
+              message: '项目名称已存在，请换一个名称',
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it('includes the upstream payload when project creation only returns a generic message', async () => {
+    const homeDir = createTempRoot();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === 'https://enterprise.example.com/api/runtime/axhub/me') {
+        return new Response(JSON.stringify({
+          code: 0,
+          data: {
+            name: 'Make 发布 Token',
+            role: 'service',
+            isPlus: true,
+            scopes: ['html:read', 'html:create', 'html:publish'],
+            tokenPrefix: 'axent_secret',
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        code: 'AXHUB_PROJECT_CREATE_FAILED',
+        error: '服务器错误',
+        requestId: 'req-project-create-1',
+      }), { status: 500 });
+    }));
+
+    await callAxhubApi({
+      homeDir,
+      pathname: '/api/axhub/connect-enterprise',
+      method: 'POST',
+      body: {
+        serverUrl: 'https://enterprise.example.com/',
+        token: 'axent_secret_123',
+      },
+    });
+
+    const created = await callAxhubApi({
+      homeDir,
+      pathname: '/api/axhub/html-projects',
+      method: 'POST',
+      body: {
+        name: 'Demo Project',
+      },
+    });
+
+    expect(created).toMatchObject({
+      handled: true,
+      status: 500,
+      body: {
+        error: '服务器错误',
+        code: 'AXHUB_PROJECT_CREATE_FAILED',
+        details: {
+          code: 'AXHUB_PROJECT_CREATE_FAILED',
+          error: '服务器错误',
+          requestId: 'req-project-create-1',
+        },
+      },
+    });
+  });
+
+  it('clears hosted review reports through the authenticated local proxy', async () => {
+    const homeDir = createTempRoot();
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://enterprise.example.com/api/runtime/axhub/me') {
+        return new Response(JSON.stringify({
+          code: 0,
+          data: {
+            name: 'Make 发布 Token',
+            role: 'service',
+            isPlus: true,
+            scopes: ['html:read', 'html:publish'],
+            tokenPrefix: 'axent_secret',
+          },
+        }), { status: 200 });
+      }
+      expect(url).toBe('https://enterprise.example.com/api/runtime/axhub/html-projects/23/review-reports');
+      expect(init?.method).toBe('DELETE');
+      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer axent_secret_123');
+      return new Response(JSON.stringify({
+        code: 0,
+        data: {
+          pid: 23,
+          path: 'hosted-review',
+          deleted: 2,
+          reviewReportCount: 0,
+        },
+      }), { status: 200 });
+    }));
+
+    await callAxhubApi({
+      homeDir,
+      pathname: '/api/axhub/connect-enterprise',
+      method: 'POST',
+      body: {
+        serverUrl: 'https://enterprise.example.com/',
+        token: 'axent_secret_123',
+      },
+    });
+
+    const cleared = await callAxhubApi({
+      homeDir,
+      pathname: '/api/axhub/html-projects/23/review-reports',
+      method: 'DELETE',
+    });
+    expect(cleared).toEqual({
+      handled: true,
+      status: 200,
+      body: {
+        pid: 23,
+        path: 'hosted-review',
+        deleted: 2,
+        reviewReportCount: 0,
+      },
+    });
+  });
 });

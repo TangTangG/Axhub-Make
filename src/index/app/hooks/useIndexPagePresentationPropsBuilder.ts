@@ -14,14 +14,19 @@ interface UseIndexPagePresentationPropsBuilderParams {
             collapsed: boolean;
             selectedItem: any;
             prototypeStartDraftActive?: boolean;
+            resourceStartDraftActive?: boolean;
+            themeStartDraftActive?: boolean;
             viewMode: ViewMode;
         activeTab: 'prototypes';
         assistantVisible: boolean;
         isDarkMode: boolean;
-        contentMode: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
+        contentMode: 'preview' | 'prototype-spec' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
         docsItems?: any[];
         sidebarTrees?: any;
         selectedDoc: any;
+        selectedPrototypeSpec?: any;
+        prototypeSpecSupported?: boolean;
+        prototypeSpecLoading?: boolean;
         selectedResourceFolder?: any;
         selectedCanvas: any;
         canvasItems?: any[];
@@ -65,6 +70,8 @@ interface UseIndexPagePresentationPropsBuilderParams {
         handleCopyStartServerErrorPrompt?: () => void | Promise<void>;
         handleOpenIdeFile: () => void | Promise<void>;
         handleOpenSelectedDocInIDE: (itemOverride?: any, kindOverride?: 'doc' | 'template') => Promise<void>;
+        handleOpenPrototypeSpec: () => void | Promise<void>;
+        handlePrototypeSpecPreviewReady?: () => void;
         handleOpenSelectedThemeInIDE: (item?: any) => Promise<void>;
         handleOpenSelectedThemeDocInIDE: (item?: any) => Promise<void>;
         handleOpenSelectedDataTableInIDE: (item?: any) => Promise<void>;
@@ -90,7 +97,12 @@ interface UseIndexPagePresentationPropsBuilderParams {
         onPreferredIDEChange?: (ide: any) => void;
         openSettingsDialog?: (tab?: SettingsDialogInitialTab) => void;
         onCreatePrototypeForDraftStart?: () => Promise<any | null>;
+        onUploadResourceFiles?: () => void;
+        onCreateResourceCanvasFile?: () => void | Promise<void>;
+        onCreateDrawioResourceFile?: () => void | Promise<void>;
+        onOpenDesignImport?: () => void;
         onRefreshPrototypes?: (preferredName?: string) => Promise<any[]>;
+        agentRunConcurrency?: number;
         onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;
     };
 }
@@ -106,6 +118,8 @@ export function useIndexPagePresentationPropsBuilder({
             collapsed: state.collapsed,
             selectedItem: state.selectedItem,
             prototypeStartDraftActive: state.prototypeStartDraftActive,
+            resourceStartDraftActive: state.resourceStartDraftActive,
+            themeStartDraftActive: state.themeStartDraftActive,
             viewMode: state.viewMode,
             activeTab: state.activeTab,
             selectedDeviceId: preview.selectedDeviceId,
@@ -119,14 +133,19 @@ export function useIndexPagePresentationPropsBuilder({
             markdownPromptCopying: preview.markdownPromptCopying,
             drawioResourceEditAvailable: preview.drawioResourceEditAvailable,
             reviewPanelOpen: preview.reviewPanelOpen,
-            activeReviewKind: preview.activeReviewKind,
-            reviewMarkdown: preview.reviewMarkdown,
-            reviewUpdatedAt: preview.reviewUpdatedAt,
+            activeReviewReportId: preview.activeReviewReportId,
+            reviewReports: preview.reviewReports,
+            selectedReviewReport: preview.selectedReviewReport,
             reviewLoading: preview.reviewLoading,
+            reviewDetailLoading: preview.reviewDetailLoading,
+            reviewUploadLoading: preview.reviewUploadLoading,
             reviewError: preview.reviewError,
-            reviewPageZoomEnabled: preview.reviewPageZoomEnabled,
+            reviewLanSubmitConfig: preview.reviewLanSubmitConfig,
+            reviewAxhubSubmitConfig: preview.reviewAxhubSubmitConfig,
             reviewPrompt: preview.reviewPrompt,
             reviewDocumentPath: preview.reviewDocumentPath,
+            reviewPrompts: preview.reviewPrompts,
+            reviewDocumentPaths: preview.reviewDocumentPaths,
             quickEditRuntimeStatus: preview.quickEditRuntimeStatus,
             exportAvailability: preview.exportAvailability,
             editorMode: preview.editorStatus.mode,
@@ -137,7 +156,12 @@ export function useIndexPagePresentationPropsBuilder({
             containerRef: preview.containerRef,
             previewIframeRef: preview.previewIframeRef,
             secondaryPreviewIframeRef: preview.secondaryPreviewIframeRef,
-            handlePreviewIframeLoad: preview.handlePreviewIframeLoad,
+            handlePreviewIframeLoad: () => {
+                preview.handlePreviewIframeLoad();
+                if (state.contentMode === 'prototype-spec') {
+                    actions.handlePrototypeSpecPreviewReady?.();
+                }
+            },
             currentDevice: preview.currentDevice,
             displaySize: preview.displaySize,
             scale: preview.scale,
@@ -151,6 +175,9 @@ export function useIndexPagePresentationPropsBuilder({
             docsItems: state.docsItems || [],
             sidebarTrees: state.sidebarTrees,
             selectedDoc: state.selectedDoc,
+            selectedPrototypeSpec: state.selectedPrototypeSpec,
+            prototypeSpecSupported: state.prototypeSpecSupported,
+            prototypeSpecLoading: state.prototypeSpecLoading,
             selectedResourceFolder: state.selectedResourceFolder,
             selectedCanvas: state.selectedCanvas,
             canvasItems: state.canvasItems || [],
@@ -206,9 +233,13 @@ export function useIndexPagePresentationPropsBuilder({
             handleOpenDrawioResourceEditor: preview.handleOpenDrawioResourceEditor,
             handleCopyMarkdownPrompt: preview.handleCopyMarkdownPrompt,
             handleReviewPanelToggle: preview.handleReviewPanelToggle,
-            handleReviewKindChange: preview.handleReviewKindChange,
-            handleCopyReviewPrompt: preview.handleCopyReviewPrompt,
-            handleToggleReviewPageZoom: preview.handleToggleReviewPageZoom,
+            handleSelectReviewReport: preview.handleSelectReviewReport,
+            handleBackToReviewList: preview.handleBackToReviewList,
+            handleStartReview: preview.handleStartReview,
+            handleRunReviewDirect: preview.handleRunReviewDirect,
+            handleUploadReviewReport: preview.handleUploadReviewReport,
+            handleReviewLanSubmitEnabledChange: preview.handleReviewLanSubmitEnabledChange,
+            handleReviewAxhubSubmitEnabledChange: preview.handleReviewAxhubSubmitEnabledChange,
             handleRunHostToolbarAction: preview.runHostToolbarAction,
             handleRunPrototypePanePromptAction: preview.runPrototypePanePromptAction,
             handleRunQuickEditSaveAction: preview.runQuickEditSaveAction,
@@ -234,7 +265,10 @@ export function useIndexPagePresentationPropsBuilder({
             handleQuickDownloadRuntimeCover: preview.handleQuickDownloadRuntimeCover,
             handleOpenAxureUsageGuide: preview.handleOpenAxureUsageGuide,
             handleOpenIdeFile: actions.handleOpenIdeFile,
-            handleOpenDocInIDE: actions.handleOpenSelectedDocInIDE,
+            handleOpenDocInIDE: state.contentMode === 'prototype-spec'
+                ? () => actions.handleOpenSelectedDocInIDE(state.selectedPrototypeSpec, 'doc')
+                : actions.handleOpenSelectedDocInIDE,
+            handleOpenPrototypeSpec: actions.handleOpenPrototypeSpec,
             handleOpenThemeInIDE: actions.handleOpenSelectedThemeInIDE,
             handleOpenThemeDocInIDE: actions.handleOpenSelectedThemeDocInIDE,
             handleOpenDataTableInIDE: actions.handleOpenSelectedDataTableInIDE,
@@ -265,7 +299,12 @@ export function useIndexPagePresentationPropsBuilder({
             onPreferredIDEChange: actions.onPreferredIDEChange,
             onOpenAISettings: actions.openSettingsDialog ? () => actions.openSettingsDialog?.('ai') : undefined,
             onCreatePrototypeForDraftStart: actions.onCreatePrototypeForDraftStart,
+            onUploadResourceFiles: actions.onUploadResourceFiles,
+            onCreateResourceCanvasFile: actions.onCreateResourceCanvasFile,
+            onCreateDrawioResourceFile: actions.onCreateDrawioResourceFile,
+            onOpenDesignImport: actions.onOpenDesignImport,
             onRefreshPrototypes: actions.onRefreshPrototypes,
+            agentRunConcurrency: actions.agentRunConcurrency,
             onSubmitCanvasAssistantPrompt: actions.onSubmitCanvasAssistantPrompt,
         },
     }), [actions, preview, state, ui]) satisfies PresentationAreaGroupedProps;

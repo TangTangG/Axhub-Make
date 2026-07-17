@@ -1,21 +1,8 @@
 import type { WebEditorDesignAdjustmentTool } from './core/editor/ui-settings';
 
 type ExportCoreModule = {
-  htmlToAxure: (
-    element: Element,
-    options: {
-      rootName: string;
-      preserveHierarchy: boolean;
-      preserveSvgIcons: boolean;
-    },
-  ) => Promise<unknown>;
-  htmlToFigma: (
-    element: Element,
-    options: {
-      rootName: string;
-      enableAutoLayout: boolean;
-    },
-  ) => Promise<unknown>;
+  htmlToAxure: (selector?: string | HTMLElement, options?: unknown) => Promise<unknown>;
+  htmlToFigma: (selector?: string | HTMLElement, options?: unknown) => Promise<unknown>;
   safeCopyToFigmaWithKiwi: (payload: { layers: unknown[] }) => Promise<{
     skipped: boolean;
     reason?: string;
@@ -110,9 +97,10 @@ export async function exportSelectionToDesignTool(
 
   const rootName = getSelectionExportName(element);
   const { htmlToAxure, htmlToFigma, safeCopyToFigmaWithKiwi } = await exportCoreLoader();
+  const exportElement = element as HTMLElement;
 
   if (tool === 'figma' || tool === 'pencil') {
-    const layers = await htmlToFigma(element, {
+    const layers = await htmlToFigma(exportElement, {
       rootName,
       enableAutoLayout: true,
     });
@@ -130,7 +118,7 @@ export async function exportSelectionToDesignTool(
     return;
   }
 
-  const payload = await htmlToAxure(element, {
+  const payload = await htmlToAxure(exportElement, {
     rootName,
     preserveHierarchy: false,
     preserveSvgIcons: true,

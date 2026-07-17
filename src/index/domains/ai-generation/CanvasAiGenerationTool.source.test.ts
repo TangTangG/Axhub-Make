@@ -60,7 +60,7 @@ describe('CanvasAiGenerationTool source', () => {
     expect(source).toContain('source');
   });
 
-  it('routes canvas start submissions directly to the sidebar assistant callback without old node composers', () => {
+  it('routes canvas start submissions through the direct API controller without old node composers', () => {
     const source = readToolSource();
 
     expect(source).not.toContain("import AiImageGenerationComposer from '../ai-image/AiImageGenerationComposer';");
@@ -76,14 +76,44 @@ describe('CanvasAiGenerationTool source', () => {
     expect(source).toContain('artifacts?: GenerationArtifactRecord[];');
     expect(source).toContain('onSubmitCanvasAssistantPrompt?: (request: CanvasAiGenerationRequest) => Promise<CanvasAiGenerationResult | boolean> | CanvasAiGenerationResult | boolean;');
     expect(source).toContain('const submitCanvasStartPrompt = useCallback(async (prompt: string, selection?: {');
-    expect(source).toContain('const submitted = await onSubmitCanvasAssistantPrompt({');
+    expect(source).toContain('createCanvasDirectRunController({');
+    expect(source).toContain('const startResult = controller?.start(request);');
+    expect(source).toContain('signal,');
+    expect(source).toContain('onPrepared,');
+    expect(source).toContain('onAccepted,');
     expect(source).toContain('canvasFilePath,');
-    expect(source).toContain('localContextRefs: canvasStartLocalContextRefs,');
-    expect(source).toContain('attachments: selection?.attachments || [],');
+    expect(source).toContain('const localContextRefs = selection?.localContextRefs || canvasStartLocalContextRefs;');
+    expect(source).toContain('localContextRefs,');
+    expect(source).toContain('statusTaskId: statusTask.id,');
+    expect(source).not.toContain('statusTaskKind');
+    expect(source).toContain('const attachments = selection?.attachments || [];');
+    expect(source).toContain('attachments,');
     expect(source).toContain('referenceImages,');
     expect(source).toContain('appendCanvasGenerationPromptSettings({');
-    expect(source).toContain('settings: canvasStartScene === \'design\' ? canvasStartImageSettings : canvasStartScene === \'document\' ? canvasStartDocumentSettings : canvasStartPrototypeSettings');
+    expect(source).toContain('const sceneSettings = canvasStartScene === \'design\' ? canvasStartImageSettings : canvasStartScene === \'document\' ? canvasStartDocumentSettings : canvasStartPrototypeSettings;');
+    expect(source).toContain('settings: sceneSettings,');
+    expect(source).toContain('statusTaskBounds: {');
+    expect(source).toContain('x: statusTask.x,');
+    expect(source).toContain('y: statusTask.y,');
+    expect(source).toContain('width: statusTask.width,');
+    expect(source).toContain('height: statusTask.height,');
     expect(source).not.toContain("if (request.scene === 'page')");
+  });
+
+  it('requires a configured default AI provider before optimizing canvas start prompts', () => {
+    const source = readToolSource();
+    const optimizeSegment = source.slice(
+      source.indexOf('const optimizeCanvasStartPrompt = useCallback'),
+      source.indexOf('const submitCanvasStartPrompt = useCallback'),
+    );
+
+    expect(source).toContain("import { normalizePromptClientPreference } from '@/common/promptExecution';");
+    expect(source).toContain("import { resolveAcpPromptClientProvider } from '@/common/acpModelConfig';");
+    expect(optimizeSegment).toContain('if (!resolveAcpPromptClientProvider(normalizePromptClientPreference(preferredPromptClient))) {');
+    expect(optimizeSegment).toContain("toast.warning('请先在 AI 设置中选择本地 AI Agent');");
+    expect(optimizeSegment).toContain("throw { action: 'open-ai-settings' };");
+    expect(optimizeSegment).toContain('return optimizeCanvasPrompt({');
+    expect(optimizeSegment).toContain('preferredPromptClient,');
   });
 
   it('removes old selected-node composer UI and active status overlays', () => {
@@ -108,7 +138,9 @@ describe('CanvasAiGenerationTool source', () => {
   it('scopes unsent composer drafts to the canvas start scene instead of selected AI nodes', () => {
     const source = readToolSource();
 
-    expect(source).toContain("import { createCanvasGenerationComposerDraftStorageKey } from '../shared/canvasGenerationComposerDraft';");
+    expect(source).toContain('createCanvasGenerationComposerDraftStorageKey,');
+    expect(source).toContain('readCanvasGenerationComposerDraft,');
+    expect(source).toContain('writeCanvasGenerationComposerDraft,');
     expect(source).toContain('assistantProjectPath');
     expect(source).toContain('canvasFilePath');
     expect(source).toContain("'canvas-start'");
@@ -117,6 +149,21 @@ describe('CanvasAiGenerationTool source', () => {
     expect(source).not.toContain('selectedGeneratorComposerDraftStorageKey');
     expect(source).not.toContain("'canvas-node'");
     expect(source).toContain('onOpenAISettings,');
+  });
+
+  it('does not overwrite a newer canvas start draft when restoring a failed direct run', () => {
+    const source = readToolSource();
+    const submitCallbackIndex = source.indexOf('const submitCanvasStartPrompt = useCallback');
+    const submitBody = source.slice(submitCallbackIndex, source.indexOf('const canvasStartSceneDefinition', submitCallbackIndex));
+
+    expect(submitBody).toContain('const draftStorage = getCanvasGenerationComposerDraftStorage();');
+    expect(submitBody).toContain('const currentDraft = readCanvasGenerationComposerDraft(draftStorage, canvasStartDraftStorageKey);');
+    expect(submitBody).toContain('if (!currentDraft.trim()) {');
+    expect(submitBody).toContain('writeCanvasGenerationComposerDraft(draftStorage, canvasStartDraftStorageKey, trimmedPrompt);');
+    expect(submitBody).toContain('setCanvasStartDraftRestoreVersion((version) => version + 1);');
+    expect(submitBody.indexOf('const currentDraft = readCanvasGenerationComposerDraft')).toBeLessThan(
+      submitBody.indexOf('writeCanvasGenerationComposerDraft(draftStorage, canvasStartDraftStorageKey, trimmedPrompt);'),
+    );
   });
 
   it('does not expose AI image detail or image-to-image creation entry points', () => {
@@ -160,23 +207,29 @@ describe('CanvasAiGenerationTool source', () => {
     expect(source).not.toContain('quickPrompts=');
   });
 
-  it('keeps image size presets on mobile portrait and PC landscape ratios', () => {
+  it('keeps image size presets within GPT Image 2 supported canvas constraints', () => {
     const source = readToolSource();
 
-    expect(source).toContain("{ label: '移动端 1K', value: '750x1624' }");
-    expect(source).toContain("{ label: '移动端 2K', value: '1170x2532' }");
-    expect(source).toContain("{ label: '移动端 4K', value: '1770x3840' }");
-    expect(source).toContain("{ label: 'PC 端 1K', value: '1024x576' }");
-    expect(source).toContain("{ label: 'PC 端 2K', value: '2048x1152' }");
-    expect(source).toContain("{ label: 'PC 端 4K', value: '3840x2160' }");
+    expect(source).toContain("{ label: '自动', value: 'auto' }");
+    expect(source).toContain("{ label: '手机整屏 768x1664', value: '768x1664' }");
+    expect(source).toContain("{ label: '手机高清 1168x2528', value: '1168x2528' }");
+    expect(source).toContain("{ label: 'PC 工作台 1440x896', value: '1440x896' }");
+    expect(source).toContain("{ label: 'PC 高清 1920x1200', value: '1920x1200' }");
+    expect(source).toContain("{ label: '方图 1024x1024', value: '1024x1024' }");
+    expect(source).not.toContain("value: '1024x1536'");
+    expect(source).not.toContain("value: '1152x2048'");
+    expect(source).not.toContain("value: '1536x1024'");
+    expect(source).not.toContain("value: '2048x1152'");
+    expect(source).not.toContain("value: '750x1624'");
+    expect(source).not.toContain("value: '1170x2532'");
+    expect(source).not.toContain("value: '1770x3840'");
+    expect(source).not.toContain("value: '1024x576'");
+    expect(source).not.toContain("value: '3840x2160'");
     expect(source).not.toContain("{ label: '移动端 1K', value: '576x1024' }");
-    expect(source).not.toContain("{ label: '移动端 2K', value: '1152x2048' }");
     expect(source).not.toContain("{ label: '移动端 4K', value: '2160x3840' }");
-    expect(source).not.toContain("{ label: '移动端 1K', value: '1024x1536' }");
-    expect(source).not.toContain("{ label: 'PC 端 1K', value: '1536x1024' }");
   });
 
-  it('submits canvas start prompt requests directly to the sidebar without selecting inserted nodes', () => {
+  it('submits canvas start prompt requests through direct runs without selecting inserted nodes', () => {
     const source = readToolSource();
     const submitCallbackIndex = source.indexOf('const submitCanvasStartPrompt = useCallback');
     const submitBody = source.slice(submitCallbackIndex, source.indexOf('const canvasStartSceneDefinition', submitCallbackIndex));
@@ -199,17 +252,119 @@ describe('CanvasAiGenerationTool source', () => {
     expect(submitBody).toContain('mode: selection?.mode');
     expect(submitBody).toContain('thought: selection?.thought');
     expect(submitBody).toContain('contextBundle: selection?.contextBundle');
-    expect(submitBody).toContain('attachments: selection?.attachments || []');
+    expect(submitBody).toContain('const attachments = selection?.attachments || [];');
+    expect(submitBody).toContain('attachments,');
     expect(submitBody).toContain('referenceImages');
     expect(submitBody).toContain('localContextRefs');
     expect(submitBody).toContain('prompt: appendCanvasGenerationPromptSettings({');
     expect(submitBody).toContain('source: \'canvas-start\'');
     expect(submitBody).toContain('canvasName: canvasFilePath');
+    expect(submitBody).toContain('statusTaskId: statusTask.id');
+    expect(submitBody).toContain('statusTaskBounds: {');
+    expect(submitBody).toContain('x: statusTask.x,');
+    expect(submitBody).toContain('y: statusTask.y,');
+    expect(submitBody).toContain('width: statusTask.width,');
+    expect(submitBody).toContain('height: statusTask.height,');
+    expect(submitBody).not.toContain('statusTaskKind');
     expect(submitBody).not.toContain('generatorElementId');
-    expect(submitBody).toContain('const submitted = await onSubmitCanvasAssistantPrompt({');
+    expect(submitBody).toContain('const request: CanvasAiGenerationRequest = {');
+    expect(submitBody).toContain('const startResult = controller?.start(request);');
+    expect(submitBody).toContain('canvasDirectRunOverlayController.createStatusTask({');
+    expect(submitBody).toContain('canvasDirectRunOverlayController.removeStatusTask(statusTask.id');
+    expect(submitBody).toContain('canvasDirectRunOverlayController.markStatusTaskFailed(statusTask.id');
+    expect(submitBody).toContain('canvasDirectRunOverlayController.registerStatusTaskStopped(statusTask.id');
+    expect(submitBody).toContain("canvasDirectRunOverlayController.updateStatusTaskRef(statusTask.id, { status: 'aborted' });");
+    expect(submitBody).not.toContain("status: 'running'");
+    expect(submitBody).not.toContain("status: 'done'");
+    expect(submitBody).not.toContain("status: 'error'");
     expect(submitCallbackIndex).toBeGreaterThan(-1);
     expect(source).not.toContain('const selectedPromptClient = providerToPromptClientPreference(request.provider) || preferredPromptClient;');
     expect(source).not.toContain('preferredPromptClient: selectedPromptClient');
+  });
+
+  it('uses annotation-backed canvas direct-run task nodes and refreshes their run refs', () => {
+    const source = readToolSource();
+
+    expect(source).toContain('CanvasDirectRunOverlayController');
+    expect(source).toContain('canvasDirectRunOverlayController?: CanvasDirectRunOverlayController;');
+    expect(source).not.toContain('buildCanvasDirectStatusPromptInstruction');
+    expect(source).not.toContain('canvasDirectStatusElement');
+    expect(source).toContain('onEvent: (event) => {');
+    expect(source).toContain('canvasDirectRunOverlayController?.updateStatusTaskRef(statusTaskId, {');
+    expect(source).toContain("if (event.type === 'error') {");
+    expect(source).toContain('canvasDirectRunOverlayController?.markStatusTaskFailed(');
+    expect(source).toContain("status: event.type === 'aborted' ? 'aborted' : 'running'");
+    expect(source).toContain('provider: event.taskRef.provider');
+    expect(source).toContain('runId: event.taskRef.requestId');
+    expect(source).toContain('threadId: event.taskRef.sessionId');
+    expect(source).toContain('const statusTask = canvasDirectRunOverlayController.createStatusTask({');
+    expect(source).toContain('const activeStatusTaskRunsRef = useRef(new Map<string, { abort: () => Promise<boolean> }>());');
+    expect(source).toContain('activeStatusTaskRunsRef.current.set(statusTask.id');
+    expect(source).toContain('canvasDirectRunOverlayController.removeStatusTask(statusTask.id');
+    expect(source).toContain('canvasDirectRunOverlayController.markStatusTaskFailed(statusTask.id');
+    expect(source).toContain("canvasDirectRunOverlayController.updateStatusTaskRef(statusTask.id, { status: 'aborted' });");
+    expect(source).toContain('canvasDirectRunOverlayController.registerStatusTaskStopped(statusTask.id');
+    expect(source).not.toContain('CanvasStartDirectRunTasks');
+    expect(source).not.toContain('data-axhub-canvas-direct-run-tasks');
+    expect(source).not.toContain('canvasDirectTasks');
+  });
+
+  it('keeps direct-run overlay details focused on prompt, context, type, and explicit settings', () => {
+    const source = readToolSource();
+    const detailsSource = source.slice(
+      source.indexOf('function buildCanvasDirectRunOverlayTaskDetails'),
+      source.indexOf('function CanvasStartSettingsPopover'),
+    );
+
+    expect(detailsSource).toContain('getCanvasStartSettingsSummary(scene, settings)');
+    expect(detailsSource).not.toContain('Provider:');
+    expect(detailsSource).not.toContain('Model:');
+    expect(detailsSource).not.toContain('模式:');
+    expect(detailsSource).not.toContain('思考:');
+  });
+
+  it('clears canvas start prompt context and settings after a direct run is accepted', () => {
+    const source = readToolSource();
+    const submitBody = source.slice(
+      source.indexOf('const submitCanvasStartPrompt = useCallback'),
+      source.indexOf('const handleCanvasStartSubmit = useCallback', source.indexOf('const submitCanvasStartPrompt = useCallback')),
+    );
+
+    expect(source).toContain('const resetCanvasStartSubmitState = useCallback(() => {');
+    expect(source).toContain('setCanvasStartLocalContextRefs([]);');
+    expect(source).toContain('copiedCanvasReferenceRef.current = null;');
+    expect(source).toContain('setHasCopiedCanvasReference(false);');
+    expect(source).toContain('setCanvasStartPrototypeCount(undefined);');
+    expect(source).toContain('setCanvasStartPrototypeNeedsRequirementsAnalysis(false);');
+    expect(source).toContain('setCanvasStartImageParams({ ...DEFAULT_CANVAS_START_IMAGE_SETTINGS });');
+    expect(source).toContain("setCanvasStartDocumentFormat('');");
+    expect(source).toContain('setCanvasStartDocumentNeedsRequirementsAnalysis(false);');
+    expect(source).toContain('canvasStartUserSelectedThemeRef.current = false;');
+    expect(submitBody).toContain('resetCanvasStartSubmitState();');
+    expect(submitBody.indexOf('const startResult = controller?.start(request);')).toBeLessThan(
+      submitBody.indexOf('resetCanvasStartSubmitState();'),
+    );
+  });
+
+  it('clears and closes the canvas start composer after submitting a prompt', () => {
+    const source = readToolSource();
+    const submitBody = source.slice(
+      source.indexOf('const submitCanvasStartPrompt = useCallback'),
+      source.indexOf('const handleCanvasStartSubmit = useCallback', source.indexOf('const submitCanvasStartPrompt = useCallback')),
+    );
+    const composerSegment = source.slice(
+      source.indexOf('<CanvasGenerationDisplayComposer'),
+      source.indexOf('postSelectorActions={() => (', source.indexOf('<CanvasGenerationDisplayComposer')),
+    );
+
+    expect(source).toContain('const handleCanvasStartSubmit = useCallback(async (prompt: string, selection?: Parameters<typeof submitCanvasStartPrompt>[1]) => {');
+    expect(source).toContain('const submitResult = await submitCanvasStartPrompt(prompt, selection);');
+    expect(source).toContain('if (submitResult !== false) {');
+    expect(source).toContain('setCanvasStartComposerOpen(false);');
+    expect(source).toContain('return submitResult;');
+    expect(composerSegment).toContain('onSubmit={handleCanvasStartSubmit}');
+    expect(composerSegment).not.toContain('onSubmit={submitCanvasStartPrompt}');
+    expect(submitBody).not.toContain('setCanvasStartComposerOpen(false);');
   });
 
   it('keeps canvas start on the sidebar-owned prompt path with ACP selector and pasted context', () => {
@@ -221,7 +376,8 @@ describe('CanvasAiGenerationTool source', () => {
 
     expect(submitSegment).toContain("source: 'canvas-start',");
     expect(submitSegment).toContain('canvasFilePath,');
-    expect(submitSegment).toContain('attachments: selection?.attachments || [],');
+    expect(submitSegment).toContain('const attachments = selection?.attachments || [];');
+    expect(submitSegment).toContain('attachments,');
     expect(submitSegment).toContain('provider: selection?.provider,');
     expect(submitSegment).toContain('model: selection?.model,');
     expect(submitSegment).toContain('mode: selection?.mode,');
@@ -240,7 +396,7 @@ describe('CanvasAiGenerationTool source', () => {
     const source = readToolSource();
     const cssSource = readFileSync(resolve(__dirname, '../shared/canvas-generation-acp-scope.css'), 'utf8');
 
-    expect(source).toContain("source?: 'placeholder-start' | 'canvas-start';");
+    expect(source).toContain("source?: 'placeholder-start' | 'resource-start' | 'theme-start' | 'canvas-start';");
     expect(source).toContain('const [canvasStartComposerOpen, setCanvasStartComposerOpen] = useState(false);');
     expect(source).toContain('data-axhub-canvas-start-ai-launcher');
     expect(source).toContain('<Sparkles className="size-[17px]" aria-hidden="true" />');
@@ -275,13 +431,34 @@ describe('CanvasAiGenerationTool source', () => {
     expect(canvasStartComposerSegment).not.toContain('quickPrompts=');
     expect(source).toContain('canvasStartDraftStorageKey');
     expect(source).toContain("'canvas-start'");
-    expect(source).toContain('sceneSettings: canvasStartScene === \'design\' ? canvasStartImageSettings : canvasStartScene === \'document\' ? canvasStartDocumentSettings : canvasStartPrototypeSettings');
+    expect(source).toContain('sceneSettings,');
     expect(source).toContain('localContextRefs');
-    expect(source).toContain('attachments: selection?.attachments || []');
+    expect(source).toContain('const attachments = selection?.attachments || [];');
     expect(source).toContain('referenceImages');
     expect(source).toContain('canPasteReferenceImages={hasCopiedCanvasReference}');
     expect(source).toContain('setHasCopiedCanvasReference(Boolean(copiedCanvasReferenceRef.current));');
     expect(source).toContain('initialLocalContextRefs={canvasStartLocalContextRefs}');
+  });
+
+  it('passes canvas scene settings and context into prompt optimization', () => {
+    const source = readToolSource();
+    const optimizeSegment = source.slice(
+      source.indexOf('const optimizeCanvasStartPrompt = useCallback'),
+      source.indexOf('const submitCanvasStartPrompt = useCallback'),
+    );
+
+    expect(source).toContain("import { optimizeCanvasPrompt } from './canvasPromptOptimization';");
+    expect(source).toContain('onOptimizePrompt={optimizeCanvasStartPrompt}');
+    expect(optimizeSegment).toContain('scene: canvasStartScene');
+    expect(optimizeSegment).toContain("sceneSettings: canvasStartScene === 'design' ? canvasStartImageSettings : canvasStartScene === 'document' ? canvasStartDocumentSettings : canvasStartPrototypeSettings");
+    expect(optimizeSegment).toContain('canvasFilePath,');
+    expect(optimizeSegment).toContain('workspacePath: assistantProjectPath');
+    expect(optimizeSegment).toContain('contextBundle: request.contextBundle');
+    expect(optimizeSegment).toContain('attachments: request.attachments');
+    expect(optimizeSegment).toContain('provider: request.provider');
+    expect(optimizeSegment).toContain('model: request.model');
+    expect(optimizeSegment).toContain('mode: request.mode');
+    expect(optimizeSegment).toContain('thought: request.thought');
   });
 
   it('uses subdued canvas scene switch styling instead of a black primary active state', () => {

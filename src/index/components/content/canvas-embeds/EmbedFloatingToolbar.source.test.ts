@@ -44,6 +44,18 @@ describe('EmbedFloatingToolbar source', () => {
         expect(source).toContain('strokeColor={label.strokeColor}');
     });
 
+    it('shows node title labels for annotation-backed AI task nodes without treating them as regular preview embeds', () => {
+        const source = readFileSync(resolve(__dirname, './EmbedFloatingToolbar.tsx'), 'utf8');
+
+        expect(source).toContain('getCanvasDirectRunAnnotationTaskRef');
+        expect(source).toContain('const annotationTaskRef = getCanvasDirectRunAnnotationTaskRef(el);');
+        expect(source).toContain("const isAnnotationTaskNode = Boolean(annotationTaskRef);");
+        expect(source).toContain("const isRegularEmbedNode = el.type === 'embeddable' && Boolean(el.link);");
+        expect(source).toContain('if (el.isDeleted || (!isRegularEmbedNode && !isAnnotationTaskNode)) continue;');
+        expect(source).toContain("const viewMode = isAnnotationTaskNode ? 'preview' : el.customData?.embedViewMode === 'preview' ? 'preview' : 'link';");
+        expect(source).toContain('if (!annotationTaskRef && isSelected && selectedIdSet.size === 1) {');
+    });
+
     it('opens prototype preview nodes through their client preview url', () => {
         const source = readFileSync(resolve(__dirname, './EmbedFloatingToolbar.tsx'), 'utf8');
         const resolverStart = source.indexOf('function resolveEmbedOpenUrl');

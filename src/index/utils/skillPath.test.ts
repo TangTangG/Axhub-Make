@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isValidSkillPath, normalizeSkillPath } from './skillPath';
+import { isValidSkillPath, normalizeSkillPath, normalizeSkillSource } from './skillPath';
 
 describe('normalizeSkillPath', () => {
   it('normalizes valid skill paths', () => {
@@ -38,5 +38,29 @@ describe('normalizeSkillPath', () => {
       expect(normalizeSkillPath(input)).toBeNull();
       expect(isValidSkillPath(input)).toBe(false);
     }
+  });
+});
+
+describe('normalizeSkillSource', () => {
+  it('normalizes multiple project-local skill paths while dropping invalid entries', () => {
+    expect(
+      normalizeSkillSource(`
+        .agents/skills/explore-options/SKILL.md
+        .claude\\skills\\explore-options\\SKILL.md
+        https://example.com/skills/remote.md
+        .agents/skills/prototype-comments/SKILL.md
+      `),
+    ).toBe(
+      [
+        '.agents/skills/explore-options/SKILL.md',
+        '.claude/skills/explore-options/SKILL.md',
+        '.agents/skills/prototype-comments/SKILL.md',
+      ].join('\n'),
+    );
+  });
+
+  it('returns null when no valid local skill path remains', () => {
+    expect(normalizeSkillSource('https://example.com/skills/remote.md')).toBeNull();
+    expect(normalizeSkillSource('')).toBeNull();
   });
 });

@@ -2,7 +2,6 @@ import { normalizePath, type HMRPayload, type HmrContext, type Plugin, type Vite
 
 type SendFunction = (...args: any[]) => void;
 
-const CANVAS_ASSETS_SEGMENT = '/canvas-assets/';
 const SPEC_SEGMENT = '/.spec/';
 const ANNOTATION_SOURCE_FILE_NAME = '/annotation-source.json';
 
@@ -10,12 +9,16 @@ function cleanHotUpdatePath(filePath: string): string {
   return normalizePath(filePath).split(/[?#]/u)[0] || '';
 }
 
+function isResourceCanvasDataFile(filePath: string): boolean {
+  return /(^|\/)src\/resources\/.+\.excalidraw$/u.test(filePath)
+    || /(^|\/)src\/resources\/.+\.assets\//u.test(filePath);
+}
+
 export function isCanvasHotUpdateFile(filePath: string): boolean {
   const normalized = cleanHotUpdatePath(filePath);
   return (
-    normalized.endsWith('.excalidraw')
+    isResourceCanvasDataFile(normalized)
     || normalized.endsWith(ANNOTATION_SOURCE_FILE_NAME)
-    || normalized.includes(CANVAS_ASSETS_SEGMENT)
     || normalized.includes(SPEC_SEGMENT)
   );
 }
