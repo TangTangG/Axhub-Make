@@ -16,19 +16,17 @@
 `plan-prds` 负责：
 
 1. 索取、读取、采集和登记来源。
-2. 建立项目总入口和来源清单。
+2. 建立产品总入口和来源清单。
 3. 按产品功能模块拆分 PRD 任务。
 4. 维护确认项、任务状态、依赖和分期。
 5. 用户确认后，使用 `write-prd` 完成各模块 PRD，或为后续对话生成明确执行入口。
 
-`plan-prds` 不负责生成或更新 `DESIGN.md`。后续独立视觉规范技能可以读取同一主题目录中的 `PROJECT.md`、`SOURCES.md` 和 `sources/`，复用网站结构、截图、文档和事实，避免重复采集。
-
 ## 存储结构
 
-每个产品或调研主题使用独立目录：
+每个产品使用独立目录：
 
 ```text
-src/resources/prd/<topic-id>/
+src/resources/prd/<product-id>/
 ├── PROJECT.md
 ├── SOURCES.md
 ├── PLAN.md
@@ -41,19 +39,19 @@ src/resources/prd/<topic-id>/
 └── ...
 ```
 
-`<topic-id>` 使用小写字母、数字和连字符。处理新主题时创建新的 `<topic-id>` 目录，不覆盖已有产品资料。重新进入已有主题时，优先读取并增量更新现有控制文档和素材。
+`<product-id>` 使用小写字母、数字和连字符。处理另一个产品时创建新的 `<product-id>` 目录，不覆盖已有产品资料。重新处理已有产品时，优先读取并增量更新现有控制文档和素材。
 
 ## 文档职责
 
 ### PROJECT.md
 
-`PROJECT.md` 是主题总入口，也是后续 Agent 首先读取的文件。它包含：
+`PROJECT.md` 是产品总入口，也是后续 Agent 首先读取的文件。它包含：
 
-- 产品或主题名称、任务模式和一句话定位。
+- 产品名称和一句话定位。
 - 产品背景、目标用户、核心场景、目标和范围边界。
 - 已确认事实、关键假设和当前开放问题。
 - `SOURCES.md`、`PLAN.md` 和各模块 PRD 的相对路径目录。
-- 当前阶段、整体进度、分期摘要和重要产品决策。
+- 重要产品决策。
 
 `PROJECT.md` 只保留跨模块且长期有效的信息。详细证据放入 `SOURCES.md`，详细执行状态放入 `PLAN.md`，模块规则放入对应 PRD，避免在四处复制同一正文。
 
@@ -85,7 +83,7 @@ src/resources/prd/<topic-id>/
                          \-> 阻塞
 ```
 
-任务状态变化后同步更新 `PLAN.md`；`PROJECT.md` 只更新整体进度和 PRD 目录摘要。
+任务状态变化后只更新 `PLAN.md`；新增、移除或重命名模块 PRD 时同步更新 `PROJECT.md` 的文档目录。
 
 ## 统一命名
 
@@ -93,7 +91,7 @@ src/resources/prd/<topic-id>/
 
 | 对象 | 格式 | 示例 |
 | --- | --- | --- |
-| 主题目录 | `<topic-id>` | `warehouse-management` |
+| 产品目录 | `<product-id>` | `warehouse-management` |
 | 来源编号 | `src-<三位序号>` | `src-003` |
 | 模块 PRD | `prd-<两位序号>-<module-id>.md` | `prd-02-inventory-transfer.md` |
 | 网站截图 | `<三位序号>-<page-id>-<state-id>-<viewport>.png` | `020-login-error-desktop.png` |
@@ -119,9 +117,9 @@ src/resources/prd/<topic-id>/
 
 ## 工作流程
 
-### 1. 选择主题和模式
+### 1. 确认产品和编制方式
 
-确认 `<topic-id>`，检查 `src/resources/prd/<topic-id>/` 是否已经存在，并判断任务属于已有产品反推、新产品创作或混合模式。
+确认 `<product-id>`，检查 `src/resources/prd/<product-id>/` 是否已经存在，并判断本次 PRD 编制属于已有产品反推、新产品创作或混合方式。编制方式用于约束证据和研究规则，不写入 `PROJECT.md` 的产品信息。
 
 ### 2. 索取核心资料
 
@@ -141,7 +139,7 @@ src/resources/prd/<topic-id>/
 
 在编写模块 PRD 前，向用户提供 `PROJECT.md`、`SOURCES.md` 和 `PLAN.md` 的路径与预览入口，请用户确认：
 
-- 产品总信息和任务模式。
+- 产品总信息和范围。
 - 采集范围、来源缺口和事实/推断分类。
 - 模块拆分、分期、待确认项和输出路径。
 
@@ -188,7 +186,7 @@ plan-prds/
     └── PLAN.md
 ```
 
-`SKILL.md` 保留触发条件、核心规则和阶段流程；特殊来源处理细节放在 `references/source-handlers.md`；三份稳定文档骨架放在 `assets/`，由技能按主题实际内容创建，不保留未替换的模板占位符。
+`SKILL.md` 保留触发条件、核心规则和阶段流程；特殊来源处理细节放在 `references/source-handlers.md`；三份稳定文档骨架放在 `assets/`，由技能按产品实际内容创建，不保留未替换的模板占位符。
 
 ## 验证策略
 
@@ -198,7 +196,7 @@ plan-prds/
 2. 只有若干产品截图：能统一命名、登记证据并暴露覆盖缺口。
 3. 新产品简述：能询问核心需求、使用公开研究补充，但不把研究建议冒充用户决定。
 4. Axure、飞书、PDF 和 Office 混合输入：能选择正确处理入口并记录产物。
-5. 已有主题目录：能复用 `SOURCES.md` 和素材，增量更新而非重复采集。
+5. 已有产品目录：能复用 `SOURCES.md` 和素材，增量更新而非重复采集。
 6. 多模块长任务：能生成分期计划、控制每期规模并给后续对话明确入口。
 
 最后校验两个技能目录一致、YAML 和目录命名合法、模板没有 `TODO`、`TBD` 或未解释占位符，并检查 `git diff --check`。
@@ -206,9 +204,8 @@ plan-prds/
 ## 完成标准
 
 - `plan-prds` 能在 Make Client 的 Codex/通用 Agent 与 Claude 技能目录中被发现。
-- 默认使用 `src/resources/prd/<topic-id>/PROJECT.md` 作为总入口。
+- 默认使用 `src/resources/prd/<product-id>/PROJECT.md` 作为产品总入口。
 - 三份控制文档职责清楚，路径和状态可追溯。
 - 所有落盘素材遵循统一语义命名，并在 `SOURCES.md` 中可定位。
 - 反推模式不虚构事实，创作模式保留研究来源和用户确认门槛。
 - 用户确认后才批量进入 `write-prd`，且支持分期、续接对话和独立任务并行。
-- `DESIGN.md` 始终由其他技能负责，但可以安全复用来源清单和素材。
