@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
@@ -50,5 +52,16 @@ describe('open-source audit', () => {
     );
 
     assert.equal(findings.some((finding) => finding.rule === 'posix-home-path'), false);
+  });
+
+  it('keeps Gitleaks defaults enabled with narrow false-positive allowlists', () => {
+    const config = fs.readFileSync(path.resolve('.gitleaks.toml'), 'utf8');
+
+    assert.match(config, /useDefault\s*=\s*true/u);
+    assert.match(config, /targetRules\s*=\s*\["gcp-api-key"\]/u);
+    assert.match(config, /vendor\/axhub-excalidraw\/dist/u);
+    assert.match(config, /targetRules\s*=\s*\["generic-api-key"\]/u);
+    assert.match(config, /src\/server\/__tests__/u);
+    assert.doesNotMatch(config, /commits\s*=|stopwords\s*=/u);
   });
 });
